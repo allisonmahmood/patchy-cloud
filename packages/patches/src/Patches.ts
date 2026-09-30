@@ -19,6 +19,7 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import {
   DescriptionText,
+  FileStoreDefinition,
   Manifest,
   PatchInventory,
   PatchName,
@@ -29,7 +30,8 @@ import {
   SharingScope,
   type SharedTableDeclaration,
   TableDefinition,
-  sharedTableId
+  sharedTableId,
+  sharedStoreId
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
@@ -108,12 +110,23 @@ export interface Actor {
 }
 const Owner = Schema.Struct({ id: Schema.String, name: Schema.String });
 const Dependant = Schema.Struct({ patchId: Schema.String, name: Schema.String, owner: Owner });
-const OffSource = Schema.Struct({
-  patchId: Schema.String,
-  name: Schema.optionalKey(Schema.String),
-  table: Schema.String,
-  state: PatchSourceState
-});
+const OffSource = Schema.Union([
+  Schema.Struct({
+    patchId: Schema.String,
+    name: Schema.optionalKey(Schema.String),
+    table: Schema.String,
+    state: PatchSourceState
+  }),
+  Schema.Struct({
+    patchId: Schema.String,
+    name: Schema.optionalKey(Schema.String),
+    store: Schema.String,
+    state: PatchSourceState
+  })
+]);
+type SharedResource =
+  | { readonly table: string; readonly store?: never }
+  | { readonly store: string; readonly table?: never };
 
 export class NotOwner extends Schema.TaggedError<NotOwner>()("NotOwner", {
   owner: Owner
@@ -152,7 +165,7 @@ export class HasDependants extends Schema.TaggedError<HasDependants>()("HasDepen
   dependants: Schema.Array(Dependant)
 }) {
   override get message() {
-    return "Other live patches read these tables. Ask the person you are working for before forcing.";
+    return "Other live patches read these tables or stores. Ask the person you are working for before forcing.";
   }
 }
 export class SourcesOff extends Schema.TaggedError<SourcesOff>()("SourcesOff", {
@@ -274,19 +287,17 @@ export interface ReadPatch {
   readonly currentVersion: number;
   readonly tier: number;
   readonly publishedAt: string;
-  readonly reads: readonly {
+  readonly reads: readonly (SharedResource & {
     readonly alias: string;
     readonly patchId: string;
     readonly name?: string;
-    readonly table: string;
     readonly state: "live" | "retired" | "deleted" | "gone";
-  }[];
-  readonly dependants: readonly {
+  })[];
+  readonly dependants: readonly (SharedResource & {
     readonly patchId: string;
     readonly name: string;
     readonly owner: { readonly id: string; readonly name: string };
-    readonly table: string;
-  }[];
+  })[];
 }
 
 export interface PortalCard extends ReadPatch {
@@ -296,12 +307,11 @@ export interface PortalCard extends ReadPatch {
     readonly createdAt: string;
     readonly publisherName: string;
   }[];
-  readonly offSources: readonly {
+  readonly offSources: readonly (SharedResource & {
     readonly patchId: string;
     readonly name?: string;
-    readonly table: string;
     readonly state: "live" | "retired" | "deleted" | "gone";
-  }[];
+  })[];
   readonly actorNames: {
     readonly description: string | null;
     readonly retired: string | null;
@@ -389,11 +399,12 @@ export class HasPrimitives extends Schema.TaggedError<HasPrimitives>()("HasPrimi
 /** A declaration never reveals whether its source is missing, private or unshared. */
 export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()("PatchNotOpenable", {
   patchId: Schema.String,
-  table: Schema.String
+  table: Schema.optionalKey(Schema.String),
+  store: Schema.optionalKey(Schema.String)
 }) {
   readonly code = "patch_not_openable" as const;
   override get message() {
-    return `Shared table ${this.patchId}/${this.table} is not openable.`;
+    return `Shared ${this.store === undefined ? "table" : "store"} ${this.patchId}/${this.store ?? this.table} is not openable.`;
   }
 }
 
@@ -405,6 +416,14 @@ export interface SharedTable {
   readonly definition: typeof TableDefinition.Type;
   readonly tables: Readonly<Record<string, typeof TableDefinition.Type>>;
   readonly uses: Readonly<Record<string, typeof SharedTableDeclaration.Type>>;
+}
+
+export interface SharedStore {
+  readonly id: string;
+  readonly patchId: string;
+  readonly store: string;
+  readonly schemaRevision: number;
+  readonly definition: typeof FileStoreDefinition.Type;
 }
 
 export type DatabaseError =
@@ -559,7 +578,7 @@ class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
 class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
 class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
 class DeclaringPatches extends Schema.Class<DeclaringPatches>("DeclaringPatches")({
-  table: Schema.String,
+  resource: Schema.String,
   count: Schema.Int
 }) {}
 class ManagedPatchRow extends Schema.Class<ManagedPatchRow>("ManagedPatchRow")({
@@ -573,7 +592,10 @@ class ReadPatchRow extends Schema.Class<ReadPatchRow>("ReadPatchRow")({
   tier: Schema.Int,
   publishedAt: Stamp,
   reads: Schema.Array(
-    Schema.Struct({ alias: Schema.String, patchId: Schema.String, table: Schema.String })
+    Schema.Union([
+      Schema.Struct({ alias: Schema.String, patchId: Schema.String, table: Schema.String }),
+      Schema.Struct({ alias: Schema.String, patchId: Schema.String, store: Schema.String })
+    ])
   )
 }) {}
 class PortalMetadataRow extends Schema.Class<PortalMetadataRow>("PortalMetadataRow")({
@@ -668,6 +690,11 @@ export class Patches extends Context.Service<
       table: string,
       companyId: string
     ) => Effect.Effect<SharedTable, PatchNotOpenable | DatabaseError | SqlError>;
+    readonly sharedStore: (
+      patchId: string,
+      store: string,
+      companyId: string
+    ) => Effect.Effect<SharedStore, PatchNotOpenable | DatabaseError | SqlError>;
     /** Durably reserves a fresh object key before any bytes can be written. */
     readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
@@ -1000,16 +1027,18 @@ export const make = Effect.gen(function* () {
         current_version.version_number AS "currentVersion", current_version.tier,
         current_version.created_at AS "publishedAt",
         COALESCE((
-          SELECT jsonb_agg(declarations ORDER BY declarations.alias, declarations."patchId", declarations."table")
+          SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(declarations))
+            ORDER BY declarations.alias, declarations."patchId", declarations."table", declarations.store)
           FROM (
             SELECT DISTINCT declaration.key AS alias,
-              declaration.value->>'patchId' AS "patchId", declaration.value->>'table' AS "table"
+              declaration.value->>'patchId' AS "patchId",
+              declaration.value->>'table' AS "table", declaration.value->>'store' AS store
             FROM patch_versions
             CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
             WHERE patch_versions.patch_id = patches.id
-              AND declaration.value->>'kind' = 'sharedTable'
-              AND declaration.value->>'id' =
-                (declaration.value->>'patchId') || '/' || (declaration.value->>'table')
+              AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
+              AND declaration.value->>'id' = (declaration.value->>'patchId') || '/' ||
+                COALESCE(declaration.value->>'table', declaration.value->>'store')
           ) declarations
         ), '[]'::jsonb) AS reads
       FROM patches
@@ -1361,14 +1390,16 @@ export const make = Effect.gen(function* () {
       for (const declaration of row.reads) {
         const edges = dependants.get(declaration.patchId);
         if (edges === undefined) continue;
-        const key = sharedTableId(declaration.patchId, declaration.table);
+        const resource =
+          "table" in declaration ? { table: declaration.table } : { store: declaration.store };
+        const key = `${declaration.patchId}/${"table" in declaration ? declaration.table : declaration.store}`;
         if (seen.has(key)) continue;
         seen.add(key);
         edges.push({
           patchId: patch.id,
           name: patch.name,
           owner: { id: patch.ownerUserId, name: row.ownerName },
-          table: declaration.table
+          ...resource
         });
       }
     }
@@ -1396,7 +1427,7 @@ export const make = Effect.gen(function* () {
           (a, b) =>
             a.name.localeCompare(b.name) ||
             a.patchId.localeCompare(b.patchId) ||
-            a.table.localeCompare(b.table)
+            (a.table ?? a.store).localeCompare(b.table ?? b.store)
         )
     }));
   }, Effect.catchTags(dieOnSchemaError));
@@ -1438,6 +1469,27 @@ export const make = Effect.gen(function* () {
     } satisfies SharedTable;
   });
 
+  const sharedStore = Effect.fn("Patches.sharedStore")(function* (
+    patchId: string,
+    store: string,
+    companyId: string
+  ) {
+    const source = yield* find(patchId);
+    if (Option.isNone(source) || source.value.patch.companyId !== companyId)
+      return yield* new PatchNotOpenable({ patchId, store });
+    const snapshot = yield* readInventory(companyId, patchId);
+    const definition = snapshot?.stores.find((entry) => entry.name === store && entry.shared);
+    if (snapshot === null || definition === undefined)
+      return yield* new PatchNotOpenable({ patchId, store });
+    return {
+      id: sharedStoreId(patchId, store),
+      patchId,
+      store,
+      schemaRevision: snapshot.schemaRevision,
+      definition: { description: definition.description, shared: definition.shared }
+    } satisfies SharedStore;
+  });
+
   const resolveDeclarations = Effect.fn("Patches.resolveDeclarations")(function* (
     manifest: typeof Manifest.Type,
     companyId: string
@@ -1450,16 +1502,22 @@ export const make = Effect.gen(function* () {
         yield* connections.resolve(companyId, declaration);
         continue;
       }
-      if (declaration.kind !== "sharedTable") continue;
-      if (declaration.id !== sharedTableId(declaration.patchId, declaration.table))
-        return yield* new PatchNotOpenable({
-          patchId: declaration.patchId,
-          table: declaration.table
-        });
-      const source = yield* sharedTable(declaration.patchId, declaration.table, companyId);
+      const resource =
+        declaration.kind === "sharedTable"
+          ? { table: declaration.table }
+          : { store: declaration.store };
+      const id =
+        declaration.kind === "sharedTable"
+          ? sharedTableId(declaration.patchId, declaration.table)
+          : sharedStoreId(declaration.patchId, declaration.store);
+      if (declaration.id !== id)
+        return yield* new PatchNotOpenable({ patchId: declaration.patchId, ...resource });
+      const source = yield* declaration.kind === "sharedTable"
+        ? sharedTable(declaration.patchId, declaration.table, companyId)
+        : sharedStore(declaration.patchId, declaration.store, companyId);
       if (declaration.revision < source.schemaRevision)
         warnings.push(
-          `Shared table \`${source.id}\`: declared schema revision ${declaration.revision} is behind source schema revision ${source.schemaRevision}.`
+          `Shared ${declaration.kind === "sharedTable" ? "table" : "store"} \`${source.id}\`: declared schema revision ${declaration.revision} is behind source schema revision ${source.schemaRevision}.`
         );
     }
     return warnings;
@@ -1472,36 +1530,39 @@ export const make = Effect.gen(function* () {
     }),
     Result: DeclaringPatches,
     execute: ({ patchId, companyId }) => sql`
-      SELECT declaration.value->>'table' AS "table", count(DISTINCT patches.id)::int AS count
+      SELECT COALESCE(declaration.value->>'table', declaration.value->>'store') AS resource,
+        count(DISTINCT patches.id)::int AS count
       FROM patches
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       WHERE patches.company_id = ${companyId}
         AND ${serving}
-        AND declaration.value->>'kind' = 'sharedTable'
+        AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
         AND declaration.value->>'patchId' = ${patchId}
-        AND declaration.value->>'id' = ${patchId} || '/' || (declaration.value->>'table')
-      GROUP BY declaration.value->>'table'`
+        AND declaration.value->>'id' = ${patchId} || '/' ||
+          COALESCE(declaration.value->>'table', declaration.value->>'store')
+      GROUP BY COALESCE(declaration.value->>'table', declaration.value->>'store')`
   });
 
   const dependantRows = SqlSchema.findAll({
     Request: Schema.Struct({
       patchId: Schema.String,
       companyId: Schema.String,
-      tables: Schema.NullOr(Schema.Array(Schema.String))
+      resources: Schema.NullOr(Schema.Array(Schema.String))
     }),
     Result: Dependant,
-    execute: ({ patchId, companyId, tables: affected }) => sql`
+    execute: ({ patchId, companyId, resources: affected }) => sql`
       SELECT DISTINCT patches.id AS "patchId", patches.name,
         jsonb_build_object('id', owner.id, 'name', owner.name) AS owner
       FROM patches JOIN users owner ON owner.id = patches.owner_user_id
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       WHERE patches.company_id = ${companyId} AND ${serving}
-        AND declaration.value->>'kind' = 'sharedTable'
+        AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
         AND declaration.value->>'patchId' = ${patchId}
-        AND declaration.value->>'id' = ${patchId} || '/' || (declaration.value->>'table')
-        AND ${affected === null ? sql`true` : sql`declaration.value->>'table' IN ${sql.in(affected)}`}
+        AND declaration.value->>'id' = ${patchId} || '/' ||
+          COALESCE(declaration.value->>'table', declaration.value->>'store')
+        AND ${affected === null ? sql`true` : sql`COALESCE(declaration.value->>'table', declaration.value->>'store') IN ${sql.in(affected)}`}
       ORDER BY patches.name, patches.id`
   });
   const refuseDependants = Effect.fn("Patches.refuseDependants")(function* (
@@ -1511,15 +1572,21 @@ export const make = Effect.gen(function* () {
     affected: readonly string[] | null = null
   ) {
     if (force || affected?.length === 0) return;
-    const dependants = yield* dependantRows({ patchId, companyId, tables: affected });
+    const dependants = yield* dependantRows({ patchId, companyId, resources: affected });
     if (dependants.length > 0) return yield* new HasDependants({ dependants });
   }, Effect.catchTags(dieOnSchemaError));
   const offSources = SqlSchema.findAll({
     Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
-    Result: Schema.Struct({ ...OffSource.fields, name: Schema.NullOr(Schema.String) }),
+    Result: Schema.Struct({
+      patchId: Schema.String,
+      name: Schema.NullOr(Schema.String),
+      table: Schema.NullOr(Schema.String),
+      store: Schema.NullOr(Schema.String),
+      state: PatchSourceState
+    }),
     execute: ({ patchId, companyId }) => sql`
       SELECT DISTINCT declaration.value->>'patchId' AS "patchId", source.name,
-        declaration.value->>'table' AS "table",
+        declaration.value->>'table' AS "table", declaration.value->>'store' AS store,
         CASE WHEN source.id IS NULL THEN 'gone'
           WHEN source.deleted_at IS NOT NULL THEN 'deleted'
           WHEN source.retired_at IS NOT NULL THEN 'retired'
@@ -1529,9 +1596,9 @@ export const make = Effect.gen(function* () {
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       LEFT JOIN patches source ON source.id = declaration.value->>'patchId'
         AND source.company_id = ${companyId} AND source.disabled_at IS NULL
-      WHERE patches.id = ${patchId} AND declaration.value->>'kind' = 'sharedTable'
+      WHERE patches.id = ${patchId} AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
         AND (source.id IS NULL OR source.deleted_at IS NOT NULL OR source.retired_at IS NOT NULL)
-      ORDER BY "patchId", "table"`
+      ORDER BY "patchId", "table", store`
   });
 
   const addressNotice = Effect.fn("Patches.addressNotice")(function* (
@@ -1564,9 +1631,10 @@ export const make = Effect.gen(function* () {
       return {
         ...card,
         versions: versions.map((version) => ({ ...version, createdAt: iso(version.createdAt) })),
-        offSources: sources.map(({ patchId: sourceId, table, state }) => {
+        offSources: sources.map(({ patchId: sourceId, table, store, state }) => {
           const name = card.reads.find((read) => read.patchId === sourceId)?.name;
-          const source = { patchId: sourceId, table, state };
+          const resource = table === null ? { store: store! } : { table };
+          const source = { patchId: sourceId, ...resource, state };
           return name === undefined ? source : { ...source, name };
         }),
         actorNames,
@@ -1615,7 +1683,9 @@ export const make = Effect.gen(function* () {
       input.patchId,
       companyId,
       input.force,
-      plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true)
+      plan.sharing.filter(
+        (name) => (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
+      )
     );
     if (snapshot !== null) {
       yield* databases.withCompany(companyId)(
@@ -1659,7 +1729,10 @@ export const make = Effect.gen(function* () {
                 input.patchId,
                 input.companyId,
                 input.force,
-                plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true)
+                plan.sharing.filter(
+                  (name) =>
+                    (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
+                )
               );
               return yield* tables.provision(input.patchId, input.manifest);
             })
@@ -1813,19 +1886,19 @@ export const make = Effect.gen(function* () {
         const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
         const resources = yield* provision({ ...input, companyId });
         const declaringPatches = resources.sharing.some(
-          (table) => input.manifest.tables[table]!.shared !== true
+          (name) => (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
         )
           ? new Map(
               (yield* declaringPatchRows({
                 patchId: input.patchId,
                 companyId
-              })).map((row) => [row.table, row.count])
+              })).map((row) => [row.resource, row.count])
             )
           : new Map<string, number>();
-        const sharingWarnings = resources.sharing.map((table) =>
-          input.manifest.tables[table]!.shared === true
-            ? `\`${table}\` is now shared.`
-            : `\`${table}\` is no longer shared; ${declaringPatches.get(table) ?? 0} declaring patches are affected.`
+        const sharingWarnings = resources.sharing.map((name) =>
+          (input.manifest.tables[name] ?? input.manifest.files[name])!.shared === true
+            ? `\`${name}\` is now shared.`
+            : `\`${name}\` is no longer shared; ${declaringPatches.get(name) ?? 0} declaring patches are affected.`
         );
         const publicUrl = address(input.publicBaseUrl, companyHandle, name);
         const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
@@ -2023,7 +2096,11 @@ export const make = Effect.gen(function* () {
       );
       if (rows.length > 0)
         return yield* new SourcesOff({
-          sources: rows.map(({ name, ...source }) => (name === null ? source : { ...source, name }))
+          sources: rows.map(({ name, table, store, ...source }) => ({
+            ...source,
+            ...(table === null ? { store: store! } : { table }),
+            ...(name === null ? {} : { name })
+          }))
         });
     }
     const at = stamp(millis);
@@ -2184,6 +2261,7 @@ export const make = Effect.gen(function* () {
     withDependencyLock,
     companyInventory,
     sharedTable,
+    sharedStore,
     prepareObject,
     claimObjects,
     completeObject,

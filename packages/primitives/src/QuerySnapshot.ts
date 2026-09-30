@@ -102,6 +102,8 @@ export const make = Effect.gen(function* () {
           for (const declaration of Object.values(binding.manifest.uses)) {
             if (declaration.kind === "sharedTable")
               keys.add(`table:${declaration.patchId}:${declaration.table}`);
+            else if (declaration.kind === "sharedStore")
+              keys.add(`store:${declaration.patchId}:${declaration.store}`);
           }
           if (keys.size === 0) {
             callbackContext = yield* Effect.context();
@@ -110,7 +112,8 @@ export const make = Effect.gen(function* () {
             return yield* Effect.interrupt;
           }
           const reserveAuthority = Object.values(capability.binding.manifest.uses).some(
-            (declaration) => declaration.kind === "sharedTable"
+            (declaration) =>
+              declaration.kind === "sharedTable" || declaration.kind === "sharedStore"
           );
           lease = yield* databases
             .lease(capability.binding.companyId, reserveAuthority)

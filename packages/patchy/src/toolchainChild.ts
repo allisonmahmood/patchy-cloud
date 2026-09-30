@@ -29,7 +29,12 @@ try {
   );
   const server =
     !inspect && process.argv[5] !== undefined
-      ? await buildServer(process.cwd(), decodeModules(process.argv[5]), toolchain)
+      ? await buildServer(
+          process.cwd(),
+          decodeModules(process.argv[5]),
+          toolchain,
+          decodeModules(process.argv[6]!)
+        )
       : undefined;
   if (server !== undefined)
     await writeFile(path.join(process.argv[3]!, "server.js"), server.server);

@@ -1,6 +1,7 @@
 import {
   createClient,
   createSharedTable,
+  createSharedStore,
   isPatchyError,
   type Call,
   type QueryRegistry
@@ -113,11 +114,16 @@ window.addEventListener("message", (event) => {
   port.start();
 });
 const client = createClient(
-  { tables: { rows: {} }, files: { assets: {} }, uses: { source: { kind: "sharedTable" } } },
+  {
+    tables: { rows: {} },
+    files: { assets: {} },
+    uses: { source: { kind: "sharedTable" }, library: { kind: "sharedStore" } }
+  },
   {
     shared: {
       source: (alias: string, call: Call, queries: QueryRegistry) =>
-        createSharedTable<{ readonly id: string; readonly label: string }>(alias, call, queries)
+        createSharedTable<{ readonly id: string; readonly label: string }>(alias, call, queries),
+      library: (alias: string, call: Call) => createSharedStore(alias, call)
     },
     connections: {}
   }

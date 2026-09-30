@@ -268,7 +268,7 @@ function mount(frame: HTMLIFrameElement): void {
       stop();
     }
   };
-  const failure = (id: string, error: Refusal) => {
+  const failure = async (id: string, error: Refusal) => {
     send({
       v: wire,
       id,
@@ -284,12 +284,24 @@ function mount(frame: HTMLIFrameElement): void {
       }
     });
     if (error.code === "shell_outdated") stale();
-    else if (
-      error.code === "session_expired" ||
-      error.code === "principal_changed" ||
-      error.code === "access_denied"
-    )
+    else if (error.code === "session_expired" || error.code === "principal_changed")
       notice(error.code);
+    else if (error.code === "access_denied") {
+      // A source refusal is recoverable. Only lost access to this document stops its frame.
+      try {
+        const reply = await runtime("me", {});
+        release(reply.heldBytes);
+      } catch (authority) {
+        if (
+          authority instanceof Refusal &&
+          (authority.code === "access_denied" ||
+            authority.code === "session_expired" ||
+            authority.code === "principal_changed")
+        )
+          notice(authority.code);
+        else if (authority instanceof Refusal && authority.code === "shell_outdated") stale();
+      }
+    }
   };
   // Decoded once, as hosted parsing reads the address: bootstrap, route events after a set and
   // back/forward report one form for one history entry.
@@ -346,6 +358,7 @@ function mount(frame: HTMLIFrameElement): void {
   };
   const runtime = async (op: Operation, args: unknown, bytes?: ArrayBuffer): Promise<Reply> => {
     if (closed) throw lost();
+    const readsBytes = op === "files.get" || op === "shared.files.get";
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort(),
@@ -366,14 +379,15 @@ function mount(frame: HTMLIFrameElement): void {
         signal: controller.signal
       };
       let url = "/api/runtime/call";
-      if (op === "files.get" || op === "files.put") {
-        const file = args as { store: string; name: string; contentType?: string };
+      if (readsBytes || op === "files.put") {
+        const file = args as { store?: string; alias?: string; name: string; contentType?: string };
+        const shared = op === "shared.files.get";
         url =
-          "/api/runtime/files/" +
-          [patchId, versionId, file.store, ...file.name.split("/")]
+          (shared ? "/api/runtime/shared-files/" : "/api/runtime/files/") +
+          [patchId, versionId, shared ? file.alias! : file.store!, ...file.name.split("/")]
             .map(encodeURIComponent)
             .join("/");
-        init.method = op === "files.get" ? "GET" : "PUT";
+        init.method = readsBytes ? "GET" : "PUT";
         if (op === "files.put") {
           headers.set("Content-Type", file.contentType!);
           init.body = bytes;
@@ -389,19 +403,19 @@ function mount(frame: HTMLIFrameElement): void {
       if (closed) throw lost();
       const data = await readBody(
         response,
-        op === "files.get" && response.ok
+        readsBytes && response.ok
           ? MAX_FILE
           : op === "server.call"
             ? registry["tier2.query.resultBytes"].default + 32
             : runtimeByteLimits.resultBytes,
-        op === "files.get" && response.ok
+        readsBytes && response.ok
           ? "runtime.file.bytes"
           : op === "server.call"
             ? "tier2.query.resultBytes"
             : "runtime.result.bytes"
       );
       responseBytes = data.byteLength;
-      if (op === "files.get" && response.ok) {
+      if (readsBytes && response.ok) {
         const heldBytes = responseBytes;
         responseBytes = 0; // The caller owns this reservation until transfer or download revocation.
         return {
@@ -509,7 +523,7 @@ function mount(frame: HTMLIFrameElement): void {
     let replyBytes = 0;
     try {
       if (seen.has(id)) {
-        failure(
+        await failure(
           id,
           new Refusal("invalid_request", "Request ids cannot be reused within a document.")
         );
@@ -530,6 +544,7 @@ function mount(frame: HTMLIFrameElement): void {
       if (
         op !== "route.set" &&
         op !== "download" &&
+        op !== "shared.download" &&
         !subscriptionOperation &&
         !Object.hasOwn(runtimeOperations, op)
       )
@@ -586,7 +601,11 @@ function mount(frame: HTMLIFrameElement): void {
         } else if (op === "subscriptions.unsubscribe") {
           unsubscribeId = decodeUnsubscribe(message.args).id;
         } else
-          request = decodeRequest({ op: op === "download" ? "files.get" : op, args: message.args });
+          request = decodeRequest({
+            op:
+              op === "download" ? "files.get" : op === "shared.download" ? "shared.files.get" : op,
+            args: message.args
+          });
       } catch (error) {
         throw error instanceof Refusal ? error : invalid();
       }
@@ -616,7 +635,7 @@ function mount(frame: HTMLIFrameElement): void {
       else reply = await runtime(request!.op, request!.args, bytes);
       replyBytes = reply.heldBytes;
       if (closed) return;
-      if (op === "download" && reply.bytes) {
+      if ((op === "download" || op === "shared.download") && reply.bytes) {
         // Blob storage is a second held copy until the transferred response buffer is released.
         reserve(reply.bytes.byteLength);
         const file = request!.args as { name: string };
@@ -660,7 +679,7 @@ function mount(frame: HTMLIFrameElement): void {
     } catch (error) {
       if (error instanceof HandlerRefusal)
         send({ v: wire, id, kind: "error", error: error.failure });
-      else failure(id, error instanceof Refusal ? error : lost());
+      else await failure(id, error instanceof Refusal ? error : lost());
     } finally {
       release(replyBytes);
       if (admitted) pending.delete(id);

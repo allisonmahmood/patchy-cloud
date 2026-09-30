@@ -33,7 +33,10 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
     | {
         readonly build: string;
         readonly toolchain: typeof ReleaseToolchain.Type;
-        readonly serverModules?: readonly string[];
+        readonly server?: {
+          readonly modules: readonly string[];
+          readonly sharedStores: readonly string[];
+        };
       }
 ) {
   const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
@@ -48,7 +51,12 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
           "build",
           operation.build,
           encodeToolchain(operation.toolchain),
-          ...(operation.serverModules === undefined ? [] : [encodeModules(operation.serverModules)])
+          ...(operation.server === undefined
+            ? []
+            : [
+                encodeModules(operation.server.modules),
+                encodeModules(operation.server.sharedStores)
+              ])
         ])
   ]);
   const decoded = yield* Effect.try({

@@ -69,6 +69,8 @@ const primitiveLines = (primitive: PrimitiveDetail) => [
   `${primitive.name}  ${primitive.kind}`,
   primitive.description,
   `Shared: ${primitive.shared}`,
+  `Declarable: ${primitive.declarable}`,
+  ...(primitive.hint === undefined ? [] : [primitive.hint]),
   `Schema revision: ${primitive.schemaRevision}`,
   "Columns:",
   ...primitive.columns.map(
@@ -220,13 +222,16 @@ export const list = Effect.fn("Discovery.list")(function* (
       if (hint !== undefined) lines.push(`    ${hint}`);
     }
     lines.push("Stores:");
-    for (const store of result.inventory.stores)
-      lines.push(`  ${store.name}: ${store.description}`, `    ${store.hint}`);
+    for (const store of result.inventory.stores) {
+      lines.push(`  ${store.name}: ${store.description}`);
+      const hint = store.hint ?? store.reason;
+      if (hint !== undefined) lines.push(`    ${hint}`);
+    }
   }
   lines.push("Reads:");
   for (const read of result.reads)
     lines.push(
-      `  ${read.alias}: ${read.patchId}${read.name === undefined ? "" : ` (${read.name})`} ${read.table}  ${read.state}`
+      `  ${read.alias}: ${read.patchId}${read.name === undefined ? "" : ` (${read.name})`} ${"store" in read ? read.store : read.table}  ${read.state}`
     );
   yield* Output.report(encodePatch(result), lines);
 });

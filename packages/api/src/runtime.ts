@@ -108,6 +108,12 @@ export const FileList = Schema.Struct({
   limit: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   cursor: Schema.optionalKey(NonEmptyText)
 });
+export const SharedFileList = Schema.Struct({
+  alias: DefinitionName,
+  prefix: FileList.fields.prefix,
+  limit: FileList.fields.limit,
+  cursor: FileList.fields.cursor
+});
 
 /** Version ids use core's newInternalId("ver") grammar. */
 export const RuntimeVersionId = Schema.String.check(
@@ -390,6 +396,27 @@ export const runtimeOperations = {
     request: Schema.Struct({
       op: Schema.Literal("files.stat"),
       args: Schema.Struct({ store: DefinitionName, name: FileName })
+    }),
+    response: Schema.NullOr(FileMetadata),
+    kind: "read"
+  },
+  "shared.files.get": {
+    request: Schema.Struct({
+      op: Schema.Literal("shared.files.get"),
+      args: Schema.Struct({ alias: DefinitionName, name: FileName })
+    }),
+    response: FileBody,
+    kind: "read"
+  },
+  "shared.files.list": {
+    request: Schema.Struct({ op: Schema.Literal("shared.files.list"), args: SharedFileList }),
+    response: FilePage,
+    kind: "read"
+  },
+  "shared.files.stat": {
+    request: Schema.Struct({
+      op: Schema.Literal("shared.files.stat"),
+      args: Schema.Struct({ alias: DefinitionName, name: FileName })
     }),
     response: Schema.NullOr(FileMetadata),
     kind: "read"

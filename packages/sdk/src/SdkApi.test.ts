@@ -935,6 +935,9 @@ it.layer(layer)("SDK company generation", (it) => {
           manifest: {
             ...Fixtures.manifest,
             name: "sdk-shared-source",
+            files: {
+              logos: { description: "Company logos keyed by filename.", shared: true }
+            },
             tables: {
               contacts: definition,
               members,
@@ -1005,7 +1008,10 @@ it.layer(layer)("SDK company generation", (it) => {
               ...generateRequest(),
               manifest: {
                 ...Fixtures.manifest,
-                uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+                uses: {
+                  contacts: { kind: "sharedTable", patchId, table: "contacts" },
+                  assets: { kind: "sharedStore", patchId, store: "logos" }
+                }
               }
             })
           )
@@ -1013,9 +1019,21 @@ it.layer(layer)("SDK company generation", (it) => {
         assert.strictEqual(response.status, 200);
         const output = yield* decodeGenerated(yield* response.json);
         assert.deepStrictEqual(output.uses, [
-          { alias: "contacts", id: `${patchId}/contacts`, revision: 1 }
+          { alias: "contacts", id: `${patchId}/contacts`, revision: 1 },
+          { alias: "assets", id: `${patchId}/logos`, revision: 1 }
         ]);
+        assert.deepStrictEqual(output.metadata.shared.assets, {
+          declaration: {
+            kind: "sharedStore",
+            patchId,
+            store: "logos",
+            id: `${patchId}/logos`,
+            revision: 1
+          },
+          definition: { description: "Company logos keyed by filename.", shared: true }
+        });
         const shared = output.metadata.shared.contacts!;
+        if (!("tables" in shared)) throw new Error("Expected shared table metadata.");
         assert.deepStrictEqual(Object.keys(shared.tables).sort(), ["contacts", "members", "teams"]);
         assert.deepStrictEqual(shared.tables.contacts!.columns, definition.columns);
         assert.deepStrictEqual(shared.tables.members, members);
@@ -1067,12 +1085,15 @@ it.layer(layer)("SDK company generation", (it) => {
           ...generateRequest(),
           manifest: {
             ...Fixtures.manifest,
-            uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+            uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
           }
         }).pipe(Effect.flip);
         assert.instanceOf(error, Generation.PatchNotOpenable);
-        if (error._tag === "SdkPatchNotOpenable")
+        if (error._tag === "SdkPatchNotOpenable") {
           assert.instanceOf(error.cause, Patches.PatchNotOpenable);
+          assert.strictEqual(error.store, "logos");
+          assert.isUndefined(error.table);
+        }
       })
   );
 

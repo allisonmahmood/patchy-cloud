@@ -7,6 +7,7 @@ import { it } from "@effect/vitest";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { CURRENT_RELEASE, GenerateRequest, MANIFEST_VERSION } from "@patchy/api";
 import { Patches } from "@patchy/patches";
+import { CompanyDatabases } from "@patchy/company-database";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -26,6 +27,34 @@ it.effect(
   "generates callable page and ctx.run types from module names without descriptors",
   () =>
     Effect.gen(function* () {
+      const identity = Fixtures.identities.uploader;
+      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(identity.company.id);
+      yield* Fixtures.record({
+        ...Fixtures.publishRecord(),
+        manifest: {
+          ...Fixtures.manifest,
+          name: "sdk-store-types",
+          files: { assets: { description: "Company assets keyed by filename.", shared: true } }
+        },
+        intent: "create",
+        patchId: "sdkstoretype",
+        companyId: identity.company.id,
+        ownerUserId: identity.user.id,
+        versionId: "sdk-store-types-version",
+        machineTokenId: identity.machine.id,
+        title: "Shared store type source",
+        objectKey: "patches/sdkstoretype/versions/1.html",
+        contentHash: `sha256:${"a".repeat(64)}`,
+        fileSize: 1,
+        filename: null,
+        repoOrg: null,
+        repoName: null,
+        cliVersion: null,
+        gitBranch: null,
+        gitCommitSha: null,
+        sourceIp: null,
+        userAgent: null
+      });
       const generated = yield* Generation.generate(
         Fixtures.identities.uploader.company.id,
         decodeGenerate({
@@ -36,7 +65,7 @@ it.effect(
             tier: 2,
             tables: {},
             files: {},
-            uses: {}
+            uses: { assets: { kind: "sharedStore", patchId: "sdkstoretype", store: "assets" } }
           },
           skills: [],
           serverModules: ["leads"]
@@ -69,22 +98,39 @@ it.effect(
           );
           await writeFile(
             path.join(directory, "patchy.config.ts"),
-            `import { defineConfig, table, t } from "patchy/config";
-export default defineConfig({name:"contract-test",tier:2,tables:{leads:table("Leads",{name:t.text()})}});
+            `import { defineConfig, sharedStore, table, t } from "patchy/config";
+export default defineConfig({name:"contract-test",tier:2,tables:{leads:table("Leads",{name:t.text()})},uses:{assets:sharedStore("sdkstoretype","assets")}});
 `
           );
-          for (const filename of ["server.ts", "client.ts"]) {
-            const file = generated.files.find(
-              (file) => file.path === `patchy/_generated/${filename}`
-            )!;
+          for (const file of generated.files.filter((file) => file.path.endsWith(".ts"))) {
+            await mkdir(path.dirname(path.join(directory, file.path)), { recursive: true });
             await writeFile(path.join(directory, file.path), file.contents);
           }
           const handlers = `import { query, mutation, action, t } from "../patchy/_generated/server.js";
 import type { QueryContext } from "../patchy/_generated/server.js";
 async function first(ctx: QueryContext) { return (await ctx.tables.leads.list({limit:20})).rows[0]?.name ?? "none"; }
-export const find = query({args:{},result:t.text(),errors:["missing"],handler:async(ctx) => first(ctx)});
-export const create = mutation({args:{name:t.text()},result:t.row("leads"),handler:async(ctx,args)=>ctx.tables.leads.insert(args)});
-export const importRows = action({args:{name:t.text()},result:t.text(),handler:async(ctx,args)=>{await ctx.run.leads.create(args);return ctx.run.leads.find({});}});
+export const find = query({args:{},result:t.text(),errors:["missing"],handler:async(ctx) => {
+  await ctx.shared.assets.list({prefix:"logos/"});
+  await ctx.shared.assets.stat("logos/company.svg");
+  // @ts-expect-error queries cannot read shared bytes
+  await ctx.shared.assets.get("logos/company.svg");
+  return first(ctx);
+}});
+export const create = mutation({args:{name:t.text()},result:t.row("leads"),handler:async(ctx,args)=>{
+  // @ts-expect-error mutations cannot read shared stores
+  await ctx.shared.assets.list();
+  return ctx.tables.leads.insert(args);
+}});
+export const importRows = action({args:{name:t.text()},result:t.text(),handler:async(ctx,args)=>{
+  const bytes: Uint8Array = await ctx.shared.assets.get("logos/company.svg");
+  await ctx.shared.assets.stat("logos/company.svg");
+  // @ts-expect-error shared stores have no writes
+  await ctx.shared.assets.put("logos/company.svg",bytes);
+  // @ts-expect-error shared stores have no delete
+  await ctx.shared.assets.delete("logos/company.svg");
+  await ctx.run.leads.create(args);
+  return ctx.run.leads.find({});
+}});
 `;
           await writeFile(path.join(directory, "server/leads.ts"), handlers);
           await writeFile(
@@ -115,6 +161,8 @@ try { await name; } catch(error) { if(isHandlerError(error,"missing")) { const c
 isHandlerError(new Error(),"not_declared");
 // @ts-expect-error tier 2 has no direct table client
 patchy.tables.leads.list();
+// @ts-expect-error tier 2 has no direct shared store client
+patchy.shared.assets.list();
 // @ts-expect-error mutations cannot subscribe
 patchy.server.leads.create.subscribe({name:"Ada"},()=>{});
 // @ts-expect-error actions cannot subscribe

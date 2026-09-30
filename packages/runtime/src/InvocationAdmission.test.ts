@@ -49,6 +49,9 @@ it.effect(
         "tables.insert",
         "files.list",
         "shared.list",
+        "shared.files.list",
+        "shared.files.stat",
+        "shared.files.get",
         "postgres.list"
       ];
       const handlers = Object.fromEntries(
@@ -137,6 +140,9 @@ it.effect(
         "tables.insert",
         "files.list",
         "shared.list",
+        "shared.files.list",
+        "shared.files.stat",
+        "shared.files.get",
         "members.list",
         "postgres.query",
         "server.call"

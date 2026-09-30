@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { NodeFileSystem } from "@effect/platform-node";
-import { runtimeOperations, sharedTableId, TablePage } from "@patchy/api";
+import { runtimeOperations, sharedStoreId, sharedTableId, TablePage } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
 import { Binding, InvocationCapabilities, LoadedVersions } from "@patchy/runtime";
@@ -318,6 +318,102 @@ it.layer(layer)("Invocation query snapshots", (it) => {
           )
           .pipe(Effect.flip);
         assert.propertyVal(error, "code", "access_denied");
+      }
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("keeps shared-store metadata on the query snapshot but rechecks sharing live", () =>
+    Effect.gen(function* () {
+      const source = yield* setup("cmp_dev", "snapshotfilesrc", {
+        ...manifest,
+        tables: {},
+        files: { docs: { description: "Shared documents", shared: true } }
+      });
+      const handlers = yield* Files.make.pipe(
+        Effect.provideService(LoadedVersions.LoadedVersions, {
+          find: () => Effect.succeed(Option.some({ ...source.binding, patchTier: 2 }))
+        })
+      );
+      yield* handlers["files.put"]
+        .run(
+          { store: "docs", name: "one.bin", contentType: "application/octet-stream" },
+          new Uint8Array([1])
+        )
+        .pipe(Effect.provideService(Binding.Binding, source.binding));
+      const consumer = yield* setup("cmp_dev", "snapshotfileuse", {
+        ...manifest,
+        tables: {},
+        files: {},
+        uses: {
+          documents: {
+            kind: "sharedStore",
+            patchId: source.binding.patchId,
+            store: "docs",
+            id: sharedStoreId(source.binding.patchId, "docs"),
+            revision: 1
+          }
+        }
+      });
+      const sourceKey = `store:${source.binding.patchId}:docs`;
+      const revisions = yield* source.databases.withCompany("cmp_dev")(
+        ResourceRevisions.read([sourceKey])
+      );
+      const readers = yield* Effect.forEach([1, 2, 3], () => open(consumer.binding));
+      const read = (
+        reader: (typeof readers)[number],
+        op: "shared.files.list" | "shared.files.stat"
+      ) =>
+        reader.resource.run(
+          handlers[op]
+            .run(
+              op === "shared.files.list"
+                ? { alias: "documents" }
+                : { alias: "documents", name: "one.bin" }
+            )
+            .pipe(Effect.provideService(Binding.Binding, reader.capability.binding))
+        );
+      const initial = yield* read(readers[0]!, "shared.files.list").pipe(Effect.flatMap(filePage));
+      assert.deepStrictEqual(
+        initial.files.map((file) => [file.name, file.size]),
+        [["one.bin", 1]]
+      );
+      for (const reader of readers) {
+        assert.strictEqual(reader.resource.watermark[sourceKey], revisions[sourceKey]);
+      }
+      yield* handlers["files.put"]
+        .run(
+          { store: "docs", name: "one.bin", contentType: "application/octet-stream" },
+          new Uint8Array([1, 2])
+        )
+        .pipe(Effect.provideService(Binding.Binding, source.binding));
+      const inventory = yield* Inventory.Inventory;
+      for (const shared of [false, true]) {
+        yield* source.databases.withCompany("cmp_dev")(
+          source.databases.withPatchLock(source.binding.patchId)(
+            inventory.putStore({
+              patchId: source.binding.patchId,
+              name: "docs",
+              description: "Documents",
+              shared
+            })
+          )
+        );
+        for (const reader of readers) {
+          for (const op of ["shared.files.list", "shared.files.stat"] as const) {
+            if (!shared) {
+              assert.propertyVal(
+                yield* read(reader, op).pipe(Effect.flip),
+                "code",
+                "access_denied"
+              );
+            } else {
+              assert.deepStrictEqual(
+                yield* read(reader, op),
+                op === "shared.files.list" ? initial : initial.files[0]
+              );
+            }
+          }
+        }
       }
     }).pipe(Effect.scoped)
   );

@@ -280,7 +280,16 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       const { sdkImports } = yield* runToolchain(cwd, {
         build: output,
         toolchain,
-        ...(serverModules === undefined ? {} : { serverModules })
+        ...(serverModules === undefined
+          ? {}
+          : {
+              server: {
+                modules: serverModules,
+                sharedStores: Object.entries(configured.uses)
+                  .filter(([, declaration]) => declaration.kind === "sharedStore")
+                  .map(([alias]) => alias)
+              }
+            })
       });
       const entries = yield* fs.readDirectory(output, { recursive: true });
       const files: string[] = [];

@@ -94,14 +94,15 @@ fails. Relay them even on failure; a publish retry retains the saved notices.
    reads across retained versions. Names and canonical ids work; a pasted URL
    resolves by its final path segment. Null `inventory` means unavailable,
    not an empty set.
-3. Run `pnpm patchy list <patch> <table> --json` to check keys and types,
-   optionality, explicit defaults, ref targets, indexes, sharing and schema
-   revision. These commands inspect definitions, never rows or file contents.
-4. Choose a table marked `declarable: true` in patch detail, then run
-   `pnpm patchy add shared-table <patchId>/<table> --as <alias>` with the returned
-   canonical id. Branch on `declarable` and `reason`, not the human `hint`.
-   Unshared tables name their owner, stores are not shareable, and off sources
-   need restoration before use.
+3. Run `pnpm patchy list <patch> <table-or-store> --json` to inspect its
+   definition, sharing and schema revision. These commands inspect metadata,
+   never rows or file contents.
+4. Choose a table or store marked `declarable: true`, then run
+   `pnpm patchy add shared-table <patchId>/<table> --as <alias>` or
+   `pnpm patchy add shared-store <patchId>/<store> --as <alias>` with the
+   returned canonical id. Branch on `declarable` and `reason`, not the human
+   `hint`. Ask the named owner about `not_shared`; `source_off` needs
+   restoration before use.
 
 `list` runs anywhere under the saved login and never reads `patchy.json`.
 It uses normal instance selection, not the repo's binding; pass `--api-url`

@@ -15,6 +15,8 @@ const ownTable = "table:consumer:notes";
 const ownStore = "store:consumer:images";
 const sharedTable = "table:source:items";
 const sourcePatch = "patch:source";
+const sharedStore = "store:filesource:assets";
+const storeSource = "patch:filesource";
 const viewer = {
   user: { id: "viewer", name: "Viewer", email: "viewer@patchy.local" },
   company: { id: "company", name: "Company", handle: "company" },
@@ -47,6 +49,13 @@ const binding: Binding.Binding["Service"] = {
     uses: {
       catalog: shared,
       duplicate: shared,
+      assets: {
+        kind: "sharedStore",
+        patchId: "filesource",
+        store: "assets",
+        id: "filesource/assets",
+        revision: 1
+      },
       warehouse: { kind: "postgres", handle: "warehouse", id: "connection", revision: 1 }
     },
     handlers: { "demo.read": { kind: "query", args: {}, result: { kind: "text" } } }
@@ -64,7 +73,9 @@ const fixture = Effect.gen(function* () {
       [ownTable]: "1",
       [ownStore]: "2",
       [sharedTable]: "3",
-      [sourcePatch]: "4"
+      [sourcePatch]: "4",
+      [sharedStore]: "5",
+      [storeSource]: "6"
     } as Record<string, string>
   };
   const storage: SubscriptionReads.SubscriptionReads["Service"] = {
@@ -153,7 +164,14 @@ it.effect("discards unrelated resume keys before reading revisions and repairs t
     });
     assert.strictEqual(f.state.calls, 1);
     assert.deepStrictEqual(f.revisionReads[0], [ownTable]);
-    const allowed = new Set([ownTable, ownStore, sharedTable, sourcePatch]);
+    const allowed = new Set([
+      ownTable,
+      ownStore,
+      sharedTable,
+      sourcePatch,
+      sharedStore,
+      storeSource
+    ]);
     for (const keys of f.revisionReads) {
       assert.isAtMost(keys.length, allowed.size);
       for (const key of keys) assert.isTrue(allowed.has(key), key);
@@ -177,50 +195,54 @@ it.effect("resumes equal owned and canonical shared revisions without invoking t
     });
     assert.strictEqual(f.state.calls, 0);
     assert.deepStrictEqual(new Set(f.revisionReads[0]), new Set(Object.keys(f.state.revisions)));
-    f.state.dependencies = [sharedTable, sourcePatch];
-    f.state.revisions[sharedTable] = "5";
-    yield* f.document.reconcile([sharedTable]);
+    f.state.dependencies = [sharedStore, storeSource];
+    f.state.revisions[sharedStore] = "7";
+    yield* f.document.reconcile([sharedStore]);
     assert.deepStrictEqual(yield* f.next, {
       type: "snapshot",
       id: "query",
       revision: "8",
       result: "current",
-      vector: { [sharedTable]: "5", [sourcePatch]: "4" }
+      vector: { [sharedStore]: "7", [storeSource]: "6" }
     });
     assert.strictEqual(f.state.calls, 1);
   }).pipe(Effect.scoped)
 );
 
-it.effect(
-  "keeps failed first shared accesses recoverable without tracing unused declarations",
-  () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      f.state.dependencies = [sharedTable, sourcePatch];
-      f.state.failure = new Runtime.AccessDenied({});
-      yield* f.subscribe();
-      assert.strictEqual((yield* f.next).type, "admitted");
-      const refused = yield* f.next;
-      assert.strictEqual(refused.type, "error");
-      if (refused.type === "error") {
-        assert.isFalse(refused.permanent);
-        assert.strictEqual(refused.error.code, "access_denied");
-      }
-      assert.deepStrictEqual(f.revisionReads[0], []);
-      assert.strictEqual(f.state.calls, 1);
-      f.state.failure = undefined;
-      yield* f.document.reconcile([sourcePatch]);
-      assert.deepStrictEqual(yield* f.next, {
-        type: "snapshot",
-        id: "query",
-        revision: "1",
-        result: "current",
-        vector: { [sharedTable]: "3", [sourcePatch]: "4" }
-      });
-      assert.strictEqual(f.state.calls, 2);
-      for (const keys of f.revisionReads) {
-        assert.notInclude(keys, ownTable);
-        assert.notInclude(keys, ownStore);
-      }
-    }).pipe(Effect.scoped)
-);
+for (const [resource, source] of [
+  [sharedTable, sourcePatch],
+  [sharedStore, storeSource]
+] as const)
+  it.effect(
+    `keeps failed first ${resource} accesses recoverable without tracing unused declarations`,
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        f.state.dependencies = [resource, source];
+        f.state.failure = new Runtime.AccessDenied({});
+        yield* f.subscribe();
+        assert.strictEqual((yield* f.next).type, "admitted");
+        const refused = yield* f.next;
+        assert.strictEqual(refused.type, "error");
+        if (refused.type === "error") {
+          assert.isFalse(refused.permanent);
+          assert.strictEqual(refused.error.code, "access_denied");
+        }
+        assert.deepStrictEqual(f.revisionReads[0], []);
+        assert.strictEqual(f.state.calls, 1);
+        f.state.failure = undefined;
+        yield* f.document.reconcile([source]);
+        assert.deepStrictEqual(yield* f.next, {
+          type: "snapshot",
+          id: "query",
+          revision: "1",
+          result: "current",
+          vector: { [resource]: f.state.revisions[resource], [source]: f.state.revisions[source] }
+        });
+        assert.strictEqual(f.state.calls, 2);
+        for (const keys of f.revisionReads) {
+          assert.notInclude(keys, ownTable);
+          assert.notInclude(keys, ownStore);
+        }
+      }).pipe(Effect.scoped)
+  );

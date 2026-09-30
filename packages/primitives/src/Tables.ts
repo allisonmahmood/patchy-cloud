@@ -258,7 +258,10 @@ export const inventoryManifest = (
   return {
     tables,
     files: Object.fromEntries(
-      snapshot.stores.map((store) => [store.name, { description: store.description }])
+      snapshot.stores.map((store) => [
+        store.name,
+        { description: store.description, shared: store.shared }
+      ])
     )
   };
 };
@@ -310,7 +313,7 @@ const diff = Effect.fn("Tables.diff")(function* (
   const oldIndexes = new Map(
     snapshot?.indexes.map((index) => [`${index.table}.${index.name}`, index])
   );
-  const oldStores = new Set(snapshot?.stores.map((store) => store.name));
+  const oldStores = new Map(snapshot?.stores.map((store) => [store.name, store]));
   const sharedTargets = new Set(
     Object.values(manifest.uses)
       .filter(
@@ -326,8 +329,15 @@ const diff = Effect.fn("Tables.diff")(function* (
   }
 
   // Omitted primitives stay in the inventory, so a name stays with its first kind.
-  for (const store of Object.keys(manifest.files)) {
-    if (oldStores.has(store)) continue;
+  for (const [store, definition] of Object.entries(manifest.files)) {
+    const oldStore = oldStores.get(store);
+    if (oldStore !== undefined) {
+      if (oldStore.shared !== (definition.shared === true)) {
+        sharing.push(store);
+        provisioned.stores.push(store);
+      }
+      continue;
+    }
     if (oldTables.has(store))
       changes.push({
         object: store,
@@ -614,15 +624,24 @@ export const make = Effect.gen(function* () {
         });
     }
     for (const name of plan.newStores)
-      yield* inventory.putStore({ patchId, name, description: manifest.files[name]!.description });
+      yield* inventory.putStore({
+        patchId,
+        name,
+        description: manifest.files[name]!.description,
+        shared: manifest.files[name]!.shared === true
+      });
     for (const store of snapshot?.stores ?? []) {
       if (!Object.hasOwn(manifest.files, store.name)) continue;
       const definition = manifest.files[store.name]!;
-      if (store.description !== definition.description)
+      if (
+        store.description !== definition.description ||
+        store.shared !== (definition.shared === true)
+      )
         yield* inventory.putStore({
           patchId,
           name: store.name,
-          description: definition.description
+          description: definition.description,
+          shared: definition.shared === true
         });
     }
     const schemaRevision = schemaChanged

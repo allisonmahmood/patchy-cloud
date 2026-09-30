@@ -97,6 +97,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
           });
           yield* inventory.putStore({
             description: "Documents identified by file name.",
+            shared: false,
             patchId,
             name: "documents"
           });
@@ -116,6 +117,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
 
       // Reinitializing retained databases must apply upgrades without losing inventory or rows.
       yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
+      yield* sql.unsafe('ALTER TABLE "patchy"."stores" DROP COLUMN "shared"');
       yield* sql.unsafe("DROP TABLE patchy.mutation_keys");
       yield* Inventory.initialize;
       yield* Inventory.initialize;
@@ -184,6 +186,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
           });
           yield* inventory.putStore({
             description: "Documents identified by file name.",
+            shared: true,
             patchId,
             name: "pictures"
           });
@@ -205,6 +208,10 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
         ["documents", "pictures"]
       );
       assert.strictEqual(cumulative.tables[0]?.shared, false);
+      assert.deepStrictEqual(
+        cumulative.stores.map((store) => store.shared),
+        [false, true]
+      );
       assert.strictEqual(cumulative.tables[0]?.description, "Notes with optional JSON metadata.");
       assert.strictEqual(cumulative.stores[0]?.description, initial.stores[0]?.description);
       assert.deepStrictEqual(cumulative.indexes, initial.indexes);
@@ -240,6 +247,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
         }),
         inventory.putStore({
           description: "Documents identified by file name.",
+          shared: false,
           patchId,
           name: "forbidden"
         }),

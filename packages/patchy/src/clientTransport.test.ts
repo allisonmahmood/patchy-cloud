@@ -921,6 +921,11 @@ it("refuses browser-only operations in the HTTP adapter without making requests"
     await expect(transport.call("download", { store: "images", name: "x" })).rejects.toMatchObject({
       code: "invalid_request"
     });
+    await expect(
+      transport.call("shared.download", { alias: "assets", name: "x" })
+    ).rejects.toMatchObject({
+      code: "invalid_request"
+    });
     expect(fetcher).not.toHaveBeenCalled();
   } finally {
     transport.close();
@@ -964,9 +969,12 @@ it.each([
   await expect(
     transport.call("files.get", { store: "images", name: "folder/a b.png" })
   ).resolves.toEqual({ bytes: new Uint8Array([1, 2]), contentType: "image/png" });
+  await expect(
+    transport.call("shared.files.get", { alias: "assets", name: "folder/a b.png" })
+  ).resolves.toEqual({ bytes: new Uint8Array([1, 2]), contentType: "image/png" });
   await expect(transport.call("me", {})).resolves.toEqual(me);
   expect(await requests[0]!.clone().json()).toMatchObject({ op: "me", principal: null });
-  expect(requests).toHaveLength(4);
+  expect(requests).toHaveLength(5);
   for (const request of requests.slice(1)) {
     expect(request.headers.get("X-Patchy-Principal")).toBe(
       JSON.stringify(me === null ? null : { userId: me.user.id })
@@ -976,6 +984,9 @@ it.each([
   const put = requests.find((request) => request.method === "PUT")!;
   expect(put.url).toBe("https://instance/api/runtime/files/patch/version/images/folder/a%20b.png");
   expect(new Uint8Array(await put.arrayBuffer())).toEqual(new Uint8Array([1, 2]));
+  expect(requests.at(-1)!.url).toBe(
+    "https://instance/api/runtime/shared-files/patch/version/assets/folder/a%20b.png"
+  );
   transport.close();
 });
 

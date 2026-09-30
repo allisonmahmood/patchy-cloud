@@ -60,7 +60,8 @@ const shared: Readonly<Record<string, true>> = {
   "shared.get": true,
   "shared.getMany": true,
   "shared.list": true,
-  "shared.stat": true
+  "shared.files.list": true,
+  "shared.files.stat": true
 };
 const readFile: Readonly<Record<string, true>> = { "files.list": true, "files.stat": true };
 const actionFile: Readonly<Record<string, true>> = {
@@ -81,9 +82,15 @@ const allowed = (kind: HandlerKind, op: string) =>
   (kind !== "query" && Object.hasOwn(writeTable, op)) ||
   (kind !== "mutation" && (Object.hasOwn(shared, op) || Object.hasOwn(readFile, op))) ||
   (kind === "action" &&
-    (op === "server.call" || Object.hasOwn(actionFile, op) || Object.hasOwn(connections, op)));
+    (op === "server.call" ||
+      op === "shared.files.get" ||
+      Object.hasOwn(actionFile, op) ||
+      Object.hasOwn(connections, op)));
 const viewerAuthority = (op: string) =>
-  Object.hasOwn(shared, op) || Object.hasOwn(members, op) || Object.hasOwn(connections, op);
+  Object.hasOwn(shared, op) ||
+  op === "shared.files.get" ||
+  Object.hasOwn(members, op) ||
+  Object.hasOwn(connections, op);
 const refused = (
   code: "access_denied" | "invalid_request" | "source_unavailable",
   error: string
@@ -160,6 +167,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           : undefined;
         if (declaration?.kind === "sharedTable") {
           capability.onDependency(`table:${declaration.patchId}:${declaration.table}`);
+          capability.onDependency(`patch:${declaration.patchId}`);
+        } else if (declaration?.kind === "sharedStore") {
+          capability.onDependency(`store:${declaration.patchId}:${declaration.store}`);
           capability.onDependency(`patch:${declaration.patchId}`);
         }
       }

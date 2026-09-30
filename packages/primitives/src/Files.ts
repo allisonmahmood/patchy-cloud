@@ -12,12 +12,14 @@ import {
   FileContentType,
   FileMetadata,
   FileName,
-  runtimeOperations
+  runtimeOperations,
+  sharedStoreId,
+  type FileList
 } from "@patchy/api";
-import { CompanyDatabases } from "@patchy/company-database";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
 import { newInternalId } from "@patchy/core";
-import { Binding, Runtime, Wakes } from "@patchy/runtime/core";
+import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
 
@@ -87,6 +89,10 @@ const decodePut = Schema.decodeUnknownEffect(runtimeOperations["files.put"].requ
 const decodeGet = Schema.decodeUnknownEffect(runtimeOperations["files.get"].request.fields.args, {
   onExcessProperty: "error"
 });
+const decodeSharedGet = Schema.decodeUnknownEffect(
+  runtimeOperations["shared.files.get"].request.fields.args,
+  { onExcessProperty: "error" }
+);
 const findFile = SqlSchema.findOneOption({
   Request: Schema.Struct({ patchId: Schema.String, store: DefinitionName, name: FileName }),
   Result: Schema.Struct({ objectId: Schema.String, contentType: FileContentType }),
@@ -102,9 +108,12 @@ const decodeFiles = Schema.decodeUnknownSync(Schema.Array(FileMetadata));
 const encodePage = Schema.encodeSync(
   Schema.fromJsonString(runtimeOperations["files.list"].response)
 );
+type StoreOwner = Pick<Binding.Binding["Service"], "companyId" | "patchId">;
 
 export const make = Effect.gen(function* () {
   const databases = yield* CompanyDatabases.CompanyDatabases;
+  const inventory = yield* Inventory.Inventory;
+  const versions = yield* LoadedVersions.LoadedVersions;
   const content = yield* ContentStore.ContentStore;
   const settings = yield* config;
   const wakes = yield* Wakes.Wakes;
@@ -149,8 +158,48 @@ export const make = Effect.gen(function* () {
         return yield* new Runtime.InvalidRequest({});
       return yield* run(binding);
     });
+  const withSharedStore = Effect.fn("Files.withSharedStore")(function* <A>(
+    alias: string,
+    run: (owner: StoreOwner, store: string) => Effect.Effect<A, Runtime.RuntimeError>
+  ) {
+    const binding = yield* Binding.Binding;
+    const declaration = Object.hasOwn(binding.manifest.uses, alias)
+      ? binding.manifest.uses[alias]
+      : undefined;
+    if (declaration?.kind !== "sharedStore") return yield* new Runtime.InvalidRequest({});
+    if (
+      declaration.id !== sharedStoreId(declaration.patchId, declaration.store) ||
+      binding.identity === null ||
+      binding.identity.company.id !== binding.companyId
+    )
+      return yield* new Runtime.AccessDenied({});
+    const source = yield* versions
+      .find(declaration.patchId)
+      .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+    if (Option.isNone(source) || source.value.companyId !== binding.companyId)
+      return yield* new Runtime.AccessDenied({});
+    yield* withCompany(
+      binding.companyId,
+      Effect.gen(function* () {
+        const retained = yield* Effect.serviceOption(ReadSnapshot.ReadSnapshot);
+        const snapshot =
+          Option.isSome(retained) && retained.value.authority !== undefined
+            ? yield* retained.value.authority(declaration.patchId)
+            : yield* inventory.read(declaration.patchId);
+        if (
+          snapshot === null ||
+          !snapshot.stores.some((store) => store.name === declaration.store && store.shared)
+        )
+          return yield* new Runtime.AccessDenied({});
+      })
+    );
+    return yield* run(
+      { companyId: binding.companyId, patchId: declaration.patchId },
+      declaration.store
+    );
+  });
   const withIndex = <A>(
-    binding: Binding.Binding["Service"],
+    binding: StoreOwner,
     store: string,
     name: string,
     run: (
@@ -225,6 +274,21 @@ export const make = Effect.gen(function* () {
         );
       })
   } satisfies Runtime.BytesPutHandler;
+  const getFile = Effect.fn("Files.getFile")(function* (
+    binding: StoreOwner,
+    args: { readonly store: string; readonly name: string }
+  ) {
+    const row = yield* withIndex(binding, args.store, args.name, () =>
+      findFile({ patchId: binding.patchId, ...args }).pipe(
+        Effect.catchTags({ SchemaError: Effect.die })
+      )
+    );
+    if (Option.isNone(row)) return yield* new Runtime.InvalidRequest({});
+    const bytes = yield* content
+      .getBytes(objectKey(binding.patchId, args.store, row.value.objectId))
+      .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+    return { bytes, contentType: row.value.contentType };
+  });
   const get = {
     kind: "read",
     transport: "bytes-get",
@@ -233,58 +297,48 @@ export const make = Effect.gen(function* () {
         const args = yield* decodeGet(input).pipe(
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
-        return yield* withStore(args.store, (binding) =>
-          Effect.gen(function* () {
-            const row = yield* withIndex(binding, args.store, args.name, () =>
-              findFile({ patchId: binding.patchId, ...args }).pipe(
-                Effect.catchTags({ SchemaError: Effect.die })
-              )
-            );
-            if (Option.isNone(row)) return yield* new Runtime.InvalidRequest({});
-            const bytes = yield* content
-              .getBytes(objectKey(binding.patchId, args.store, row.value.objectId))
-              .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-            return { bytes, contentType: row.value.contentType };
-          })
+        return yield* withStore(args.store, (binding) => getFile(binding, args));
+      })
+  } satisfies Runtime.BytesGetHandler;
+  const sharedGet = {
+    kind: "read",
+    transport: "bytes-get",
+    run: (input: unknown) =>
+      Effect.gen(function* () {
+        const args = yield* decodeSharedGet(input).pipe(
+          Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+        );
+        return yield* withSharedStore(args.alias, (owner, store) =>
+          getFile(owner, { store, name: args.name })
         );
       })
   } satisfies Runtime.BytesGetHandler;
-  const list = Runtime.handler(
-    {
-      kind: "read",
-      input: runtimeOperations["files.list"].request.fields.args,
-      output: runtimeOperations["files.list"].response
-    },
-    (args) =>
-      withStore(args.store, (binding) =>
-        withCompany(
-          binding.companyId,
-          Effect.gen(function* () {
-            const sql = yield* CompanyDatabases.CompanyConnection;
-            const patchId = binding.patchId;
-            const limit = args.limit ?? settings.defaultPage;
-            if (limit > settings.maxPage)
-              return yield* new PageLimit({ maxItems: settings.maxPage });
-            const prefix = args.prefix ?? "";
-            let after = "";
-            if (args.cursor !== undefined) {
-              if (!/^[A-Za-z0-9_-]+$/.test(args.cursor))
-                return yield* new InvalidCursor({ store: args.store });
-              const cursor = yield* decodeCursor(
-                Buffer.from(args.cursor, "base64url").toString("utf8")
-              ).pipe(Effect.mapError((cause) => new InvalidCursor({ store: args.store, cause })));
-              if (
-                cursor.patchId !== patchId ||
-                cursor.store !== args.store ||
-                cursor.prefix !== prefix ||
-                !cursor.after.startsWith(prefix)
-              )
-                return yield* new InvalidCursor({ store: args.store });
-              after = cursor.after;
-            }
-            const { rows, hasMore } = yield* boundedRows(
-              sql,
-              `SELECT name, size, "contentType", "updatedAt",
+  const listFiles = Effect.fnUntraced(
+    function* (binding: StoreOwner, args: typeof FileList.Type) {
+      const sql = yield* CompanyDatabases.CompanyConnection;
+      const patchId = binding.patchId;
+      const limit = args.limit ?? settings.defaultPage;
+      if (limit > settings.maxPage) return yield* new PageLimit({ maxItems: settings.maxPage });
+      const prefix = args.prefix ?? "";
+      let after = "";
+      if (args.cursor !== undefined) {
+        if (!/^[A-Za-z0-9_-]+$/.test(args.cursor))
+          return yield* new InvalidCursor({ store: args.store });
+        const cursor = yield* decodeCursor(
+          Buffer.from(args.cursor, "base64url").toString("utf8")
+        ).pipe(Effect.mapError((cause) => new InvalidCursor({ store: args.store, cause })));
+        if (
+          cursor.patchId !== patchId ||
+          cursor.store !== args.store ||
+          cursor.prefix !== prefix ||
+          !cursor.after.startsWith(prefix)
+        )
+          return yield* new InvalidCursor({ store: args.store });
+        after = cursor.after;
+      }
+      const { rows, hasMore } = yield* boundedRows(
+        sql,
+        `SELECT name, size, "contentType", "updatedAt",
               row_number() OVER (ORDER BY name COLLATE "C") AS "__position"
             FROM (
               SELECT name, size, content_type AS "contentType",
@@ -293,36 +347,62 @@ export const make = Effect.gen(function* () {
                 AND starts_with(name, $3) AND name COLLATE "C" > $4 COLLATE "C"
               ORDER BY name COLLATE "C" LIMIT $5
             ) AS selected`,
-              [patchId, args.store, prefix, after, limit + 1],
-              limit,
-              settings.resultBytes
-            );
-            const files = decodeFiles(rows);
-            const last = files[files.length - 1];
-            const result = {
-              files,
-              cursor:
-                hasMore && last !== undefined
-                  ? Buffer.from(
-                      encodeCursor({
-                        version: 1,
-                        patchId,
-                        store: args.store,
-                        prefix,
-                        after: last.name
-                      })
-                    ).toString("base64url")
-                  : null
-            };
-            if (Buffer.byteLength(encodePage(result)) > settings.resultBytes)
-              return yield* new Runtime.TooLarge({
-                maxBytes: settings.resultBytes,
-                limitId: "runtime.result.bytes"
-              });
-            return result;
-          })
-        )
-      )
+        [patchId, args.store, prefix, after, limit + 1],
+        limit,
+        settings.resultBytes
+      );
+      const files = decodeFiles(rows);
+      const last = files[files.length - 1];
+      const result = {
+        files,
+        cursor:
+          hasMore && last !== undefined
+            ? Buffer.from(
+                encodeCursor({
+                  version: 1,
+                  patchId,
+                  store: args.store,
+                  prefix,
+                  after: last.name
+                })
+              ).toString("base64url")
+            : null
+      };
+      if (Buffer.byteLength(encodePage(result)) > settings.resultBytes)
+        return yield* new Runtime.TooLarge({
+          maxBytes: settings.resultBytes,
+          limitId: "runtime.result.bytes"
+        });
+      return result;
+    },
+    (effect, binding) => withCompany(binding.companyId, effect)
+  );
+  const list = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["files.list"].request.fields.args,
+      output: runtimeOperations["files.list"].response
+    },
+    (args) => withStore(args.store, (binding) => listFiles(binding, args))
+  );
+  const sharedList = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["shared.files.list"].request.fields.args,
+      output: runtimeOperations["shared.files.list"].response
+    },
+    (args) => withSharedStore(args.alias, (owner, store) => listFiles(owner, { ...args, store }))
+  );
+  const statFile = Effect.fnUntraced(
+    function* (binding: StoreOwner, args: { readonly store: string; readonly name: string }) {
+      const sql = yield* CompanyDatabases.CompanyConnection;
+      const rows = yield* sql`SELECT name, size::integer AS size, content_type AS "contentType",
+              to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
+              FROM patchy.files
+              WHERE patch_id = ${binding.patchId} AND store = ${args.store} AND name = ${args.name}`;
+      return decodeFiles(rows)[0] ?? null;
+    },
+    (effect, binding) => withCompany(binding.companyId, effect)
   );
   const stat = Runtime.handler(
     {
@@ -330,21 +410,16 @@ export const make = Effect.gen(function* () {
       input: runtimeOperations["files.stat"].request.fields.args,
       output: runtimeOperations["files.stat"].response
     },
+    (args) => withStore(args.store, (binding) => statFile(binding, args))
+  );
+  const sharedStat = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["shared.files.stat"].request.fields.args,
+      output: runtimeOperations["shared.files.stat"].response
+    },
     (args) =>
-      withStore(args.store, (binding) =>
-        withCompany(
-          binding.companyId,
-          Effect.gen(function* () {
-            const sql = yield* CompanyDatabases.CompanyConnection;
-            const rows =
-              yield* sql`SELECT name, size::integer AS size, content_type AS "contentType",
-              to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
-              FROM patchy.files
-              WHERE patch_id = ${binding.patchId} AND store = ${args.store} AND name = ${args.name}`;
-            return decodeFiles(rows)[0] ?? null;
-          })
-        )
-      )
+      withSharedStore(args.alias, (owner, store) => statFile(owner, { store, name: args.name }))
   );
   const remove = Runtime.handler(
     {
@@ -367,6 +442,9 @@ export const make = Effect.gen(function* () {
     "files.get": get,
     "files.list": list,
     "files.stat": stat,
-    "files.delete": remove
+    "files.delete": remove,
+    "shared.files.get": sharedGet,
+    "shared.files.list": sharedList,
+    "shared.files.stat": sharedStat
   } satisfies Readonly<Record<string, Runtime.Handler>>;
 });

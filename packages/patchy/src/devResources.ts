@@ -17,7 +17,7 @@ import {
   PostgresOperations
 } from "@patchy/integrations/dev";
 import { Files, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
-import { LoadedVersions, Wakes, me } from "@patchy/runtime/core";
+import { Binding, LoadedVersions, Wakes, me } from "@patchy/runtime/core";
 import { Runtime, StreamLimits, Subscriptions } from "@patchy/runtime/dev";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
@@ -52,7 +52,7 @@ export class SharedFixtureInvalid extends Schema.TaggedError<SharedFixtureInvali
   }
 ) {
   override get message() {
-    return `Could not load the shared-table fixture at ${this.path}.`;
+    return `Could not load the shared fixture at ${this.path}.`;
   }
 }
 
@@ -133,6 +133,7 @@ const baselineSnapshot = (
           patchId,
           name,
           description: definition.description,
+          shared: definition.shared === true,
           resourceRevision: "0"
         })
     )
@@ -150,6 +151,12 @@ interface LocalState {
     readonly patchId: string;
     readonly path: string;
     readonly contents: string;
+  }>;
+  readonly storeFixtures: ReadonlyArray<{
+    readonly patchId: string;
+    readonly store: string;
+    readonly path: string;
+    readonly files: ReadonlyArray<{ readonly name: string; readonly path: string }>;
   }>;
 }
 
@@ -210,8 +217,47 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
       catch: (cause) => new SharedFixtureInvalid({ path: fixture.path, cause })
     });
   }
+  const fileHandlers = yield* Files.make;
+  for (const fixture of state.storeFixtures) {
+    const source = state.versions.get(fixture.patchId)!;
+    const binding = Binding.Binding.of({
+      ...source,
+      identity: {
+        user: prepared.identity.user,
+        company: prepared.identity.company,
+        admin: prepared.identity.role === "admin"
+      },
+      principal: { userId: prepared.identity.user.id },
+      correlationId: "dev-shared-fixture"
+    });
+    yield* databases.withCompany(companyId)(
+      Effect.gen(function* () {
+        const sql = yield* CompanyDatabases.CompanyConnection;
+        yield* sql`WITH removed AS (
+          DELETE FROM patchy.files
+          WHERE patch_id = ${fixture.patchId} AND store = ${fixture.store}
+          RETURNING 1
+        )
+        UPDATE patchy.stores SET resource_revision = resource_revision + 1
+        WHERE patch_id = ${fixture.patchId} AND name = ${fixture.store}
+          AND EXISTS (SELECT 1 FROM removed)`;
+      })
+    );
+    for (const file of fixture.files) {
+      const bytes = yield* fs.readFile(file.path);
+      yield* fileHandlers["files.put"]
+        .run(
+          { store: fixture.store, name: file.name, contentType: "application/octet-stream" },
+          bytes
+        )
+        .pipe(
+          Effect.provideService(Binding.Binding, binding),
+          Effect.mapError((cause) => new SharedFixtureInvalid({ path: fixture.path, cause }))
+        );
+    }
+  }
   const postgres = yield* PostgresOperations.makeHandlers;
-  const handlers = { me, ...(yield* TableOperations.make), ...(yield* Files.make), ...postgres };
+  const handlers = { me, ...(yield* TableOperations.make), ...fileHandlers, ...postgres };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };
 });
@@ -248,21 +294,53 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   let currentVersion = version;
   const versions = new Map<string, LoadedVersions.LoadedVersion>([[prepared.patchId, version]]);
   const fixtures: Array<{ patchId: string; path: string; contents: string }> = [];
-  for (const [alias, { declaration, tables }] of Object.entries(prepared.metadata.shared)) {
-    const relative = `fixtures/shared-${alias}.sql`;
-    const fixturePath = yield* checkedPath(root, relative);
-    if (!(yield* fs.exists(fixturePath))) return yield* new FixtureMissing({ path: relative });
-    const contents = yield* fs.readFileString(fixturePath);
-    fixtures.push({ patchId: declaration.patchId, path: relative, contents });
+  const storeFixtures: Array<LocalState["storeFixtures"][number]> = [];
+  for (const [alias, entry] of Object.entries(prepared.metadata.shared)) {
+    const { declaration } = entry;
     const existing = versions.get(declaration.patchId);
-    const sourceTables = { ...tables, ...existing?.manifest.tables };
+    let sourceTables = existing?.manifest.tables ?? {};
+    let sourceFiles = existing?.manifest.files ?? {};
+    if ("tables" in entry) {
+      const relative = `fixtures/shared-${alias}.sql`;
+      const fixturePath = yield* checkedPath(root, relative);
+      if (!(yield* fs.exists(fixturePath))) return yield* new FixtureMissing({ path: relative });
+      const contents = yield* fs.readFileString(fixturePath);
+      fixtures.push({ patchId: declaration.patchId, path: relative, contents });
+      sourceTables = { ...entry.tables, ...sourceTables };
+    } else {
+      const relative = `fixtures/shared-${alias}`;
+      const fixturePath = yield* checkedPath(root, relative);
+      if (!(yield* fs.exists(fixturePath)) || (yield* fs.stat(fixturePath)).type !== "Directory")
+        return yield* new FixtureMissing({ path: relative });
+      const files: Array<{ name: string; path: string }> = [];
+      const directories = [""];
+      while (directories.length > 0) {
+        const directory = directories.pop()!;
+        const absolute =
+          directory === "" ? fixturePath : yield* checkedPath(fixturePath, directory);
+        for (const child of yield* fs.readDirectory(absolute)) {
+          const name = directory === "" ? child : `${directory}/${child}`;
+          const file = yield* checkedPath(fixturePath, name);
+          const stat = yield* fs.stat(file);
+          if (stat.type === "Directory") directories.push(name);
+          else if (stat.type === "File" && name !== "README.md") files.push({ name, path: file });
+        }
+      }
+      storeFixtures.push({
+        patchId: declaration.patchId,
+        store: entry.declaration.store,
+        path: relative,
+        files
+      });
+      sourceFiles = { ...sourceFiles, [entry.declaration.store]: entry.definition };
+    }
     versions.set(declaration.patchId, {
       ...version,
       patchId: declaration.patchId,
       manifest: {
         ...prepared.manifest,
         tables: sourceTables,
-        files: existing?.manifest.files ?? {},
+        files: sourceFiles,
         uses: Tables.inventoryReferences(sourceTables)
       }
     });
@@ -276,14 +354,14 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     yield* checkedPath(local, `postgres-${declaration.id}.json`);
   }
   const shared: Record<string, string> = Object.create(null);
-  for (const fixture of fixtures) {
-    if (Object.hasOwn(shared, fixture.patchId)) continue;
-    shared[fixture.patchId] = sha256(
+  for (const { declaration } of Object.values(prepared.metadata.shared)) {
+    if (Object.hasOwn(shared, declaration.patchId)) continue;
+    shared[declaration.patchId] = sha256(
       encodeJson({
         declarations: Object.values(prepared.metadata.shared).filter(
-          (item) => item.declaration.patchId === fixture.patchId
+          (item) => item.declaration.patchId === declaration.patchId
         ),
-        fixtures: fixtures.filter((item) => item.patchId === fixture.patchId)
+        fixtures: fixtures.filter((item) => item.patchId === declaration.patchId)
       })
     );
   }
@@ -435,7 +513,8 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     changedSources,
     version,
     versions,
-    fixtures
+    fixtures,
+    storeFixtures
   }).pipe(Effect.provideContext(context));
   if (version.manifest.tier === 2) {
     const execution = yield* DevExecution.make(

@@ -1,7 +1,7 @@
 // Compile-only fixture matching the generated module's type-only dependency cycle.
-import { defineConfig, files, postgres, sharedTable, t, table } from "./config.js";
+import { defineConfig, files, postgres, sharedStore, sharedTable, t, table } from "./config.js";
 import type { Id } from "./config.js";
-import type { ReadTable } from "./client.js";
+import type { ReadFileStore, ReadTable } from "./client.js";
 import {
   bindServer,
   type ActionBuilder,
@@ -24,11 +24,16 @@ export const config = defineConfig({
     })
   },
   files: { documents: files("Lead attachments keyed by filename.") },
-  uses: { directory: sharedTable("abcdefghijkl", "people"), sales: postgres("warehouse") }
+  uses: {
+    directory: sharedTable("abcdefghijkl", "people"),
+    assets: sharedStore("abcdefghijkl", "assets"),
+    sales: postgres("warehouse")
+  }
 });
 export type ServerModules = { readonly leads: typeof leads };
 type Shared = {
   readonly directory: ReadTable<{ readonly id: Id<"people">; readonly name: string }>;
+  readonly assets: ReadFileStore;
 };
 type Connections = {
   readonly sales: { query(sql: string): Promise<readonly { readonly total: number }[]> };

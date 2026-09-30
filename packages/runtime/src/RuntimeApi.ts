@@ -163,9 +163,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
   Effect.gen(function* () {
     const runtime = yield* Runtime.Runtime;
     const events = yield* WideEvents.WideEvents;
-    const file = Effect.fn("RuntimeApi.file")(function* (params: Readonly<Record<string, string>>) {
+    const file = Effect.fn("RuntimeApi.file")(function* (
+      params: Readonly<Record<string, string>>,
+      shared = false
+    ) {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const operation = request.method === "PUT" ? "files.put" : "files.get";
+      const operation = shared
+        ? "shared.files.get"
+        : request.method === "PUT"
+          ? "files.put"
+          : "files.get";
       yield* WideEvents.operation(operation);
       const wire = yield* Runtime.decodeWire(request.headers["x-patchy-wire"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
@@ -175,9 +182,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         versionId: params.versionId ?? "",
         principal: null,
         wire,
-        op: request.method === "PUT" ? "files.put" : "files.get",
+        op: operation,
         args: {
-          store: params.store,
+          ...(shared ? { alias: params.alias } : { store: params.store }),
           name: params["*"],
           ...(request.method === "PUT"
             ? { contentType: request.headers["content-type"] ?? "application/octet-stream" }
@@ -263,6 +270,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         events.withEvent(
           { type: "request" },
           file(params).pipe(
+            Effect.catch(recordFailure),
+            Effect.tap((response) =>
+              WideEvents.enrich({
+                responseBytes:
+                  response.body._tag === "Uint8Array" ? response.body.body.byteLength : 0
+              })
+            )
+          )
+        )
+      )
+      .handleRaw("getSharedFile", ({ params }) =>
+        events.withEvent(
+          { type: "request" },
+          file(params, true).pipe(
             Effect.catch(recordFailure),
             Effect.tap((response) =>
               WideEvents.enrich({

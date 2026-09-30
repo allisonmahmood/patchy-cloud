@@ -243,21 +243,22 @@ Table detail prints column kinds, optionality, explicit defaults including
 `null`, ref targets, indexes with `unique`, the shared flag and schema revision.
 An absent default means no default.
 
-Only declarable shared tables get `patchy add shared-table <patchId>/<table>`
-hints. Unshared tables name the owner; stores are not shareable; off sources
-need restoration. Connected entries get `patchy add postgres/<handle>`;
-disconnected ones point to `/company/connections`. JSON agents branch on
-`declarable` and `reason`, never parse `hint`. The discovery chain is descriptions,
-patch inventory and reads, table keys and types, then `add` by canonical id.
+Declarable shared tables get `patchy add shared-table <patchId>/<table>` hints;
+shared stores get `patchy add shared-store <patchId>/<store>` hints. Resource
+detail includes `shared`, `declarable`, `reason` and the add hint. Unshared
+resources name the owner; off sources need restoration. Connected entries get
+`patchy add postgres/<handle>`; disconnected ones point to `/company/connections`.
+JSON agents branch on `declarable` and `reason`, never parse `hint`. Shared reads
+name their resource in `table` or `store`, never label a store as a table.
 
 ### Patch-repo commands and managed files
 
-| command                                                                                                     | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                            |
-| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                     | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; tier 2 adds handlers and its managed engine pin. Target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
-| `patchy refresh`                                                                                            | Fetch one release, reconcile managed pins with the release and tier, install/re-exec as needed, generate and activate the managed set transactionally. Failure leaves the previous set intact.                                                                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
-| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                                                                              | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
-| `patchy remove <alias>`                                                                                     | Remove the declaration and its generated output; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                                                                                 | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
+| command                                                                                                                                                                 | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                                                                                 | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; tier 2 adds handlers and its managed engine pin. Target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
+| `patchy refresh`                                                                                                                                                        | Fetch one release, reconcile managed pins with the release and tier, install/re-exec as needed, generate and activate the managed set transactionally. Failure leaves the previous set intact.                                                                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
+| `patchy add postgres/<handle> [--as <alias>]`, `patchy add shared-table <patchId>/<table> [--as <alias>]` or `patchy add shared-store <patchId>/<store> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                                                                              | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
+| `patchy remove <alias>`                                                                                                                                                 | Remove the declaration and its generated output; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                                                                                 | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
 
 `refresh` reports `changed.pin: true` when either managed pin changes, including
 adding or removing `workerd` on a tier change. Its transaction restores both
@@ -270,7 +271,7 @@ app/build/typecheck sources, generated client and declaration metadata, project
 skills and fixtures. Write-once `AGENTS.md` records purpose, layout, completed
 installation, the generated index and `patchy dev`; `CLAUDE.md` imports it.
 The starter config defines notes with `table(description, columns, options?)`;
-file stores use `files(description)`. Each description is required and nonblank,
+file stores use `files(description, options?)`. Each description is required and nonblank,
 and explains one row or object, its identifying keys, and relevant units.
 Config execution refuses blank descriptions and table/store name collisions
 as `invalid_manifest`, naming both conflicting definitions.
@@ -330,11 +331,15 @@ entries in JSON success documents, or failure documents if a later step fails.
 `patchy add postgres` chooses the sole connected Postgres connection; with
 several it lists copy-ready choices from `list connections` and stops, and with
 none it names `/company/connections`. Default aliases camel-case Postgres handle hyphens or use
-the shared table name; `--as` overrides either. An uneditable `uses` expression
-fails with the exact source line and declaration line to add before refresh.
-Shared-table add reads the named source's discovery detail, checks that the table
-is declarable, and records its canonical patch id. It does not list connections
-or shared tables across the company; use `list` for discovery.
+the shared table or store name; `--as` overrides the default. An uneditable `uses`
+expression fails with the exact source line and declaration line to add before
+refresh. Shared-table and shared-store add read the named source's discovery
+detail, check that the resource is declarable, and record its canonical patch id.
+They do not enumerate connections or shared resources; use `list` for discovery.
+Store declarations have `kind: "sharedStore"`, `patchId`, `store`, the canonical
+`id` as `<patchId>/<store>`, and the source inventory's `revision` stamp.
+Stale stamps warn as for shared tables. Removing the last store declaration
+removes `patchy-shared-stores`, independently of the shared-table skill.
 Connection setup, reconnection and credential forms are browser-only for admins;
 no CLI command accepts connection secrets. A shared-source refusal names the
 source-access repair path.
@@ -429,6 +434,15 @@ that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Fixed contract limits remain enforced;
 production operating capacity does not. PGlite is not evidence for hosted
 `busy` or `write_conflict` behavior.
+
+Shared-store fixtures live in `fixtures/shared-<alias>/`. Refresh creates only
+missing directories, with `README.md` naming the source store and asking for
+invented files. It never repairs or overwrites an existing fixture directory.
+Dev reads bytes recursively on every start, skips the root README, and clears
+the source store before loading its files. File deletions take effect on restart;
+owned local files remain intact. Fixture bytes use `application/octet-stream`.
+Both tiers consume the same source fixtures through real runtime handlers.
+Edit fixtures and restart to change sources locally; authority changes are not simulated.
 
 | command                 | `--json` success                                                                             |
 | ----------------------- | -------------------------------------------------------------------------------------------- |

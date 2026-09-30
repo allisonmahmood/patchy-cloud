@@ -69,7 +69,7 @@ Moving a live patch's current version to any retained version, without creating 
 _Avoid_: revert, redeploy, undo
 
 **Dependant**:
-A live, enabled patch that declares one of this patch's shared tables in any retained version, even when its current version dropped that declaration. Lifecycle warnings identify distinct dependant patches and their owners; discovery also associates each openable dependant with the tables it reads.
+A live, enabled patch that declares one of this patch's shared tables or file stores in any retained version, even when its current version dropped that declaration. Lifecycle warnings identify distinct dependant patches and their owners; discovery also associates each openable dependant with the tables or stores it reads.
 _Avoid_: consumer (a runtime word), subscriber
 
 **Description**:
@@ -85,7 +85,7 @@ The promise that a successful publish leaves both a version and its content, whi
 _Avoid_: two-phase commit, saga
 
 **Manifest**:
-The serializable description of one version's name, release, tier, owned resources, declared connections and shared tables, server handler contracts and SDK imports. It describes the patch's contract rather than executing its source.
+The serializable description of one version's name, release, tier, owned resources, declared connections, shared tables and shared stores, server handler contracts and SDK imports. It describes the patch's contract rather than executing its source.
 _Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
 
 **Inventory**:

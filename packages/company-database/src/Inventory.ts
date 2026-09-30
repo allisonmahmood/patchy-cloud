@@ -47,6 +47,7 @@ export class Store extends Schema.Class<Store>("Inventory.Store")({
   patchId: Schema.String,
   name: Schema.String,
   description: Schema.String,
+  shared: Schema.Boolean,
   resourceRevision: Schema.String
 }) {}
 
@@ -144,7 +145,7 @@ const findStores = SqlSchema.findAll({
   Result: Store,
   execute: Effect.fn("Inventory.findStores")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description",
+    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description", "shared",
       "resource_revision"::text AS "resourceRevision" FROM "patchy"."stores"
       WHERE "patch_id" = ${patchId} ORDER BY "name"`;
   })
@@ -244,9 +245,10 @@ const putIndex = Effect.fn("Inventory.putIndex")(function* (row: Index) {
 
 const putStore = Effect.fn("Inventory.putStore")(function* (row: Omit<Store, "resourceRevision">) {
   const sql = yield* lockedClient(row.patchId);
-  yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name", "description")
-      VALUES (${row.patchId}, ${row.name}, ${row.description})
-      ON CONFLICT ("patch_id", "name") DO UPDATE SET "description" = EXCLUDED."description",
+  yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name", "description", "shared")
+      VALUES (${row.patchId}, ${row.name}, ${row.description}, ${row.shared})
+      ON CONFLICT ("patch_id", "name") DO UPDATE SET
+        "description" = EXCLUDED."description", "shared" = EXCLUDED."shared",
         "resource_revision" = "stores"."resource_revision" + 1`;
   const lock = yield* CompanyDatabases.PatchLock;
   lock.resources.add(`store:${row.patchId}:${row.name}`);
@@ -308,6 +310,12 @@ export const upgrade = Effect.gen(function* () {
   if (present.length === 0) {
     yield* sql.unsafe('ALTER TABLE "patchy"."columns" ADD COLUMN IF NOT EXISTS "ref_table" text');
   }
+  const storeSharing = yield* sql`SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'patchy' AND table_name = 'stores' AND column_name = 'shared'`;
+  if (storeSharing.length === 0)
+    yield* sql.unsafe(
+      'ALTER TABLE "patchy"."stores" ADD COLUMN IF NOT EXISTS "shared" boolean NOT NULL DEFAULT false'
+    );
   for (const table of ["tables", "stores"]) {
     const revision = yield* sql`SELECT 1 FROM information_schema.columns
       WHERE table_schema = 'patchy' AND table_name = ${table} AND column_name = 'resource_revision'`;
@@ -361,6 +369,7 @@ export const initialize = Effect.gen(function* () {
     "patch_id" text NOT NULL REFERENCES "patchy"."patches" ("patch_id") ON DELETE CASCADE,
     "name" text NOT NULL,
     "description" text NOT NULL,
+    "shared" boolean NOT NULL DEFAULT false,
     "resource_revision" bigint NOT NULL DEFAULT 0,
     PRIMARY KEY ("patch_id", "name")
   )`);

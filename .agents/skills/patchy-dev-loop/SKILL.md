@@ -64,8 +64,10 @@ Open its `url` and exercise the real generated client through the local shell:
 insert/list, file upload/`url(name)`, and declared Postgres/shared fixtures as applicable.
 For tiers 1 and 2, open `colleagueUrl` as the fixed non-admin colleague at a second
 origin. Save through one viewer and observe the other's subscribed result without
-reload. Tier 2 handlers use shared-table and Postgres fixtures through `ctx.shared`
-and `ctx.connections`; fixture/config changes still need restart.
+reload. Tier 2 handlers use shared-table/shared-store and Postgres fixtures through
+`ctx.shared` and `ctx.connections`. Shared stores load `fixtures/shared-<alias>/`
+at start, without overwriting it. Edit invented files there and restart to change
+the local source; source authority changes are not simulated.
 Done means the observed local result, not an ordinary Vite preview or a cloud read.
 
 `patchy dev` is detached and idempotent; its `status`, `stop`, `logs` and `reset`

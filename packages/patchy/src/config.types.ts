@@ -1,5 +1,14 @@
 // Compile-only public contract checks: included in the package typecheck, never in its build entries.
-import { defineConfig, executeConfig, files, postgres, sharedTable, t, table } from "./config.js";
+import {
+  defineConfig,
+  executeConfig,
+  files,
+  postgres,
+  sharedStore,
+  sharedTable,
+  t,
+  table
+} from "./config.js";
 import type { Id, Insert, Row, Update } from "./config.js";
 import type { Manifest } from "@patchy/api";
 import type { ExecutedManifest } from "./executeConfig.js";
@@ -45,8 +54,12 @@ const config = defineConfig({
     ),
     users: table("Users identified by id.", { name: t.text() })
   },
-  files: { attachments: files("Note attachments keyed by filename.") },
-  uses: { sales: postgres("warehouse"), customers: sharedTable("abcdefghijkl", "customers") }
+  files: { attachments: files("Note attachments keyed by filename.", { shared: true }) },
+  uses: {
+    sales: postgres("warehouse"),
+    customers: sharedTable("abcdefghijkl", "customers"),
+    logos: sharedStore("abcdefghijkl", "logos")
+  }
 });
 type Note = Row<typeof config, "notes">;
 export type ConfigAssertions = [
@@ -77,6 +90,8 @@ export type ConfigAssertions = [
   Assert<Equal<typeof config.tables.notes.indexes.byTitle.columns, readonly ["title"]>>,
   Assert<Equal<typeof config.tables.notes.indexes.byCount.unique, true>>,
   Assert<Equal<typeof config.uses.sales.handle, "warehouse">>,
+  Assert<Equal<typeof config.uses.logos.store, "logos">>,
+  Assert<Equal<typeof config.uses.logos.kind, "sharedStore">>,
   Assert<Equal<typeof executeConfig, (path: string) => Promise<ExecutedManifest>>>,
   Assert<ExecutedManifest extends typeof Manifest.Type ? true : false>,
   Assert<typeof Manifest.Type extends ExecutedManifest ? true : false>,

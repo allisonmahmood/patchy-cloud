@@ -29,6 +29,7 @@ const serverCode = (output: readonly ServerOutput[]) => {
 const buildConfig = (
   root: string,
   modules: readonly string[],
+  sharedStores: readonly string[],
   watched?: { readonly outDir: string; readonly complete: (server: string) => void }
 ): InlineConfig => {
   const entry = "\0patchy-server-entry";
@@ -41,7 +42,7 @@ const buildConfig = (
       (name, index) =>
         `import * as module${index} from ${JSON.stringify(path.join(root, "server", `${name}.ts`))};`
     ),
-    `export default createGuest({${modules.map((name, index) => `${JSON.stringify(name)}: module${index}`).join(",")}});`
+    `export default createGuest({${modules.map((name, index) => `${JSON.stringify(name)}: module${index}`).join(",")}},${JSON.stringify(sharedStores)});`
   ].join("\n");
   return {
     configFile: false,
@@ -81,9 +82,15 @@ const buildConfig = (
 export async function buildServer(
   root: string,
   modules: readonly string[],
-  toolchain: typeof ReleaseToolchain.Type
+  toolchain: typeof ReleaseToolchain.Type,
+  sharedStores: readonly string[]
 ) {
-  const built = await runToolchain(root, toolchain, buildConfig(root, modules), "server");
+  const built = await runToolchain(
+    root,
+    toolchain,
+    buildConfig(root, modules, sharedStores),
+    "server"
+  );
   const result = Array.isArray(built.result)
     ? built.result.length === 1
       ? built.result[0]
@@ -103,13 +110,14 @@ export async function watchServer(
   modules: readonly string[],
   toolchain: typeof ReleaseToolchain.Type,
   outDir: string,
+  sharedStores: readonly string[],
   complete: (result: BuiltServer | LocalError) => void
 ) {
   let server: string | undefined;
   const loaded = await runToolchain(
     root,
     toolchain,
-    buildConfig(root, modules, {
+    buildConfig(root, modules, sharedStores, {
       outDir,
       complete: (built) => {
         server = built;

@@ -31,6 +31,10 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           ["query", "tables.insert"],
           ["mutation", "files.list"],
           ["mutation", "shared.list"],
+          ["query", "shared.files.get"],
+          ["mutation", "shared.files.list"],
+          ["mutation", "shared.files.stat"],
+          ["mutation", "shared.files.get"],
           ["action", "server.call"],
           ["action", "not.an.operation"]
         ] as const) {
@@ -117,6 +121,82 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           );
         }
       }).pipe(Effect.scoped)
+  );
+
+  it.effect("traces refused shared-store reads and reauthorizes metadata and action bytes", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      let live = false;
+      const dependencies = new Set<string>();
+      const body = {
+        bytes: new Uint8Array([0, 128, 255]),
+        contentType: "application/octet-stream"
+      };
+      const gateway = yield* CallbackGateway.make({
+        "shared.files.list": {
+          kind: "read",
+          run: () => Effect.succeed({ files: [], cursor: null })
+        },
+        "shared.files.stat": { kind: "read", run: () => Effect.succeed(null) },
+        "shared.files.get": {
+          kind: "read",
+          transport: "bytes-get",
+          run: () => Effect.succeed(body)
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      for (const kind of ["query", "action"] as const) {
+        const capability = yield* Fixtures.issue(capabilities, {
+          kind,
+          binding: {
+            ...Fixtures.binding,
+            manifest: {
+              ...Fixtures.binding.manifest,
+              uses: {
+                documents: {
+                  kind: "sharedStore",
+                  patchId: "sourceshared",
+                  store: "docs",
+                  id: "sourceshared/docs",
+                  revision: 1
+                }
+              }
+            }
+          },
+          onDependency: (key) => dependencies.add(key),
+          reauthorize: Effect.suspend(() =>
+            live ? Effect.succeed(Fixtures.identity) : Effect.fail(new Runtime.AccessDenied({}))
+          )
+        });
+        const ops =
+          kind === "query"
+            ? ["shared.files.list", "shared.files.stat"]
+            : ["shared.files.list", "shared.files.stat", "shared.files.get"];
+        for (const op of ops) {
+          live = false;
+          assert.include(
+            yield* gateway.callback(capability.token, capability.attempt, {
+              op,
+              args: { alias: "documents", name: "one.bin" }
+            }),
+            { ok: false, code: "access_denied" }
+          );
+          assert.deepStrictEqual([...dependencies].sort(), [
+            "patch:sourceshared",
+            "store:sourceshared:docs"
+          ]);
+          live = true;
+          assert.deepStrictEqual(
+            yield* gateway.callback(capability.token, capability.attempt, {
+              op,
+              args: { alias: "documents", name: "one.bin" }
+            }),
+            op === "shared.files.get"
+              ? { ok: true, body }
+              : { ok: true, value: op === "shared.files.list" ? { files: [], cursor: null } : null }
+          );
+        }
+      }
+    }).pipe(Effect.scoped)
   );
 
   it.effect(

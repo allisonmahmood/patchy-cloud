@@ -5,11 +5,12 @@ import * as ts from "typescript";
 import {
   createClient,
   createSharedTable,
+  createSharedStore,
   decodeError,
   type QueryRegistry,
   type Transport
 } from "./client.js";
-import { defineConfig, files, table, t } from "./config.js";
+import { defineConfig, files, sharedStore, table, t } from "./config.js";
 import { generateClient } from "../../sdk/src/generateClient.js";
 import { RuntimeCode, runtimeOperations } from "../../api/src/runtime.js";
 
@@ -91,6 +92,63 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   client.close();
   await Promise.resolve();
   expect(resolveObjectURL(third)).toBeUndefined();
+});
+
+it("reauthorizes shared URL reads and revokes every returned URL when closed", async () => {
+  const config = defineConfig({
+    name: "logos",
+    tier: 1,
+    uses: { assets: sharedStore("abcdefghijkl", "logos") }
+  });
+  const pending = Promise.withResolvers<{ bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  let access = true;
+  let delayed = false;
+  let bytes = new Uint8Array([1]);
+  const transport: Transport = {
+    route: unusedRoute,
+    ready: async () => {},
+    waitForServerTime: async () => {
+      throw new Error("No server calls.");
+    },
+    serverTime: () => undefined,
+    handlerKind: () => undefined,
+    queries: unusedQueries,
+    call: async () => {
+      if (!access)
+        throw decodeError({ source: "patchy", code: "access_denied", error: "Unshared." });
+      return delayed ? pending.promise : { bytes, contentType: "image/png" };
+    },
+    close() {}
+  };
+  const shared = { assets: createSharedStore };
+  const client = createClient<typeof config, typeof shared>(config, {
+    transport,
+    shared,
+    connections: {}
+  });
+  const first = await client.shared.assets.url("logo.png");
+  bytes = new Uint8Array([2]);
+  const second = await client.shared.assets.url("logo.png");
+  expect(new Uint8Array(await resolveObjectURL(second)!.arrayBuffer())).toEqual(bytes);
+  access = false;
+  await expect(client.shared.assets.url("logo.png")).rejects.toMatchObject({
+    code: "access_denied"
+  });
+  await expect(client.shared.assets.get("logo.png")).rejects.toMatchObject({
+    code: "access_denied"
+  });
+  await expect(client.shared.assets.download("logo.png")).rejects.toMatchObject({
+    code: "access_denied"
+  });
+  access = true;
+  expect(await client.shared.assets.get("logo.png")).toEqual(bytes);
+  delayed = true;
+  const inFlight = client.shared.assets.url("logo.png");
+  client.close();
+  pending.resolve({ bytes, contentType: "image/png" });
+  await expect(inFlight).rejects.toMatchObject({ code: "unknown_outcome" });
+  expect(resolveObjectURL(first)).toBeUndefined();
+  expect(resolveObjectURL(second)).toBeUndefined();
 });
 
 it.each(["put", "delete", "close"] as const)(
@@ -191,10 +249,10 @@ it("shares the supplied transport with generated aliases and exposes shared read
 
 it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
   const root = new URL("../dist/", import.meta.url).pathname;
-  const source = `import { createClient, createSharedTable, type Call, type QueryRegistry, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
-import { defineConfig, table, t, files, postgres, sharedTable, type Id } from "patchy/config";
+  const source = `import { createClient, createSharedTable, createSharedStore, type Call, type QueryRegistry, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
+import { defineConfig, table, t, files, postgres, sharedTable, sharedStore, type Id } from "patchy/config";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
-const operationsConform: Equal<Operation, "route.set" | "download" | "subscriptions.subscribe" | "subscriptions.unsubscribe" | ${Object.keys(
+const operationsConform: Equal<Operation, "route.set" | "download" | "shared.download" | "subscriptions.subscribe" | "subscriptions.unsubscribe" | ${Object.keys(
     runtimeOperations
   )
     .map((name) => JSON.stringify(name))
@@ -203,8 +261,8 @@ const config = defineConfig({ name: "notes", tier: 1, tables: {
   notes: table("Notes identified by id; parent links another note.", { title: t.text(), body: t.text().optional(), count: t.integer().default(0), parent: t.ref("notes").optional() }, { indexes: { byTitle: ["title"] } }),
   people: table("People identified by id.", { name: t.text() }),
   data: table("JSON records identified by id.", { required: t.json(), defaulted: t.json().default({}), optional: t.json().optional() })
-}, files: { images: files("Images keyed by filename.") }, uses: { team: sharedTable("source", "notes"), sales: postgres("warehouse") } });
-const shared = { team: (alias: string, call: Call, queries: QueryRegistry) => createSharedTable<{ id: Id<"source/notes">; title: string }>(alias, call, queries) };
+}, files: { images: files("Images keyed by filename.") }, uses: { team: sharedTable("source", "notes"), assets: sharedStore("source", "logos"), sales: postgres("warehouse") } });
+const shared = { team: (alias: string, call: Call, queries: QueryRegistry) => createSharedTable<{ id: Id<"source/notes">; title: string }>(alias, call, queries), assets: createSharedStore };
 const connections = { sales: (alias: string, call: Call) => ({ count: async () => 42 }) };
 const client = createClient<typeof config, typeof shared, typeof connections>(config, { shared, connections });
 async function use() {
@@ -237,6 +295,16 @@ async function use() {
   });
   unsubscribe();
   const downloaded: null = await client.files.images.download("report.csv");
+  const sharedBytes: Uint8Array = await client.shared.assets.get("logo.svg");
+  const sharedUrl: string = await client.shared.assets.url("logo.svg");
+  const sharedDownload: null = await client.shared.assets.download("logo.svg");
+  const sharedName: string | undefined = (await client.shared.assets.list({ prefix: "logos/" })).files[0]?.name;
+  // @ts-expect-error shared stores cannot be written
+  client.shared.assets.put("logo.svg", sharedBytes, { contentType: "image/svg+xml" });
+  // @ts-expect-error shared stores cannot be deleted
+  client.shared.assets.delete("logo.svg");
+  // @ts-expect-error browser stores expose no server metadata stat operation
+  client.shared.assets.stat("logo.svg");
   await client.tables.data.insert({ required: { nested: null }, optional: null });
   await client.tables.data.update("id" as Id<"data">, { defaulted: [null], optional: null });
   // @ts-expect-error required JSON cannot be top-level null

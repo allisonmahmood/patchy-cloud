@@ -97,12 +97,13 @@ const summary = (row: Patches.ReadPatch, userId: string, publicBaseUrl: string) 
     currentVersion: row.currentVersion,
     publishedAt: row.publishedAt
   });
-const tableSummary = (
+const primitiveSummary = (
   row: Patches.ReadPatch,
   name: string,
-  table: (typeof PatchInventory.Type.tables)[string]
+  definition: { readonly description: string; readonly shared?: boolean },
+  kind: "table" | "store"
 ): typeof PatchTableSummary.Type => {
-  const common = { name, description: table.description, shared: table.shared === true };
+  const common = { name, description: definition.description, shared: definition.shared === true };
   if (row.patch.state !== "live") {
     return {
       ...common,
@@ -111,17 +112,17 @@ const tableSummary = (
       hint: `This source is ${row.patch.state}. Ask ${row.owner.name} or an admin to restore it.`
     };
   }
-  return table.shared
+  return definition.shared
     ? {
         ...common,
         declarable: true,
-        hint: `patchy add shared-table ${row.patch.id}/${name}`
+        hint: `patchy add shared-${kind} ${row.patch.id}/${name}`
       }
     : {
         ...common,
         declarable: false,
         reason: "not_shared",
-        hint: `Not shared. Ask ${row.owner.name} to share this table.`
+        hint: `Not shared. Ask ${row.owner.name} to share this ${kind}.`
       };
 };
 const lifecycleFailure = <S extends Schema.Top & Schema.Codec<{ readonly code: string }, unknown>>(
@@ -611,15 +612,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                     ? null
                     : {
                         tables: Object.entries(inventory.tables).map(([name, table]) =>
-                          tableSummary(row, name, table)
+                          primitiveSummary(row, name, table, "table")
                         ),
-                        stores: Object.entries(inventory.files).map(([name, store]) => ({
-                          name,
-                          description: store.description,
-                          declarable: false as const,
-                          reason: "not_shareable" as const,
-                          hint: "File stores are not shareable yet."
-                        }))
+                        stores: Object.entries(inventory.files).map(([name, store]) =>
+                          primitiveSummary(row, name, store, "store")
+                        )
                       },
                 reads: row.reads
               })
@@ -660,9 +657,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             encodePrimitive(
               new PrimitiveDetail({
                 kind: table === undefined ? "store" : "table",
-                name: params.name,
-                description: (table ?? store)!.description,
-                shared: table?.shared === true,
+                ...primitiveSummary(
+                  row,
+                  params.name,
+                  (table ?? store)!,
+                  table === undefined ? "store" : "table"
+                ),
                 schemaRevision: inventory.schemaRevision,
                 columns:
                   table === undefined

@@ -83,6 +83,7 @@ describe("wire schemas", () => {
       name: "notes",
       description: "Notes keyed by id.",
       shared: true,
+      declarable: true,
       schemaRevision: 2,
       columns: [
         { name: "title", kind: "text" as const, optional: false },
@@ -352,7 +353,7 @@ describe("wire schemas", () => {
     ).toBe("Success");
   });
 
-  it("round-trips shared declarations and resolved refs while rejecting invalid source table names", () => {
+  it("round-trips shared declarations and resolved refs while rejecting invalid source names", () => {
     const declaration = {
       kind: "sharedTable" as const,
       patchId: "abcdefghijkl",
@@ -369,7 +370,17 @@ describe("wire schemas", () => {
           indexes: {}
         }
       },
-      uses: { contacts: declaration }
+      files: { documents: { description: "Source documents.", shared: true } },
+      uses: {
+        contacts: declaration,
+        photos: {
+          kind: "sharedStore" as const,
+          patchId: "abcdefghijkl",
+          store: "photos",
+          id: "abcdefghijkl/photos",
+          revision: 3
+        }
+      }
     };
     expect(roundTrip(Manifest, consumer)).toEqual(consumer);
     const decode = Schema.decodeUnknownExit(Manifest);
@@ -377,6 +388,12 @@ describe("wire schemas", () => {
       expect(decode({ ...consumer, uses: { contacts: { ...declaration, table } } })._tag).toBe(
         "Failure"
       );
+      expect(
+        decode({
+          ...consumer,
+          uses: { photos: { ...consumer.uses.photos, store: table } }
+        })._tag
+      ).toBe("Failure");
     }
     expect(
       decode({ ...consumer, uses: { contacts: { ...declaration, patchId: "source-name" } } })._tag

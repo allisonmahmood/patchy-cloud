@@ -252,8 +252,11 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
   const definition = {
     ...manifest({}),
     files: {
-      attachments: { description: "Documents attached to notes, identified by file name." },
-      constructor: { description: "Construction drawings identified by file name." }
+      attachments: {
+        description: "Documents attached to notes, identified by file name.",
+        shared: true
+      },
+      constructor: { description: "Construction drawings identified by file name.", shared: false }
     }
   };
   yield* databases.ensureReady(companyId);
@@ -286,7 +289,8 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
         files: {
           ...definition.files,
           attachments: {
-            description: "Reference documents, identified by their original file names."
+            description: "Reference documents, identified by their original file names.",
+            shared: true
           }
         }
       };
@@ -310,7 +314,7 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
         ...definition,
         files: {
           ...definition.files,
-          images: { description: "Images identified by file name." }
+          images: { description: "Images identified by file name.", shared: false }
         }
       };
       const added = yield* databases.withPatchLock(patchId)(tables.provision(patchId, expanded));
@@ -350,6 +354,32 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
       assert.deepStrictEqual(
         after?.stores.map((store) => store.name),
         ["attachments", "constructor", "images"]
+      );
+      const beforeUnshare = after!.stores.find((store) => store.name === "attachments")!;
+      const unshared = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, {
+          ...definition,
+          files: { attachments: { description: definition.files.attachments.description } }
+        })
+      );
+      assert.strictEqual(unshared.schemaRevision, 3);
+      assert.deepStrictEqual(unshared.sharing, ["attachments"]);
+      assert.deepStrictEqual(unshared.provisioned.stores, ["attachments"]);
+      const unsharedStore = (yield* inventory.read(patchId))!.stores.find(
+        (store) => store.name === "attachments"
+      )!;
+      assert.isFalse(unsharedStore.shared);
+      assert.strictEqual(
+        BigInt(unsharedStore.resourceRevision),
+        BigInt(beforeUnshare.resourceRevision) + 1n
+      );
+      const reshared = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, definition)
+      );
+      assert.strictEqual(reshared.schemaRevision, 4);
+      assert.isTrue(
+        (yield* inventory.read(patchId))!.stores.find((store) => store.name === "attachments")!
+          .shared
       );
     })
   );

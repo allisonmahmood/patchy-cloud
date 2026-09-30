@@ -87,7 +87,8 @@ export function classify(method: string, requestTarget: string): Target {
       (pathname === "/api/runtime/call" || pathname === "/api/runtime/subscriptions")) ||
     (method === "GET" && pathname === "/api/runtime/stream") ||
     ((method === "PUT" || method === "GET") &&
-      /^\/api\/runtime\/files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname))
+      /^\/api\/runtime\/files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname)) ||
+    (method === "GET" && /^\/api\/runtime\/shared-files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname))
   )
     return { kind: "runtime" };
   if (method === "POST") {

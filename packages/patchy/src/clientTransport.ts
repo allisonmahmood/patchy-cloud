@@ -17,6 +17,8 @@ export type Operation =
   | "subscriptions.unsubscribe"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
   | `shared.${"get" | "getMany" | "list"}`
+  | "shared.download"
+  | `shared.files.${"get" | "list" | "stat"}`
   | `files.${"get" | "put" | "list" | "stat" | "delete"}`
   | `postgres.${"get" | "getMany" | "list" | "query"}`;
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
@@ -504,12 +506,18 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
     });
     const init: RequestInit = { credentials: "include", headers, signal: controller.signal };
     let url = new URL("/api/runtime/call", options.baseUrl);
-    const file = args as { store: string; name: string; contentType?: string };
-    if (op === "files.get" || op === "files.put") {
-      const path = [options.patchId, options.versionId, file.store, ...file.name.split("/")]
+    const file = args as { store: string; alias: string; name: string; contentType?: string };
+    if (op === "files.get" || op === "files.put" || op === "shared.files.get") {
+      const shared = op === "shared.files.get";
+      const path = [
+        options.patchId,
+        options.versionId,
+        shared ? file.alias : file.store,
+        ...file.name.split("/")
+      ]
         .map(encodeURIComponent)
         .join("/");
-      url = new URL(`/api/runtime/files/${path}`, options.baseUrl);
+      url = new URL(`/api/runtime/${shared ? "shared-files" : "files"}/${path}`, options.baseUrl);
       init.method = op === "files.put" ? "PUT" : "GET";
       if (op === "files.put") {
         headers.set("Content-Type", file.contentType!);
@@ -534,7 +542,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
       throw lost();
     }
     try {
-      if (op === "files.get" && response.ok)
+      if ((op === "files.get" || op === "shared.files.get") && response.ok)
         return {
           bytes: new Uint8Array(await response.arrayBuffer()),
           contentType: response.headers.get("Content-Type") ?? "application/octet-stream"
@@ -573,7 +581,12 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
       }
     },
     call: async (op, args, bytes) => {
-      if (op === "route.set" || op === "download" || op.startsWith("subscriptions."))
+      if (
+        op === "route.set" ||
+        op === "download" ||
+        op === "shared.download" ||
+        op.startsWith("subscriptions.")
+      )
         throw browserOnly();
       identity ??= dispatch("me", {}, null) as Promise<Me | null>;
       const me = await identity;

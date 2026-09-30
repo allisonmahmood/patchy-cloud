@@ -29,10 +29,11 @@ as described under Publishing, then use the discovery chain:
 2. Run `patchy list <patch> --json` for each candidate's tables, stores and reads.
    Use its name or canonical id; a pasted URL resolves by its final path segment.
    Null `inventory` means unavailable, not no tables.
-3. Run `patchy list <patch> <table> --json` to check keys, types, optional columns,
-   explicit defaults, ref targets, indexes, sharing and schema revision without
-   reading rows. Choose only tables marked `declarable: true` in patch detail.
-   In a consuming repo, use `pnpm patchy add shared-table <patchId>/<table>`,
+3. Run `patchy list <patch> <table-or-store> --json` to inspect metadata,
+   sharing and schema revision without reading rows or bytes. Choose resources
+   marked `declarable: true`. In a consuming repo, use
+   `pnpm patchy add shared-table <patchId>/<table>` or
+   `pnpm patchy add shared-store <patchId>/<store> --as <alias>`,
    carrying the canonical id returned by discovery, not the name or address.
 
 `list` runs anywhere under the saved login and never reads `patchy.json`.
@@ -58,8 +59,8 @@ lists choices from `list connections` and stops.
 All levels accept `--json`. Top-level success is `{ patches, connections }`
 merged from two routes; the other levels print the wire body with no `ok`
 wrapper. Branch on `declarable` and `reason`, never parse the human `hint`.
-Unshared tables name their owner, file stores are not shareable, and off sources
-need restoration before use. Disconnected connections point to the admin's
+Unshared tables and stores name their owner; off sources need restoration
+before use. Disconnected connections point to the admin's
 browser at `/company/connections`. Listing grants no access and reads no rows
 or file contents.
 
@@ -100,9 +101,11 @@ Inside that repo read `AGENTS.md`, `.agents/skills/patchy-loop/SKILL.md` and
 `patchy/_generated/index.json`, then use `pnpm patchy`, the pinned copy.
 The project skills teach Preact, tables, files and declarations in Patchy's own terms.
 Use the discovery chain above before adding a dependency.
-`pnpm patchy add postgres/<handle> --as <alias>`
-or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` adds a declaration
-and generates its client, context, fixture stub and skill. `pnpm patchy remove <alias>`
+`pnpm patchy add postgres/<handle> --as <alias>`,
+`pnpm patchy add shared-table <patchId>/<table> --as <alias>` or
+`pnpm patchy add shared-store <patchId>/<store> --as <alias>` adds a declaration
+and generates its client, context, fixture stub and skill. Shared stores publish
+read access to every file in the store. `pnpm patchy remove <alias>`
 reverses it while leaving its fixture. `pnpm patchy refresh` updates the managed
 pins, generated server module list, other generated files and present skills
 transactionally, removing stale generated context while preserving application source.
@@ -361,7 +364,7 @@ browser sign-out is a separate control on **Your machines**.
   A `release_mismatch` names both releases: install the exact package reported
   by that endpoint using the integrity check above. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources. Repo mode admits
-  tiers 0, 1 and 2 with tables, stores, shared tables and Postgres declarations.
+  tiers 0, 1 and 2 with tables, stores, shared tables, shared stores and Postgres declarations.
   Tier 2 publishes both HTML and server artifacts on dev and test instances;
   production admission requires the fleet executor. Tier 2 is company-only.
   If the instance returns `has_primitives`, publish from the patch's repo, not a
@@ -386,7 +389,7 @@ browser sign-out is a separate control on **Your machines**.
   [definitive publish refusals](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals):
   decoded 413s, selected 422s or 422s carrying `errors`, selected 409s and the
   matching unavailable-update 404. A decoded 413 needs a smaller fresh payload.
-  `patch_not_openable` is definitive (exit 2): correct the shared-table declaration
+  `patch_not_openable` is definitive (exit 2): correct the shared-table/store declaration
   or restore source access before publishing a fresh attempt.
   `connection_not_connected` and `stale_generated` are also definitive (exit 2).
   An admin reconnects at `/company/connections`; a stale declaration needs a

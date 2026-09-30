@@ -53,7 +53,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   yield* fs.writeFileString(path.join(root, "fixtures/shared-contacts.sql"), "");
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
-    `import { defineConfig, table, t, sharedTable } from ${JSON.stringify(builders)};\n` +
+    `import { defineConfig, table, t, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n` +
       'import { column } from "./fields.ts";\n' +
       `export default defineConfig({ name: "preparation-test", tier: ${tier}, tables: { notes: table("Notes identified by id.", { [column]: t.text() }) }, uses: ${uses} });\n`
   );
@@ -187,5 +187,44 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
           );
       }),
     { timeout: 30_000 }
+  );
+  it.effect("requires a directory for shared-store fixtures and preserves it while stamping", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const declaration = {
+        kind: "sharedStore" as const,
+        patchId: "abcdefghijkl",
+        store: "documents",
+        id: "abcdefghijkl/documents",
+        revision: 3
+      };
+      const fixture = yield* harness({
+        uses: '{ assets: sharedStore("abcdefghijkl", "documents") }',
+        index: {
+          ...currentIndex,
+          uses: [{ alias: "assets", id: declaration.id, revision: 3, declaration }]
+        },
+        metadata: {
+          postgres: {},
+          shared: {
+            assets: { declaration, definition: { description: "Source documents", shared: true } }
+          }
+        }
+      });
+      const relative = "fixtures/shared-assets";
+      const missing = yield* fixture.prepare.pipe(Effect.flip);
+      assert.instanceOf(missing, Preparation.FixtureMissing);
+      yield* fs.writeFileString(`${fixture.root}/${relative}`, "Not a directory");
+      const wrongKind = yield* fixture.prepare.pipe(Effect.flip);
+      assert.instanceOf(wrongKind, Preparation.FixtureMissing);
+      yield* fs.remove(`${fixture.root}/${relative}`);
+      yield* fs.makeDirectory(`${fixture.root}/${relative}`);
+      yield* fs.writeFile(`${fixture.root}/${relative}/asset.bin`, new Uint8Array([0, 255]));
+      assert.deepStrictEqual((yield* fixture.prepare).manifest.uses, { assets: declaration });
+      assert.deepStrictEqual(
+        yield* fs.readFile(`${fixture.root}/${relative}/asset.bin`),
+        new Uint8Array([0, 255])
+      );
+    })
   );
 });

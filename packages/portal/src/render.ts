@@ -136,20 +136,21 @@ const descriptionBlock = (card: Patches.PortalCard): string => {
 interface DependantGroup {
   readonly name: string;
   readonly ownerName: string;
-  readonly tables: string[];
+  readonly resources: string[];
 }
 
 const dependantGroups = (card: Patches.PortalCard) => {
   const groups = new Map<string, DependantGroup>();
   for (const dependant of card.dependants) {
+    const resource = dependant.table ?? dependant.store;
     const existing = groups.get(dependant.patchId);
     if (existing === undefined) {
       groups.set(dependant.patchId, {
         name: dependant.name,
         ownerName: dependant.owner.name,
-        tables: [dependant.table]
+        resources: [resource]
       });
-    } else if (!existing.tables.includes(dependant.table)) existing.tables.push(dependant.table);
+    } else if (!existing.resources.includes(resource)) existing.resources.push(resource);
   }
   return Array.from(groups.values());
 };
@@ -160,7 +161,7 @@ const dependantsFact = (groups: readonly DependantGroup[], all: boolean): string
     .slice(0, 3)
     .map(
       (group) =>
-        `<li class="list-row"><a href="${escapeAttribute(`/patches/${encodeURIComponent(group.name)}${all ? "?all=1" : ""}`)}">${escapeHtml(group.name)}</a> (${escapeHtml(group.ownerName)}) reads ${group.tables.map((table) => `<code>${escapeHtml(table)}</code>`).join(", ")}</li>`
+        `<li class="list-row"><a href="${escapeAttribute(`/patches/${encodeURIComponent(group.name)}${all ? "?all=1" : ""}`)}">${escapeHtml(group.name)}</a> (${escapeHtml(group.ownerName)}) reads ${group.resources.map((resource) => `<code>${escapeHtml(resource)}</code>`).join(", ")}</li>`
     )
     .join("");
   return `<p>${escapeHtml(groups.length)} ${groups.length === 1 ? "patch" : "patches"}</p><ul class="list list-compact">${shown}</ul>${groups.length > 3 ? `<p class="supporting-text">and ${escapeHtml(groups.length - 3)} more</p>` : ""}`;
@@ -178,7 +179,7 @@ const descriptionForm = (
 const scopeForm = (card: Patches.PortalCard, all: boolean): string => {
   const radio = (scope: Patches.Patch["scope"], label: string) =>
     `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${escapeAttribute(scope)}"${card.patch.scope === scope ? " checked" : ""}>${escapeHtml(label)}</label>`;
-  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3><form method="post" action="${escapeAttribute(cardPath(card.patch, all, "scope"))}">${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
+  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3><form method="post" action="${escapeAttribute(cardPath(card.patch, all, "scope"))}">${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables and stores other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
 };
 
 const versionsTable = (
@@ -213,7 +214,7 @@ const versionsSection = (
     if (version.id !== card.patch.currentVersionId) shown.push(version);
     if (shown.length === 4) break;
   }
-  return `<section class="section"><h3 class="section-heading">Versions</h3>${versionsTable(card, shown, viewer, all, now)}<p class="supporting-text">The address changes for everyone now. Tables and the description do not move.</p><p><a href="${escapeAttribute(cardPath(card.patch, all, "versions"))}">All ${escapeHtml(card.versions.length)} versions</a></p></section>`;
+  return `<section class="section"><h3 class="section-heading">Versions</h3>${versionsTable(card, shown, viewer, all, now)}<p class="supporting-text">The address changes for everyone now. Tables, files, sharing and the description do not move.</p><p><a href="${escapeAttribute(cardPath(card.patch, all, "versions"))}">All ${escapeHtml(card.versions.length)} versions</a></p></section>`;
 };
 
 const renderCard = (input: {
@@ -286,7 +287,7 @@ const renderCard = (input: {
       : "";
   const stop =
     live && manage
-      ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
+      ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables or stores and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
       : "";
   const management = manage
     ? `${adminLine}<section class="section" aria-labelledby="manage-heading"><h2 class="section-heading" id="manage-heading">Manage</h2>${restoreActions}${patch.state === "deleted" ? "" : descriptionForm(card, all, input.submittedDescription, input.descriptionError)}${live ? scopeForm(card, all) + versionsSection(card, viewer, all, now) + stop : ""}</section>`
@@ -321,17 +322,17 @@ export const renderVersions = (input: {
   readonly all: boolean;
   readonly now: number;
 }): string =>
-  `<article class="portal-subpage"><p><a href="${escapeAttribute(cardPath(input.card.patch, input.all))}">Back to ${escapeHtml(input.card.patch.name)}</a></p><h1 class="page-heading">Versions of ${escapeHtml(input.card.patch.name)}</h1>${versionsTable(input.card, input.card.versions, input.viewer, input.all, input.now)}${canManage(input.card, input.viewer) && input.card.patch.state === "live" ? '<p class="supporting-text">The address changes for everyone now. Tables and the description do not move.</p>' : ""}</article>`;
+  `<article class="portal-subpage"><p><a href="${escapeAttribute(cardPath(input.card.patch, input.all))}">Back to ${escapeHtml(input.card.patch.name)}</a></p><h1 class="page-heading">Versions of ${escapeHtml(input.card.patch.name)}</h1>${versionsTable(input.card, input.card.versions, input.viewer, input.all, input.now)}${canManage(input.card, input.viewer) && input.card.patch.state === "live" ? '<p class="supporting-text">The address changes for everyone now. Tables, files, sharing and the description do not move.</p>' : ""}</article>`;
 
 export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
 
 const confirmationDependants = (groups: readonly DependantGroup[]): string =>
   groups.length === 0
     ? '<p class="supporting-text">Nothing else reads this patch.</p>'
-    : `<p>These patches will lose access to its tables on their next read, until it is restored.</p><ul class="confirmation-list">${groups
+    : `<p>These patches will lose access to its shared tables and stores on their next read, until it is restored.</p><ul class="confirmation-list">${groups
         .map(
           (group) =>
-            `<li><code>${escapeHtml(group.name)}</code> (${escapeHtml(group.ownerName)}) reads ${group.tables.map((table) => `<code>${escapeHtml(table)}</code>`).join(", ")}</li>`
+            `<li><code>${escapeHtml(group.name)}</code> (${escapeHtml(group.ownerName)}) reads ${group.resources.map((resource) => `<code>${escapeHtml(resource)}</code>`).join(", ")}</li>`
         )
         .join("")}</ul>`;
 
@@ -368,7 +369,7 @@ export const renderConfirmation = (input: {
       verb = "Retire";
       consequence = `Nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored. Its page, versions, tables, files and name are kept indefinitely. The owner or an admin can restore it.`;
       const groups = dependantGroups(card);
-      fields = `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its tables.", acknowledged)}`;
+      fields = `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its shared tables and stores.", acknowledged)}`;
       break;
     }
     case "delete": {
@@ -380,7 +381,7 @@ export const renderConfirmation = (input: {
       const groups = patch.state === "live" ? dependantGroups(card) : [];
       const dependants =
         patch.state === "live"
-          ? `${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its tables.", acknowledged)}`
+          ? `${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its shared tables and stores.", acknowledged)}`
           : "";
       const nameError =
         input.nameError === undefined
@@ -392,14 +393,14 @@ export const renderConfirmation = (input: {
     case "restore": {
       verb = "Restore";
       consequence =
-        "This patch will serve, but it will error when it reads these tables until their sources are restored too. A source that is gone cannot be restored.";
+        "This patch will serve, but it will error when it reads these tables or stores until their sources are restored too. A source that is gone cannot be restored.";
       const sources = card.offSources
         .map(
           (source) =>
-            `<li><code>${escapeHtml(source.name ?? source.patchId)}</code> / <code>${escapeHtml(source.table)}</code>: ${escapeHtml(source.state)}</li>`
+            `<li><code>${escapeHtml(source.name ?? source.patchId)}</code> / <code>${escapeHtml(source.table ?? source.store)}</code>: ${escapeHtml(source.state)}</li>`
         )
         .join("");
-      fields = `${hidden("expectedState", patch.state)}<ul class="confirmation-list">${sources}</ul>${confirmationAcknowledgement("I understand this patch will error when it reads these tables.", acknowledged)}`;
+      fields = `${hidden("expectedState", patch.state)}<ul class="confirmation-list">${sources}</ul>${confirmationAcknowledgement("I understand this patch will error when it reads these tables or stores.", acknowledged)}`;
       break;
     }
     case "reassign": {

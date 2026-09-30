@@ -77,6 +77,9 @@ export const make = Effect.gen(function* () {
       if (declaration.kind === "sharedTable") {
         allowed.add(`table:${declaration.patchId}:${declaration.table}`);
         allowed.add(`patch:${declaration.patchId}`);
+      } else if (declaration.kind === "sharedStore") {
+        allowed.add(`store:${declaration.patchId}:${declaration.store}`);
+        allowed.add(`patch:${declaration.patchId}`);
       }
     }
     // Resume keys are untrusted. Only fence declared resources; callbacks still
@@ -92,7 +95,8 @@ export const make = Effect.gen(function* () {
     // before invocation, then keep only the sources actually attempted by the guest.
     const sources = new Set<string>();
     for (const declaration of Object.values(binding.manifest.uses))
-      if (declaration.kind === "sharedTable") sources.add(`patch:${declaration.patchId}`);
+      if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
+        sources.add(`patch:${declaration.patchId}`);
     const before = yield* reads.revisions(binding.companyId, [...sources]);
     const attempted = new Set<string>();
     let watermark: Readonly<Record<string, string>> = {};

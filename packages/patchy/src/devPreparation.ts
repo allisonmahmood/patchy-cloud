@@ -78,11 +78,14 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           const relative =
             declaration.kind === "postgres"
               ? `fixtures/postgres-${declaration.handle}.sql`
-              : `fixtures/shared-${alias}.sql`;
+              : declaration.kind === "sharedStore"
+                ? `fixtures/shared-${alias}`
+                : `fixtures/shared-${alias}.sql`;
           const fixture = yield* io("Read fixture path", () => safePath(root, relative));
           if (!(yield* fs.exists(fixture))) return yield* new FixtureMissing({ path: relative });
           const info = yield* fs.stat(fixture);
-          if (info.type !== "File") return yield* new FixtureMissing({ path: relative });
+          if (info.type !== (declaration.kind === "sharedStore" ? "Directory" : "File"))
+            return yield* new FixtureMissing({ path: relative });
         }
         const skills = yield* io("Read project skills", () => presentSkills(root));
         const serverModules = unresolved.tier === 2 ? yield* discoverServerModules(root) : [];
@@ -129,7 +132,10 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               actual.handle !== declaration.handle) ||
             (actual.kind === "sharedTable" &&
               declaration.kind === "sharedTable" &&
-              (actual.patchId !== declaration.patchId || actual.table !== declaration.table))
+              (actual.patchId !== declaration.patchId || actual.table !== declaration.table)) ||
+            (actual.kind === "sharedStore" &&
+              declaration.kind === "sharedStore" &&
+              (actual.patchId !== declaration.patchId || actual.store !== declaration.store))
           )
             return yield* new LocalError({
               message: `Generation returned inconsistent metadata for ${alias}.`

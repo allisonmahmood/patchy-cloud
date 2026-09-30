@@ -110,12 +110,20 @@ export const HasDependants = failure(409, {
 export const SourcesOff = failure(409, {
   code: Schema.Literal("sources_off"),
   sources: Schema.Array(
-    Schema.Struct({
-      patchId: PatchId,
-      name: Schema.optionalKey(Schema.String),
-      table: Schema.String,
-      state: PatchSourceState
-    })
+    Schema.Union([
+      Schema.Struct({
+        patchId: PatchId,
+        name: Schema.optionalKey(Schema.String),
+        table: Schema.String,
+        state: PatchSourceState
+      }),
+      Schema.Struct({
+        patchId: PatchId,
+        name: Schema.optionalKey(Schema.String),
+        store: Schema.String,
+        state: PatchSourceState
+      })
+    ])
   )
 });
 export const ReservedName = failure(422, { code: Schema.Literal("reserved_name") });
@@ -370,7 +378,10 @@ export const TableDefinition = Schema.Struct({
       ) || "An index names an unknown column."
   )
 );
-export const FileStoreDefinition = Schema.Struct({ description: PrimitiveDescription });
+export const FileStoreDefinition = Schema.Struct({
+  description: PrimitiveDescription,
+  shared: Schema.optionalKey(Schema.Boolean)
+});
 
 const handlerScalars = {
   text: PostgresText,
@@ -470,6 +481,16 @@ export const SharedTableDeclaration = Schema.Struct({
   id: NonEmptyText,
   revision: Revision
 });
+
+/** Stable shared-store identity; a patch name never participates in resolution. */
+export const sharedStoreId = (patchId: string, store: string): string => `${patchId}/${store}`;
+export const SharedStoreDeclaration = Schema.Struct({
+  kind: Schema.Literal("sharedStore"),
+  patchId: PatchId,
+  store: DefinitionName,
+  id: NonEmptyText,
+  revision: Revision
+});
 const distinctPrimitiveNames = Schema.makeFilter(
   (manifest: {
     readonly tables: Readonly<Record<string, unknown>>;
@@ -489,7 +510,9 @@ export const Manifest = Schema.Struct({
   tier: Schema.Literals([0, 1, 2, 3]),
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
-  uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration])),
+  uses: definitions(
+    Schema.Union([PostgresDeclaration, SharedTableDeclaration, SharedStoreDeclaration])
+  ),
   handlers: Schema.optionalKey(HandlerDescriptors),
   sdkImports: Schema.optionalKey(Schema.Array(NonEmptyText))
 }).check(distinctPrimitiveNames, Schema.makeFilter(handlerTablesValid));
@@ -506,6 +529,11 @@ export const GenerationManifest = Schema.Struct({
       }),
       Schema.Struct({
         ...SharedTableDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
+        ...SharedStoreDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
       })
@@ -568,7 +596,8 @@ export const isManagedOutputPath = (path: string): boolean => {
   return (
     path.startsWith("patchy/_generated/") ||
     /^\.agents\/skills\/patchy-[a-z0-9-]+\/SKILL\.md$/.test(path) ||
-    /^fixtures\/(?:postgres-[a-z0-9-]+|shared-[a-z][a-zA-Z0-9]*)\.sql$/.test(path)
+    /^fixtures\/(?:postgres-[a-z0-9-]+|shared-[a-z][a-zA-Z0-9]*)\.sql$/.test(path) ||
+    /^fixtures\/shared-[a-z][a-zA-Z0-9]*\/README\.md$/.test(path)
   );
 };
 export const DeclarationMetadata = Schema.Struct({
@@ -578,11 +607,17 @@ export const DeclarationMetadata = Schema.Struct({
   ),
   shared: Schema.Record(
     Schema.String,
-    Schema.Struct({
-      declaration: SharedTableDeclaration,
-      tables: Schema.Record(Schema.String, TableDefinition),
-      uses: Schema.Record(Schema.String, SharedTableDeclaration)
-    })
+    Schema.Union([
+      Schema.Struct({
+        declaration: SharedTableDeclaration,
+        tables: Schema.Record(Schema.String, TableDefinition),
+        uses: Schema.Record(Schema.String, SharedTableDeclaration)
+      }),
+      Schema.Struct({
+        declaration: SharedStoreDeclaration,
+        definition: FileStoreDefinition
+      })
+    ])
   )
 });
 
@@ -632,20 +667,23 @@ export const PatchTableSummary = Schema.Struct({
   reason: Schema.optionalKey(Schema.Literals(["not_shared", "source_off"])),
   hint: Schema.optionalKey(Schema.String)
 });
-export const PatchStoreSummary = Schema.Struct({
-  name: Schema.String,
-  description: Schema.String,
-  declarable: Schema.Literal(false),
-  reason: Schema.Literal("not_shareable"),
-  hint: Schema.String
-});
-export const PatchRead = Schema.Struct({
-  alias: Schema.String,
-  patchId: PatchId,
-  name: Schema.optionalKey(Schema.String),
-  table: Schema.String,
-  state: PatchSourceState
-});
+export const PatchStoreSummary = Schema.Struct({ ...PatchTableSummary.fields });
+export const PatchRead = Schema.Union([
+  Schema.Struct({
+    alias: Schema.String,
+    patchId: PatchId,
+    name: Schema.optionalKey(Schema.String),
+    table: Schema.String,
+    state: PatchSourceState
+  }),
+  Schema.Struct({
+    alias: Schema.String,
+    patchId: PatchId,
+    name: Schema.optionalKey(Schema.String),
+    store: Schema.String,
+    state: PatchSourceState
+  })
+]);
 export class PatchDetail extends Schema.Class<PatchDetail>("PatchDetail")({
   ...PatchSummary.fields,
   title: Schema.String,
@@ -665,6 +703,9 @@ export class PrimitiveDetail extends Schema.Class<PrimitiveDetail>("PrimitiveDet
   name: Schema.String,
   description: Schema.String,
   shared: Schema.Boolean,
+  declarable: Schema.Boolean,
+  reason: Schema.optionalKey(Schema.Literals(["not_shared", "source_off"])),
+  hint: Schema.optionalKey(Schema.String),
   schemaRevision: Revision,
   columns: Schema.Array(
     Schema.Struct({

@@ -64,6 +64,11 @@ const changeSchema = Schema.Union([
         kind: Schema.Literal("sharedTable"),
         patchId: Schema.String,
         table: Schema.String
+      }),
+      Schema.Struct({
+        kind: Schema.Literal("sharedStore"),
+        patchId: Schema.String,
+        store: Schema.String
       })
     ])
   }),
@@ -473,7 +478,12 @@ export const generate = Effect.fn("Project.generate")(function* (
     removedKind &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)
   ) {
-    const skill = removedKind === "postgres" ? "patchy-postgres" : "patchy-shared-tables";
+    const skill =
+      removedKind === "postgres"
+        ? "patchy-postgres"
+        : removedKind === "sharedStore"
+          ? "patchy-shared-stores"
+          : "patchy-shared-tables";
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
@@ -738,17 +748,18 @@ export const add = Effect.fn("Project.add")(function* (
       });
     declaration = { kind: "postgres", handle: connections[0]!.handle };
     defaultAlias = connectionAlias(declaration.handle);
-  } else if (integration === "shared-table") {
+  } else if (integration === "shared-table" || integration === "shared-store") {
+    const resource = integration === "shared-store" ? "store" : "table";
     const parts = Option.isSome(target) ? target.value.split("/") : [];
     if (parts.length !== 2 || !parts[0] || !parts[1])
       return yield* new LocalError({
-        message: "Use patchy add shared-table <patchId>/<table> [--as <alias>]."
+        message: `Use patchy add ${integration} <patchId>/<${resource}> [--as <alias>].`
       });
     const notOpenable = {
       refusal: {
         ok: false as const,
         code: "patch_not_openable",
-        error: `That shared table is not available to you. Ask an admin at ${instance.apiUrl}/company.`
+        error: `That shared ${resource} is not available to you. Ask an admin at ${instance.apiUrl}/company.`
       }
     };
     const observed: { status?: number } = {};
@@ -778,13 +789,19 @@ export const add = Effect.fn("Project.add")(function* (
         code: "source_unavailable",
         message: "The shared source's inventory is unavailable. Try again later."
       });
-    const shared = source.inventory.tables.find((table) => table.name === parts[1]);
+    const shared = (
+      integration === "shared-store" ? source.inventory.stores : source.inventory.tables
+    ).find((entry) => entry.name === parts[1]);
     if (!shared?.declarable) return yield* new RejectedError(notOpenable);
-    declaration = { kind: "sharedTable", patchId: source.id, table: shared.name };
+    declaration =
+      integration === "shared-store"
+        ? { kind: "sharedStore", patchId: source.id, store: shared.name }
+        : { kind: "sharedTable", patchId: source.id, table: shared.name };
     defaultAlias = shared.name;
   } else
     return yield* new LocalError({
-      message: "Use patchy add postgres/<handle> or patchy add shared-table <patchId>/<table>."
+      message:
+        "Use patchy add postgres/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
     });
   const alias = Option.getOrElse(as, () => defaultAlias);
   yield* refresh(cwd, token, { kind: "add", alias, declaration });

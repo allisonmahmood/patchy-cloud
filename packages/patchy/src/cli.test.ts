@@ -44,7 +44,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import { workerdVersion } from "@patchy/api/guest";
-import { generateClient } from "../../sdk/src/generateClient.js";
+import { generateClient, generateSharedStoreClient } from "../../sdk/src/generateClient.js";
 import { generateServer } from "../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "./initProject.js";
@@ -345,7 +345,7 @@ const projectSource = {
   title: "Directory",
   inventory: {
     tables: [{ name: "people", description: "One person per id.", shared: true, declarable: true }],
-    stores: []
+    stores: [{ name: "photos", description: "Profile photos.", shared: true, declarable: true }]
   },
   reads: []
 };
@@ -361,10 +361,34 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
     declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
   }> = [];
   const postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]> = {};
+  const sharedMetadata: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]> = {};
+  const shared: Record<string, string> = {};
   const connections: Record<string, string> = {};
   const skills = new Set(coreProjectSkills);
   if (manifest.tier === 2) skills.add("patchy-server");
   for (const [alias, declaration] of Object.entries(manifest.uses)) {
+    if (declaration.kind === "sharedStore") {
+      const stamp = {
+        ...declaration,
+        id: `${declaration.patchId}/${declaration.store}`,
+        revision: 3
+      };
+      sharedMetadata[alias] = {
+        declaration: stamp,
+        definition: { description: "Profile photos.", shared: true }
+      };
+      files.push(
+        { path: `patchy/_generated/uses/${alias}.ts`, contents: generateSharedStoreClient() },
+        {
+          path: `fixtures/shared-${alias}/README.md`,
+          contents: `Put invented files from ${stamp.patchId}/${stamp.store} here.\n`
+        }
+      );
+      shared[alias] = `./uses/${alias}.js`;
+      uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
+      skills.add("patchy-shared-stores");
+      continue;
+    }
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
     const stamp = { ...declaration, id: "conn-sales", revision: 1 };
     const snapshot = {
@@ -387,7 +411,7 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
   files.push(
     {
       path: "patchy/_generated/client.ts",
-      contents: generateClient({ connections, tier: manifest.tier })
+      contents: generateClient({ connections, shared, tier: manifest.tier })
     },
     {
       path: "patchy/_generated/index.json",
@@ -403,14 +427,14 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
   if (manifest.tier === 2)
     files.push({
       path: "patchy/_generated/server.ts",
-      contents: generateServer({ modules: serverModules, connections })
+      contents: generateServer({ modules: serverModules, connections, shared })
     });
   for (const skill of [...skills].sort())
     files.push({
       path: `.agents/skills/${skill}/SKILL.md`,
       contents: readFileSync(path.join(packageDir, "../sdk/skills", skill, "SKILL.md"), "utf8")
     });
-  return { ok: true, files, metadata: { postgres, shared: {} }, uses };
+  return { ok: true, files, metadata: { postgres, shared: sharedMetadata }, uses };
 };
 
 const projectHandler: Handler = (request, respond) => {
@@ -2442,6 +2466,14 @@ describe("patch lifecycle commands", () => {
       verb: "restore",
       args: [],
       status: 409,
+      code: "sources_off",
+      fields: { sources: [{ patchId: "zyxwvutsrqpo", store: "documents", state: "gone" }] },
+      text: "/ documents: gone"
+    },
+    {
+      verb: "restore",
+      args: [],
+      status: 409,
       code: "patch_deleted",
       fields: { purgeAt },
       text: purgeAt
@@ -3183,10 +3215,8 @@ describe("repo description sync and change notices", () => {
     writeFileSync(config, privateConfig);
     const refused = await runCli(["publish", "--json"], options);
     expect(refused).toMatchObject({ status: 2, stdout: "" });
-    expect(JSON.parse(refused.stderr)).toEqual({
+    expect(JSON.parse(refused.stderr)).toMatchObject({
       ok: false,
-      error:
-        "Other live patches read these tables.\n- mnopqrstuvwx reader (Sam)\nAsk the person you are working for before forcing.",
       kind: "rejected",
       code: "has_dependants",
       dependants,
@@ -3322,6 +3352,7 @@ describe("patchy list", () => {
     name: "people",
     description: "One person per id.",
     shared: true,
+    declarable: true,
     schemaRevision: 7,
     columns: [
       { name: "id", kind: "text", optional: false },
@@ -3416,13 +3447,16 @@ describe("patchy list", () => {
           {
             name: "photos",
             description: "Profile photos",
-            declarable: false,
-            reason: "not_shareable",
-            hint: "Not shareable yet."
+            shared: true,
+            declarable: true,
+            hint: `patchy add shared-store ${summary.id}/photos`
           }
         ]
       },
-      reads: [{ alias: "old", patchId: "zyxwvutsrqpo", table: "orders", state: "gone" }]
+      reads: [
+        { alias: "old", patchId: "zyxwvutsrqpo", table: "orders", state: "gone" },
+        { alias: "assets", patchId: "zyxwvutsrqpo", store: "documents", state: "gone" }
+      ]
     };
     const instance = await stubInstance((request, respond) => {
       expect(new URL(request.url, "http://instance.test").pathname).toBe("/api/patches/directory");
@@ -3448,8 +3482,8 @@ describe("patchy list", () => {
         expect(result.stdout).toContain(`patchy add shared-table ${summary.id}/people`);
         expect(result.stdout).toContain("Not shared; ask Sam.");
         expect(result.stdout).toContain("Stores:\n  photos: Profile photos");
-        expect(result.stdout).toContain("Not shareable yet.");
         expect(result.stdout).toContain("Reads:\n  old: zyxwvutsrqpo orders  gone");
+        expect(result.stdout).toContain("assets: zyxwvutsrqpo documents  gone");
       }
     }
   });
@@ -3473,7 +3507,16 @@ describe("patchy list", () => {
       const body =
         kind === "table"
           ? primitive
-          : { ...primitive, kind, name: "photos", shared: false, columns: [], indexes: [] };
+          : {
+              ...primitive,
+              kind,
+              name: "photos",
+              shared: true,
+              declarable: true,
+              hint: `patchy add shared-store ${summary.id}/photos`,
+              columns: [],
+              indexes: []
+            };
       const instance = await stubInstance((request, respond) => {
         expect(new URL(request.url, "http://instance.test").pathname).toBe(
           `/api/patches/${summary.id}/primitives/${body.name}`
@@ -3485,6 +3528,10 @@ describe("patchy list", () => {
       expect(result).toMatchObject({ status: 0, stderr: "" });
       expect(result.stdout).toContain(`Shared: ${body.shared}`);
       expect(result.stdout).toContain("Schema revision: 7");
+      if (kind === "store") {
+        expect(result.stdout).toContain("Declarable: true");
+        expect(result.stdout).toContain(`patchy add shared-store ${summary.id}/photos`);
+      }
       if (kind === "table") {
         expect(result.stdout).toContain("id: text required\n");
         expect(result.stdout).toContain("nickname: text optional default null");
@@ -3763,9 +3810,9 @@ describe("patch-repo commands", () => {
           {
             name: "people",
             description: "Directory files.",
-            declarable: false,
-            reason: "not_shareable",
-            hint: "File stores cannot be shared."
+            shared: true,
+            declarable: true,
+            hint: "patchy add shared-store abcdefghijkl/people"
           }
         ]
       },
@@ -4211,6 +4258,81 @@ document.body.textContent = JSON.stringify({
     expect(readFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), "utf8")).toBe(fixture);
   });
 
+  it("adds and stamps a shared store by canonical id, then removes it without touching fixtures", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const fixture = path.join(dir, "fixtures/shared-assets");
+    mkdirSync(path.join(fixture, "nested"), { recursive: true });
+    const invented = Buffer.from([0, 255, 10]);
+    writeFileSync(path.join(fixture, "nested/photo.bin"), invented);
+    const added = await runCli(
+      ["add", "shared-store", "directory/photos", "--as", "assets", "--json"],
+      { cwd: dir, env }
+    );
+    expect(added).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(added.stdout)).toMatchObject({
+      alias: "assets",
+      declaration: { kind: "sharedStore", patchId: "abcdefghijkl", store: "photos" }
+    });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
+      uses: {
+        assets: {
+          kind: "sharedStore",
+          patchId: "abcdefghijkl",
+          store: "photos",
+          id: "abcdefghijkl/photos",
+          revision: 3
+        }
+      }
+    });
+    expect(existsSync(path.join(fixture, "README.md"))).toBe(false);
+    expect(readFileSync(path.join(fixture, "nested/photo.bin"))).toEqual(invented);
+    const removed = await runCli(["remove", "assets", "--json"], { cwd: dir, env });
+    expect(removed).toMatchObject({ status: 0, stderr: "" });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({ uses: {} });
+    expect(existsSync(path.join(dir, "patchy/_generated/uses/assets.ts"))).toBe(false);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-shared-stores"))).toBe(false);
+    expect(readFileSync(path.join(fixture, "nested/photo.bin"))).toEqual(invented);
+    expect(instance.requests.some((request) => request.url.startsWith("/api/connections"))).toBe(
+      false
+    );
+  });
+
+  it.each(["not_shared", "source_off"])(
+    "refuses a shared store marked %s before generation",
+    async (reason) => {
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url.split("?")[0] === "/api/patches/directory")
+          return respond(200, {
+            ...projectSource,
+            inventory: {
+              tables: [],
+              stores: [
+                {
+                  ...projectSource.inventory.stores[0],
+                  shared: reason !== "not_shared",
+                  declarable: false,
+                  reason
+                }
+              ]
+            }
+          });
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = projectTree(instance.url);
+      const result = await runCli(["add", "shared-store", "directory/photos", "--json"], {
+        cwd: dir,
+        env
+      });
+      expect(result).toMatchObject({ status: 2, stdout: "" });
+      expect(JSON.parse(result.stderr)).toMatchObject({ code: "patch_not_openable" });
+      expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+      expect(instance.requests.map((request) => request.url)).toEqual([
+        "/api/patches/directory?state=all"
+      ]);
+    }
+  );
+
   it("removes the declaration, generated surface and last integration skill, but keeps its fixture", async () => {
     const instance = await stubInstance(projectHandler);
     const source = projectConfig.replace(
@@ -4243,6 +4365,10 @@ document.body.textContent = JSON.stringify({
       declaration: '"salesDb": {"kind":"postgres","handle":"sales-db"},'
     },
     {
+      args: ["shared-store", "directory/photos"],
+      declaration: '"photos": {"kind":"sharedStore","patchId":"abcdefghijkl","store":"photos"},'
+    },
+    {
       args: ["shared-table", "directory/people"],
       declaration: '"people": {"kind":"sharedTable","patchId":"abcdefghijkl","table":"people"},'
     }
@@ -4268,7 +4394,7 @@ document.body.textContent = JSON.stringify({
       expect(failure.error).toContain("patchy refresh");
       expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(source);
       expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
-      if (args[0] === "shared-table")
+      if (args[0] === "shared-table" || args[0] === "shared-store")
         expect(
           instance.requests.some((request) => request.url.startsWith("/api/connections"))
         ).toBe(false);

@@ -108,6 +108,7 @@ for (const [name, database] of [
               yield* inventory.ensurePatch(patchId);
               yield* inventory.putStore({
                 description: "Documents identified by file name.",
+                shared: false,
                 patchId,
                 name: "docs"
               });
@@ -174,6 +175,7 @@ for (const [name, database] of [
                   });
                   yield* inventory.putStore({
                     description: "Documents identified by file name.",
+                    shared: false,
                     patchId: "sweep_orphan",
                     name: "documents"
                   });
@@ -275,6 +277,7 @@ for (const [name, database] of [
                 yield* inventory.ensurePatch("sweep_files");
                 yield* inventory.putStore({
                   description: "Documents identified by file name.",
+                  shared: false,
                   patchId: "sweep_files",
                   name: "docs"
                 });
@@ -366,6 +369,7 @@ for (const [name, database] of [
                   yield* inventory.ensurePatch(patchId);
                   yield* inventory.putStore({
                     description: "Documents identified by file name.",
+                    shared: false,
                     patchId,
                     name: "docs"
                   });

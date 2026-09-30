@@ -54,10 +54,12 @@ const value = query({args:{},result:t.text(),handler:async () => ${JSON.stringif
 const live = query({args:${mode === "breaking" ? "{required:t.text()}" : "{}"},result:t.text(),handler:async ctx => {await ctx.tables.notes.list(); return ${JSON.stringify(label)};}});
 const nested = action({args:{},result:t.text(),handler:async ctx => {await ctx.tables.notes.list(); return ctx.run.demo.value({});}});
 const fixtures = action({args:{},result:t.json(),handler:async ctx => ({viewer:ctx.viewer.user.id, shared:await ctx.shared.contacts.list(), postgres:await ctx.connections.warehouse.query("SELECT marker FROM fixture_marker",[],{marker:t.text()})})});
+const storeMetadata = query({args:{},result:t.json(),handler:async ctx => ({listed:(await ctx.shared.assets.list()).files.map(file=>file.name),name:(await ctx.shared.assets.stat("nested/brief.txt")).name})});
+const storeBytes = action({args:{},result:t.text(),handler:async ctx => new TextDecoder().decode(await ctx.shared.assets.get("nested/brief.txt"))});
 const write = mutation({args:{title:t.text()},result:t.text(),handler:async (ctx,args) => {await ctx.tables.notes.insert({title:args.title}); ctx.log("saved",{viewer:ctx.viewer.user.id}); return args.title;}});
 const fail = mutation({args:{},result:t.text(),handler:async ctx => {await ctx.tables.notes.insert({title:"must roll back"}); throw new Error("dev failure diagnostic");}});
 const oversized = query({args:{},result:t.text(),handler:async () => "x".repeat(1000)});
-export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,write,fail,oversized}});`
+export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,fail,oversized}}, ["assets"]);`
       },
       alias: { "patchy/server": new URL("./server.ts", import.meta.url).pathname },
       external: ["./executeConfig.js"],
@@ -87,6 +89,12 @@ it.live(
         `${root}/fixtures/postgres-warehouse.sql`,
         "CREATE TABLE fixture_marker AS SELECT 'Connection fixture'::text AS marker;"
       );
+      yield* fs.makeDirectory(`${root}/fixtures/shared-assets/nested`, { recursive: true });
+      yield* fs.writeFileString(`${root}/fixtures/shared-assets/README.md`, "Fixture instructions");
+      yield* fs.writeFileString(
+        `${root}/fixtures/shared-assets/nested/brief.txt`,
+        "Shared store fixture"
+      );
       const shared = {
         kind: "sharedTable" as const,
         patchId: "source000001",
@@ -100,17 +108,31 @@ it.live(
         handle: "warehouse",
         revision: 1
       };
+      const assets = {
+        kind: "sharedStore" as const,
+        patchId: shared.patchId,
+        store: "documents",
+        id: `${shared.patchId}/documents`,
+        revision: 1
+      };
       const settlements: Invocation.DevSettlement[] = [];
       const resources = yield* DevResources.prepare(
         {
           ...prepared,
-          manifest: { ...prepared.manifest, uses: { contacts: shared, warehouse: postgres } },
+          manifest: {
+            ...prepared.manifest,
+            uses: { contacts: shared, assets, warehouse: postgres }
+          },
           metadata: {
             shared: {
               contacts: {
                 declaration: shared,
                 tables: { contacts: { ...notes, shared: true } },
                 uses: {}
+              },
+              assets: {
+                declaration: assets,
+                definition: { description: "Source documents", shared: true }
               }
             },
             postgres: {
@@ -161,6 +183,18 @@ it.live(
         assert.deepNestedInclude(reply.value, {
           "shared.rows[0].title": "Shared fixture",
           "postgres.rows[0].marker": "Connection fixture"
+        });
+        const metadata = yield* call("demo.storeMetadata", current);
+        assert.isTrue(metadata.ok);
+        if (metadata.ok) {
+          assert.deepStrictEqual(metadata.value, {
+            listed: ["nested/brief.txt"],
+            name: "nested/brief.txt"
+          });
+        }
+        assert.deepStrictEqual(yield* call("demo.storeBytes", current), {
+          ok: true,
+          value: "Shared store fixture"
         });
       }
       const mutationKey = `${Date.now()}-AAAAAAAAAAAAAAAAAAAAAA`;
