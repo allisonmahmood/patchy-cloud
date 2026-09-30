@@ -5,6 +5,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as Testing from "@patchy/sql/testing";
 import * as InvocationLog from "./InvocationLog.js";
+import * as RuntimeLog from "./RuntimeLog.js";
 
 const NOW = Date.UTC(2026, 0, 1);
 const begin = (id: string): InvocationLog.Begin => ({
@@ -241,5 +242,64 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
       assert.deepStrictEqual(yield* log.find(lookup), original);
       assert.isNull(yield* log.find({ ...lookup, invocationId: "invocation-same-correlation" }));
     })
+  );
+
+  it.effect(
+    "bounds an entry's tree, reads unsettled overdue entries as unknown and scopes cursors",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const log = yield* InvocationLog.InvocationLog;
+        const calls = yield* RuntimeLog.make;
+        const scope = { companyId: DEV_SEED.companyId, patchId: "treepatch" };
+        const root = { ...begin("tree-root"), ...scope, kind: "action" as const };
+        yield* log.begin(root);
+        for (let index = 0; index <= InvocationLog.TREE_LIMIT; index++) {
+          yield* TestClock.adjust(1);
+          yield* calls.begin({
+            companyId: scope.companyId,
+            patchId: scope.patchId,
+            versionId: root.versionId,
+            userId: null,
+            effectivePrincipal: "patch",
+            invocationId: root.id,
+            credentialKind: "session",
+            op: "tables.insert",
+            resource: "leads",
+            connectionId: null,
+            correlationId: `tree-call-${index}`,
+            deadlineMs: 1_000
+          });
+        }
+        const overdue = { ...begin("tree-overdue"), ...scope, startedAt: NOW + 100 };
+        yield* log.begin(overdue);
+        yield* TestClock.setTime(overdue.deadline);
+
+        const page = yield* log.page({ ...scope, limit: 1 });
+        assert.deepStrictEqual(
+          page.entries.map((entry) => [entry.invocation.id, entry.invocation.outcome]),
+          [["tree-overdue", "unknown_outcome"]]
+        );
+        assert.isTrue(page.more);
+        const older = yield* log.page({ ...scope, before: "tree-overdue", limit: 1 });
+        const [entry] = older.entries;
+        assert.strictEqual(entry?.invocation.id, root.id);
+        assert.strictEqual(entry?.tree.length, InvocationLog.TREE_LIMIT);
+        assert.strictEqual(entry?.treeTotal, InvocationLog.TREE_LIMIT + 1);
+        assert.deepStrictEqual(entry?.tree[0]?.outcome, "unknown_outcome");
+        assert.isFalse(older.more);
+        assert.deepStrictEqual(
+          (yield* log.page({ ...scope, filter: { outcome: "unknown" }, limit: 5 })).entries.length,
+          2
+        );
+        assert.deepStrictEqual(
+          yield* log.page({ ...scope, patchId: "otherpatch", before: "tree-overdue", limit: 5 }),
+          { entries: [], more: false }
+        );
+        assert.deepStrictEqual(yield* log.choices(scope), {
+          handlers: ["leads.approve"],
+          viewerIds: [DEV_SEED.userId]
+        });
+      })
   );
 });

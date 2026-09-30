@@ -426,6 +426,12 @@ export function htmlPage(options: {
       color: var(--green-ink);
     }
 
+    /* pill-failed: failed and refused outcomes, danger ink on amber like btn-danger. */
+    .pill-failed {
+      background: var(--paper-amber);
+      color: var(--danger);
+    }
+
     h1,
     h2,
     h3 {
@@ -613,12 +619,19 @@ export function htmlPage(options: {
     .list-row p { margin: 0 0 8px; }
     .list-row summary { margin: 12px 0; cursor: pointer; }
     .list-compact .list-row { padding: 4px 0; border-bottom: 0; }
+    /* list-tree: a row's children indented under a left rule, such as the steps inside a log entry. Use with list list-compact. */
+    .list-tree { margin: 8px 0 12px 6px; padding-left: 16px; border-left: 1px solid var(--line-strong); }
     .list-link { display: block; min-height: 44px; padding: 8px 10px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; }
     .list-link:hover { background: var(--paper-blue); }
     .list-link[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
     .table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .9rem; overflow-wrap: anywhere; }
     .table th, .table td { padding: 10px 8px; border-bottom: 1px solid var(--line-strong); text-align: left; vertical-align: top; }
     .table th { color: var(--muted); font-weight: 750; }
+    /* An expandable table row: a table-expand row after its entry holds one full-width cell with a details. The entry
+       gives up its rule so the pair reads as one row, and the summary takes the list-row summary's pointer. */
+    .table tr:has(+ .table-expand) > * { border-bottom: 0; }
+    .table-expand > td { padding-top: 0; }
+    .table-expand summary { margin: 0 0 8px; cursor: pointer; }
     .copy-address { user-select: all; overflow-wrap: anywhere; }
     .code-panel { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }
     .actions, .confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }

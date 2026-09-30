@@ -64,6 +64,7 @@ import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
+  InvocationLog,
   Runtime,
   RuntimeProduction,
   RuntimeApi,
@@ -178,6 +179,7 @@ const services = Layer.mergeAll(
     )
   ),
   Layer.provideMerge(RuntimeLog.layer),
+  Layer.provideMerge(InvocationLog.layer),
   Layer.provideMerge(MemberDirectory.layer),
   Layer.provideMerge(resourceChanges),
   Layer.provideMerge(WakesPostgres.layer),

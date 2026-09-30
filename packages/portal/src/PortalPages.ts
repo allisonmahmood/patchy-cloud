@@ -12,6 +12,8 @@ import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
+import { InvocationLog } from "@patchy/runtime";
+import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
   ago,
   type ConfirmationAction,
@@ -63,6 +65,9 @@ const decodeReassign = Schema.decodeUnknownEffect(
 
 type Action = "description" | "scope" | "rollback" | ConfirmationAction;
 const forbidden = "Only the owner or an admin can do that. Nothing was done.";
+const logForbidden = "Only the owner or an admin can read this patch's log.";
+const isOutcomeFilter = Schema.is(Schema.Literals(outcomeFilters.map(([value]) => value)));
+const maxFilterLength = 256;
 const adminRequired = "Only an admin can reassign this patch. Nothing was done.";
 
 const context = Effect.gen(function* () {
@@ -99,6 +104,37 @@ const errorPage = Effect.fn("PortalPages.errorPage")(function* (
     },
     session
   );
+});
+
+/** Stored ids in the reader's words: company members' names, version numbers and the patch's title. */
+const logNames = Effect.fn("PortalPages.logNames")(function* (
+  card: Patches.PortalCard,
+  companyId: string
+) {
+  const members = yield* (yield* Users.Users).list(companyId);
+  return {
+    people: new Map(members.map((member) => [member.id, member.name])),
+    versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
+    patch: card.patch.title.trim() || card.patch.name
+  } satisfies LogNames;
+});
+
+/** W-2 on the card: the owner's and admins' last three entries, once the patch has any or serves tier 2. */
+const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
+  card: Patches.PortalCard,
+  all: boolean,
+  now: number
+) {
+  const { viewer } = yield* context;
+  if (viewer.role !== "admin" && card.owner.id !== viewer.user.id) return "";
+  const { entries } = yield* (yield* InvocationLog.InvocationLog).page({
+    companyId: viewer.company.id,
+    patchId: card.patch.id,
+    limit: 3
+  });
+  if (entries.length === 0 && card.tier < 2) return "";
+  const names = yield* logNames(card, viewer.company.id);
+  return renderRecentActivity({ patch: card.patch, all, now, names, entries });
 });
 
 const overlongName = errorPage(
@@ -144,6 +180,7 @@ const render = Effect.fn("PortalPages.render")(function* (
           all,
           now,
           publicBaseUrl: session.publicBaseUrl,
+          activity: card === null ? "" : yield* recentActivity(card, all, now),
           notice: options.notice,
           submittedDescription: options.submittedDescription,
           descriptionError: options.descriptionError
@@ -224,6 +261,62 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
       }),
       styles,
       status: form.status ?? 200,
+      app: { viewer, section: "patches" }
+    },
+    session
+  );
+});
+
+/** The patch's log for its current owner and admins: newest first, filtered and paged by cursor. */
+const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
+  const { viewer, session, all, access } = yield* context;
+  if (name.length > maxNameLength) return yield* overlongName;
+  if (!isName(name))
+    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  const patches = yield* Patches.Patches;
+  const selected = (yield* patches.read({ ...access, state: "all" })).find(
+    (row) => row.patch.name === name
+  );
+  if (selected === undefined)
+    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  // Ownership is read now, so reassignment moves who may read the log.
+  if (viewer.role !== "admin" && selected.owner.id !== viewer.user.id)
+    return yield* render(name, { status: 403, notice: logForbidden });
+  const card = yield* patches.portalCard(selected.patch.id, access);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const query = new URL(request.url, session.publicBaseUrl).searchParams;
+  const param = (key: string) => {
+    const value = query.get(key);
+    return value === null || value === "" || value.length > maxFilterLength ? undefined : value;
+  };
+  const outcome = param("outcome");
+  const filter = {
+    outcome: isOutcomeFilter(outcome) ? outcome : undefined,
+    viewerId: param("person"),
+    handler: param("handler")
+  };
+  const before = param("before");
+  const log = yield* InvocationLog.InvocationLog;
+  const scope = { companyId: viewer.company.id, patchId: card.patch.id };
+  const page = yield* log.page({ ...scope, before, filter, limit: 25 });
+  const choices = yield* log.choices(scope);
+  const names = yield* logNames(card, viewer.company.id);
+  return pageResponse(
+    {
+      title: `${card.patch.name} log`,
+      heading: "",
+      body: renderLog({
+        patch: card.patch,
+        all,
+        now: yield* Clock.currentTimeMillis,
+        names,
+        entries: page.entries,
+        more: page.more,
+        before,
+        filter,
+        choices
+      }),
+      styles,
       app: { viewer, section: "patches" }
     },
     session
@@ -445,6 +538,11 @@ const patchRoutes = [
     path: "/patches/:name/versions" as const,
     handle: (name: string) => render(name, { versions: true })
   },
+  {
+    method: "GET" as const,
+    path: "/patches/:name/log" as const,
+    handle: logPage
+  },
   ...(["retire", "delete", "restore", "reassign"] as const).map((action) => ({
     method: "GET" as const,
     path: `/patches/:name/${action}` as const,
@@ -465,7 +563,12 @@ export const layer: Layer.Layer<
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
-      Session.Session | Companies.Companies | Users.Users | Patches.Patches | SqlClient.SqlClient
+      | Session.Session
+      | Companies.Companies
+      | Users.Users
+      | Patches.Patches
+      | InvocationLog.InvocationLog
+      | SqlClient.SqlClient
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {

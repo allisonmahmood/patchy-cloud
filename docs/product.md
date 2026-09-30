@@ -279,7 +279,7 @@ A published patch is shared with **everyone in the company** by default, or made
 
 A person finds a patch in the portal or through its shared address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is. See [Addresses](#addresses).
 
-**The portal is built.** Signed out, `/` shows the login door. Signed in, it shows an index grouped Yours and Company, with Retired and deleted behind a toggle, beside one patch's card at `/patches/<name>`. The first of Yours is selected, otherwise the first live patch. An empty company gets instructions for publishing its first patch; an off-only company keeps the toggle and an empty live index. The name leads, with the description's first clause in the index and a distinct document title at most a secondary line on the card. The card shows its address with Open, description and editor, owner and deactivation status, current version and publisher, who can open it, and the first three patches that read its shared tables or stores. Owners and admins edit descriptions, sharing and served versions inline and restore off patches whose current sources are live. The full versions page is at `/patches/<name>/versions`. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign have confirmation pages under the card's URL. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches. The index has no search or paging.
+**The portal is built.** Signed out, `/` shows the login door. Signed in, it shows an index grouped Yours and Company, with Retired and deleted behind a toggle, beside one patch's card at `/patches/<name>`. The first of Yours is selected, otherwise the first live patch. An empty company gets instructions for publishing its first patch; an off-only company keeps the toggle and an empty live index. The name leads, with the description's first clause in the index and a distinct document title at most a secondary line on the card. The card shows its address with Open, description and editor, owner and deactivation status, current version and publisher, who can open it, and the first three patches that read its shared tables or stores. Owners and admins edit descriptions, sharing and served versions inline and restore off patches whose current sources are live. The full versions page is at `/patches/<name>/versions`. The patch's log is at `/patches/<name>/log`, and its card shows the owner and admins the last three entries under Recent activity. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign have confirmation pages under the card's URL. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches. The index has no search or paging.
 
 The portal, Company, Connections and Your machines share one app shell with section navigation, the viewer's name and company, and sign-out. First-party pages use one component set for buttons, fields, fact lists, selectable index rows, tables, notices, headings, pills and confirmation forms. Sign-in, create-or-join, device confirmation and error doors keep the card shell. Portal not-found pages keep the app shell.
 
@@ -457,6 +457,18 @@ Its ECS provider runs credential-free company tasks in private subnets, with
 one workerd process per loaded version. Each task shares its half-vCPU CPU budget
 across the supervisor and all loaded processes; process separation does not
 promise unchanged sibling latency under CPU contention.
+
+**The log view is built.** A patch's current owner and every company admin read
+its log in the portal at `/patches/<name>/log`; reassignment moves the owner's
+access. Each row is a top-level invocation, newest first: who initiated it, the
+version, handler and kind, the settled outcome and timing. It expands into the
+calls it made and nested handlers, each with its effective principal ("as the
+patch" or as the viewer), and the patch's `ctx.log` lines. A reply the page never
+received still shows the real settled outcome, marked "reply not delivered". The
+page filters by outcome, person and handler, pages 25 entries at a time by cursor
+and shows at most 50 steps per entry. It is an attribution record, not an access
+audit, and `ctx.log` text is the patch's own. The card shows the owner and admins
+the last three entries under Recent activity.
 
 Metering records calls and database-held milliseconds from the first admitted
 invocation, independently of best-effort request events. Invocation rows record
@@ -804,8 +816,9 @@ Every mutation is attributed in the runtime log before execution; table and file
 reads are not logged. Public versions refuse table and file access; the member
 directory exception does not grant access to stored resources. Older
 manifests remain usable after additive changes, including inserts omitting newer
-columns. Admins own the audit view, not extra powers inside patch code; today's
-log reader is the recent-calls list per connection, not a general mutation browser.
+columns. Admins own the audit view, not extra powers inside patch code. Admins read the
+recent-calls list per connection; a patch's current owner and every admin read its
+log, described under Tier 2.
 
 ### Shared tables
 

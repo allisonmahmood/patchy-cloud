@@ -26,6 +26,7 @@
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/patches": "workspace:*",
+    "@patchy/runtime": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
