@@ -74,6 +74,9 @@ the local executor. Built fleet code is not a claim that role-only Fargate
 acceptance or production deployment is complete. Keep the catalogue's prose
 current alongside the skill templates; generation replaces the marker with
 that prose, not with a hand-edited project copy.
+The catalogue's owned-row, batch, file and Postgres-result byte figures use
+`runtimeByteLimits` from `@patchy/api`, which reads the Limits registry. These
+figures are generated from the enforced constants, not maintained as prose literals.
 
 Each capability has a stable `id`, `group`, `name`, `entrypoints`, `runs` and
 `limits`. Keep its id when wording changes. Refresh compares the old managed

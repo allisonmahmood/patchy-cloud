@@ -47,8 +47,8 @@ export function renderApiMarkdown(): string {
   const lines: string[] = [
     `# ${spec.info.title}`,
     "",
-    "Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`. Do not",
-    "edit by hand: a test fails when this file and the schemas disagree.",
+    "Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`.",
+    "Edit the schemas or renderer, then regenerate this file. There is no automated API-document drift check.",
     "",
     spec.info.description ?? "",
     ""

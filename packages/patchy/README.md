@@ -1,13 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes static HTML files and tier 0, 1 and 2 repos. Tier 2 runs on the ECS fleet in production and the local executor in dev and tests. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
-
-The fleet implementation is built. Role-only Fargate acceptance remains pending
-the IAM grant in [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)
-and [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439). Production
-infrastructure and the first deploy remain unbuilt
-[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
-[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes static HTML files and tier 0, 1 and 2 repos. Tier 2 runs handlers on hosted execution and on the local executor under `patchy dev`. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 

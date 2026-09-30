@@ -23,8 +23,9 @@ The wire contract is its own package, `@patchy/api`, beside neither context.
    or sends on `/api/*` is described by schemas in `packages/api/src`,
    including runtime operations, streams and handler descriptors. The server encodes its
    responses and decodes its request bodies through them; the CLI decodes what it
-   reads through them; `docs/API.md` is rendered from them and a test fails when
-   the file drifts. A shape that exists in one place cannot disagree with itself.
+   reads through them. Regenerate `docs/API.md` with
+   `pnpm --filter @patchy/api render-docs` after changing the contract or its
+   documentation; no automated API-document drift check currently runs.
    A publish success is encoded once when its version is recorded. Both the
    initial response and later replays return the stored JSONB representation;
    a replay never applies today's schema to a historical response.

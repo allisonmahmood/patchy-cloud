@@ -1,3 +1,5 @@
+import { runtimeByteLimits } from "@patchy/api";
+
 export interface SdkCapability {
   /** Stable across releases; refresh compares ids rather than display text. */
   readonly id: string;
@@ -80,7 +82,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "Server handlers",
     entrypoints: ["patchy/_generated/client.ts: patchy.server", "patchy/_generated/server.ts"],
-    runs: "Tier 2 company pages; ECS fleet execution in production, local execution in dev and tests",
+    runs: "Tier 2 company pages through hosted execution and the local executor under patchy dev",
     limits:
       "Queries share a read-only snapshot with a 3-second deadline; resource-free queries need no company database. Mutations use one SERIALIZABLE transaction, up to three attempts in 5 seconds and a keyed retry() for unknown outcomes. Actions have 60 seconds, declared connections and nested queries or mutations. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB, mutation results 64 KiB and query/action results 8 MiB. Local dev uses the same engine and callback path with live server rebinding and a colleague mount, not production scheduling, operating capacity or containment."
   },
@@ -105,8 +107,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "patchy/_generated/server.ts: ctx.tables"
     ],
     runs: "Tier 1 pages through the broker; tier 2 queries, mutations and actions; local PGlite in patchy dev",
-    limits:
-      "Indexed reads. Tier 1 writes act as the viewer, with no cross-call transaction or row-level authorization. Tier 2 writes act as the patch; mutation handlers group owned-table operations into one transaction and enforce the patch's rules. Queries are read-only. Rows are at most 1 MiB, batches at most 1,000 rows and 8 MiB, and list pages at most 1,000 rows."
+    limits: `Indexed reads. Tier 1 writes act as the viewer, with no cross-call transaction or row-level authorization. Tier 2 writes act as the patch; mutation handlers group owned-table operations into one transaction and enforce the patch's rules. Queries are read-only. Rows are at most ${runtimeByteLimits.rowBytes / 1024 ** 2} MiB, batches at most 1,000 rows and ${runtimeByteLimits.batchBytes / 1024 ** 2} MiB, and list pages at most 1,000 rows.`
   },
   {
     id: "primitives.files",
@@ -117,8 +118,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "patchy/_generated/server.ts: ctx.files"
     ],
     runs: "Tier 1 pages through the broker; tier 2 queries read metadata and actions read or write bytes; downloads through the shell; local files in patchy dev",
-    limits:
-      "Objects are at most 20 MiB; names are at most 512 UTF-8 bytes. Tier 1 url(name) returns a frame-local blob URL, not a public link. Tier 2 pages use handles returned by handlers, not store names. File writes are not part of a mutation transaction. A shared store publishes read access to every file."
+    limits: `Objects are at most ${runtimeByteLimits.fileBytes / 1024 ** 2} MiB; names are at most 512 UTF-8 bytes. Tier 1 url(name) returns a frame-local blob URL, not a public link. Tier 2 pages use handles returned by handlers, not store names. File writes are not part of a mutation transaction. A shared store publishes read access to every file.`
   },
   {
     id: "core.file-handles",
@@ -190,8 +190,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "patchy/_generated/server.ts: ctx.connections"
     ],
     runs: "Tier 1 pages through the broker; tier 2 actions; synthetic fixtures in patchy dev",
-    limits:
-      "Declare a connected company source. Read-only queries return at most 1,000 rows and 8 MiB, with a 10-second statement timeout and a 15-second service deadline bounded by the action's remaining time. Credentials stay with Patchy and access is checked on each call. Queries and mutations cannot use ctx.connections; Postgres reads are not live-query dependencies."
+    limits: `Declare a connected company source. Read-only queries return at most 1,000 rows and ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB, with a 10-second statement timeout and a 15-second service deadline bounded by the action's remaining time. Credentials stay with Patchy and access is checked on each call. Queries and mutations cannot use ctx.connections; Postgres reads are not live-query dependencies.`
   },
   {
     id: "helpers.csv",
@@ -206,7 +205,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
-  Core: "The ECS fleet implementation is built. Role-only Fargate acceptance and the first production deploy remain pending. window.print() works in the frame, including browser print-to-PDF.",
+  Core: "window.print() works in the frame, including browser print-to-PDF.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
