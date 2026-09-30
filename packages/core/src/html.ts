@@ -624,9 +624,7 @@ export function htmlPage(options: {
     .list-link { display: block; min-height: 44px; padding: 8px 10px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; }
     .list-link:hover { background: var(--paper-blue); }
     .list-link[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
-    /* break-word, not anywhere: words stay whole in the column widths, so a narrow table scrolls in its wrapper instead of
-       splitting "Version"; only a token wider than the whole table breaks. */
-    .table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .9rem; overflow-wrap: break-word; }
+    .table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .9rem; overflow-wrap: anywhere; }
     .table th, .table td { padding: 10px 8px; border-bottom: 1px solid var(--line-strong); text-align: left; vertical-align: top; }
     .table th { color: var(--muted); font-weight: 750; }
     /* An expandable table row: a table-expand row after its entry holds one full-width cell with a details. The entry

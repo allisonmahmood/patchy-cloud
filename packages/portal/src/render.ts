@@ -18,7 +18,8 @@ export const styles = `
   .log-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0 12px; align-items: end; margin: 8px 0 20px; }
   .log-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .log-outcome { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  .log-table { min-width: 880px; }
+  /* Log cells keep words whole, so on a phone the table scrolls in portal-table rather than splitting "Version". */
+  .log-table { min-width: 880px; overflow-wrap: break-word; }
   .log-table time { white-space: nowrap; }
   @media (max-width: 860px) {
     .portal { grid-template-columns: minmax(0, 1fr); }
