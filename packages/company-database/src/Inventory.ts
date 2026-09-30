@@ -301,7 +301,7 @@ export const upgrade = Effect.gen(function* () {
       content_type text NOT NULL,
       sha256 text NOT NULL,
       expires_at timestamptz NOT NULL,
-      state text NOT NULL CHECK (state IN ('writing', 'staged', 'adopted', 'discarded')),
+      state text NOT NULL CHECK (state IN ('writing', 'staged', 'discarded')),
       CHECK (token IS NULL OR (viewer_id IS NOT NULL AND version_id IS NOT NULL))
     )`);
   }
@@ -309,7 +309,7 @@ export const upgrade = Effect.gen(function* () {
     WHERE schemaname = 'patchy' AND indexname = 'file_uploads_expiry'`;
   if (uploadExpiry.length === 0)
     yield* sql.unsafe(`CREATE INDEX IF NOT EXISTS file_uploads_expiry
-      ON patchy.file_uploads (expires_at) WHERE state <> 'adopted'`);
+      ON patchy.file_uploads (expires_at)`);
   const handleKeys = yield* sql`SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'patchy' AND table_name = 'file_handle_key'`;
   if (handleKeys.length === 0) {

@@ -851,7 +851,7 @@ defines. An object id alone never authorizes adoption. A content type is a claim
 lock the same stage row; whichever commits first wins, and later attempts return
 `not_found`. Unadopted uploads expire after one hour. The sweep preserves every
 referenced or live-staged object and serializes deletion with adoption and
-unfinished writes. Staging and discard are unlogged transport; adoption logs
+unfinished staging writes. Staging and discard are unlogged transport; adoption logs
 the existing file write as the patch.
 
 A stage is at most 20 MiB. Each viewer may hold at most 16 stages and 100 MiB per

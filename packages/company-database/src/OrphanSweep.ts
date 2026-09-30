@@ -183,33 +183,47 @@ export const make = Effect.gen(function* () {
         ORDER BY object_id LIMIT ${BATCH_SIZE}`;
     })
   });
-  const reclaimUpload = Effect.fn("OrphanSweep.reclaimUpload")(function* (object: FileReference) {
-    return yield* CompanyDatabases.withFileObjectsLock(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const now = DateTime.formatIso(yield* DateTime.now);
-        const expired = yield* sql`SELECT object_id FROM patchy.file_uploads
-        WHERE object_id = ${object.objectId}
-          AND (state = 'discarded' OR (state IN ('writing', 'staged') AND expires_at <= ${now}::timestamptz))
-        FOR UPDATE`;
-        if (expired.length === 0) return false;
-        const references =
-          yield* sql`SELECT 1 FROM patchy.files WHERE object_id = ${object.objectId}`;
-        if (references.length !== 0) {
-          yield* sql`UPDATE patchy.file_uploads SET state = 'adopted' WHERE object_id = ${object.objectId}`;
-          return false;
-        }
-        // Adoption and late write completion need this same lock and a live row.
-        yield* store.delete(`files/${object.patchId}/${object.objectId}`);
-        yield* sql`DELETE FROM patchy.file_uploads WHERE object_id = ${object.objectId}`;
-        return true;
-      })
+  const reclaimUpload = Effect.fn("OrphanSweep.reclaimUpload")(function* (
+    companyId: string,
+    object: FileReference
+  ) {
+    const revision = yield* withCompany(
+      companyId,
+      CompanyDatabases.withFileObjectsLock(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const references =
+            yield* sql`SELECT 1 FROM patchy.files WHERE object_id = ${object.objectId}`;
+          if (references.length !== 0) return undefined;
+          const rows = yield* sql<{ revision: string }>`UPDATE patchy.file_uploads
+            SET state = 'discarded'
+            WHERE object_id = ${object.objectId}
+              AND (state = 'discarded' OR (state IN ('writing', 'staged') AND expires_at <= ${now}::timestamptz))
+            RETURNING xmin::text AS revision`;
+          return rows[0]?.revision;
+        })
+      )
     );
+    if (revision === undefined) return false;
+    // A discarded row fences adoption and late completion without retaining a lease.
+    yield* store.delete(`files/${object.patchId}/${object.objectId}`);
+    yield* withCompany(
+      companyId,
+      Effect.flatMap(
+        CompanyDatabases.CompanyConnection,
+        (sql) =>
+          // A late writer may replace the tombstone while DELETE is in flight.
+          sql`DELETE FROM patchy.file_uploads WHERE object_id = ${object.objectId}
+          AND state = 'discarded' AND xmin::text = ${revision}`
+      )
+    );
+    return true;
   });
 
   const reclaimFile = Effect.fn("OrphanSweep.reclaimFile")(
     function* (key: string, reference: FileReference) {
-      return yield* platform.withTransaction(
+      const reclaim = yield* platform.withTransaction(
         Effect.gen(function* () {
           const owners = yield* lockPlatformPatch(reference.patchId).pipe(
             Effect.catchTags({ SchemaError: Effect.die })
@@ -220,29 +234,40 @@ export const make = Effect.gen(function* () {
             // object keys, never-reused patch IDs, and the one-day object grace
             // exceeding a new publication's 60s deadline. A concurrent create
             // cannot legitimately introduce a reference to this old object.
-            yield* store.delete(key);
-            return true;
+            return { companyId: undefined, revision: undefined };
           }
           return yield* companies.withCompany(owners[0]!.companyId)(
             companies.withPatchLock(reference.patchId)(
               CompanyDatabases.withFileObjectsLock(
                 Effect.gen(function* () {
-                  // Publish holds the platform/patch locks; both forms of put also
-                  // hold the object lock before attaching an immutable object.
                   const references = yield* fileReferences([reference]).pipe(
                     Effect.catchTags({ SchemaError: Effect.die })
                   );
-                  if (references.length !== 0) return false;
-                  yield* store.delete(key);
+                  if (references.length !== 0) return undefined;
                   const sql = yield* SqlClient.SqlClient;
-                  yield* sql`DELETE FROM patchy.file_uploads WHERE object_id = ${reference.objectId}`;
-                  return true;
+                  const rows = yield* sql<{ revision: string }>`UPDATE patchy.file_uploads
+                    SET state = 'discarded' WHERE object_id = ${reference.objectId}
+                    RETURNING xmin::text AS revision`;
+                  return { companyId: owners[0]!.companyId, revision: rows[0]?.revision };
                 })
               )
             )
           );
         })
       );
+      if (reclaim === undefined) return false;
+      yield* store.delete(key);
+      if (reclaim.companyId !== undefined && reclaim.revision !== undefined)
+        yield* withCompany(
+          reclaim.companyId,
+          Effect.flatMap(
+            CompanyDatabases.CompanyConnection,
+            (sql) =>
+              sql`DELETE FROM patchy.file_uploads WHERE object_id = ${reference.objectId}
+              AND state = 'discarded' AND xmin::text = ${reclaim.revision}`
+          )
+        );
+      return true;
     },
     // Release the platform row as well as the company lease before waiting.
     retryBusy
@@ -263,73 +288,81 @@ export const make = Effect.gen(function* () {
     if (placements === undefined) return { ...result, failed: 1 };
 
     for (const placement of placements) {
-      const scan = withCompany(
-        placement.companyId,
-        Effect.gen(function* () {
-          const sql = yield* CompanyDatabases.CompanyConnection;
-          yield* sql`DELETE FROM patchy.mutation_keys
-            WHERE issued_at < to_timestamp(${DateTime.toEpochMillis(now) - keyLifetime}::double precision / 1000)`;
-          yield* sql`DELETE FROM patchy.file_uploads AS upload
-            WHERE state = 'adopted'
-              AND NOT EXISTS (SELECT 1 FROM patchy.files WHERE object_id = upload.object_id)`;
-          let afterUpload = "";
-          while (true) {
-            const uploads = yield* expiredUploads({
-              after: afterUpload,
-              now: DateTime.formatIso(now)
-            }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-            for (const upload of uploads)
-              yield* reclaimUpload(upload).pipe(
-                Effect.tap((deleted) =>
-                  Effect.sync(() => {
-                    if (deleted) result.filesDeleted += 1;
-                  })
-                ),
-                Effect.catch((error) =>
-                  Effect.logWarning("Orphan sweep could not expire an upload.", error._tag).pipe(
-                    Effect.andThen(
-                      Effect.sync(() => {
-                        result.failed += 1;
-                      })
-                    )
+      const scan = Effect.gen(function* () {
+        yield* withCompany(
+          placement.companyId,
+          Effect.flatMap(
+            CompanyDatabases.CompanyConnection,
+            (sql) =>
+              sql`DELETE FROM patchy.mutation_keys
+              WHERE issued_at < to_timestamp(${DateTime.toEpochMillis(now) - keyLifetime}::double precision / 1000)`
+          )
+        );
+        let afterUpload = "";
+        while (true) {
+          const uploads = yield* withCompany(
+            placement.companyId,
+            expiredUploads({ after: afterUpload, now: DateTime.formatIso(now) })
+          ).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+          for (const upload of uploads)
+            yield* reclaimUpload(placement.companyId, upload).pipe(
+              Effect.tap((deleted) =>
+                Effect.sync(() => {
+                  if (deleted) result.filesDeleted += 1;
+                })
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning("Orphan sweep could not expire an upload.", error._tag).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      result.failed += 1;
+                    })
                   )
                 )
-              );
-            if (uploads.length < BATCH_SIZE) break;
-            afterUpload = uploads[uploads.length - 1]!.objectId;
-          }
-          let after = "";
-          while (true) {
-            const batch = yield* namespaces(after).pipe(
-              Effect.catchTags({ SchemaError: Effect.die })
+              )
             );
-            for (const row of batch) {
-              yield* reclaimNamespace(row.namespace, cutoff).pipe(
-                Effect.tap((deleted) =>
-                  Effect.sync(() => {
-                    if (deleted) result.namespacesDeleted += 1;
-                  })
-                ),
-                Effect.catch((error) =>
-                  Effect.logWarning("Orphan sweep could not reclaim a namespace.", error._tag).pipe(
-                    Effect.annotateLogs({
-                      companyId: placement.companyId,
-                      namespace: row.namespace
-                    }),
-                    Effect.andThen(
-                      Effect.sync(() => {
-                        result.failed += 1;
-                      })
+          if (uploads.length < BATCH_SIZE) break;
+          afterUpload = uploads[uploads.length - 1]!.objectId;
+        }
+        yield* withCompany(
+          placement.companyId,
+          Effect.gen(function* () {
+            let after = "";
+            while (true) {
+              const batch = yield* namespaces(after).pipe(
+                Effect.catchTags({ SchemaError: Effect.die })
+              );
+              for (const row of batch) {
+                yield* reclaimNamespace(row.namespace, cutoff).pipe(
+                  Effect.tap((deleted) =>
+                    Effect.sync(() => {
+                      if (deleted) result.namespacesDeleted += 1;
+                    })
+                  ),
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      "Orphan sweep could not reclaim a namespace.",
+                      error._tag
+                    ).pipe(
+                      Effect.annotateLogs({
+                        companyId: placement.companyId,
+                        namespace: row.namespace
+                      }),
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          result.failed += 1;
+                        })
+                      )
                     )
                   )
-                )
-              );
+                );
+              }
+              if (batch.length < BATCH_SIZE) break;
+              after = batch[batch.length - 1]!.namespace;
             }
-            if (batch.length < BATCH_SIZE) break;
-            after = batch[batch.length - 1]!.namespace;
-          }
-        })
-      );
+          })
+        );
+      });
       // Upgrade retained inventory before taking a lease or any patch locks.
       yield* companies.ensureReady(placement.companyId).pipe(
         Effect.andThen(scan),

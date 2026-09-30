@@ -101,8 +101,10 @@ adopts with host-resolved metadata, refuses reuse and discarded uploads, and
 retains the file after a failed follow-up mutation. `devExecution.test.ts`
 executes staged adoption on workerd over PGlite. File contracts cover atomic
 stage quotas and discard/adoption races on Postgres; orphan sweep checks cover
-one-hour expiry and late byte-write completion. Inventory contracts initialize
-retained databases twice and preserve staged/adopted rows.
+one-hour expiry and late staging completion. A paused blob deletion must not
+block unrelated puts or adoption, and a delayed delete acknowledgement must not
+erase a late writer's cleanup retry. Inventory contracts initialize retained
+databases twice and preserve outstanding upload rows.
 Wide-event contracts cover successful and refused quota peaks, company override
 revisions, and both advertised-length and streaming byte overflows.
 

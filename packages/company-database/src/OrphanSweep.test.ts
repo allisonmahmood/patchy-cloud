@@ -86,8 +86,7 @@ for (const [name, database] of [
                   ["expired", "staged", NOW],
                   ["live", "staged", NOW + 1],
                   ["writing", "writing", NOW + 1],
-                  ["discarded", "discarded", NOW + 3_600_000],
-                  ["adopted", "adopted", NOW - 3_600_000]
+                  ["discarded", "discarded", NOW + 3_600_000]
                 ] as const)
                   yield* sql`INSERT INTO patchy.file_uploads
                 (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)

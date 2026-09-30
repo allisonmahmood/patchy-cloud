@@ -71,7 +71,7 @@ Publish commits, retire, delete and restore first take a company-keyed transacti
 
 `withCompany` supplies a typed company-connection capability. `withPatchLock` requires that capability and supplies a patch-lock capability tied to its patch id and transaction. Definition-inventory mutations require the latter and reject a mismatched patch id before writing; they do not quietly start independent transactions. Raw SQL for resource DDL follows the same outer lock protocol.
 
-Runtime file operations are company-only: `LoadedVersions` admission supplies patch liveness and viewer authority, never a second platform lookup inside `Files`. `withFileLock` requires a company lease and serializes the index entry for one patch/store/name using a distinct advisory key. Its file-lock capability carries that identity; index writes reject a mismatched patch, store or name. Put reserves a unique object, releases its lease for blob I/O, then takes the name lock and company object lock before changing the pointer. Get reads its pointer under the name lock and releases the lease before fetching bytes. Delete changes only the index, and list uses a lease without a write lock. Blob transfers hold neither platform nor company transactions. Unrelated names do not share a file lock; their short object-state transactions serialize with quota accounting and reclamation. Failed or interrupted puts leave reservations for the sweep.
+Runtime file operations are company-only: `LoadedVersions` admission supplies patch liveness and viewer authority, never a second platform lookup inside `Files`. `withFileLock` requires a company lease and serializes the index entry for one patch/store/name using a distinct advisory key. Its file-lock capability carries that identity; index writes reject a mismatched patch, store or name. Ordinary byte puts write a fresh immutable object outside leases, then take only the name lock to change the pointer. They neither reserve uploads nor take the company object lock. Get reads its pointer under the name lock and releases the lease before fetching bytes. Delete changes only the index, and list uses a lease without a write lock. Blob transfers hold neither platform nor company transactions. Failed or interrupted byte puts leave unreferenced objects for the one-day sweep; the admitted mutation deadline is shorter than that grace period.
 
 Shared-table reads resolve source liveness through `LoadedVersions` before
 leasing the company database; they never query or lock platform rows inside
@@ -106,7 +106,7 @@ and never reused or moved between stores; replacement writes a new object.
 Redemption checks the live pointer before source authority and releases the
 company lease before fetching bytes.
 
-`patchy.file_uploads` records writing, staged, adopted and discarded objects.
+`patchy.file_uploads` records writing, staged and discarded uploads.
 Initialization adds it idempotently without changing existing rows or migrating
 old object keys. Staging may initialize company storage without creating a patch
 namespace or requiring a store. Quota reservations commit before blob I/O and
@@ -115,10 +115,11 @@ the current operating override before leasing the company database.
 
 An upload token binds company, viewer, consuming patch and loaded version.
 Adoption and discard lock its live stage row under the object lock; adoption
-also holds the destination name lock first. Adoption changes only the pointer
-and stage state in one transaction. Every completion checks its reservation is
-still live, so a write finishing after reclamation cannot attach missing bytes.
-Staged uploads expire after one hour, independently of object timestamps.
+also holds the destination name lock first. Adoption inserts the pointer and
+deletes the upload row in one transaction. Consumed uploads retain no duplicate
+file metadata. Staging completion checks its reservation is still live, so a
+stage finishing after reclamation cannot become adoptable. Staged uploads
+expire after one hour, independently of object timestamps.
 
 The deletion sweep reclaims deleted patches after their 30-day recovery window.
 It locks the platform row, rechecks the delete deadline and takes the company
@@ -128,9 +129,9 @@ reclaims the company namespace and its files. Restore takes the same row lock.
 A crash after platform commit leaves an orphan namespace for the existing sweep;
 retire and delete inside the recovery window change no physical resources.
 
-The startup/hourly sweep reclaims namespaces with no platform patch row after a day, and immutable `files/<patchId>/<objectId>` objects unnamed by any file index or live stage after a day. Expired stages and incomplete writes are reclaimed at their one-hour deadline; discarded stages are eligible immediately. Namespace age is recorded with inventory; previously untracked schemas get a full grace period. An unavailable company database is not evidence that a file is unreferenced. Version cleanup never owns file objects.
+The startup/hourly sweep reclaims namespaces with no platform patch row after a day, and immutable `files/<patchId>/<objectId>` objects unnamed by any file index or live stage after a day. Expired stages and unfinished staging writes are reclaimed at their one-hour deadline; discarded stages are eligible immediately. Namespace age is recorded with inventory; previously untracked schemas get a full grace period. An unavailable company database is not evidence that a file is unreferenced. Version cleanup never owns file objects.
 
-Before deleting an old unreferenced file belonging to an existing patch, the sweep locks its platform row, takes the owning company patch lock and object lock, and rechecks both file pointers and live stages. The locks remain held through deletion. Expired-stage cleanup takes the object lock and stage row lock, then rechecks the pointer before deleting. Adoption takes the same locks, so a live or adopted file cannot be swept. Absent patch rows cannot be gap-locked; old-object cleanup relies on immutable object keys, never-reused patch ids and the one-day grace exceeding publication's deadline.
+Before deleting an old unreferenced file belonging to an existing patch, the sweep locks its platform row, takes the owning company patch lock and object lock, and rechecks both file pointers and live stages. Expired-stage cleanup also takes the object lock and rechecks the pointer. Both paths mark any upload row discarded and commit before deleting bytes, releasing every platform transaction and company lease. Adoption uses the same object lock and requires a live row, so it cannot attach an object claimed for reclamation. Failed blob deletions leave discarded rows for retry. Successful deletion removes only the claimed row version, using PostgreSQL's `xmin`, so a delayed acknowledgement cannot erase a late writer's newer cleanup tombstone. Absent patch rows cannot be gap-locked; old-object cleanup relies on immutable object keys, never-reused patch ids and the one-day grace exceeding publication and ordinary byte-put deadlines.
 
 Deletion and orphan passes run in independent scoped fibers. Each contains non-interruption failures per pass and retries at its next hourly tick; shutdown interruption still terminates both. A blocked or defective orphan pass cannot stop deletion.
 

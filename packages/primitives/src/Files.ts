@@ -385,31 +385,29 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
       return yield* new Runtime.AccessDenied({});
     return binding;
   });
-  const reserveObject = Effect.fn("Files.reserveObject")(function* (
+  const reserveUpload = Effect.fn("Files.reserveUpload")(function* (
     binding: Binding.Binding["Service"],
     bytes: Uint8Array,
-    contentType: string,
-    staged: boolean
+    contentType: string
   ) {
-    const companyBytes = staged ? yield* companyQuota(binding.companyId) : undefined;
-    if (staged)
-      yield* databases.ensureReady(binding.companyId).pipe(
-        Effect.mapError((cause) =>
-          cause._tag === "Busy"
-            ? new Busy({
-                resource: cause.resource,
-                scope: cause.scope,
-                limitId: cause.limitId,
-                value: cause.value,
-                retryAfterSeconds: cause.retryAfterSeconds,
-                cause
-              })
-            : new Runtime.SourceUnavailable({ cause })
-        )
-      );
+    const companyBytes = yield* companyQuota(binding.companyId);
+    yield* databases.ensureReady(binding.companyId).pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "Busy"
+          ? new Busy({
+              resource: cause.resource,
+              scope: cause.scope,
+              limitId: cause.limitId,
+              value: cause.value,
+              retryAfterSeconds: cause.retryAfterSeconds,
+              cause
+            })
+          : new Runtime.SourceUnavailable({ cause })
+      )
+    );
     const row = {
       objectId: newInternalId("obj"),
-      token: staged ? randomBytes(32).toString("base64url") : null,
+      token: randomBytes(32).toString("base64url"),
       size: bytes.byteLength,
       contentType,
       sha256: createHash("sha256").update(bytes).digest("hex")
@@ -420,47 +418,45 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           const now = DateTime.formatIso(yield* DateTime.now);
-          if (staged) {
-            // Reservations count before blob I/O, including writers on other replicas.
-            const [usage] = yield* sql<{
-              count: number;
-              viewerBytes: number;
-              companyBytes: number;
-            }>`SELECT
-              count(*) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id})::integer AS count,
-              coalesce(sum(size) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id}), 0)::double precision AS "viewerBytes",
-              coalesce(sum(size), 0)::double precision AS "companyBytes"
-              FROM patchy.file_uploads
-              WHERE token IS NOT NULL AND state IN ('writing', 'staged') AND expires_at > ${now}::timestamptz`;
-            const contractRevision = { deploymentRevision: "contract", overrideRevision: "0" };
-            const limits = [
-              {
-                limitId: "files.stage.count",
-                value: stageLimits.count,
-                peak: usage!.count + 1,
-                configRevision: contractRevision
-              },
-              {
-                limitId: "files.stage.viewerBytes",
-                value: stageLimits.viewerBytes,
-                peak: usage!.viewerBytes + row.size,
-                configRevision: contractRevision
-              },
-              {
-                limitId: "files.stage.companyBytes",
-                value: companyBytes!.value,
-                peak: usage!.companyBytes + row.size,
-                configRevision: companyBytes!.configRevision
-              }
-            ] as const;
-            yield* WideEvents.enrich({ limits });
-            for (const { limitId, value, peak } of limits)
-              if (peak > value) return yield* new Runtime.LimitExceeded({ limitId, value });
-          }
+          // Reservations count before blob I/O, including writers on other replicas.
+          const [usage] = yield* sql<{
+            count: number;
+            viewerBytes: number;
+            companyBytes: number;
+          }>`SELECT
+            count(*) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id})::integer AS count,
+            coalesce(sum(size) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id}), 0)::double precision AS "viewerBytes",
+            coalesce(sum(size), 0)::double precision AS "companyBytes"
+            FROM patchy.file_uploads
+            WHERE token IS NOT NULL AND state IN ('writing', 'staged') AND expires_at > ${now}::timestamptz`;
+          const contractRevision = { deploymentRevision: "contract", overrideRevision: "0" };
+          const limits = [
+            {
+              limitId: "files.stage.count",
+              value: stageLimits.count,
+              peak: usage!.count + 1,
+              configRevision: contractRevision
+            },
+            {
+              limitId: "files.stage.viewerBytes",
+              value: stageLimits.viewerBytes,
+              peak: usage!.viewerBytes + row.size,
+              configRevision: contractRevision
+            },
+            {
+              limitId: "files.stage.companyBytes",
+              value: companyBytes.value,
+              peak: usage!.companyBytes + row.size,
+              configRevision: companyBytes.configRevision
+            }
+          ] as const;
+          yield* WideEvents.enrich({ limits });
+          for (const { limitId, value, peak } of limits)
+            if (peak > value) return yield* new Runtime.LimitExceeded({ limitId, value });
           yield* sql`INSERT INTO patchy.file_uploads
             (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)
             VALUES (${row.objectId}, ${binding.patchId}, ${row.token},
-              ${staged ? binding.identity!.user.id : null}, ${staged ? binding.versionId : null},
+              ${binding.identity!.user.id}, ${binding.versionId},
               ${row.size}, ${row.contentType}, ${row.sha256},
               ${now}::timestamptz + ${stageLimits.lifetime} * interval '1 millisecond', 'writing')`;
         })
@@ -484,13 +480,10 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     );
     return row;
   });
-  const finishObject = Effect.fn("Files.finishObject")(function* (
-    objectId: string,
-    state: "staged" | "adopted"
-  ) {
+  const finishStage = Effect.fn("Files.finishStage")(function* (objectId: string) {
     const sql = yield* SqlClient.SqlClient;
     const now = DateTime.formatIso(yield* DateTime.now);
-    const rows = yield* sql`UPDATE patchy.file_uploads SET state = ${state}
+    const rows = yield* sql`UPDATE patchy.file_uploads SET state = 'staged'
       WHERE object_id = ${objectId} AND state = 'writing' AND expires_at > ${now}::timestamptz
       RETURNING object_id`;
     if (rows.length === 0) return yield* new ReservationExpired();
@@ -586,10 +579,10 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
             maxBytes: stageLimits.bytes,
             limitId: "files.stage.bytes"
           });
-        const row = yield* reserveObject(binding, bytes, args.contentType, true);
+        const row = yield* reserveUpload(binding, bytes, args.contentType);
         yield* withCompany(
           binding.companyId,
-          CompanyDatabases.withFileObjectsLock(finishObject(row.objectId, "staged"))
+          CompanyDatabases.withFileObjectsLock(finishStage(row.objectId))
         ).pipe(
           Effect.catchTags({
             FileReservationExpired: () =>
@@ -598,7 +591,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
               )
           })
         );
-        return { token: row.token!, size: row.size, contentType: row.contentType };
+        return { token: row.token, size: row.size, contentType: row.contentType };
       })
   } satisfies Runtime.BytesPutHandler;
   const inspectUpload = Runtime.handler(
@@ -660,7 +653,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
                 Effect.gen(function* () {
                   const sql = yield* SqlClient.SqlClient;
                   const row = yield* selectedUpload(binding, args.upload.token);
-                  yield* sql`UPDATE patchy.file_uploads SET state = 'adopted' WHERE object_id = ${row.objectId}`;
+                  yield* sql`DELETE FROM patchy.file_uploads WHERE object_id = ${row.objectId}`;
                   return yield* indexObject(binding, args.store, args.name, row);
                 })
               )
@@ -675,20 +668,17 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
           });
         return yield* withStore(args.store, (binding) =>
           Effect.gen(function* () {
-            const row = yield* reserveObject(binding, bytes, args.contentType, false);
-            // Name locks precede object locks, so a busy name cannot stall other files.
+            const row = {
+              objectId: newInternalId("obj"),
+              size: bytes.byteLength,
+              contentType: args.contentType,
+              sha256: createHash("sha256").update(bytes).digest("hex")
+            };
+            yield* content
+              .putBytes(objectKey(binding.patchId, row.objectId), bytes)
+              .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
             return yield* withWriteIndex(binding, args.store, args.name, () =>
-              CompanyDatabases.withFileObjectsLock(
-                Effect.gen(function* () {
-                  yield* finishObject(row.objectId, "adopted");
-                  return yield* indexObject(binding, args.store, args.name, row);
-                })
-              )
-            ).pipe(
-              Effect.catchTags({
-                FileReservationExpired: (error) =>
-                  reclaimLateObject(binding, row).pipe(Effect.andThen(Effect.fail(error)))
-              })
+              indexObject(binding, args.store, args.name, row)
             );
           })
         );

@@ -15,7 +15,8 @@ import {
   contracts,
   filesystem,
   independentNamesContract,
-  latePutSweepContract
+  lateStageSweepContract,
+  slowSweepDeleteContract
 } from "./test/filesContract.js";
 import * as TestWakes from "./test/wakes.js";
 
@@ -64,8 +65,13 @@ for (const { name, layer, companyId } of [
         60_000
       );
       it.effect(
-        "refuses a late put after sweep expires its write reservation without creating a dangling pointer",
-        () => latePutSweepContract(companyId),
+        "reclaims late staged bytes and preserves cleanup retries across delayed sweep acknowledgements",
+        () => lateStageSweepContract(companyId),
+        60_000
+      );
+      it.effect(
+        "keeps file writes and adoption progressing while sweep blob deletion is paused",
+        () => slowSweepDeleteContract(companyId),
         60_000
       );
       it.effect(

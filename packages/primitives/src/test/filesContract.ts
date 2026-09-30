@@ -1087,35 +1087,43 @@ export const independentNamesContract = Effect.fn("test.filesContract.independen
   assert.deepStrictEqual(yield* get("held.bin"), { bytes: replacement, contentType: "text/plain" });
 }, Effect.scoped);
 
-export const latePutSweepContract = Effect.fn("test.filesContract.latePutSweep")(function* (
+export const lateStageSweepContract = Effect.fn("test.filesContract.lateStageSweep")(function* (
   companyId: string
 ) {
   const now = Date.UTC(2035, 0, 3);
   const platform = yield* SqlClient.SqlClient;
   const content = yield* ContentStore.ContentStore;
-  // Listing time is a blob-store concern. Keep late completions inside the orphan
-  // grace period so only durable discarded rows can reclaim them on the next pass.
-  const sweeper = yield* OrphanSweep.make.pipe(
-    Effect.provideService(ContentStore.ContentStore, {
-      ...content,
-      list: (prefix) =>
-        content.list(prefix).pipe(Stream.map((object) => ({ ...object, lastModified: now })))
-    })
-  );
-  for (const [staged, failDelete] of [
-    [false, false],
-    [false, true],
-    [true, false]
-  ] as const) {
+  for (const failDelete of [false, true]) {
     yield* TestClock.setTime(now);
-    const patchId = staged ? "filelatestage" : failDelete ? "filelateputretry" : "filelateput";
-    const fixture = staged
-      ? yield* setupStaged(companyId, patchId)
-      : yield* setup(companyId, patchId);
+    const patchId = failDelete ? "filelatestageretry" : "filelatestage";
+    const fixture = yield* setupStaged(companyId, patchId);
     yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
-      VALUES (${patchId}, ${companyId}, 'usr_dev', 'Late put', ${patchId})`;
+      VALUES (${patchId}, ${companyId}, 'usr_dev', 'Late stage', ${patchId})`;
     const entered = yield* Deferred.make<string>();
     const release = yield* Deferred.make<void>();
+    const deleted = yield* Deferred.make<void>();
+    const acknowledgeDelete = yield* Deferred.make<void>();
+    // Keep the blob inside the listing grace so a failed late cleanup must retain
+    // its tombstone even when an older sweep DELETE has not acknowledged yet.
+    const sweeper = yield* OrphanSweep.make.pipe(
+      Effect.provideService(ContentStore.ContentStore, {
+        ...content,
+        list: (prefix) =>
+          content.list(prefix).pipe(Stream.map((object) => ({ ...object, lastModified: now }))),
+        delete: (key) =>
+          content
+            .delete(key)
+            .pipe(
+              Effect.tap(() =>
+                failDelete
+                  ? Deferred.succeed(deleted, undefined).pipe(
+                      Effect.andThen(Deferred.await(acknowledgeDelete))
+                    )
+                  : Effect.void
+              )
+            )
+      })
+    );
     const paused = yield* Files.makeLocal.pipe(
       Effect.provideService(ContentStore.ContentStore, {
         ...content,
@@ -1136,36 +1144,90 @@ export const latePutSweepContract = Effect.fn("test.filesContract.latePutSweep")
           : content.delete
       })
     );
-    const writing = yield* (
-      staged
-        ? paused["files.stage"].run(
-            { contentType: "application/octet-stream" },
-            new Uint8Array([8])
-          )
-        : paused["files.put"].run(
-            { store: "docs", name: "late.bin", contentType: "application/octet-stream" },
-            new Uint8Array([8])
-          )
-    ).pipe(
-      Effect.provideService(Binding.Binding, fixture.binding),
-      Effect.result,
-      Effect.forkScoped
-    );
+    const writing = yield* paused["files.stage"]
+      .run({ contentType: "application/octet-stream" }, new Uint8Array([8]))
+      .pipe(
+        Effect.provideService(Binding.Binding, fixture.binding),
+        Effect.result,
+        Effect.forkScoped
+      );
     const key = yield* Deferred.await(entered);
     yield* TestClock.adjust("1 hour");
-    yield* sweeper.sweep;
+    const sweeping = yield* sweeper.sweep.pipe(Effect.forkScoped);
+    if (failDelete) yield* Deferred.await(deleted);
+    else yield* Fiber.join(sweeping);
     assert.propertyVal(yield* content.getBytes(key).pipe(Effect.flip), "_tag", "ObjectNotFound");
     yield* Deferred.succeed(release, undefined);
     const result = yield* Fiber.join(writing);
     assert.strictEqual(result._tag, "Failure");
     if (result._tag === "Failure")
       assert.propertyVal(result.failure, "code", failDelete ? "source_unavailable" : "not_found");
-    assert.deepStrictEqual(yield* fixture.readPointer("late.bin"), []);
     if (failDelete) {
+      yield* Deferred.succeed(acknowledgeDelete, undefined);
+      yield* Fiber.join(sweeping);
       assert.deepStrictEqual(yield* content.getBytes(key), new Uint8Array([8]));
       yield* sweeper.sweep;
     }
     assert.propertyVal(yield* content.getBytes(key).pipe(Effect.flip), "_tag", "ObjectNotFound");
+  }
+}, Effect.scoped);
+
+export const slowSweepDeleteContract = Effect.fn("test.filesContract.slowSweepDelete")(function* (
+  companyId: string
+) {
+  const content = yield* ContentStore.ContentStore;
+  const platform = yield* SqlClient.SqlClient;
+  for (const expiredStage of [true, false]) {
+    yield* TestClock.setTime(Date.UTC(2035, 0, 3));
+    const patchId = expiredStage ? "fileslowstagegc" : "filesloworphangc";
+    const fixture = yield* setupStaged(companyId, patchId);
+    yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+      VALUES (${patchId}, ${companyId}, 'usr_dev', 'Slow file cleanup', ${patchId})`;
+    const upload = expiredStage ? yield* fixture.stage(new Uint8Array([1])) : undefined;
+    if (expiredStage) yield* TestClock.adjust("1 hour");
+    else {
+      yield* fixture.put("replace.bin", new Uint8Array([1]));
+      yield* fixture.put("replace.bin", new Uint8Array([2]));
+    }
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const sweeper = yield* OrphanSweep.make.pipe(
+      Effect.provideService(ContentStore.ContentStore, {
+        ...content,
+        list: (prefix) =>
+          content.list(prefix).pipe(
+            Stream.map((object) => ({
+              ...object,
+              lastModified: object.key.startsWith(`files/${patchId}/`) ? 0 : object.lastModified
+            }))
+          ),
+        delete: (key) =>
+          key.startsWith(`files/${patchId}/`)
+            ? Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(content.delete(key))
+              )
+            : content.delete(key)
+      })
+    );
+    const sweeping = yield* sweeper.sweep.pipe(Effect.forkScoped);
+    yield* Deferred.await(entered);
+    yield* Effect.gen(function* () {
+      // Blob deletion must not retain a lease or serialize unrelated file work.
+      yield* fixture.put("unrelated.bin", new Uint8Array([3]));
+      const next = yield* fixture.stage(new Uint8Array([4]));
+      yield* fixture.adopt(next, "live.bin");
+      assert.deepStrictEqual((yield* fixture.get("unrelated.bin")).bytes, new Uint8Array([3]));
+      assert.deepStrictEqual((yield* fixture.get("live.bin")).bytes, new Uint8Array([4]));
+      if (upload !== undefined)
+        assert.propertyVal(yield* fixture.adopt(upload).pipe(Effect.flip), "code", "not_found");
+      else assert.deepStrictEqual((yield* fixture.get("replace.bin")).bytes, new Uint8Array([2]));
+    }).pipe(
+      Effect.timeout("5 seconds"),
+      TestClock.withLive,
+      Effect.ensuring(Deferred.succeed(release, undefined))
+    );
+    assert.strictEqual((yield* Fiber.join(sweeping)).failed, 0);
   }
 }, Effect.scoped);
 
