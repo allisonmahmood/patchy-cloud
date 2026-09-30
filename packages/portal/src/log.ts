@@ -248,7 +248,7 @@ export const renderLog = (input: {
   const searched = `${InvocationLog.FILTER_WINDOW.toLocaleString("en-US")} entries`;
   // Filters search a bounded run of entries; say so when older ones were left unsearched.
   const window = input.windowEnded
-    ? `<p class="supporting-text">Filters search ${searched} at a time. Older entries continues further back.</p>`
+    ? `<p class="supporting-text">Filters search ${searched} at a time. Choose &quot;Older entries&quot; to search further back.</p>`
     : "";
   if (input.entries.length === 0) {
     const empty = filtered
