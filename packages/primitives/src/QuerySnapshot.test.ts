@@ -198,14 +198,11 @@ it.layer(layer)("Invocation query snapshots", (it) => {
           .pipe(Effect.provideService(Binding.Binding, capability.binding))
       );
       assert.deepStrictEqual(stat, beforeFiles.files[0]);
+      // The page redeems outside the handler snapshot; redemption is not a guest callback.
       assert.propertyVal(
-        yield* resource
-          .run(
-            files["files.redeem"]
-              .run({ handle: beforeFiles.files[0]!.handle })
-              .pipe(Effect.provideService(Binding.Binding, capability.binding))
-          )
-          .pipe(Effect.flip),
+        yield* files["files.redeem"]
+          .run({ handle: beforeFiles.files[0]!.handle })
+          .pipe(Effect.provideService(Binding.Binding, capability.binding), Effect.flip),
         "code",
         "not_found"
       );

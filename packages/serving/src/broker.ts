@@ -5,6 +5,7 @@ import {
   RuntimeRequest,
   RuntimeFailure,
   HandlerFailure,
+  FileName,
   RuntimeSubscription,
   runtimeOperations,
   runtimeBodyLimit,
@@ -33,7 +34,7 @@ const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty:
 const decodeHandleDownload = Schema.decodeUnknownSync(
   Schema.Struct({
     handle: Schema.String,
-    filename: Schema.optional(Schema.String)
+    filename: Schema.optionalKey(FileName)
   }),
   { onExcessProperty: "error" }
 );
@@ -664,7 +665,11 @@ function mount(frame: HTMLIFrameElement): void {
       if (closed) return;
       if (op === "files.download" && reply.bytes) {
         const file = reply.value as { name: string; contentType: string };
-        handleDownloads.add(downloadFilename ?? file.name, reply.bytes, file.contentType);
+        handleDownloads.add(
+          downloadFilename ?? file.name.split("/").at(-1)!,
+          reply.bytes,
+          file.contentType
+        );
         reply = { value: null, heldBytes: 0 };
       }
       if ((op === "download" || op === "shared.download") && reply.bytes) {

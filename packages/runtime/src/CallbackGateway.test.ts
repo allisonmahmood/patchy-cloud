@@ -25,7 +25,12 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
         const gateway = yield* CallbackGateway.make({
           "tables.insert": { kind: "mutation", run: () => Effect.sync(() => ++writes) },
           "shared.list": { kind: "read", run: () => Effect.succeed([]) },
-          "files.list": { kind: "read", run: () => Effect.succeed([]) }
+          "files.list": { kind: "read", run: () => Effect.succeed([]) },
+          "files.redeem": {
+            kind: "read",
+            transport: "bytes-get",
+            run: () => Effect.die(new Error("Guests must not reach handle redemption."))
+          }
         }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
         for (const [kind, op] of [
           ["query", "tables.insert"],
@@ -35,6 +40,9 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           ["mutation", "shared.files.list"],
           ["mutation", "shared.files.stat"],
           ["mutation", "shared.files.get"],
+          ["query", "files.redeem"],
+          ["mutation", "files.redeem"],
+          ["action", "files.redeem"],
           ["action", "server.call"],
           ["action", "not.an.operation"]
         ] as const) {

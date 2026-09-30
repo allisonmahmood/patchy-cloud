@@ -14,7 +14,8 @@ import {
   FileName,
   runtimeOperations,
   sharedStoreId,
-  type FileList
+  type FileList,
+  type SharedStoreDeclaration
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
@@ -186,12 +187,11 @@ export const make = Effect.gen(function* () {
   const wakes = yield* Wakes.Wakes;
   const withCompany = <A, R>(
     companyId: string,
-    effect: Effect.Effect<A, Runtime.RuntimeError | SqlError, R>,
-    live = false
+    effect: Effect.Effect<A, Runtime.RuntimeError | SqlError, R>
   ) =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.serviceOption(ReadSnapshot.ReadSnapshot);
-      if (!live && Option.isSome(snapshot) && snapshot.value.companyId === companyId)
+      if (Option.isSome(snapshot) && snapshot.value.companyId === companyId)
         return yield* effect.pipe(
           Effect.provideService(CompanyDatabases.CompanyConnection, snapshot.value.sql),
           Effect.provideService(SqlClient.SqlClient, snapshot.value.sql)
@@ -226,19 +226,10 @@ export const make = Effect.gen(function* () {
         return yield* new Runtime.InvalidRequest({});
       return yield* run(binding);
     });
-  const withSharedStore = Effect.fn("Files.withSharedStore")(function* <A>(
-    alias: string,
-    run: (
-      owner: StoreOwner,
-      store: string,
-      consumer: Binding.Binding["Service"]
-    ) => Effect.Effect<A, Runtime.RuntimeError>
+  const sharedSourceAccess = Effect.fn("Files.sharedSourceAccess")(function* (
+    binding: Binding.Binding["Service"],
+    declaration: typeof SharedStoreDeclaration.Type
   ) {
-    const binding = yield* Binding.Binding;
-    const declaration = Object.hasOwn(binding.manifest.uses, alias)
-      ? binding.manifest.uses[alias]
-      : undefined;
-    if (declaration?.kind !== "sharedStore") return yield* new Runtime.InvalidRequest({});
     if (
       declaration.id !== sharedStoreId(declaration.patchId, declaration.store) ||
       binding.identity === null ||
@@ -265,6 +256,21 @@ export const make = Effect.gen(function* () {
           return yield* new Runtime.AccessDenied({});
       })
     );
+  });
+  const withSharedStore = Effect.fn("Files.withSharedStore")(function* <A>(
+    alias: string,
+    run: (
+      owner: StoreOwner,
+      store: string,
+      consumer: Binding.Binding["Service"]
+    ) => Effect.Effect<A, Runtime.RuntimeError>
+  ) {
+    const binding = yield* Binding.Binding;
+    const declaration = Object.hasOwn(binding.manifest.uses, alias)
+      ? binding.manifest.uses[alias]
+      : undefined;
+    if (declaration?.kind !== "sharedStore") return yield* new Runtime.InvalidRequest({});
+    yield* sharedSourceAccess(binding, declaration);
     return yield* run(
       { companyId: binding.companyId, patchId: declaration.patchId },
       declaration.store,
@@ -412,8 +418,7 @@ export const make = Effect.gen(function* () {
             const pointer = yield* findObject(`obj_${locator}`);
             if (Option.isNone(pointer)) return yield* new NotFound();
             return pointer.value;
-          }).pipe(Effect.catchTags({ SchemaError: Effect.die })),
-          true
+          }).pipe(Effect.catchTags({ SchemaError: Effect.die }))
         );
         if (
           pointer.patchId !== binding.patchId ||
@@ -423,24 +428,10 @@ export const make = Effect.gen(function* () {
             (use) =>
               use.kind === "sharedStore" &&
               use.patchId === pointer.patchId &&
-              use.store === pointer.store &&
-              use.id === sharedStoreId(pointer.patchId, pointer.store)
+              use.store === pointer.store
           );
-          if (declaration === undefined) return yield* new Runtime.AccessDenied({});
-          const source = yield* versions
-            .find(pointer.patchId)
-            .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-          if (Option.isNone(source) || source.value.companyId !== binding.companyId)
-            return yield* new Runtime.AccessDenied({});
-          yield* withCompany(
-            binding.companyId,
-            Effect.gen(function* () {
-              const current = yield* inventory.read(pointer.patchId);
-              if (!current?.stores.some((store) => store.name === pointer.store && store.shared))
-                return yield* new Runtime.AccessDenied({});
-            }),
-            true
-          );
+          if (declaration?.kind !== "sharedStore") return yield* new Runtime.AccessDenied({});
+          yield* sharedSourceAccess(binding, declaration);
         }
         const bytes = yield* content
           .getBytes(objectKey(pointer.patchId, pointer.store, pointer.objectId))

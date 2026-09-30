@@ -819,7 +819,8 @@ is a result descriptor, not an argument or table column.
 
 The page uses `patchy.files.url(handle)` for a frame-local blob URL and
 `patchy.files.download(handle, filename?)` for a shell download, defaulting to
-the stored file's name. `useFileUrl(handle)` from `patchy/preact` returns
+the last segment of the stored file's name, as on tier 1. An explicit filename
+must satisfy the file-name rules. `useFileUrl(handle)` from `patchy/preact` returns
 `{ url, error }`, removes a stale image on failure and releases its URL on
 unmount. Tier 1 keeps its name-based store operations.
 

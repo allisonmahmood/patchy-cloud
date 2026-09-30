@@ -368,7 +368,8 @@ test("authorised handles display blob images, reauthorise and queue trusted shel
     { server: built.server }
   );
   const frame = await open(page, patch);
-  const name = "résumé & report.svg";
+  const filename = "résumé & report.svg";
+  const name = `logos/${filename}`;
   const content =
     '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><path fill="red" d="M0 0h1v1H0z"/></svg>';
   const handle = await frame.evaluate(
@@ -419,15 +420,38 @@ test("authorised handles display blob images, reauthorise and queue trusted shel
   const downloads: string[] = [];
   page.on("download", (download) => downloads.push(download.suggestedFilename()));
   const cards = page.locator(".shell-corner");
+  for (const filename of ["", "../report.svg", "folder//report.svg", "x".repeat(513)]) {
+    expect(
+      await frame.evaluate(
+        async ({ handle, filename }) => {
+          try {
+            await (window as unknown as FileProbeWindow).fileProbe.client.files.download(
+              handle,
+              filename
+            );
+            return "unexpected_success";
+          } catch (error) {
+            return error instanceof Error && "code" in error ? error.code : "unexpected_error";
+          }
+        },
+        { handle, filename }
+      )
+    ).toBe("invalid_request");
+  }
+  await expect(cards).toBeHidden();
   await frame.evaluate(
     (handle) => (window as unknown as FileProbeWindow).fileProbe.client.files.download(handle),
     handle
   );
-  await expect(cards.getByText(name, { exact: true })).toBeVisible();
+  await expect(cards.getByText(filename, { exact: true })).toBeVisible();
   await expect(
     cards.getByText(`${Buffer.byteLength(content)} bytes`, { exact: true })
   ).toBeVisible();
-  await cards.getByRole("button", { name: "Not now", exact: true }).click();
+  const defaultDownloadEvent = page.waitForEvent("download");
+  await cards.getByRole("button", { name: "Download", exact: true }).click();
+  const defaultDownload = await defaultDownloadEvent;
+  expect(defaultDownload.suggestedFilename()).toBe(filename);
+  expect(await readFile((await defaultDownload.path())!, "utf8")).toBe(content);
   await expect(cards).toBeHidden();
   await frame.evaluate(async (handle) => {
     const { client } = (window as unknown as FileProbeWindow).fileProbe;
@@ -440,7 +464,7 @@ test("authorised handles display blob images, reauthorise and queue trusted shel
     .getByRole("button", { name: "Download", exact: true })
     .first()
     .evaluate((button: HTMLButtonElement) => button.click());
-  expect(downloads).toEqual([]);
+  expect(downloads).toEqual([filename]);
   await expect(cards.locator(".note:visible")).toHaveCount(3);
   const downloadEvent = page.waitForEvent("download");
   await cards.getByRole("button", { name: "Download", exact: true }).first().click();

@@ -169,8 +169,10 @@ reads. Neither the SDK nor the broker may reuse bytes without reauthorization.
 
 `patchy.files.url(handle)` creates a blob URL inside the frame.
 `useFileUrl(handle)` owns its URL through unmount and clears stale images on
-failure. Downloads use the selected D-1 bottom-right shell card with filename
-and size. Only its trusted Download click starts the download; a frame's claim
+failure. Downloads use the selected D-1 bottom-right shell card, titled
+"<patch> has a file to download", with filename and size. The title identifies
+the offering patch, not who created a stored or shared file. Only its trusted
+Download click starts the download; a frame's claim
 of user activation is insufficient. Not now discards it, three offers remain
 visible and older ones fold under a count. Pending files are shell-local and
 are lost on close or reload. Core owns the shared styles.

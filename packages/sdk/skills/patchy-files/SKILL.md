@@ -73,7 +73,10 @@ HTTP URL. Every call rechecks access. For Preact images, use
 `useFileUrl(handle)` from `patchy/preact`; render its `{ url, error }`, including
 the error. It drops a stale image on failure and releases the URL on unmount.
 `patchy.files.download(handle, filename?)` offers the file in Patchy's shell;
-the viewer clicks Download there. The default filename is the stored name.
+the viewer clicks Download there. The default filename is the last segment of
+the stored name, as on tier 1: `logos/company.svg` downloads as `company.svg`.
+An explicit filename must satisfy the file-name rules below; empty names are
+`invalid_request`, not an instruction to choose a browser-generated name.
 `Not now` discards the offer, and closing or reloading loses pending downloads.
 
 Handles are 57 characters, with no filename or expiry clock, and count against

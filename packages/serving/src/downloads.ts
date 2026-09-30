@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 // @effect-diagnostics globalTimers:off
 // Download approval belongs to the signed-in shell, never to an event reported by the frame.
-// D-1 from #385: each file is a bottom-right card, "<patch> made a file", with its name, size, Download and Not now.
+// D-1 from #385: a bottom-right card names the offering patch and file, with Download and Not now.
 export function createDownloads(
   frame: HTMLIFrameElement,
   reserve: (size: number) => void,
@@ -84,7 +84,7 @@ export function createDownloads(
       message.setAttribute("role", "status");
       const title = document.createElement("div");
       title.className = "note-title";
-      title.append(glyph(), `${frame.title} made a file`);
+      title.append(glyph(), `${frame.title} has a file to download`);
       const line = document.createElement("p");
       const fileName = document.createElement("code");
       fileName.textContent = name;
