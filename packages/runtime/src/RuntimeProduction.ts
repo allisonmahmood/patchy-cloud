@@ -11,12 +11,14 @@ import { Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
+import * as StreamAdmission from "./StreamAdmission.js";
 
 type Dependencies =
   | LoadedVersions.LoadedVersions
   | Limits.Limits
   | OperatingLimits.OperatingLimits
   | RuntimeLog.RuntimeLog
+  | StreamAdmission.StreamAdmission
   | Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>;
 
 export const make = (
@@ -27,6 +29,7 @@ export const make = (
     const session = yield* Session.Session;
     const operatingLimits = yield* OperatingLimits.OperatingLimits;
     const companyTokens = yield* TokenBucket.make;
+    const principalAdmission = yield* StreamAdmission.StreamAdmission;
     // Capture Auth's viewer resolver requirements, without importing its Companies dependencies.
     const viewerContext =
       yield* Effect.context<
@@ -78,6 +81,10 @@ export const make = (
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,
       identity,
+      bootstrapIdentity: Effect.map(principalAdmission.admit, ({ identity, recheck }) => ({
+        viewer: identity,
+        reauthorize: Effect.map(recheck, (current) => current.identity)
+      })),
       admitCompany: Effect.fn("Runtime.admitCompany")(function* (companyId: string) {
         const { rate, burst } = yield* operatingLimits
           .getMany({

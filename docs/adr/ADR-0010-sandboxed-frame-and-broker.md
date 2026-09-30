@@ -22,7 +22,10 @@ Owned upload buffers transfer through the shipped `patchy/client` transport and
 detach; subviews copy only their selected bytes. Request byte defaults and
 operation classification are shared API definitions, also used by Runtime.
 
-Company shells pin the admitted viewer when rendered; the local shell obtains its principal through `me`. Public `me` is null and public company-data operations fail even for signed-in readers. A changed or expired session stops the patch and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome. Leaving the page closes the broker; a page restored from the back/forward cache reloads whole rather than reopening it.
+Company shells pin the admitted viewer when rendered; the local shell obtains its principal through `me`. Public `me` is null. Public tier 1 documents may read their declared member directory as an authenticated company member, but cannot access tables, files or integrations. A changed or expired session stops authenticated directory work and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome. Leaving the page closes the broker; a page restored from the back/forward cache reloads whole rather than reopening it.
+The public shell lazily binds `{ userId }` through the internal `principal` runtime operation before its first directory call or subscription. That handshake is not a patch SDK operation. The shell pins the result for the document, then uses the existing principal checks on calls and stream reconnects; cacheable public HTML never contains a viewer identity. Public `me` remains null.
+Runtime adapters supply bootstrap identity explicitly. Production shares `StreamAdmission` between the handshake and document streams, including stale-token refresh semantics; it does not fall back to ordinary invocation admission.
+Public member-enabled shells hold the trusted session scripts in an inert template containing only public Clerk configuration. Directory authentication activates that template once, including when a stale token needs refresh during the initial handshake. Anonymous refusals leave the public page and its route bridge usable.
 `access_denied`, `session_expired`, `principal_changed` and `revoked` stop the
 document. `not_available_on_public` remains a patch-visible refusal, and public
 patches retain their browser-owned route bridge.
@@ -44,7 +47,8 @@ An old shell with a supported bundle gets one cache-bypassing refresh. A repeate
 ## Company document streams
 
 Each company shell on tiers 1 and 2 opens one fetch-streamed SSE connection at
-bootstrap, independently of patch code. Public shells and tier 0 do not open one.
+bootstrap, independently of patch code. Public tier 1 shells open one lazily for
+member-directory subscriptions after authenticating a company member. Tier 0 does not.
 The shell pins its admitted viewer, patch, loaded version and document nonce.
 `GET /api/runtime/stream` rechecks the cookie session and version eligibility on
 every open. `hello` supplies a new generation and the server clock; replacement

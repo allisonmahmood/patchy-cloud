@@ -125,7 +125,7 @@ The patch whose loaded version defines its owned resources and declares the outs
 _Avoid_: effective principal, patch owner
 
 **Initiating viewer**:
-The user whose live session admits an invocation or a direct browser operation. A public document has no initiating viewer with company authority.
+The user whose live session admits an invocation or a direct browser operation. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
 _Avoid_: principal, machine token, owning patch
 
 **Patch identity**:

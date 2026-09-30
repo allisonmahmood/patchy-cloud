@@ -422,6 +422,7 @@ it.layer(services)("Invocation", (it) => {
           {},
           {
             origin: "http://localhost",
+            bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
             identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
           }
         ).pipe(

@@ -384,7 +384,10 @@ const diff = Effect.fn("Tables.diff")(function* (
           changes.push({
             object,
             change: "adding a required column without a default",
-            fix: "add an optional or defaulted column instead"
+            fix:
+              column.kind === "member"
+                ? "add an optional member column and backfill it with explicit assignments"
+                : "add an optional or defaulted column instead"
           });
         } else {
           newColumns.push({ table, name });

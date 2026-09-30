@@ -263,8 +263,10 @@ Limit refusals may also carry `scope`, `limitId`, `value` and `retryAfter`.
 On a company patch, every viewer who can open it can read and write all its own
 tables and files; there are no row rules or separate write scopes. Shared tables
 and stores are read-only and Postgres integrations perform constrained reads as the role
-the admin supplied. A public tier 1 patch gets no company capability for anyone:
-`me()` returns null and data calls fail `not_available_on_public`, even for members.
+the admin supplied. On a public tier 1 patch, `me()` returns null, but signed-in
+company members can read the declared member directory. Anonymous viewers and
+viewers outside the company cannot read it. Tables, files and integrations still
+fail with `not_available_on_public`, even for company members.
 The route bridge still works. The frame has no direct outbound fetch, client
 storage, popups, workers or device access.
 
@@ -345,9 +347,10 @@ dependencies. Directory reads come from the platform database, outside a
 query's company-database snapshot. Outsiders on public tier 1 patches are
 refused. A lower-tier document of a patch serving tier 2 still gets only `me`.
 
-`t.member()` is a table column storing a string user id. Optional and default
-modifiers work as for text columns. Inserts and changed assignments require a
-current candidate or fail with `invalid_row`; an unchanged deactivated id
+`t.member()` is a table column storing a string user id. It supports `.optional()`
+but refuses `.default()`; supply an eligible user id explicitly on insert.
+Inserts and changed assignments require a current candidate or fail with
+`invalid_row`; an unchanged deactivated id
 passes. Deactivation never rewrites stored rows. Eligibility is checked on
 arrival, not at transaction commit. Resolve a page's distinct owners once with
 `getMany`. Use `t.text()` for handler id arguments; `t.member()` is not a handler

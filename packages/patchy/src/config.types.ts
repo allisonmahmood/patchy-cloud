@@ -47,7 +47,6 @@ const config = defineConfig({
         dataDefault: t.json().default({ nested: [null, 1] }),
         owner: t.member(),
         ownerOptional: t.member().optional(),
-        ownerDefault: t.member().default("usr_default"),
         parent: t.ref("notes"),
         parentOptional: t.ref("notes").optional(),
         parentDefault: t.ref("notes").default("note-id" as Id<"notes">),
@@ -90,7 +89,6 @@ export type ConfigAssertions = [
   Assert<Equal<Note["dataDefault"], unknown>>,
   Assert<Equal<Note["owner"], string>>,
   Assert<Equal<Note["ownerOptional"], string | null>>,
-  Assert<Equal<Note["ownerDefault"], string>>,
   Assert<Equal<Note["parent"], Id<"notes">>>,
   Assert<Equal<Note["parentOptional"], Id<"notes"> | null>>,
   Assert<Equal<Note["parentDefault"], Id<"notes">>>,
@@ -178,8 +176,10 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   t.boolean().default(1);
   // @ts-expect-error reference defaults must name the right target
   t.ref("notes").default(userId);
-  // @ts-expect-error member defaults must be string user ids
-  t.member().default(1);
+  // @ts-expect-error member columns cannot have defaults
+  t.member().default("usr_owner");
+  // @ts-expect-error optional member columns cannot have defaults
+  t.member().optional().default("usr_owner");
   // @ts-expect-error system columns are reserved
   table("Notes identified by id.", { id: t.text() });
   // @ts-expect-error indexes can only name known or system columns

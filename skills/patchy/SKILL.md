@@ -489,9 +489,10 @@ writes must be user-triggered and show a visible failure when unavailable.
 Async clipboard permission can still be denied for an opaque frame. A user-triggered
 `copy` event via `document.execCommand("copy")` is a compatibility fallback; if both
 paths fail, show selectable text and a visible error rather than claiming success.
-A public tier 1 patch renders signed out: `me` is null, and company-data operations
-reject with `not_available_on_public`, even for a signed-in reader. Patch code handles
-that error; it does not replace the page or disable local routing.
+A public tier 1 patch returns null from `me`. Signed-in company members can read
+its declared member directory; anonymous viewers and outsiders cannot. Tables,
+files and integrations reject with `not_available_on_public` even for members.
+Patch code handles that error; it does not replace the page or disable local routing.
 
 Runtime notices belong to Patchy, not the uploaded document. `session_expired`
 and `principal_changed` require the notice's Sign in link and a whole-page reload;

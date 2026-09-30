@@ -27,9 +27,9 @@ export const make = Effect.gen(function* () {
       directory
         .getMany(companyId, ids)
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
-    isCandidate: (companyId, id) =>
+    candidates: (companyId, ids) =>
       directory
-        .isCandidate(companyId, id)
+        .candidates(companyId, ids)
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
     revision: (companyId) =>
       directory

@@ -38,10 +38,10 @@ export class MemberDirectory extends Context.Service<
       companyId: string,
       ids: readonly string[]
     ) => Effect.Effect<readonly (typeof Member.Type | null)[], Runtime.RuntimeError>;
-    readonly isCandidate: (
+    readonly candidates: (
       companyId: string,
-      id: string
-    ) => Effect.Effect<boolean, Runtime.RuntimeError>;
+      ids: readonly string[]
+    ) => Effect.Effect<readonly string[], Runtime.RuntimeError>;
     readonly revision: (companyId: string) => Effect.Effect<string, Runtime.RuntimeError>;
   }
 >()("@patchy/primitives/MemberDirectory") {}

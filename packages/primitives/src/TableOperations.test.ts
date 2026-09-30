@@ -39,8 +39,10 @@ const postgres = Tables.layer.pipe(
   Layer.provideMerge(TestWakes.layer)
 );
 it.layer(postgres)("TableOperations / Postgres", (it) => {
-  it.effect("checks member defaults, changed assignments and atomic batches on both tiers", () =>
-    memberAssignmentsContract("cmp_dev")
+  it.effect(
+    "checks changed member assignments and atomic batches on both tiers",
+    () => memberAssignmentsContract("cmp_dev"),
+    60_000
   );
   it.effect("commits revisions and wakes atomically and reads subscription snapshots", () =>
     revisionsContract("cmp_dev")

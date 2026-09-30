@@ -154,16 +154,29 @@ describe("executeConfig", () => {
       name: "assignments", tier: 1,
       uses: { members: members() },
       tables: { tasks: table("Tasks assigned to a company user.", {
-        owner: t.member(), previous: t.member().optional(), fallback: t.member().default("usr_owner")
+        owner: t.member(), previous: t.member().optional()
       }) }
     });`);
     const manifest = await executeConfig(path);
     expect(manifest.uses).toEqual({ members: { kind: "members" } });
     expect(manifest.tables.tasks?.columns).toEqual({
       owner: { kind: "member" },
-      previous: { kind: "member", optional: true },
-      fallback: { kind: "member", default: "usr_owner" }
+      previous: { kind: "member", optional: true }
     });
+  });
+
+  it.each([
+    't.member().default("usr_owner")',
+    'Object.assign(t.member(), { hasDefault: true, defaultValue: "usr_owner" })',
+    '{ kind: "member", default: "usr_owner" }',
+    '{ kind: "member", default: undefined }'
+  ])("refuses member defaults through config execution: %s", async (owner) => {
+    const path = await fixture(`export default defineConfig({
+      name: "invalid-member-default", tier: 1,
+      uses: { members: members() },
+      tables: { tasks: table("Tasks assigned to company users.", { owner: ${owner} }) }
+    });`);
+    await expect(ConfigExecution.executeConfig(path, { resolve: false })).rejects.toThrow();
   });
 
   it.each([

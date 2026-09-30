@@ -156,6 +156,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
         { me },
         {
           origin: PUBLIC_BASE_URL,
+          bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
           identity: Effect.succeed({
             viewer: { user: identity.user, company: identity.company, admin: false },
             reauthorize: Effect.succeed({

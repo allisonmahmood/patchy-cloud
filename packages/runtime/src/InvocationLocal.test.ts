@@ -176,6 +176,7 @@ it.live(
       );
       const runtime = yield* Runtime.make(handlers, {
         origin: "http://localhost",
+        bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
         identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }).pipe(Effect.provideService(Invocation.Invocation, invocations));
       const request = HttpServerRequest.fromWeb(

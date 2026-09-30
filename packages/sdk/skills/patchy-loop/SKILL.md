@@ -153,7 +153,7 @@ operating capacity does not. PGlite is not evidence for hosted `busy` or
 `write_conflict` behavior. Tier 2 reads invented shared and Postgres fixtures
 through `ctx.shared` and `ctx.connections`.
 
-On tier 1, every readable row is available to whoever can open the patch, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables and Postgres are read-only, checked against live source access. A public tier 1 patch returns null from `me()` and `not_available_on_public` for data operations, even for a signed-in member; tier 2 cannot be public.
+On tier 1, every readable row is available to every admitted company viewer, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables and Postgres are read-only, checked against live source access. A public tier 1 patch returns null from `me()`. Signed-in company members can read its declared member directory; anonymous viewers and outsiders cannot. Tables, files and integrations still return `not_available_on_public` for everyone. Tier 2 cannot be public.
 
 ## Presence and live screens
 

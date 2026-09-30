@@ -124,14 +124,6 @@ type Row = typeof TableRow.Type;
 type Column = typeof ColumnDefinition.Type;
 type Table = typeof TableDefinition.Type;
 type List = typeof TableList.Type;
-const MemberColumn = Schema.Struct({
-  name: DefinitionName,
-  defaultValue: Schema.UndefinedOr(Schema.NullOr(PostgresText))
-});
-type MemberColumn = typeof MemberColumn.Type;
-const decodeMemberColumns = Schema.decodeUnknownSync(Schema.Array(MemberColumn));
-const memberColumns = `SELECT name, default_value AS "defaultValue" FROM patchy.columns
-  WHERE patch_id = $1 AND "table" = $2 AND kind = 'member'`;
 type TableQuery<A> = (
   sql: SqlClient.SqlClient,
   table: Table,
@@ -383,25 +375,31 @@ export const make = Effect.gen(function* () {
   const validateMembers = Effect.fn("TableOperations.validateMembers")(function* (
     companyId: string,
     name: string,
-    columns: readonly MemberColumn[],
-    row: Row,
+    table: Table,
+    rows: readonly Row[],
     previous?: Row
   ) {
-    for (const column of columns) {
-      const key = column.name;
-      const value = Object.hasOwn(row, key)
-        ? row[key]
-        : previous === undefined
-          ? column.defaultValue
-          : undefined;
-      if (
-        value === undefined ||
-        value === null ||
-        (previous !== undefined && value === previous[key])
-      )
-        continue;
-      if (typeof value !== "string" || !(yield* directory.isCandidate(companyId, value)))
-        return yield* new InvalidRow({ table: name, column: key, problem: "invalid value" });
+    const columns = Object.keys(table.columns).filter(
+      (key) => table.columns[key]!.kind === "member"
+    );
+    if (columns.length === 0) return;
+    const assignments = new Map<string, string>();
+    for (const row of rows) {
+      for (const key of columns) {
+        const value = row[key];
+        if (
+          typeof value === "string" &&
+          (previous === undefined || value !== previous[key]) &&
+          !assignments.has(value)
+        )
+          assignments.set(value, key);
+      }
+    }
+    if (assignments.size === 0) return;
+    const candidates = new Set(yield* directory.candidates(companyId, [...assignments.keys()]));
+    for (const [id, column] of assignments) {
+      if (!candidates.has(id))
+        return yield* new InvalidRow({ table: name, column, problem: "invalid value" });
     }
   });
   const withWriteTable = <A>(name: string, run: TableQuery<A>) =>
@@ -509,14 +507,11 @@ export const make = Effect.gen(function* () {
       rowCount: () => 1
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified, patchId, _name, companyId) =>
+      withWriteTable(args.table, (sql, table, qualified, _patchId, _name, companyId) =>
         Effect.gen(function* () {
           yield* byteLimit(args.row, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.row, true);
-          const columns = yield* sql
-            .unsafe(memberColumns, [patchId, args.table])
-            .pipe(Effect.map(decodeMemberColumns));
-          yield* validateMembers(companyId, args.table, columns, args.row);
+          yield* validateMembers(companyId, args.table, table, [args.row]);
           return yield* sql.withTransaction(insert(sql, table, qualified, args.row));
         })
       )
@@ -530,19 +525,16 @@ export const make = Effect.gen(function* () {
       rowCount: (value) => (Array.isArray(value) ? value.length : null)
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified, patchId, _name, companyId) =>
+      withWriteTable(args.table, (sql, table, qualified, _patchId, _name, companyId) =>
         Effect.gen(function* () {
           if (args.rows.length > settings.maxItems)
             return yield* new ItemLimit({ maxItems: settings.maxItems });
           yield* byteLimit(args.rows, settings.batchBytes, "runtime.batch.bytes");
-          const columns = yield* sql
-            .unsafe(memberColumns, [patchId, args.table])
-            .pipe(Effect.map(decodeMemberColumns));
           for (const row of args.rows) {
             yield* byteLimit(row, settings.rowBytes, "runtime.row.bytes");
             yield* validateRow(args.table, table, row, true);
-            yield* validateMembers(companyId, args.table, columns, row);
           }
+          yield* validateMembers(companyId, args.table, table, args.rows);
           return yield* sql.withTransaction(
             Effect.gen(function* () {
               const result: Row[] = [];
@@ -596,10 +588,7 @@ export const make = Effect.gen(function* () {
                   [args.id]
                 );
                 if (previous.length === 0) return yield* new RowNotFound({ table: args.table });
-                const columns = Object.entries(table.columns)
-                  .filter(([, column]) => column.kind === "member")
-                  .map(([name]) => ({ name, defaultValue: undefined }));
-                yield* validateMembers(companyId, args.table, columns, args.patch, previous[0]!);
+                yield* validateMembers(companyId, args.table, table, [args.patch], previous[0]!);
               }
               const rows = yield* queryRows(
                 sql,

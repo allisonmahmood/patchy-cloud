@@ -578,8 +578,9 @@ New patches default to `company`; updates preserve scope unless `--share` sets
 it. Only a public patch's current version is public, cached for at most 60 seconds
 at both addresses. Older versions stay behind the company door; company origin
 responses are `private, no-store`. Still-fresh public caches and downloaded copies
-cannot be recalled. Tier 1 public patches have no company capabilities, even for
-signed-in members; sharing publicly does not anonymously expose their resources.
+cannot be recalled. Tier 1 public patches expose the declared member directory
+only to signed-in company members. Other company capabilities remain unavailable;
+sharing publicly does not anonymously expose company data.
 
 Tier 2 is company-only. `share --share public`, positional public sharing and the
 portal scope form read the served version's tier, never local config, and answer

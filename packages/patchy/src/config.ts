@@ -104,8 +104,9 @@ export class Column<
 
   default(
     this: Column<K, false, false, Target>,
-    value: WriteValue<K, Target>
+    value: K extends "member" ? never : WriteValue<K, Target>
   ): Column<K, false, true, Target> {
+    if (this.kind === "member") throw new Error("A member column cannot have a default.");
     if (this.isOptional) throw new Error("An optional column cannot have a default.");
     if (value === null || value === undefined)
       throw new Error("A default cannot be null or undefined.");
@@ -114,6 +115,8 @@ export class Column<
 
   /** Only JSON descriptors cross the process and wire boundary. */
   toJSON(): ColumnDescriptor<K, Optional, Defaulted, Target> {
+    if (this.kind === "member" && this.hasDefault)
+      throw new Error("A member column cannot have a default.");
     return {
       kind: this.kind,
       ...(this.kind === "ref" ? { table: this.table } : {}),

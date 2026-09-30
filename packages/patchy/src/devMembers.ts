@@ -47,7 +47,8 @@ export const layer = (identity: typeof Identity.Type) => {
       get: (companyId, id) => authorize(companyId).pipe(Effect.as(byId.get(id) ?? null)),
       getMany: (companyId, ids) =>
         authorize(companyId).pipe(Effect.as(ids.map((id) => byId.get(id) ?? null))),
-      isCandidate: (companyId, id) => authorize(companyId).pipe(Effect.as(byId.has(id))),
+      candidates: (companyId, ids) =>
+        authorize(companyId).pipe(Effect.as([...new Set(ids)].filter((id) => byId.has(id)))),
       revision: (companyId) => authorize(companyId).pipe(Effect.as("0"))
     })
   );

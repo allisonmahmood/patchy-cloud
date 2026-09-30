@@ -327,7 +327,11 @@ export const ColumnDefinition = Schema.Union([
   column("boolean", Schema.Boolean),
   column("timestamp", Schema.Union([Schema.Literal("now"), IsoTimestamp])),
   column("json", PostgresJson),
-  column("member", PostgresText.check(Schema.isMinLength(1))),
+  Schema.Struct({
+    kind: Schema.Literal("member"),
+    ...modifiers,
+    default: Schema.optionalKey(Schema.Never)
+  }),
   Schema.Struct({
     kind: Schema.Literal("ref"),
     table: NonEmptyText,

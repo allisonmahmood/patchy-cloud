@@ -69,7 +69,10 @@ export class Directory extends Context.Service<
       companyId: string,
       ids: readonly string[]
     ) => Effect.Effect<readonly (Member | null)[], SqlError>;
-    readonly isCandidate: (companyId: string, id: string) => Effect.Effect<boolean, SqlError>;
+    readonly candidates: (
+      companyId: string,
+      ids: readonly string[]
+    ) => Effect.Effect<readonly string[], SqlError>;
     readonly revision: (companyId: string) => Effect.Effect<string, CompanyNotFound | SqlError>;
   }
 >()("@patchy/companies/Directory") {}
@@ -91,12 +94,15 @@ export const make = Effect.gen(function* () {
     execute: ({ companyId, ids }) =>
       sql`SELECT ${columns} FROM users WHERE company_id = ${companyId} AND ${sql.in("id", ids)}`
   });
-  const candidate = SqlSchema.findOne({
-    Request: ref,
-    Result: Schema.Struct({ eligible: Schema.Boolean }),
-    execute: ({ companyId, id }) => sql`
-      SELECT EXISTS (SELECT 1 FROM users
-        WHERE company_id = ${companyId} AND id = ${id} AND deactivated_at IS NULL) AS eligible`
+  const candidatesByIds = SqlSchema.findAll({
+    Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ companyId, ids }) =>
+      sql.unsafe(
+        `SELECT id FROM users WHERE company_id = $1
+          AND id = ANY($2::text[]) AND deactivated_at IS NULL`,
+        [companyId, ids]
+      )
   });
   const directoryRevision = SqlSchema.findOneOption({
     Request: Schema.String,
@@ -106,7 +112,7 @@ export const make = Effect.gen(function* () {
       FROM companies c LEFT JOIN companies_directory d ON d.company_id = c.id
       WHERE c.id = ${companyId}`
   });
-  const candidates = SqlSchema.findAll({
+  const candidatePage = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
       text: Schema.NullOr(Schema.String),
@@ -154,7 +160,7 @@ export const make = Effect.gen(function* () {
       if (after.companyId !== companyId || after.text !== text)
         return yield* new InvalidCursor({ companyId });
     }
-    const found = yield* candidates({ companyId, text, limit, after }).pipe(
+    const found = yield* candidatePage({ companyId, text, limit, after }).pipe(
       Effect.catchTags(dieOnSchemaError)
     );
     const rows = found
@@ -192,11 +198,15 @@ export const make = Effect.gen(function* () {
     const members = new Map(found.map((member) => [member.id, member]));
     return ids.map((id) => members.get(id) ?? null);
   });
-  const isCandidate = Effect.fn("Directory.isCandidate")(function* (companyId: string, id: string) {
-    const result = yield* candidate({ companyId, id }).pipe(
-      Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+  const candidates = Effect.fn("Directory.candidates")(function* (
+    companyId: string,
+    ids: readonly string[]
+  ) {
+    if (ids.length === 0) return [];
+    const found = yield* candidatesByIds({ companyId, ids }).pipe(
+      Effect.catchTags(dieOnSchemaError)
     );
-    return result.eligible;
+    return found.map(({ id }) => id);
   });
   const revision = Effect.fn("Directory.revision")(function* (companyId: string) {
     const found = yield* directoryRevision(companyId).pipe(Effect.catchTags(dieOnSchemaError));
@@ -208,7 +218,7 @@ export const make = Effect.gen(function* () {
     search: (companyId, text, limit, cursor) => page(companyId, text, limit, cursor),
     get,
     getMany,
-    isCandidate,
+    candidates,
     revision
   });
 });

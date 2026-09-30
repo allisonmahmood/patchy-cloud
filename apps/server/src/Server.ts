@@ -136,9 +136,9 @@ const services = Layer.mergeAll(
         RuntimeProduction.layer(handlers),
         RuntimeStream.layer.pipe(
           Layer.provide(Subscriptions.layer),
-          Layer.provide([SubscriptionReads.layer, StreamAdmission.layer, StreamLimits.layer])
+          Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
         )
-      );
+      ).pipe(Layer.provide(StreamAdmission.layer));
       if (yield* FleetInvocation.enabled)
         return runtime.pipe(
           Layer.provide(

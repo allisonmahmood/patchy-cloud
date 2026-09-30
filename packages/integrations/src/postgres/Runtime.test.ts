@@ -17,7 +17,13 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { LoadedVersions, RuntimeProduction, RuntimeApi, RuntimeLog } from "@patchy/runtime";
+import {
+  LoadedVersions,
+  RuntimeProduction,
+  RuntimeApi,
+  RuntimeLog,
+  StreamAdmission
+} from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
@@ -144,7 +150,8 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
           }).pipe(
             Effect.provide(
               Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
-                Layer.provide(RuntimeProduction.layer(handlers))
+                Layer.provide(RuntimeProduction.layer(handlers)),
+                Layer.provide(StreamAdmission.layer)
               )
             )
           );

@@ -10,7 +10,7 @@ Read `../patchy-loop/SKILL.md` first. The directory belongs to the patch's compa
 ## Declare and use
 
 1. Run `pnpm patchy add members`. It adds `uses: { members: { kind: "members" } }` and generates this skill and the typed client. The alias is always `members`; there is no source id, revision stamp or fixture file. A hand-written `members()` declaration imported from `patchy/config` is equivalent after refresh. A patch may declare the directory without owning any table.
-2. For assignments, add `owner: t.member()` to a table, or `t.member().optional()` if the owner may be null. `t.member().default("user-id")` supplies an insert default, which faces the same eligibility check as an explicit assignment. Declare an index yourself if you filter rows by owner. Config refuses member columns without the declaration.
+2. For assignments, add `owner: t.member()` to a table, or `t.member().optional()` if the owner may be null. Member columns cannot have defaults; supply the id on each insert. Declare an index yourself if you filter rows by owner. Config refuses member columns without the declaration.
 3. Use `patchy.members` on a tier 1 page, or `ctx.members` in tier 2 queries, mutations and actions. A tier 2 page calls its generated handlers, never the directory directly. `t.member()` is columns-only; handler args use `t.text()` for an id and results use ordinary field schemas or `t.row("table")` for a row containing member columns.
 4. Exercise the screen through both `url` and `colleagueUrl` from `pnpm patchy dev --json`. Both list the same two active candidates: the machine token's user and the non-admin fixture colleague. Dev imports no company roster and simulates no membership, role or other authority changes.
 
@@ -43,7 +43,7 @@ Directory reads use the platform database, outside a query's company-database sn
 
 ## Assignment checks and removal
 
-An insert or changed member value must name a current candidate, otherwise the write is `invalid_row`. This applies to defaulted values and both tiers. An unchanged value passes even after its user is deactivated; copying that id into a new row is a new assignment and is refused. Deactivation never rewrites stored rows. A batch containing an invalid assignment writes no rows.
+An insert or changed member value must name a current candidate, otherwise the write is `invalid_row`. This applies to both tiers. An unchanged value passes even after its user is deactivated; copying that id into a new row is a new assignment and is refused. Deactivation never rewrites stored rows. A batch containing an invalid assignment writes no rows.
 
 Eligibility is checked when the write arrives, not when the company transaction commits. A user deactivated during a mutation can still receive an assignment that already passed its check. Use the write result rather than treating an earlier candidate listing as an authorization guarantee.
 

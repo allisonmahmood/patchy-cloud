@@ -10,6 +10,6 @@ export const layer = Layer.succeed(MemberDirectory.MemberDirectory, {
   search: () => unexpected,
   get: () => unexpected,
   getMany: () => unexpected,
-  isCandidate: () => unexpected,
+  candidates: () => unexpected,
   revision: () => unexpected
 });

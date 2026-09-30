@@ -34,13 +34,15 @@ type ManifestColumn = {
   [K in ColumnKind]: {
     readonly kind: K;
     readonly optional?: boolean;
-    readonly default?: K extends "json"
-      ? Json
-      : K extends "integer" | "number"
-        ? number
-        : K extends "boolean"
-          ? boolean
-          : string;
+    readonly default?: K extends "member"
+      ? never
+      : K extends "json"
+        ? Json
+        : K extends "integer" | "number"
+          ? number
+          : K extends "boolean"
+            ? boolean
+            : string;
   } & (K extends "ref" ? { readonly table: string } : unknown);
 }[ColumnKind];
 

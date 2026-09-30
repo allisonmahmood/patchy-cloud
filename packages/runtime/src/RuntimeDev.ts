@@ -11,14 +11,17 @@ export const layer = (
     readonly origin: string;
     readonly identity: NonNullable<Binding.Binding["Service"]["identity"]>;
   }
-): Layer.Layer<Runtime.Runtime, never, LoadedVersions.LoadedVersions | Limits.Limits> =>
-  Layer.effect(
+): Layer.Layer<Runtime.Runtime, never, LoadedVersions.LoadedVersions | Limits.Limits> => {
+  const identity = Effect.succeed({
+    viewer: options.identity,
+    reauthorize: Effect.succeed(options.identity)
+  });
+  return Layer.effect(
     Runtime.Runtime,
     Runtime.make(handlers, {
       origin: options.origin,
-      identity: Effect.succeed({
-        viewer: options.identity,
-        reauthorize: Effect.succeed(options.identity)
-      })
+      identity,
+      bootstrapIdentity: identity
     })
   );
+};

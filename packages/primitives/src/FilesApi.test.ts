@@ -27,6 +27,7 @@ import {
   RuntimeProduction,
   RuntimeApi,
   RuntimeLog,
+  StreamAdmission,
   me
 } from "@patchy/runtime";
 import * as Files from "./Files.js";
@@ -79,7 +80,7 @@ const dependencies = Layer.mergeAll(
 ).pipe(Layer.provideMerge(services));
 const runtime = Layer.unwrap(
   Effect.map(Files.make, (files) => RuntimeProduction.layer({ me, ...files }))
-).pipe(Layer.provideMerge(dependencies));
+).pipe(Layer.provide(StreamAdmission.layer), Layer.provideMerge(dependencies));
 const apiDefinition = HttpApi.make("patchy").add(RuntimeGroup);
 const apiLayer = RuntimeApi.layer.pipe(
   Layer.provideMerge(runtime),

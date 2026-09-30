@@ -1289,6 +1289,8 @@ three `shared.*` reads, `files.list`/`files.delete`, and `postgres.list`/`postgr
 `postgres.getMany`/`postgres.query`; file bytes use separate routes.
 A company version needs a browser session, never the dev machine token; a current
 public version returns null for `me` and refuses owned-table, shared-table, file and Postgres access.
+Its declared `members.*` reads and subscriptions admit signed-in company members
+and refuse anonymous viewers, other-company viewers and deactivated members.
 Required headers and request shapes are in [API.md](API.md#runtime).
 The runtime log baseline is applied by all three migration entrypoints above.
 Postgres connection reads use one statement runner over native `pg` or a killable

@@ -22,6 +22,7 @@ import * as Runtime from "../Runtime.js";
 import * as RuntimeProduction from "../RuntimeProduction.js";
 import * as RuntimeApi from "../RuntimeApi.js";
 import * as RuntimeLog from "../RuntimeLog.js";
+import * as StreamAdmission from "../StreamAdmission.js";
 import { me } from "../me.js";
 import * as SubscriptionReads from "../SubscriptionReads.js";
 import * as Wakes from "../Wakes.js";
@@ -101,6 +102,7 @@ export const layer = (
   Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
     Layer.provide(events),
     Layer.provideMerge(RuntimeProduction.layer(handlers)),
+    Layer.provideMerge(StreamAdmission.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         versions,

@@ -12,6 +12,7 @@ import {
   runtimeBodyLimitId,
   WIRE_VERSION,
   runtimeOperations,
+  isMemberOperation,
   type RuntimeCode,
   type RuntimeFailure,
   type RuntimeBodyLimitId,
@@ -359,6 +360,11 @@ export const handler = <
   };
 };
 
+const principalHandler = handler(
+  { kind: "read", input: Schema.Struct({}), output: RuntimePrincipal },
+  () => Effect.map(Binding.Binding, (binding) => binding.principal)
+);
+
 export const byteLimits = {
   rowBytes: ContractLimits.get("runtime.row.bytes"),
   batchBytes: ContractLimits.get("runtime.batch.bytes"),
@@ -440,6 +446,8 @@ export interface Options {
     RuntimeError,
     HttpServerRequest.HttpServerRequest
   >;
+  /** The read-only shell handshake may recover a stale cookie before binding its principal. */
+  readonly bootstrapIdentity: Options["identity"];
   /** Production operating admission, once per incoming operation, never inside a handler. */
   readonly admitCompany?: (companyId: string) => Effect.Effect<void, RuntimeError>;
   readonly record?: <A>(
@@ -486,7 +494,13 @@ export const make = (
     ) =>
       Effect.gen(function* () {
         if (draining) return yield* new Draining();
-        const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
+        // The shell binds public directory requests without exposing identity through `me`.
+        const principalBootstrap = input.op === "principal";
+        const operation = principalBootstrap
+          ? principalHandler
+          : Object.hasOwn(handlers, input.op)
+            ? handlers[input.op]
+            : undefined;
         if (operation !== undefined || Object.hasOwn(runtimeOperations, input.op))
           yield* WideEvents.operation(input.op);
         const integration = operation?.kind === "integration";
@@ -547,7 +561,8 @@ export const make = (
             // A constrained SELECT can invoke functions: integrations require the same
             // exact Origin as mutations, never a Sec-Fetch-Site fallback.
             if (
-              ((input.op === "server.call" ||
+              ((principalBootstrap ||
+                input.op === "server.call" ||
                 input.op === "files.discard" ||
                 operation?.kind === "mutation" ||
                 integration ||
@@ -581,10 +596,23 @@ export const make = (
           return yield* new ShellOutdated({});
         let identity: Binding.Binding["Service"]["identity"] = null;
         let reauthorize: AdmittedIdentity["reauthorize"] = Effect.fail(new AccessDenied({}));
-        if (version.scope === "public") {
-          if (input.op !== "me") return yield* new PublicUnavailable({});
-        } else {
-          const admitted = yield* options.identity;
+        if (
+          principalBootstrap &&
+          (version.scope !== "public" ||
+            version.manifest.tier !== 1 ||
+            !Object.hasOwn(version.manifest.uses, "members") ||
+            version.manifest.uses.members?.kind !== "members")
+        )
+          return yield* new AccessDenied({});
+        if (
+          version.scope === "public" &&
+          input.op !== "me" &&
+          !principalBootstrap &&
+          (version.manifest.tier !== 1 || !isMemberOperation(input.op))
+        )
+          return yield* new PublicUnavailable({});
+        if (version.scope !== "public" || input.op !== "me") {
+          const admitted = yield* principalBootstrap ? options.bootstrapIdentity : options.identity;
           identity = admitted.viewer;
           reauthorize = admitted.reauthorize;
           yield* WideEvents.enrich({ viewerId: identity.user.id });
@@ -616,7 +644,11 @@ export const make = (
               );
               if (principal?.userId !== bodyPrincipal?.userId) return yield* new InvalidRequest({});
             }
-            if (principal === null ? input.op !== "me" : principal.userId !== identity.user.id)
+            if (
+              principal === null
+                ? input.op !== "me" && !principalBootstrap
+                : principal.userId !== identity.user.id
+            )
               return yield* new PrincipalChanged({});
           }
           if (
@@ -673,7 +705,7 @@ export const make = (
               value:
                 attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
             });
-          if (version.scope !== "public" && options.admitCompany !== undefined)
+          if (identity !== null && options.admitCompany !== undefined)
             yield* options.admitCompany(version.companyId);
           if (draining) return yield* new Draining();
         });

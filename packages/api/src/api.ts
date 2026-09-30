@@ -548,11 +548,14 @@ const runtimeAdmission =
   "Browser-only: no bearer middleware, and machine tokens are refused. Every request requires " +
   "`X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or " +
   '`{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. ' +
-  "A public version answers `me` with null and every other operation, including unknown ones, " +
-  "with `not_available_on_public`, with or without a session and before any principal check. " +
-  "Public shells always send a null principal. Company versions require a browser session " +
+  "A public version answers `me` with null. Public tier 1 versions admit declared `members.*` reads " +
+  "only for active signed-in members of the patch's company; all other data operations, including " +
+  "unknown ones, return `not_available_on_public`. Public HTML contains no viewer identity. " +
+  "Before directory work, the trusted shell uses the internal `principal` operation with a null " +
+  "principal to bind `{ userId }`, then pins that principal for directory calls and streams. " +
+  "Company versions require a browser session " +
   "(`session_expired`), a viewer who can open the patch (`access_denied`), and a principal " +
-  "matching that session's user (`principal_changed`); only `me` may bootstrap with null. " +
+  "matching that session's user (`principal_changed`); company `me` may bootstrap with null. " +
   "Tier 2 documents admit handle redemption (`files.redeem`) but refuse direct name-based primitives " +
   "and integrations with `server_required`, even after rollback to a lower served tier. A loaded " +
   "lower-tier document cannot redeem handles and gets only `me` while tier 2 is served. " +
@@ -634,12 +637,12 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`members.getMany { ids }` preserves input order and duplicates with null for unknown " +
           "or other-company ids. More than 1,000 ids is `limit_exceeded` with `members.getMany`. " +
           "Each member is `{ id, name, email, admin, active }`. These reads require the fixed " +
-          "`members` declaration and company-document authority. All four operations subscribe " +
+          "`members` declaration and active same-company viewer authority, including on public tier 1 documents. All four operations subscribe " +
           "to the company directory revision. Tier 2 handlers may read the directory in all " +
           "three kinds; only queries track dependencies. Directory reads use the platform " +
           "database, outside the query's company-database snapshot. A `member` column stores " +
           "a user id and rejects a non-candidate with `invalid_row` on insertion or changed " +
-          "assignment, including defaults. An unchanged inactive id passes. Eligibility is " +
+          "assignment. Member columns may be optional but cannot have defaults. An unchanged inactive id passes. Eligibility is " +
           "checked when the write arrives, not when its transaction commits. " +
           "`postgres.list`, `postgres.get`, `postgres.getMany` and `postgres.query` select a " +
           "declared alias with `connection`; relation operations use `relation: { schema, name }`. " +
@@ -858,12 +861,13 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
         "Browser-cookie authentication only; bearer tokens are refused. " +
           "`X-Patchy-Wire` is the decimal runtime wire; `X-Patchy-Principal` is JSON " +
           '`{"userId":"..."}` matching the current admitted viewer, never null. ' +
-          "GET opens one fetch-streamed SSE connection per company document on tiers 1 and 2. " +
+          "GET opens one fetch-streamed SSE connection per authenticated document on tiers 1 and 2. " +
           "`patchId` and `versionId` identify the retained loaded version; `documentId` is the " +
           "shell's 16–128 character base64url nonce. `Sec-Fetch-Site: same-origin` is required. " +
-          "Every reconnect checks the session, company and loaded version again. Only company " +
-          "shells bootstrap this stream; an authenticated company document keeps its stream if " +
-          "the patch becomes public. Frames are `data: <JSON>\\n\\n`, without an event field. " +
+          "Every reconnect checks the session, company and loaded version again. Company " +
+          "shells bootstrap this stream; public tier 1 shells open it lazily for declared " +
+          "member-directory subscriptions after binding the authenticated principal. An authenticated " +
+          "company document keeps its stream if the patch becomes public. Frames are `data: <JSON>\\n\\n`, without an event field. " +
           "The first frame is `{type:'hello',generation,serverTime}`, with an opaque generation " +
           "and Unix milliseconds; the current `{type:'served',versionId,tier}` follows. " +
           "Dev also sends `{type:'handlers',kinds}` with the complete host-inspected handler-kind map " +
@@ -914,8 +918,9 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "using its loaded version, document nonce and current stream generation. Control " +
           "requests share `runtime.calls.perMinute` with ordinary calls for the same viewer " +
           "and patch; exhaustion is `rate_limited` (429) with `Retry-After`. Public loaded " +
-          "versions refuse data subscriptions with `not_available_on_public` without closing " +
-          "the lifecycle stream; retained company versions remain eligible. Deltas " +
+          "tier 1 versions admit only declared `members.*` subscriptions for same-company viewers; " +
+          "other data subscriptions return `not_available_on_public` without closing " +
+          "the lifecycle stream. Retained company versions remain eligible. Deltas " +
           "`{type:'subscribe',sequence,subscription}` and `{type:'unsubscribe',sequence,id}` " +
           "apply in order, starting at sequence 1. " +
           "A subscription is `{id,op,args,vector?,revision?}`; tier 1 supports `tables.list`, " +

@@ -245,12 +245,13 @@ restart to change a local source. Authority changes are not simulated.
 Only metadata and inventory come from the instance.
 On tier 1, every readable row is available to every admitted viewer;
 UI filters do not create access control. Tier 2 enforces rules in handlers.
-A public runtime gets no company data. Project skills teach these boundaries
+A public tier 1 patch can read its declared member directory for a signed-in
+company member, but not other company data. Project skills teach these boundaries
 and the limits of each tier; durable data goes through Patchy.
 
 ### Sharing and finding
 
-A published patch is shared with **everyone in the company** by default, or made **public** on purpose, so anyone can open its current version without a login. The owner chooses the scope with `patchy publish [file] --share company|public` or `patchy share`, using the repo id, file cache or explicit `--patch <id>`. A publish without `--share` preserves the scope. Owners and admins can also change a live patch's scope on its portal card. Public tier 1 versions expose no company capabilities, even to a signed-in member. Narrower sharing remains future work, as described under [Identity and access](#access-to-a-patch).
+A published patch is shared with **everyone in the company** by default, or made **public** on purpose, so anyone can open its current version without a login. The owner chooses the scope with `patchy publish [file] --share company|public` or `patchy share`, using the repo id, file cache or explicit `--patch <id>`. A publish without `--share` preserves the scope. Owners and admins can also change a live patch's scope on its portal card. Public tier 1 versions expose their declared member directory only to signed-in company members; other company capabilities remain unavailable. Narrower sharing remains future work, as described under [Identity and access](#access-to-a-patch).
 
 A person finds a patch in the portal or through its shared address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is. See [Addresses](#addresses).
 
@@ -306,17 +307,17 @@ A **tier** is where a patch's code runs, and nothing else. Tier 0 is **static**:
 
 A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev/test instances and production hosts configured with the ECS fleet.
 
-Tiers 0 and 1 can be **public**, open to anyone with the link. A public tier 0 patch is a static page; a public tier 1 patch can run browser code but receives no company capabilities for anyone, including signed-in members. It may still use the shell's route bridge. An authenticated company-data mode of a public patch remains deferred. **Public tier 2 is deferred**: the patch identity grants no anonymous access. `tier2_not_public` refuses public sharing of a served tier 2 version, and a tier 2 publish to a public patch requires explicit `--share company`.
+Tiers 0 and 1 can be **public**, open to anyone with the link. A public tier 0 patch is a static page; a public tier 1 patch can run browser code and use the shell's route bridge. Its declared member directory is available only to signed-in company members. Tables, files and integrations remain unavailable on public versions. **Public tier 2 is deferred**: the patch identity grants no anonymous access. `tier2_not_public` refuses public sharing of a served tier 2 version, and a tier 2 publish to a public patch requires explicit `--share company`.
 
 ### Tier 0 — static
 
-The published document runs no script, so **the patch cannot watch you**. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish patch content from its first-party shell: a public tier 0 shell needs no script; a public tier 1 shell runs only Patchy's broker, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
+The published document runs no script, so **the patch cannot watch you**. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish patch content from its first-party shell: a public tier 0 shell needs no script; a public tier 1 shell starts only Patchy's broker, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer. A public tier 1 shell activates the same session maintenance when it authenticates directory access. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
 
 ### Tier 1 — browser
 
 Code runs in the viewer's browser and, on a company version, acts **as the viewer**. It never holds the Clerk session or an integration credential. It can learn the viewer's user and company claims; an admin hint is for presentation, not an extra permission. It reaches the patch's own tables and files, declared shared tables and company integrations through Patchy, which authorizes the call against the loaded version and the viewer's current access. It cannot use the viewer's broader account or admin powers. There is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
 
-**A tier 1 patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** A public shell runs only Patchy's own shell script, never analytics; company shells also maintain the session.
+**A tier 1 patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** Public shells load no analytics. Company shells maintain the session; public tier 1 shells activate session maintenance for authenticated directory access.
 
 The shell binds one document, patch and version through a nonce-checked message
 channel. Tier 1 content is served on the same host in a sandboxed, opaque-origin
@@ -330,7 +331,8 @@ Publish and rollback announce the served version without reloading the frame or
 discarding input. A bottom-centre notice offers Reload; Not now lasts until the
 next publish, and Hide collapses it without dismissing. The tier-upgrade state
 "Reload to keep saving" cannot be dismissed. Rolling back to the loaded version
-clears the notice. Public documents have no company stream.
+clears the notice. Public tier 1 documents use an authenticated stream for
+declared member-directory subscriptions; outsiders get no company stream.
 
 The shell reconnects after a network cut or host restart, keeping its loaded
 version and last subscription values. A reconnecting pill appears after two seconds
@@ -633,7 +635,7 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 - **Agent** — software acting for a user, with that user's machine token. Never a who, always a how; it is indistinguishable from its user except by the token's machine name.
 - **Member**, **admin** — the two roles a user has in the company.
 - **Owner**: the user a patch belongs to and the only user who publishes its code. Same-company admin actors may perform the other management acts; admitted viewers may write its data.
-- **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. Tier 1 patch code acts within that viewer's permissions. Tier 2 retains the initiating viewer and rechecks their live session and membership for company resources; its own-resource callbacks act as the patch. Public documents have no company runtime authority, even for a signed-in reader.
+- **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. Tier 1 patch code acts within that viewer's permissions. Tier 2 retains the initiating viewer and rechecks their live session and membership for company resources; its own-resource callbacks act as the patch. On a public tier 1 document, a company member has authority only for the declared member directory.
 - **Operator** — Patchy, running the platform. Platform powers only, never a role inside a company, and never the word for whoever drives the CLI — that is the agent, the CLI's primary **driver**.
 
 ## Primitives
@@ -666,7 +668,8 @@ restore with a placement-version change is designed for, not an available tool.
 ### Tables and rows
 
 Columns have kinds `text`, `integer`, `number`, `boolean`, `timestamp`, `json`,
-`ref` and `member`, with optional or defaulted values. Defaulted does not mean nullable.
+`ref` and `member`. Member columns may be optional but cannot have defaults;
+other kinds support optional or defaulted values. Defaulted does not mean nullable.
 Every row has a server-generated UUIDv7 `id` and database-maintained `createdAt`
 and `updatedAt`; patch code cannot supply those fields. Refs are indexed row
 identifiers without foreign keys: deleting a target leaves a normal dangling ref.
@@ -699,9 +702,9 @@ last-write-wins, with no cross-table transaction or mutation replay key.
 `patchy add members` declares the company's member directory and installs the
 `patchy-members` project skill. The declaration is `uses: { members: { kind: "members" } }`,
 with no resource stamp or fixture. Tier 1 uses `patchy.members`; all three tier 2
-handler kinds use `ctx.members`. Public documents grant no directory access,
-including for signed-in readers. A lower-tier document gets only `me` while its
-patch serves tier 2.
+handler kinds use `ctx.members`. On a public tier 1 patch, signed-in company
+members can read the directory; anonymous viewers and viewers outside the
+company are refused. A lower-tier document gets only `me` while its patch serves tier 2.
 
 Candidates are active company users. `list` and `search` return `{ rows, cursor }`
 in pages of 50, ordered by lowercased name, lowercased email and id. Search matches
@@ -716,9 +719,9 @@ transaction commits. Only query handlers acquire this dependency. Directory read
 are outside a query's company-database snapshot; a directory-only query needs no
 company database.
 
-`t.member()` stores a user id and requires the declaration. Inserts and changed
-assignments check the current candidates, including defaulted values; invalid
-assignments fail `invalid_row` on both tiers. An unchanged value passes after its
+`t.member()` stores a user id and requires the declaration. It supports `.optional()`
+but not `.default()`. Inserts and changed assignments check the current candidates;
+invalid assignments fail `invalid_row` on both tiers. An unchanged value passes after its
 user is deactivated, and deactivation never rewrites rows. Eligibility is checked
 when the write arrives, not at commit, so deactivation during a mutation can still
 leave a committed assignment. Resolve a page's distinct ids once with `getMany`.
@@ -774,7 +777,8 @@ An admitted company viewer reads and writes every row and file defined by the
 loaded version of the owning patch, acting as themselves, not the patch owner.
 There are no per-row, per-user or write scopes; UI filtering is not access control.
 Every mutation is attributed in the runtime log before execution; table and file
-reads are not logged. A public version grants no company-data access. Older
+reads are not logged. Public versions refuse table and file access; the member
+directory exception does not grant access to stored resources. Older
 manifests remain usable after additive changes, including inserts omitting newer
 columns. Admins own the audit view, not extra powers inside patch code; today's
 log reader is the recent-calls list per connection, not a general mutation browser.

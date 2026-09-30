@@ -17,6 +17,7 @@ import {
   RuntimeStreamRequest,
   RuntimeSubscriptionRequest,
   handlerKinds,
+  isMemberOperation,
   type HandlerKind,
   WIRE_VERSION
 } from "@patchy/api";
@@ -349,7 +350,6 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             return yield* new Runtime.AccessDenied({});
           binding = { ...binding, ...eligible.value };
           servedTier = eligible.value.patchTier;
-          if (eligible.value.scope === "public") return yield* new Runtime.PublicUnavailable({});
         }).pipe(
           Effect.tapError((error) =>
             Effect.sync(() => {
@@ -364,6 +364,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ),
         checkOperation: (op) =>
           Effect.gen(function* () {
+            if (binding.scope === "public" && !isMemberOperation(op))
+              return yield* new Runtime.PublicUnavailable({});
             if (op === "server.call" && loaded.manifest.tier === 2) return;
             if (op === "server.call" || loaded.manifest.tier !== 1 || servedTier !== 1)
               return yield* new DirectSubscriptionRequired({

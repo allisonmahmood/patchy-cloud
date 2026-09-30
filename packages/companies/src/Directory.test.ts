@@ -67,7 +67,7 @@ it.layer(services)("company directory", (it) => {
         rows: [memberValue(member), memberValue(admin)],
         cursor: null
       });
-      assert.isTrue(yield* directory.isCandidate(company.id, member.id));
+      assert.deepStrictEqual(yield* directory.candidates(company.id, [member.id]), [member.id]);
       const left = yield* users.deactivate({ companyId: company.id, userId: member.id });
       assert.deepStrictEqual(yield* directory.list(company.id, 50), {
         rows: [memberValue(admin)],
@@ -78,9 +78,10 @@ it.layer(services)("company directory", (it) => {
         cursor: null
       });
       assert.deepStrictEqual(yield* directory.get(company.id, member.id), memberValue(left));
-      assert.isFalse(yield* directory.isCandidate(company.id, member.id));
-      assert.isFalse(yield* directory.isCandidate(company.id, outsider.id));
-      assert.isFalse(yield* directory.isCandidate(company.id, "missing"));
+      assert.deepStrictEqual(
+        yield* directory.candidates(company.id, [member.id, outsider.id, "missing"]),
+        []
+      );
       assert.isNull(yield* directory.get(company.id, outsider.id));
       assert.isNull(yield* directory.get(company.id, "missing"));
       assert.deepStrictEqual(
@@ -96,7 +97,44 @@ it.layer(services)("company directory", (it) => {
       assert.deepStrictEqual(yield* directory.getMany(company.id, []), []);
       yield* users.reactivate({ companyId: company.id, userId: member.id });
       assert.deepStrictEqual(yield* directory.get(company.id, member.id), memberValue(member));
-      assert.isTrue(yield* directory.isCandidate(company.id, member.id));
+      assert.deepStrictEqual(yield* directory.candidates(company.id, [member.id]), [member.id]);
+    })
+  );
+
+  it.effect("checks distinct assignments with one query and skips empty candidate batches", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const users = yield* Users.Users;
+      const { company, user: admin } = yield* createCompany("directory-batch");
+      const { user: outsider } = yield* createCompany("directory-batch-outsider");
+      const inactive = yield* join(company.id, admin.id, "inactive@batch.test", "Inactive");
+      yield* users.deactivate({ companyId: company.id, userId: inactive.id });
+      const queries: number[] = [];
+      const unsafe: SqlClient.SqlClient["unsafe"] = <A extends object>(
+        query: string,
+        params?: ReadonlyArray<unknown>
+      ) => {
+        queries.push(params?.length ?? 0);
+        return sql.unsafe<A>(query, params);
+      };
+      const recordingSql = new Proxy(sql, {
+        get: (target, property, receiver) =>
+          property === "unsafe" ? unsafe : Reflect.get(target, property, receiver)
+      });
+      const directory = yield* Directory.make.pipe(
+        Effect.provideService(SqlClient.SqlClient, recordingSql)
+      );
+      const ids = [inactive.id, admin.id, outsider.id, "missing"];
+      assert.deepStrictEqual(
+        yield* directory.candidates(
+          company.id,
+          Array.from({ length: 1000 }, (_, index) => ids[index % ids.length]!)
+        ),
+        [admin.id]
+      );
+      assert.deepStrictEqual(queries, [2]);
+      assert.deepStrictEqual(yield* directory.candidates(company.id, []), []);
+      assert.deepStrictEqual(queries, [2]);
     })
   );
 
@@ -416,7 +454,9 @@ it.layer(services)("company directory", (it) => {
       assert.strictEqual(yield* directory.revision(source.company.id), "3");
       assert.strictEqual(yield* directory.revision(target.company.id), "2");
       assert.isNull(yield* directory.get(source.company.id, member.id));
-      assert.isTrue(yield* directory.isCandidate(target.company.id, member.id));
+      assert.deepStrictEqual(yield* directory.candidates(target.company.id, [member.id]), [
+        member.id
+      ]);
       yield* sql`DELETE FROM users WHERE id = ${member.id}`;
       assert.strictEqual(yield* directory.revision(target.company.id), "3");
       assert.isNull(yield* directory.get(target.company.id, member.id));

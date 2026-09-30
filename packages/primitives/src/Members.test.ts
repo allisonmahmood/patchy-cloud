@@ -57,7 +57,7 @@ const fixture = Effect.gen(function* () {
     get: () => read,
     getMany: (_companyId, ids) =>
       read.pipe(Effect.as(ids.map((id) => (id === member.id ? member : null)))),
-    isCandidate: () => Effect.succeed(false),
+    candidates: () => Effect.succeed([]),
     revision: () => Effect.sync(() => String(state.revision))
   });
   const databases = yield* CompanyDatabases.CompanyDatabases;
