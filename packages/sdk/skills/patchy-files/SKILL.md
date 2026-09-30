@@ -7,6 +7,11 @@ description: Define a Patchy file store, stage or discard a tier 2 upload, adopt
 
 Read `../patchy-loop/SKILL.md` first. On tier 1, every stored file is available to whoever can open the patch; file names and hidden UI controls are not access rules. Tier 2 uses `ctx.files` in handlers, not named stores on the page client. Use local invented files while building, never download production bytes to seed development, and never edit generated output.
 
+For files generated in the page, use the Core method
+`patchy.download(name, data)`, not a stored-file upload followed by download.
+It works without a store, including on public tier 1 patches. See
+`../patchy-loop/SKILL.md` for CSV export, the shell's approval action and limits.
+
 ## Discover stores without reading files
 
 Use the loop skill's discovery chain to find a tool by description with

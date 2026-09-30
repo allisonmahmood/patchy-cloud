@@ -4,11 +4,13 @@ import { getDocumentTransport, LostReply, type Me, type Transport } from "./clie
 import { createQueryRegistry } from "./queryRegistry.js";
 import type { ServerClient } from "./server.js";
 import { createServerFiles, getDocumentFiles, type ServerFiles } from "./serverFiles.js";
+import { createDownload, type Download } from "./download.js";
 
 export interface ServerOnlyClient<Modules> {
   readonly server: ServerClient<Modules>;
   readonly files: ServerFiles;
   readonly route: Transport["route"];
+  readonly download: Download;
   me(): Promise<Me>;
   close(): void;
 }
@@ -89,6 +91,7 @@ export function createServerClient<Modules>(
     server: server as ServerClient<Modules>,
     files,
     route: transport.route,
+    download: createDownload(transport.call),
     me: () =>
       (identity ??= transport.call("me", {}).then((value) => {
         if (value === null)

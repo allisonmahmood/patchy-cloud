@@ -73,8 +73,9 @@ shell's reconnecting pill stays visible until catch-up completes.
 
 Dev and publish check the page graph, not `package.json`. Runtime imports may
 use `patchy/preact`, its two JSX runtimes, `patchy/csv` and the relative generated
-client. CSV is a reserved entry point until its helper ticket ships. The generated
-client uses `patchy/client` internally and re-exports `isPatchyError` for pages.
+client. `patchy/csv` is a shipped Helper on both page and server graphs.
+The generated client uses `patchy/client` internally and re-exports
+`isPatchyError` for pages.
 Tooling and type-only imports do not enter the page graph. An off-SDK import,
 including one hidden by an alias or removed by tree shaking, is local exit 1,
 `import_refused`. Its message names the package, importer and allowed entries,
@@ -91,6 +92,77 @@ Contributors can run `pnpm --filter patchy build` followed by
 the installed UI tree and JSX types, exercises optimized dev and the single-file
 production bundle in Chromium, and installs a same-version repack through a new
 digest URL.
+
+### CSV import and export
+
+`patchy/csv` is based on PapaParse, with its own synchronous text API rather
+than exposed PapaParse options. Import it in tier 1 and 2 pages or tier 2
+server handlers:
+
+```ts
+import { parse, records, stringify, CsvError } from "patchy/csv";
+
+parse(text); // string[][]
+records(text); // { headers: string[], records: Record<string, string>[],
+//   errors: { line: number, expected: number, actual: number }[] }
+stringify(rows, { formulaProtection: true }); // string
+```
+
+`parse` preserves text and each row's field count, with no trimming, type
+conversion or padding. Both parsers accept a leading BOM, CRLF or LF and
+quoted multiline fields. They skip only empty physical lines, not
+whitespace-only, quoted-empty or delimiter-only rows. A final line terminator
+adds no extra row. Empty input returns `[]` from `parse`.
+
+`records` takes the first retained row as headers and rejects duplicate
+headers. A wrong-width row is omitted from `records` and reported in `errors`,
+with its 1-based starting physical line, expected field count and actual
+field count. It never pads or truncates a row. Empty input returns
+`{ headers: [], records: [], errors: [] }`.
+
+Parsing enforces at most 10,000,000 input characters and 1,000,000 cells.
+Fatal failures throw `CsvError` with `code` and a 1-based physical `line`
+when applicable. An unterminated quote fails the entire parse and names the
+opening quote's physical line, rather than returning partial data.
+Limit errors carry `code: "limit_exceeded"`, `limitId` of `csv.characters`
+or `csv.cells`, and `value` containing that limit's fixed bound.
+
+`stringify(rows, options?)` accepts readonly rows of strings and numbers.
+It writes CRLF and quotes fields as needed. Formula protection is on by
+default: text starting with `=`, `+`, `-`, `@`, a tab or a CR receives a
+leading `'`; numbers are untouched. This is not lossless, because parsing
+that output retains the apostrophe. `{ formulaProtection: false }` preserves
+the original text instead of adding this protection.
+
+### Generated downloads and printing
+
+The generated client's `download(name, data): Promise<null>` accepts `Blob`,
+`Uint8Array` or `ArrayBuffer`. It is Core on tier 1 and 2 pages, including
+public tier 1 patches, and needs no store declaration. Stored-file downloads
+remain separate capabilities with their own access checks.
+
+```ts
+import { patchy } from "../patchy/_generated/client.js";
+import { stringify } from "patchy/csv";
+
+const csv = stringify([
+  ["Name", "Balance"],
+  ["Avery", -12]
+]);
+await patchy.download("balances.csv", new Blob([csv], { type: "text/csv" }));
+```
+
+The shell enforces 20 MiB of encoded bytes, not characters. It shows its own
+download card with the filename and size; the viewer must click Download
+there, because a frame's claim of a user click is not trusted. `Not now`
+discards the offer and rejects the promise. Success means the browser took
+the file, not that the person saved it to disk. Reloading or closing loses
+pending files.
+
+`window.print()` works in the frame for browser print-to-PDF. The SDK does
+not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic,
+phone parsing, component libraries, rich text, charts or HTML sanitisation.
+These are missing SDK features, not restrictions on company code.
 
 ### Tier 2 contract
 
@@ -900,8 +972,8 @@ is `too_large`, with a largest-contributor report. `server/` below tier 2 remain
 back to a static file.
 
 Tier 2 bundles `server/` into one closed module with no dynamic imports.
-The server graph allows `patchy/server`, `patchy/csv` when available, generated
-server helpers and company code. The page imports server modules only as types.
+The server graph allows `patchy/server`, `patchy/csv`, generated server
+helpers and company code. The page imports server modules only as types.
 `handlers` and `sdkImports` are recorded in the manifest. The instance inspects
 the stored server bytes in a throwaway process; descriptor disagreement, a
 top-level throw, an unresolved import or an unfinished initializer is

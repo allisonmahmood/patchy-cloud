@@ -42,7 +42,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   ${options.head ?? ""}
   ${scripted ? '<script defer src="/~shell/broker.js"></script>' : ""}
   <style>
-    ${scripted && options.scope !== "public" ? shellStyles : ""}
+    ${scripted ? shellStyles : ""}
     html, body { height: 100%; margin: 0; background: #ffffff; }
     body { overflow: hidden; }
     .patch-frame { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }

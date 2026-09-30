@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { afterEach, expect, it, vi } from "vitest";
 import { build } from "vite";
 import type { LocalError } from "./CliError.js";
@@ -53,6 +54,33 @@ document.body.textContent = "Types stay outside the page graph";
   expect(script).toContain("Types stay outside the page graph");
   expect(script).not.toContain("lodash");
 });
+
+it.each(["page", "server"] as const)(
+  "builds and executes patchy/csv on the %s graph",
+  async (graph) => {
+    const root = page(`import { parse, stringify } from "patchy/csv";
+globalThis.csvResult = parse(stringify([["=1", -42], ["a,b", "line\\nnext"]]));
+`);
+    const result = await build({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [pageImports(root, () => {}, { graph })],
+      build: {
+        write: false,
+        lib: { entry: path.join(root, "main.ts"), formats: ["iife"], name: "CsvExample" }
+      }
+    });
+    const output = Array.isArray(result) ? result[0]! : result;
+    if (!("output" in output)) throw new Error("Expected a completed CSV graph build.");
+    const chunk = output.output.find((file) => file.type === "chunk");
+    if (!chunk || chunk.type !== "chunk") throw new Error("The CSV graph emitted no JavaScript.");
+    expect(JSON.parse(runInNewContext(`${chunk.code}\nJSON.stringify(csvResult)`))).toEqual([
+      ["'=1", "-42"],
+      ["a,b", "line\nnext"]
+    ]);
+  }
+);
 
 it.each([
   'import { handler } from "./server/leads.ts"; console.log(handler);',

@@ -23,16 +23,36 @@ A patch is a **file tree**. A **patch repo** is its local working copy, initiali
 Each version has exactly one tier. The CLI checks the tree and bundle; the server checks the manifest and bundle. Tier is about code, not data: a tier 0 repo may define tables and stores or declare dependencies even though its static page cannot call them. Tables and stores are provisioned with the patch; a declared connection must already be connected and a shared table or store must already be available (see [Primitives](#primitives) and [Integrations](#integrations)).
 
 The **Patchy SDK** is the release-versioned code a patch imports: Core supplies
-the generated client, contract, Preact with compat semantics and shell operations;
+the generated client, contract, Preact with compat semantics and shell operations,
+including generated-file downloads separate from stored-file access;
 Primitives supply tables and files; Integrations supply company Postgres;
-Helpers are optional reusable modules, with CSV planned next. Everything else
+Helpers include `patchy/csv`, a synchronous text codec based on PapaParse with
+Patchy's own API, importable on both page and server graphs. Everything else
 written or copied into the patch is **company code**, maintained by the company.
-Dev and publish check page imports, not the dependency list in `package.json`.
+Dev and publish check both import graphs, not the dependency list in `package.json`.
 An off-SDK import is local `import_refused`, with its importer, allowed entry
 points and the company-code rule. This build contract is not containment.
 Generation lists the current release's capabilities, where they run and their
 limits in "What the SDK gives you" in `patchy-loop`; refresh announces additions
 without rewriting company code.
+
+`patchy/csv` parses at most 10,000,000 input characters and 1,000,000 cells.
+It accepts a BOM, CRLF or LF and quoted multiline fields, preserving text and
+row widths. `records` uses the first row as headers, rejects duplicates and
+reports wrong-width rows by physical line without padding. Only empty physical
+lines are skipped. `stringify` writes CRLF with quoting as needed; default
+formula protection prefixes risky text cells with `'` but leaves numbers
+untouched. It can be disabled and is not lossless.
+
+The generated client's `download(name, data)` accepts a Blob or bytes on
+tier 1 and 2 pages, including public tier 1 patches. The shell enforces
+20 MiB of encoded bytes and offers its own filename-and-size download card.
+A frame's claim of a click never authorizes a download. The viewer's Download
+action hands the file to the browser; success does not promise a disk save.
+`Not now` rejects the request. Reloading or closing loses pending files.
+`window.print()` works in the frame for browser print-to-PDF. The SDK does not
+yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic,
+phone parsing, component libraries, rich text, charts or HTML sanitisation.
 
 ### Who makes one, and how it gets in
 
@@ -515,9 +535,9 @@ every other direct operation is `server_required`. The `served` frame makes
 the shell show "Reload to keep saving". Rollback to tier 1 reopens tier 1
 documents' direct operations. Rollback to the loaded version clears the notice.
 A tier 2 client remains server-only after any rollback. Its shell exceptions are
-`me`, the route bridge, authorized file-handle redemption and downloads, and
-staging or discarding uploads. Name-based tables, files, shared resources,
-connections and members remain behind handlers.
+`me`, the route bridge, authorized file-handle redemption and stored-file downloads,
+generated-file downloads, and staging or discarding uploads. Name-based tables,
+files, shared resources, connections and members remain behind handlers.
 
 ## Companies
 

@@ -29,7 +29,7 @@ const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.jso
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
 const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
-const publicEntries = ["config", "client", "server", "dev", ...uiEntries];
+const publicEntries = ["config", "client", "server", "csv", "dev", ...uiEntries];
 
 const literals = async (file) => {
   const source = ts.createSourceFile(
@@ -93,7 +93,7 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["config", "server"].map((name) => path.join(packageDir, `src/${name}.ts`)),
+  entryPoints: ["config", "server", "csv"].map((name) => path.join(packageDir, `src/${name}.ts`)),
   outdir: distDir,
   platform: "browser",
   target: "es2022",
@@ -159,6 +159,11 @@ try {
   await declarations.close();
 }
 await chmod(path.join(distDir, "index.js"), 0o755);
+await mkdir(path.join(distDir, "licenses"), { recursive: true });
+await copyFile(
+  path.join(packageDir, "node_modules/papaparse/LICENSE"),
+  path.join(distDir, "licenses/papaparse-LICENSE")
+);
 await access(path.join(rootSkillsDir, "patchy/SKILL.md"));
 await rm(packageSkillsDir, { recursive: true, force: true });
 await cp(rootSkillsDir, packageSkillsDir, { recursive: true });
