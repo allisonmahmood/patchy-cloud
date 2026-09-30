@@ -129,7 +129,9 @@ window.download = client.download; window.outcome = "idle";`,
       value: 20 * 1024 * 1024
     });
     await expect(cards.getByRole("alert")).toContainText("too-large.bin");
-    await expect(cards.getByRole("alert")).toContainText("20 MiB");
+    await expect(cards.getByRole("alert")).toContainText(
+      "This file is too large to download (21 MB, the limit is 20 MB)."
+    );
     await expect(cards.getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
     await cards.getByRole("button", { name: "Dismiss", exact: true }).click();
     await content.evaluate(() => {

@@ -74,6 +74,15 @@ export function createDownloads(
     layout();
     frame.focus();
   };
+  const formatSize = (bytes: number) => {
+    const kb = bytes / 1024;
+    return bytes < 1024
+      ? `${bytes} bytes`
+      : kb < 1024
+        ? `${Number(kb.toFixed(1))} KB`
+        : `${Number((kb / 1024).toFixed(1))} MB`;
+  };
+  // A refusal (maxBytes set) is the same card as note-refused, with no Download and a plain Dismiss.
   const offer = (
     name: string,
     sizeBytes: number,
@@ -83,7 +92,7 @@ export function createDownloads(
   ) => {
     const { promise, resolve } = Promise.withResolvers<boolean>();
     const card = document.createElement("section");
-    card.className = `note ${maxBytes === undefined ? "note-info" : "note-warn"} note-float`;
+    card.className = `note ${maxBytes === undefined ? "note-info" : "note-refused"} note-float`;
     card.setAttribute("aria-label", name);
     // Title and file line are the live region; the actions stay outside it.
     const message = document.createElement("div");
@@ -95,18 +104,12 @@ export function createDownloads(
     const fileName = document.createElement("code");
     fileName.textContent = name;
     const size = document.createElement("span");
-    const kb = sizeBytes / 1024;
-    size.textContent =
-      sizeBytes < 1024
-        ? `${sizeBytes} bytes`
-        : kb < 1024
-          ? `${Number(kb.toFixed(1))} KB`
-          : `${Number((kb / 1024).toFixed(1))} MB`;
+    size.textContent = formatSize(sizeBytes);
     line.append(fileName, " · ", size);
     message.append(title, line);
     if (maxBytes !== undefined) {
       const reason = document.createElement("p");
-      reason.textContent = `This file is too large to download. The limit is ${maxBytes / 1024 / 1024} MiB. Make a smaller file and try again.`;
+      reason.textContent = `This file is too large to download (${formatSize(sizeBytes)}, the limit is ${formatSize(maxBytes)}).`;
       message.append(reason);
     }
     const actions = document.createElement("div");
@@ -129,7 +132,7 @@ export function createDownloads(
     }
     const dismiss = document.createElement("button");
     dismiss.type = "button";
-    dismiss.className = "btn btn-quiet";
+    dismiss.className = maxBytes === undefined ? "btn btn-quiet" : "btn";
     dismiss.textContent = maxBytes === undefined ? "Not now" : "Dismiss";
     dismiss.addEventListener("click", () => discard(file, false));
     actions.append(dismiss);
