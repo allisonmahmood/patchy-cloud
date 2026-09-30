@@ -309,3 +309,100 @@ test("public directory bootstrap refreshes an already-stale cookie before bindin
   ).toHaveLength(2);
   await expect(frame.locator("#identity")).toHaveText("anonymous");
 });
+
+test("public directory retries a failed bootstrap on the next member request", async ({
+  page,
+  context,
+  instance
+}) => {
+  await installSessionRefreshBoundary(context, () => instance.session(context));
+  const patch = await instance.publish("public", undefined, undefined, { uses });
+  let dropped = false;
+  await page.route("**/api/runtime/call", async (route) => {
+    if (!dropped && route.request().postDataJSON().op === "principal") {
+      dropped = true;
+      await route.fetch();
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  const frame = await open(page, patch);
+  for (const id of ["lost", "retry"]) {
+    await frame.evaluate(
+      ({ wire, id }) => {
+        (window as unknown as FixtureWindow).harness.raw({
+          v: wire,
+          id,
+          op: "members.list",
+          args: {}
+        });
+      },
+      { wire: instance.wire, id }
+    );
+    await expect
+      .poll(() =>
+        frame.evaluate(
+          (id) =>
+            (window as unknown as FixtureWindow).harness.replies.find((reply) => reply.id === id),
+          id
+        )
+      )
+      .toMatchObject(
+        id === "lost"
+          ? { kind: "error", error: { code: "unknown_outcome" } }
+          : {
+              kind: "result",
+              value: { rows: expect.arrayContaining([expect.objectContaining({ id: "usr_dev" })]) }
+            }
+      );
+  }
+  expect(dropped).toBe(true);
+  await expect(frame.locator("#identity")).toHaveText("anonymous");
+});
+
+for (const loss of ["deactivation", "company change"] as const) {
+  test(`public call-only directory stops after viewer ${loss}`, async ({
+    page,
+    context,
+    instance
+  }) => {
+    await installSessionRefreshBoundary(context, () => instance.session(context));
+    const patch = await instance.publish("public", undefined, undefined, { uses });
+    const frame = await open(page, patch);
+    await frame.evaluate((wire) => {
+      (window as unknown as FixtureWindow).harness.raw({
+        v: wire,
+        id: "initial",
+        op: "members.list",
+        args: {}
+      });
+    }, instance.wire);
+    await expect
+      .poll(() =>
+        frame.evaluate(
+          () =>
+            (window as unknown as FixtureWindow).harness.replies.find(
+              (reply) => reply.id === "initial"
+            )?.kind
+        )
+      )
+      .toBe("result");
+    expect(instance.streamConnections.size).toBe(0);
+    if (loss === "deactivation")
+      await instance.platform.query("UPDATE users SET deactivated_at=now() WHERE id='usr_dev'");
+    else {
+      await instance.platform.query(
+        "INSERT INTO companies (id, handle, name) VALUES ('cmp_foreign', 'foreign', 'Foreign')"
+      );
+      await instance.platform.query("UPDATE users SET company_id='cmp_foreign' WHERE id='usr_dev'");
+    }
+    await frame.evaluate((wire) => {
+      (window as unknown as FixtureWindow).harness.raw({
+        v: wire,
+        id: "refused",
+        op: "members.list",
+        args: {}
+      });
+    }, instance.wire);
+    await notice(page, "access_denied");
+  });
+}

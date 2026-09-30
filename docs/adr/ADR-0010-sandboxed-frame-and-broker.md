@@ -26,6 +26,7 @@ Company shells pin the admitted viewer when rendered; the local shell obtains it
 The public shell lazily binds `{ userId }` through the internal `principal` runtime operation before its first directory call or subscription. That handshake is not a patch SDK operation. The shell pins the result for the document, then uses the existing principal checks on calls and stream reconnects; cacheable public HTML never contains a viewer identity. Public `me` remains null.
 Runtime adapters supply bootstrap identity explicitly. Production shares `StreamAdmission` between the handshake and document streams, including stale-token refresh semantics; it does not fall back to ordinary invocation admission.
 Public member-enabled shells hold the trusted session scripts in an inert template containing only public Clerk configuration. Directory authentication activates that template once, including when a stale token needs refresh during the initial handshake. Anonymous refusals leave the public page and its route bridge usable.
+A failed lazy bind can retry on the next directory request. A successful bind keeps its principal for the document's lifetime. Once bound, a public document stops on lost member authority even if it uses only direct calls and has never opened a stream.
 `access_denied`, `session_expired`, `principal_changed` and `revoked` stop the
 document. `not_available_on_public` remains a patch-visible refusal, and public
 patches retain their browser-owned route bridge.

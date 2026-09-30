@@ -304,6 +304,12 @@ function mount(frame: HTMLIFrameElement): void {
       (frame.dataset.scope !== "public" || principal !== null)
     )
       notice(error.code);
+    else if (
+      error.code === "access_denied" &&
+      frame.dataset.scope === "public" &&
+      principal !== null
+    )
+      notice(error.code);
     else if (error.code === "access_denied") {
       // A source refusal is recoverable. Only lost access to this document stops its frame.
       try {
@@ -574,7 +580,10 @@ function mount(frame: HTMLIFrameElement): void {
         release(reply.heldBytes);
       }
       await maintainSession();
-    })();
+    })().catch((error: unknown) => {
+      directoryPrincipal = undefined;
+      throw error;
+    });
     return directoryPrincipal;
   };
   const identifyFailure = (error: unknown) => {
