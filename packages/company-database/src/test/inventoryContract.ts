@@ -119,12 +119,16 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
       yield* sql.unsafe('ALTER TABLE "patchy"."stores" DROP COLUMN "shared"');
       yield* sql.unsafe("DROP TABLE patchy.mutation_keys");
+      yield* sql.unsafe("DROP TABLE patchy.file_handle_key");
+      yield* sql.unsafe("DROP INDEX patchy.files_object_id");
       yield* Inventory.initialize;
+      const keys = yield* sql`SELECT secret FROM patchy.file_handle_key`;
       yield* Inventory.initialize;
       yield* sql`INSERT INTO patchy.mutation_keys
         (key, issued_at, patch_id, version_id, handler, viewer_id, fingerprint, invocation_id, reply)
         VALUES ('retained', now(), ${patchId}, 'version', 'demo.mutation', 'viewer', 'fingerprint', 'inv_retained', '{"ok":true,"value":42}'::jsonb)`;
       yield* Inventory.initialize;
+      assert.deepStrictEqual(yield* sql`SELECT secret FROM patchy.file_handle_key`, keys);
       assert.deepStrictEqual(
         yield* sql`SELECT invocation_id, reply FROM patchy.mutation_keys WHERE key = 'retained'`,
         [{ invocation_id: "inv_retained", reply: { ok: true, value: 42 } }]

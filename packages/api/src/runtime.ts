@@ -82,18 +82,30 @@ export const FileContentType = Schema.String.check(
       "Content-Type must be a media type without control characters."
   )
 );
+const fileHandle = Schema.String.check(
+  Schema.isLengthBetween(
+    registry["files.handle.length"].default,
+    registry["files.handle.length"].default
+  ),
+  Schema.isPattern(/^[a-z0-9]{24}\.[A-Za-z0-9_-]{32}$/)
+);
 export const FileMetadata = Schema.Struct({
   name: FileName,
   size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   contentType: FileContentType,
-  updatedAt: IsoTimestamp
+  updatedAt: IsoTimestamp,
+  handle: Schema.optionalKey(fileHandle)
 });
 export const FilePage = Schema.Struct({
   files: Schema.Array(FileMetadata),
   cursor: Schema.NullOr(Schema.String)
 });
 /** A capability result, transferred as raw bytes by HTTP and ArrayBuffer by the broker. */
-export const FileBody = Schema.Struct({ bytes: Schema.Uint8Array, contentType: FileContentType });
+export const FileBody = Schema.Struct({
+  bytes: Schema.Uint8Array,
+  contentType: FileContentType,
+  name: Schema.optionalKey(FileName)
+});
 export type FileBody = typeof FileBody.Type;
 export const FileList = Schema.Struct({
   store: DefinitionName,
@@ -387,6 +399,14 @@ export const runtimeOperations = {
     response: FileBody,
     kind: "read"
   },
+  "files.redeem": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.redeem"),
+      args: Schema.Struct({ handle: fileHandle })
+    }),
+    response: FileBody,
+    kind: "read"
+  },
   "files.list": {
     request: Schema.Struct({ op: Schema.Literal("files.list"), args: FileList }),
     response: FilePage,
@@ -479,6 +499,7 @@ export const RuntimeCode = Schema.Literals([
   ...IntegrationBoundaryCode.literals,
   "table_not_declared",
   "row_not_found",
+  "not_found",
   "invalid_row",
   "unique_violation",
   "invalid_cursor",

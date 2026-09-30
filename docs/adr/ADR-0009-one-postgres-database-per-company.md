@@ -97,6 +97,15 @@ initialization twice against an already-initialized database with a missing colu
 on PostgreSQL and PGlite, and checks that existing rows and definitions survive.
 A versioned per-company migration ledger remains deferred.
 
+Authorised file handles use a company-local signing key in
+`patchy.file_handle_key`. Initialization creates it once; idempotent upgrades
+preserve it, so replicas and restarts mint the same handles. Metadata queries
+only read it, including inside read-only query snapshots. The file index has a
+company-wide unique object-id index for redemption. Object ids are immutable
+and never reused or moved between stores; replacement writes a new object.
+Redemption checks the live pointer before source authority and releases the
+company lease before fetching bytes.
+
 The deletion sweep reclaims deleted patches after their 30-day recovery window.
 It locks the platform row, rechecks the delete deadline and takes the company
 patch lock when inventory exists. It durably queues version object keys and

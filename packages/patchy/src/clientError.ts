@@ -8,6 +8,7 @@ export const errorCodes = {
   source_unavailable: true,
   table_not_declared: true,
   row_not_found: true,
+  not_found: true,
   invalid_row: true,
   unique_violation: true,
   invalid_cursor: true,

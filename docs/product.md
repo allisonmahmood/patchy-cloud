@@ -809,6 +809,35 @@ headers. HTML and SVG stay bytes, never a navigable page. File mutations log
 the store and name, not their body; reads are not logged. Frame-local blob URLs
 and ownership-transferring ArrayBuffers are available through the browser broker.
 
+On tier 2, every `ctx.files.<store>.list`, `ctx.shared.<alias>.list` and
+`stat(name)` metadata entry includes an **authorised file handle**. The host
+mints a deterministic 57-character token bound to the viewer, company, consuming
+patch, loaded version, source store and exact object. It contains no filename
+or clock. Handles returned through `ctx.run` keep the same binding, and their
+bytes count against metadata-page and handler-result limits. `t.fileHandle()`
+is a result descriptor, not an argument or table column.
+
+The page uses `patchy.files.url(handle)` for a frame-local blob URL and
+`patchy.files.download(handle, filename?)` for a shell download, defaulting to
+the stored file's name. `useFileUrl(handle)` from `patchy/preact` returns
+`{ url, error }`, removes a stale image on failure and releases its URL on
+unmount. Tier 1 keeps its name-based store operations.
+
+A handle authenticates nobody: redemption requires the viewer's signed-in
+shell. Patchy checks the MAC, then whether the name still points at the exact
+object, then live source access. Replacement or deletion returns `not_found`;
+lost access or unsharing returns `access_denied`. If replacement and access loss
+coincide, `not_found` wins. Every redemption rechecks authority, including
+repeated image requests; redemptions are reads and are not logged.
+
+**The patch's filter** is what its handlers return, not everything they enumerate.
+Filtering by viewer is the patch's code. A handle freezes that selection until
+the query reruns; redemption does not rerun the filter. To cut off a file when
+a record narrows to private, is handed over or is deleted, re-put or delete it.
+Handles already selected keep redeeming until then, subject to Patchy's live
+access checks. Publishing does not invalidate an eligible open version's
+handles. Bytes already displayed or downloaded cannot be recalled.
+
 ### Shared file stores
 
 `files(description, { shared: true })` shares a store whole. This publishes read

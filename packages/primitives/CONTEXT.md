@@ -43,3 +43,11 @@ _Avoid_: bucket, content store (the infrastructure holding bytes)
 **Shared file store**:
 A source patch's file store published as read-only access to every file for consumers on either tier, with the viewer's source access and the store's sharing rechecked on every read. Its immutable identity is the source patch and store; its sharing authority belongs to [Company database's Inventory](../company-database/CONTEXT.md), independent of published versions, omissions and rollbacks.
 _Avoid_: public files, copied store, shared folder
+
+**Authorised file handle**:
+The host-minted token a handler returns with a file's metadata, which lets the signed-in shell read that exact stored object's bytes for its viewer. It records the server's selection and grants no Patchy access of its own. It is deterministic for the viewer, company, consuming patch, loaded version, source store and object, with no filename or expiry clock. Replacement or deletion invalidates it; every redemption checks live access.
+_Avoid_: file URL, signed link, file reference
+
+**The patch's filter**:
+Which files and rows a patch's server code chooses to return, distinct from Patchy's live access checks. Redemption does not rerun this filter. To cut off a previously selected file when a record becomes private, changes hands or is deleted, the patch must re-put or delete the file. Already delivered bytes cannot be recalled.
+_Avoid_: permission, scope, access rule

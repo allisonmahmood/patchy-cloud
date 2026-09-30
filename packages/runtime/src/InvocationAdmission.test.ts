@@ -139,6 +139,7 @@ it.effect(
         "tables.list",
         "tables.insert",
         "files.list",
+        "files.redeem",
         "shared.list",
         "shared.files.list",
         "shared.files.stat",

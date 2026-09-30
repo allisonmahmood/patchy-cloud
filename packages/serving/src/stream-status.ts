@@ -49,6 +49,14 @@ export function createStreamStatus(
   version.setAttribute("role", "status");
   root.append(reconnecting, version);
   document.body.append(root);
+  const resize = new ResizeObserver(() => {
+    const height = root.getBoundingClientRect().height;
+    document.documentElement.style.setProperty(
+      "--patchy-status-offset",
+      `${height > 0 ? height + 16 : 0}px`
+    );
+  });
+  resize.observe(root);
   // T-1 from #385: a static dim over the frame with one centred note. It holds focus until ready.
   // The dialog's name stays fixed while the note inside switches between starting and failed.
   const cover = document.createElement("dialog");
@@ -277,6 +285,8 @@ export function createStreamStatus(
       renderVersion();
     },
     close() {
+      resize.disconnect();
+      document.documentElement.style.removeProperty("--patchy-status-offset");
       clearTimeout(reconnectTimer);
       clearStarting();
       cover.remove();

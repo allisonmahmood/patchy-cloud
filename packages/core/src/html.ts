@@ -165,6 +165,26 @@ export const shellStyles = `
     .shell-bottom, .shell-bottom * { box-sizing: border-box; }
     .shell-bottom > * { pointer-events: auto; }
     .shell-bottom [hidden] { display: none; }
+    /* shell-corner: D-1 downloads, separate from the bottom-centre page state. */
+    .shell-corner {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 3;
+      width: min(340px, calc(100% - 32px));
+      max-height: calc(100dvh - 32px);
+      overflow-y: auto;
+      padding: 0 4px 4px 0;
+      color: var(--ink-soft);
+      font-family: var(--font-sans);
+    }
+    .shell-corner, .shell-corner * { box-sizing: border-box; }
+    .shell-corner [hidden], .shell-corner[hidden] { display: none; }
+    .shell-downloads { display: flex; flex-direction: column; gap: 10px; }
+    .shell-corner .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .shell-corner > details { margin-top: 10px; }
+    .shell-corner summary { width: 100%; }
+    .shell-corner details[open] > summary { margin-bottom: 10px; }
     /* shell-scrim: the T-1 cover. A static dim over the whole frame with one centred note-float; nothing moves or fades.
        It is a modal dialog, so the dim is the dialog itself and the top-layer backdrop stays clear. */
     .shell-scrim {
@@ -206,6 +226,14 @@ export const shellStyles = `
         border-radius: var(--radius) var(--radius) 0 0;
         box-shadow: none;
       }
+      .shell-corner {
+        right: 0;
+        bottom: calc(16px + var(--patchy-status-offset, 0px));
+        width: 100%;
+        max-height: calc(100dvh - 32px - var(--patchy-status-offset, 0px));
+        padding: 0;
+      }
+      .shell-corner .note-float { box-shadow: none; }
     }
 `;
 

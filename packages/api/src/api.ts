@@ -521,7 +521,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
  * Raw handlers choose an explicit HTTP status when encoding RuntimeFailure:
  * the identical wire shape at each status cannot select its own status.
  */
-const runtimeErrors = [400, 401, 403, 409, 413, 429, 503, 504].map((status) =>
+const runtimeErrors = [400, 401, 403, 404, 409, 413, 429, 503, 504].map((status) =>
   RuntimeFailure.pipe(HttpApiSchema.status(status))
 );
 
@@ -551,6 +551,9 @@ const runtimeAdmission =
   "Public shells always send a null principal. Company versions require a browser session " +
   "(`session_expired`), a viewer who can open the patch (`access_denied`), and a principal " +
   "matching that session's user (`principal_changed`); only `me` may bootstrap with null. " +
+  "Tier 2 documents admit handle redemption (`files.redeem`) but refuse direct name-based primitives " +
+  "and integrations with `server_required`, even after rollback to a lower served tier. A loaded " +
+  "lower-tier document cannot redeem handles and gets only `me` while tier 2 is served. " +
   "Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls " +
   "are limited to 300 per minute by the release contract; `rate_limited` is 429 with `Retry-After` seconds. " +
   "Company admission also uses a per-host-replica token bucket, 100 calls/second with burst 200 by default, " +
@@ -664,7 +667,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "The client's mutation `unknown_outcome.retry()` re-sends that key and captured arguments; actions are never replayed. " +
           "Successful mutation replies include `revisions`, the resource revision vector committed with their writes. " +
           "`handler_failed` carries a host correlation id; exception messages and stacks remain in the invocation log. " +
-          "The isolated local executor exercises this host path; tier 2 publishing remains refused. " +
+          "The isolated local executor exercises this host path. " +
           "Request bodies allow 1 MiB plus envelope for " +
           "insert/update and 8 MiB plus envelope for insertMany; server.call handler arguments allow " +
           "1 MiB (`tier2.args.bytes`) with a 64 KiB allowance for the enclosing request. Postgres calls allow " +
@@ -680,12 +683,17 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "with a literal prefix and a keyset cursor bound to patch, store and prefix. Pages default " +
           "to 100, capped at 1,000 (`PATCHY_FILE_DEFAULT_PAGE`, `PATCHY_FILE_MAX_PAGE`), with an " +
           "8 MiB result cap (`runtime.result.bytes`), including the cursor. " +
+          "Tier 2 callback list/stat metadata additionally includes a host-minted `handle`: 57 characters, " +
+          "deterministic for viewer, company, consuming patch, loaded version, source store and exact " +
+          "immutable object, with no filename or clock. Handles count against page and result bounds. " +
+          "Nested `ctx.run` results retain the parent's binding. A handle preserves the handler's " +
+          "selection until replacement or deletion; narrowing a row does not revoke an already returned handle. " +
           "`shared.files.list { alias, prefix?, limit?, cursor? }` uses the same page contract. " +
           "`shared.files.stat { alias, name }` returns metadata or null. Both recheck source access " +
           "and sharing live. Tier 2 queries and actions may list and stat; only actions may get bytes. " +
           "`files.delete { store, name }` removes only the index row and returns null idempotently. " +
-          "File mutations log store/name as their resource. `files.put`, `files.get` and " +
-          "`shared.files.get` require raw bytes routes; they are refused on this JSON route, " +
+          "File mutations log store/name as their resource. `files.put`, `files.get`, " +
+          "`shared.files.get` and `files.redeem` require raw bytes routes; they are refused on this JSON route, " +
           "never serialized as JSON/base64."
       )
     ),
@@ -754,6 +762,31 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "the principal and wire headers, and no body. Responses are raw bytes under the same " +
           "20 MiB limit as owned files, with the stored media type, `no-store`, attachment " +
           "disposition and a sandbox CSP. There are no shared writes."
+      )
+    ),
+    HttpApiEndpoint.get("redeemFile", "/runtime/file-handles/:patchId/:versionId/:handle", {
+      params: {
+        patchId: Schema.String,
+        versionId: Schema.String,
+        handle: Schema.String
+      },
+      headers: {
+        ...runtimeHeaders,
+        "sec-fetch-site": Schema.optionalKey(Schema.String)
+      },
+      success: RuntimeBytes,
+      error: runtimeErrors
+    }).annotateMerge(
+      describe(
+        runtimeAdmission +
+          "Redeems a file selected by a tier 2 handler, with the signed-in viewer's normal " +
+          "principal and wire headers and `Sec-Fetch-Site: same-origin`. The 57-character handle " +
+          "binds viewer, company, consuming patch, loaded version, source store and immutable object. " +
+          "The MAC is checked first, then the current name pointer (`not_found`), then live source " +
+          "access (`access_denied`). Every request rechecks authority, and reads are not logged. " +
+          "The response is raw bytes with stored `Content-Type`, `no-store`, sandbox CSP, attachment " +
+          "disposition and `X-Patchy-File-Name` containing the exact URI-encoded name. Lower-tier " +
+          "documents cannot redeem handles, including when their patch serves tier 2."
       )
     )
   )
