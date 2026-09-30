@@ -292,10 +292,11 @@ host registration, and checks a stored host definition before promotion.
 This does not prove the role has the required IAM permissions. If the role
 still has no fleet policy, provision that policy before running `up`; do not
 forward user keys to work around an authorization failure.
-The role-only spike probe obtained task credentials, but `ecs:ListTasks` was
-denied. The deployer was also denied `iam:PutRolePolicy`, so fleet permissions
-remain an operator prerequisite. Earlier acceptance using IAM-user credentials
-does not verify the role-only deployment path.
+The [role-only acceptance on #406](https://github.com/allisonmahmood/patchy-cloud/issues/406#issuecomment-5920910104)
+verified temporary credentials from this role, warm-spare launch, idle task stop,
+promotion and secret retirement without static AWS keys on hosts. The initial
+`ecs:ListTasks` denial was resolved by an operator granting the policy below;
+the deployer made no IAM policy changes.
 
 The provider needs the following host-role permissions. Substitute the approved
 account and cluster name from the private AWS file. `<cluster-arn>` is the full

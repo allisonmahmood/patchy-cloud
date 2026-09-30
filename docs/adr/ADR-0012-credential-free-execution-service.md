@@ -296,7 +296,7 @@ callback listeners bind the task's private address, not the ALB.
 The provider rejects exec definitions without an explicit root container user;
 it does not silently accept the image's default unprivileged host user.
 
-The disposable spike used two hosts, application-cookie affinity on
+The initial spike run used two hosts, application-cookie affinity on
 `patchy_stream_affinity`, and 512-CPU-unit/2048-MiB exec tasks. First open claimed
 a ready spare and reached the stream's ready frame in **685 ms**. Sixty
 subscription control POSTs across two independently observed replicas had no
@@ -350,15 +350,45 @@ and deregistered the run task definitions and requested their deletion.
 The pre-existing tagged AWS stack and
 Neon project remain available; CloudWatch run logs are retained as evidence.
 
-The first acceptance run passed the deployer's IAM-user credentials to hosts.
+The initial acceptance run passed the deployer's IAM-user credentials to hosts.
 That path is removed: hosts must use the existing spike host task role.
-A subsequent role-only host probe assumed that role successfully, but
-ECS denied `ListTasks`; the deployer was also denied `iam:PutRolePolicy`.
-The role-only fleet deployment therefore remains unverified until an authorized
-operator grants the documented fleet permissions. The probe was stopped and
-its definition deregistered. The earlier credential-bearing host definitions
-are deregistered and pending ECS deletion; CloudTrail history is not scrubbed
-by deletion. No IAM user or access key was rotated or deleted.
+The first role-only probe was denied `ecs:ListTasks`; an operator subsequently
+granted the documented fleet policy and rotated the deployer's key, deleting the
+old one. Credential-bearing host definitions were deregistered and their deletion
+requested. Deleting a definition does not scrub CloudTrail history.
+
+A role-only rerun of PR #439 at `66eb974` verified the host role through the ECS
+credential endpoint, with no static AWS keys on hosts or execs. Hosts launched
+warm spares and stopped idle tasks; promotion and sealing used the same role.
+A fresh browser open bound an existing spare with zero spare wait and reached
+ready in 481 ms. Closing the last document led to physical ECS stop in 49.244
+seconds. The first two spares took 30.768 and 57.655 seconds from request to ready.
+These measurements do not promise cold admission within the 40-second wait bound.
+
+The rerun exercised both directions between adjacent deployment revisions.
+It replaced binding epoch 5 with 6 and then 7, and retained the 90-second ALB drain.
+The same browser document's keyed retry returned its original committed nonce after both
+replacement and sealing. A role-only control task received HTTP 200 with both
+management secrets during overlap; after sealing, the retired secret returned
+401 and the current secret returned 200 on the active bound task.
+
+Two repeat contention windows used action handlers so both spinning processes
+remained outstanding throughout the five-second dispatch window. Healthy probes
+ran at 10/s on a third version in the same half-vCPU task. These are
+**client-observed milliseconds**, including browser, network, host and database
+overhead, not directly comparable to the earlier host-observed measurements:
+
+| Run | Baseline p50 / p95 / p99 (60 calls) | Two-spinner p50 / p95 / p99 (50 calls) | Healthy replies |
+| --- | ----------------------------------- | -------------------------------------- | --------------- |
+| A   | 632 / 999 / 1245                    | 777 / 1189 / 1300                      | 50/50           |
+| B   | 638 / 768 / 928                     | 746 / 938 / 1034                       | 50/50           |
+
+The spinning calls ended after 6.590/6.595 seconds in A and 6.756/6.862 seconds
+in B. Four distinct process reports on the same task recorded `stall`, with
+1.35/1.36 and 1.46/1.41 CPU seconds respectively. Healthy p95 increased in both
+windows. Successful sibling replies are not evidence of unchanged sibling speed.
+The role-only run was torn down and its network configuration matched the pre-run
+snapshots. [Full measurements and teardown evidence are recorded on #406](https://github.com/allisonmahmood/patchy-cloud/issues/406#issuecomment-5920910104).
 
 ## Seven hosting decisions
 
