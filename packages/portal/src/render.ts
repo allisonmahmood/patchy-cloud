@@ -19,8 +19,6 @@ export const styles = `
   .log-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .log-outcome { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .log-table { min-width: 880px; }
-  /* Entry cells keep whole words so the table scrolls rather than splitting "mutation". */
-  .log-table > tbody > tr > td:not([colspan]) { overflow-wrap: normal; }
   .log-table time { white-space: nowrap; }
   @media (max-width: 860px) {
     .portal { grid-template-columns: minmax(0, 1fr); }
