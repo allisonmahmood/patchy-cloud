@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
-import type { InvocationLog } from "@patchy/runtime";
+import { InvocationLog } from "@patchy/runtime";
 
 export type OutcomeFilter = NonNullable<InvocationLog.PageFilter["outcome"]>;
 export const outcomeFilters: ReadonlyArray<readonly [OutcomeFilter, string]> = [
@@ -17,6 +17,8 @@ export interface LogNames {
   readonly versions: ReadonlyMap<string, number>;
   /** The patch as people know it: its distinct title, else its name. */
   readonly patch: string;
+  /** Company connection handles by id, for the calls that went to them. */
+  readonly connections: ReadonlyMap<string, string>;
 }
 
 export const logPath = (patch: Patches.Patch, query: Record<string, string | undefined> = {}) => {
@@ -95,6 +97,16 @@ const callLabel = (op: string) =>
         : "call";
 // Stored relations are quoted identifiers; plain ones read better bare.
 const resource = (value: string) => value.replace(/"([a-z_][a-z0-9_]*)"/gu, "$1");
+/** "warehouse.customers.list": the connection by handle (its id once deleted), relation, method. */
+const connectionCall = (item: InvocationLog.TreeItem, names: LogNames) => {
+  const handle =
+    item.connectionId === null
+      ? "connection"
+      : (names.connections.get(item.connectionId) ?? item.connectionId);
+  const relation =
+    item.resource === null ? "" : `.${resource(item.resource).replace(/^public\./u, "")}`;
+  return `${handle}${relation}.${item.name.slice("postgres.".length)}`;
+};
 
 type LogLine = typeof Schema.Json.Type;
 // `ctx.log(message, details?)` stores this shape; anything else prints as JSON.
@@ -123,7 +135,9 @@ const tree = (
     const what =
       item.type === "invocation"
         ? `${item.name} (${item.kind})`
-        : `${item.name}${item.resource === null ? "" : ` ${resource(item.resource)}`} (${callLabel(item.name)})`;
+        : item.name.startsWith("postgres.")
+          ? `${connectionCall(item, names)} (${callLabel(item.name)})`
+          : `${item.name}${item.resource === null ? "" : ` ${resource(item.resource)}`} (${callLabel(item.name)})`;
     const as =
       item.effectivePrincipal === "patch" ? "the patch" : person(names, item.effectivePrincipal);
     const facts = [
@@ -138,20 +152,22 @@ const tree = (
 
 const expansion = (entry: InvocationLog.Entry, names: LogNames) => {
   const lines = entry.invocation.logLines.length;
-  if (entry.treeTotal === 0 && lines === 0) return "";
+  const steps = entry.tree.length;
+  if (steps === 0 && lines === 0) return "";
   const children = new Map<string, InvocationLog.TreeItem[]>();
   for (const item of entry.tree)
     children.set(item.parentId, [...(children.get(item.parentId) ?? []), item]);
   const summary = [
-    entry.treeTotal === 0 ? null : `${entry.treeTotal} ${entry.treeTotal === 1 ? "call" : "calls"}`,
+    steps === 0
+      ? null
+      : `${steps}${entry.truncated ? "+" : ""} ${steps === 1 && !entry.truncated ? "call" : "calls"}`,
     lines === 0 ? null : `${lines} log ${lines === 1 ? "line" : "lines"}`
   ]
     .filter((part) => part !== null)
     .join(" · ");
-  const cut =
-    entry.tree.length < entry.treeTotal
-      ? `<p class="supporting-text">Showing the first ${entry.tree.length} of ${entry.treeTotal} calls.</p>`
-      : "";
+  const cut = entry.truncated
+    ? `<p class="supporting-text">Showing ${steps} calls, outermost first. This entry made more.</p>`
+    : "";
   const open = entry.invocation.outcome === "success" ? "" : " open";
   return `<tr class="table-expand"><td colspan="7"><details${open}><summary>${escapeHtml(summary)}</summary>${tree(entry.invocation.id, children, names)}${cut}${logLines(entry.invocation.logLines)}</details></td></tr>`;
 };
@@ -164,7 +180,10 @@ export const renderLog = (input: {
   readonly now: number;
   readonly names: LogNames;
   readonly entries: ReadonlyArray<InvocationLog.Entry>;
-  readonly more: boolean;
+  /** The cursor for Older entries, or null at the start of the log. */
+  readonly next: string | null;
+  /** A filtered page stopped at the edge of the entries it searched. */
+  readonly windowEnded: boolean;
   readonly before: string | undefined;
   readonly filter: InvocationLog.PageFilter;
   readonly choices: {
@@ -221,22 +240,27 @@ export const renderLog = (input: {
     input.before === undefined
       ? ""
       : `<a class="btn btn-quiet" href="${escapeAttribute(logPath(patch, filters))}">Newest entries</a>`;
+  const older =
+    input.next === null
+      ? ""
+      : `<a class="btn" href="${escapeAttribute(logPath(patch, { ...filters, before: input.next }))}">Older entries</a>`;
+  const paging = older || newest ? `<div class="actions">${older}${newest}</div>` : "";
+  const searched = `${InvocationLog.FILTER_WINDOW.toLocaleString("en-US")} entries`;
+  // Filters search a bounded run of entries; say so when older ones were left unsearched.
+  const window = input.windowEnded
+    ? `<p class="supporting-text">Filters search ${searched} at a time. Older entries continues further back.</p>`
+    : "";
   if (input.entries.length === 0) {
     const empty = filtered
-      ? `<p>No entries match these filters.</p><p><a href="${escapeAttribute(logPath(patch, keep))}">Clear filters</a></p>`
+      ? `<p>No entries match these filters${input.windowEnded ? ` in the ${searched} searched` : ""}.</p><p><a href="${escapeAttribute(logPath(patch, keep))}">Clear filters</a></p>`
       : "<p>No older entries.</p>";
-    return `<article>${back}${intro}${form}${empty}${newest ? `<div class="actions">${newest}</div>` : ""}</article>`;
+    return `<article>${back}${intro}${form}${empty}${window}${paging}</article>`;
   }
   const rows = input.entries.map((entry) => {
     const { invocation } = entry;
     return `<tr id="${escapeAttribute(entryId(invocation))}"><td>${time(invocation.startedAt, now)}</td><td>${escapeHtml(person(names, invocation.initiatingViewerId))}</td><td>${escapeHtml(version(names, invocation.versionId))}</td><td><code>${escapeHtml(invocation.handler)}</code></td><td>${escapeHtml(invocation.kind)}</td><td>${outcome(invocation.outcome, invocation.outcomeCode)}</td><td>${escapeHtml(timing(invocation))}</td></tr>${expansion(entry, names)}`;
   });
-  const last = input.entries.at(-1)!.invocation;
-  const older = input.more
-    ? `<a class="btn" href="${escapeAttribute(logPath(patch, { ...filters, before: last.id }))}">Older entries</a>`
-    : "";
-  const paging = older || newest ? `<div class="actions">${older}${newest}</div>` : "";
-  return `<article>${back}${intro}${form}<p class="supporting-text">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p><div class="portal-table"><table class="table log-table" aria-label="Log entries"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Person</th><th scope="col">Version</th><th scope="col">Handler</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${paging}</article>`;
+  return `<article>${back}${intro}${form}<p class="supporting-text">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p><div class="portal-table"><table class="table log-table" aria-label="Log entries"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Person</th><th scope="col">Version</th><th scope="col">Handler</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${window}${paging}</article>`;
 };
 
 /** W-2: the card's last three entries for its owner and admins, each linking into the log. */

@@ -25,6 +25,7 @@
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/integrations": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:"
@@ -33,7 +34,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/company-database": "workspace:*",
-    "@patchy/integrations": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "vitest": "^5.0.1"
   }

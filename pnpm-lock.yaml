@@ -600,6 +600,9 @@ importers:
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
+      '@patchy/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@patchy/patches':
         specifier: workspace:*
         version: link:../patches
@@ -619,9 +622,6 @@ importers:
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database
-      '@patchy/integrations':
-        specifier: workspace:*
-        version: link:../integrations
       '@patchy/primitives':
         specifier: workspace:*
         version: link:../primitives

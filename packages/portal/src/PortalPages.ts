@@ -12,6 +12,7 @@ import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
+import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
@@ -115,7 +116,8 @@ const logNames = Effect.fn("PortalPages.logNames")(function* (
   return {
     people: new Map(members.map((member) => [member.id, member.name])),
     versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
-    patch: card.patch.title.trim() || card.patch.name
+    patch: card.patch.title.trim() || card.patch.name,
+    connections: new Map<string, string>()
   } satisfies LogNames;
 });
 
@@ -130,7 +132,8 @@ const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
   const { entries } = yield* (yield* InvocationLog.InvocationLog).page({
     companyId: viewer.company.id,
     patchId: card.patch.id,
-    limit: 3
+    limit: 3,
+    trees: false
   });
   if (entries.length === 0 && card.tier < 2) return "";
   const names = yield* logNames(card, viewer.company.id);
@@ -301,6 +304,15 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
   const page = yield* log.page({ ...scope, before, filter, limit: 25 });
   const choices = yield* log.choices(scope);
   const names = yield* logNames(card, viewer.company.id);
+  // Calls record the connection's id; readers know it by its handle. A connection deleted
+  // since, or a store that cannot answer, leaves the id.
+  const connections = page.entries.some((entry) =>
+    entry.tree.some((item) => item.connectionId !== null)
+  )
+    ? yield* (yield* ConnectionStore.ConnectionStore)
+        .list(viewer.company.id)
+        .pipe(Effect.orElseSucceed(() => []))
+    : [];
   return pageResponse(
     {
       title: `${card.patch.name} log`,
@@ -309,9 +321,13 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
         patch: card.patch,
         all,
         now: yield* Clock.currentTimeMillis,
-        names,
+        names: {
+          ...names,
+          connections: new Map(connections.map((connection) => [connection.id, connection.handle]))
+        },
         entries: page.entries,
-        more: page.more,
+        next: page.next,
+        windowEnded: page.windowEnded,
         before,
         filter,
         choices
@@ -568,6 +584,7 @@ export const layer: Layer.Layer<
       | Users.Users
       | Patches.Patches
       | InvocationLog.InvocationLog
+      | ConnectionStore.ConnectionStore
       | SqlClient.SqlClient
     >
 > = HttpRouter.use((router) =>

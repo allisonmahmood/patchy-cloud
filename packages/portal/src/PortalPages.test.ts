@@ -12,6 +12,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import {
   CURRENT_RELEASE,
   MANIFEST_VERSION,
@@ -24,6 +25,7 @@ import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "@patchy/core";
 import * as Testing from "@patchy/company-database/testing";
+import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
@@ -42,7 +44,28 @@ const services = Layer.mergeAll(
   Users.layer,
   InvocationLog.layer
 ).pipe(
-  Layer.provideMerge(ConnectionStoreDev.layer([])),
+  Layer.provideMerge(
+    ConnectionStoreDev.layer([
+      {
+        connection: new ConnectionStore.Connection({
+          id: "con_warehouse",
+          companyId: "cmp_portal_log",
+          integration: "postgres",
+          handle: "warehouse",
+          description: "The sales warehouse",
+          mode: "company",
+          status: "connected",
+          display: { host: "db.example.com", port: 5432, database: "sales", role: "reader" },
+          credentialRevision: 1,
+          metadataRevision: 1,
+          lastTestedAt: null,
+          lastDiscoveredAt: null,
+          createdBy: "usr_portal_log"
+        }),
+        snapshots: []
+      }
+    ])
+  ),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(Testing.resourceChangesLayer),
@@ -65,11 +88,11 @@ interface Person {
   readonly machineTokenId: string;
 }
 let counter = 0;
-const company = Effect.fn("PortalPagesTest.company")(function* () {
+const company = Effect.fn("PortalPagesTest.company")(function* (companyId?: string) {
   yield* TestClock.setTime(1_767_225_600_000);
   const sql = yield* SqlClient.SqlClient;
-  const id = `cmp_portal_${++counter}`;
-  const handle = `portal-${counter}`;
+  const id = companyId ?? `cmp_portal_${++counter}`;
+  const handle = companyId === undefined ? `portal-${counter}` : `portal-${companyId.slice(11)}`;
   yield* sql`INSERT INTO companies (id, handle, name) VALUES (${id}, ${handle}, 'Northwind')`;
   const people: Person[] = [];
   for (const [name, role] of [
@@ -1666,7 +1689,11 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
     /** Runs between admission and settlement, such as the calls the invocation makes. */
     readonly inside?: (
       id: string
-    ) => Effect.Effect<void, unknown, RuntimeLog.RuntimeLog | InvocationLog.InvocationLog>;
+    ) => Effect.Effect<
+      void,
+      SqlError,
+      RuntimeLog.RuntimeLog | InvocationLog.InvocationLog | SqlClient.SqlClient
+    >;
   }
 ) {
   const log = yield* InvocationLog.InvocationLog;
@@ -1686,7 +1713,7 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
     deadline: startedAt + 60_000,
     argsBytes: 2
   });
-  if (input.inside) yield* input.inside(id).pipe(Effect.provide(RuntimeLog.layer), Effect.orDie);
+  if (input.inside) yield* input.inside(id).pipe(Effect.provide(RuntimeLog.layer));
   yield* log.finish({
     id,
     outcome: input.outcome ?? "success",
@@ -1752,7 +1779,7 @@ const logPath = (name: string, query = "") => `${cardPath(name)}/log${query}`;
 it.layer(layer)("patch log on a socket", (it) => {
   it.effect("shows an owner the tree of a failed action and refuses another owner's log", () =>
     Effect.gen(function* () {
-      const workspace = yield* company();
+      const workspace = yield* company("cmp_portal_log");
       const crm = yield* publish(workspace.owner, "sales-crm", { title: "Sales CRM" });
       const other = yield* publish(workspace.member, "other-tool");
       const seed = seedOf(workspace.id, crm);
@@ -1812,7 +1839,7 @@ it.layer(layer)("patch log on a socket", (it) => {
         tree,
         [
           "3 calls · 2 log lines",
-          "postgres.list public.customers (connection call) · as Alex Succeeded 12 ms · 412 rows",
+          "warehouse.customers.list (connection call) · as Alex Succeeded 12 ms · 412 rows",
           "leads.create (mutation) · as the patch Succeeded 30 ms · 2 attempts",
           "tables.insert leads (table write) · as the patch Succeeded 12 ms · 1 row",
           `importing 412 rows from warehouse row 57 is invalid {&quot;owner&quot;:&quot;&lt;sam@&gt;&quot;}`

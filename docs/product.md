@@ -465,8 +465,10 @@ version, handler and kind, the settled outcome and timing. It expands into the
 calls it made and nested handlers, each with its effective principal ("as the
 patch" or as the viewer), and the patch's `ctx.log` lines. A reply the page never
 received still shows the real settled outcome, marked "reply not delivered". The
-page filters by outcome, person and handler, pages 25 entries at a time by cursor
-and shows at most 50 steps per entry. It is an attribution record, not an access
+page pages 25 entries at a time by cursor. Filters by outcome, person and handler
+search 1,000 entries at a time, and the page says when older entries lie beyond
+that window. Calls to a company connection name it by handle. An entry shows at
+most 50 steps, outermost first, and says when it made more. It is an attribution record, not an access
 audit, and `ctx.log` text is the patch's own. The card shows the owner and admins
 the last three entries under Recent activity.
 
