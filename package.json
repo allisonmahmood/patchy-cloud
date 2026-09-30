@@ -20,6 +20,7 @@
     "test:all": "sh scripts/test-all.sh",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
     "test:packed-preact-e2e": "node scripts/packed-preact-e2e.mjs",
+    "test:packed-tier2-e2e": "node scripts/packed-cli-e2e.mjs --tier2",
     "test:postgres-concurrency": "vitest run --config vitest.postgres.config.ts",
     "prepare": "node scripts/build-serving-broker.mjs && effect-language-service patch && simple-git-hooks",
     "lint": "eslint \"**/*.{ts,mts,cts,tsx}\"",

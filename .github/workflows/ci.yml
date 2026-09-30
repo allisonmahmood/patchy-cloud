@@ -132,6 +132,24 @@ jobs:
       - name: Exercise the packed Preact runtime and same-version upgrades
         run: pnpm test:packed-preact-e2e
 
+  tier2-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chromium and system dependencies
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Exercise the packed tier 2 journey against an isolated real server
+        run: pnpm test:packed-tier2-e2e
+
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
