@@ -107,8 +107,10 @@ Redemption checks the live pointer before source authority and releases the
 company lease before fetching bytes.
 
 `patchy.file_uploads` records writing, staged and discarded uploads.
-Initialization adds it idempotently without changing existing rows or migrating
-old object keys. Staging may initialize company storage without creating a patch
+Initialization adds it idempotently. Retained inventories with the former
+`adopted` state remove only consumed upload metadata and replace the state
+constraint and expiry index in one transaction. Live stages, file pointers,
+blob bytes and object keys remain unchanged. Staging may initialize company storage without creating a patch
 namespace or requiring a store. Quota reservations commit before blob I/O and
 count across replicas under the company object lock. Company byte quotas resolve
 the current operating override before leasing the company database.

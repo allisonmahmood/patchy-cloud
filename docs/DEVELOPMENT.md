@@ -104,7 +104,8 @@ stage quotas and discard/adoption races on Postgres; orphan sweep checks cover
 one-hour expiry and late staging completion. A paused blob deletion must not
 block unrelated puts or adoption, and a delayed delete acknowledgement must not
 erase a late writer's cleanup retry. Inventory contracts initialize retained
-databases twice and preserve outstanding upload rows.
+databases twice, remove obsolete adopted metadata, and preserve live stages
+and file pointers while replacing the legacy state constraint and expiry index.
 Wide-event contracts cover successful and refused quota peaks, company override
 revisions, and both advertised-length and streaming byte overflows.
 

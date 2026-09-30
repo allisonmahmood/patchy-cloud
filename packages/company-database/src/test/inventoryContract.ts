@@ -128,10 +128,26 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       yield* sql`INSERT INTO patchy.mutation_keys
         (key, issued_at, patch_id, version_id, handler, viewer_id, fingerprint, invocation_id, reply)
         VALUES ('retained', now(), ${patchId}, 'version', 'demo.mutation', 'viewer', 'fingerprint', 'inv_retained', '{"ok":true,"value":42}'::jsonb)`;
+      yield* databases.withPatchLock(patchId)(
+        sql`INSERT INTO "patchy"."files"
+      ("patch_id", "store", "name", "object_id", "size", "content_type", "sha256")
+      VALUES (${patchId}, 'documents', 'folder/report.txt', 'object-one', 42, 'text/plain', 'digest')`
+      );
+      // Retain the previous upload schema, including consumed metadata and its partial index.
+      yield* sql.unsafe(`ALTER TABLE patchy.file_uploads
+        DROP CONSTRAINT file_uploads_state_check,
+        ADD CONSTRAINT file_uploads_state_check
+          CHECK (state IN ('writing', 'staged', 'adopted', 'discarded'))`);
+      yield* sql.unsafe("DROP INDEX patchy.file_uploads_expiry");
+      yield* sql.unsafe(`CREATE INDEX file_uploads_expiry ON patchy.file_uploads (expires_at)
+        WHERE state <> 'adopted'`);
       yield* sql`INSERT INTO patchy.file_uploads
         (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)
         VALUES ('retained-stage', ${patchId}, 'retained-token', 'viewer', 'version', 42,
-          'text/plain', 'digest', '2035-01-03T01:00:00Z', 'staged')`;
+          'text/plain', 'digest', '2035-01-03T01:00:00Z', 'staged'),
+          ('object-one', ${patchId}, 'consumed-token', 'viewer', 'version', 42,
+          'text/plain', 'digest', '2035-01-02T01:00:00Z', 'adopted')`;
+      yield* Inventory.initialize;
       yield* Inventory.initialize;
       assert.deepStrictEqual(yield* sql`SELECT secret FROM patchy.file_handle_key`, keys);
       assert.deepStrictEqual(
@@ -338,11 +354,6 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
         day: "2024-02-29",
         stamp: DateTime.toDateUtc(DateTime.makeUnsafe(Date.UTC(2024, 1, 29, 12, 34, 56, 123)))
       });
-      yield* databases.withPatchLock(patchId)(
-        sql`INSERT INTO "patchy"."files"
-      ("patch_id", "store", "name", "object_id", "size", "content_type", "sha256")
-      VALUES (${patchId}, 'documents', 'folder/report.txt', 'object-one', 42, 'text/plain', 'digest')`
-      );
       const file = yield* readFile(patchId);
       assert.strictEqual(file.name, "folder/report.txt");
       assert.strictEqual(file.size, "42");
