@@ -5,7 +5,7 @@ The release's contract limits, operating defaults and company overrides, alongsi
 ## Language
 
 **Contract limit**:
-A bound patch code is written against, fixed per release and enforced identically in dev.
+A bound patch code is written against, fixed per release and enforced at the SDK and host boundaries in dev as well as hosting. Dev does not promise production watchdog termination or containment.
 _Avoid_: quota, setting
 
 **Operating limit**:
@@ -13,7 +13,7 @@ A bound on how Patchy runs its services and execution fleet, supplied by deploym
 _Avoid_: quota (a lasting count), tuning
 
 **Limit override**:
-A company's own value for an operating limit, set by a controller operation and kept with its history. Runtime reads related effective limits and their revision from one database statement snapshot.
+A company's own value for an operating limit, set by a controller operation and kept with its history and configuration revision.
 _Avoid_: exception, plan
 
 **Rate limit**:

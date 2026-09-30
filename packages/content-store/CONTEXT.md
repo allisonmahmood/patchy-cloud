@@ -2,14 +2,10 @@
 
 Where published patch bytes, patch file objects and SDK archives live, separate from their metadata. [Patches](../patches/CONTEXT.md) owns published versions; the [company database](../company-database/CONTEXT.md) holds file-object references. SDK distribution owns release metadata. The content store owns none of these associations.
 
-Production bytes live in Neon Object Storage through a path-style S3 layer.
-The configured branch endpoint selects the bucket's namespace. Development
-uses the filesystem layer; both layers satisfy the same content-store contract.
-
 ## Language
 
 **Content store**:
-The platform's object store for published HTML, immutable patch file objects and retained SDK archives. It distinguishes an invalid object key, absent content and an unavailable store.
+The platform's object store for published HTML and server bundles, immutable patch file objects and retained SDK archives. It distinguishes an invalid object key, absent content and an unavailable store.
 _Avoid_: file store (a patch's declared file primitive), blob store, bucket
 
 **Object key**:

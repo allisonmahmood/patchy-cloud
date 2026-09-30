@@ -92,7 +92,21 @@ Tier 2 publication is admitted on dev and test instances. The server inspects
 the stored server bytes in a throwaway process. A descriptor disagreement,
 top-level throw, unresolved module or unfinished initializer is HTTP 422
 `invalid_manifest`, `kind: "rejected"`, exit 2. A tier 2 repo with no handlers
-publishes with a warning. Production refuses tier 2 until fleet execution lands.
+publishes with a warning. Production admits tier 2 only with
+`EXECUTION_PROVIDER=ecs`; the built provider's role-only Fargate acceptance
+remains pending the IAM grant on [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)
+and [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439).
+Production infrastructure and first deploy remain unbuilt on
+[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
+[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
+
+The browser runtime has its own refusal contract in [API](../API.md), not CLI
+exit codes. It includes `handler_failed`, `handler_timeout`, `write_conflict`,
+`patch_paused`, `server_required`, `limit_exceeded` and `invalid_row`.
+`busy` carries the applicable limit and safe retry delay; it is not a serialization
+conflict. `unknown_outcome` on a tier 2 mutation offers explicit same-key
+`retry()`; actions are never replayed. A declared `HandlerError` is a
+`source: "handler"` result, distinct from Patchy's `source: "patchy"` refusals.
 
 ### Instance, credentials and local state
 
@@ -383,7 +397,8 @@ are local refusals; tiers 0 and 1 use an empty list and have no generated
 and publish never repair it. Publish checks the list before bundling and
 returns `stale_generated` for additions, removals or renames.
 Skills are sticky: refresh re-fetches every present skill and adds config-implied
-ones. `patchy-server` is the sole tier-keyed exception, removed below tier 2.
+ones. `patchy-server` is the tier-keyed exception, removed below tier 2;
+`patchy-members` is declaration-keyed, removed when `uses.members` is absent.
 A different present skill no longer offered by the release fails refresh.
 Their canonical source is `packages/sdk`.
 
@@ -409,9 +424,9 @@ dependency array.
 
 Dev and publish check reachable page imports before bundling can remove them.
 The page entries are `patchy/preact`, its `jsx-runtime` and `jsx-dev-runtime`,
-`patchy/csv`, and the relative generated client. `patchy/csv` is reserved for its
-helper ticket and is not shipped yet. Generated clients use `patchy/client`
-internally. Tooling imports in config files and type-only imports are not page
+`patchy/csv`, and the relative generated client. `patchy/csv` ships CSV parsing
+and stringification for both page and server code. Generated clients use
+`patchy/client` internally. Tooling imports in config files and type-only imports are not page
 dependencies. A bare package import fails with `import_refused` even if aliased
 to a local file, or unused after tree shaking.
 The check follows nested CSS imports and runtime module syntax before alias

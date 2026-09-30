@@ -10,7 +10,7 @@ description: Build in a Patchy repo, discover company tools and data sources, re
 Talk through edge cases and product behaviour with the person before building.
 
 1. Read `AGENTS.md` for the purpose and layout, then `patchy/_generated/README.md` and `patchy/_generated/index.json` for available skills, declarations, context paths and revision stamps. Initialization already installed dependencies: use the pinned `pnpm patchy` command, not a global copy, and do not reinstall as a setup ritual. `pnpm patchy --help` lists commands in this release.
-2. Read `patchy.config.ts` for the tier, owned tables and file stores, and connections and shared tables in `uses`. Choose the page workflow from the tier and existing source:
+2. Read `patchy.config.ts` for the tier, owned tables and file stores, and the declarations in `uses`. Choose the page workflow from the tier and existing source:
    - Tier 0 is static HTML. Edit `index.html`; the page cannot run scripts or call resources. It does not need Preact or `src/App.tsx`.
    - Tiers 1 and 2 start with Preact in `src/App.tsx`, mounted by `src/main.tsx`. Read `../patchy-preact/SKILL.md` before changing components or hooks.
    - Tier 2 puts handlers in `server/`. Read `../patchy-server/SKILL.md`; the page calls `patchy.server.<module>.<handler>`, not tables, named files or connections directly.
@@ -18,7 +18,7 @@ Talk through edge cases and product behaviour with the person before building.
      Read `../patchy-tables/SKILL.md` for rows, `../patchy-files/SKILL.md` for bytes, and each declaration's skill and generated context before using it. In a scripted page, import the generated client by relative path; from `src/App.tsx` or `src/main.ts`, use `import { patchy } from "../patchy/_generated/client.js"`.
 3. Edit source, config and invented fixtures. Run `pnpm patchy refresh` after changing definitions, declarations, tier or server module filenames. The generated index must name every declaration and its context before you use it. Run `pnpm typecheck` and, when `package.json` supplies a lint script, `pnpm lint`; the Preact scaffold supplies both. Repair source or config, never generated output.
 4. Run `pnpm patchy dev --json` and open `url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed non-admin viewer sharing the same local data. Exercise both viewers through the real shell, using invented fixtures. The command is healthy on return and idempotent. `src/` rebuilds reload the shell; tier 2 `server/` saves atomically rebind without reload and discover new modules, logging a reminder to refresh types. Existing calls and nested calls finish on their old binding. Subscriptions rerun on the new one, discard crossing results and end permanently for removed handlers or incompatible arguments. Failed builds retain the last good binding. Config and fixture edits need stop/start. A standalone Vite preview cannot exercise capabilities.
-5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declarations and server module names, typechecks and builds the HTML bundle. Tier 2 also builds a closed server module; dev and test instances inspect and serve it. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Tier 2 is company-only: publish to a public patch with `--share company`. Report the address, scope, tier, version, artifacts, handlers, provisioned and unused resources.
+5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declarations and server module names, typechecks and builds the HTML bundle. Tier 2 also builds a closed server module; the instance re-derives its handlers before serving it. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Tier 2 is company-only: publish to a public patch with `--share company`. Report the address, scope, tier, version, artifacts, handlers, provisioned and unused resources.
 
 <!-- sdk-capabilities -->
 
@@ -37,9 +37,10 @@ neither requires tier 2.
   if the patch is currently public.
 - To move from tier 2 to 1, set `tier: 1`, remove `server/`, then run
   `pnpm patchy refresh`. It removes the `workerd` pin, generated `server.ts` and
-  `patchy-server` skill. This tier-keyed removal is the exception to sticky
-  skills. Run `pnpm typecheck` and rewrite every `patchy.server.*` call it names.
-  Tier 1 cannot retain handler-enforced rules or cross-call transactions.
+  `patchy-server` skill. The server skill follows the tier; the members skill
+  follows its declaration. Other installed skills stay sticky.
+  Run `pnpm typecheck` and rewrite every `patchy.server.*` call it names.
+  Tier 1 cannot retain handler-enforced rules or multi-operation transactions.
   Publishing or rolling back to a tier 1 version makes public sharing possible
   again; a local config edit alone does not change the served tier.
 
@@ -148,7 +149,8 @@ the stamp unchanged. Publish sends the pulled text and records the returned stam
 Repo publish requires a nonempty description of at most 500 normalized Unicode
 code points. Use `pnpm patchy describe "<text>"` to update both cloud and repo
 without publishing. `describe --clear` explicitly empties it; refill before publish.
-`publish --description` is file-only, not a repo override.
+`publish --description` and `--name` are file-only. Repo publishing takes the
+description from `patchy.json` and the name from `patchy.config.ts`.
 
 Refresh, new dev starts and publish also compare executed definitions with the
 last generated manifest. If a table or store changed but its description did
@@ -201,7 +203,7 @@ disconnected entries point to `/company/connections`. Discovery grants no access
 - `pnpm patchy add postgres/<handle> --as sales` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub and skill. Choose the target through discovery above. `add postgres` chooses a sole connected Postgres connection; with several it lists choices from `list connections` and stops. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
 - `pnpm patchy remove sales` reverses the declaration and its generated output, and removes its declaration skill when no declaration of that kind remains. It leaves the fixture for you and says so.
 - An uneditable `uses` expression fails with its exact source line and, for add, the exact literal declaration line to insert. Either make `uses` an explicit object literal while preserving its meaning and retry, or add the declaration yourself and run `pnpm patchy refresh`. Do not bypass the refusal by editing generated metadata.
-- `pnpm patchy refresh` fetches one release, updates the managed pins and installs if needed, re-execs that CLI, executes config, generates, and activates the managed set transactionally. Failure retains the previous set. It refreshes every present skill and adds config-implied skills; skills stay sticky except that `patchy-server` is removed below tier 2. If another present skill is no longer offered, refresh fails rather than leaving stale instructions. It announces newly recorded SDK capabilities with their entrypoints, where they run and limits; `--json` returns them in `addedCapabilities`. Older repos record the full catalogue once, and an unchanged refresh returns an empty list.
+- `pnpm patchy refresh` fetches one release, updates the managed pins and installs if needed, re-execs that CLI, executes config, generates, and activates the managed set transactionally. Failure retains the previous set. It refreshes every present skill and adds config-implied skills. `patchy-server` follows the tier and `patchy-members` follows its declaration; other installed skills stay sticky. If another present skill is no longer offered, refresh fails rather than leaving stale instructions. It announces newly recorded SDK capabilities with their entrypoints, where they run and limits; `--json` returns them in `addedCapabilities`. Older repos record the full catalogue once, and an unchanged refresh returns an empty list.
 - Every command accepts `--json`: success is one stdout document; failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }` on stderr. Inspect and relay `warnings` even on failure. Exit 1 is locally fixable, 2 an instance refusal, 3 no usable answer, 130 interrupted. Branch on a returned `code`, not prose. Missing key: `Run: patchy login`; relay the login URL and code to the person.
 - Repo publish writes its returned id and description sync stamp into `patchy.json`. Preserve `.patchy/publish/` after interruption or failed writes and rerun as the same owning user; recovery precedes release checks and rebuilding. Untargeted `share`, `retire`, `delete --yes`, `restore`, `rollback <n>` and `describe` use that id. Keep it on `not_owner`, `patch_retired` or `patch_deleted`; arrange reassignment or restoration. Only a gone patch's 404 calls for removing `patch` when intentionally starting a new patch.
 - Retire and delete from live refuse with `has_dependants`; restore with unavailable sources refuses with `sources_off`. Relay the list and ask the person you are working for before forcing. `--force` accepts breakage, including an unshare at publish; `--yes` only confirms deletion. Delete keeps everything for 30 days until `purgeAt`, retire indefinitely. Rollback changes only the live served version, not data, sharing, description or name.
@@ -219,7 +221,7 @@ Development uses local PGlite data and agent-authored fixtures. Only metadata an
 New starts bind the primary viewer from the publishing key's `/api/me` identity and refresh declaration metadata. Tiers 1 and 2 also mount a fixed non-admin colleague. `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` output and local-only failure message/stack. Starting with `--json` records full wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`. No runtime database log rows, PostHog delivery or connection keyring are used. Before the first publish, schema changes recreate local data. Afterwards, the published inventory is the baseline: additive changes preserve rows, and changes publish would refuse are refused locally with the same object/change/fix. A local-only schema incompatible with an otherwise valid config can be recreated.
 
 `patchy dev` runs the same handler engine and callback path as production.
-It does not reproduce production's scheduling, limits or containment. A handler
+It does not reproduce production scheduling, operating capacity or containment. A handler
 that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Contract limits still apply; production
 operating capacity does not. PGlite is not evidence for hosted `busy` or
@@ -233,10 +235,10 @@ On tier 1, every readable row is available to every admitted company viewer, and
 Patchy owns presence through each document's stream, including reconnect and
 access-loss notices. Keep presence out of patch tables and heartbeat code.
 Render from the subscription's latest result rather than copying mutation
-replies into a second query-state cache. Tier 1 table subscriptions work in dev
-and hosted company pages. Tier 2 query subscriptions work through the same
-document stream in local dev and published dev/test instances. Read
-`patchy-server` for handler and subscription limits.
+replies into a second query-state cache. Tier 1 table and member-directory
+subscriptions and tier 2 query subscriptions use the same document stream in
+local dev and hosted company pages. Read `patchy-server` for handler and
+subscription limits.
 
 ## Tier 1 constraints
 

@@ -85,7 +85,7 @@ The promise that a successful publish leaves both a version and its content, whi
 _Avoid_: two-phase commit, saga
 
 **Manifest**:
-The serializable description of one version's name, release, tier, owned resources, declared connections, shared tables and shared stores, server handler contracts and SDK imports. It describes the patch's contract rather than executing its source.
+The serializable description of one version's name, release, tier, owned resources, declared connections, shared tables, shared stores and member directory, server handler contracts and SDK imports. It describes the patch's contract rather than executing its source.
 _Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
 
 **Inventory**:

@@ -1,14 +1,25 @@
 # Patchy Cloud
 
-The product, written down where agents read it. The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) record the decisions (the portal's spec is [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247)); the glossaries in each `CONTEXT.md` carry the words, and this file carries the shape.
+The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `CONTEXT.md` defines its context's terms; this file describes the product.
 
-**Built today:** tier 0 static HTML pages and tier 1 sandboxed browser tools at named company addresses. Static pages publish from an HTML file or a repo; tier 1 tools publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources, read-only shared tables and stores, and company Postgres connections through the shell broker as the viewer, with mutations and integration calls logged.
+Built today: tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres connections.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller supports separate local task processes for offline checks and ECS Fargate tasks for production, including spare claims, stopping and drain, crash metering and the patch breaker. Its starting cover holds calls until the company is ready. Production tier 2 admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Shared file stores are readable on both tiers. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 repos publish an HTML artifact and an inspected server artifact. The local dev loop runs the hosted handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller and ECS Fargate provider are built, including spare claims, stopping and drain, crash metering and the patch breaker. Production admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+
+## Tier 2 delivery status
+
+The build in PRs #417 through #453 implements the tier 2 map's handler, sync, execution, SDK and portal contracts. This documentation reconciliation records those capabilities as built, not as proposals. It does not mean the platform is deployed or every acceptance check has passed:
+
+- [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)'s role-only Fargate acceptance is pending an IAM grant for [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439).
+- [#413](https://github.com/allisonmahmood/patchy-cloud/issues/413)'s reference CRM journey and tier-picking check run by hand after the stack merges. The automated acceptance work is built; those two checks have not run.
+- Version revocation remains an open question on [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425). The `revoked` frame exists, but there is no way to revoke a version.
+- Production infrastructure and the first deploy, [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), are not built.
+
+This is the closing documentation pass for [#294](https://github.com/allisonmahmood/patchy-cloud/issues/294). Allison closes the map and its issues after merge.
 
 ## Patches
 
@@ -95,17 +106,14 @@ cause a mutation replay. Repo generation supplies this client surface and the
 same shell provides its broker locally and in the cloud. Initialization alone
 does not publish a patch.
 
-The tier 2 handler contract is available through `patchy/server`: typed queries,
+The tier 2 handler contract comes through `patchy/server`: typed queries,
 mutations and actions, config-bound helper contexts, business errors and
 serializable descriptors. Generation derives the server-only client's signatures
 from type-only server imports. `useQuery` shares local subscription state and
-retains its last value through errors. The pinned workerd engine, credential-free
-SDK guest, isolated descriptor inspection, process supervisor, private management
-listener and supervised local executor are implemented. Runtime now admits and
-settles invocations through a private capability gateway in isolated execution
-tests and the existing `pnpm dev` instance. An eligible `server.call` executes on
-the local executor. Published tier 2 pages use the generated handler client in
-the hosted shell. `patchy dev` uses that engine and gateway over local PGlite and fixtures.
+retains its last value through errors. Hosted instances use the ECS fleet;
+dev and tests use the supervised local executor. Both execute through Runtime's
+private capability gateway. `patchy dev` uses the same engine and gateway over
+PGlite and fixtures. See [Tier 2](#tier-2--hosted) for the execution contract.
 
 ### Building a patch
 
@@ -171,11 +179,10 @@ message/stack. Starting with `--json` records full wide events and invocation JS
 There are no runtime database log rows, PostHog delivery or connection keyring.
 
 `patchy dev` runs the same handler engine and callback path as production.
-It does not reproduce production's scheduling, limits or containment. A handler
-that spins forever times out, and a health check restarts the dev engine, which
-can interrupt other calls in flight. Contract limits still apply; production
-operating capacity does not. PGlite is not evidence for hosted `busy` or
-`write_conflict` behavior.
+It enforces contract limits, but does not reproduce production scheduling,
+operating capacity or containment. A handler that spins forever times out,
+and a health check restarts the dev engine, which can interrupt other calls
+in flight. PGlite is not evidence for hosted `busy` or `write_conflict` behavior.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
@@ -253,12 +260,14 @@ The **global skill** is the door for sign-in, static pages and `init`; inside a 
 the **project skills** govern. Their sole source is `packages/sdk/skills/`:
 `patchy-loop`, `patchy-tables` and `patchy-files` are core;
 `patchy-preact` is added on tiers 1 and 2; `patchy-server` is added on tier 2.
-`patchy-postgres`, `patchy-shared-tables` and `patchy-shared-stores` follow declarations. Refresh
-re-fetches every present skill and adds implied ones. Skill presence is sticky,
-except that dropping below tier 2 removes `patchy-server` alongside the
-`workerd` pin and generated `server.ts`. A different missing skill offer fails
-rather than preserving obsolete instructions. Explicit remove may retire a
-declaration skill when no declaration of its kind remains.
+`patchy-postgres`, `patchy-shared-tables`, `patchy-shared-stores` and
+`patchy-members` follow declarations. Refresh re-fetches every present skill
+and adds implied ones. Skill presence is sticky except for two cases:
+dropping below tier 2 removes `patchy-server` alongside the `workerd` pin and
+generated `server.ts`, and removing the member-directory declaration removes
+`patchy-members`. A different missing skill offer fails rather than preserving
+obsolete instructions. Explicit remove may retire a declaration skill when no
+declaration of its kind remains.
 
 A **fixture stub** contains metadata and guidance, not company rows or bytes.
 The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
@@ -275,7 +284,7 @@ and the limits of each tier; durable data goes through Patchy.
 
 ### Sharing and finding
 
-A published patch is shared with **everyone in the company** by default, or made **public** on purpose, so anyone can open its current version without a login. The owner chooses the scope with `patchy publish [file] --share company|public` or `patchy share`, using the repo id, file cache or explicit `--patch <id>`. A publish without `--share` preserves the scope. Owners and admins can also change a live patch's scope on its portal card. Public tier 1 versions expose their declared member directory only to signed-in company members; other company capabilities remain unavailable. Narrower sharing remains future work, as described under [Identity and access](#access-to-a-patch).
+A published patch is shared with everyone in the company by default. Tiers 0 and 1 may be made public so anyone can open the current version without a login; tier 2 is company-only. The owner chooses the scope with `patchy publish [file] --share company|public` or `patchy share`, using the repo id, file cache or explicit `--patch <id>`. A publish without `--share` preserves the scope. Owners and admins can change a live patch's scope on its portal card. Public tier 1 versions expose their declared member directory only to signed-in company members; other company capabilities remain unavailable. Narrower sharing remains future work, as described under [Identity and access](#access-to-a-patch).
 
 A person finds a patch in the portal or through its shared address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is. See [Addresses](#addresses).
 
@@ -325,13 +334,16 @@ Not a **connection** (a connected source belongs to the company, or in the futur
 
 ## Runtime tiers
 
-A **tier** is where a patch's code runs, and nothing else. Tier 0 is **static**: no patch code runs anywhere. Tier 1 is **browser**: code runs in the viewer's browser, as the viewer. Tier 2 is **hosted**: the patch also has server-side code Patchy runs for it, while someone has the patch open. Beyond them, and not designed: tier 3 runs with no viewer present — automations, a thing that persists — and tier 4 gives an agent its own computer to work in (the shape Daytona fits). The numbers are the names; the glosses are for context.
+A tier determines where a patch's code runs. Tier 0 is static, with no patch code execution. Tier 1 runs in the viewer's browser, as the viewer. Tier 2 adds server handlers that Patchy runs while someone has the patch open. Tier 3, execution with no viewer present, is the next line of work. Tier 4, an agent's own computer, remains beyond it.
 
 ### What a tier changes, and what it never changes
 
 A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev/test instances and production hosts configured with the ECS fleet.
 
 Tiers 0 and 1 can be **public**, open to anyone with the link. A public tier 0 patch is a static page; a public tier 1 patch can run browser code and use the shell's route bridge. Its declared member directory is available only to signed-in company members. Tables, files and integrations remain unavailable on public versions. **Public tier 2 is deferred**: the patch identity grants no anonymous access. `tier2_not_public` refuses public sharing of a served tier 2 version, and a tier 2 publish to a public patch requires explicit `--share company`.
+
+The supported browser is Chromium desktop. Other browsers and mobile are outside
+this release's supported runtime.
 
 ### Tier 0 — static
 
@@ -400,10 +412,11 @@ Access loss is a first-party notice the patch cannot hide. Session expiry or
 account changes are refused before another operation executes, stop the patch,
 and require a whole-page reload after sign-in. Already-dispatched work keeps its
 original principal; a navigated document receives neither its port nor its replies.
-Unanswered operations have an unknown outcome and are never replayed. A stale
-shell refreshes once, bypassing its cache; a persistent mismatch stops visibly,
-while a retired wire shows the needs-rebuild door. See
-[ADR-0010](./adr/ADR-0010-sandboxed-frame-and-broker.md).
+Unanswered tier 1 operations have an unknown outcome and are never replayed.
+Tier 2 queries retry a lost reply once; mutations offer only explicit keyed
+`retry()`, and actions never replay. A stale shell refreshes once, bypassing its
+cache; a persistent mismatch stops visibly, while a retired wire shows the
+needs-rebuild door. See [ADR-0010](./adr/ADR-0010-sandboxed-frame-and-broker.md).
 
 The runtime operation path admits `me`, owned-table operations, shared-table
 and shared-store reads, owned-file operations and Postgres operations. A company
@@ -427,36 +440,56 @@ The [limits registry](./limits.md) is the source for release contract bounds and
 operating defaults. Contract bounds cannot change through production deployment
 configuration. Controller code can set and remove company operating overrides,
 with the actor, effective values and configuration revision kept in history.
-The registry includes the decided tier 2 bounds; their enforcers land with the
-features below.
+Runtime, the callback gateway and the execution supervisor enforce tier 2 bounds
+from that registry; the generated server skill describes the same contract limits.
 
 Tier 1 runs only while the viewer has the patch open. It cannot run background work or server-side patch code, but its writes persist: a saved photo or table row remains available to other admitted viewers after the browser closes.
 
 ### Tier 2 — hosted
 
-Tier 2 publication is built for dev/test instances and production ECS fleet hosts,
-as defined in [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md). The server stores
-both artifacts and inspects the server bytes before recording a version.
-Its engine, inspection, supervisor, local executor and host invocation lifetime
-are built. The host validates handler
-arguments and results, authorises callbacks, records invocations and settles
-admitted work independently of the browser connection. The supervisor terminates
-runaway version processes and unfinished initialisation. The local executor
-refuses production construction. Queries with declared company resources retain
-one read-only repeatable-read snapshot, with live shared-table access checks.
-Resource-free queries retain the same fenced callback lifetime without requiring
-a company database. Mutations group owned-table operations and a validated
-result into one host-owned serializable transaction, retrying serialization
-conflicts up to three times within five seconds. A mutation key makes an explicit
-retry after an unknown outcome recover a committed result without duplicate
-writes. Actions can transfer file bytes, call company integrations as the viewer
-and run sibling queries or mutations under their remaining deadline. The fleet
-controller binds one company task, manages spares and drains stopping bindings.
-Its local provider runs separate supervisor processes for offline acceptance.
-Its ECS provider runs credential-free company tasks in private subnets, with
-one workerd process per loaded version. Each task shares its half-vCPU CPU budget
-across the supervisor and all loaded processes; process separation does not
-promise unchanged sibling latency under CPU contention.
+Tier 2 runs request-scoped handlers exported from `server/*.ts`, named by module
+and export. It is not an arbitrary app listening on a port. A handler is a query,
+mutation or action. The generated page client calls handlers, never name-based
+tables, stores, shared resources, connections or members. Its shell operations
+remain available for identity, routes, file handles, uploads and downloads.
+
+Queries read under one read-only repeatable-read company snapshot. Resource-free
+queries need no company database, and member-directory reads use the platform
+database outside that snapshot. Mutations group owned-table operations and a
+validated result into one host-owned serializable transaction. Serialization
+conflicts re-run the whole handler for at most three attempts within the original
+five-second deadline. Exhaustion is `write_conflict`, not capacity refusal `busy`.
+An explicit `retry()` after `unknown_outcome` resends the same mutation key and
+arguments, recovering a committed result without duplicate writes. Actions have
+no transaction. They transfer file bytes, read company integrations as the viewer
+and run sibling queries or mutations under their remaining deadline. Actions
+are never replayed, and each nested mutation owns its transaction.
+
+The host validates arguments and results, authorises callbacks and settles admitted
+work independently of the browser connection. Query, mutation and action deadlines
+are 3, 5 and 60 seconds. At the deadline, the host fences effects and starts bounded
+cleanup; unresolved commit outcomes remain `unknown_outcome`. The supervisor kills
+work that continues a second past its deadline or stalls its event loop for six
+seconds. Guest memory may survive between calls, but is not durable state, and
+patch code has no supported background execution.
+
+The ECS fleet binds one Fargate task to one company from a pool of spares.
+A released task stops and is never reused. One workerd process runs each loaded
+version. The company task is the security boundary; separate version processes
+isolate failures, not companies. Each task shares its half-vCPU CPU budget across
+the supervisor and all loaded processes. Process separation does not promise
+unchanged sibling latency under CPU contention. The local task provider exercises
+the controller with separate supervisor processes; it does not prove Fargate
+containment. [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md)
+records the engine and hosting contract, and the [delivery status](#tier-2-delivery-status)
+separates built code from pending acceptance and deployment.
+
+While the company starts, the shell holds handler calls before admission or
+deadlines begin. After two seconds, a cover replaces the frame on first open
+and on resume. `ready` releases held calls. After 40 seconds without a binding,
+held calls fail `busy` and are never replayed; the cover offers retry and binding
+retries use backoff. The shell's states, downloads and log follow
+[Allison's #385 pick](https://github.com/allisonmahmood/patchy-cloud/issues/385#issuecomment-5862481797).
 
 **The log view is built.** A patch's current owner and every company admin read
 its log in the portal at `/patches/<name>/log`; reassignment moves the owner's
@@ -506,9 +539,11 @@ internet: everything it does goes through Patchy, as you, while you have the
 patch open. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.**
 
-The patch also has server-side code, and Patchy admits new work **while a viewer has the patch open**. Already-admitted work finishes after departure. The company task is released after thirty minutes with no connected tier 2 documents and no admitted work, including retries, nested calls and cleanup. The line to tier 3 is whether work must start when nobody has the patch open.
-
-The server side is handler-shaped code Patchy runs, with a fixed layout `init` lays down — not an arbitrary app listening on a port. Bringing a whole app is a second runtime with a second set of limits, and is not promised.
+Patchy admits new work while a viewer has the patch open. Already-admitted work
+finishes after departure. The company task is released after thirty minutes with
+no connected tier 2 documents and no admitted work, including retries, nested calls
+and cleanup. Bringing a whole app would be a second runtime with different limits;
+it is not supported.
 
 Server-side calls use two identities. The **initiating viewer** is the person
 whose live session admitted the invocation. The gateway chooses the **effective
@@ -528,6 +563,12 @@ Bundles are single closed modules. Outbound fetch, socket and Node module access
 Node globals, `eval` and `new Function` are refused. Other workerd APIs are
 incidental, not a supported contract; the exact list and engine pin live in
 ADR-0012.
+
+### Tier 3 is next
+
+Tier 3 starts work without a viewer present: inbound HTTP routes, webhooks,
+schedules, unattended imports and automations. It is not built or specified by
+the tier 2 contract. Tier 2 supports an interactive CRM, not unattended execution.
 
 ### Declaring and changing a tier
 
@@ -559,7 +600,7 @@ files, shared resources, connections and members remain behind handlers.
 
 ## Companies
 
-A **company** is the tenant everything on Patchy Cloud hangs off. Every patch and user lives in exactly one company, and nothing inside crosses the company line except a patch someone chose to make public. A company is flat — no sub-tenants — and carries a globally unique **handle** alongside its display name. It owns its Postgres connections; billing, groups and company-wide usage accounting are not built yet.
+A company is the tenant for its patches, users and Postgres connections. It is flat, with no sub-tenants, and has a globally unique handle alongside its display name. Nothing crosses the company boundary except a patch deliberately shared publicly. Runtime records company bound seconds, database time and calls; billing, groups and a company usage view are not built.
 
 A company comes to exist on **create-or-join**, after sign-in: a person without an invitation names a company, chooses its handle and becomes its first admin. The company and user are created together; a solo builder is a company of one. The handle is fixed once created, 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and reserved platform names refused. Self-serve billing — put in a card, set when it tops up — is the intended later path, not a step in today's signup.
 
@@ -606,7 +647,7 @@ A patch's **name** is 3–32 lowercase letters, digits or hyphens, with no leadi
 
 Company sharing protects patch content, not address existence. A signed-out request for a retained company patch or an off patch gets the 401 login door; a missing, disabled or reclaimed patch gets 404. Someone probing names can therefore distinguish a retained address from an absent one. This follows the requirement that reclamation leaves no row or name and answers 404 for everyone: a reclaimed address cannot be distinguished from one that never existed.
 
-Only the current public version is public and caches for at most a minute at both its address and its numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting **content URL**, never the link to share: it serves that version's bytes with that version's tier and content security policy, the same door and sharing-based caching as the address. Tier 0 keeps its script-free `srcdoc` frame with `sandbox=""`; tier 1 frames that content URL with a document nonce and `sandbox="allow-scripts allow-modals"`. Historical pages always render with their own version's tier.
+Only the current public version is public and caches for at most a minute at both its address and numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting content URL, never the link to share. It serves that version's bytes with its tier, content security policy, door and sharing-based caching. Tier 0 uses a script-free `srcdoc` frame with `sandbox=""`; tiers 1 and 2 frame the content URL with a document nonce and `sandbox="allow-scripts allow-modals"`. Historical pages always render with their own version's tier.
 
 ### The operator
 
@@ -620,7 +661,7 @@ Log in once, and every patch you have access to opens when someone sends you its
 
 ### Signing in
 
-A person signs in with **Google**, **Microsoft**, or a **code sent to their email**, through Clerk's Account Portal. There are no passwords. One Clerk session opens the company's patches and first-party pages, including the portal. A company link opened without a session shows the login door, whose Sign in link returns the person to that patch. A public patch needs no sign-in. Higher-runtime patches will use the same door.
+A person signs in with Google, Microsoft or a code sent to their email through Clerk's Account Portal. There are no passwords. One Clerk session opens the company's patches and first-party pages, including the portal. A company link opened without a session shows the login door, whose Sign in link returns the person to that patch. Company patches use this door on tiers 0, 1 and 2. A public patch needs no sign-in.
 
 Company **SSO** is future work: Patchy will enable it for a company, and its admin will set up SAML or OIDC against their IdP themselves — Patchy never handles the IdP credentials. SSO will be enforced on the company's verified domain, so everyone at `acme.com` signs in through Acme's IdP and nothing else. SSO is intended as a paid feature; the price is a pricing question, not a design one.
 
@@ -648,7 +689,7 @@ Two roles, **member** and **admin**. Every company member may build and publish.
 
 ### Access to a patch
 
-Sharing decides who may open a live patch. The owner may publish, change sharing, describe, retire, delete, restore or roll back. Same-company admins can perform every act except publish through the portal, including reassignment to an active member. Admin management uses the portal, never machine tokens. Publish stays owner-only for accountability, not protection against admins, who can reassign a patch before publishing. These powers are separate from data access: every admitted company viewer may read and write the patch's defined tables and stores; public versions grant no company-data access. Named-user and group sharing remain future work.
+Sharing decides who may open a live patch. The owner may publish, change sharing, describe, retire, delete, restore or roll back. Same-company admins can perform every act except publish through the portal, including reassignment to an active company member. Admin management uses the portal, never machine tokens. Publish stays owner-only for accountability, not protection against admins, who can reassign a patch before publishing. These powers are separate from data access. A tier 1 company viewer can read and write the patch's defined tables and stores; tier 2 handlers enforce the patch's rules. Public versions grant no table, file or integration access. Named-user and group sharing remain future work.
 
 **Admins see every company patch.** The portal shows their management controls and a Reassign confirmation page for live, retired and deleted patches. Reassignment is repeatable and preserves every version's publisher attribution. The company owns what is built in it; future owner-only sharing is not a secret from the company.
 
@@ -811,16 +852,21 @@ table or store with a different flag. Omission and rollback preserve sharing.
 
 ### Who reads and writes
 
-An admitted company viewer reads and writes every row and file defined by the
-loaded version of the owning patch, acting as themselves, not the patch owner.
-There are no per-row, per-user or write scopes; UI filtering is not access control.
-Every mutation is attributed in the runtime log before execution; table and file
-reads are not logged. Public versions refuse table and file access; the member
-directory exception does not grant access to stored resources. Older
-manifests remain usable after additive changes, including inserts omitting newer
-columns. Admins own the audit view, not extra powers inside patch code. Admins read the
-recent-calls list per connection; a patch's current owner and every admin read its
-log, described under Tier 2.
+On tier 1, an admitted company viewer reads and writes every row and file defined
+by the loaded version, acting as themselves rather than the patch owner.
+UI filtering is not access control. On tier 2, the page has no direct resource
+operations; handlers enforce rules and own-resource callbacks act as the patch.
+Shared resources, connections and members still require the initiating viewer's
+live authority.
+
+The runtime records resource mutations before execution; table and file reads
+have no operation log row. Tier 2 invocation records separately capture mutations,
+actions and queries that log or fail. Public versions refuse table and file
+access; the member-directory exception grants no access to stored resources.
+Older manifests remain usable after additive changes, including inserts omitting
+newer columns. Admins have no extra powers inside patch code. They read the
+per-connection recent-calls list; a patch's current owner and every admin read
+its attribution log, described under Tier 2. It is not an access audit.
 
 ### Shared tables
 

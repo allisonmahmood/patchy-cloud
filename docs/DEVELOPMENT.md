@@ -100,7 +100,9 @@ returning `InvocationUnavailable`. It publishes and serves both tier 2 artifacts
 The patch-repo `patchy dev` uses this same engine and callback gateway over local
 PGlite and fixtures, without platform invocation rows. `InvocationLocal.test.ts`
 exercises the hosted composition; `devExecution.test.ts` covers the patch-repo one.
-Nested queries and mutations use the parent's exact binding and have separate invocation rows.
+In the hosted runtime, nested queries and mutations use the parent's exact
+binding and have separate invocation rows. Patch-repo dev records them in
+`dev.log`, not platform runtime-log tables.
 Resource-free queries use a fenced invocation
 resource with an empty watermark and zero database-held time, without provisioning
 a company database. Data-bearing queries retain one read-only repeatable-read
@@ -123,9 +125,9 @@ multi-session contention and cancellation guarantees.
 `pnpm exec vitest run apps/server/src/DevelopmentExecution.test.ts` exercises
 eligible query, mutation and action calls through the same `Server.layer`
 selected by `pnpm dev`, including nested callbacks, committed-key replay,
-company isolation and production refusal.
-It publishes and executes stored tier 2 artifacts, and verifies production
-publication refusal.
+company isolation and refusal of the local executor in production.
+It publishes and executes stored tier 2 artifacts, and verifies that production
+publication is refused without `EXECUTION_PROVIDER=ecs`.
 For a callback-free mutation on a fresh company, the host provisions the key
 store before execution. The replay check must begin with no company database;
 pre-provisioning a table would miss that first-call path.
@@ -290,6 +292,15 @@ document stream through `starting` and `ready`, then exercises nested callbacks
 and committed mutation-key replay. The ECS provider uses the same controller.
 
 ### Deploying only the tier 2 spike
+
+The ECS provider, reproducible host/exec image and guarded spike deploy script
+are built. Role-only Fargate acceptance is still pending the IAM grant on
+[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406) and
+[PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439). The earlier
+IAM-user-credential run does not prove that path. This spike is not production
+infrastructure [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)
+or the first deploy [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416);
+both remain unbuilt.
 
 `scripts/tier2-spike.mjs` reads its allowlist only from the existing private
 files below. It does not accept account, caller, region or project overrides
@@ -1099,7 +1110,7 @@ defaults, references, indexes and schema revisions. These checks use the saved
 login and invented definitions, never a developer's instance or company data.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
-and `uses`. The API admits tier 0, 1 and 2 manifests with tables, stores, shared-table declarations and resolved Postgres declarations in dev and test instances. Scripted HTML is stored raw and served in the sandbox. Tier 2 additionally stores one closed server module; descriptor disagreement, load failure or load timeout is `invalid_manifest`. Production refuses tier 2 until fleet execution lands. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tiers 1 and 2 use `PATCHY_MAX_BUNDLE_BYTES` (10 MiB) per artifact.
+and `uses`. The API admits tier 0, 1 and 2 manifests with tables, stores, shared tables and stores, members and resolved Postgres declarations in dev and test instances. Scripted HTML is stored raw and served in the sandbox. Tier 2 additionally stores one closed server module; descriptor disagreement, load failure or load timeout is `invalid_manifest`. Production tier 2 admission requires `EXECUTION_PROVIDER=ecs`; its role-only acceptance and production deployment remain pending as described above. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tiers 1 and 2 use `PATCHY_MAX_BUNDLE_BYTES` (10 MiB) per artifact.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
 against that release. File attempts live in the isolated `PATCHY_STATE_DIR`;
@@ -1170,6 +1181,9 @@ CLI state directory and package caches, disposable Postgres and file storage,
 the real host with the local workerd executor, and Chromium. It does not use a
 running dev instance, live Clerk, cloud credentials or company data. Initial
 toolchain installation needs registry access; browser requests stay on loopback.
+Adding `tier2-smoke` to the required status checks remains Allison's
+[configuration action on #413](https://github.com/allisonmahmood/patchy-cloud/issues/413#issuecomment-5914608333).
+The separate job is built; its existence alone does not make it a merge gate.
 
 The journey initializes a tier 2 repo, authors a query, mutation and action,
 and exercises both `patchy dev` mounts over invented shared-table and shared-store
@@ -1189,9 +1203,10 @@ patch dev runtime.
 
 This is assembled-behavior acceptance, not another implementation ticket.
 Product failures belong to the owning ticket in the tier 2 stack, not fixes in
-this e2e. The fresh-agent CRM journey and tier-picking check on #413 remain manual
-checks on `main` after the stack merges; neither runs in this job or ships an
-example CRM. This local-executor check does not prove Fargate containment.
+this e2e. The fresh-agent CRM journey and tier-picking check on
+[#413](https://github.com/allisonmahmood/patchy-cloud/issues/413) remain pending.
+Both run by hand on `main` after the stack merges, not in this job. No example
+CRM ships. This local-executor check does not prove Fargate containment.
 
 #### Live content store
 
@@ -1344,9 +1359,12 @@ sharing and lifecycle changes. Runtime adds `0011_runtime_invocations`, with
 invocation and query-rollup records, callback invocation/principal attribution
 and explicit unknown operation outcomes. `0012_runtime_mutation_commit_proof`
 keeps committed mutation evidence independent of the original host's settlement
-timing and metering. Published seed patches stay live until retired or deleted;
-only deletion starts their 30-day recovery window. Token and invitation expiry
-remain separate.
+timing and metering. Patches adds `0013_patches_server_artifact`, Execution adds
+`0014_execution_fleet`, and Companies adds `0015_companies_directory`.
+These fifteen records across eight owners match
+[ADR-0003](./adr/ADR-0003-postgres-only.md).
+Published seed patches stay live until retired or deleted; only deletion starts
+their 30-day recovery window. Token and invitation expiry remain separate.
 Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,
@@ -1355,10 +1373,10 @@ template without passing migrations. Packed and live browser servers migrate
 through the server's existing spread rather than maintaining another one.
 
 The supervisor sets `NODE_ENV=development` in the server's closed environment.
-Development and test instances select local invocation execution automatically;
-production refuses tier 2 admission until the fleet executor is available. The
-private callback listener binds loopback, and company-local executors close
-with the server scope. Retained server bytes enter through Runtime's existing
+Development and test instances select local invocation execution by default.
+Production requires `EXECUTION_PROVIDER=ecs`; it never falls back to a local
+executor. The local executor's private callback listener binds loopback, and
+company-local executors close with the server scope. Retained server bytes enter through Runtime's existing
 `ServerBundles` port, implemented by Patches' content store. The version's stored
 hash and byte count are checked before execution. Published versions retain
 their own server artifacts across new publishes and rollbacks.

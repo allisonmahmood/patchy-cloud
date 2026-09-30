@@ -134,7 +134,7 @@ The agent instructions for entering Patchy: choosing an instance, signing the ma
 _Avoid_: project skill, template
 
 **Project skill**:
-A release-bound set of agent instructions for building within one patch repo, supplied by the instance for its core capabilities or declared connections and shared tables.
+A release-bound set of agent instructions for building within one patch repo, supplied by the instance for its tier, core capabilities and declared connections, shared resources or member directory.
 _Avoid_: global skill, copied tutorial
 
 **Discovery**:

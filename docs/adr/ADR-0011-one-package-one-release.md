@@ -37,9 +37,9 @@ is a separate breaking-change decision with a needs-rebuild door, not a package
 upgrade silently taking old patches down.
 
 For tier 2, wire 1 also fixes the private guest protocol and workerd compatibility
-date, `2026-09-24`, with Node compatibility explicitly disabled. The internal
-`packages/execution` dependency pins `workerd` to `1.20260924.1`; this is not yet a
-managed dependency in generated patch repos. Each published version retains its
+date, `2026-09-24`, with Node compatibility explicitly disabled. Both the internal
+`packages/execution` dependency and tier 2 patch repos pin `workerd` to
+`1.20260924.1`. Each published version retains its
 server bytes, descriptors and server-stamped wire version. Loading and inspection
 use that wire's guest protocol and compatibility date, never the latest tooling
 release's settings. The engine and inspection share these constants; see
@@ -53,13 +53,16 @@ config's type and the manifest's value, so config execution and Node dependencie
 stay outside the browser graph.
 
 `patchy/client` contains neither Node nor PGlite. It uses the document-bound
-broker port in cloud and local environments, exposes one `PatchyError`, and never
-replays a mutation. A dispatched request with a lost reply has `unknown_outcome`:
-retrying it could duplicate a write. HTTP is a test adapter, not permission for a
-patch frame to fetch the runtime directly. `patchy/dev` is the Node entrypoint
-composing local PGlite resources and fixtures with the production shell and dispatcher.
+broker port in cloud and local environments and exposes one `PatchyError`.
+Tier 1 writes are never replayed. The tier 2 client retries a lost query reply
+once. A mutation's `unknown_outcome` offers explicit `retry()` with its original
+mutation key and captured arguments; actions are never replayed. HTTP is a
+test adapter, not permission for a patch frame to fetch the runtime directly.
+`patchy/dev` is the Node entrypoint composing local PGlite resources and fixtures
+with the production shell, dispatcher and supervised workerd executor.
 PGlite is packed as a bundled dependency so its WASM/data and worker imports
-remain intact; installing the release needs neither registry access nor scripts.
+remain intact. SDK bytes come from the instance; the patch repo's workerd and
+builder-owned toolchain dependencies are installed with lifecycle scripts disabled.
 
 `patchy/preact` exports the UI API with compat semantics, hooks and signals.
 `patchy/preact/jsx-runtime` and `patchy/preact/jsx-dev-runtime` support
@@ -74,11 +77,12 @@ signals resolve one shared instance, including its types and licenses.
 Exports name individual entries, never a `patchy/*` wildcard. Config and local
 dev remain tooling entries; the generated client and Preact entries are for the
 page. `patchy/server` ships the handler builders and guest entry for hosted code;
-`patchy/csv` belongs to the CSV ticket and has no placeholder export. The graph
+`patchy/csv` ships CSV parsing and stringification for either graph. The graph
 import checks run independently on the page and server publication graphs.
 
-The only managed package pin in patch repos today is `patchy`; tier 2 init adds
-the patch-side `workerd` pin.
+Managed package pins are `patchy` on every tier and `workerd` on tier 2.
+Changing tier plus `refresh` adds or removes the workerd pin and generated
+server helpers without rewriting authored page or handler code.
 Vite, `vite-plugin-singlefile`, TypeScript and `@types/*` belong to the builder.
 The scaffold supplies caret ranges and the release reports tested versions and
 accepted ranges. Dev and publish refuse unsupported loaded Vite and plugin

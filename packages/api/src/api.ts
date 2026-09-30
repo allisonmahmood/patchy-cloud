@@ -510,7 +510,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
         describe(
           "Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. " +
             "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. " +
-            "Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, " +
+            "Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, " +
             "typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
             "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. " +
             "Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap."

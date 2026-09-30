@@ -59,8 +59,8 @@ A read failure is not an empty successful result.
 ## useQuery
 
 `useQuery(query, args)` accepts a tier 1 table's `list` or `get` callable,
-including shared tables, or a tier 2 generated server query. Pass list options,
-a get row id, or the handler's declared arguments:
+including shared tables, a declared member-directory read, or a tier 2 generated
+server query. Pass list options, a get row id, or the handler's declared arguments:
 
 ```tsx
 const snapshot = useQuery(patchy.server.leads.list, { stage: "open" });
@@ -90,12 +90,14 @@ outside the query's company-database snapshot. See `../patchy-server/SKILL.md`
 for handler dependencies, failures and bounds, or `../patchy-tables/SKILL.md`
 for whole-result rendering and table-grain wakes on tier 1.
 
-Tier 1 table subscriptions run in hosted company pages and `patchy dev`.
-Tier 2 query subscriptions run on published patches in dev and test instances;
-the tier 2 `patchy dev` engine and production fleet hosting remain separate.
-Arbitrary promises, `getMany`, integrations, mutations and actions are not query
-callables. For tier 2 file inputs, stage in the event handler and pass the Upload
-to an action. See `../patchy-files/SKILL.md` for adoption, discard and partial saves.
+Tier 1 table and member-directory subscriptions and tier 2 query subscriptions
+run in hosted company pages and `patchy dev`. Production tier 2 execution uses
+the fleet; local dev uses the supervised local executor.
+Arbitrary promises, table `getMany`, integrations, mutations and actions are not
+query callables. Read `../patchy-members/SKILL.md` for all four subscribable
+directory reads and search arguments. For tier 2 file inputs, stage in the event
+handler and pass the Upload to an action. See `../patchy-files/SKILL.md` for
+adoption, discard and partial saves.
 
 ## useFileUrl
 
@@ -117,8 +119,8 @@ build mode. `patchy dev` uses production build-watch, so it is false there.
 It is not a test for local data and must not guard fixture inserts. Use the
 local fixtures and shell workflow in `patchy-loop`.
 
-Run `pnpm typecheck` and the scaffold's `pnpm lint`, then exercise tier 1 through
-`pnpm patchy dev`. For tier 2, follow `patchy-server`'s current runtime boundary.
+Run `pnpm typecheck` and the scaffold's `pnpm lint`, then exercise either tier
+through `pnpm patchy dev`. Read `patchy-server` for tier 2 execution limits.
 Lint checks hook usage and supported imports; fix failures in source rather
 than disabling the rules.
 

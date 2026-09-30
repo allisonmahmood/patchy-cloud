@@ -1,6 +1,6 @@
 /**
  * Writes `docs/API.md` from the live `PatchyApi`. Run through
- * `pnpm --filter @patchy/api render-docs`; `src/api-md.test.ts` fails on drift.
+ * `pnpm --filter @patchy/api render-docs`.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

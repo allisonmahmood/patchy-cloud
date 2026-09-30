@@ -48,6 +48,12 @@ refusal without replay on failure. Stop the disposable task resource explicitly;
 host shutdown leaves shared tasks running. Keep the ordinary no-pool patch-repo
 dev loop unchanged.
 
+For ECS acceptance, follow DEVELOPMENT's spike-deploy recipe. The ECS provider
+is built, but #406 / PR #439 still requires the host task role's IAM grant and
+a role-only Fargate acceptance run. The earlier static-key run does not prove
+that credential path. Production infrastructure and first deploy remain
+#415 and #416, separate from local or spike verification.
+
 For tier 2 handler changes, follow DEVELOPMENT's **The execution engine**
 guidance and exercise an eligible `server.call` through the existing `pnpm dev`
 server composition. The local executor, private callback gateway, query snapshot
@@ -61,14 +67,22 @@ exercise its generated client in the hosted shell. Verify both artifact hashes,
 `server_required` in an older tier 1 tab, then rollback recovery. The patch-repo
 `patchy dev` loop below runs the same supervised engine and callback gateway.
 
+For assembled tier 2 changes, follow DEVELOPMENT's **Packed tier 2 acceptance**
+recipe and run `pnpm test:packed-tier2-e2e`. It exercises the packed release
+with real local execution and two browsers, not Fargate containment. The fresh-agent
+reference CRM journey and tier-picking checks in #413 remain manual checks on
+`main` after the stack merges; they are not part of that command and no CRM ships.
+
 ## Patch repos and the local runtime
 
 For a patch repo against this checkout, follow DEVELOPMENT's **A patch repo
 against this worktree** recipe. Initialize under `.local/` after the cloud is
 healthy; this keeps instance discovery scoped here. `init` installs the release,
 so run the pinned `pnpm patchy dev --json` without reinstalling.
-Open its `url` and exercise the real generated client through the local shell:
-insert/list, file upload/`url(name)`, and declared Postgres/shared fixtures as applicable.
+Open its `url` and exercise the real generated client through the local shell.
+On tier 1, use direct table and file calls. On tier 2, call handlers and redeem
+their selected file handles; use staged uploads for browser-selected bytes.
+Exercise declared Postgres and shared fixtures through the APIs for that tier.
 For tiers 1 and 2, open `colleagueUrl` as the fixed non-admin colleague at a second
 origin. Save through one viewer and observe the other's subscribed result without
 reload. Tier 2 handlers use shared-table/shared-store and Postgres fixtures through
@@ -93,7 +107,7 @@ invocation JSON; `dev logs --json` remains `{ ok, log, text }`. No runtime datab
 log rows, PostHog delivery or connection keyring are used.
 
 `patchy dev` runs the same handler engine and callback path as production.
-It does not reproduce production's scheduling, limits or containment. A handler
+It does not reproduce production scheduling, operating capacity or containment. A handler
 that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Contract limits still apply; production
 operating capacity does not. Use real Postgres, not PGlite, to prove hosted

@@ -1,6 +1,6 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/CONTEXT.md) owns membership and [Runtime](../runtime/CONTEXT.md) binds operations to the acting viewer.
+The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/CONTEXT.md) owns membership, and [Runtime](../runtime/CONTEXT.md) uses the initiating viewer as the effective principal for connection calls.
 
 ## Language
 
@@ -25,7 +25,7 @@ The immutable name a company connection carries beside its integration — `ware
 _Avoid_: alias, connection id (the identity, which never changes)
 
 **Declaration**:
-A patch's statement of a connection or shared table it uses but does not own. It names an integration and connection handle, or a source patch's id and table; it describes a requirement, never a grant of access.
+A patch's statement of a connection, shared table, shared file store or company member directory it uses but does not own. It binds the required resource's identity and metadata where applicable, never grants access.
 _Avoid_: dependency, requirement, scope request
 
 **Description**:
@@ -73,5 +73,5 @@ The local implementation of an integration's supported operations, using synthet
 _Avoid_: Mock integration, production proxy
 
 **Fixture**:
-Agent-authored synthetic rows for a declared connection or shared table's local shape, with explicit rows for views rather than recomputed source data. Fixtures establish local behavior, not production data, privilege or volume guarantees.
+Builder-authored synthetic data for a declaration's local shape, with invented rows for connections and shared tables, or files for shared stores. Fixtures establish local behavior, not production data, authority or volume guarantees; view fixtures contain explicit rows rather than recomputed source data.
 _Avoid_: Sample of production, mock response

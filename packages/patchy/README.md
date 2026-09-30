@@ -1,6 +1,13 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes static HTML files and tier 0, 1 and 2 repos. Tier 2 publication runs on dev and test instances; production admission requires the fleet executor. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes static HTML files and tier 0, 1 and 2 repos. Tier 2 runs on the ECS fleet in production and the local executor in dev and tests. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
+
+The fleet implementation is built. Role-only Fargate acceptance remains pending
+the IAM grant in [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)
+and [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439). Production
+infrastructure and the first deploy remain unbuilt
+[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
+[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -35,8 +42,8 @@ without a login, and a saved login takes precedence over that seed.
 
 Public subpaths are explicit: `patchy/config` and `patchy/dev` for tooling,
 `patchy/client` for the generated browser client, `patchy/server` for handler
-contracts, and `patchy/preact`, `patchy/preact/jsx-runtime` and
-`patchy/preact/jsx-dev-runtime` for pages.
+contracts, `patchy/preact`, `patchy/preact/jsx-runtime` and
+`patchy/preact/jsx-dev-runtime` for pages, and `patchy/csv` for both graphs.
 Package exports are not all page entry points.
 
 ### Bundled UI runtime
@@ -231,9 +238,10 @@ binary; host refusals and declared business errors retain their structured repli
 SDK query-shape validation preserves its own `invalid_request` refusals without
 trusting arbitrary handler-created `PatchyError` objects.
 
-Queries, mutations and actions run through the pinned local executor in tests and the
-source checkout's existing `pnpm dev` cloud server for eligible `server.call`
-requests. See [the development guide](../../docs/DEVELOPMENT.md).
+Queries, mutations and actions run through the same handler engine and callback
+gateway with the ECS fleet in production and the pinned local executor in dev
+and tests. See [the development guide](../../docs/DEVELOPMENT.md) for setup and
+the remaining fleet acceptance gate.
 A query with declared data resources shares one read-only `REPEATABLE READ`
 company snapshot across its callbacks, with a 3-second deadline. Resource-free
 queries need no company database lease and report an empty watermark and zero
@@ -254,10 +262,10 @@ A new call is not that retry and can duplicate a write. Actions are never replay
 
 Tier 2 publication builds and uploads both HTML and server artifacts, then the
 instance re-derives handler descriptors from stored bytes before recording the
-version. It runs on the local executor in dev and test instances. Production
-hosting requires the fleet executor. Query subscriptions use that same hosted
-runtime. `patchy dev` uses the supervised production handler engine and callback
-gateway, with live server rebinding and a separate non-admin colleague URL.
+version. Production uses the ECS fleet executor; dev and tests use the local
+executor. Query subscriptions use the same runtime. `patchy dev` uses the
+supervised production handler engine and callback gateway, with live server
+rebinding and a separate non-admin colleague URL.
 The `patchy-server` skill documents handler behavior and registry limits.
 Tier 2 pages stage bytes with `patchy.files.stage(bytes, { contentType })` and
 discard unused uploads with `patchy.files.discard(upload)`. An action accepts
@@ -495,7 +503,7 @@ check `list --state retired` before concluding a tool does not exist.
 ### Patch repo commands
 
 Use the instance-installed CLI outside a repo and the pinned `pnpm patchy` inside.
-The private package is not available as `npx patchy@latest` yet; use the
+The private package is not available as `npx patchy@latest`; use the
 instance's release tarball as described above.
 
 | command                                                                                                                                                                 | behaviour                                                                                                                                                                                                                         | `--json` success                                                                                             |
@@ -572,8 +580,8 @@ index, and describes the `src/` page and `server/` handler split for either tier
 It points to the release-bound `patchy-loop` skill for how to exercise the
 configured tier, so refresh can update that workflow without rewriting `AGENTS.md`.
 The repo typechecks without added setup, and `pnpm patchy --help` runs its pinned
-copy. This release supports `pnpm patchy dev` for tiers 0 and 1. Exercise tier 2
-handlers by publishing to a development instance with invented data.
+copy. `pnpm patchy dev` supports tiers 0, 1 and 2. Tiers 1 and 2 provide both
+viewer mounts; tier 2 runs handlers against invented local data.
 
 To move between tiers, edit `tier` in `patchy.config.ts`, then run `pnpm patchy refresh`.
 
@@ -583,7 +591,7 @@ To move between tiers, edit `tier` in `patchy.config.ts`, then run `pnpm patchy 
   Publish with `--share company` if the patch is public.
 - Moving to tier 1 removes those managed parts. Remove `server/`, refresh and
   run `pnpm typecheck`; its errors identify every `patchy.server.*` call to
-  rewrite. Handler-enforced rules and cross-call transactions do not carry over.
+  rewrite. Handler-enforced rules and multi-operation transactions do not carry over.
   Serving a tier 1 version through publish or rollback permits public sharing
   again; local config alone does not.
 
@@ -701,7 +709,7 @@ Tier 0 adds only the trusted local reload script and its polling endpoint to its
 shell CSP and has no colleague URL. No connection keyring is loaded.
 
 `patchy dev` runs the same handler engine and callback path as production.
-It does not reproduce production's scheduling, limits or containment. A handler
+It does not reproduce production scheduling, operating capacity or containment. A handler
 that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Contract limits (including result sizes,
 deadlines and registry limits) still apply; production operating capacity does
@@ -1261,8 +1269,11 @@ The package bundles the global skill at `skills/patchy/SKILL.md`: what Patchy is
 sign-in, safe static-file publishing and the `patchy init` door for building a
 tool. Inside a patch repo, its project skills govern. The instance generates
 those from `packages/sdk`: core loop/tables/files skills at init, Preact guidance
-on tiers 1 and 2, and Postgres, shared-table, shared-store and member-directory skills added by declarations.
-Refresh them through the CLI, not by editing the generated copies.
+on tiers 1 and 2, server guidance on tier 2, and Postgres, shared-table,
+shared-store and member-directory skills added by declarations.
+Refresh them through the CLI, not by editing the generated copies. See
+[skill distribution](../../docs/SKILL_DISTRIBUTION.md) for the canonical sources
+and the tier- and declaration-driven removal rules.
 
 ## Security
 
