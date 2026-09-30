@@ -170,7 +170,7 @@ export function createSharedTable<
 
 const closeSharedStore = Symbol("closeSharedStore");
 export function createSharedStore(alias: string, call: Call): ReadFileStore {
-  const urls = new Set<string>();
+  const urls = new Map<string, string>();
   let closed = false;
   const get = (name: string) =>
     call("shared.files.get", { alias, name }) as Promise<{
@@ -188,12 +188,14 @@ export function createSharedStore(alias: string, call: Call): ReadFileStore {
       const { bytes, contentType } = await get(name);
       if (closed) throw new PatchyError("unknown_outcome", "The client is closed.", {});
       const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
-      urls.add(url);
+      const previous = urls.get(name);
+      if (previous !== undefined) URL.revokeObjectURL(previous);
+      urls.set(name, url);
       return url;
     },
     [closeSharedStore]() {
       closed = true;
-      for (const url of urls) URL.revokeObjectURL(url);
+      for (const url of urls.values()) URL.revokeObjectURL(url);
       urls.clear();
     }
   };

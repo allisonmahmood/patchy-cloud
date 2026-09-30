@@ -617,10 +617,12 @@ Shared stores need `fixtures/shared-<alias>/`. Refresh creates a missing
 directory with a README naming the source store; it leaves an existing directory
 untouched, even if its README was removed. Put invented files in it. Dev loads
 bytes recursively at startup, keeps relative filenames, and skips the directory's
-README. Fixture bytes use `application/octet-stream`. Each start clears and
-reloads that source store, so deleting a fixture file removes it from the next
-session. Edit fixtures and restart dev to change a source locally. Dev does not
-simulate source authority changes.
+README. Dev infers content types from extensions, ignoring case: `svg`, `png`,
+`jpg`, `jpeg`, `gif`, `webp`, `pdf`, `txt`, `csv`, `json` and `html`. Other extensions
+or no extension use `application/octet-stream`; bytes are not inspected or changed.
+Each start clears and reloads that source store, so deleting a fixture file removes
+it from the next session. Edit fixtures and restart dev to change a source locally.
+Dev does not simulate source authority changes.
 
 ### `patchy login [--complete [code]] [--wait <seconds>]`
 

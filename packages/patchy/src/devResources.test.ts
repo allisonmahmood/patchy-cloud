@@ -137,7 +137,7 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
 );
 
 it.live(
-  "reloads shared store bytes and deletions on restart without replacing owned data or fixtures",
+  "reloads shared store bytes, inferred media types and deletions without replacing owned data or fixtures",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -147,6 +147,10 @@ it.live(
       yield* fs.makeDirectory(path.join(fixture, "nested"), { recursive: true });
       yield* fs.writeFileString(path.join(fixture, "README.md"), "Fixture instructions");
       yield* fs.writeFile(path.join(fixture, "nested/asset.bin"), new Uint8Array([0, 255, 1]));
+      yield* fs.writeFileString(
+        path.join(fixture, "nested/logo.SVG"),
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
+      );
       yield* fs.writeFileString(path.join(fixture, "removed.txt"), "Remove on restart");
       const assets = {
         kind: "sharedStore" as const,
@@ -209,6 +213,23 @@ it.live(
         const page = yield* resources.handlers["shared.files.list"]
           .run({ alias: "assets" })
           .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeFiles));
+        for (const [name, contentType] of [
+          ["nested/logo.SVG", "image/svg+xml"],
+          ["nested/asset.bin", "application/octet-stream"]
+        ] as const) {
+          assert.include(
+            page.files.find((file) => file.name === name),
+            { contentType }
+          );
+          const metadata = yield* resources.handlers["shared.files.stat"]
+            .run({ alias: "assets", name })
+            .pipe(Effect.provideService(Binding.Binding, binding));
+          assert.include(metadata, { name, contentType });
+          const bytes = yield* resources.handlers["shared.files.get"]
+            .run({ alias: "assets", name })
+            .pipe(Effect.provideService(Binding.Binding, binding));
+          assert.strictEqual(bytes.contentType, contentType);
+        }
         const body = yield* resources.handlers["shared.files.get"]
           .run({ alias: "assets", name: "nested/asset.bin" })
           .pipe(Effect.provideService(Binding.Binding, binding));
@@ -223,16 +244,17 @@ it.live(
         return { names: page.files.map((file) => file.name), bytes: Array.from(body.bytes) };
       });
       assert.deepStrictEqual(yield* session(true).pipe(Effect.scoped), {
-        names: ["nested/asset.bin", "removed.txt"],
+        names: ["nested/asset.bin", "nested/logo.SVG", "removed.txt"],
         bytes: [0, 255, 1]
       });
       yield* fs.remove(path.join(fixture, "removed.txt"));
       yield* fs.writeFile(path.join(fixture, "nested/asset.bin"), new Uint8Array([2, 0, 254]));
       assert.deepStrictEqual(yield* session(false).pipe(Effect.scoped), {
-        names: ["nested/asset.bin"],
+        names: ["nested/asset.bin", "nested/logo.SVG"],
         bytes: [2, 0, 254]
       });
       yield* fs.remove(path.join(fixture, "nested/asset.bin"));
+      yield* fs.remove(path.join(fixture, "nested/logo.SVG"));
       const resources = yield* DevResources.prepare(prepared, root, path.join(root, ".patchy/dev"));
       const sql = yield* PgliteClient.PgliteClient.pipe(Effect.provideContext(resources.context));
       assert.deepStrictEqual(

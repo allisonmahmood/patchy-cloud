@@ -63,6 +63,19 @@ const resourceChanges = Layer.effect(
 const versionId = "ver_000000000000000000000000";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const epoch = DateTime.toDateUtc(DateTime.makeUnsafe(0));
+const fixtureContentTypes: Readonly<Record<string, string>> = {
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".csv": "text/csv",
+  ".json": "application/json",
+  ".html": "text/html"
+};
 const SchemaState = Schema.Struct({
   companyId: Schema.String,
   patchId: Schema.String,
@@ -162,6 +175,7 @@ interface LocalState {
 
 const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state: LocalState) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const tables = yield* Tables.Tables;
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventory = yield* Inventory.Inventory;
@@ -247,7 +261,13 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
       const bytes = yield* fs.readFile(file.path);
       yield* fileHandlers["files.put"]
         .run(
-          { store: fixture.store, name: file.name, contentType: "application/octet-stream" },
+          {
+            store: fixture.store,
+            name: file.name,
+            contentType:
+              fixtureContentTypes[path.extname(file.name).toLowerCase()] ??
+              "application/octet-stream"
+          },
           bytes
         )
         .pipe(

@@ -3214,9 +3214,10 @@ async function runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken }
     if (fixture.shared) {
       assert.equal(table.hint, `patchy add shared-table ${detail.id}/${table.name}`);
       assert.deepEqual(
-        detail.inventory.stores.map(({ name, description, declarable, reason }) => ({
+        detail.inventory.stores.map(({ name, description, shared, declarable, reason }) => ({
           name,
           description,
+          shared,
           declarable,
           reason
         })),
@@ -3224,8 +3225,9 @@ async function runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken }
           {
             name: "receipts",
             description: "Receipt scans keyed by file name.",
+            shared: false,
             declarable: false,
-            reason: "not_shareable"
+            reason: "not_shared"
           }
         ]
       );
@@ -3246,6 +3248,9 @@ async function runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken }
       "name",
       "description",
       "shared",
+      "declarable",
+      "hint",
+      ...(fixture.shared ? [] : ["reason"]),
       "schemaRevision",
       "columns",
       "indexes"
@@ -3254,6 +3259,8 @@ async function runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken }
     assert.equal(schema.name, table.name);
     assert.equal(schema.description, table.description);
     assert.equal(schema.shared, fixture.shared);
+    assert.equal(schema.declarable, fixture.shared);
+    if (!fixture.shared) assert.equal(schema.reason, "not_shared");
     assert.equal(schema.schemaRevision, published.schemaRevision);
     assert.deepEqual(
       Object.fromEntries(schema.columns.map(({ name, ...column }) => [name, column])),

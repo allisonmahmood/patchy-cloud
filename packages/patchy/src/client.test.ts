@@ -94,7 +94,7 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   expect(resolveObjectURL(third)).toBeUndefined();
 });
 
-it("reauthorizes shared URL reads and revokes every returned URL when closed", async () => {
+it("reauthorizes shared URL reads and retains only the current URL per filename", async () => {
   const config = defineConfig({
     name: "logos",
     tier: 1,
@@ -127,13 +127,21 @@ it("reauthorizes shared URL reads and revokes every returned URL when closed", a
     connections: {}
   });
   const first = await client.shared.assets.url("logo.png");
+  const other = await client.shared.assets.url("other.png");
   bytes = new Uint8Array([2]);
   const second = await client.shared.assets.url("logo.png");
-  expect(new Uint8Array(await resolveObjectURL(second)!.arrayBuffer())).toEqual(bytes);
+  expect(resolveObjectURL(first)).toBeUndefined();
+  expect(new Uint8Array(await resolveObjectURL(second)!.arrayBuffer())).toEqual(
+    new Uint8Array([2])
+  );
+  expect(new Uint8Array(await resolveObjectURL(other)!.arrayBuffer())).toEqual(new Uint8Array([1]));
   access = false;
   await expect(client.shared.assets.url("logo.png")).rejects.toMatchObject({
     code: "access_denied"
   });
+  expect(new Uint8Array(await resolveObjectURL(second)!.arrayBuffer())).toEqual(
+    new Uint8Array([2])
+  );
   await expect(client.shared.assets.get("logo.png")).rejects.toMatchObject({
     code: "access_denied"
   });
@@ -142,6 +150,18 @@ it("reauthorizes shared URL reads and revokes every returned URL when closed", a
   });
   access = true;
   expect(await client.shared.assets.get("logo.png")).toEqual(bytes);
+  const concurrent = await Promise.all([
+    client.shared.assets.url("logo.png"),
+    client.shared.assets.url("logo.png")
+  ]);
+  expect(resolveObjectURL(second)).toBeUndefined();
+  const retained = concurrent.flatMap((url) => {
+    const blob = resolveObjectURL(url);
+    return blob ? [blob] : [];
+  });
+  expect(retained).toHaveLength(1);
+  expect(new Uint8Array(await retained[0]!.arrayBuffer())).toEqual(new Uint8Array([2]));
+  expect(resolveObjectURL(other)).toBeDefined();
   delayed = true;
   const inFlight = client.shared.assets.url("logo.png");
   client.close();
@@ -149,6 +169,8 @@ it("reauthorizes shared URL reads and revokes every returned URL when closed", a
   await expect(inFlight).rejects.toMatchObject({ code: "unknown_outcome" });
   expect(resolveObjectURL(first)).toBeUndefined();
   expect(resolveObjectURL(second)).toBeUndefined();
+  for (const url of concurrent) expect(resolveObjectURL(url)).toBeUndefined();
+  expect(resolveObjectURL(other)).toBeUndefined();
 });
 
 it.each(["put", "delete", "close"] as const)(

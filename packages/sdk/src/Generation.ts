@@ -323,7 +323,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       );
       files.set(
         fixture,
-        `# Shared files from ${source.patchId}/${source.store}\n\nPut invented files here to stand in for the source store ${source.store}. Subdirectories become part of each file name. Dev loads this directory at start and skips README.md metadata. Edit these files and restart dev to reload them. Refresh preserves an existing fixture directory. Production files and authority changes are not simulated.\n`
+        `# Shared files from ${source.patchId}/${source.store}\n\nPut invented files here to stand in for the source store ${source.store}. Subdirectories become part of each file name. Dev loads this directory at start and skips README.md metadata. Content types come from file extensions, ignoring case: svg, png, jpg, jpeg, gif, webp, pdf, txt, csv, json and html. Other extensions or no extension use application/octet-stream; bytes are not inspected or changed. Edit these files and restart dev to reload them. Refresh preserves an existing fixture directory. Production files and authority changes are not simulated.\n`
       );
       shared[alias] = `./uses/${alias}.js`;
       skills.add("patchy-shared-stores");

@@ -619,6 +619,9 @@ declarations need invented inserts in `fixtures/postgres-<handle>.sql` and
 dev generation leaves fixture files untouched.
 Shared stores use `fixtures/shared-<alias>/`, with a README naming the source
 store. Add invented files under their runtime names, including nested paths.
+Dev infers content types from extensions, ignoring case: `svg`, `png`, `jpg`,
+`jpeg`, `gif`, `webp`, `pdf`, `txt`, `csv`, `json` and `html`. Other extensions or
+no extension use `application/octet-stream`; bytes are not inspected or changed.
 Refresh creates only missing fixture directories. Dev reloads their bytes at
 each start, including removals; edit fixtures and restart to change a source.
 Removing the last file also changes the store's revision, so a reconnected query
