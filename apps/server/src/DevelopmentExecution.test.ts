@@ -1,9 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdtempSync } from "node:fs";
 import { createServer } from "node:net";
-import os from "node:os";
-import path from "node:path";
 import { assert, it } from "@effect/vitest";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { build } from "esbuild";
 import { CURRENT_RELEASE, WIRE_VERSION, type Manifest } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -14,6 +12,7 @@ import { contentHash, sha256 } from "../../../packages/core/src/index.js";
 import * as LocalTaskProvider from "@patchy/execution/local-task-provider";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
@@ -67,10 +66,11 @@ const manifest: typeof Manifest.Type = {
   }
 };
 
-const testServer = (env: Record<string, string> = {}) => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "patchy-execution-test-"));
-  return Layer.unwrap(
+const testServer = (env: Record<string, string> = {}) =>
+  Layer.unwrap(
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-execution-test-" });
       let fleetConfig: Record<string, string> = {};
       if (env.EXECUTION_PROVIDER === "local-fleet") {
         const callbackPort = yield* Effect.promise(
@@ -106,8 +106,7 @@ const testServer = (env: Record<string, string> = {}) => {
         )
       );
     })
-  ).pipe(Layer.provide(FetchHttpClient.layer));
-};
+  ).pipe(Layer.provide([FetchHttpClient.layer, NodeFileSystem.layer]));
 
 // Retained historical versions exercise company isolation independently of publication.
 const retain = Effect.fn("DevelopmentExecutionTest.retain")(function* (

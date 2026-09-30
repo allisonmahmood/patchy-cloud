@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- real child processes, callback sockets and wall-clock watchdog deadlines are the acceptance boundary.
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { dirname } from "node:path";
 import { expect, it } from "@effect/vitest";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
@@ -370,6 +371,18 @@ it.live(
       });
       const bad = yield* bind(supervisor, "ver_spin");
       const sibling = yield* bind(supervisor, "ver_sibling");
+      const pid = (yield* supervisor.stats({ bindingEpoch: 1 })).processes.find(
+        (entry) => entry.processGeneration === bad.processGeneration
+      )!.pid;
+      const directory =
+        process.platform === "linux"
+          ? yield* Effect.promise(async () => {
+              const args = (await readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0");
+              return dirname(args.find((arg) => arg.endsWith("config.capnp"))!);
+            })
+          : undefined;
+      if (directory !== undefined)
+        expect(yield* Effect.promise(async () => (await stat(directory)).isDirectory())).toBe(true);
       const held = invocation(bad, host.url, "callback", { invocationId: "inv_held" });
       const heldFiber = yield* supervisor.invoke(held).pipe(Effect.result, Effect.forkChild);
       yield* Effect.promise(() => reached.promise);
@@ -389,6 +402,10 @@ it.live(
       });
       const report = yield* reportFor(supervisor, bad.processGeneration!);
       expect(report).toMatchObject({ cause: "deadline", callsServed: 2, binding: bad.binding });
+      if (directory !== undefined)
+        yield* Effect.promise(() =>
+          expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" })
+        );
       expect(report.invocations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ invocationId: "inv_spin", deadline }),

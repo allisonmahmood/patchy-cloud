@@ -131,6 +131,8 @@ publication is refused without `EXECUTION_PROVIDER=ecs`.
 For a callback-free mutation on a fresh company, the host provisions the key
 store before execution. The replay check must begin with no company database;
 pre-provisioning a table would miss that first-call path.
+The test's storage directory belongs to its server layer and is removed when that
+scope closes, including failed startup and interruption.
 
 Tier 2 queries subscribe through the same document stream as tier 1. Run
 `pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium server-subscriptions.spec.ts`
@@ -215,8 +217,9 @@ post-deadline termination grace are release contracts. Linux uses `/proc` and
 macOS uses `ps` for metering; other platforms refuse supervised execution.
 Unexpected sampling failures kill only the affected resident with report end
 cause `metering_failed`; other residents remain supervised. Distinct child uids
-require a privileged supervisor. Scope shutdown kills and reaps children and
-removes their temporary configuration.
+require a privileged supervisor. Each resident scope kills and reaps its child
+before removing the temporary configuration directory. Clean stops, watchdog
+kills, child crashes and supervisor shutdown all close that scope.
 
 The local adapter runs its supervisor in the host process. Its aggregate RSS
 ceiling counts only supervised workerd children, not PGlite, Vite, fixtures or
