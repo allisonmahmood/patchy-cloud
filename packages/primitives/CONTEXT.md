@@ -1,12 +1,12 @@
 # Primitives
 
-The resources a patch defines and owns, and the operations its admitted viewers use to work with them. Their cumulative existence belongs to the [company database's inventory](../company-database/CONTEXT.md); [Runtime](../runtime/CONTEXT.md) binds access to the loaded version and effective principal. Tier 1 operations act as the viewer. Tier 2 own-resource callbacks act as the patch; shared-resource callbacks require the initiating viewer's live authority.
+The resources a patch defines and owns or declares from its company, and the operations its admitted viewers use to work with them. Owned resources' cumulative existence belongs to the [company database's inventory](../company-database/CONTEXT.md); [Runtime](../runtime/CONTEXT.md) binds access to the loaded version and effective principal. Tier 1 operations act as the viewer. Tier 2 own-resource callbacks act as the patch; shared-resource and member directory callbacks require the initiating viewer's live authority.
 
 ## Language
 
 **Definition**:
 The specification of a resource a patch owns, including a required description of what its rows or files represent. A version's manifest says which definitions that version uses. Publishing a definition replaces its description; omitting one preserves the resource, description and data.
-_Avoid_: declaration (a connection, shared table or shared file store the patch uses but does not own), inventory (the cumulative authority)
+_Avoid_: declaration (a connection, shared table, shared file store or member directory the patch uses but does not own), inventory (the cumulative authority)
 
 **Table**:
 A patch-owned collection of rows with defined columns and indexes. An admitted company viewer reads and writes the owning patch's tables; a public version grants no table access.
@@ -21,7 +21,7 @@ The patch's cumulative schema revision, advanced when provisioning changes its o
 _Avoid_: version number, release
 
 **Resource revision**:
-The durable count of changes to one table or file store, including its writes and sharing changes. A subscription reads rows and their resource revision together; a shared read also depends on the source patch's lifecycle revision.
+The durable count of changes to one table, file store or member directory. A table or store subscription reads its data and revision together; a shared read also depends on the source patch's lifecycle revision. The member directory has its own company-wide revision.
 _Avoid_: schema revision, published version
 
 **System column**:
@@ -31,6 +31,18 @@ _Avoid_: user column, metadata field
 **Ref**:
 A column identifying a row in a named table, without requiring that row to exist. A deleted or missing target is a dangling ref, read as a missing row rather than a cascading change.
 _Avoid_: foreign key, join, embedded row
+
+**Member directory**:
+The company's users as patch code reads them through a members declaration. Patchy owns the data. It offers candidates to assign and resolves stored user ids, including deactivated users.
+_Avoid_: members table, native resource, roster
+
+**Candidate**:
+A user who can currently be assigned in a patch. Today that is every active user of its company; public sharing does not widen the candidates.
+_Avoid_: active member (active does not imply assignable)
+
+**Member column**:
+A table column holding a user id, checked against the candidates on insertion or when its value changes. An unchanged value remains valid after its user is deactivated; deactivation never rewrites stored values.
+_Avoid_: user ref, owner field
 
 **Shared table**:
 A source patch's table that another patch may declare and read, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/CONTEXT.md), independent of the source's active version.

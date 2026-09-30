@@ -371,6 +371,62 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
   );
 
   it.effect(
+    "traces refused member reads only for queries and rechecks every callback's viewer",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        let live = false;
+        let reads = 0;
+        const gateway = yield* CallbackGateway.make({
+          "members.list": {
+            kind: "read",
+            run: () =>
+              Effect.sync(() => {
+                reads++;
+                return { rows: [], cursor: null };
+              })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        for (const kind of ["query", "mutation", "action"] as const) {
+          const dependencies: string[] = [];
+          const capability = yield* Fixtures.issue(capabilities, {
+            kind,
+            binding: {
+              ...Fixtures.binding,
+              manifest: { ...Fixtures.binding.manifest, uses: { members: { kind: "members" } } }
+            },
+            onDependency: (key) => dependencies.push(key),
+            reauthorize: Effect.suspend(() =>
+              live ? Effect.succeed(Fixtures.identity) : Effect.fail(new Runtime.AccessDenied({}))
+            )
+          });
+          live = false;
+          assert.include(
+            yield* gateway.callback(capability.token, capability.attempt, {
+              op: "members.list",
+              args: {}
+            }),
+            { ok: false, code: "access_denied" }
+          );
+          assert.deepStrictEqual(
+            dependencies,
+            kind === "query" ? [`members:${Fixtures.binding.companyId}`] : []
+          );
+          live = true;
+          assert.deepStrictEqual(
+            yield* gateway.callback(capability.token, capability.attempt, {
+              op: "members.list",
+              args: {}
+            }),
+            { ok: true, value: { rows: [], cursor: null } }
+          );
+          yield* capabilities.settle(capability.token, "returned");
+        }
+        assert.strictEqual(reads, 3);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
     "eight callbacks execute concurrently and queued callbacks complete instead of being refused",
     () =>
       Effect.gen(function* () {

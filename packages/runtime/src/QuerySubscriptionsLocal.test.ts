@@ -27,6 +27,7 @@ import * as QuerySnapshot from "../../primitives/src/QuerySnapshot.js";
 import * as MutationTransaction from "../../primitives/src/MutationTransaction.js";
 import * as SubscriptionReads from "../../primitives/src/SubscriptionReads.js";
 import * as TestWakes from "../../primitives/src/test/wakes.js";
+import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import * as Local from "../../execution/src/local.js";
 import * as Binding from "./Binding.js";
 import * as CallbackGateway from "./CallbackGateway.js";
@@ -94,6 +95,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(InvocationCapabilities.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(TestWakes.layer),
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(FetchHttpClient.layer),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, {

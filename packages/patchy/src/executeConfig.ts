@@ -10,6 +10,7 @@ import {
   GenerationManifest,
   Manifest,
   PatchName,
+  MembersDeclaration,
   PostgresDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
@@ -65,7 +66,14 @@ export interface ExecutedManifest {
   >;
   readonly files: Readonly<Record<string, FileStoreDefinition>>;
   readonly uses: Readonly<
-    Record<string, Declaration & { readonly id: string; readonly revision: number }>
+    Record<
+      string,
+      | Extract<Declaration, { readonly kind: "members" }>
+      | (Exclude<Declaration, { readonly kind: "members" }> & {
+          readonly id: string;
+          readonly revision: number;
+        })
+    >
   >;
 }
 
@@ -82,6 +90,7 @@ const configSchema = Schema.Struct({
   uses: Schema.Record(
     Schema.String,
     Schema.Union([
+      MembersDeclaration,
       Schema.Struct({
         kind: PostgresDeclaration.fields.kind,
         handle: PostgresDeclaration.fields.handle
@@ -249,8 +258,11 @@ export async function executeConfig(
  * that no longer match the config's declarations.
  */
 export const resolveStamps = (config: UnresolvedManifest, source: string): ExecutedManifest => {
-  const declarations = Object.entries(config.uses);
+  const declarations = Object.entries(config.uses).filter(
+    ([, declaration]) => declaration.kind !== "members"
+  );
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
+  if (config.uses.members?.kind === "members") uses.members = config.uses.members;
   let index: typeof generatedIndexSchema.Type;
   try {
     index = decodeIndex(source);

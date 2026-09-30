@@ -195,6 +195,8 @@ it("validates structural handler descriptors without invoking callbacks or seria
 it("refuses table modifiers and misplaced handler schemas at builder time", () => {
   for (const field of [
     t.ref("leads"),
+    t.member(),
+    t.object({ nested: t.member() }),
     t.text().default("default"),
     t.fileHandle(),
     t.upload(),
@@ -207,6 +209,8 @@ it("refuses table modifiers and misplaced handler schemas at builder time", () =
   }
   for (const result of [
     t.upload(),
+    t.member(),
+    t.array(t.member()),
     t.text().optional(),
     t.array(t.text().optional()),
     t.nullable(t.text().optional())

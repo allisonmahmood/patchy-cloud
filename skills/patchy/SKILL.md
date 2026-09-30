@@ -117,6 +117,12 @@ Its `addedCapabilities` JSON list names new SDK capabilities, where they run and
 their limits. Read the generated loop skill's catalogue before choosing imports.
 Never manually edit `patchy/_generated/` or managed project skills.
 
+For people assignments or directory display, run `pnpm patchy add members`.
+It adds `patchy-members` and the typed directory client without importing the
+company's users into the repo. Read that project skill before adding `t.member()`
+columns or directory queries. `pnpm patchy remove members` refuses while a
+configured member column remains.
+
 Publish from the repo root with `pnpm patchy publish [--share company|public]`.
 Tier 2 is company-only; a public patch needs `--share company` when publishing
 tier 2. Serving a tier 1 version makes public sharing possible again.

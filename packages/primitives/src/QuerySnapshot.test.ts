@@ -23,6 +23,7 @@ import * as ResourceRevisions from "./ResourceRevisions.js";
 import * as TableOperations from "./TableOperations.js";
 import * as Tables from "./Tables.js";
 import * as TestWakes from "./test/wakes.js";
+import * as TestMemberDirectory from "./test/memberDirectory.js";
 import * as FileFixtures from "./test/files.js";
 import { manifest, setup } from "./test/operationsContract.js";
 
@@ -68,6 +69,7 @@ const open = Effect.fn("test.openQuerySnapshot")(function* (
   return { resource, capabilities, capability };
 });
 const layer = FileFixtures.services.pipe(
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
   )
@@ -492,6 +494,7 @@ const local = Layer.unwrap(
   })
 ).pipe(
   Layer.provideMerge(TestWakes.layer),
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provide(NodeFileSystem.layer),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })

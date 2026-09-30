@@ -43,7 +43,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/preact"],
     runs: "Tier 1 and 2 company pages through patchy dev; hosted tier 1 and published tier 2 pages in dev and test instances",
     limits:
-      "Accepts table list/get callables or generated server queries. Returns status, data, error and loading. Retains data through errors; a permanent error ends the subscription without restarting for another consumer or reconnect."
+      "Accepts table list/get, member-directory callables or generated server queries. Returns status, data, error and loading. Retains data through errors; a permanent error ends the subscription without restarting for another consumer or reconnect."
   },
   {
     id: "primitives.table-subscriptions",
@@ -151,6 +151,19 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "Stores are shared whole and read-only. Tier 2 queries read list and stat metadata; actions also read bytes. Every read and download checks live source access and sharing. Files are at most 20 MiB; list pages at most 1,000 files."
   },
   {
+    id: "primitives.members",
+    group: "Primitives",
+    name: "Company member directory and member columns",
+    entrypoints: [
+      "patchy/config: members and t.member",
+      "patchy/_generated/client.ts: patchy.members",
+      "patchy/_generated/server.ts: ctx.members"
+    ],
+    runs: "Tier 1 company viewers through the broker; tier 2 queries, mutations and actions; two mount identities in patchy dev",
+    limits:
+      "Declare with patchy add members. Candidates are active company users; resolution includes deactivated users. Prefix search only, pages of 50, getMany at most 1,000 ids. All directory reads are subscribable; only queries track dependencies. Member columns check new assignments on arrival, outside the company transaction snapshot. Outsiders and direct tier 2 page operations are refused."
+  },
+  {
     id: "integrations.postgres",
     group: "Integrations",
     name: "Company Postgres reads",
@@ -162,9 +175,8 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 ];
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
-const unavailable: Record<(typeof groups)[number], string> = {
+const unavailable: Partial<Record<(typeof groups)[number], string>> = {
   Core: "Production fleet hosting and generated-file downloads are not available in this release.",
-  Primitives: "The member directory is not available in this release.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:
     "No Helpers ship in this release. patchy/csv is reserved, not implemented. The SDK does not yet offer PDF, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
@@ -185,7 +197,7 @@ export const sdkCapabilitiesMarkdown = [
         `- ${capability.name}. Entrypoints: ${capability.entrypoints.map((entry) => `\`${entry}\``).join(", ")}. Runs: ${capability.runs}. Limits: ${capability.limits}`
       ]),
     "",
-    unavailable[group],
+    ...(unavailable[group] === undefined ? [] : [unavailable[group]]),
     ""
   ])
 ].join("\n");

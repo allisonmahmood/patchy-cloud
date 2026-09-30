@@ -17,6 +17,7 @@ import * as TableOperations from "../../primitives/src/TableOperations.js";
 import * as QuerySnapshot from "../../primitives/src/QuerySnapshot.js";
 import * as MutationTransaction from "../../primitives/src/MutationTransaction.js";
 import * as TestWakes from "../../primitives/src/test/wakes.js";
+import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import * as Binding from "./Binding.js";
 import * as CallbackGateway from "./CallbackGateway.js";
 import * as Executor from "./Executor.js";
@@ -77,6 +78,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(InvocationCapabilities.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(TestWakes.layer),
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(
     Layer.succeed(ContractLimits.overrides, {
       "tier2.query.deadline": 1_000,

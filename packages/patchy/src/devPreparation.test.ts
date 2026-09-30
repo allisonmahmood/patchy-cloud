@@ -53,7 +53,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   yield* fs.writeFileString(path.join(root, "fixtures/shared-contacts.sql"), "");
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
-    `import { defineConfig, table, t, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n` +
+    `import { defineConfig, table, t, members, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n` +
       'import { column } from "./fields.ts";\n' +
       `export default defineConfig({ name: "preparation-test", tier: ${tier}, tables: { notes: table("Notes identified by id.", { [column]: t.text() }) }, uses: ${uses} });\n`
   );
@@ -187,6 +187,17 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
           );
       }),
     { timeout: 30_000 }
+  );
+  it.effect("prepares members without requiring a fixture or declaration snapshot", () =>
+    Effect.gen(function* () {
+      const { prepare } = yield* harness({
+        index: currentIndex,
+        uses: "{ members: members() }"
+      });
+      const prepared = yield* prepare;
+      assert.deepStrictEqual(prepared.manifest.uses, { members: { kind: "members" } });
+      assert.deepStrictEqual(prepared.metadata, { postgres: {}, shared: {} });
+    })
   );
   it.effect("requires a directory for shared-store fixtures and preserves it while stamping", () =>
     Effect.gen(function* () {

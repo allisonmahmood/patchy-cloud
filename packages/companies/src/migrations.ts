@@ -38,5 +38,49 @@ export const migrations: Migrations = {
     `ALTER TABLE invites ADD COLUMN expires_at TIMESTAMPTZ`,
     `UPDATE invites SET expires_at = created_at + interval '720 hours'`,
     `ALTER TABLE invites ALTER COLUMN expires_at SET NOT NULL`
+  ),
+  "0015_companies_directory": ddl(
+    `CREATE TABLE companies_directory (
+      company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+      revision BIGINT NOT NULL DEFAULT 0
+    )`,
+    `INSERT INTO companies_directory (company_id) SELECT id FROM companies`,
+    `CREATE INDEX users_directory_candidates_idx
+      ON users (company_id, lower(name) COLLATE "C", lower(email) COLLATE "C", id COLLATE "C")
+      WHERE deactivated_at IS NULL`,
+    // The separate counter row avoids inverting Users' company-before-user locks.
+    // PostgreSQL delivers NOTIFY only after the outermost transaction commits,
+    // including a portal transaction wrapping a Companies service's savepoint.
+    `CREATE FUNCTION companies_directory_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE
+      old_company TEXT;
+      new_company TEXT;
+      changed_company TEXT;
+    BEGIN
+      IF TG_OP <> 'INSERT' THEN old_company := OLD.company_id; END IF;
+      IF TG_OP <> 'DELETE' THEN new_company := NEW.company_id; END IF;
+      IF TG_OP = 'UPDATE' AND
+        (OLD.company_id, OLD.id, OLD.name, OLD.email, OLD.role, OLD.deactivated_at IS NULL)
+        IS NOT DISTINCT FROM
+        (NEW.company_id, NEW.id, NEW.name, NEW.email, NEW.role, NEW.deactivated_at IS NULL)
+      THEN RETURN NULL;
+      END IF;
+      FOR changed_company IN
+        SELECT DISTINCT company_id
+        FROM unnest(ARRAY[old_company, new_company]) AS changed(company_id)
+        WHERE company_id IS NOT NULL ORDER BY company_id
+      LOOP
+        INSERT INTO companies_directory (company_id, revision) VALUES (changed_company, 1)
+        ON CONFLICT (company_id)
+        DO UPDATE SET revision = companies_directory.revision + 1;
+        PERFORM pg_notify('patchy_runtime_wakes',
+          json_build_object('keys', ARRAY['members:' || changed_company])::text);
+      END LOOP;
+      RETURN NULL;
+    END;
+    $$`,
+    `CREATE TRIGGER companies_directory_changed
+      AFTER INSERT OR UPDATE OR DELETE ON users
+      FOR EACH ROW EXECUTE FUNCTION companies_directory_changed()`
   )
 };

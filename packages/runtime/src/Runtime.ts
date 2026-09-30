@@ -183,7 +183,8 @@ export class LimitExceeded extends Schema.TaggedError<LimitExceeded>()("LimitExc
     "company.admission.rate",
     "files.stage.count",
     "files.stage.viewerBytes",
-    "files.stage.companyBytes"
+    "files.stage.companyBytes",
+    "members.getMany"
   ])
 }) {
   readonly code = "limit_exceeded" as const;

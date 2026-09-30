@@ -164,6 +164,10 @@ export const RuntimeSubscriptionOperation = Schema.Literals([
   "tables.get",
   "shared.list",
   "shared.get",
+  "members.list",
+  "members.search",
+  "members.get",
+  "members.getMany",
   "server.call"
 ]);
 export const RuntimeSubscription = Schema.Struct({
@@ -292,6 +296,25 @@ export const TablePage = Schema.Struct({
   cursor: Schema.NullOr(Schema.String)
 });
 
+export const Member = Schema.Struct({
+  id: NonEmptyText,
+  name: Schema.String,
+  email: Schema.String,
+  admin: Schema.Boolean,
+  active: Schema.Boolean
+});
+export type Member = typeof Member.Type;
+export const MembersPage = Schema.Struct({
+  rows: Schema.Array(Member),
+  cursor: Schema.NullOr(Schema.String)
+});
+export type MembersPage = typeof MembersPage.Type;
+export const MembersList = Schema.Struct({ cursor: Schema.optionalKey(NonEmptyText) });
+export const MembersSearch = Schema.Struct({
+  text: PostgresText,
+  cursor: Schema.optionalKey(NonEmptyText)
+});
+
 export const ServerCall = Schema.Struct({
   handler: HandlerName,
   args: Schema.Record(Schema.String, Schema.Json),
@@ -313,6 +336,32 @@ export const runtimeOperations = {
       args: Schema.Record(Schema.String, Schema.Never)
     }),
     response: RuntimeMe,
+    kind: "read"
+  },
+  "members.list": {
+    request: Schema.Struct({ op: Schema.Literal("members.list"), args: MembersList }),
+    response: MembersPage,
+    kind: "read"
+  },
+  "members.search": {
+    request: Schema.Struct({ op: Schema.Literal("members.search"), args: MembersSearch }),
+    response: MembersPage,
+    kind: "read"
+  },
+  "members.get": {
+    request: Schema.Struct({
+      op: Schema.Literal("members.get"),
+      args: Schema.Struct({ id: NonEmptyText })
+    }),
+    response: Schema.NullOr(Member),
+    kind: "read"
+  },
+  "members.getMany": {
+    request: Schema.Struct({
+      op: Schema.Literal("members.getMany"),
+      args: Schema.Struct({ ids: Schema.Array(NonEmptyText) })
+    }),
+    response: Schema.Array(Schema.NullOr(Member)),
     kind: "read"
   },
   "tables.get": {

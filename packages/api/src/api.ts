@@ -222,6 +222,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Stored versions retain their wire; tier 2 wire 1 fixes the guest protocol and workerd compatibility date. " +
           "Every table and file store requires a nonblank description; missing or blank descriptions " +
           "and table/store name collisions answer `invalid_manifest`. " +
+          'The company directory is declared as `uses: { members: { kind: "members" } }`, ' +
+          "without a resource id or schema stamp. Member columns require this declaration. " +
           'Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. ' +
           "The handle and id must name the same connected company connection, otherwise " +
           "`connection_not_connected`; the revision must equal its current schema snapshot, " +
@@ -624,6 +626,21 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "While authorized, dangling ids remain null in input order. Source definitions come from " +
           "cumulative inventory, so omission from the source's active manifest does not remove access. " +
           "Deletion and recreation under the same patch name never rebind a declaration. " +
+          "`members.list { cursor? }` and `members.search { text, cursor? }` return active " +
+          "company candidates as `{ rows, cursor }`, in pages of 50. Search matches a literal, " +
+          "case-insensitive prefix of the full name or email, not a surname or substring. " +
+          "Order is lowercased name, lowercased email, then id; cursors bind to company and search. " +
+          "`members.get { id }` resolves any company user, including deactivated users; " +
+          "`members.getMany { ids }` preserves input order and duplicates with null for unknown " +
+          "or other-company ids. More than 1,000 ids is `limit_exceeded` with `members.getMany`. " +
+          "Each member is `{ id, name, email, admin, active }`. These reads require the fixed " +
+          "`members` declaration and company-document authority. All four operations subscribe " +
+          "to the company directory revision. Tier 2 handlers may read the directory in all " +
+          "three kinds; only queries track dependencies. Directory reads use the platform " +
+          "database, outside the query's company-database snapshot. A `member` column stores " +
+          "a user id and rejects a non-candidate with `invalid_row` on insertion or changed " +
+          "assignment, including defaults. An unchanged inactive id passes. Eligibility is " +
+          "checked when the write arrives, not when its transaction commits. " +
           "`postgres.list`, `postgres.get`, `postgres.getMany` and `postgres.query` select a " +
           "declared alias with `connection`; relation operations use `relation: { schema, name }`. " +
           "The alias resolves through the loaded manifest to its stable connection id and pinned " +
@@ -875,7 +892,7 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "return without changing loaded version. Expiry of the authenticated token ends the " +
           "stream normally. A refreshable stale token answers `session_refresh_required` (401), " +
           "so the browser refreshes its cookie without discarding the document. Only definitive " +
-          "session loss is `session_expired`. Tier 1 table and tier 2 query subscriptions share this stream. " +
+          "session loss is `session_expired`. Tier 1 table and member-directory subscriptions share this stream with tier 2 query subscriptions. " +
           "The registry bounds `stream.documents` at 8 per viewer per patch and " +
           "`stream.buffer.bytes` at 16 MiB; overflow closes with `slow_consumer`."
       )
@@ -902,19 +919,19 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "`{type:'subscribe',sequence,subscription}` and `{type:'unsubscribe',sequence,id}` " +
           "apply in order, starting at sequence 1. " +
           "A subscription is `{id,op,args,vector?,revision?}`; tier 1 supports `tables.list`, " +
-          "`tables.get`, `shared.list` and `shared.get`. `get` watches the whole table. " +
+          "`tables.get`, `shared.list`, `shared.get` and all four `members.*` reads. `get` watches the whole table. " +
           "Tier 2 supports `server.call` with `{handler,args}` and no mutation key; only queries " +
           "are admitted. Handlers belong to the document's retained loaded version, so publishing " +
           "a version without a handler does not remove it from an already loaded document. " +
           "Optional `vector` and `revision` describe the snapshot the client actually received, " +
           "not the last frame the server sent. Tier 2 resume revision checks ignore keys outside " +
-          "the loaded version's owned tables/stores and declared shared-table/shared-store resources. " +
+          "the loaded version's owned tables/stores, declared shared resources and declared `members:<companyId>` directory. " +
           "`{type:'replace',sequence,subscriptions}` installs the full desired set and supersedes " +
           "buffered deltas through that sequence; older replacements are refused. All requests " +
           "also carry `patchId`, `versionId`, `documentId` and `generation`. A gap after 5 seconds " +
           "or more than 64 buffered deltas sends `resync_required`. `admitted` names the last " +
           "applied sequence. `snapshot` carries `id`, decimal query `revision`, `result` and " +
-          "a revision `vector` with resource keys and source lifecycle `patch:<id>` keys; " +
+          "a revision `vector` with resource keys, directory `members:<companyId>` keys and source lifecycle `patch:<id>` keys; " +
           "`up-to-date` carries `id`, `revision` and `vector` when " +
           "the result is unchanged or resume reaches an equal vector without running the query. " +
           "Successful equal-vector checks emit no `re-run` event. " +

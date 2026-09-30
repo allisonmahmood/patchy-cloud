@@ -327,6 +327,7 @@ export const ColumnDefinition = Schema.Union([
   column("boolean", Schema.Boolean),
   column("timestamp", Schema.Union([Schema.Literal("now"), IsoTimestamp])),
   column("json", PostgresJson),
+  column("member", PostgresText.check(Schema.isMinLength(1))),
   Schema.Struct({
     kind: Schema.Literal("ref"),
     table: NonEmptyText,
@@ -451,7 +452,7 @@ export const handlerValueSchema = (
         ...Object.fromEntries(
           Object.entries(table.columns).map(([name, column]) => {
             const value =
-              column.kind === "ref"
+              column.kind === "ref" || column.kind === "member"
                 ? PostgresText
                 : column.kind === "json"
                   ? PostgresJson.check(
@@ -506,6 +507,27 @@ export const SharedStoreDeclaration = Schema.Struct({
   id: NonEmptyText,
   revision: Revision
 });
+export const MembersDeclaration = Schema.Struct({ kind: Schema.Literal("members") });
+const memberColumnsValid = Schema.makeFilter(
+  (manifest: {
+    readonly tables: Readonly<Record<string, typeof TableDefinition.Type>>;
+    readonly uses: Readonly<Record<string, { readonly kind: string }>>;
+  }) => {
+    if (
+      Object.entries(manifest.uses).some(
+        ([alias, use]) => use.kind === "members" && alias !== "members"
+      )
+    )
+      return 'The members declaration must use the name "members".';
+    return (
+      manifest.uses.members?.kind === "members" ||
+      !Object.values(manifest.tables).some((table) =>
+        Object.values(table.columns).some((column) => column.kind === "member")
+      ) ||
+      "Member columns require the members declaration."
+    );
+  }
+);
 const distinctPrimitiveNames = Schema.makeFilter(
   (manifest: {
     readonly tables: Readonly<Record<string, unknown>>;
@@ -526,17 +548,23 @@ export const Manifest = Schema.Struct({
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
   uses: definitions(
-    Schema.Union([PostgresDeclaration, SharedTableDeclaration, SharedStoreDeclaration])
+    Schema.Union([
+      PostgresDeclaration,
+      SharedTableDeclaration,
+      SharedStoreDeclaration,
+      MembersDeclaration
+    ])
   ),
   handlers: Schema.optionalKey(HandlerDescriptors),
   sdkImports: Schema.optionalKey(Schema.Array(NonEmptyText))
-}).check(distinctPrimitiveNames, Schema.makeFilter(handlerTablesValid));
+}).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Generation resolves declarations; existing stamps are hints, never authority. */
 export const GenerationManifest = Schema.Struct({
   ...Manifest.fields,
   uses: definitions(
     Schema.Union([
+      MembersDeclaration,
       Schema.Struct({
         ...PostgresDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
@@ -554,7 +582,7 @@ export const GenerationManifest = Schema.Struct({
       })
     ])
   )
-}).check(distinctPrimitiveNames, Schema.makeFilter(handlerTablesValid));
+}).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 export const ConnectionSummary = Schema.Struct({
   id: Schema.String,
@@ -725,7 +753,16 @@ export class PrimitiveDetail extends Schema.Class<PrimitiveDetail>("PrimitiveDet
   columns: Schema.Array(
     Schema.Struct({
       name: Schema.String,
-      kind: Schema.Literals(["text", "integer", "number", "boolean", "timestamp", "json", "ref"]),
+      kind: Schema.Literals([
+        "text",
+        "integer",
+        "number",
+        "boolean",
+        "timestamp",
+        "json",
+        "ref",
+        "member"
+      ]),
       optional: Schema.Boolean,
       default: Schema.optionalKey(Schema.Json),
       ref: Schema.optionalKey(Schema.String)

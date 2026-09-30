@@ -2,6 +2,7 @@ import * as GuestProtocol from "@patchy/api/guest";
 import { canonicalArgs } from "@patchy/api/canonical-args";
 import * as Schema from "effect/Schema";
 import type { Json, Upload, ValueDescriptor } from "./config.js";
+import type { MemberListOptions, MemberSearchOptions } from "./client.js";
 import { decodeError, PatchyError } from "./clientError.js";
 import { extractHandlerDescriptors } from "./handlerDescriptors.js";
 import { decodeHandlerError, isHandlerError } from "./handlerError.js";
@@ -88,6 +89,14 @@ const shared = (call: Call, alias: string) => ({
   get: (id: string) => call("shared.get", { alias, id }),
   getMany: (ids: readonly string[]) => call("shared.getMany", { alias, ids }),
   list: (options: object = {}) => call("shared.list", { ...options, alias })
+});
+
+const members = (call: Call) => ({
+  list: (options: MemberListOptions = {}) => call("members.list", { ...options }),
+  search: (text: string | MemberSearchOptions, options: MemberListOptions = {}) =>
+    call("members.search", typeof text === "string" ? { ...options, text } : { ...text }),
+  get: (id: string) => call("members.get", { id }),
+  getMany: (ids: readonly string[]) => call("members.getMany", { ids })
 });
 
 const sharedStore = (call: Call, callback: Callback, alias: string, bytes: boolean) => {
@@ -196,8 +205,12 @@ const postgres = (call: Call, connection: string, invalidRequest: (message: stri
         ) => {
           const wireShape = Object.fromEntries(
             Object.entries(shape).map(([column, value]) => {
-              if (value.kind === "ref" || ("hasDefault" in value && value.hasDefault))
-                invalidRequest("Query shapes do not accept references or defaults.");
+              if (
+                value.kind === "ref" ||
+                value.kind === "member" ||
+                ("hasDefault" in value && value.hasDefault)
+              )
+                invalidRequest("Query shapes do not accept references, members or defaults.");
               if (
                 !("isOptional" in value) &&
                 Object.keys(value).some((key) => key !== "kind" && key !== "optional")
@@ -385,6 +398,7 @@ export function createGuest(
       const context = {
         viewer: input.viewer,
         tables: names((name) => table(call, name, kind !== "query")),
+        members: members(call),
         log(message: string, details?: Json): void {
           pendingLogs.push(
             call("log", { message, ...(details === undefined ? {} : { details }) }).then(

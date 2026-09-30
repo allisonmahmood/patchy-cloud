@@ -25,6 +25,7 @@ import { boundedRows } from "./bounded-rows.js";
 import { inventoryManifest } from "./Tables.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
 import * as MutationWrites from "./MutationWrites.js";
+import * as MemberDirectory from "./MemberDirectory.js";
 
 export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("TableNotDeclared", {
   table: Schema.String
@@ -123,12 +124,21 @@ type Row = typeof TableRow.Type;
 type Column = typeof ColumnDefinition.Type;
 type Table = typeof TableDefinition.Type;
 type List = typeof TableList.Type;
+const MemberColumn = Schema.Struct({
+  name: DefinitionName,
+  defaultValue: Schema.UndefinedOr(Schema.NullOr(PostgresText))
+});
+type MemberColumn = typeof MemberColumn.Type;
+const decodeMemberColumns = Schema.decodeUnknownSync(Schema.Array(MemberColumn));
+const memberColumns = `SELECT name, default_value AS "defaultValue" FROM patchy.columns
+  WHERE patch_id = $1 AND "table" = $2 AND kind = 'member'`;
 type TableQuery<A> = (
   sql: SqlClient.SqlClient,
   table: Table,
   qualified: string,
   patchId: string,
-  name: string
+  name: string,
+  companyId: string
 ) => Effect.Effect<A, Runtime.RuntimeError | SqlError>;
 const isDefinitionName = Schema.is(DefinitionName);
 const system = ["id", "createdAt", "updatedAt"];
@@ -170,6 +180,7 @@ const validValue = (column: Column, value: unknown): boolean => {
     case "json":
       return isJson(value);
     case "text":
+    case "member":
     case "ref":
       return isText(value);
   }
@@ -304,7 +315,8 @@ export const makeAccess = Effect.gen(function* () {
             table,
             `${Inventory.quoteIdentifier(Inventory.namespace(binding.patchId))}.${Inventory.quoteIdentifier(name)}`,
             binding.patchId,
-            name
+            name,
+            binding.companyId
           ).pipe(Effect.catchTags({ SqlError: (cause) => Effect.fail(sqlFailure(name, cause)) }));
         })
       );
@@ -350,7 +362,8 @@ export const makeAccess = Effect.gen(function* () {
           table,
           `${Inventory.quoteIdentifier(Inventory.namespace(declaration.patchId))}.${Inventory.quoteIdentifier(declaration.table)}`,
           declaration.patchId,
-          declaration.table
+          declaration.table,
+          binding.companyId
         );
       }).pipe(
         Effect.catchTags({
@@ -366,13 +379,38 @@ export const make = Effect.gen(function* () {
   const { withTable, withSharedTable } = yield* makeAccess;
   const settings = yield* config;
   const wakes = yield* Wakes.Wakes;
+  const directory = yield* MemberDirectory.MemberDirectory;
+  const validateMembers = Effect.fn("TableOperations.validateMembers")(function* (
+    companyId: string,
+    name: string,
+    columns: readonly MemberColumn[],
+    row: Row,
+    previous?: Row
+  ) {
+    for (const column of columns) {
+      const key = column.name;
+      const value = Object.hasOwn(row, key)
+        ? row[key]
+        : previous === undefined
+          ? column.defaultValue
+          : undefined;
+      if (
+        value === undefined ||
+        value === null ||
+        (previous !== undefined && value === previous[key])
+      )
+        continue;
+      if (typeof value !== "string" || !(yield* directory.isCandidate(companyId, value)))
+        return yield* new InvalidRow({ table: name, column: key, problem: "invalid value" });
+    }
+  });
   const withWriteTable = <A>(name: string, run: TableQuery<A>) =>
     Effect.gen(function* () {
       const binding = yield* Binding.Binding;
       const result = yield* withTable(name, (sql, table, qualified, patchId, tableName) =>
         sql.withTransaction(
           Effect.gen(function* () {
-            const result = yield* run(sql, table, qualified, patchId, tableName);
+            const result = yield* run(sql, table, qualified, patchId, tableName, binding.companyId);
             yield* sql`UPDATE patchy.tables SET resource_revision = resource_revision + 1
               WHERE patch_id = ${patchId} AND name = ${tableName}`;
             return result;
@@ -471,10 +509,14 @@ export const make = Effect.gen(function* () {
       rowCount: () => 1
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified) =>
+      withWriteTable(args.table, (sql, table, qualified, patchId, _name, companyId) =>
         Effect.gen(function* () {
           yield* byteLimit(args.row, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.row, true);
+          const columns = yield* sql
+            .unsafe(memberColumns, [patchId, args.table])
+            .pipe(Effect.map(decodeMemberColumns));
+          yield* validateMembers(companyId, args.table, columns, args.row);
           return yield* sql.withTransaction(insert(sql, table, qualified, args.row));
         })
       )
@@ -488,14 +530,18 @@ export const make = Effect.gen(function* () {
       rowCount: (value) => (Array.isArray(value) ? value.length : null)
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified) =>
+      withWriteTable(args.table, (sql, table, qualified, patchId, _name, companyId) =>
         Effect.gen(function* () {
           if (args.rows.length > settings.maxItems)
             return yield* new ItemLimit({ maxItems: settings.maxItems });
           yield* byteLimit(args.rows, settings.batchBytes, "runtime.batch.bytes");
+          const columns = yield* sql
+            .unsafe(memberColumns, [patchId, args.table])
+            .pipe(Effect.map(decodeMemberColumns));
           for (const row of args.rows) {
             yield* byteLimit(row, settings.rowBytes, "runtime.row.bytes");
             yield* validateRow(args.table, table, row, true);
+            yield* validateMembers(companyId, args.table, columns, row);
           }
           return yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -526,7 +572,7 @@ export const make = Effect.gen(function* () {
       rowCount: () => 1
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified) =>
+      withWriteTable(args.table, (sql, table, qualified, _patchId, _name, companyId) =>
         Effect.gen(function* () {
           yield* byteLimit(args.patch, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.patch, false);
@@ -543,6 +589,18 @@ export const make = Effect.gen(function* () {
                   .join(", ");
           return yield* sql.withTransaction(
             Effect.gen(function* () {
+              if (Object.keys(args.patch).some((key) => table.columns[key]?.kind === "member")) {
+                const previous = yield* queryRows(
+                  sql,
+                  `SELECT ${projection(table)} FROM ${qualified} WHERE "id" = $1 FOR UPDATE`,
+                  [args.id]
+                );
+                if (previous.length === 0) return yield* new RowNotFound({ table: args.table });
+                const columns = Object.entries(table.columns)
+                  .filter(([, column]) => column.kind === "member")
+                  .map(([name]) => ({ name, defaultValue: undefined }));
+                yield* validateMembers(companyId, args.table, columns, args.patch, previous[0]!);
+              }
               const rows = yield* queryRows(
                 sql,
                 `UPDATE ${qualified} AS stored SET ${assignments} WHERE "id" = $${values.length + 1} RETURNING ${projection(table)}, to_jsonb(stored) AS "__storedRow"`,

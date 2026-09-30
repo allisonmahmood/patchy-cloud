@@ -96,6 +96,10 @@ it.layer(Layer.merge(NodeFileSystem.layer, Testing.resourceChangesLayer))(
                 });
                 yield* inventory.bumpRevision("legacy");
                 yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
+                yield* sql.unsafe(`ALTER TABLE patchy.columns
+                  DROP CONSTRAINT columns_kind_check,
+                  ADD CONSTRAINT columns_kind_check
+                    CHECK (kind IN ('text', 'integer', 'number', 'boolean', 'timestamp', 'json', 'ref'))`);
               })
             )
           );
@@ -127,6 +131,24 @@ it.layer(Layer.merge(NodeFileSystem.layer, Testing.resourceChangesLayer))(
               assert.strictEqual(
                 updated?.columns.find((column) => column.name === "parent")?.refTable,
                 "notes"
+              );
+              yield* databases.withPatchLock("legacy")(
+                inventory.putColumn({
+                  patchId: "legacy",
+                  table: "notes",
+                  name: "owner",
+                  kind: "member",
+                  refTable: null,
+                  optional: true,
+                  defaultKind: null,
+                  defaultValue: null
+                })
+              );
+              yield* Inventory.upgrade;
+              const members = yield* inventory.read("legacy");
+              assert.strictEqual(
+                members?.columns.find((column) => column.name === "owner")?.kind,
+                "member"
               );
             })
           );

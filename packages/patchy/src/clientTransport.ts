@@ -20,6 +20,7 @@ export type Operation =
   | "subscriptions.subscribe"
   | "subscriptions.unsubscribe"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
+  | `members.${"get" | "getMany" | "list" | "search"}`
   | `shared.${"get" | "getMany" | "list"}`
   | "shared.download"
   | `shared.files.${"get" | "list" | "stat"}`

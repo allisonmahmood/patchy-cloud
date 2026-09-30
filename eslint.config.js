@@ -49,7 +49,7 @@ export default tseslint.config(
     // CLI imports stay wire-only except for isolated server-artifact inspection.
     ignores: [
       "**/*.test.ts",
-      "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log}.ts"
+      "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members}.ts"
     ],
     rules: {
       "no-restricted-imports": [
@@ -73,7 +73,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ["packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log}.ts"],
+    files: ["packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members}.ts"],
     rules: {
       "no-restricted-imports": [
         "error",

@@ -5,7 +5,6 @@ import {
   ColumnDefinition,
   Manifest,
   ProvisioningReport,
-  SharedTableDeclaration,
   TableDefinition,
   sharedTableId
 } from "@patchy/api";
@@ -87,6 +86,7 @@ const literal = (value: string): string =>
 const sqlTypes = {
   text: "text",
   ref: "text",
+  member: "text",
   integer: "integer",
   number: "double precision",
   boolean: "boolean",
@@ -142,7 +142,7 @@ const indexBudgets = (
         const value = newValues.get(key) ?? quote(name);
         const kind = name === "id" ? "text" : kinds.get(key);
         // Conservatively preflight uncompressed keys, not a persistent write limit.
-        return kind === "text" || kind === "ref"
+        return kind === "text" || kind === "ref" || kind === "member"
           ? `(${value} || '')`
           : kind === "json"
             ? `(${value})::text::jsonb`
@@ -268,15 +268,16 @@ export const inventoryManifest = (
 const decodeColumn = Schema.decodeUnknownSync(ColumnDefinition);
 
 /**
- * Recover provisioning-only shared identities from persisted ref targets.
+ * Recover provisioning-only declarations required by cumulative column definitions.
  * Revision 0 is unresolved: these declarations validate schema, not runtime access
  * or a target's current revision. Omitted manifest aliases are not authority.
  */
 export const inventoryReferences = (tables: (typeof Manifest.Type)["tables"]) => {
-  const uses: Record<string, typeof SharedTableDeclaration.Type> = Object.create(null);
+  const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = Object.create(null);
   const seen = new Set<string>();
   for (const definition of Object.values(tables)) {
     for (const column of Object.values(definition.columns)) {
+      if (column.kind === "member") uses.members = { kind: "members" };
       if (column.kind !== "ref" || seen.has(column.table)) continue;
       const separator = column.table.indexOf("/");
       if (separator === -1) continue;
@@ -315,13 +316,12 @@ const diff = Effect.fn("Tables.diff")(function* (
   );
   const oldStores = new Map(snapshot?.stores.map((store) => [store.name, store]));
   const sharedTargets = new Set(
-    Object.values(manifest.uses)
-      .filter(
-        (declaration) =>
-          declaration.kind === "sharedTable" &&
-          declaration.id === sharedTableId(declaration.patchId, declaration.table)
-      )
-      .map((declaration) => declaration.id)
+    Object.values(manifest.uses).flatMap((declaration) =>
+      declaration.kind === "sharedTable" &&
+      declaration.id === sharedTableId(declaration.patchId, declaration.table)
+        ? [declaration.id]
+        : []
+    )
   );
   const oldColumnCounts = new Map<string, number>();
   for (const column of snapshot?.columns ?? []) {

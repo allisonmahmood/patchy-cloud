@@ -665,8 +665,8 @@ restore with a placement-version change is designed for, not an available tool.
 
 ### Tables and rows
 
-Columns have kinds `text`, `integer`, `number`, `boolean`, `timestamp`, `json`
-and `ref`, with optional or defaulted values. Defaulted does not mean nullable.
+Columns have kinds `text`, `integer`, `number`, `boolean`, `timestamp`, `json`,
+`ref` and `member`, with optional or defaulted values. Defaulted does not mean nullable.
 Every row has a server-generated UUIDv7 `id` and database-maintained `createdAt`
 and `updatedAt`; patch code cannot supply those fields. Refs are indexed row
 identifiers without foreign keys: deleting a target leaves a normal dangling ref.
@@ -693,6 +693,40 @@ On update, omitted fields stay unchanged; null clears an optional field.
 Unknown and system fields are refused. Updating a missing id is `row_not_found`;
 deleting it succeeds idempotently. `insertMany` is all-or-nothing. Writes are
 last-write-wins, with no cross-table transaction or mutation replay key.
+
+### Member directory
+
+`patchy add members` declares the company's member directory and installs the
+`patchy-members` project skill. The declaration is `uses: { members: { kind: "members" } }`,
+with no resource stamp or fixture. Tier 1 uses `patchy.members`; all three tier 2
+handler kinds use `ctx.members`. Public documents grant no directory access,
+including for signed-in readers. A lower-tier document gets only `me` while its
+patch serves tier 2.
+
+Candidates are active company users. `list` and `search` return `{ rows, cursor }`
+in pages of 50, ordered by lowercased name, lowercased email and id. Search matches
+a case-insensitive prefix of the full name or email: "ann" finds Anna, not Joanne.
+`get` and `getMany`, at most 1,000 ids, resolve any company user as
+`{ id, name, email, admin, active }`, including deactivated users. Unknown and
+other-company ids return null; bulk resolution preserves input order and duplicates.
+
+All four reads are subscribable. Joins, deactivation, reactivation and profile or
+role changes commit a directory revision and wake subscriptions after the platform
+transaction commits. Only query handlers acquire this dependency. Directory reads
+are outside a query's company-database snapshot; a directory-only query needs no
+company database.
+
+`t.member()` stores a user id and requires the declaration. Inserts and changed
+assignments check the current candidates, including defaulted values; invalid
+assignments fail `invalid_row` on both tiers. An unchanged value passes after its
+user is deactivated, and deactivation never rewrites rows. Eligibility is checked
+when the write arrives, not at commit, so deactivation during a mutation can still
+leave a committed assignment. Resolve a page's distinct ids once with `getMany`.
+`remove members` refuses while a configured member column remains.
+
+Both local dev mounts expose the same two active candidates: the machine's user
+and the fixture colleague. Dev imports no real directory and simulates no
+membership changes.
 
 ### Additive publishing
 

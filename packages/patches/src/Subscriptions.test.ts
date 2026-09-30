@@ -27,6 +27,7 @@ import { CompanyDatabases } from "@patchy/company-database";
 import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { SubscriptionReads, TableOperations } from "@patchy/primitives";
+import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import {
   Binding,
   RuntimeStream,
@@ -73,6 +74,7 @@ const services = Layer.mergeAll(
   Users.layer
 ).pipe(
   Layer.provideMerge(Fixtures.database),
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );
 const loaded = LoadedVersions.layer.pipe(Layer.provideMerge(services));

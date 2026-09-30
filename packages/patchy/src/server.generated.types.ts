@@ -1,5 +1,14 @@
 // Compile-only fixture matching the generated module's type-only dependency cycle.
-import { defineConfig, files, postgres, sharedStore, sharedTable, t, table } from "./config.js";
+import {
+  defineConfig,
+  files,
+  members,
+  postgres,
+  sharedStore,
+  sharedTable,
+  t,
+  table
+} from "./config.js";
 import type { Id } from "./config.js";
 import type { ReadFileStore, ReadTable } from "./client.js";
 import {
@@ -20,11 +29,13 @@ export const config = defineConfig({
     leads: table("Leads keyed by id.", {
       name: t.text(),
       note: t.text().optional(),
-      active: t.boolean().default(true)
+      active: t.boolean().default(true),
+      owner: t.member().optional()
     })
   },
   files: { documents: files("Lead attachments keyed by filename.") },
   uses: {
+    members: members(),
     directory: sharedTable("abcdefghijkl", "people"),
     assets: sharedStore("abcdefghijkl", "assets"),
     sales: postgres("warehouse")

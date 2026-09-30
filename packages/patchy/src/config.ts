@@ -1,7 +1,8 @@
 /** Code-first definitions. Builders do not load the Node-only config executor. */
 declare const idBrand: unique symbol;
 export type Id<Table extends string> = string & { readonly [idBrand]: Table };
-export type ColumnKind = "text" | "integer" | "number" | "boolean" | "timestamp" | "json" | "ref";
+export type ColumnKind =
+  "text" | "integer" | "number" | "boolean" | "timestamp" | "json" | "ref" | "member";
 export type Json =
   null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 type Value<K extends ColumnKind, Target extends string> = K extends "ref"
@@ -17,7 +18,7 @@ type WriteValue<K extends ColumnKind, Target extends string> = K extends "json"
   ? Exclude<Json, null>
   : Value<K, Target>;
 
-export type ScalarKind = Exclude<ColumnKind, "ref">;
+export type ScalarKind = Exclude<ColumnKind, "ref" | "member">;
 export type ValueDescriptor = (
   | { readonly kind: ScalarKind }
   | { readonly kind: "object"; readonly fields: Readonly<Record<string, ValueDescriptor>> }
@@ -36,7 +37,7 @@ type ColumnDescriptor<
   (Optional extends true ? { readonly optional: true } : unknown) &
   (Defaulted extends true ? { readonly default: WriteValue<K, Target> } : unknown);
 export type Descriptor = (
-  | { readonly kind: ScalarKind }
+  | { readonly kind: ScalarKind | "member" }
   | { readonly kind: "ref" | "row"; readonly table: string }
   | { readonly kind: "object"; readonly fields: Readonly<Record<string, Descriptor>> }
   | { readonly kind: "array"; readonly element: Descriptor }
@@ -130,6 +131,7 @@ export const t = {
   timestamp: () => new Column("timestamp", false, false),
   json: () => new Column("json", false, false),
   ref: <const Target extends string>(table: Target) => new Column("ref", false, false, table),
+  member: () => new Column("member", false, false),
   object: <const F extends Fields>(fields: F) =>
     new ValueSchema(
       {
@@ -241,10 +243,12 @@ export const sharedStore = <const Patch extends string, const Store extends stri
   patchId,
   store
 });
+export const members = () => ({ kind: "members" as const });
 export type Declaration =
   | { readonly kind: "postgres"; readonly handle: string }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
-  | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string };
+  | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
+  | { readonly kind: "members" };
 export interface Config {
   readonly name: string;
   readonly tier: 0 | 1 | 2 | 3;

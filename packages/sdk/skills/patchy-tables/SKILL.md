@@ -65,6 +65,11 @@ described in `../patchy-server/SKILL.md`, and call those handlers from the page.
 
 Kinds: `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.timestamp()` (ISO string), `t.json()` (read as `unknown`), `t.ref("notes")` (typed row id). Refs have an automatic index named exactly after their column: the example's `parent` ref is queried with `list({ index: "parent", eq: { parent: note.id } })`. They are not foreign keys; deleting a target may leave dangling refs. Validate unknown JSON before using its fields.
 
+For a column that assigns a person, run `pnpm patchy add members` and use
+`t.member()` or `t.member().optional()`. Read `../patchy-members/SKILL.md` for
+candidate checks, deactivated users and batch resolution. This is a string user
+id, not a table reference, and it has no automatic index.
+
 Each row has reserved `id`, `createdAt` and `updatedAt`. Patchy supplies and maintains them; never put them in insert or update input. `Row`, `Insert` and `Update` types from `patchy/config` can be inferred from `typeof config` and the table name.
 
 - Insert: required fields must be supplied; omitted optional fields become null; omitted defaulted fields take their default. Defaulted is not nullable. Explicit null is accepted only for optional fields. Unknown fields are refused.

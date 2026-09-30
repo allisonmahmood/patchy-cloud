@@ -37,6 +37,7 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as DevResources from "./devResources.js";
 import * as DevLog from "./devLog.js";
+import { colleague } from "./devMembers.js";
 import type { Prepared } from "./devPreparation.js";
 import { atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
 import { watch } from "./devWatch.js";
@@ -272,11 +273,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
   if (prepared.manifest.tier >= 1) {
     const colleagueServer = yield* Layer.build(Layer.fresh(layer));
     colleagueUrl = yield* mount({
-      user: {
-        id: "usr_dev_colleague",
-        name: "Dev Colleague",
-        email: "colleague@patchy.local"
-      },
+      user: colleague,
       company: prepared.identity.company,
       admin: false
     }).pipe(Effect.provideContext(colleagueServer));

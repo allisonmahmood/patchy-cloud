@@ -75,6 +75,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           ...(repo.description === undefined ? {} : { description: repo.description })
         };
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
+          if (declaration.kind === "members") continue;
           const relative =
             declaration.kind === "postgres"
               ? `fixtures/postgres-${declaration.handle}.sql`
@@ -112,12 +113,14 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         const metadata = generated.metadata;
         if (
           Object.keys(metadata.postgres).length + Object.keys(metadata.shared).length !==
-          Object.keys(manifest.uses).length
+          Object.values(manifest.uses).filter((declaration) => declaration.kind !== "members")
+            .length
         )
           return yield* new LocalError({
             message: "Generation returned inconsistent declaration metadata."
           });
         for (const [alias, declaration] of Object.entries(manifest.uses)) {
+          if (declaration.kind === "members") continue;
           const actual =
             declaration.kind === "postgres"
               ? metadata.postgres[alias]?.declaration
@@ -153,10 +156,14 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         if (yield* fs.exists(serverPath))
           files.push({ path: serverFile, contents: yield* fs.readFileString(serverPath) });
         yield* io("Activate generated files", () =>
-          transaction.activate(files, encodeManifest(manifest), [], {
-            before: source,
-            after: source
-          })
+          transaction.activate(
+            files,
+            encodeManifest(manifest),
+            manifest.uses.members?.kind !== "members" && skills.includes("patchy-members")
+              ? ["patchy-members"]
+              : [],
+            { before: source, after: source }
+          )
         ).pipe(Effect.uninterruptible);
         return {
           manifest,

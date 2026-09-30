@@ -112,7 +112,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" }
+    { kind: "postgres" | "members" }
   >
 ) => {
   const source =
@@ -144,7 +144,8 @@ const knownSkills = [
   "patchy-server",
   "patchy-postgres",
   "patchy-shared-tables",
-  "patchy-shared-stores"
+  "patchy-shared-stores",
+  "patchy-members"
 ];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -213,6 +214,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
   if (request.manifest.tier === 1 || request.manifest.tier === 2) skills.add("patchy-preact");
   if (request.manifest.tier === 2) skills.add("patchy-server");
   else skills.delete("patchy-server");
+  if (request.manifest.uses.members?.kind === "members") skills.add("patchy-members");
+  else skills.delete("patchy-members");
   for (const skill of skills) {
     if (!knownSkills.includes(skill))
       return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });
@@ -263,6 +266,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       )
     : [];
   for (const [alias, declaration] of Object.entries(request.manifest.uses)) {
+    if (declaration.kind === "members") continue;
     const context = `${root}/context/${alias}.md`;
     const client = `${root}/uses/${alias}.ts`;
     if (declaration.kind === "postgres") {

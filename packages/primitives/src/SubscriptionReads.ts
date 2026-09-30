@@ -11,10 +11,12 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as TableOperations from "./TableOperations.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
 import * as ResourceRevisions from "./ResourceRevisions.js";
+import * as MemberDirectory from "./MemberDirectory.js";
+import * as Members from "./Members.js";
 
 class LifecycleChanged extends Schema.TaggedError<LifecycleChanged>()(
   "SubscriptionLifecycleChanged",
-  { patchId: Schema.String }
+  { resource: Schema.String }
 ) {
   readonly code = "source_unavailable" as const;
   readonly status = 503;
@@ -35,7 +37,28 @@ const decoders = {
   }),
   "shared.get": Schema.decodeUnknownEffect(runtimeOperations["shared.get"].request.fields.args, {
     onExcessProperty: "error"
-  })
+  }),
+  "members.list": Schema.decodeUnknownEffect(
+    runtimeOperations["members.list"].request.fields.args,
+    {
+      onExcessProperty: "error"
+    }
+  ),
+  "members.search": Schema.decodeUnknownEffect(
+    runtimeOperations["members.search"].request.fields.args,
+    {
+      onExcessProperty: "error"
+    }
+  ),
+  "members.get": Schema.decodeUnknownEffect(runtimeOperations["members.get"].request.fields.args, {
+    onExcessProperty: "error"
+  }),
+  "members.getMany": Schema.decodeUnknownEffect(
+    runtimeOperations["members.getMany"].request.fields.args,
+    {
+      onExcessProperty: "error"
+    }
+  )
 };
 type Operation = keyof typeof decoders;
 const isOperation = (op: string): op is Operation => Object.hasOwn(decoders, op);
@@ -49,6 +72,8 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const handlers = yield* TableOperations.make;
   const access = yield* TableOperations.makeAccess;
+  const directory = yield* MemberDirectory.MemberDirectory;
+  const memberHandlers = yield* Members.make;
   const withCompany = <A, R>(
     companyId: string,
     effect: Effect.Effect<A, Runtime.RuntimeError, R>
@@ -79,6 +104,16 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     if (!isOperation(input.op)) return yield* new Runtime.InvalidRequest({});
     const decoded: Effect.Effect<unknown, Schema.SchemaError> = decoders[input.op](input.args);
     yield* decoded.pipe(Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })));
+    if (
+      input.op === "members.list" ||
+      input.op === "members.search" ||
+      input.op === "members.get" ||
+      input.op === "members.getMany"
+    ) {
+      const keys = [`members:${input.binding.companyId}`];
+      for (const key of keys) input.onDependency?.(key);
+      return { keys, op: input.op, members: true as const };
+    }
     const shared = input.op.startsWith("shared.");
     const name = shared ? input.args.alias : input.args.table;
     if (typeof name !== "string") return yield* new Runtime.InvalidRequest({});
@@ -93,10 +128,14 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     const table = declaration?.kind === "sharedTable" ? declaration.table : name;
     const keys = [`table:${patchId}:${table}`, `patch:${patchId}`];
     for (const key of keys) input.onDependency?.(key);
-    return { keys, name, shared, op: input.op };
+    return { keys, name, shared, op: input.op, members: false as const };
   });
   const admit = Effect.fn("SubscriptionReads.admit")(function* (input: SubscriptionReads.Input) {
     const dependency = yield* dependencies(input);
+    if (dependency.members) {
+      yield* Members.authorize.pipe(Effect.provideService(Binding.Binding, input.binding));
+      return dependency.keys;
+    }
     yield* (
       dependency.shared
         ? access.withSharedTable(dependency.name, () => Effect.void)
@@ -109,16 +148,34 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     keys: readonly string[]
   ) {
     const patchKeys = keys.filter((key) => key.startsWith("patch:"));
-    const resources = keys.filter((key) => !key.startsWith("patch:"));
+    const resources = keys.filter(
+      (key) => !key.startsWith("patch:") && !key.startsWith("members:")
+    );
+    const members: Record<string, string> = {};
+    for (const key of keys) {
+      if (!key.startsWith("members:")) continue;
+      if (key !== `members:${companyId}`) return yield* new Runtime.AccessDenied({});
+      members[key] = yield* directory.revision(companyId);
+    }
     const patches = yield* lifecycle(companyId, patchKeys);
     const vector =
       resources.length === 0
         ? {}
         : yield* withCompany(companyId, ResourceRevisions.read(resources));
-    return { ...vector, ...patches };
+    return { ...vector, ...patches, ...members };
   });
   const read = Effect.fn("SubscriptionReads.read")(function* (input: SubscriptionReads.Input) {
     const dependency = yield* dependencies(input);
+    if (dependency.members) {
+      yield* Members.authorize.pipe(Effect.provideService(Binding.Binding, input.binding));
+      const before = yield* directory.revision(input.binding.companyId);
+      const result = yield* memberHandlers[dependency.op]
+        .run(input.args)
+        .pipe(Effect.provideService(Binding.Binding, input.binding));
+      const after = yield* directory.revision(input.binding.companyId);
+      if (before !== after) return yield* new LifecycleChanged({ resource: dependency.keys[0]! });
+      return { result, vector: { [dependency.keys[0]!]: before } };
+    }
     const patchKeys = dependency.keys.filter((key) => key.startsWith("patch:"));
     const resourceKeys = dependency.keys.filter((key) => !key.startsWith("patch:"));
     // Platform lifecycle is outside the company snapshot. A changed fence refuses this run.
@@ -149,8 +206,7 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     );
     const after = yield* lifecycle(input.binding.companyId, patchKeys);
     const changed = patchKeys.find((key) => before[key] !== after[key]);
-    if (changed !== undefined)
-      return yield* new LifecycleChanged({ patchId: changed.slice("patch:".length) });
+    if (changed !== undefined) return yield* new LifecycleChanged({ resource: changed });
     return { result: snapshot.result, vector: { ...snapshot.vector, ...before } };
   });
   return SubscriptionReads.SubscriptionReads.of({ admit, read, revisions });
@@ -160,6 +216,7 @@ type Dependencies =
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory
   | LoadedVersions.LoadedVersions
+  | MemberDirectory.MemberDirectory
   | Wakes.Wakes;
 
 export const make: Effect.Effect<

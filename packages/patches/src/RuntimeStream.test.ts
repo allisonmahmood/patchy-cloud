@@ -26,6 +26,7 @@ import {
 } from "@patchy/runtime";
 import { Wakes } from "@patchy/runtime/core";
 import { SubscriptionReads } from "@patchy/primitives";
+import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
@@ -49,6 +50,7 @@ const dependencies = Layer.mergeAll(
 const layer = RuntimeStream.layer.pipe(
   Layer.provide(Subscriptions.layer),
   Layer.provide(SubscriptionReads.layer),
+  Layer.provide(TestMemberDirectory.layer),
   Layer.provideMerge(
     Layer.mergeAll(LoadedVersions.layer, StreamAdmission.layer, StreamLimits.layer).pipe(
       Layer.provideMerge(dependencies)

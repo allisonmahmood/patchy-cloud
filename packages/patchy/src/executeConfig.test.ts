@@ -24,7 +24,7 @@ const fixture = async (
   await writeFile(join(directory, "package.json"), '{"type":"module"}');
   await writeFile(
     path,
-    `import { defineConfig, table, t, files, postgres, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n${source}`
+    `import { defineConfig, table, t, files, members, postgres, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n${source}`
   );
   if (index !== null) {
     await mkdir(join(directory, "patchy/_generated"), { recursive: true });
@@ -147,6 +147,33 @@ describe("executeConfig", () => {
         }
       }
     });
+  });
+
+  it("resolves member columns with an unstamped directory declaration", async () => {
+    const path = await fixture(`export default defineConfig({
+      name: "assignments", tier: 1,
+      uses: { members: members() },
+      tables: { tasks: table("Tasks assigned to a company user.", {
+        owner: t.member(), previous: t.member().optional(), fallback: t.member().default("usr_owner")
+      }) }
+    });`);
+    const manifest = await executeConfig(path);
+    expect(manifest.uses).toEqual({ members: { kind: "members" } });
+    expect(manifest.tables.tasks?.columns).toEqual({
+      owner: { kind: "member" },
+      previous: { kind: "member", optional: true },
+      fallback: { kind: "member", default: "usr_owner" }
+    });
+  });
+
+  it.each([
+    'tables: { tasks: table("Tasks.", { owner: t.member() }) }',
+    "uses: { people: members() }"
+  ])("refuses invalid member declarations: %s", async (definition) => {
+    const path = await fixture(
+      `export default defineConfig({ name: "invalid-members", tier: 1, ${definition} });`
+    );
+    await expect(ConfigExecution.executeConfig(path, { resolve: false })).rejects.toThrow();
   });
 
   it("reports a thrown config locally without leaking process state into the caller", async () => {

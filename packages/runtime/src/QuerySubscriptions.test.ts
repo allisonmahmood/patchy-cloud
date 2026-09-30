@@ -10,6 +10,7 @@ import * as Runtime from "./Runtime.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
 import * as Subscriptions from "./Subscriptions.js";
+import * as QuerySubscriptions from "./QuerySubscriptions.js";
 
 const ownTable = "table:consumer:notes";
 const ownStore = "store:consumer:images";
@@ -17,6 +18,7 @@ const sharedTable = "table:source:items";
 const sourcePatch = "patch:source";
 const sharedStore = "store:filesource:assets";
 const storeSource = "patch:filesource";
+const memberDirectory = "members:company";
 const viewer = {
   user: { id: "viewer", name: "Viewer", email: "viewer@patchy.local" },
   company: { id: "company", name: "Company", handle: "company" },
@@ -47,6 +49,7 @@ const binding: Binding.Binding["Service"] = {
     },
     files: { images: { description: "Images" } },
     uses: {
+      members: { kind: "members" },
       catalog: shared,
       duplicate: shared,
       assets: {
@@ -75,7 +78,8 @@ const fixture = Effect.gen(function* () {
       [sharedTable]: "3",
       [sourcePatch]: "4",
       [sharedStore]: "5",
-      [storeSource]: "6"
+      [storeSource]: "6",
+      [memberDirectory]: "7"
     } as Record<string, string>
   };
   const storage: SubscriptionReads.SubscriptionReads["Service"] = {
@@ -170,7 +174,8 @@ it.effect("discards unrelated resume keys before reading revisions and repairs t
       sharedTable,
       sourcePatch,
       sharedStore,
-      storeSource
+      storeSource,
+      memberDirectory
     ]);
     for (const keys of f.revisionReads) {
       assert.isAtMost(keys.length, allowed.size);
@@ -211,7 +216,8 @@ it.effect("resumes equal owned and canonical shared revisions without invoking t
 
 for (const [resource, source] of [
   [sharedTable, sourcePatch],
-  [sharedStore, storeSource]
+  [sharedStore, storeSource],
+  [memberDirectory, memberDirectory]
 ] as const)
   it.effect(
     `keeps failed first ${resource} accesses recoverable without tracing unused declarations`,
@@ -246,3 +252,45 @@ for (const [resource, source] of [
         }
       }).pipe(Effect.scoped)
   );
+
+it.effect(
+  "refuses a member directory revision change during a query, outside its company snapshot",
+  () =>
+    Effect.gen(function* () {
+      let revision = 1;
+      let changeDuringQuery = true;
+      const readers = yield* QuerySubscriptions.make.pipe(
+        Effect.provideService(SubscriptionReads.SubscriptionReads, {
+          admit: () => Effect.die("Unexpected direct admission"),
+          read: () => Effect.die("Unexpected direct read"),
+          revisions: (_companyId, keys) =>
+            Effect.succeed(
+              Object.fromEntries(
+                keys.map((key) => [key, key === memberDirectory ? String(revision) : "0"])
+              )
+            )
+        }),
+        Effect.provideService(Invocation.Invocation, {
+          call: (_args, _binding, _reauthorize, observation) =>
+            Effect.sync(() => {
+              observation?.onDependency(memberDirectory);
+              observation?.onSnapshot({});
+              if (changeDuringQuery) revision++;
+              return { ok: true as const, value: "members" };
+            })
+        })
+      );
+      const input = {
+        binding,
+        op: "server.call",
+        args: { handler: "demo.read", args: {} },
+        reauthorize: Effect.succeed(viewer)
+      };
+      assert.strictEqual((yield* readers.read(input).pipe(Effect.flip)).code, "source_unavailable");
+      changeDuringQuery = false;
+      assert.deepStrictEqual(yield* readers.read(input), {
+        result: "members",
+        vector: { [memberDirectory]: "2" }
+      });
+    })
+);

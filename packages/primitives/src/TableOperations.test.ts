@@ -14,6 +14,7 @@ import * as Testing from "@patchy/company-database/testing";
 import * as Tables from "./Tables.js";
 import * as TableOperations from "./TableOperations.js";
 import * as TestWakes from "./test/wakes.js";
+import * as TestMemberDirectory from "./test/memberDirectory.js";
 import { Binding, LoadedVersions } from "@patchy/runtime";
 import {
   boundsContract,
@@ -21,6 +22,7 @@ import {
   indexKeyContract,
   revisionsContract,
   operationsContract,
+  memberAssignmentsContract,
   sharedOperationsContract,
   setup,
   manifest,
@@ -33,9 +35,13 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
 });
 const postgres = Tables.layer.pipe(
   Layer.provideMerge([Testing.layer(), versions]),
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(TestWakes.layer)
 );
 it.layer(postgres)("TableOperations / Postgres", (it) => {
+  it.effect("checks member defaults, changed assignments and atomic batches on both tiers", () =>
+    memberAssignmentsContract("cmp_dev")
+  );
   it.effect("commits revisions and wakes atomically and reads subscription snapshots", () =>
     revisionsContract("cmp_dev")
   );
@@ -204,32 +210,36 @@ it.layer(postgres)("TableOperations / Postgres", (it) => {
   );
 });
 
-it.layer(Layer.merge(NodeFileSystem.layer, TestWakes.layer))("TableOperations / PGlite", (it) => {
-  it.effect(
-    "runs the same operations, cursors and bounds over the dev database",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-table-operations-" });
-        const local = Tables.layer.pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(
-              Inventory.layer,
-              PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir }),
-              versions
+it.layer(Layer.mergeAll(NodeFileSystem.layer, TestWakes.layer, TestMemberDirectory.layer))(
+  "TableOperations / PGlite",
+  (it) => {
+    it.effect(
+      "runs the same operations, cursors and bounds over the dev database",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-table-operations-" });
+          const local = Tables.layer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                Inventory.layer,
+                PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir }),
+                versions
+              )
             )
-          )
-        );
-        yield* Effect.gen(function* () {
-          yield* operationsContract("local-company");
-          yield* revisionsContract("local-company");
-          yield* sharedOperationsContract("local-company");
-          yield* boundsContract("local-company");
-          yield* expandedResultsContract("local-company");
-          yield* indexKeyContract("local-company");
-          yield* uuidContract("local-company");
-        }).pipe(Effect.provide(local));
-      }).pipe(Effect.scoped),
-    60_000
-  );
-});
+          );
+          yield* Effect.gen(function* () {
+            yield* operationsContract("local-company");
+            yield* memberAssignmentsContract("local-company");
+            yield* revisionsContract("local-company");
+            yield* sharedOperationsContract("local-company");
+            yield* boundsContract("local-company");
+            yield* expandedResultsContract("local-company");
+            yield* indexKeyContract("local-company");
+            yield* uuidContract("local-company");
+          }).pipe(Effect.provide(local));
+        }).pipe(Effect.scoped),
+      60_000
+    );
+  }
+);

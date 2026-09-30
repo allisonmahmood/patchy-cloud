@@ -353,6 +353,24 @@ describe("wire schemas", () => {
     ).toBe("Success");
   });
 
+  it("requires the fixed members declaration for member columns", () => {
+    const withMember = {
+      ...manifest,
+      tables: {
+        tasks: {
+          description: "Tasks assigned to company users.",
+          columns: { owner: { kind: "member" as const, optional: true } },
+          indexes: {}
+        }
+      },
+      uses: { members: { kind: "members" as const } }
+    };
+    const decode = Schema.decodeUnknownExit(Manifest);
+    expect(roundTrip(Manifest, withMember)).toEqual(withMember);
+    expect(decode({ ...withMember, uses: {} })._tag).toBe("Failure");
+    expect(decode({ ...withMember, uses: { people: { kind: "members" } } })._tag).toBe("Failure");
+  });
+
   it("round-trips shared declarations and resolved refs while rejecting invalid source names", () => {
     const declaration = {
       kind: "sharedTable" as const,

@@ -16,7 +16,7 @@ import {
   PostgresExecution,
   PostgresOperations
 } from "@patchy/integrations/dev";
-import { Files, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
+import { Files, Members, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
 import { Binding, LoadedVersions, Wakes, me } from "@patchy/runtime/core";
 import { Runtime, StreamLimits, Subscriptions } from "@patchy/runtime/dev";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -32,6 +32,7 @@ import * as Schema from "effect/Schema";
 import { FixtureMissing, type Prepared } from "./devPreparation.js";
 import { safePath } from "./ManagedProject.js";
 import * as DevExecution from "./devExecution.js";
+import * as DevMembers from "./devMembers.js";
 
 export class StateUnavailable extends Schema.TaggedError<StateUnavailable>()(
   "DevStateUnavailable",
@@ -277,7 +278,13 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
     }
   }
   const postgres = yield* PostgresOperations.makeHandlers;
-  const handlers = { me, ...(yield* TableOperations.make), ...fileHandlers, ...postgres };
+  const handlers = {
+    me,
+    ...(yield* TableOperations.make),
+    ...(yield* Members.make),
+    ...fileHandlers,
+    ...postgres
+  };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };
 });
@@ -511,6 +518,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     PgliteCompanyDatabases.layer({ companyId: version.companyId, dataDir: companyDir }),
     Inventory.layer,
     loaded,
+    DevMembers.layer(prepared.identity),
     ConnectionStoreDev.layer([...connections.values()]),
     postgres,
     FilesystemContentStore.layer.pipe(
