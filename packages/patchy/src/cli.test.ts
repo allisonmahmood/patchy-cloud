@@ -28,7 +28,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { promisify } from "node:util";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as Schema from "effect/Schema";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { sha256 } from "@patchy/core";
@@ -50,6 +50,9 @@ import { generate as generatePostgres } from "../../integrations/src/postgres/Ge
 import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import { sdkCapabilities } from "../../sdk/src/sdkCapabilities.js";
+
+// Every case launches the bundled CLI; pure in-process tests belong in their module suites.
+vi.setConfig({ testTimeout: 30_000 });
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
@@ -1910,7 +1913,7 @@ describe("patchy publish", async () => {
     expect(instance.requests[8]?.body).not.toHaveProperty("patchId");
     expect(instance.requests[8]?.body).not.toHaveProperty("manifest.name");
     expect(instance.requests[8]).toMatchObject({ authorization: "Bearer pp_env" });
-  }, 30_000); // Four real CLI processes cover token setup, cached republish and --new.
+  });
 
   it("sets sharing explicitly on create and update, reporting the returned audience", async () => {
     let version = 0;
@@ -1999,7 +2002,7 @@ describe("patchy publish", async () => {
       hasToken: true,
       tokenSource: null
     });
-  }, 30_000); // Six real CLI processes exercise the complete credential-precedence sequence.
+  });
 
   it("checks identity before release and HTML, and does not retry a refused key", async () => {
     const instance = await stubInstance((request, respond) =>
@@ -2303,7 +2306,7 @@ describe("patchy delete", async () => {
     });
     expect(repeated.status).toBe(2);
     expect(JSON.parse(repeated.stderr)).toMatchObject({ kind: "rejected", code: "wrong_state" });
-  }, 30_000); // Five real CLI processes exercise publish, cache removal and repeated deletion.
+  });
 });
 
 describe("patch lifecycle commands", () => {
@@ -2677,7 +2680,7 @@ describe("patch lifecycle commands", () => {
       expect(result.status).toBe(1);
     }
     expect(instance.requests).toEqual([]);
-  }, 30_000); // Six real CLI processes cover the local description-validation boundaries.
+  });
 
   it("clears descriptions explicitly and normalizes nonempty text", async () => {
     const instance = await stubInstance((request, respond) =>
@@ -2943,7 +2946,7 @@ describe("tier 2 refresh module discovery", () => {
       .filter((request) => request.url === "/api/sdk/generate")
       .at(-1)!;
     expect(decodeGenerateRequest(current.body).serverModules).toEqual(["contacts", "import-rows"]);
-  }, 30_000);
+  });
 });
 
 describe("repo description sync and change notices", () => {
@@ -3023,7 +3026,7 @@ describe("repo description sync and change notices", () => {
       descriptionSyncedAt: "2026-09-17T00:00:00.000Z",
       authorField: 7
     });
-  }, 30_000);
+  });
 
   it("carries definition-only reminders through refresh and publish without blocking either command", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
@@ -3071,7 +3074,7 @@ describe("repo description sync and change notices", () => {
     const described = await runCli(["refresh", "--json"], options);
     expect(described.status, described.stderr).toBe(0);
     expect(JSON.parse(described.stdout).warnings).toEqual([]);
-  }, 30_000);
+  });
 
   it("recovers a lost repo publish response with the original primitive reminder", async () => {
     let lost = true;
@@ -3116,7 +3119,7 @@ describe("repo description sync and change notices", () => {
     expect(sent).toHaveLength(2);
     expect(sent[1]!.body).toEqual(sent[0]!.body);
     expect(existsSync(attemptPath)).toBe(false);
-  }, 30_000);
+  });
 
   it.each([
     ["src/main.ts", "const title: string = 42;", "Typecheck"],
@@ -3125,62 +3128,58 @@ describe("repo description sync and change notices", () => {
       'throw new Error("synthetic build failure"); export default {};',
       "Vite build"
     ]
-  ])(
-    "reports discovered notices when %s fails before sending",
-    async (file, source, stage) => {
-      let cloud = { description: "Synthetic notes", descriptionUpdatedAt: null as string | null };
-      const instance = await stubInstance((request, respond, disconnect) => {
-        if (request.url === "/api/patches/abcdefghijkl?state=all")
-          return respond(200, { ...projectSource, ...cloud });
-        projectHandler(request, respond, disconnect);
-      });
-      const dir = publishTree(instance.url);
-      const repoFile = path.join(dir, "patchy.json");
-      writeFileSync(
-        repoFile,
-        JSON.stringify({
-          instance: instance.url,
-          patch: "abcdefghijkl",
-          description: "Synthetic notes"
-        })
-      );
-      const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
-      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-      cloud = {
-        description: "Changed portal description",
-        descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
-      };
-      const config = path.join(dir, "patchy.config.ts");
-      writeFileSync(
-        config,
-        readFileSync(config, "utf8").replace(
-          "title: t.text()",
-          "title: t.text(), extra: t.text().optional()"
-        )
-      );
-      writeFileSync(path.join(dir, file), source);
-      const failed = await runCli(["publish", "--json"], options);
-      expect(failed).toMatchObject({ status: 1, stdout: "" });
-      expect(JSON.parse(failed.stderr)).toMatchObject({
-        ok: false,
-        kind: "local",
-        error: expect.stringContaining(stage),
-        warnings: [
-          expect.stringContaining("Changed portal description"),
-          expect.stringContaining("Table `notes` changed since its last generation")
-        ]
-      });
-      expect(readJson(repoFile)).toMatchObject({
-        description: cloud.description,
-        descriptionSyncedAt: cloud.descriptionUpdatedAt
-      });
-      expect(instance.requests.filter((request) => request.url === "/api/publish")).toEqual([]);
-      expect(existsSync(path.join(dir, ".patchy/publish", sha256(instance.url), "attempt"))).toBe(
-        false
-      );
-    },
-    30_000
-  );
+  ])("reports discovered notices when %s fails before sending", async (file, source, stage) => {
+    let cloud = { description: "Synthetic notes", descriptionUpdatedAt: null as string | null };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(200, { ...projectSource, ...cloud });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const repoFile = path.join(dir, "patchy.json");
+    writeFileSync(
+      repoFile,
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        description: "Synthetic notes"
+      })
+    );
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    cloud = {
+      description: "Changed portal description",
+      descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
+    };
+    const config = path.join(dir, "patchy.config.ts");
+    writeFileSync(
+      config,
+      readFileSync(config, "utf8").replace(
+        "title: t.text()",
+        "title: t.text(), extra: t.text().optional()"
+      )
+    );
+    writeFileSync(path.join(dir, file), source);
+    const failed = await runCli(["publish", "--json"], options);
+    expect(failed).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(failed.stderr)).toMatchObject({
+      ok: false,
+      kind: "local",
+      error: expect.stringContaining(stage),
+      warnings: [
+        expect.stringContaining("Changed portal description"),
+        expect.stringContaining("Table `notes` changed since its last generation")
+      ]
+    });
+    expect(readJson(repoFile)).toMatchObject({
+      description: cloud.description,
+      descriptionSyncedAt: cloud.descriptionUpdatedAt
+    });
+    expect(instance.requests.filter((request) => request.url === "/api/publish")).toEqual([]);
+    expect(existsSync(path.join(dir, ".patchy/publish", sha256(instance.url), "attempt"))).toBe(
+      false
+    );
+  });
 
   it("reports the unshare reminder at refusal before a fresh forced publish", async () => {
     const dependants = [
@@ -3234,7 +3233,7 @@ describe("repo description sync and change notices", () => {
     expect(sent).toHaveLength(2);
     expect(sent[1]!.body).toMatchObject({ force: true });
     expect(existsSync(attemptPath)).toBe(false);
-  }, 30_000);
+  });
 
   it("refuses a missing repo description on publish and a 501-code-point init purpose", async () => {
     const instance = await stubInstance(projectHandler);
@@ -3261,7 +3260,7 @@ describe("repo description sync and change notices", () => {
     expect(JSON.parse(init.stderr).error).toContain("500");
     expect(existsSync(path.join(dir, "too-long"))).toBe(false);
     expect(instance.requests.filter((request) => request.url === "/api/publish")).toEqual([]);
-  }, 30_000);
+  });
 });
 
 describe("patchy status", async () => {
@@ -3930,7 +3929,7 @@ describe("patch-repo commands", () => {
       expect.objectContaining({ id: "core.preact", runs: "Page", limits: expect.any(String) })
     ]);
     expect(readFileSync(app, "utf8")).toBe(source);
-  }, 30_000);
+  });
 
   it.each([
     { command: "publish", source: 'import "lodash";', aliased: false },
@@ -4026,8 +4025,7 @@ describe("patch-repo commands", () => {
       expect(failure.error).toContain("patchy/preact");
       expect(failure.error).toContain("What the SDK gives you");
       expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-    },
-    30_000
+    }
   );
 
   it("publishes a vanilla page with default Vite module preloading", async () => {
@@ -4054,7 +4052,7 @@ describe("patch-repo commands", () => {
     expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
     const request = instance.requests.find((request) => request.url === "/api/publish");
     expect(decodePublishRequest(request?.body).html).toContain("Vanilla page");
-  }, 30_000);
+  });
 
   it.each([
     {
@@ -4159,8 +4157,7 @@ document.body.textContent = JSON.stringify({
         production,
         mode: "production"
       });
-    },
-    30_000 // Refresh and publish execute real config, compiler and Vite child processes.
+    }
   );
 
   it.each([
@@ -4233,8 +4230,7 @@ document.body.textContent = JSON.stringify({
       }
       expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
       expect(readFileSync(file, "utf8")).toBe(source);
-    },
-    30_000
+    }
   );
 
   it("adds the sole connected Postgres declaration without overwriting fixtures", async () => {
@@ -4526,8 +4522,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
         ...authoredPackage,
         devDependencies: { patchy: originalPin }
       });
-    },
-    30_000 // A changed pin installs the real SDK before reaching the generation barrier.
+    }
   );
 
   it.each([
@@ -4828,108 +4823,95 @@ describe("repo publish recovery", () => {
       expect(refused).toMatchObject({ status: 1, stdout: "" });
       expect(JSON.parse(refused.stderr)).toMatchObject({ ok: false, kind: "local" });
       expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
-    },
-    30_000
+    }
   );
 
   it.each([
     [0, 512 * 1024],
     [1, 10 * 1024 * 1024]
-  ])(
-    "tier %s size refusals report too_large and the offending resource",
-    async (tier, cap) => {
-      const instance = await stubInstance((request, respond, disconnect) => {
-        if (request.url === "/api/publish")
-          return respond(201, { ...publish(201, "abcdefghijkl", 1), tier });
-        projectHandler(request, respond, disconnect);
-      });
-      const dir = publishTree(instance.url);
-      const config = path.join(dir, "patchy.config.ts");
-      writeFileSync(config, readFileSync(config, "utf8").replace("tier: 1", `tier: ${tier}`));
-      const options = {
-        cwd: dir,
-        stateDir: tempDir(),
-        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-      };
-      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-      const entry = path.join(dir, "index.html");
-      const oversizedImage = `data:image/png;base64,${"A".repeat(cap)}`;
-      writeFileSync(entry, validHtml.replace("</body>", `<img src="${oversizedImage}"></body>`));
-      const refused = await runCli(["publish", "--json"], options);
-      expect(refused).toMatchObject({ status: 1, stdout: "" });
-      const error = JSON.parse(refused.stderr);
-      expect(error).toMatchObject({ ok: false, kind: "local", code: "too_large" });
-      expect(error.error).toContain(`${cap} bytes`);
-      expect(error.error).toContain(`<img> src: ${Buffer.byteLength(oversizedImage)} bytes`);
-      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-      expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
+  ])("tier %s size refusals report too_large and the offending resource", async (tier, cap) => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish")
+        return respond(201, { ...publish(201, "abcdefghijkl", 1), tier });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const config = path.join(dir, "patchy.config.ts");
+    writeFileSync(config, readFileSync(config, "utf8").replace("tier: 1", `tier: ${tier}`));
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const entry = path.join(dir, "index.html");
+    const oversizedImage = `data:image/png;base64,${"A".repeat(cap)}`;
+    writeFileSync(entry, validHtml.replace("</body>", `<img src="${oversizedImage}"></body>`));
+    const refused = await runCli(["publish", "--json"], options);
+    expect(refused).toMatchObject({ status: 1, stdout: "" });
+    const error = JSON.parse(refused.stderr);
+    expect(error).toMatchObject({ ok: false, kind: "local", code: "too_large" });
+    expect(error.error).toContain(`${cap} bytes`);
+    expect(error.error).toContain(`<img> src: ${Buffer.byteLength(oversizedImage)} bytes`);
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+    expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
 
-      writeFileSync(entry, validHtml);
-      const reduced = await runCli(["publish", "--json"], options);
-      expect(reduced, reduced.stderr).toMatchObject({ status: 0, stderr: "" });
-    },
-    30_000
-  );
+    writeFileSync(entry, validHtml);
+    const reduced = await runCli(["publish", "--json"], options);
+    expect(reduced, reduced.stderr).toMatchObject({ status: 0, stderr: "" });
+  });
 
   it.each([
     '<img src="blob:https://example.test/temporary">',
     '<object data="blob:https://example.test/temporary"></object>',
     `<iframe srcdoc="&lt;img src='blob:https://example.test/temporary'&gt;"></iframe>`,
     '<style>body { background-image: url("blob:https://example.test/temporary"); }</style>'
-  ])(
-    "refuses document-local blob assets in built HTML: %s",
-    async (asset) => {
-      const instance = await stubInstance((request, respond, disconnect) => {
-        if (request.url === "/api/publish") return respond(201, publish(201, "abcdefghijkl", 1));
-        projectHandler(request, respond, disconnect);
-      });
-      const dir = publishTree(instance.url);
-      const options = {
-        cwd: dir,
-        stateDir: tempDir(),
-        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-      };
-      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-      const entry = path.join(dir, "index.html");
-      writeFileSync(entry, readFileSync(entry, "utf8").replace("</body>", `${asset}</body>`));
-      const result = await runCli(["publish", "--json"], options);
-      expect(result).toMatchObject({ status: 1, stdout: "" });
-      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-    },
-    30_000
-  ); // Refresh and publish run real config, compiler and Vite child processes.
+  ])("refuses document-local blob assets in built HTML: %s", async (asset) => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return respond(201, publish(201, "abcdefghijkl", 1));
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const entry = path.join(dir, "index.html");
+    writeFileSync(entry, readFileSync(entry, "utf8").replace("</body>", `${asset}</body>`));
+    const result = await runCli(["publish", "--json"], options);
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+  });
 
   it.each([
     ["image-set", 'image-set("https://example.test/pixel.png" 1x)'],
     ["-webkit-image-set", '-webkit-image-set("blob:https://example.test/pixel" 1x)'],
     ["escaped image-set", String.raw`image\2d set("\68 ttps://example.test/pixel.png" 1x)`],
     ["escaped url", String.raw`\75rl("\62 lob:https://example.test/pixel")`]
-  ])(
-    "refuses external %s resources in inline CSS",
-    async (_, value) => {
-      const instance = await stubInstance(projectHandler);
-      const dir = publishTree(instance.url);
-      const options = {
-        cwd: dir,
-        stateDir: tempDir(),
-        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-      };
-      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-      const entry = path.join(dir, "index.html");
-      writeFileSync(
-        entry,
-        readFileSync(entry, "utf8").replace(
-          "</body>",
-          `<div style='background-image: ${value}'></div></body>`
-        )
-      );
-      const result = await runCli(["publish", "--json"], options);
-      expect(result).toMatchObject({ status: 1, stdout: "" });
-      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
-      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-    },
-    30_000
-  ); // Refresh and publish run real config, compiler and Vite child processes.
+  ])("refuses external %s resources in inline CSS", async (_, value) => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const entry = path.join(dir, "index.html");
+    writeFileSync(
+      entry,
+      readFileSync(entry, "utf8").replace(
+        "</body>",
+        `<div style='background-image: ${value}'></div></body>`
+      )
+    );
+    const result = await runCli(["publish", "--json"], options);
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+  });
 
   it("publishes harmless CSS strings and embedded image candidates", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
@@ -4963,7 +4945,7 @@ describe("repo publish recovery", () => {
     expect(requests[0]!.body).toMatchObject({
       html: expect.stringContaining("@import url(foo)")
     });
-  }, 30_000); // Refresh and publish run real config, compiler and Vite child processes.
+  });
 
   it.each([
     String.raw`<style>@\69mport "https://example.test/external.css";</style>`,
@@ -5007,7 +4989,7 @@ describe("repo publish recovery", () => {
     expect(result).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-  }, 30_000); // Refresh and publish run real config, compiler and Vite child processes.
+  });
 
   it.each(["file", "parent"])(
     "refuses a generated manifest %s symlink without truncating its target",
@@ -5066,7 +5048,7 @@ describe("repo publish recovery", () => {
     expect(refused).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(refused.stderr)).toMatchObject({ code: "tier_mismatch" });
     expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
-  }, 30_000); // Refresh and two repo publishes each execute config and build child processes.
+  });
 
   it.each([
     ["patchy.config.ts", 'throw new Error("private-diagnostic-marker");'],
@@ -5197,7 +5179,7 @@ describe("repo publish recovery", () => {
         .filter((request) => request.url === "/api/publish")
         .map((request) => request.body)
     ).toEqual(Array(3).fill(JSON.parse(original).request));
-  }, 30_000); // Refresh, a lost update, conflict refusal and receipt recovery use four CLI processes.
+  });
 
   it.each([true, false])(
     "clears only a proven payload-too-large response (decoded: %s)",
@@ -5233,8 +5215,7 @@ describe("repo publish recovery", () => {
       if (decoded) expect(requests[1]!.body).not.toEqual(requests[0]!.body);
       else expect(requests[1]!.body).toEqual(requests[0]!.body);
       expect(existsSync(attemptPath)).toBe(false);
-    },
-    30_000 // Refresh, refused publish, and recovery rebuild are one multi-process scenario.
+    }
   );
 
   it("recovers a moved create across owner refusal, failed identity write and release change", async () => {
@@ -5356,7 +5337,7 @@ describe("repo publish recovery", () => {
       request
     ]);
     expect(instance.requests.filter((r) => r.url === "/api/release")).toHaveLength(2);
-  }, 30_000);
+  });
 
   it("uses the repo identity for share and delete, and a missing update cannot become a create", async () => {
     const instance = await stubPublishingInstance((request, respond) => {
