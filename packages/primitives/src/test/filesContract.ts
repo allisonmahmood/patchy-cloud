@@ -10,25 +10,31 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   CURRENT_RELEASE,
   FileMetadata,
   FilePage,
   Manifest,
   sharedStoreId,
+  Upload,
   WIRE_VERSION
 } from "@patchy/api";
-import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import { CompanyDatabases, Inventory, OrphanSweep } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
-import { ContractLimits } from "@patchy/limits";
+import { ContractLimits, OperatingLimits } from "@patchy/limits";
 import { Binding, LoadedVersions } from "@patchy/runtime";
 import * as Files from "../Files.js";
 import * as Tables from "../Tables.js";
 
 const decodePage = Schema.decodeUnknownEffect(FilePage);
 const decodeMetadata = Schema.decodeUnknownEffect(Schema.NullOr(FileMetadata));
+const decodeUpload = Schema.decodeUnknownEffect(Upload);
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 export const manifest: typeof Manifest.Type = {
   manifestVersion: 1,
@@ -63,7 +69,7 @@ export const setup = Effect.fn("test.filesContract.setup")(function* (
   yield* databases.withCompany(companyId)(
     databases.withPatchLock(patchId)(tables.provision(patchId, definition))
   );
-  const handlers = yield* Files.make;
+  const handlers = yield* Files.makeLocal;
   const binding = Binding.Binding.of({
     patchId,
     companyId,
@@ -139,7 +145,7 @@ const metadataCapContract = Effect.fn("test.filesContract.metadataCap")(function
 ) {
   const { put, binding } = yield* setup(companyId, "filelistcaps");
   yield* put("one", new Uint8Array([1]), "text/plain; note=" + "x".repeat(256));
-  const handlers = yield* Files.make.pipe(
+  const handlers = yield* Files.makeLocal.pipe(
     Effect.provideService(ContractLimits.overrides, { "runtime.result.bytes": 128 })
   );
   const failure = yield* handlers["files.list"]
@@ -167,7 +173,7 @@ const storageFailureContract = Effect.fn("test.filesContract.storageFailure")(fu
         Effect.fail(new ContentStore.StoreUnavailable({ operation: "put", key, cause }))
     })
   );
-  const handlers = yield* Files.make.pipe(Effect.provide(fault));
+  const handlers = yield* Files.makeLocal.pipe(Effect.provide(fault));
   const failure = yield* handlers["files.put"]
     .run({ store: "docs", name: "keep.bin", contentType: "text/html" }, new Uint8Array([1]))
     .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
@@ -198,7 +204,7 @@ const concurrentWritesContract = Effect.fn("test.filesContract.concurrentWrites"
   assert.strictEqual(row!.sha256, digest(result.bytes));
   assert.include(candidates.map(digest), row!.sha256);
   const content = yield* ContentStore.ContentStore;
-  const objects = yield* content.list(`files/${binding.patchId}/docs/`).pipe(Stream.runCollect);
+  const objects = yield* content.list(`files/${binding.patchId}/`).pipe(Stream.runCollect);
   assert.strictEqual(objects.length, 2);
   assert.strictEqual(new Set(objects.map((object) => object.key)).size, 2);
   for (const object of objects) {
@@ -290,7 +296,7 @@ const namesAndDeletionContract = Effect.fn("test.filesContract.namesAndDeletion"
     );
   }
   yield* put("é".repeat(256), new Uint8Array([0]));
-  const bounded = yield* Files.make.pipe(
+  const bounded = yield* Files.makeLocal.pipe(
     Effect.provideService(ContractLimits.overrides, { "runtime.file.bytes": 2 }),
     Effect.provide(
       ConfigProvider.layer(
@@ -315,11 +321,11 @@ const namesAndDeletionContract = Effect.fn("test.filesContract.namesAndDeletion"
   );
   yield* put("remove.bin", new Uint8Array([9]));
   const content = yield* ContentStore.ContentStore;
-  const before = yield* content.list(`files/${binding.patchId}/docs/`).pipe(Stream.runCollect);
+  const before = yield* content.list(`files/${binding.patchId}/`).pipe(Stream.runCollect);
   yield* remove("remove.bin");
   yield* remove("remove.bin");
   assert.strictEqual((yield* get("remove.bin").pipe(Effect.flip)).code, "invalid_request");
-  const after = yield* content.list(`files/${binding.patchId}/docs/`).pipe(Stream.runCollect);
+  const after = yield* content.list(`files/${binding.patchId}/`).pipe(Stream.runCollect);
   assert.deepStrictEqual(
     after.map((object) => object.key).sort(),
     before.map((object) => object.key).sort()
@@ -382,7 +388,7 @@ const wrongLockContract = Effect.fn("test.filesContract.wrongLock")(function* (c
         )
     })
   );
-  const handlers = yield* Files.make.pipe(Effect.provide(wrongLock));
+  const handlers = yield* Files.makeLocal.pipe(Effect.provide(wrongLock));
   for (const mutation of [
     handlers["files.put"].run(
       { store: "docs", name: "keep.bin", contentType: "text/html" },
@@ -428,7 +434,7 @@ const blobIoContract = Effect.fn("test.filesContract.blobIo")(function* (company
           : { getBytes: (key: string) => pause.pipe(Effect.andThen(content.getBytes(key))) })
       })
     );
-    const handlers = yield* Files.make.pipe(Effect.provide(paused));
+    const handlers = yield* Files.makeLocal.pipe(Effect.provide(paused));
     const running = yield* Effect.all(
       Array.from({ length: 4 }, () =>
         (operation === "put"
@@ -513,7 +519,7 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
   };
   let live = true;
   let sourceCompany = companyId;
-  const handlers = yield* Files.make.pipe(
+  const handlers = yield* Files.makeLocal.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, {
       find: (patchId) =>
         Effect.sync(() =>
@@ -658,7 +664,7 @@ const handlesContract = Effect.fn("test.filesContract.handles")(function* (compa
   assert.deepStrictEqual(stat, page.files[0]);
   yield* fixture.databases.withCompany(companyId)(Inventory.initialize);
   yield* fixture.databases.withCompany(companyId)(Inventory.initialize);
-  const restarted = yield* Files.make;
+  const restarted = yield* Files.makeLocal;
   const again = yield* restarted["files.list"].run({ store: "docs" }).pipe(
     Effect.provideService(Binding.Binding, {
       ...binding,
@@ -702,7 +708,7 @@ const handlesContract = Effect.fn("test.filesContract.handles")(function* (compa
   assert.propertyVal(yield* redeem(replaced!.handle!).pipe(Effect.flip), "code", "not_found");
 
   yield* fixture.put("one", bytes);
-  const bounded = yield* Files.make.pipe(
+  const bounded = yield* Files.makeLocal.pipe(
     Effect.provideService(ContractLimits.overrides, { "runtime.result.bytes": 170 })
   );
   const tier1 = yield* bounded["files.list"]
@@ -725,7 +731,264 @@ const handlesContract = Effect.fn("test.filesContract.handles")(function* (compa
   );
 });
 
+const stageOnlyContract = Effect.fn("test.filesContract.stageOnly")(function* (companyId: string) {
+  const handlers = yield* Files.makeLocal;
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const inventory = yield* Inventory.Inventory;
+  const binding = Binding.Binding.of({
+    patchId: "filestageonly",
+    companyId,
+    versionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaa",
+    manifest: { ...manifest, tier: 2, files: {} },
+    wireVersion: WIRE_VERSION,
+    scope: "company",
+    identity: {
+      user: { id: "stage-only-viewer", name: "Viewer", email: "viewer@example.test" },
+      company: { id: companyId, handle: "company", name: "Company" },
+      admin: false
+    },
+    principal: { userId: "stage-only-viewer" },
+    correlationId: "stage-only"
+  });
+  const upload = yield* handlers["files.stage"]
+    .run({ contentType: "text/plain" }, new Uint8Array([7]))
+    .pipe(Effect.provideService(Binding.Binding, binding));
+  assert.propertyVal(upload, "size", 1);
+  assert.strictEqual(
+    yield* databases.withCompany(companyId)(inventory.read(binding.patchId)),
+    null
+  );
+  assert.propertyVal(
+    yield* handlers["files.put"]
+      .run({ store: "docs", name: "denied.txt", upload })
+      .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip),
+    "code",
+    "invalid_request"
+  );
+  yield* handlers["files.discard"]
+    .run({ upload })
+    .pipe(Effect.provideService(Binding.Binding, binding));
+});
+
+const setupStaged = Effect.fn("test.filesContract.setupStaged")(function* (
+  companyId: string,
+  patchId: string
+) {
+  const fixture = yield* setup(companyId, patchId, { ...manifest, tier: 2 });
+  const identity = {
+    user: { id: "usr_staging", name: "Staging viewer", email: "staging@example.test" },
+    company: { id: companyId, handle: "company", name: "Company" },
+    admin: false
+  };
+  const binding = { ...fixture.binding, identity, principal: { userId: identity.user.id } };
+  const stage = (bytes: Uint8Array, contentType = "text/plain") =>
+    fixture.handlers["files.stage"]
+      .run({ contentType }, bytes)
+      .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeUpload));
+  const adopt = (upload: typeof Upload.Type, name = "adopted.txt") =>
+    fixture.handlers["files.put"]
+      .run({ store: "docs", name, upload })
+      .pipe(Effect.provideService(Binding.Binding, binding));
+  const discard = (upload: typeof Upload.Type) =>
+    fixture.handlers["files.discard"]
+      .run({ upload })
+      .pipe(Effect.provideService(Binding.Binding, binding));
+  return { ...fixture, binding, stage, adopt, discard };
+});
+
+const stagedLifecycleContract = Effect.fn("test.filesContract.stagedLifecycle")(function* (
+  companyId: string
+) {
+  const fixture = yield* setupStaged(companyId, "filestaged");
+  const bytes = new Uint8Array([0, 255, 128, 9]);
+  const upload = yield* fixture.stage(bytes, "image/svg+xml");
+  assert.deepStrictEqual(
+    { size: upload.size, contentType: upload.contentType },
+    { size: bytes.byteLength, contentType: "image/svg+xml" }
+  );
+  const content = yield* ContentStore.ContentStore;
+  const objects = yield* content.list(`files/${fixture.binding.patchId}/`).pipe(Stream.runCollect);
+  assert.lengthOf(objects, 1);
+  assert.lengthOf(objects[0]!.key.split("/"), 3);
+  assert.notInclude(upload.token, objects[0]!.key.split("/")[2]!);
+  const replica = yield* Files.makeLocal;
+  for (const current of [
+    {
+      ...fixture.binding,
+      identity: {
+        ...fixture.binding.identity,
+        user: { ...fixture.binding.identity.user, id: "other-viewer" }
+      }
+    },
+    { ...fixture.binding, patchId: "other-patch" },
+    { ...fixture.binding, versionId: "ver_bbbbbbbbbbbbbbbbbbbbbbbb" }
+  ]) {
+    for (const operation of [
+      replica["files.inspectUpload"].run({ upload }),
+      replica["files.discard"].run({ upload }),
+      replica["files.put"].run({ store: "docs", name: "forged.txt", upload })
+    ])
+      assert.propertyVal(
+        yield* operation.pipe(Effect.provideService(Binding.Binding, current), Effect.flip),
+        "code",
+        "not_found"
+      );
+  }
+  const forged = { ...upload, token: `${upload.token}x` };
+  assert.propertyVal(yield* fixture.adopt(forged).pipe(Effect.flip), "code", "not_found");
+  const metadataForgery = { ...upload, size: 999, contentType: "text/html" };
+  assert.deepStrictEqual(
+    yield* replica["files.inspectUpload"]
+      .run({ upload: metadataForgery })
+      .pipe(Effect.provideService(Binding.Binding, fixture.binding)),
+    upload
+  );
+  yield* replica["files.put"]
+    .run({ store: "images", name: "image.svg", upload: metadataForgery })
+    .pipe(
+      Effect.provideService(Binding.Binding, {
+        ...fixture.binding,
+        invocationId: "inv_second_action"
+      })
+    );
+  assert.deepStrictEqual(yield* fixture.get("image.svg", "images"), {
+    bytes,
+    contentType: "image/svg+xml"
+  });
+  assert.deepStrictEqual(
+    (yield* content.list(`files/${fixture.binding.patchId}/`).pipe(Stream.runCollect)).map(
+      (object) => object.key
+    ),
+    objects.map((object) => object.key)
+  );
+  assert.propertyVal(yield* fixture.adopt(upload).pipe(Effect.flip), "code", "not_found");
+  assert.propertyVal(yield* fixture.discard(upload).pipe(Effect.flip), "code", "not_found");
+  const discarded = yield* fixture.stage(new Uint8Array([5]));
+  yield* fixture.discard(discarded);
+  assert.propertyVal(yield* fixture.adopt(discarded).pipe(Effect.flip), "code", "not_found");
+  assert.deepStrictEqual(yield* fixture.get("image.svg", "images"), {
+    bytes,
+    contentType: "image/svg+xml"
+  });
+});
+
+const stagedBoundsContract = Effect.fn("test.filesContract.stagedBounds")(function* (
+  companyId: string
+) {
+  const fixture = yield* setupStaged(companyId, "filestagebounds");
+  const byteLimit = yield* ContractLimits.get("files.stage.bytes");
+  assert.propertyVal(
+    yield* fixture.stage(new Uint8Array(byteLimit + 1)).pipe(Effect.flip),
+    "limitId",
+    "files.stage.bytes"
+  );
+  const boundary = yield* fixture.stage(new Uint8Array(byteLimit));
+  yield* fixture.discard(boundary);
+  const replica = yield* Files.makeLocal;
+  const uploads: Array<typeof Upload.Type> = [];
+  for (let index = 0; index < 15; index++)
+    uploads.push(yield* fixture.stage(new Uint8Array([index])));
+  const competing = yield* Effect.all(
+    [
+      fixture.stage(new Uint8Array([15])).pipe(Effect.result),
+      replica["files.stage"]
+        .run({ contentType: "text/plain" }, new Uint8Array([16]))
+        .pipe(Effect.provideService(Binding.Binding, fixture.binding), Effect.result)
+    ],
+    { concurrency: "unbounded" }
+  );
+  assert.strictEqual(competing.filter((result) => result._tag === "Success").length, 1);
+  const refused = competing.find((result) => result._tag === "Failure")!;
+  assert.strictEqual(refused._tag, "Failure");
+  if (refused._tag === "Failure")
+    assert.propertyVal(refused.failure, "limitId", "files.stage.count");
+  assert.propertyVal(
+    yield* fixture.stage(new Uint8Array([17])).pipe(Effect.flip),
+    "limitId",
+    "files.stage.count"
+  );
+  yield* fixture.discard(uploads[0]!);
+  const replacement = yield* fixture.stage(new Uint8Array([18]));
+  yield* fixture.discard(replacement);
+  for (const upload of uploads.slice(1)) yield* fixture.discard(upload);
+  // Lower byte bounds exercise quota precedence without allocating a company's full allowance.
+  const bounded = yield* Files.makeLocal.pipe(
+    Effect.provideService(ContractLimits.overrides, {
+      "files.stage.bytes": 4,
+      "files.stage.viewerBytes": 5
+    })
+  );
+  const stage = (bytes: Uint8Array, current = fixture.binding) =>
+    bounded["files.stage"]
+      .run({ contentType: "text/plain" }, bytes)
+      .pipe(Effect.provideService(Binding.Binding, current));
+  assert.propertyVal(
+    yield* stage(new Uint8Array(5)).pipe(Effect.flip),
+    "limitId",
+    "files.stage.bytes"
+  );
+  const boundedUpload = yield* stage(new Uint8Array(4)).pipe(Effect.flatMap(decodeUpload));
+  assert.propertyVal(
+    yield* stage(new Uint8Array(1)).pipe(Effect.flip),
+    "limitId",
+    "files.stage.viewerBytes"
+  );
+  yield* fixture.discard(boundedUpload);
+  for (const result of competing)
+    if (result._tag === "Success") yield* fixture.discard(yield* decodeUpload(result.success));
+});
+
+const stagedRaceContract = Effect.fn("test.filesContract.stagedRace")(function* (
+  companyId: string
+) {
+  const fixture = yield* setupStaged(companyId, "filestagerace");
+  const replica = yield* Files.makeLocal;
+  const bytes = new Uint8Array([3, 1, 4]);
+  const upload = yield* fixture.stage(bytes);
+  const [adoption, discard] = yield* Effect.all(
+    [
+      fixture.adopt(upload).pipe(Effect.result),
+      replica["files.discard"]
+        .run({ upload })
+        .pipe(Effect.provideService(Binding.Binding, fixture.binding), Effect.result)
+    ],
+    { concurrency: "unbounded" }
+  );
+  if (adoption._tag === "Success") {
+    assert.strictEqual(discard._tag, "Failure");
+    if (discard._tag === "Failure") assert.propertyVal(discard.failure, "code", "not_found");
+    assert.deepStrictEqual((yield* fixture.get("adopted.txt")).bytes, bytes);
+  } else {
+    assert.propertyVal(adoption.failure, "code", "not_found");
+    assert.strictEqual(discard._tag, "Success");
+    assert.deepStrictEqual(yield* fixture.readPointer("adopted.txt"), []);
+  }
+  assert.propertyVal(yield* fixture.adopt(upload).pipe(Effect.flip), "code", "not_found");
+});
+
+const stagedExpiryContract = Effect.fn("test.filesContract.stagedExpiry")(function* (
+  companyId: string
+) {
+  const fixture = yield* setupStaged(companyId, "filestageexpiry");
+  const expires = yield* fixture.stage(new Uint8Array([1]));
+  const adopted = yield* fixture.stage(new Uint8Array([2]));
+  yield* TestClock.adjust("3599999 millis");
+  yield* fixture.adopt(adopted);
+  yield* TestClock.adjust("1 millis");
+  assert.propertyVal(yield* fixture.adopt(expires).pipe(Effect.flip), "code", "not_found");
+  assert.propertyVal(yield* fixture.discard(expires).pipe(Effect.flip), "code", "not_found");
+  assert.deepStrictEqual((yield* fixture.get("adopted.txt")).bytes, new Uint8Array([2]));
+  const fresh = yield* fixture.stage(new Uint8Array([3]));
+  yield* fixture.discard(fresh);
+});
+
 export const contracts = {
+  "stages bytes without a declared store or patch namespace": stageOnlyContract,
+  "adopts staged bytes without copying, restores authoritative metadata and rejects forged bindings":
+    stagedLifecycleContract,
+  "bounds stages atomically across replicas and frees consumed quota": stagedBoundsContract,
+  "serializes adoption and discard so only one consumes a stage": stagedRaceContract,
+  "expires stages at one hour without revoking adopted files": stagedExpiryContract,
   "binds deterministic handles to the selected viewer and document across replicas and replacements":
     handlesContract,
   "rechecks source sharing and liveness for metadata and bytes, and recovers unchanged consumers":
@@ -789,7 +1052,7 @@ export const independentNamesContract = Effect.fn("test.filesContract.independen
         )
     })
   );
-  const handlers = yield* Files.make.pipe(Effect.provide(observed));
+  const handlers = yield* Files.makeLocal.pipe(Effect.provide(observed));
   const writer = yield* handlers["files.put"]
     .run({ store: "docs", name: "held.bin", contentType: "text/plain" }, replacement)
     .pipe(Effect.provideService(Binding.Binding, binding), Effect.forkScoped);
@@ -823,3 +1086,192 @@ export const independentNamesContract = Effect.fn("test.filesContract.independen
   yield* Fiber.join(writer);
   assert.deepStrictEqual(yield* get("held.bin"), { bytes: replacement, contentType: "text/plain" });
 }, Effect.scoped);
+
+export const latePutSweepContract = Effect.fn("test.filesContract.latePutSweep")(function* (
+  companyId: string
+) {
+  const now = Date.UTC(2035, 0, 3);
+  const platform = yield* SqlClient.SqlClient;
+  const content = yield* ContentStore.ContentStore;
+  // Listing time is a blob-store concern. Keep late completions inside the orphan
+  // grace period so only durable discarded rows can reclaim them on the next pass.
+  const sweeper = yield* OrphanSweep.make.pipe(
+    Effect.provideService(ContentStore.ContentStore, {
+      ...content,
+      list: (prefix) =>
+        content.list(prefix).pipe(Stream.map((object) => ({ ...object, lastModified: now })))
+    })
+  );
+  for (const [staged, failDelete] of [
+    [false, false],
+    [false, true],
+    [true, false]
+  ] as const) {
+    yield* TestClock.setTime(now);
+    const patchId = staged ? "filelatestage" : failDelete ? "filelateputretry" : "filelateput";
+    const fixture = staged
+      ? yield* setupStaged(companyId, patchId)
+      : yield* setup(companyId, patchId);
+    yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+      VALUES (${patchId}, ${companyId}, 'usr_dev', 'Late put', ${patchId})`;
+    const entered = yield* Deferred.make<string>();
+    const release = yield* Deferred.make<void>();
+    const paused = yield* Files.makeLocal.pipe(
+      Effect.provideService(ContentStore.ContentStore, {
+        ...content,
+        putBytes: (key, bytes) =>
+          Deferred.succeed(entered, key).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(content.putBytes(key, bytes))
+          ),
+        delete: failDelete
+          ? (key) =>
+              Effect.fail(
+                new ContentStore.StoreUnavailable({
+                  operation: "delete",
+                  key,
+                  cause: new Error("injected late cleanup deletion failure")
+                })
+              )
+          : content.delete
+      })
+    );
+    const writing = yield* (
+      staged
+        ? paused["files.stage"].run(
+            { contentType: "application/octet-stream" },
+            new Uint8Array([8])
+          )
+        : paused["files.put"].run(
+            { store: "docs", name: "late.bin", contentType: "application/octet-stream" },
+            new Uint8Array([8])
+          )
+    ).pipe(
+      Effect.provideService(Binding.Binding, fixture.binding),
+      Effect.result,
+      Effect.forkScoped
+    );
+    const key = yield* Deferred.await(entered);
+    yield* TestClock.adjust("1 hour");
+    yield* sweeper.sweep;
+    assert.propertyVal(yield* content.getBytes(key).pipe(Effect.flip), "_tag", "ObjectNotFound");
+    yield* Deferred.succeed(release, undefined);
+    const result = yield* Fiber.join(writing);
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure")
+      assert.propertyVal(result.failure, "code", failDelete ? "source_unavailable" : "not_found");
+    assert.deepStrictEqual(yield* fixture.readPointer("late.bin"), []);
+    if (failDelete) {
+      assert.deepStrictEqual(yield* content.getBytes(key), new Uint8Array([8]));
+      yield* sweeper.sweep;
+    }
+    assert.propertyVal(yield* content.getBytes(key).pipe(Effect.flip), "_tag", "ObjectNotFound");
+  }
+}, Effect.scoped);
+
+export const companyStageBoundsContract = Effect.fn("test.filesContract.companyStageBounds")(
+  function* (baseCompanyId: string) {
+    const operating = yield* OperatingLimits.OperatingLimits;
+    const companyId = `${baseCompanyId}_stage_limits`;
+    const platform = yield* SqlClient.SqlClient;
+    yield* platform`INSERT INTO companies (id, handle, name)
+    VALUES (${companyId}, 'file-stage-limits', 'File stage limits')`;
+    const limit = { companyId, limitId: "files.stage.companyBytes", actor: "stage-contract" };
+    const fixture = yield* setupStaged(companyId, "filecompanybounds");
+    const otherPatch = yield* setupStaged(companyId, "filecompanyboundstwo");
+    const handlers = yield* Files.make;
+    const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+    const events = yield* WideEvents.make.pipe(
+      Effect.provideService(WideEvents.Sink, {
+        write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+      })
+    );
+    const stage = (target: typeof fixture, bytes: Uint8Array) =>
+      handlers["files.stage"]
+        .run({ contentType: "text/plain" }, bytes)
+        .pipe(
+          Effect.provideService(Binding.Binding, target.binding),
+          Effect.flatMap(Schema.decodeUnknownEffect(Upload))
+        );
+    const uploads: Array<{
+      readonly upload: typeof Upload.Type;
+      readonly discard: typeof fixture.discard;
+    }> = [];
+    yield* operating.setOverride({ ...limit, value: 8 });
+    const initialLimit = yield* operating.get(limit);
+    yield* Effect.gen(function* () {
+      uploads.push({
+        upload: yield* events.withEvent({ type: "request" }, stage(fixture, new Uint8Array(4))),
+        discard: fixture.discard
+      });
+      assert.deepInclude((yield* Queue.take(records)).limits, {
+        limitId: limit.limitId,
+        value: 8,
+        peak: 4,
+        configRevision: initialLimit.configRevision
+      });
+      uploads.push({
+        upload: yield* stage(otherPatch, new Uint8Array(4)),
+        discard: otherPatch.discard
+      });
+      const full = yield* events
+        .withEvent({ type: "request" }, stage(fixture, new Uint8Array(1)))
+        .pipe(Effect.flip);
+      const refusedEvent = yield* Queue.take(records);
+      assert.deepInclude(refusedEvent.limits, {
+        limitId: limit.limitId,
+        value: 8,
+        peak: 9,
+        configRevision: initialLimit.configRevision
+      });
+      assert.deepInclude(refusedEvent.limits, {
+        limitId: "files.stage.count",
+        value: 16,
+        peak: 2,
+        configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+      });
+      assert.deepInclude(refusedEvent.limits, {
+        limitId: "files.stage.viewerBytes",
+        value: 100 * 1024 * 1024,
+        peak: 5,
+        configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+      });
+      assert.propertyVal(full, "limitId", "files.stage.companyBytes");
+      assert.propertyVal(full, "value", 8);
+      // Existing handler instances must observe new company overrides on the next stage.
+      yield* operating.setOverride({ ...limit, value: 16 });
+      const updatedLimit = yield* operating.get(limit);
+      uploads.push({ upload: yield* stage(fixture, new Uint8Array(8)), discard: fixture.discard });
+      const changed = yield* events
+        .withEvent({ type: "request" }, stage(otherPatch, new Uint8Array(1)))
+        .pipe(Effect.flip);
+      assert.deepInclude((yield* Queue.take(records)).limits, {
+        limitId: limit.limitId,
+        value: 16,
+        peak: 17,
+        configRevision: updatedLimit.configRevision
+      });
+      assert.propertyVal(changed, "limitId", "files.stage.companyBytes");
+      assert.propertyVal(changed, "value", 16);
+      const unavailable = yield* Files.make.pipe(
+        Effect.provideService(OperatingLimits.OperatingLimits, {
+          ...operating,
+          get: () => Effect.fail(new OperatingLimits.CompanyNotFound({ companyId }))
+        })
+      );
+      assert.propertyVal(
+        yield* unavailable["files.stage"]
+          .run({ contentType: "text/plain" }, new Uint8Array())
+          .pipe(Effect.provideService(Binding.Binding, fixture.binding), Effect.flip),
+        "code",
+        "source_unavailable"
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Effect.forEach(uploads, ({ upload, discard }) => discard(upload), { discard: true })
+        ).pipe(Effect.ensuring(operating.removeOverride(limit)), Effect.orDie)
+      )
+    );
+  }
+);

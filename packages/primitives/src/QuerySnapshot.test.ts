@@ -142,7 +142,7 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         table: "notes",
         row: { title: "before", slug: "before" }
       });
-      const files = yield* Files.make;
+      const files = yield* Files.makeLocal;
       const put = (name: string, value: string) =>
         files["files.put"]
           .run({ store: "docs", name, contentType: "text/plain" }, new TextEncoder().encode(value))
@@ -339,7 +339,7 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         tables: {},
         files: { docs: { description: "Shared documents", shared: true } }
       });
-      const handlers = yield* Files.make.pipe(
+      const handlers = yield* Files.makeLocal.pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
           find: () => Effect.succeed(Option.some({ ...source.binding, patchTier: 2 }))
         })

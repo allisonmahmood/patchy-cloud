@@ -37,6 +37,30 @@ class FakePort extends EventTarget implements Port {
 }
 afterEach(() => vi.useRealTimers());
 
+it("refuses oversized staged Blobs before reading their bytes", async () => {
+  class OversizedFile extends Blob {
+    override async arrayBuffer(): Promise<ArrayBuffer> {
+      throw new Error("An oversized file must not be materialized.");
+    }
+  }
+  const port = new FakePort();
+  const client = createServerClient({ transport: createPortTransport(port) });
+  try {
+    await expect(
+      client.files.stage(new OversizedFile([new Uint8Array(20 * 1024 * 1024 + 1)]), {
+        contentType: "application/octet-stream"
+      })
+    ).rejects.toMatchObject({
+      code: "too_large",
+      limitId: "files.stage.bytes",
+      value: 20 * 1024 * 1024
+    });
+    expect(port.sent).toEqual([]);
+  } finally {
+    client.close();
+  }
+});
+
 it("correlates out-of-order replies and decodes the one error class with details", async () => {
   const port = new FakePort();
   const transport = createPortTransport(port);

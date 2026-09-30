@@ -2,7 +2,15 @@
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { registry } from "@patchy/limits/registry";
-import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
+import {
+  DefinitionName,
+  FileContentType,
+  Identity,
+  IsoTimestamp,
+  PatchId,
+  PostgresText,
+  Upload
+} from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
@@ -75,13 +83,6 @@ export const FileName = PostgresText.check(
       "File names must be 1–512 bytes with no empty, . or .. segments."
   )
 );
-export const FileContentType = Schema.String.check(
-  Schema.makeFilter(
-    (value) =>
-      /^[a-zA-Z0-9!#$%&'*+.^_`|~-]+\/[a-zA-Z0-9!#$%&'*+.^_`|~-]+(?:;[\x20-\x7e]+)?$/.test(value) ||
-      "Content-Type must be a media type without control characters."
-  )
-);
 const fileHandle = Schema.String.check(
   Schema.isLengthBetween(
     registry["files.handle.length"].default,
@@ -89,6 +90,11 @@ const fileHandle = Schema.String.check(
   ),
   Schema.isPattern(/^[a-z0-9]{24}\.[A-Za-z0-9_-]{32}$/)
 );
+export const FilePutUpload = Schema.Struct({
+  store: DefinitionName,
+  name: FileName,
+  upload: Upload
+});
 export const FileMetadata = Schema.Struct({
   name: FileName,
   size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -386,10 +392,37 @@ export const runtimeOperations = {
   "files.put": {
     request: Schema.Struct({
       op: Schema.Literal("files.put"),
-      args: Schema.Struct({ store: DefinitionName, name: FileName, contentType: FileContentType })
+      args: Schema.Union([
+        Schema.Struct({ store: DefinitionName, name: FileName, contentType: FileContentType }),
+        FilePutUpload
+      ])
     }),
     response: Schema.Null,
     kind: "mutation"
+  },
+  "files.stage": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.stage"),
+      args: Schema.Struct({ contentType: FileContentType })
+    }),
+    response: Upload,
+    kind: "read"
+  },
+  "files.discard": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.discard"),
+      args: Schema.Struct({ upload: Upload })
+    }),
+    response: Schema.Null,
+    kind: "read"
+  },
+  "files.inspectUpload": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.inspectUpload"),
+      args: Schema.Struct({ upload: Upload })
+    }),
+    response: Upload,
+    kind: "read"
   },
   "files.get": {
     request: Schema.Struct({

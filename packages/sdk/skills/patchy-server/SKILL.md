@@ -89,9 +89,9 @@ belongs to the member-directory release, not this contract.
   Read only what the screen needs, using filters and bounded pages.
 - An action reads and writes owned tables, reads shared tables, reaches declared
   connections and reads or writes file bytes. `ctx.files.<store>.put(name, bytes,
-options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `get(name)` returns
-  bytes and `delete(name)` removes the object. Staged upload adoption is not
-  available yet. Shared stores expose `list`, `stat` and `get`, with no writes;
+options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `put(name, upload)`
+  adopts a staged Upload without copying bytes. `get(name)` returns bytes and
+  `delete(name)` removes the object. Shared stores expose `list`, `stat` and `get`, with no writes;
   read `../patchy-shared-stores/SKILL.md` for their access and fixture contract.
 - A mutation reads and writes owned tables in one atomic transaction. It cannot
   read file metadata. Use queries for file lists and metadata, and actions for
@@ -200,6 +200,25 @@ Replacement or deletion returns `not_found`; an unshared store or lost source
 access returns `access_denied`. If both happen, `not_found` takes precedence.
 Redemptions are reads, not logged operations. See `../patchy-files/SKILL.md`
 for URL lifetime, download offers and file limits.
+
+### Adopt staged uploads
+
+Declare the argument as `t.upload()`, including inside objects or arrays.
+Before the handler runs, Patchy resolves the token under the initiating viewer,
+consuming patch and loaded version. The handler's `upload.size` is the measured
+byte length; `upload.contentType` is the stored claim, not proof of format.
+An altered client size or type cannot override these values.
+
+Validate your file rules before `await ctx.files.<store>.put(name, upload)`.
+Only actions adopt, and only into a store defined by the loaded version.
+Adoption consumes the Upload once and logs the existing file write as the patch.
+Expired, consumed, discarded or differently bound uploads return `not_found`.
+The page can discard unused stages; see `../patchy-files/SKILL.md` for the
+stage/discard workflow and bounds.
+
+Put then mutation is not atomic. A failed `ctx.run` mutation leaves the adopted
+file saved. Return a business error or result that makes this partial outcome
+visible, with a deliberate repair path. Never claim the file write rolled back.
 
 ## Results and failures
 

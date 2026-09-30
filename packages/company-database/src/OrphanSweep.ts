@@ -32,7 +32,6 @@ class ExistsRow extends Schema.Class<ExistsRow>("OrphanReferenceRow")({
 
 class FileReference extends Schema.Class<FileReference>("OrphanFileReference")({
   patchId: Schema.String,
-  store: Schema.String,
   objectId: Schema.String
 }) {}
 
@@ -157,14 +156,55 @@ export const make = Effect.gen(function* () {
     Result: FileReference,
     execute: Effect.fn(function* (objects) {
       const sql = yield* CompanyDatabases.CompanyConnection;
-      return yield* sql`SELECT DISTINCT patch_id AS "patchId", store, object_id AS "objectId"
-        FROM patchy.files WHERE ${sql.or(
+      const now = DateTime.formatIso(yield* DateTime.now);
+      return yield* sql`SELECT DISTINCT patch_id AS "patchId", object_id AS "objectId"
+        FROM (
+          SELECT patch_id, object_id FROM patchy.files
+          UNION ALL
+          SELECT patch_id, object_id FROM patchy.file_uploads
+            WHERE state IN ('writing', 'staged') AND expires_at > ${now}::timestamptz
+        ) AS retained WHERE ${sql.or(
           objects.map(
-            (object) =>
-              sql`patch_id = ${object.patchId} AND store = ${object.store} AND object_id = ${object.objectId}`
+            (object) => sql`patch_id = ${object.patchId} AND object_id = ${object.objectId}`
           )
         )}`;
     })
+  });
+
+  const expiredUploads = SqlSchema.findAll({
+    Request: Schema.Struct({ after: Schema.String, now: Schema.String }),
+    Result: FileReference,
+    execute: Effect.fn(function* ({ after, now }) {
+      const sql = yield* CompanyDatabases.CompanyConnection;
+      return yield* sql`SELECT patch_id AS "patchId", object_id AS "objectId"
+        FROM patchy.file_uploads
+        WHERE object_id > ${after}
+          AND (state = 'discarded' OR (state IN ('writing', 'staged') AND expires_at <= ${now}::timestamptz))
+        ORDER BY object_id LIMIT ${BATCH_SIZE}`;
+    })
+  });
+  const reclaimUpload = Effect.fn("OrphanSweep.reclaimUpload")(function* (object: FileReference) {
+    return yield* CompanyDatabases.withFileObjectsLock(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const now = DateTime.formatIso(yield* DateTime.now);
+        const expired = yield* sql`SELECT object_id FROM patchy.file_uploads
+        WHERE object_id = ${object.objectId}
+          AND (state = 'discarded' OR (state IN ('writing', 'staged') AND expires_at <= ${now}::timestamptz))
+        FOR UPDATE`;
+        if (expired.length === 0) return false;
+        const references =
+          yield* sql`SELECT 1 FROM patchy.files WHERE object_id = ${object.objectId}`;
+        if (references.length !== 0) {
+          yield* sql`UPDATE patchy.file_uploads SET state = 'adopted' WHERE object_id = ${object.objectId}`;
+          return false;
+        }
+        // Adoption and late write completion need this same lock and a live row.
+        yield* store.delete(`files/${object.patchId}/${object.objectId}`);
+        yield* sql`DELETE FROM patchy.file_uploads WHERE object_id = ${object.objectId}`;
+        return true;
+      })
+    );
   });
 
   const reclaimFile = Effect.fn("OrphanSweep.reclaimFile")(
@@ -185,17 +225,20 @@ export const make = Effect.gen(function* () {
           }
           return yield* companies.withCompany(owners[0]!.companyId)(
             companies.withPatchLock(reference.patchId)(
-              Effect.gen(function* () {
-                // An existing patch can attach an old object after the batch
-                // scan. Serialize this final check and deletion with publishers,
-                // holding the platform row before the company patch lock.
-                const references = yield* fileReferences([reference]).pipe(
-                  Effect.catchTags({ SchemaError: Effect.die })
-                );
-                if (references.length !== 0) return false;
-                yield* store.delete(key);
-                return true;
-              })
+              CompanyDatabases.withFileObjectsLock(
+                Effect.gen(function* () {
+                  // Publish holds the platform/patch locks; both forms of put also
+                  // hold the object lock before attaching an immutable object.
+                  const references = yield* fileReferences([reference]).pipe(
+                    Effect.catchTags({ SchemaError: Effect.die })
+                  );
+                  if (references.length !== 0) return false;
+                  yield* store.delete(key);
+                  const sql = yield* SqlClient.SqlClient;
+                  yield* sql`DELETE FROM patchy.file_uploads WHERE object_id = ${reference.objectId}`;
+                  return true;
+                })
+              )
             )
           );
         })
@@ -226,6 +269,35 @@ export const make = Effect.gen(function* () {
           const sql = yield* CompanyDatabases.CompanyConnection;
           yield* sql`DELETE FROM patchy.mutation_keys
             WHERE issued_at < to_timestamp(${DateTime.toEpochMillis(now) - keyLifetime}::double precision / 1000)`;
+          yield* sql`DELETE FROM patchy.file_uploads AS upload
+            WHERE state = 'adopted'
+              AND NOT EXISTS (SELECT 1 FROM patchy.files WHERE object_id = upload.object_id)`;
+          let afterUpload = "";
+          while (true) {
+            const uploads = yield* expiredUploads({
+              after: afterUpload,
+              now: DateTime.formatIso(now)
+            }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+            for (const upload of uploads)
+              yield* reclaimUpload(upload).pipe(
+                Effect.tap((deleted) =>
+                  Effect.sync(() => {
+                    if (deleted) result.filesDeleted += 1;
+                  })
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning("Orphan sweep could not expire an upload.", error._tag).pipe(
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        result.failed += 1;
+                      })
+                    )
+                  )
+                )
+              );
+            if (uploads.length < BATCH_SIZE) break;
+            afterUpload = uploads[uploads.length - 1]!.objectId;
+          }
           let after = "";
           while (true) {
             const batch = yield* namespaces(after).pipe(
@@ -288,7 +360,7 @@ export const make = Effect.gen(function* () {
           for (const object of batch) {
             const segments = object.key.split("/");
             if (
-              segments.length !== 4 ||
+              segments.length !== 3 ||
               segments[0] !== "files" ||
               segments.some((segment) => segment === "")
             )
@@ -297,8 +369,7 @@ export const make = Effect.gen(function* () {
               object.key,
               new FileReference({
                 patchId: segments[1]!,
-                store: segments[2]!,
-                objectId: segments[3]!
+                objectId: segments[2]!
               })
             );
           }
@@ -309,8 +380,7 @@ export const make = Effect.gen(function* () {
                 placement.companyId,
                 fileReferences([...candidates.values()])
               ).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-              for (const row of rows)
-                candidates.delete(`files/${row.patchId}/${row.store}/${row.objectId}`);
+              for (const row of rows) candidates.delete(`files/${row.patchId}/${row.objectId}`);
               if (candidates.size === 0) return;
             }
             for (const [key, reference] of candidates) {

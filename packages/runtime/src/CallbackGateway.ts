@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Buffer counts UTF-8 bytes without allocating another encoded body.
 import { Buffer } from "node:buffer";
-import { limitRefusal, type HandlerKind, type RuntimeFailure } from "@patchy/api";
+import { FilePutUpload, limitRefusal, type HandlerKind, type RuntimeFailure } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -38,6 +38,7 @@ const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const Log = Schema.Struct({ message: Schema.String, details: Schema.optionalKey(Schema.Json) });
 const decodeLog = Schema.decodeUnknownEffect(Log, strict);
+const decodeAdoption = Schema.decodeUnknownEffect(FilePutUpload, strict);
 const isCapabilityRefused = Schema.is(InvocationCapabilities.CapabilityRefused);
 const readTable: Readonly<Record<string, true>> = {
   "tables.get": true,
@@ -67,7 +68,8 @@ const readFile: Readonly<Record<string, true>> = { "files.list": true, "files.st
 const actionFile: Readonly<Record<string, true>> = {
   "files.get": true,
   "files.put": true,
-  "files.delete": true
+  "files.delete": true,
+  "files.inspectUpload": true
 };
 const connections: Readonly<Record<string, true>> = {
   "postgres.list": true,
@@ -267,14 +269,25 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         // Reauthorization may have waited past return or deadline.
         yield* capabilities.resolve(token, attempt);
         if (handler.transport === "bytes-put") {
-          if (request.body === undefined) return yield* new Runtime.InvalidRequest({});
-          const args = { ...request.args, contentType: request.body.contentType };
-          yield* perform(
+          const args =
+            request.body === undefined
+              ? request.op === "files.put"
+                ? yield* decodeAdoption(request.args).pipe(
+                    Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+                  )
+                : yield* new Runtime.InvalidRequest({})
+              : { ...request.args, contentType: request.body.contentType };
+          const value = yield* perform(
             handler
-              .run(args, request.body.bytes)
+              .run(args, request.body?.bytes)
               .pipe(Effect.provideService(Binding.Binding, binding))
           );
-          return { ok: true, value: null };
+          return {
+            ok: true,
+            value: yield* decodeJson(value).pipe(
+              Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+            )
+          };
         }
         if (request.body !== undefined) return yield* new Runtime.InvalidRequest({});
         if (handler.transport === "bytes-get") {

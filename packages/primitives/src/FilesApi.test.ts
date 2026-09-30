@@ -385,7 +385,7 @@ it.layer(socket)("Files HTTP / deletion", (it) => {
         const client = yield* HttpClient.HttpClient;
         const api = yield* HttpApiClient.makeWith(apiDefinition, { httpClient: client });
         const content = yield* ContentStore.ContentStore;
-        const objects = yield* content.list(`files/${patchId}/docs/`).pipe(Stream.runCollect);
+        const objects = yield* content.list(`files/${patchId}/`).pipe(Stream.runCollect);
         assert.lengthOf(objects, 1);
         const params = { patchId, versionId, store: "docs", name };
         const requestHeaders = { ...headers(), origin: PUBLIC_BASE_URL };

@@ -390,7 +390,13 @@ function mount(frame: HTMLIFrameElement): void {
         signal: controller.signal
       };
       let url = "/api/runtime/call";
-      if (op === "files.redeem") {
+      if (op === "files.stage") {
+        const { contentType } = args as { contentType: string };
+        url = "/api/runtime/staged-files/" + [patchId, versionId].map(encodeURIComponent).join("/");
+        init.method = "PUT";
+        headers.set("Content-Type", contentType);
+        init.body = bytes;
+      } else if (op === "files.redeem") {
         const { handle } = args as { handle: string };
         url =
           "/api/runtime/file-handles/" +
@@ -561,6 +567,7 @@ function mount(frame: HTMLIFrameElement): void {
           throw invalid();
       }
       const op = message.op;
+      if (op === "files.inspectUpload") throw invalid();
       const subscriptionOperation =
         op === "subscriptions.subscribe" || op === "subscriptions.unsubscribe";
       if (
@@ -581,11 +588,17 @@ function mount(frame: HTMLIFrameElement): void {
           limitRefusal("frame.outstanding")
         );
       const payload = message.bytes;
-      if (op === "files.put" ? !(payload instanceof ArrayBuffer) : payload !== undefined)
+      if (
+        op === "files.put" || op === "files.stage"
+          ? !(payload instanceof ArrayBuffer)
+          : payload !== undefined
+      )
         throw invalid();
       const bytes = payload as ArrayBuffer | undefined;
-      if (bytes && bytes.byteLength > MAX_FILE)
-        throw tooLarge(MAX_FILE, limitRefusal("runtime.file.bytes", MAX_FILE));
+      const fileLimitId = op === "files.stage" ? "files.stage.bytes" : "runtime.file.bytes";
+      const fileLimit = registry[fileLimitId].default;
+      if (bytes && bytes.byteLength > fileLimit)
+        throw tooLarge(fileLimit, limitRefusal(fileLimitId, fileLimit));
       const bodyOp =
         op === "subscriptions.subscribe" &&
         message.args !== null &&

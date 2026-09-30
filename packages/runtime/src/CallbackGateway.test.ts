@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { RuntimeFailure } from "@patchy/api";
+import { RuntimeFailure, runtimeOperations } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as Deferred from "effect/Deferred";
@@ -30,6 +30,24 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
             kind: "read",
             transport: "bytes-get",
             run: () => Effect.die(new Error("Guests must not reach handle redemption."))
+          },
+          "files.stage": {
+            kind: "read",
+            transport: "bytes-put",
+            run: () => Effect.die("Guests must not stage uploads.")
+          },
+          "files.discard": {
+            kind: "read",
+            run: () => Effect.die("Guests must not discard uploads.")
+          },
+          "files.inspectUpload": {
+            kind: "read",
+            run: () => Effect.die("Only actions may inspect uploads.")
+          },
+          "files.put": {
+            kind: "mutation",
+            transport: "bytes-put",
+            run: () => Effect.die("Only actions may adopt uploads.")
           }
         }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
         for (const [kind, op] of [
@@ -43,6 +61,16 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           ["query", "files.redeem"],
           ["mutation", "files.redeem"],
           ["action", "files.redeem"],
+          ["query", "files.stage"],
+          ["mutation", "files.stage"],
+          ["action", "files.stage"],
+          ["query", "files.discard"],
+          ["mutation", "files.discard"],
+          ["action", "files.discard"],
+          ["query", "files.inspectUpload"],
+          ["mutation", "files.inspectUpload"],
+          ["query", "files.put"],
+          ["mutation", "files.put"],
           ["action", "server.call"],
           ["action", "not.an.operation"]
         ] as const) {
@@ -59,6 +87,141 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           { ok: true, value: 1 }
         );
       }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "action inspection stays unlogged and JSON adoption uses the files.put mutation log",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const log = yield* RuntimeLog.RuntimeLog;
+        let inspectionCorrelation = "";
+        const upload = { token: "opaque-stage-token", size: 10, contentType: "image/png" };
+        let adopted = false;
+        let correlationId = "";
+        const gateway = yield* CallbackGateway.make({
+          "files.inspectUpload": Runtime.handler(
+            {
+              kind: "read",
+              input: runtimeOperations["files.inspectUpload"].request.fields.args,
+              output: runtimeOperations["files.inspectUpload"].response
+            },
+            () =>
+              Effect.gen(function* () {
+                inspectionCorrelation = (yield* Binding.Binding).correlationId;
+                return upload;
+              })
+          ),
+          "files.put": {
+            kind: "mutation",
+            transport: "bytes-put",
+            resource: () => "docs/photo.png",
+            run: (args, bytes) =>
+              Effect.gen(function* () {
+                assert.isUndefined(bytes);
+                assert.deepStrictEqual(args, { store: "docs", name: "photo.png", upload });
+                const binding = yield* Binding.Binding;
+                correlationId = binding.correlationId;
+                assert.strictEqual(binding.identity?.user.id, Fixtures.identity.user.id);
+                assert.strictEqual(binding.versionId, Fixtures.binding.versionId);
+                const pending = yield* log
+                  .find({ companyId: binding.companyId, correlationId })
+                  .pipe(Effect.orDie);
+                assert.include(pending, {
+                  op: "files.put",
+                  resource: "docs/photo.png",
+                  outcome: "pending",
+                  effectivePrincipal: "patch"
+                });
+                adopted = true;
+                return null;
+              })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+        assert.deepStrictEqual(
+          yield* gateway.callback(capability.token, capability.attempt, {
+            op: "files.inspectUpload",
+            args: { upload: { ...upload, size: 0, contentType: "text/plain" } }
+          }),
+          { ok: true, value: upload }
+        );
+        assert.isNull(
+          yield* log.find({
+            companyId: Fixtures.identity.company.id,
+            correlationId: inspectionCorrelation
+          })
+        );
+        for (const args of [
+          { store: "docs", name: "photo.png", contentType: "image/png" },
+          { store: "docs", name: "photo.png", upload, contentType: "text/plain" },
+          { store: "docs", name: "photo.png", upload: upload.token }
+        ] as const) {
+          assert.include(
+            yield* gateway.callback(capability.token, capability.attempt, {
+              op: "files.put",
+              args
+            }),
+            { ok: false, code: "invalid_request" }
+          );
+          assert.isFalse(adopted);
+        }
+        assert.deepStrictEqual(
+          yield* gateway.callback(capability.token, capability.attempt, {
+            op: "files.put",
+            args: { store: "docs", name: "photo.png", upload }
+          }),
+          { ok: true, value: null }
+        );
+        assert.isTrue(adopted);
+        assert.include(
+          yield* log.find({ companyId: Fixtures.identity.company.id, correlationId }),
+          {
+            op: "files.put",
+            outcome: "success",
+            invocationId: capability.attempt.invocationId
+          }
+        );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("fencing an in-flight adoption preserves an unknown side-effect outcome", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const log = yield* RuntimeLog.RuntimeLog;
+      const started = yield* Deferred.make<string>();
+      const gateway = yield* CallbackGateway.make({
+        "files.put": {
+          kind: "mutation",
+          transport: "bytes-put",
+          run: () =>
+            Effect.gen(function* () {
+              const binding = yield* Binding.Binding;
+              yield* Deferred.succeed(started, binding.correlationId);
+              return yield* Effect.never;
+            })
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+      const callback = yield* gateway
+        .callback(capability.token, capability.attempt, {
+          op: "files.put",
+          args: {
+            store: "docs",
+            name: "photo.png",
+            upload: { token: "opaque-stage-token", size: 10, contentType: "image/png" }
+          }
+        })
+        .pipe(Effect.forkChild);
+      const correlationId = yield* Deferred.await(started);
+      assert.isFalse(yield* capabilities.settle(capability.token, "deadline"));
+      assert.include(yield* Fiber.join(callback), { ok: false, code: "access_denied" });
+      assert.include(yield* log.find({ companyId: Fixtures.identity.company.id, correlationId }), {
+        op: "files.put",
+        outcome: "unknown",
+        outcomeCode: "unknown_outcome"
+      });
+    }).pipe(Effect.scoped)
   );
 
   it.effect(

@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import { build } from "esbuild";
-import { CURRENT_RELEASE, Identity, type RuntimeStreamFrame } from "@patchy/api";
+import { CURRENT_RELEASE, Identity, Upload, type RuntimeStreamFrame } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Inspection from "@patchy/execution/inspection";
 import { ContractLimits } from "@patchy/limits";
@@ -14,10 +14,12 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import type { ServerBinding } from "./devExecution.js";
+import type { Json } from "./config.js";
 
 const identity = new Identity({
   user: { id: "usr_dev", name: "Builder", email: "dev@patchy.local" },
@@ -35,7 +37,7 @@ const prepared: Prepared = {
     release: CURRENT_RELEASE,
     tier: 2,
     tables: { notes },
-    files: {},
+    files: { documents: { description: "Locally adopted documents" } },
     uses: {}
   },
   metadata: { postgres: {}, shared: {} }
@@ -57,9 +59,13 @@ const fixtures = action({args:{},result:t.json(),handler:async ctx => ({viewer:c
 const storeMetadata = query({args:{},result:t.json(),handler:async ctx => ({listed:(await ctx.shared.assets.list()).files.map(file=>file.name),name:(await ctx.shared.assets.stat("nested/brief.txt")).name})});
 const storeBytes = action({args:{},result:t.text(),handler:async ctx => new TextDecoder().decode(await ctx.shared.assets.get("nested/brief.txt"))});
 const write = mutation({args:{title:t.text()},result:t.text(),handler:async (ctx,args) => {await ctx.tables.notes.insert({title:args.title}); ctx.log("saved",{viewer:ctx.viewer.user.id}); return args.title;}});
+const adopt = action({args:{upload:t.upload()},result:t.json(),handler:async (ctx,args) => {
+  await ctx.files.documents.put("local.txt",args.upload);
+  return {size:args.upload.size,contentType:args.upload.contentType,text:new TextDecoder().decode(await ctx.files.documents.get("local.txt"))};
+}});
 const fail = mutation({args:{},result:t.text(),handler:async ctx => {await ctx.tables.notes.insert({title:"must roll back"}); throw new Error("dev failure diagnostic");}});
 const oversized = query({args:{},result:t.text(),handler:async () => "x".repeat(1000)});
-export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,fail,oversized}}, ["assets"]);`
+export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,adopt,fail,oversized}}, ["assets"]);`
       },
       alias: { "patchy/server": new URL("./server.ts", import.meta.url).pathname },
       external: ["./executeConfig.js"],
@@ -157,7 +163,7 @@ it.live(
       const call = (
         handler: string,
         current = viewer,
-        args: Record<string, string> = {},
+        args: Record<string, Json> = {},
         mutationKey?: string
       ) =>
         invocation.call(
@@ -197,6 +203,29 @@ it.live(
           value: "Shared store fixture"
         });
       }
+      const staged = yield* resources.handlers["files.stage"]
+        .run({ contentType: "text/plain" }, new TextEncoder().encode("Local upload"))
+        .pipe(
+          Effect.provideService(Binding.Binding, {
+            ...resources.version,
+            identity: viewer,
+            principal: { userId: viewer.user.id },
+            correlationId: "local-stage"
+          }),
+          Effect.flatMap(Schema.decodeUnknownEffect(Upload))
+        );
+      assert.deepStrictEqual(
+        yield* call("demo.adopt", viewer, {
+          upload: { ...staged, size: 0, contentType: "image/png" }
+        }),
+        {
+          ok: true,
+          value: { size: 12, contentType: "text/plain", text: "Local upload" }
+        }
+      );
+      assert.include(yield* call("demo.adopt", viewer, { upload: staged }).pipe(Effect.flip), {
+        code: "not_found"
+      });
       const mutationKey = `${Date.now()}-AAAAAAAAAAAAAAAAAAAAAA`;
       assert.include(yield* call("demo.write", colleague, { title: "Kept" }, mutationKey), {
         ok: true,

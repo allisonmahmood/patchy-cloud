@@ -137,7 +137,7 @@ const saveResources = Effect.fn("SdkConcurrency.saveResources")(function* (
 ) {
   const binding = yield* bindingFor(patchId, versionId);
   const tables = yield* TableOperations.make;
-  const files = yield* Files.make;
+  const files = yield* Files.makeLocal;
   const row = yield* tables["tables.insert"]
     .run({ table: "notes", row: { title: "retained note", slug: "retained-note" } })
     .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeRow));
@@ -157,7 +157,7 @@ const assertResources = Effect.fn("SdkConcurrency.assertResources")(function* (
 ) {
   const binding = yield* bindingFor(patchId, versionId);
   const tables = yield* TableOperations.make;
-  const files = yield* Files.make;
+  const files = yield* Files.makeLocal;
   const row = yield* tables["tables.get"]
     .run({ table: "notes", id: rowId })
     .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeRow));
@@ -538,7 +538,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         );
 
         // Both immutable bundles write the store provisioned by Content, not a separately seeded index.
-        const files = yield* Files.make;
+        const files = yield* Files.makeLocal;
         const fileHeld = yield* gate();
         const filePid = yield* Deferred.make<number>();
         const fileBlocker = yield* databases

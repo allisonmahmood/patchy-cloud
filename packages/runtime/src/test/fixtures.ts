@@ -30,6 +30,8 @@ export const patchId = "runtimepatch";
 export const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
 export const publicVersionId = "ver_bbbbbbbbbbbbbbbbbbbbbbbb";
 export const tier1VersionId = "ver_dddddddddddddddddddddddd";
+export const tier2VersionId = "ver_eeeeeeeeeeeeeeeeeeeeeeee";
+export const staleTier1VersionId = "ver_ffffffffffffffffffffffff";
 const manifest = {
   manifestVersion: 1,
   release: CURRENT_RELEASE,
@@ -44,14 +46,26 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version = versionId) =>
     Effect.succeed(
       ![patchId, "secondpatch1", "otherpatch11"].includes(patch) ||
-        ![versionId, publicVersionId, tier1VersionId].includes(version)
+        ![versionId, publicVersionId, tier1VersionId, tier2VersionId, staleTier1VersionId].includes(
+          version
+        )
         ? Option.none()
         : Option.some({
             patchId: patch,
             versionId: version,
-            patchTier: version === tier1VersionId ? 1 : 0,
+            patchTier:
+              version === tier2VersionId || version === staleTier1VersionId
+                ? 2
+                : version === tier1VersionId
+                  ? 1
+                  : 0,
             companyId: patch === "otherpatch11" ? "cmp_other" : DEV_SEED.companyId,
-            manifest: version === tier1VersionId ? { ...manifest, tier: 1 as const } : manifest,
+            manifest:
+              version === tier2VersionId
+                ? { ...manifest, tier: 2 as const, handlers: {} }
+                : version === tier1VersionId || version === staleTier1VersionId
+                  ? { ...manifest, tier: 1 as const }
+                  : manifest,
             wireVersion: WIRE_VERSION,
             scope: version === publicVersionId ? ("public" as const) : ("company" as const)
           })

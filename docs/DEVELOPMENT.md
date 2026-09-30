@@ -96,6 +96,16 @@ another viewer, URL cleanup and narrow download-card layout. The Primitives
 file contracts cover live unsharing, replacement-before-access refusal order,
 durable signing keys and metadata-page byte limits on PostgreSQL and PGlite.
 
+The same browser file scenario stages raw bytes, rejects a colleague's discard,
+adopts with host-resolved metadata, refuses reuse and discarded uploads, and
+retains the file after a failed follow-up mutation. `devExecution.test.ts`
+executes staged adoption on workerd over PGlite. File contracts cover atomic
+stage quotas and discard/adoption races on Postgres; orphan sweep checks cover
+one-hour expiry and late byte-write completion. Inventory contracts initialize
+retained databases twice and preserve staged/adopted rows.
+Wide-event contracts cover successful and refused quota peaks, company override
+revisions, and both advertised-length and streaming byte overflows.
+
 `SubscriptionsSettlement.test.ts` exercises real invocation ownership with delayed
 executor and snapshot cancellation. A timeout or disconnected document must not
 release its re-run slot before cleanup settles or destroys the retained resources.

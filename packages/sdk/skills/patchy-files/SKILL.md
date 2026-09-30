@@ -1,6 +1,6 @@
 ---
 name: patchy-files
-description: Define a Patchy file store, save or retrieve bytes, page stored files, or display an image with a frame-local URL.
+description: Define a Patchy file store, stage or discard a tier 2 upload, adopt it in an action, save or retrieve bytes, page stored files, or display an image with a frame-local URL.
 ---
 
 # File stores
@@ -57,7 +57,7 @@ actions use the store's byte operations. Every list entry and non-null stat
 result carries a host-minted `handle`. Return it with `t.fileHandle()` in the
 handler's result schema. The page calls those handlers, then uses
 `patchy.files.url(handle)` or `patchy.files.download(handle, filename?)`.
-Staged uploads are not available yet. See `../patchy-server/SKILL.md` for
+For browser uploads, use staging below. See `../patchy-server/SKILL.md` for
 handler kinds and the development boundary.
 
 ## Tier 2 selection and display
@@ -88,6 +88,36 @@ deletion makes an old handle `not_found`; unsharing or lost access makes it
 shell is required on every redemption; a handle is not a login or entitlement.
 Redemptions are reads and are not logged.
 
+## Tier 2 staged uploads
+
+Call `patchy.files.stage(bytes, { contentType })` on the page. It accepts
+`Uint8Array`, `ArrayBuffer` or `Blob` and returns a single-use `Upload`; the
+shell writes the bytes without sending them through server code. Pass that
+Upload to an action argument declared with `t.upload()`.
+
+In the action, inspect `upload.size` and `upload.contentType`, then call
+`ctx.files.attachments.put(name, upload)` to adopt it into a store the loaded
+version defines. Patchy resolves the metadata before your handler runs, so
+`size` is authoritative even if the caller altered it. A content type is a
+claim, not proof of format. Adoption keeps the staged content type and writes
+a pointer without copying bytes.
+
+When a person cancels before adoption, call `patchy.files.discard(upload)`.
+The Upload binds its viewer, consuming patch and loaded version, and expires
+after one hour. Adoption and discard race on the same row; whichever commits
+first wins. An expired, consumed, discarded or differently bound Upload is
+`not_found`. An object id is never adoption authority.
+
+Stage at most 20 MiB per upload, with at most 16 outstanding stages and 100 MiB
+per viewer per patch. Company capacity defaults to 1 GiB. Oversize files return
+`too_large`; outstanding quotas return `limit_exceeded` with the limit id.
+Staging and discard are unlogged transport. Adoption is a logged file write.
+
+Put followed by a mutation is not atomic. If the mutation fails, the file
+remains. Present that partial outcome to the person and offer an intentional
+repair or retry; do not report that nothing was saved or replay the action.
+Exercise this path in `patchy dev`, including cancelling and selecting again.
+
 ## Operations and limits
 
 - `put(name, bytes, { contentType })` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; it replaces the named file and returns null. Replacement stores new immutable bytes and changes the name's pointer.
@@ -98,6 +128,6 @@ Redemptions are reads and are not logged.
 
 Files are at most 20 MiB. Names are 1–512 UTF-8 bytes in slash-separated segments, with neither `.` nor `..` segments. Choose a content type matching the bytes. Uploaded HTML and SVG stay bytes; they are never served as active documents at a file URL. The sandbox allows blob/data images, fonts and media, not outbound URLs or in-frame downloads.
 
-File writes act as the viewer and are logged for company admins; public patches cannot use stores (`not_available_on_public`). For `unknown_outcome` reconcile by reading the name before offering a deliberate retry, never automatically replaying a write.
+Tier 1 file writes act as the viewer; tier 2 file writes act as the patch. Both are logged for company admins. Public patches cannot use stores (`not_available_on_public`). For `unknown_outcome` reconcile by reading the name before offering a deliberate retry, never automatically replaying a write.
 
 Omitting a store from config makes it unreachable to that version but keeps its data. Rollback and version cleanup never delete a patch's files. Local files live under `.patchy/`; deleting that directory destroys local files and rows. Keep reproducible local examples in source or fixtures, not production copies.

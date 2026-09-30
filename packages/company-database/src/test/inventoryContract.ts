@@ -121,17 +121,32 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       yield* sql.unsafe("DROP TABLE patchy.mutation_keys");
       yield* sql.unsafe("DROP TABLE patchy.file_handle_key");
       yield* sql.unsafe("DROP INDEX patchy.files_object_id");
+      yield* sql.unsafe("DROP TABLE patchy.file_uploads");
       yield* Inventory.initialize;
       const keys = yield* sql`SELECT secret FROM patchy.file_handle_key`;
       yield* Inventory.initialize;
       yield* sql`INSERT INTO patchy.mutation_keys
         (key, issued_at, patch_id, version_id, handler, viewer_id, fingerprint, invocation_id, reply)
         VALUES ('retained', now(), ${patchId}, 'version', 'demo.mutation', 'viewer', 'fingerprint', 'inv_retained', '{"ok":true,"value":42}'::jsonb)`;
+      yield* sql`INSERT INTO patchy.file_uploads
+        (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)
+        VALUES ('retained-stage', ${patchId}, 'retained-token', 'viewer', 'version', 42,
+          'text/plain', 'digest', '2035-01-03T01:00:00Z', 'staged'),
+          ('retained-adoption', ${patchId}, 'adopted-token', 'viewer', 'version', 7,
+          'image/png', 'other-digest', '2035-01-02T01:00:00Z', 'adopted')`;
       yield* Inventory.initialize;
       assert.deepStrictEqual(yield* sql`SELECT secret FROM patchy.file_handle_key`, keys);
       assert.deepStrictEqual(
         yield* sql`SELECT invocation_id, reply FROM patchy.mutation_keys WHERE key = 'retained'`,
         [{ invocation_id: "inv_retained", reply: { ok: true, value: 42 } }]
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT object_id, state, token, size::integer AS size
+        FROM patchy.file_uploads ORDER BY object_id`,
+        [
+          { object_id: "retained-adoption", state: "adopted", token: "adopted-token", size: 7 },
+          { object_id: "retained-stage", state: "staged", token: "retained-token", size: 42 }
+        ]
       );
       assert.deepStrictEqual(yield* inventory.read(patchId), initial);
       assert.deepStrictEqual(

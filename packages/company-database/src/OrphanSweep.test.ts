@@ -56,6 +56,77 @@ for (const [name, database] of [
 
   it.layer(services)(`OrphanSweep (${name})`, (it) => {
     it.effect(
+      "expires stages at one hour while preserving live reservations and adopted files",
+      () =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW);
+          const platform = yield* SqlClient.SqlClient;
+          const companies = yield* CompanyDatabases.CompanyDatabases;
+          const inventory = yield* Inventory.Inventory;
+          const sweeper = yield* OrphanSweep.OrphanSweep;
+          const store = yield* ContentStore.ContentStore;
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* FilesystemContentStore.rootDir;
+          const patchId = "sweep_stages";
+          yield* companies.ensureReady(COMPANY);
+          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+          VALUES (${patchId}, ${COMPANY}, 'usr_dev', 'Stages', 'sweep-stages')`;
+          yield* companies.withCompany(COMPANY)(
+            companies.withPatchLock(patchId)(
+              Effect.gen(function* () {
+                const sql = yield* SqlClient.SqlClient;
+                yield* inventory.ensurePatch(patchId);
+                yield* inventory.putStore({
+                  patchId,
+                  name: "docs",
+                  description: "Documents.",
+                  shared: false
+                });
+                for (const [objectId, state, expiry] of [
+                  ["expired", "staged", NOW],
+                  ["live", "staged", NOW + 1],
+                  ["writing", "writing", NOW + 1],
+                  ["discarded", "discarded", NOW + 3_600_000],
+                  ["adopted", "adopted", NOW - 3_600_000]
+                ] as const)
+                  yield* sql`INSERT INTO patchy.file_uploads
+                (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)
+                VALUES (${objectId}, ${patchId}, ${`token-${objectId}`}, 'viewer', 'version', 5,
+                  'text/plain', 'hash', to_timestamp(${expiry}::double precision / 1000), ${state})`;
+                yield* sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
+              VALUES (${patchId}, 'docs', 'adopted.txt', 'adopted', 5, 'text/plain', 'hash')`;
+              })
+            )
+          );
+          for (const objectId of ["expired", "live", "writing", "discarded", "adopted"]) {
+            const key = `files/${patchId}/${objectId}`;
+            yield* store.put(key, "bytes");
+            // Even an old listing timestamp must not make a live stage collectible.
+            if (objectId !== "expired")
+              yield* fs.utimes(`${root}/${key}`, (NOW - 2 * DAY) / 1_000, (NOW - 2 * DAY) / 1_000);
+          }
+          const result = yield* sweeper.sweep;
+          assert.strictEqual(result.failed, 0);
+          for (const objectId of ["expired", "discarded"])
+            assert.propertyVal(
+              yield* store.get(`files/${patchId}/${objectId}`).pipe(Effect.flip),
+              "_tag",
+              "ObjectNotFound"
+            );
+          for (const objectId of ["live", "writing", "adopted"])
+            assert.strictEqual(yield* store.get(`files/${patchId}/${objectId}`), "bytes");
+          yield* TestClock.adjust("1 millis");
+          yield* sweeper.sweep;
+          for (const objectId of ["live", "writing"])
+            assert.propertyVal(
+              yield* store.get(`files/${patchId}/${objectId}`).pipe(Effect.flip),
+              "_tag",
+              "ObjectNotFound"
+            );
+          assert.strictEqual(yield* store.get(`files/${patchId}/adopted`), "bytes");
+        })
+    );
+    it.effect(
       "sweeps expired mutation outcomes in idle companies without deleting the window boundary",
       () =>
         Effect.gen(function* () {
@@ -99,7 +170,7 @@ for (const [name, database] of [
         const fs = yield* FileSystem.FileSystem;
         const root = yield* FilesystemContentStore.rootDir;
         const patchId = "sweep_retained_orphan";
-        const key = `files/${patchId}/docs/old`;
+        const key = `files/${patchId}/old`;
         yield* companies.ensureReady(COMPANY);
         yield* companies.withCompany(COMPANY)(
           companies.withPatchLock(patchId)(
@@ -286,10 +357,10 @@ for (const [name, database] of [
               })
             )
           );
-          const referenced = "files/sweep_files/docs/referenced";
-          const orphan = "files/no_patch_or_inventory/docs/orphan";
-          const young = "files/no_patch_or_inventory/docs/young";
-          const boundary = "files/no_patch_or_inventory/docs/boundary";
+          const referenced = "files/sweep_files/referenced";
+          const orphan = "files/no_patch_or_inventory/orphan";
+          const young = "files/no_patch_or_inventory/young";
+          const boundary = "files/no_patch_or_inventory/boundary";
           for (const [key, time] of [
             [referenced, NOW - 2 * DAY],
             [orphan, NOW - 2 * DAY],
@@ -316,7 +387,7 @@ for (const [name, database] of [
         const fs = yield* FileSystem.FileSystem;
         const root = yield* FilesystemContentStore.rootDir;
         yield* companies.ensureReady(COMPANY);
-        const key = "files/unavailable_index/docs/old";
+        const key = "files/unavailable_index/old";
         yield* store.put(key, "keep until absence is proven");
         yield* fs.utimes(`${root}/${key}`, (NOW - 2 * DAY) / 1_000, (NOW - 2 * DAY) / 1_000);
         yield* companies.withCompany(COMPANY)(
@@ -359,7 +430,7 @@ for (const [name, database] of [
             const fs = yield* FileSystem.FileSystem;
             const root = yield* FilesystemContentStore.rootDir;
             const patchId = "sweep_reference_race";
-            const key = `files/${patchId}/docs/old`;
+            const key = `files/${patchId}/old`;
             yield* companies.ensureReady(COMPANY);
             yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
             VALUES (${patchId}, ${COMPANY}, 'usr_dev', 'Race', 'sweep-reference-race')`;
@@ -461,7 +532,7 @@ it.layer(
       for (const companyId of ["sweep_pool_a", "sweep_pool_b"]) {
         yield* companies.ensureReady(companyId);
       }
-      const key = "files/absent_pool_patch/docs/old";
+      const key = "files/absent_pool_patch/old";
       yield* store.put(key, "reclaim after every index responds");
       yield* fs.utimes(`${root}/${key}`, (NOW - 2 * DAY) / 1_000, (NOW - 2 * DAY) / 1_000);
       const busy = yield* Queue.unbounded<void>();

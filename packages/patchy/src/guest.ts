@@ -1,7 +1,7 @@
 import * as GuestProtocol from "@patchy/api/guest";
 import { canonicalArgs } from "@patchy/api/canonical-args";
 import * as Schema from "effect/Schema";
-import type { Json, Upload } from "./config.js";
+import type { Json, Upload, ValueDescriptor } from "./config.js";
 import { decodeError, PatchyError } from "./clientError.js";
 import { extractHandlerDescriptors } from "./handlerDescriptors.js";
 import { decodeHandlerError, isHandlerError } from "./handlerError.js";
@@ -125,8 +125,7 @@ const fileStore = (call: Call, callback: Callback, store: string, writable: bool
           input: Uint8Array | ArrayBuffer | Blob | Upload,
           options?: { readonly contentType: string }
         ) {
-          if (typeof input === "string")
-            return call("files.put", { ...options, store, name, upload: input });
+          if ("token" in input) return call("files.put", { store, name, upload: input });
           const bytes =
             input instanceof Uint8Array
               ? input
@@ -229,6 +228,54 @@ const postgres = (call: Call, connection: string, invalidRequest: (message: stri
       }));
     }
   });
+};
+
+const containsUpload = (descriptor: ValueDescriptor): boolean => {
+  switch (descriptor.kind) {
+    case "upload":
+      return true;
+    case "nullable":
+      return containsUpload(descriptor.value);
+    case "array":
+      return containsUpload(descriptor.element);
+    case "object":
+      return Object.values(descriptor.fields).some(containsUpload);
+    default:
+      return false;
+  }
+};
+
+/** Resolve capabilities before application code sees their authoritative metadata. */
+const resolveUploads = async (
+  descriptor: ValueDescriptor,
+  value: Json | undefined,
+  call: Call
+): Promise<Json | undefined> => {
+  if (value === undefined || value === null || !containsUpload(descriptor)) return value;
+  switch (descriptor.kind) {
+    case "upload":
+      return call("files.inspectUpload", { upload: value });
+    case "nullable":
+      return resolveUploads(descriptor.value, value, call);
+    case "array": {
+      const values = value as readonly Json[];
+      const resolved: Json[] = [];
+      for (const item of values)
+        resolved.push((await resolveUploads(descriptor.element, item, call))!);
+      return resolved;
+    }
+    case "object": {
+      const fields = value as Readonly<Record<string, Json>>;
+      const resolved: Record<string, Json> = {};
+      for (const [name, field] of Object.entries(descriptor.fields)) {
+        const item = await resolveUploads(field, fields[name], call);
+        if (item !== undefined) resolved[name] = item;
+      }
+      return resolved;
+    }
+    default:
+      return value;
+  }
 };
 
 /** Worker entry for server bundles, without importing privileged Workers APIs. */
@@ -371,7 +418,18 @@ export function createGuest(
       };
       let reply: GuestProtocol.GuestReply;
       try {
-        reply = decodeReply({ ok: true, value: await entry.handler(context as never, input.args) });
+        const args =
+          kind === "action"
+            ? await resolveUploads(
+                { kind: "object", fields: entry.descriptor.args },
+                input.args,
+                call
+              )
+            : input.args;
+        reply = decodeReply({
+          ok: true,
+          value: await entry.handler(context as never, args as Readonly<Record<string, Json>>)
+        });
       } catch (error) {
         reply = errorReply(error);
         if (!reply.ok && reply.source === "patchy" && reply.code === "handler_failed") {

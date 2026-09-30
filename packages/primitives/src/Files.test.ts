@@ -8,11 +8,21 @@ import { Inventory } from "@patchy/company-database";
 import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
 import * as Testing from "@patchy/company-database/testing";
 import { LoadedVersions } from "@patchy/runtime";
+import { OperatingLimits } from "@patchy/limits";
 import * as Tables from "./Tables.js";
-import { contracts, filesystem, independentNamesContract } from "./test/filesContract.js";
+import {
+  companyStageBoundsContract,
+  contracts,
+  filesystem,
+  independentNamesContract,
+  latePutSweepContract
+} from "./test/filesContract.js";
 import * as TestWakes from "./test/wakes.js";
 
-const postgres = Layer.merge(filesystem, Tables.layer.pipe(Layer.provideMerge(Testing.layer())));
+const postgres = Layer.merge(
+  filesystem,
+  Layer.merge(Tables.layer, OperatingLimits.layer).pipe(Layer.provideMerge(Testing.layer()))
+);
 const local = Layer.merge(
   filesystem,
   Layer.unwrap(
@@ -48,6 +58,16 @@ for (const { name, layer, companyId } of [
       it.effect(description, () => contract(companyId), 60_000);
     }
     if (name === "Postgres") {
+      it.effect(
+        "enforces current company stage overrides across patches and fails closed on limit lookup errors",
+        () => companyStageBoundsContract(companyId),
+        60_000
+      );
+      it.effect(
+        "refuses a late put after sweep expires its write reservation without creating a dangling pointer",
+        () => latePutSweepContract(companyId),
+        60_000
+      );
       it.effect(
         "keeps unrelated names and list progressing while a same-name writer waits on another session",
         () => independentNamesContract(companyId),

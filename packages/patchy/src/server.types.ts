@@ -209,6 +209,15 @@ const fileConsumer = async (client: ServerOnlyClient<ServerModules>, handle: Fil
   const url: string = await client.files.url(handle);
   await client.files.download(handle);
   await client.files.download(handle, "invoice.pdf");
+  const upload: Upload = await client.files.stage(new Uint8Array([1]), {
+    contentType: "application/octet-stream"
+  });
+  await client.server.leads.sync({ name: "invoice.pdf", upload });
+  await client.files.discard(upload);
+  // @ts-expect-error an object id is not upload authority
+  await client.files.discard("object-id");
+  // @ts-expect-error upload metadata is host-measured and readonly
+  upload.size = 1;
   const snapshot = useFileUrl(handle);
   const image: string | undefined = snapshot.url;
   const error: Error | undefined = snapshot.error;
@@ -266,7 +275,9 @@ const schemas = () => {
     args: {},
     // @ts-expect-error uploads are never results
     result: t.upload(),
-    handler: () => "upload" as Upload
+    handler: () => {
+      throw new Error("Uploads cannot be handler results.");
+    }
   });
   query({
     args: {},

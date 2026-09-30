@@ -14,6 +14,7 @@ import {
   ServerCallReply
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
+import { ContractLimits } from "@patchy/limits";
 import * as Runtime from "./Runtime.js";
 
 const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvelope), {
@@ -124,11 +125,25 @@ const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Ru
   return { input, byteLength: size };
 });
 
-/** This effect is evaluated by Runtime only after admission and the mutation log's begin. */
-const readFile = Effect.fn("RuntimeApi.readFile")(function* (maxBytes: number) {
+/** Read only after admission and, for ordinary puts, the mutation log's begin. */
+const readFile = Effect.fn("RuntimeApi.readFile")(function* (
+  maxBytes: number,
+  limitId: "runtime.file.bytes" | "files.stage.bytes"
+) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  if (Number(request.headers["content-length"]) > maxBytes)
-    return yield* new Runtime.TooLarge({ maxBytes, limitId: "runtime.file.bytes" });
+  if (Number(request.headers["content-length"]) > maxBytes) {
+    yield* WideEvents.enrich({
+      limits: [
+        {
+          limitId,
+          value: maxBytes,
+          peak: Number(request.headers["content-length"]),
+          configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+        }
+      ]
+    });
+    return yield* new Runtime.TooLarge({ maxBytes, limitId });
+  }
   const chunks: Uint8Array[] = [];
   let size = 0;
   yield* forEachBodyChunk(request, (chunk) =>
@@ -138,15 +153,14 @@ const readFile = Effect.fn("RuntimeApi.readFile")(function* (maxBytes: number) {
         requestBytes: size,
         limits: [
           {
-            limitId: "runtime.file.bytes",
+            limitId,
             value: maxBytes,
             peak: size,
             configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
           }
         ]
       });
-      if (size > maxBytes)
-        return yield* new Runtime.TooLarge({ maxBytes, limitId: "runtime.file.bytes" });
+      if (size > maxBytes) return yield* new Runtime.TooLarge({ maxBytes, limitId });
       chunks.push(chunk);
     })
   );
@@ -163,19 +177,22 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
   Effect.gen(function* () {
     const runtime = yield* Runtime.Runtime;
     const events = yield* WideEvents.WideEvents;
+    const stageBytes = yield* ContractLimits.get("files.stage.bytes");
     const file = Effect.fn("RuntimeApi.file")(function* (
       params: Readonly<Record<string, string>>,
-      mode: "owned" | "shared" | "handle" = "owned"
+      mode: "owned" | "shared" | "handle" | "stage" = "owned"
     ) {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const operation =
-        mode === "handle"
-          ? "files.redeem"
-          : mode === "shared"
-            ? "shared.files.get"
-            : request.method === "PUT"
-              ? "files.put"
-              : "files.get";
+        mode === "stage"
+          ? "files.stage"
+          : mode === "handle"
+            ? "files.redeem"
+            : mode === "shared"
+              ? "shared.files.get"
+              : request.method === "PUT"
+                ? "files.put"
+                : "files.get";
       yield* WideEvents.operation(operation);
       const wire = yield* Runtime.decodeWire(request.headers["x-patchy-wire"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
@@ -187,21 +204,26 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         wire,
         op: operation,
         args:
-          mode === "handle"
-            ? { handle: params.handle }
-            : {
-                ...(mode === "shared" ? { alias: params.alias } : { store: params.store }),
-                name: params["*"],
-                ...(request.method === "PUT"
-                  ? { contentType: request.headers["content-type"] ?? "application/octet-stream" }
-                  : {})
-              }
+          mode === "stage"
+            ? { contentType: request.headers["content-type"] ?? "application/octet-stream" }
+            : mode === "handle"
+              ? { handle: params.handle }
+              : {
+                  ...(mode === "shared" ? { alias: params.alias } : { store: params.store }),
+                  name: params["*"],
+                  ...(request.method === "PUT"
+                    ? { contentType: request.headers["content-type"] ?? "application/octet-stream" }
+                    : {})
+                }
       };
       if (request.method === "PUT") {
         const scope = yield* Scope.Scope;
         const value = yield* runtime.putFile(
           input,
-          readFile(runtime.fileBytes).pipe(Effect.provideService(Scope.Scope, scope))
+          readFile(
+            mode === "stage" ? stageBytes : runtime.fileBytes,
+            mode === "stage" ? "files.stage.bytes" : "runtime.file.bytes"
+          ).pipe(Effect.provideService(Scope.Scope, scope))
         );
         const body = yield* encodeSuccess({ ok: true, value }).pipe(
           Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
@@ -251,6 +273,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
                 )
             ),
             Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: noStore })),
+            Effect.catch(recordFailure),
+            Effect.tap((response) =>
+              WideEvents.enrich({
+                responseBytes:
+                  response.body._tag === "Uint8Array" ? response.body.body.byteLength : 0
+              })
+            )
+          )
+        )
+      )
+      .handleRaw("stageFile", ({ params }) =>
+        events.withEvent(
+          { type: "request" },
+          file(params, "stage").pipe(
             Effect.catch(recordFailure),
             Effect.tap((response) =>
               WideEvents.enrich({

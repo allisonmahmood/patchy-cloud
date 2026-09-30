@@ -128,8 +128,8 @@ every other direct operation is `server_required`. Rolling back to tier 1
 reopens those documents' direct operations. A tier 2 document never gains
 name-based tables, files, shared resources, connections or members, even after
 rollback. Its generated client is server-only, with `me`, the route bridge and
-authorised file handles. Staged uploads and generated downloads remain separate
-shell capabilities as their implementation tickets land.
+authorised file handles and staged uploads. Generated-file downloads remain a
+separate shell capability for their implementation ticket.
 
 Tier 2 is company-only. Publish to a public patch requires explicit
 `--share company`; public scope changes through the CLI or portal inspect the
@@ -176,6 +176,27 @@ Download click starts the download; a frame's claim
 of user activation is insufficient. Not now discards it, three offers remain
 visible and older ones fold under a count. Pending files are shell-local and
 are lost on close or reload. Core owns the shared styles.
+
+## Staged uploads
+
+Staging is the third data-access shell exception beside identity and authorised
+file handles; the browser-owned route bridge is unchanged. A tier 2 page uses
+`files.stage { contentType }` with a transferred ArrayBuffer. The shell sends
+raw bytes to `PUT /api/runtime/staged-files/:patchId/:versionId` under its exact
+Origin, wire and pinned principal. It receives an Upload with an opaque token,
+measured size and claimed content type. No staged bytes enter the isolate.
+
+`files.discard { upload }` uses the same binding through the JSON runtime route.
+Both operations are unlogged and remain unavailable to lower-tier documents.
+Private action-only `files.inspectUpload` resolves every `t.upload()` argument
+before application code sees it, replacing client-supplied metadata with stored
+values. It is unavailable through the public runtime and broker.
+
+An action's `files.put { store, name, upload }` callback consumes the stage and
+updates the pointer atomically, logged as the existing file write. The token,
+not its object id or metadata, supplies adoption authority. Stage/discard remain
+unavailable to guests; the public JSON route never accepts adoption. The inventory
+locks, one-hour expiry and bounds are recorded in ADR-0009 and the limits registry.
 
 ## Tier-scoped promise
 

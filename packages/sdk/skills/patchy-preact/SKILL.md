@@ -94,7 +94,8 @@ Tier 1 table subscriptions run in hosted company pages and `patchy dev`.
 Tier 2 query subscriptions run on published patches in dev and test instances;
 the tier 2 `patchy dev` engine and production fleet hosting remain separate.
 Arbitrary promises, `getMany`, integrations, mutations and actions are not query
-callables. Staged uploads are not available yet.
+callables. For tier 2 file inputs, stage in the event handler and pass the Upload
+to an action. See `../patchy-files/SKILL.md` for adoption, discard and partial saves.
 
 ## useFileUrl
 

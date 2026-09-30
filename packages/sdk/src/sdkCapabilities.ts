@@ -118,6 +118,18 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "Handlers return 57-character handles from file metadata. Every redemption checks live authority. url(handle) returns a frame-local blob URL; useFileUrl releases it on change or unmount and clears failed images. Downloads need a click on the shell's filename and size card. Closing or reloading discards pending downloads."
   },
   {
+    id: "core.staged-uploads",
+    group: "Core",
+    name: "Staged uploads",
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.files.stage and patchy.files.discard",
+      "patchy/_generated/server.ts: t.upload and ctx.files"
+    ],
+    runs: "Tier 2 company pages through the shell; adoption in actions, including patchy dev",
+    limits:
+      "Stage at most 20 MiB without sending bytes through server code. Uploads are single-use, viewer/patch/version-bound and expire after one hour. At most 16 stages and 100 MiB per viewer per patch; 1 GiB per company by default. Adoption writes a file pointer, not a copy. A following mutation is separate: if it fails, the file remains. A content type is a claim."
+  },
+  {
     id: "primitives.shared-tables",
     group: "Primitives",
     name: "Shared-table reads",
@@ -151,7 +163,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Record<(typeof groups)[number], string> = {
-  Core: "Production fleet hosting, staged uploads and generated-file downloads are not available in this release.",
+  Core: "Production fleet hosting and generated-file downloads are not available in this release.",
   Primitives: "The member directory is not available in this release.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:

@@ -288,6 +288,28 @@ export const layer = Layer.effect(Inventory, make);
  */
 export const upgrade = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const uploads = yield* sql`SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'patchy' AND table_name = 'file_uploads'`;
+  if (uploads.length === 0) {
+    yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS patchy.file_uploads (
+      object_id text PRIMARY KEY,
+      patch_id text NOT NULL,
+      token text UNIQUE,
+      viewer_id text,
+      version_id text,
+      size bigint NOT NULL CHECK (size >= 0),
+      content_type text NOT NULL,
+      sha256 text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      state text NOT NULL CHECK (state IN ('writing', 'staged', 'adopted', 'discarded')),
+      CHECK (token IS NULL OR (viewer_id IS NOT NULL AND version_id IS NOT NULL))
+    )`);
+  }
+  const uploadExpiry = yield* sql`SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'patchy' AND indexname = 'file_uploads_expiry'`;
+  if (uploadExpiry.length === 0)
+    yield* sql.unsafe(`CREATE INDEX IF NOT EXISTS file_uploads_expiry
+      ON patchy.file_uploads (expires_at) WHERE state <> 'adopted'`);
   const handleKeys = yield* sql`SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'patchy' AND table_name = 'file_handle_key'`;
   if (handleKeys.length === 0) {

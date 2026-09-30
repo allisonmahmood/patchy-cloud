@@ -183,7 +183,15 @@ hosting requires the fleet executor. Query subscriptions use that same hosted
 runtime. `patchy dev` uses the supervised production handler engine and callback
 gateway, with live server rebinding and a separate non-admin colleague URL.
 The `patchy-server` skill documents handler behavior and registry limits.
-Staged upload adoption remains a reserved contract.
+Tier 2 pages stage bytes with `patchy.files.stage(bytes, { contentType })` and
+discard unused uploads with `patchy.files.discard(upload)`. An action accepts
+`t.upload()` and adopts with `ctx.files.<store>.put(name, upload)`, without a
+byte copy. Its `size` is host-measured; its `contentType` is a claim. Uploads
+are single-use and bound to viewer, patch and loaded version, expiring after
+one hour. Each is at most 20 MiB; outstanding bounds are 16 stages and 100 MiB
+per viewer per patch, and 1 GiB per company by default. Staging is unlogged;
+adoption logs a file write. A later failed mutation does not undo adoption:
+the patch must present the partial outcome.
 
 ### Config
 

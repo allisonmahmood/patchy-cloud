@@ -74,7 +74,13 @@ export class ValueSchema<D extends object, Optional extends boolean = false> {
 declare const fileHandleBrand: unique symbol;
 declare const uploadBrand: unique symbol;
 export type FileHandle = string & { readonly [fileHandleBrand]: true };
-export type Upload = string & { readonly [uploadBrand]: true };
+export type Upload = {
+  readonly token: string;
+  /** Patchy's measured byte length; never inferred from the claimed media type. */
+  readonly size: number;
+  readonly contentType: string;
+  readonly [uploadBrand]: true;
+};
 
 export class Column<
   K extends ColumnKind = ColumnKind,

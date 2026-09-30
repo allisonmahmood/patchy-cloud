@@ -55,7 +55,7 @@ export const setup = Effect.fn("test.files.setup")(function* (patchId: string) {
       );
     })
   );
-  const handlers = yield* Files.make;
+  const handlers = yield* Files.makeLocal;
   const binding = Binding.Binding.of({
     patchId,
     companyId,
