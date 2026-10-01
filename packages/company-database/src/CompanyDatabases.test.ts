@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as PgClient from "@effect/sql-pg/PgClient";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -16,6 +18,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { inject } from "vitest";
 import { layerFromUrl } from "@patchy/sql";
 import * as WideEvents from "@patchy/analytics/wide-events";
+import * as DatabaseMeter from "@patchy/analytics/database-meter";
 import { OperatingLimits } from "@patchy/limits";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as PgCompanyDatabases from "./PgCompanyDatabases.js";
@@ -86,6 +89,205 @@ it.layer(Testing.layer().pipe(Layer.provideMerge(Testing.resourceChangesLayer)))
         );
         assert.notStrictEqual(after[0]!.pid, before[0]!.pid);
       }).pipe(Effect.scoped)
+    );
+
+    it.effect("meters actual transactions and nested work but not idle company slots", () =>
+      Effect.gen(function* () {
+        const companyId = "meter-transactions";
+        yield* createCompany(companyId);
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        yield* databases.ensureReady(companyId);
+        const parent = yield* DatabaseMeter.make;
+        const child = yield* DatabaseMeter.make.pipe(
+          Effect.provideService(DatabaseMeter.current, parent)
+        );
+        yield* databases
+          .withCompany(companyId)(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              yield* TestClock.adjust("7 millis");
+              assert.strictEqual(parent.snapshot(), 0);
+              yield* sql.withTransaction(TestClock.adjust("11 millis"));
+              yield* TestClock.adjust("5 millis");
+              assert.strictEqual(parent.snapshot(), 11);
+              const failed = yield* sql
+                .withTransaction(
+                  TestClock.adjust("13 millis").pipe(Effect.andThen(Effect.fail("failed work")))
+                )
+                .pipe(Effect.exit);
+              assert.deepStrictEqual(failed, Exit.fail("failed work"));
+              yield* sql
+                .withTransaction(TestClock.adjust("17 millis"))
+                .pipe(Effect.provideService(DatabaseMeter.current, child));
+            })
+          )
+          .pipe(Effect.provideService(DatabaseMeter.current, parent));
+        assert.strictEqual(parent.snapshot(), 41);
+        assert.strictEqual(child.snapshot(), 17);
+        yield* TestClock.adjust("19 millis");
+        assert.strictEqual(parent.snapshot(), 41);
+      })
+    );
+
+    it.effect(
+      "meters retained and authority connections until destruction without duplicate release",
+      () =>
+        Effect.gen(function* () {
+          const companyId = "meter-retained";
+          yield* createCompany(companyId);
+          const databases = yield* CompanyDatabases.CompanyDatabases;
+          yield* databases.ensureReady(companyId);
+          const meter = yield* DatabaseMeter.make;
+          const scope = yield* Scope.make();
+          const lease = yield* databases
+            .lease(companyId, true)
+            .pipe(Scope.provide(scope), Effect.provideService(DatabaseMeter.current, meter));
+          yield* TestClock.adjust("10 millis");
+          assert.strictEqual(meter.snapshot(), 10);
+          yield* lease
+            .authority(
+              Effect.flatMap(SqlClient.SqlClient, (sql) =>
+                sql.withTransaction(TestClock.adjust("7 millis"))
+              )
+            )
+            .pipe(Effect.provideService(DatabaseMeter.current, meter));
+          assert.strictEqual(meter.snapshot(), 24);
+          lease.destroy();
+          yield* TestClock.adjust("9 millis");
+          assert.strictEqual(meter.snapshot(), 24);
+          yield* Scope.close(scope, Exit.void);
+          assert.strictEqual(meter.snapshot(), 24);
+        }).pipe(Effect.scoped)
+    );
+
+    it.effect("settles a cancelled retained lease's held time", () =>
+      Effect.gen(function* () {
+        const companyId = "meter-cancelled";
+        yield* createCompany(companyId);
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        yield* databases.ensureReady(companyId);
+        const meter = yield* DatabaseMeter.make;
+        const entered = yield* Deferred.make<void>();
+        const owner = yield* Effect.gen(function* () {
+          yield* databases.lease(companyId, false);
+          yield* Deferred.succeed(entered, undefined);
+          yield* Effect.never;
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(DatabaseMeter.current, meter),
+          Effect.forkScoped
+        );
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("23 millis");
+        yield* Fiber.interrupt(owner);
+        yield* TestClock.adjust("29 millis");
+        assert.strictEqual(meter.snapshot(), 23);
+      }).pipe(Effect.scoped)
+    );
+
+    it.effect("adds repeated queue waits without metering unacquired connections", () =>
+      Effect.gen(function* () {
+        const companyId = "meter-queued";
+        yield* createCompany(companyId);
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        yield* databases.ensureReady(companyId);
+        yield* holdConnections(companyId, 4);
+        const meter = yield* DatabaseMeter.make;
+        const recorded = yield* Queue.unbounded<WideEvents.WideEvent>();
+        const refused = yield* Queue.unbounded<void>();
+        const waiting = yield* Queue.unbounded<void>();
+        const clock = yield* Clock.Clock;
+        const events = yield* WideEvents.make.pipe(
+          Effect.provideService(WideEvents.Sink, {
+            write: (event) => Queue.offer(recorded, event).pipe(Effect.asVoid)
+          })
+        );
+        const waiter = yield* events
+          .withEvent(
+            { type: "request", companyId },
+            Effect.forEach([1, 2], () =>
+              databases
+                .lease(companyId, false)
+                .pipe(
+                  Effect.scoped,
+                  Effect.catchTags({ Busy: () => Queue.offer(refused, undefined) })
+                )
+            )
+          )
+          .pipe(
+            Effect.provideService(DatabaseMeter.current, meter),
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              sleep: (duration) =>
+                Duration.toMillis(duration) === 1_000
+                  ? Queue.offer(waiting, undefined).pipe(Effect.andThen(clock.sleep(duration)))
+                  : clock.sleep(duration)
+            }),
+            Effect.forkScoped
+          );
+        yield* Queue.take(waiting);
+        yield* TestClock.adjust("1 second");
+        yield* Queue.take(refused);
+        yield* Queue.take(waiting);
+        yield* TestClock.adjust("1 second");
+        yield* Queue.take(refused);
+        yield* Fiber.join(waiter);
+        const event = yield* Queue.take(recorded);
+        assert.strictEqual(event.type, "request");
+        if (event.type !== "request") return;
+        assert.strictEqual(event.queueWaitMs, 2_000);
+        assert.strictEqual(event.connectionWaitMs, 2_000);
+        assert.strictEqual(meter.snapshot(), 0);
+      }).pipe(Effect.scoped)
+    );
+
+    it.effect("reports PostgreSQL's actual commit result and ignores read-only rollback", () =>
+      Effect.gen(function* () {
+        const companyId = "meter-commit-outcome";
+        yield* createCompany(companyId);
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        yield* databases.ensureReady(companyId);
+        const recorded = yield* Queue.unbounded<WideEvents.WideEvent>();
+        const events = yield* WideEvents.make.pipe(
+          Effect.provideService(WideEvents.Sink, {
+            write: (event) => Queue.offer(recorded, event).pipe(Effect.asVoid)
+          })
+        );
+        yield* events.withEvent(
+          { type: "request", companyId },
+          databases.withCompany(companyId)(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql.withTransaction(sql`SELECT 1 / 0`.pipe(Effect.catch(() => Effect.void)));
+            })
+          )
+        );
+        const aborted = yield* Queue.take(recorded);
+        assert.strictEqual(aborted.type, "request");
+        if (aborted.type !== "request") return;
+        assert.strictEqual(aborted.commitOutcome, "rolled_back");
+        yield* events.withEvent(
+          { type: "request", companyId },
+          databases.withCompany(companyId)(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql.withTransaction(TestClock.adjust("5 millis"));
+              yield* sql
+                .withTransaction(
+                  sql
+                    .unsafe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                    .pipe(Effect.andThen(Effect.fail("close snapshot")))
+                )
+                .pipe(Effect.exit);
+            })
+          )
+        );
+        const committed = yield* Queue.take(recorded);
+        assert.strictEqual(committed.type, "request");
+        if (committed.type !== "request") return;
+        assert.strictEqual(committed.commitOutcome, "committed");
+        assert.strictEqual(committed.dbMs, 5);
+      })
     );
 
     it.effect("bounds shared-query authority headroom even for a one-connection company", () =>

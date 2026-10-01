@@ -111,7 +111,7 @@ const layer = Layer.unwrap(
       OperatingLimits.layer,
       InvocationLog.layer,
       InvocationCapabilities.layer
-    ).pipe(Layer.provide(Testing.layer()))
+    ).pipe(Layer.provideMerge(Testing.layer()))
   )
 );
 const api = HttpApi.make("invocation-http").add(RuntimeGroup);
@@ -279,7 +279,7 @@ const callbackRuntime = Layer.unwrap(
       InvocationLog.layer,
       InvocationCapabilities.layer,
       RuntimeLog.layer
-    ).pipe(Layer.provide(Testing.layer()))
+    ).pipe(Layer.provideMerge(Testing.layer()))
   )
 );
 const callbackSocket = HttpRouter.serve(

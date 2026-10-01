@@ -1,4 +1,5 @@
 import { limitRefusalFields, type GuestProtocol } from "@patchy/api";
+import * as Management from "@patchy/api/management";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -18,6 +19,7 @@ export class ExecutionError extends Schema.TaggedError<ExecutionError>()("Execut
     "production_refused"
   ]),
   limit: Schema.optionalKey(Schema.Struct(limitRefusalFields)),
+  limits: Management.Refusal.fields.limits,
   cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {

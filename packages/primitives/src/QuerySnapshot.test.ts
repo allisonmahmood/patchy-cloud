@@ -117,7 +117,6 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         assert.isTrue(yield* capabilities.settle(capability.token, "deadline"));
         assert.isTrue(Exit.isFailure(yield* Fiber.join(running)));
         yield* resource.settled;
-        assert.strictEqual(resource.dbMs, 0);
         assert.propertyVal(
           yield* resource.run(Effect.succeed("late callback")).pipe(Effect.flip),
           "_tag",
@@ -363,7 +362,6 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         for (let index = 0; index < 4; index++) yield* Queue.take(entered);
         yield* Deferred.succeed(release, undefined);
         yield* Effect.forEach(holders, Fiber.join);
-        assert.strictEqual(resource.dbMs, 3_000);
       }).pipe(Effect.scoped)
   );
 });

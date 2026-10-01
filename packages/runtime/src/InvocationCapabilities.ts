@@ -8,6 +8,8 @@ import {
   type ServerCallReply
 } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import * as DatabaseMeter from "@patchy/analytics/database-meter";
 import { ContractLimits, DeploymentConfig } from "@patchy/limits";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -35,6 +37,12 @@ export interface TreeBudget {
 export interface Counters {
   callbacks: number;
   logBytes: number;
+  outstanding: number;
+  peakOutstanding: number;
+  peakBytes: number;
+  peakLogBytes: number;
+  peakFileBytes: number;
+  readonly operations: Set<string>;
   readonly logs: Array<Schema.Json>;
 }
 export interface Capability {
@@ -49,6 +57,7 @@ export interface Capability {
   readonly refusals: Array<{ readonly failure: RuntimeFailure; readonly status: number }>;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
   readonly snapshot: { value?: Resource };
+  readonly observe: <A, E, R>(work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 export interface Issue {
   readonly binding: Binding.Binding["Service"];
@@ -162,6 +171,10 @@ export const make = Effect.gen(function* () {
       );
   };
   const chargeBytes: InvocationCapabilities["Service"]["chargeBytes"] = (capability, bytes) => {
+    capability.counters.peakBytes = Math.max(
+      capability.counters.peakBytes,
+      capability.tree.bytes + bytes
+    );
     if (capability.tree.bytes + bytes > byteLimit)
       return rememberRefusal(
         capability,
@@ -260,7 +273,19 @@ export const make = Effect.gen(function* () {
     return entry.capability;
   });
   const issue = Effect.fn("InvocationCapabilities.issue")(function* (input: Issue) {
-    const counters: Counters = { callbacks: 0, logBytes: 0, logs: [] };
+    const counters: Counters = {
+      callbacks: 0,
+      logBytes: 0,
+      logs: [],
+      outstanding: 0,
+      peakOutstanding: 0,
+      peakBytes: 0,
+      peakLogBytes: 0,
+      peakFileBytes: 0,
+      operations: new Set()
+    };
+    const observe = yield* WideEvents.capture;
+    const meter = yield* DatabaseMeter.current;
     const capability: Capability = Object.freeze({
       token: randomBytes(32).toString("base64url"),
       binding: Object.freeze({
@@ -280,6 +305,8 @@ export const make = Effect.gen(function* () {
       reauthorize: input.reauthorize,
       tree: input.tree ?? { bytes: 0 },
       snapshot: {},
+      observe: <A, E, R>(work: Effect.Effect<A, E, R>) =>
+        observe(work.pipe(Effect.provideService(DatabaseMeter.current, meter))),
       ...(input.run === undefined ? {} : { run: input.run }),
       counters,
       logs: counters.logs,
@@ -339,8 +366,28 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* resolve(capability.token, capability.attempt);
       const entry = entries.get(capability.token)!;
+      const queuedAt = yield* Clock.currentTimeMillis;
       const job = entry.gate.withPermits(1)(
-        resolve(capability.token, capability.attempt).pipe(Effect.andThen(effect))
+        Effect.gen(function* () {
+          yield* resolve(capability.token, capability.attempt);
+          yield* capability.observe(
+            WideEvents.add({
+              queueWaitMs: Math.max(0, (yield* Clock.currentTimeMillis) - queuedAt)
+            })
+          );
+          capability.counters.outstanding++;
+          capability.counters.peakOutstanding = Math.max(
+            capability.counters.peakOutstanding,
+            capability.counters.outstanding
+          );
+          return yield* capability.observe(effect).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                capability.counters.outstanding--;
+              })
+            )
+          );
+        })
       );
       // The service owns callback effects, not the HTTP request that waits for their reply.
       const fiber = yield* Effect.forkIn(job, scope);

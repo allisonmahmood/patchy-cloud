@@ -22,6 +22,7 @@ import { OperatingLimits } from "@patchy/limits";
 import * as Sql from "@patchy/sql";
 import { registry } from "@patchy/limits/registry";
 import * as CompanyDatabases from "./CompanyDatabases.js";
+import * as ConnectionTiming from "./ConnectionTiming.js";
 import * as Inventory from "./Inventory.js";
 import * as ResourceChanges from "./ResourceChanges.js";
 
@@ -90,6 +91,7 @@ interface PoolTarget {
 interface CompanyPool extends PoolTarget {
   readonly scope: Scope.Closeable;
   readonly context: Context.Context<SqlClient.SqlClient | CompanyDatabases.CompanyConnection>;
+  readonly reserve: ConnectionTiming.Client["reserve"];
 }
 
 const samePool = (left: PoolTarget, right: PoolTarget) =>
@@ -180,6 +182,14 @@ export const make = Effect.gen(function* () {
     execute: () => platform`SELECT ${columns} FROM company_databases WHERE status = 'ready'`
   });
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
+  const timedPool = (database: string, maximum: number) =>
+    pool(settings.dataUrl, maximum, database).pipe(
+      Effect.flatMap((sql) =>
+        ConnectionTiming.make(PgClient.makeCompiler()).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        )
+      )
+    );
 
   const claim = Effect.fn("CompanyDatabases.claim")(
     function* (companyId: string) {
@@ -201,7 +211,7 @@ export const make = Effect.gen(function* () {
 
   const upgradeReady = Effect.fn("CompanyDatabases.upgradeReady")(
     function* (placement: CompanyDatabases.Placement) {
-      const data = yield* pool(settings.dataUrl, 1, placement.databaseName);
+      const { sql: data } = yield* timedPool(placement.databaseName, 1);
       yield* Inventory.upgrade.pipe(Effect.provideService(SqlClient.SqlClient, data));
       return placement;
     },
@@ -248,7 +258,7 @@ export const make = Effect.gen(function* () {
           );
           yield* Effect.scoped(
             Effect.gen(function* () {
-              const data = yield* pool(settings.dataUrl, 1, claimed.databaseName);
+              const { sql: data } = yield* timedPool(claimed.databaseName, 1);
               yield* Effect.gen(function* () {
                 yield* data.unsafe(`REVOKE ALL ON DATABASE ${name} FROM PUBLIC`);
                 yield* data.unsafe(`GRANT CONNECT, TEMPORARY ON DATABASE ${name} TO ${dataRole}`);
@@ -371,7 +381,7 @@ export const make = Effect.gen(function* () {
             current = undefined;
             yield* Scope.close(previous.scope, Exit.void);
           }
-          const sql = yield* pool(settings.dataUrl, maximum, next.placement.databaseName).pipe(
+          const timed = yield* timedPool(next.placement.databaseName, maximum).pipe(
             Effect.mapError(
               (cause) =>
                 new CompanyDatabases.CompanyDatabaseError({
@@ -384,8 +394,9 @@ export const make = Effect.gen(function* () {
           current = {
             ...next,
             scope,
-            context: Context.make(SqlClient.SqlClient, sql).pipe(
-              Context.add(CompanyDatabases.CompanyConnection, sql)
+            reserve: timed.reserve,
+            context: Context.make(SqlClient.SqlClient, timed.sql).pipe(
+              Context.add(CompanyDatabases.CompanyConnection, timed.sql)
             )
           };
         }).pipe(
@@ -406,8 +417,19 @@ export const make = Effect.gen(function* () {
           return Effect.gen(function* () {
             if (failed) return yield* failed;
             if (opening) return Option.none();
-            if (active + 1 > target!.connections.value - (reserveAuthority ? 1 : 0))
+            if (active + 1 > target!.connections.value - (reserveAuthority ? 1 : 0)) {
+              yield* WideEvents.enrich({
+                limits: [
+                  {
+                    limitId: "company.connections",
+                    value: target!.connections.value,
+                    peak: active,
+                    configRevision: target!.connections.configRevision
+                  }
+                ]
+              });
               return Option.none();
+            }
             if (!current || !samePool(current, target!)) {
               if (active > 0) return Option.none();
               opening = true;
@@ -427,7 +449,7 @@ export const make = Effect.gen(function* () {
                 }
               ]
             });
-            return Option.some(current!.context);
+            return Option.some(current!);
           }).pipe(
             Effect.ensuring(
               Effect.suspend(() => {
@@ -458,18 +480,31 @@ export const make = Effect.gen(function* () {
         }
         const immediate = yield* tryAcquire(reserveAuthority);
         if (Option.isSome(immediate)) return immediate.value;
-        const startedAt = yield* Clock.currentTimeMillis;
+        const startedAt = yield* Clock.monotonicTimeNanos;
         return yield* Effect.acquireUseRelease(
           Effect.suspend(() => {
             if (waiters + 1 > waiterLimit.value) {
-              return Effect.fail(
-                new CompanyDatabases.Busy({
-                  resource: "connection queue",
-                  scope: "company",
-                  limitId: waiterLimit.limitId,
-                  value: waiterLimit.value,
-                  retryAfterSeconds: Math.max(1, Math.ceil(waitLimit.value / 1_000))
-                })
+              return WideEvents.enrich({
+                limits: [
+                  {
+                    limitId: waiterLimit.limitId,
+                    value: waiterLimit.value,
+                    peak: waiters,
+                    configRevision: waiterLimit.configRevision
+                  }
+                ]
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new CompanyDatabases.Busy({
+                      resource: "connection queue",
+                      scope: "company",
+                      limitId: waiterLimit.limitId,
+                      value: waiterLimit.value,
+                      retryAfterSeconds: Math.max(1, Math.ceil(waitLimit.value / 1_000))
+                    })
+                  )
+                )
               );
             }
             waiters++;
@@ -510,10 +545,9 @@ export const make = Effect.gen(function* () {
           () =>
             Effect.gen(function* () {
               waiters--;
-              const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+              const elapsed = Number((yield* Clock.monotonicTimeNanos) - startedAt) / 1_000_000;
+              yield* WideEvents.add({ queueWaitMs: elapsed, connectionWaitMs: elapsed });
               yield* WideEvents.enrich({
-                queueWaitMs: elapsed,
-                connectionWaitMs: elapsed,
                 limits: [
                   {
                     limitId: waitLimit.limitId,
@@ -604,7 +638,7 @@ export const make = Effect.gen(function* () {
   const withCompany: CompanyDatabases.CompanyDatabases["Service"]["withCompany"] =
     (companyId) => (effect) =>
       Effect.scoped(
-        Effect.flatMap(acquireContext(companyId, false), (context) =>
+        Effect.flatMap(acquireContext(companyId, false), ({ context }) =>
           effect.pipe(Effect.provideContext(context))
         )
       );
@@ -613,9 +647,8 @@ export const make = Effect.gen(function* () {
     companyId: string,
     reserveAuthority: boolean
   ) {
-    const context = yield* acquireContext(companyId, reserveAuthority);
-    const sql = Context.get(context, CompanyDatabases.CompanyConnection);
-    const connection = yield* sql.reserve.pipe(
+    const acquired = yield* acquireContext(companyId, reserveAuthority);
+    const { connection, release } = yield* acquired.reserve.pipe(
       Effect.mapError(
         (cause) =>
           new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
@@ -645,6 +678,7 @@ export const make = Effect.gen(function* () {
       run: (effect) => effect.pipe(Effect.provideContext(retainedContext)),
       authority: withCompany(companyId),
       destroy: () => {
+        release();
         native.base.fatal(
           new SqlError.SqlError({
             reason: new SqlError.ConnectionError({

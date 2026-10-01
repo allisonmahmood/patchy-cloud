@@ -375,6 +375,34 @@ call company integrations as the viewer and run sibling queries under their
 remaining deadline. Mutation transactions and keys, company tasks and the publish
 path remain separate work.
 
+Metering records calls and database-held milliseconds from the first admitted
+invocation, independently of best-effort request events. Invocation rows record
+host elapsed time, guest-reported time, callbacks, argument and result bytes,
+attempts and outcome. Quiet top-level queries instead increment exact UTC-minute
+rollups; queries that log or fail and nested queries have invocation rows, never
+both records for the same run. Settlement atomically deduplicates each rollup
+increment by run id for one hour. A client retry is a new run.
+Quiet query replies do not wait for persistence. Settlement retries recoverable
+SQL failures, including ambiguous acknowledgements, with the same id for at most
+five minutes. Exponential delays start at 100 milliseconds, use jitter and cap at
+10 seconds. The budget covers stalled SQL as well as retries and ends before the
+deduplication window. Permanent failures and exhausted budgets produce a safe
+diagnostic and stop settlement. A host crash or abandoned settlement can lose a
+run; a lost acknowledgement can leave an already-counted run. Dedup-id pruning
+is separate from the atomic increment, so pruning failures do not replay it.
+
+Database time excludes connection queues and includes a nested call's held
+connections in its parent action. Host elapsed time, guest time and database time
+include child work; do not sum them across an invocation tree. Callback counts,
+bytes and attempts are additive. Request events report observed limit peaks with their effective
+configuration revisions and name the highest peak-to-bound ratio in
+`closestLimitId`. They are not metering storage.
+
+The metering model records bound seconds, database time and calls; billing decides
+what is priced. Bound seconds need the fleet binding history, which is not built
+yet. Nested mutation metering uses the same connection accounting when #400 adds
+mutation execution; this stack still refuses nested mutations.
+
 The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
 internet: everything it does goes through Patchy, as you, while you have the

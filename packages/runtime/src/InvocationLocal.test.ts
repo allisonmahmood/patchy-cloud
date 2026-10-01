@@ -1,11 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { CURRENT_RELEASE, TablePage, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { newInternalId, sha256 } from "@patchy/core";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
@@ -51,6 +55,7 @@ const binding: Binding.Binding["Service"] = {
     files: {},
     uses: {},
     handlers: {
+      "demo.quiet": { kind: "query", args: {}, result: { kind: "json" } },
       "demo.read": { kind: "query", args: {}, result: { kind: "json" } },
       "demo.fail": { kind: "query", args: {}, result: { kind: "json" } },
       "demo.queryTimeout": { kind: "query", args: {}, result: { kind: "json" } },
@@ -114,6 +119,7 @@ it.live(
             await build({
               stdin: {
                 contents: `import { query, action, createGuest, t } from "patchy/server";
+      const quiet = query({args:{},result:t.json(),handler:async ctx => await ctx.tables.notes.list()});
       const read = query({args:{},result:t.json(),handler:async ctx => { ctx.log("Reading own notes"); return {viewer:ctx.viewer.user.id, page:await ctx.tables.notes.list()}; }});
       const fail = query({args:{},result:t.json(),handler:async () => { throw new Error("private diagnostic 397"); }});
       const write = action({args:{},result:t.json(),handler:async ctx => await ctx.tables.notes.insert({title:"Attributed write"})});
@@ -135,7 +141,7 @@ it.live(
         await waiting.promise;
         return null;
       }});
-      export default createGuest({demo:{read,fail,write,nested,forbidden,queryTimeout,writeThenTimeout}});`,
+      export default createGuest({demo:{read,quiet,fail,write,nested,forbidden,queryTimeout,writeThenTimeout}});`,
                 resolveDir: new URL("../../execution/src", import.meta.url).pathname,
                 sourcefile: "invocation-fixture.ts"
               },
@@ -205,6 +211,47 @@ it.live(
         ["Gateway proof"]
       );
       assert.isNull(read.value.page.cursor);
+      const locked = yield* Deferred.make<void>();
+      const unlock = yield* Deferred.make<void>();
+      const persistence = yield* platform
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* platform`LOCK TABLE runtime_query_rollups IN ACCESS EXCLUSIVE MODE`;
+            yield* Deferred.succeed(locked, undefined);
+            yield* Deferred.await(unlock);
+          })
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(locked);
+      // Successful guest replies do not wait for platform metering persistence.
+      yield* Effect.forEach([1, 2, 3], () => call("demo.quiet"), { concurrency: 3 });
+      yield* Deferred.succeed(unlock, undefined);
+      yield* Fiber.join(persistence);
+      const quiet = yield* platform<{ runs: string; callbacks: string }>`
+        SELECT runs::text, callbacks::text FROM runtime_query_rollups
+        WHERE patch_id = ${binding.patchId} AND handler = 'demo.quiet'`.pipe(
+        Effect.repeat({
+          until: (rows) => rows.reduce((sum, row) => sum + Number(row.runs), 0) === 3
+        })
+      );
+      assert.strictEqual(
+        quiet.reduce((sum, row) => sum + Number(row.runs), 0),
+        3
+      );
+      assert.strictEqual(
+        quiet.reduce((sum, row) => sum + Number(row.callbacks), 0),
+        3
+      );
+      assert.deepStrictEqual(
+        yield* platform`
+        SELECT id FROM runtime_invocations WHERE patch_id = ${binding.patchId} AND handler = 'demo.quiet'`,
+        []
+      );
+      assert.deepStrictEqual(
+        yield* platform`
+        SELECT handler FROM runtime_query_rollups WHERE patch_id = ${binding.patchId} AND handler = 'demo.read'`,
+        []
+      );
       assert.deepStrictEqual(yield* call("demo.nested"), read);
       const tree = yield* platform<{
         parent_handler: string;
@@ -221,8 +268,40 @@ it.live(
           child_outcome: "success"
         }
       ]);
+      const held = yield* platform<{ parent_ms: number; child_ms: number }>`
+        SELECT parent.db_ms AS parent_ms, child.db_ms AS child_ms
+        FROM runtime_invocations child JOIN runtime_invocations parent ON child.parent_id = parent.id
+        WHERE parent.patch_id = ${binding.patchId} AND parent.handler = 'demo.nested'`;
+      assert.isAbove(held[0]!.child_ms, 0);
+      assert.isAtLeast(held[0]!.parent_ms, held[0]!.child_ms);
       assert.strictEqual((yield* call("demo.forbidden").pipe(Effect.flip)).code, "access_denied");
-      const written = yield* call("demo.write");
+      const eventQueue = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(eventQueue, event).pipe(Effect.asVoid)
+        })
+      );
+      const written = yield* events.withEvent({ type: "request" }, call("demo.write"));
+      const event = yield* Queue.take(eventQueue);
+      if (event.type !== "request") return assert.fail("Expected request event");
+      assert.include(event, {
+        handler: "demo.write",
+        kind: "action",
+        attempts: 1,
+        callbacks: 1,
+        commitOutcome: "committed"
+      });
+      assert.includeMembers(event.operations!, ["server.call", "tables.insert"]);
+      assert.isAbove(event.dbMs!, 0);
+      assert.isDefined(event.closestLimitId);
+      assert.isTrue(
+        event.limits!.some(
+          (limit) =>
+            limit.limitId === "company.connections" &&
+            limit.peak >= 1 &&
+            limit.configRevision.deploymentRevision !== ""
+        )
+      );
       assert.deepInclude(written, { ok: true });
       const rows = yield* platform<{
         user_id: string | null;

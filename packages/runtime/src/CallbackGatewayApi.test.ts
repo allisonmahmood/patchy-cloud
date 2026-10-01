@@ -159,6 +159,7 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
         value: 10
       });
       assert.strictEqual(writes, 0);
+      assert.strictEqual(capability.counters.peakFileBytes, 12);
     }).pipe(
       Effect.scoped,
       Effect.provideService(ContractLimits.overrides, { "tier2.callbacks.fileBytes": 10 })

@@ -4583,24 +4583,28 @@ describe("repo publish recovery", () => {
     '<object data="blob:https://example.test/temporary"></object>',
     `<iframe srcdoc="&lt;img src='blob:https://example.test/temporary'&gt;"></iframe>`,
     '<style>body { background-image: url("blob:https://example.test/temporary"); }</style>'
-  ])("refuses document-local blob assets in built HTML: %s", async (asset) => {
-    const instance = await stubInstance((request, respond, disconnect) => {
-      if (request.url === "/api/publish") return respond(201, publish(201, "abcdefghijkl", 1));
-      projectHandler(request, respond, disconnect);
-    });
-    const dir = publishTree(instance.url);
-    const options = {
-      cwd: dir,
-      stateDir: tempDir(),
-      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-    };
-    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    const entry = path.join(dir, "index.html");
-    writeFileSync(entry, readFileSync(entry, "utf8").replace("</body>", `${asset}</body>`));
-    const result = await runCli(["publish", "--json"], options);
-    expect(result).toMatchObject({ status: 1, stdout: "" });
-    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-  });
+  ])(
+    "refuses document-local blob assets in built HTML: %s",
+    async (asset) => {
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url === "/api/publish") return respond(201, publish(201, "abcdefghijkl", 1));
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = publishTree(instance.url);
+      const options = {
+        cwd: dir,
+        stateDir: tempDir(),
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      };
+      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+      const entry = path.join(dir, "index.html");
+      writeFileSync(entry, readFileSync(entry, "utf8").replace("</body>", `${asset}</body>`));
+      const result = await runCli(["publish", "--json"], options);
+      expect(result).toMatchObject({ status: 1, stdout: "" });
+      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+    },
+    30_000
+  ); // Refresh and publish run real config, compiler and Vite child processes.
 
   it.each([
     ["image-set", 'image-set("https://example.test/pixel.png" 1x)'],

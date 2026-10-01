@@ -46,12 +46,14 @@ const outcomeFields = {
   outcome: Schema.optionalKey(Outcome),
   code: Schema.optionalKey(Schema.String),
   limitId: Schema.optionalKey(Schema.String),
+  closestLimitId: Schema.optionalKey(Schema.String),
   limits: Schema.optionalKey(Schema.Array(LimitPeak))
 };
 const invocationMetrics = {
   queueWaitMs: Schema.optionalKey(Schema.Number),
   connectionWaitMs: Schema.optionalKey(Schema.Number),
   guestMs: Schema.optionalKey(Schema.Number),
+  dbMs: Schema.optionalKey(Schema.Number),
   callbacks: Schema.optionalKey(Schema.Number),
   attempts: Schema.optionalKey(Schema.Number),
   argsBytes: Schema.optionalKey(Schema.Number),
@@ -241,6 +243,37 @@ export const enrich = (fields: EventFields): Effect.Effect<void> =>
     if (event) addFields(event, fields);
   });
 
+/** Carry only the event accumulator across the private callback transport. */
+export const capture = Effect.map(
+  current,
+  (event) =>
+    <A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      Effect.provideService(work, current, event)
+);
+
+/** Add disjoint measurements; elapsed invocation time is never additive. */
+export const add = (
+  fields: Partial<
+    Record<
+      | "queueWaitMs"
+      | "connectionWaitMs"
+      | "dbMs"
+      | "callbacks"
+      | "attempts"
+      | "argsBytes"
+      | "resultBytes"
+      | "requestBytes"
+      | "responseBytes",
+      number
+    >
+  >
+): Effect.Effect<void> =>
+  Effect.map(current, (event) => {
+    if (!event || event.closed) return;
+    for (const [key, value] of Object.entries(fields))
+      event.fields[key] = Number(event.fields[key] ?? 0) + value;
+  });
+
 export const operation = (name: string): Effect.Effect<void> =>
   Effect.map(current, (event) => {
     if (event && !event.closed) event.operations.add(name);
@@ -310,6 +343,17 @@ export const make = Effect.gen(function* () {
               };
               if (event.operations.size > 0) draft.operations = [...event.operations];
               if (event.limits.size > 0) draft.limits = [...event.limits.values()];
+              if (event.limits.size > 0) {
+                let closest: LimitPeak | undefined;
+                for (const limit of event.limits.values())
+                  if (
+                    limit.value > 0 &&
+                    (closest === undefined ||
+                      limit.peak / limit.value > closest.peak / closest.value)
+                  )
+                    closest = limit;
+                if (closest !== undefined) draft.closestLimitId = closest.limitId;
+              }
               const record: Record<string, unknown> = {};
               for (const key of Object.keys(schemas[seed.type].fields)) {
                 if (draft[key] !== undefined) record[key] = draft[key];

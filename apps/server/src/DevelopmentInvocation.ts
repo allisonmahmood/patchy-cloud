@@ -47,6 +47,7 @@ type Dependencies =
   | RuntimeLog.RuntimeLog
   | InvocationCapabilities.InvocationCapabilities
   | InvocationLog.InvocationLog
+  | SqlClient.SqlClient
   | RuntimeQuerySnapshot.QuerySnapshot
   | OperatingLimits.OperatingLimits;
 

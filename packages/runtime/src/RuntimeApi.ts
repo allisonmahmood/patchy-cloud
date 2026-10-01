@@ -40,7 +40,10 @@ const recordFailure = Effect.fnUntraced(function* (error: Runtime.RuntimeError) 
     outcome:
       error.code === "unknown_outcome"
         ? "unknown_outcome"
-        : error.code === "source_unavailable" || error.code === "timeout"
+        : error.code === "source_unavailable" ||
+            error.code === "timeout" ||
+            error.code === "handler_failed" ||
+            error.code === "handler_timeout"
           ? "failure"
           : "refused",
     code: error.code,
@@ -72,16 +75,40 @@ const forEachBodyChunk = Effect.fn("RuntimeApi.forEachBodyChunk")(function* (
 const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Runtime["Service"]) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (Number(request.headers["content-length"]) > runtime.maxCallBytes)
-    return yield* new Runtime.TooLarge({
-      maxBytes: runtime.maxCallBytes,
-      limitId: runtime.maxCallLimitId
-    });
+    return yield* WideEvents.enrich({
+      limits: [
+        {
+          limitId: runtime.maxCallLimitId,
+          value: runtime.maxCallBytes,
+          peak: Number(request.headers["content-length"]),
+          configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+        }
+      ]
+    }).pipe(
+      Effect.andThen(
+        new Runtime.TooLarge({
+          maxBytes: runtime.maxCallBytes,
+          limitId: runtime.maxCallLimitId
+        })
+      )
+    );
   let size = 0;
   let text = "";
   const decoder = new TextDecoder();
   yield* forEachBodyChunk(request, (chunk) =>
     Effect.gen(function* () {
       size += chunk.byteLength;
+      yield* WideEvents.enrich({
+        requestBytes: size,
+        limits: [
+          {
+            limitId: runtime.maxCallLimitId,
+            value: runtime.maxCallBytes,
+            peak: size,
+            configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+          }
+        ]
+      });
       if (size > runtime.maxCallBytes)
         return yield* new Runtime.TooLarge({
           maxBytes: runtime.maxCallBytes,
@@ -107,6 +134,17 @@ const readFile = Effect.fn("RuntimeApi.readFile")(function* (maxBytes: number) {
   yield* forEachBodyChunk(request, (chunk) =>
     Effect.gen(function* () {
       size += chunk.byteLength;
+      yield* WideEvents.enrich({
+        requestBytes: size,
+        limits: [
+          {
+            limitId: "runtime.file.bytes",
+            value: maxBytes,
+            peak: size,
+            configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+          }
+        ]
+      });
       if (size > maxBytes)
         return yield* new Runtime.TooLarge({ maxBytes, limitId: "runtime.file.bytes" });
       chunks.push(chunk);
@@ -158,6 +196,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         return HttpServerResponse.jsonUnsafe(body, { headers: noStore });
       }
       const result = yield* runtime.getFile(input);
+      yield* WideEvents.enrich({
+        limits: [
+          {
+            limitId: "runtime.file.bytes",
+            value: runtime.fileBytes,
+            peak: result.bytes.byteLength,
+            configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+          }
+        ]
+      });
       return HttpServerResponse.uint8Array(result.bytes, {
         contentType: result.contentType,
         headers: {
@@ -187,15 +235,43 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
                 )
             ),
             Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: noStore })),
-            Effect.catch(recordFailure)
+            Effect.catch(recordFailure),
+            Effect.tap((response) =>
+              WideEvents.enrich({
+                responseBytes:
+                  response.body._tag === "Uint8Array" ? response.body.body.byteLength : 0
+              })
+            )
           )
         )
       )
       .handleRaw("putFile", ({ params }) =>
-        events.withEvent({ type: "request" }, file(params).pipe(Effect.catch(recordFailure)))
+        events.withEvent(
+          { type: "request" },
+          file(params).pipe(
+            Effect.catch(recordFailure),
+            Effect.tap((response) =>
+              WideEvents.enrich({
+                responseBytes:
+                  response.body._tag === "Uint8Array" ? response.body.body.byteLength : 0
+              })
+            )
+          )
+        )
       )
       .handleRaw("getFile", ({ params }) =>
-        events.withEvent({ type: "request" }, file(params).pipe(Effect.catch(recordFailure)))
+        events.withEvent(
+          { type: "request" },
+          file(params).pipe(
+            Effect.catch(recordFailure),
+            Effect.tap((response) =>
+              WideEvents.enrich({
+                responseBytes:
+                  response.body._tag === "Uint8Array" ? response.body.body.byteLength : 0
+              })
+            )
+          )
+        )
       );
   })
 );
