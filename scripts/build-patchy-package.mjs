@@ -75,8 +75,9 @@ const common = {
   sourcemap: true,
   tsconfig: path.join(packageDir, "tsconfig.json"),
   conditions: ["development"],
+  define: { __PATCHY_PACKED_LOADER__: "true" },
   // Its WASM/data and worker-relative imports must remain a real package. npm packs it with Patchy.
-  external: ["@electric-sql/pglite", "@electric-sql/pglite/*"],
+  external: ["@electric-sql/pglite", "@electric-sql/pglite/*", "esbuild"],
   // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.
   alias: { "css-tree": path.join(packageDir, "node_modules/css-tree/dist/csstree.esm.js") }
 };
@@ -92,7 +93,7 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["config", "client", "server"].map((name) =>
+  entryPoints: ["config", "client", "server", "guest"].map((name) =>
     path.join(packageDir, `src/${name}.ts`)
   ),
   outdir: distDir,
@@ -125,6 +126,18 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   banner: { js: requireBanner }
+});
+await esbuild.build({
+  entryPoints: [path.join(repoRoot, "packages/execution/src/loader.ts")],
+  outfile: path.join(distDir, "loader.js"),
+  bundle: true,
+  format: "esm",
+  platform: "browser",
+  target: "es2022",
+  conditions: common.conditions,
+  external: ["cloudflare:workers"],
+  minify: true,
+  legalComments: "none"
 });
 const declarations = await rollup({
   input: Object.fromEntries(

@@ -104,7 +104,7 @@ const layer = Layer.unwrap(
   Layer.provide(Layer.succeed(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })),
   Layer.provide(
     Layer.succeed(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some(version))
+      find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
     })
   ),
   Layer.provide(
@@ -272,7 +272,7 @@ const callbackRuntime = Layer.unwrap(
   Layer.provide(Layer.succeed(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })),
   Layer.provide(
     Layer.succeed(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some(version))
+      find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
     })
   ),
   Layer.provide(

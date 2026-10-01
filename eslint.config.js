@@ -46,7 +46,7 @@ export default tseslint.config(
   },
   {
     files: ["packages/patchy/src/**/*.{ts,mts,cts,tsx}"],
-    // Shipped CLI code is wire-only; the three local-runtime composition modules use explicit dev surfaces.
+    // CLI imports stay wire-only except for isolated server-artifact inspection.
     ignores: ["**/*.test.ts", "packages/patchy/src/dev{Preparation,Resources,Server}.ts"],
     rules: {
       "no-restricted-imports": [
@@ -55,9 +55,9 @@ export default tseslint.config(
           patterns: [
             {
               regex:
-                "^@patchy/(?!(api|api/handlers|api/guest|api/canonical-args|api/query-config|core)$)",
+                "^@patchy/(?!(api|api/handlers|api/guest|api/canonical-args|api/query-config|core|execution/inspection)$)",
               message:
-                "The CLI may depend only on @patchy/api, its engine-neutral contract modules and @patchy/core."
+                "The CLI may depend only on @patchy/api, engine-neutral contract modules, @patchy/core and isolated execution/inspection."
             },
             {
               regex: "(?!^\\.\\./package\\.json$)(^|/)\\.\\.(/|$)",

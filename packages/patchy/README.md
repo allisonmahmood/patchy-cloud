@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and `patchy/dev` local runtime. The CLI initializes patch repos, manages their declarations and generated files, runs them locally over fixtures, publishes tier 0 and tier 1 repos or static HTML files, changes sharing and takes patches down. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link read the current version.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes static HTML files and tier 0, 1 and 2 repos. Tier 2 publication runs on dev and test instances; production admission requires the fleet executor. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -125,12 +125,11 @@ It ignores stale frames and preserves the last value on an error. Retryable
 source refusals recover on restore or reshare; permanent refusals end that
 subscription.
 
-`patchy/server` also exports `createGuest`, the wire-1 entry for server bundles.
-Generation does not emit that entry yet. `createGuest` derives descriptors from
-the actual handler exports, builds kind-specific contexts and sends runtime
-operations through an invocation-bound
-RPC stub. It receives no callback credential. File bytes stay binary, and host
-refusals and declared business errors retain their structured replies.
+The CLI's server build wraps discovered modules with `createGuest`, the wire-1
+entry exported by `patchy/server`. It derives descriptors from actual handler
+exports, builds kind-specific contexts and sends operations through an
+invocation-bound RPC stub. It receives no callback credential. File bytes stay
+binary; host refusals and declared business errors retain their structured replies.
 SDK query-shape validation preserves its own `invalid_request` refusals without
 trusting arbitrary handler-created `PatchyError` objects.
 
@@ -155,11 +154,12 @@ stream's server clock. An `unknown_outcome` error offers `retry()` with the
 same key and captured arguments; a repeat returns the committed result.
 A new call is not that retry and can duplicate a write. Actions are never replayed.
 
-The tier 2 `patchy dev` lifecycle and server watch, production hosting and
-tier 2 publishing land separately. The `patchy-server` skill documents handler
-behavior and embeds registry-generated limits;
-tier 2 init will install it. Authorised handles and staged upload adoption remain
-reserved contracts.
+Tier 2 publication builds and uploads both HTML and server artifacts, then the
+instance re-derives handler descriptors from stored bytes before recording the
+version. It runs on the local executor in dev and test instances. Production
+hosting, the tier 2 `patchy dev` lifecycle and server watch remain separate work.
+The `patchy-server` skill documents handler behavior and registry limits.
+Authorised handles and staged upload adoption remain reserved contracts.
 
 ### Config
 
@@ -723,19 +723,32 @@ working for before forcing.
 
 Repo publish first recovers `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`.
 Otherwise it checks the exact pin, executing CLI and installed runtime against
-the instance release; executes config; checks the generated release, manifest version
-and declaration stamps in `patchy/_generated/index.json`; builds with Vite and
-checks page imports; runs `tsc --noEmit`; and checks the evident tier. Stale generation fails locally with
-`stale_generated` and “declarations changed; run `patchy refresh`”, before the build. Leftover
-files or external resource dependencies fail loudly. Bundle inspection checks
+the instance release; executes config; checks generated declarations and server
+module names; builds with the repo's Vite toolchain; checks both import graphs;
+runs `tsc --noEmit`; and checks the evident tier. Stale generation fails locally
+with `stale_generated` before the build; run `patchy refresh`.
+Leftover files or external resource dependencies fail loudly. Bundle inspection checks
 resource completeness: embed resources, inline scripts and styles, and remove
 CSS `@import`. It does not duplicate core's tier 0 safe-HTML policy or restrict
 hyperlinks: fragment, relative and external anchors have the same acceptance in
 both tiers, while the runtime sandbox still governs navigation.
-The local HTML cap is 512 KiB at tier 0 and 10 MiB at tier 1; either excess is
-`too_large`, with a largest-contributor report to guide reduction. `server/`
-requires unsupported tier 2; scripts require at least tier 1. A failed repo
-build never falls back to a static file.
+The local HTML cap is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2; either excess
+is `too_large`, with a largest-contributor report. `server/` below tier 2 remains
+`tier_mismatch`; scripts require at least tier 1. A failed repo build never falls
+back to a static file.
+
+Tier 2 bundles `server/` into one closed module with no dynamic imports.
+The server graph allows `patchy/server`, `patchy/csv` when available, generated
+server helpers and company code. The page imports server modules only as types.
+`handlers` and `sdkImports` are recorded in the manifest. The instance inspects
+the stored server bytes in a throwaway process; descriptor disagreement, a
+top-level throw, an unresolved import or an unfinished initializer is
+`invalid_manifest`, exit 2. Local descriptor failures are exit 1. Zero handlers
+publishes with a warning.
+
+Every publish JSON success includes `artifacts.html: { sha256, bytes }`.
+Tier 2 adds `artifacts.server: { sha256, bytes }` and
+`handlers: [{ name, kind }]`, sorted by name. Recovery persists both bodies.
 
 The complete request, owner and local notices are persisted in an atomically
 selected attempt directory before sending; recovery retains those notices.
@@ -775,11 +788,11 @@ Every patch has an address at `/<company>/<name>` and numbered versions at `/<co
 
 Before sending, the CLI authenticates the publishing key and saves the whole request, a fresh `publishKey`, the owning user ID, the original file path and cache application context in its instance-scoped state directory. The next `publish` authenticates again and recovers that attempt **before** checking today's file, cache, flags or release. A replacement token for the same owner can recover it; a different user is refused locally without sending the saved content or deleting the attempt. A successful replay updates the original file's cache and exits without another version, even if you passed a different file or `--new`.
 
-Recovery accepts retained receipts from before description metadata was added.
+Recovery accepts retained receipts from before description or artifact metadata was added.
 It validates the receipt before applying its patch identity and clearing the
 attempt. Under `--json`, the retained fields are preserved without inventing
-`description` or `descriptionUpdatedAt`; fresh publishes still require both
-fields from the instance.
+`description`, `descriptionUpdatedAt` or `artifacts`. Fresh publishes require
+all three fields from the instance.
 
 Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. A definitive refusal clears it so you can correct the input or target state and start a fresh attempt. The complete [definitive-refusal clearing list in ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals) includes ownership and lifecycle refusals. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
 
@@ -788,7 +801,7 @@ If the selected attempt settles before a competing invocation can read it, that
 invocation exits locally asking to run publish again rather than sending its own
 unselected payload.
 
-The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and managed set. Repo publishing admits tier 0 and tier 1 with tables, stores, shared-table declarations and resolved Postgres connections. New local dev starts check the same release; a running session survives upgrades.
+The executing CLI must match the instance release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance mismatch exits 2 with `kind: "rejected"`. Install the package from `GET /api/release`, or run `patchy refresh` inside a repo. Repo publishing admits tier 0, 1 and 2 with declared resources; tier 2 production admission requires fleet execution. New local dev starts check the same release; a running session survives upgrades.
 
 File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
@@ -813,6 +826,15 @@ Change an existing patch's sharing without publishing a version. Name the file i
 
 From a published repo, `patchy share company|public` uses `patchy.json` without
 a file or `--patch`. An unpublished repo is a local refusal.
+`patchy share --share company|public` selects the same scope explicitly.
+
+Sharing a served tier 2 version publicly is `tier2_not_public`, exit 2, through
+both the CLI and portal. The instance reads the served version, not local config.
+Publishing tier 2 to a public patch requires `patchy publish --share company`.
+To roll a public patch back to tier 2, change its scope to company first.
+While tier 2 is served, older tier 1 pages get only `me`; other direct operations
+are `server_required` until rollback serves tier 1 again. Tier 2 pages always
+use their handlers, even after rollback.
 
 ```sh
 patchy share ./plan.html public

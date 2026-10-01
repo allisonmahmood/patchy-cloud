@@ -49,6 +49,7 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
         : Option.some({
             patchId: patch,
             versionId: version,
+            patchTier: version === tier1VersionId ? 1 : 0,
             companyId: patch === "otherpatch11" ? "cmp_other" : DEV_SEED.companyId,
             manifest: version === tier1VersionId ? { ...manifest, tier: 1 as const } : manifest,
             wireVersion: WIRE_VERSION,

@@ -387,6 +387,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
               (error.code === "release_mismatch" ||
                 error.code === "invalid_manifest" ||
                 error.code === "tier_mismatch" ||
+                error.code === "tier2_not_public" ||
                 error.code === "has_primitives" ||
                 error.code === "patch_not_openable" ||
                 error.code === "connection_not_connected" ||
@@ -534,7 +535,7 @@ const publish = Command.make(
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
-          const { manifest, html, warnings } = yield* prepareRepoPublish(repo, apiToken);
+          const { manifest, html, server, warnings } = yield* prepareRepoPublish(repo, apiToken);
           const project = yield* Project.readRepo(repo);
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
@@ -543,6 +544,7 @@ const publish = Command.make(
             request: new PublishRequest({
               manifest,
               html,
+              ...(server === undefined ? {} : { server }),
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
               ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
               ...(options.force ? { force: true } : {}),
@@ -692,19 +694,36 @@ const share = Command.make(
       Argument.optional
     ),
     scope: Argument.Literals("scope", SharingScope.literals).pipe(Argument.optional),
+    share: Flag.Literals("share", SharingScope.literals).pipe(
+      Flag.withDescription("Who can open the patch: your company or anyone with the link"),
+      Flag.optional
+    ),
     patch: Flag.String("patch").pipe(
       Flag.withDescription("Change sharing for this patch by ID instead of by file"),
       Flag.optional
     )
   },
   (options) =>
-    (Option.isNone(options.scope) && Option.isNone(options.patch) ? runProject : run)(
+    (Option.isNone(options.scope) &&
+      Option.isNone(options.patch) &&
+      (Option.isNone(options.share) || Option.isNone(options.fileOrScope))
+      ? runProject
+      : run)(
       Effect.gen(function* () {
-        // The last positional is always the scope. With --patch it is also the
-        // first, so an optional file argument must not swallow it as a path.
-        const file = Option.isSome(options.scope) ? options.fileOrScope : Option.none<string>();
+        if (Option.isSome(options.share) && Option.isSome(options.scope))
+          return yield* new LocalError({
+            message: "Pass --share or a positional scope, not both."
+          });
+        const file =
+          Option.isSome(options.share) || Option.isSome(options.scope)
+            ? options.fileOrScope
+            : Option.none<string>();
         const scope = yield* decodeSharingScope(
-          Option.getOrUndefined(Option.orElse(options.scope, () => options.fileOrScope))
+          Option.getOrUndefined(
+            Option.orElse(options.share, () =>
+              Option.orElse(options.scope, () => options.fileOrScope)
+            )
+          )
         ).pipe(
           Effect.mapError(
             (cause) =>
@@ -730,7 +749,7 @@ const share = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Change who can open a patch: share <file> company|public or share --patch <id> company|public."
+    "Change who can open a patch: share [file] --share company|public or share --patch <id> company|public."
   )
 );
 

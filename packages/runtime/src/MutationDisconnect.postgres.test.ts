@@ -87,7 +87,7 @@ const services = Layer.mergeAll(
   ),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some(binding))
+      find: () => Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
     })
   )
 );

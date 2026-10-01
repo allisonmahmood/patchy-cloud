@@ -10,6 +10,12 @@ export const release = Context.Reference<string>("@patchy/patches/Release", {
   defaultValue: () => CURRENT_RELEASE
 });
 
+/** The fleet executor is not configured yet; production must not admit local execution. */
+export const tier2Enabled = Config.map(
+  Config.String("NODE_ENV").pipe(Config.withDefault("development")),
+  (environment) => environment !== "production"
+);
+
 /** The required origin a patch's public URL is built on. */
 export const publicBaseUrl = Config.String("PATCHY_PUBLIC_BASE_URL");
 
@@ -38,8 +44,8 @@ export const publishRateLimitPerMinute = Config.Int(
   "PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(registry["rate.publish.perMinute"].default));
 
-/** Room for the HTML bundle escaped into JSON and its manifest. */
+/** Room for both artifacts escaped into JSON and their manifest. */
 export const maxPublishBodyBytes = Config.map(
   Config.all([maxHtmlBytes, maxBundleBytes]),
-  ([htmlBytes, bundleBytes]) => Math.max(htmlBytes, bundleBytes) * 3
+  ([htmlBytes, bundleBytes]) => (Math.max(htmlBytes, bundleBytes) + bundleBytes) * 3
 );

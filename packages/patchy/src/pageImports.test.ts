@@ -34,6 +34,8 @@ import { type Other } from "lodash";
 import type Legacy = require("lodash");
 export type { Missing } from "lodash";
 export { type Other } from "lodash";
+import type { Handler } from "./server/leads.js";
+export type { Handler } from "./server/leads.js";
 document.body.textContent = "Types stay outside the page graph";
 `);
   const result = await build({
@@ -51,6 +53,89 @@ document.body.textContent = "Types stay outside the page graph";
   expect(script).toContain("Types stay outside the page graph");
   expect(script).not.toContain("lodash");
 });
+
+it.each([
+  'import { handler } from "./server/leads.ts"; console.log(handler);',
+  'export { handler } from "./server/leads.ts";',
+  'void import("./server/leads.ts");'
+])("refuses a page runtime import of server code: %s", async (source) => {
+  const root = page(source);
+  mkdirSync(path.join(root, "server"));
+  writeFileSync(path.join(root, "server/leads.ts"), "export const handler = 1;");
+  let refusal: LocalError | undefined;
+  await expect(
+    build({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [
+        pageImports(root, (error) => {
+          refusal = error;
+        })
+      ],
+      build: { write: false }
+    })
+  ).rejects.toThrow();
+  expect(refusal).toMatchObject({ code: "import_refused" });
+});
+
+it.each([
+  ['import "patchy/preact";', "import_refused"],
+  ['import "node:fs";', "import_refused"],
+  ['if (false) void import("./never.ts");', "invalid_manifest"],
+  ['const source = "./never.ts"; void import(source);', "invalid_manifest"]
+])("checks server graph imports before tree shaking: %s", async (source, code) => {
+  const root = page(source);
+  let refusal: LocalError | undefined;
+  await expect(
+    build({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [
+        pageImports(
+          root,
+          (error) => {
+            refusal = error;
+          },
+          { graph: "server" }
+        )
+      ],
+      build: { write: false }
+    })
+  ).rejects.toThrow();
+  expect(refusal).toMatchObject({ code });
+});
+
+it.each(["./shim", "patchy/csv"])(
+  "refuses server dependencies hidden by alias %s",
+  async (source) => {
+    const root = page(`import { value } from ${JSON.stringify(source)}; console.log(value);`);
+    const dependency = path.join(root, "node_modules/foreign/index.js");
+    mkdirSync(path.dirname(dependency));
+    writeFileSync(dependency, "export const value = 42;");
+    let refusal: LocalError | undefined;
+    await expect(
+      build({
+        root,
+        configFile: false,
+        logLevel: "silent",
+        resolve: { alias: { [source]: dependency } },
+        plugins: [
+          pageImports(
+            root,
+            (error) => {
+              refusal = error;
+            },
+            { graph: "server" }
+          )
+        ],
+        build: { write: false }
+      })
+    ).rejects.toThrow();
+    expect(refusal).toMatchObject({ code: "import_refused" });
+  }
+);
 
 it("rechecks nested CSS edits, refuses the actual importer, and recovers through cycles", async () => {
   const root = page('import "./style.css";');

@@ -586,7 +586,7 @@ it.layer(
         HttpClientRequest.post("/api/publish").pipe(
           HttpClientRequest.bearerToken(DEV_SEED.token),
           HttpClientRequest.setHeader("content-type", "application/json"),
-          HttpClientRequest.bodyText(`{"html":"${"x".repeat(2 * 1024 * 1024)}`)
+          HttpClientRequest.bodyText(`{"html":"${"x".repeat(4 * 1024 * 1024)}`)
         )
       );
       assert.deepStrictEqual(yield* answer(tooLarge), {

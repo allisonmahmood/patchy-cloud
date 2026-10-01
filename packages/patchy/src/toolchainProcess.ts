@@ -10,7 +10,11 @@ import { processResult } from "./processResult.js";
 const decodeResult = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Union([
-      Schema.Struct({ ok: Schema.Literal(true), warnings: Schema.Array(Schema.String) }),
+      Schema.Struct({
+        ok: Schema.Literal(true),
+        warnings: Schema.Array(Schema.String),
+        sdkImports: Schema.Array(Schema.String)
+      }),
       Schema.Struct({
         ok: Schema.Literal(false),
         error: Schema.String,
@@ -20,12 +24,17 @@ const decodeResult = Schema.decodeUnknownSync(
   )
 );
 const encodeToolchain = Schema.encodeSync(Schema.fromJsonString(ReleaseToolchain));
+const encodeModules = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 export const runToolchain = Effect.fn("runToolchain")(function* (
   cwd: string,
   operation:
     | { readonly inspect: typeof ReleaseToolchain.Type }
-    | { readonly build: string; readonly toolchain: typeof ReleaseToolchain.Type }
+    | {
+        readonly build: string;
+        readonly toolchain: typeof ReleaseToolchain.Type;
+        readonly serverModules?: readonly string[];
+      }
 ) {
   const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
   const result = yield* processResult(cwd, process.execPath, [
@@ -35,7 +44,12 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
     fileURLToPath(new URL(`./toolchainChild.${extension}`, import.meta.url)),
     ...("inspect" in operation
       ? ["inspect", encodeToolchain(operation.inspect)]
-      : ["build", operation.build, encodeToolchain(operation.toolchain)])
+      : [
+          "build",
+          operation.build,
+          encodeToolchain(operation.toolchain),
+          ...(operation.serverModules === undefined ? [] : [encodeModules(operation.serverModules)])
+        ])
   ]);
   const decoded = yield* Effect.try({
     try: () => decodeResult(result.stdout),
@@ -54,5 +68,5 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
       ...(decoded.code ? { code: decoded.code } : {}),
       cause: result
     });
-  return decoded.warnings;
+  return decoded;
 });

@@ -33,6 +33,7 @@ import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
+import { contentHash } from "../../core/src/index.js";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as Fixtures from "../../patches/src/test/fixtures.js";
 import { registry } from "../../limits/src/registry.js";
@@ -574,7 +575,7 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
     machineTokenId: identity.machine.id,
     title: "SDK failure source",
     objectKey: `patches/${patchId}/versions/1.html`,
-    contentHash: patchId,
+    contentHash: contentHash(patchId),
     fileSize: 1,
     filename: null,
     repoOrg: null,
@@ -955,7 +956,7 @@ it.layer(layer)("SDK company generation", (it) => {
           machineTokenId: identity.machine.id,
           title: "SDK shared source",
           objectKey: `patches/${patchId}/versions/1.html`,
-          contentHash: "sdk-shared",
+          contentHash: contentHash("sdk-shared"),
           fileSize: 1,
           filename: null,
           repoOrg: null,

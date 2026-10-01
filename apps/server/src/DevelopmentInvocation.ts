@@ -20,21 +20,10 @@ import {
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
-
-export class MissingServerBundle extends Schema.TaggedError<MissingServerBundle>()(
-  "MissingServerBundle",
-  { companyId: Schema.String, patchId: Schema.String, versionId: Schema.String }
-) {
-  override get message() {
-    return `No retained server bundle is available for ${this.patchId}/${this.versionId}.`;
-  }
-}
 
 export type StartupError =
   | Config.ConfigError
@@ -47,6 +36,7 @@ type Dependencies =
   | Scope.Scope
   | HttpClient.HttpClient
   | RuntimeLog.RuntimeLog
+  | ServerBundles.ServerBundles
   | InvocationCapabilities.InvocationCapabilities
   | InvocationLog.InvocationLog
   | SqlClient.SqlClient
@@ -54,8 +44,11 @@ type Dependencies =
   | RuntimeMutationTransaction.MutationTransaction
   | OperatingLimits.OperatingLimits;
 
-/** Only the existing repository dev supervisor opts the cloud server into this layer. */
-export const enabled = Config.Boolean("PATCHY_DEV_EXECUTION").pipe(Config.withDefault(false));
+/** Every dev and test host uses the supervised local executor. */
+export const enabled = Config.map(
+  Config.String("NODE_ENV").pipe(Config.withDefault("development")),
+  (environment) => environment !== "production"
+);
 
 export const make: (
   handlers: Readonly<Record<string, Runtime.Handler>>
@@ -68,7 +61,6 @@ export const make: (
 
   const scope = yield* Effect.scope;
   const context = yield* Effect.context<HttpClient.HttpClient>();
-  const bundles = yield* Effect.serviceOption(ServerBundles.ServerBundles);
   const gateway = yield* CallbackGateway.make(handlers);
   const listener = yield* CallbackGatewayApi.listen().pipe(
     Effect.provideService(CallbackGateway.CallbackGateway, gateway)
@@ -106,26 +98,7 @@ export const make: (
       )
   });
   return yield* Invocation.make({ callbackUrl: listener.url }).pipe(
-    Effect.provideService(Executor.Executor, executor),
-    // Tier 2 publication has not supplied retained server bytes yet. Do not treat
-    // stored page HTML as executable code or invent a second storage format.
-    Effect.provideService(
-      ServerBundles.ServerBundles,
-      Option.getOrElse(bundles, () =>
-        ServerBundles.ServerBundles.of({
-          load: (version) =>
-            Effect.fail(
-              new Runtime.SourceUnavailable({
-                cause: new MissingServerBundle({
-                  companyId: version.companyId,
-                  patchId: version.patchId,
-                  versionId: version.versionId
-                })
-              })
-            )
-        })
-      )
-    )
+    Effect.provideService(Executor.Executor, executor)
   );
 });
 
@@ -139,6 +112,7 @@ export const layer = (
   | Wakes.Wakes
   | OperatingLimits.OperatingLimits
   | RuntimeLog.RuntimeLog
+  | ServerBundles.ServerBundles
   | SqlClient.SqlClient
 > =>
   Layer.effect(Invocation.Invocation, make(handlers)).pipe(

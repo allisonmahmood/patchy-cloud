@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 invocation admission, patch identity for own-resource callbacks, viewer reauthorization and bounded settlement are implemented in local execution tests and the existing `pnpm dev` instance's server composition. Hosted tier 2 publication and fleet wiring, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. Production admission remains closed until fleet execution lands. The patch-repo tier 2 dev loop, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -42,7 +42,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tier 0 and tier 1 with tables, stores, shared tables and resolved Postgres connections. Tier 0 obeys the safe-HTML policy; tier 1 runs in the sandbox; higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback moves the pointer to any retained version without creating a version or changing anything else, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables and resolved Postgres connections, and tier 2 on dev and test instances. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -80,9 +80,8 @@ SDK guest, isolated descriptor inspection, process supervisor, private managemen
 listener and supervised local executor are implemented. Runtime now admits and
 settles invocations through a private capability gateway in isolated execution
 tests and the existing `pnpm dev` instance. An eligible `server.call` executes on
-the local executor. Tier 2 publication remains refused until #401; `patchy dev`
-on the production engine belongs to #404. The end-to-end browser path lands with
-those tickets, not through a separate development command or runner.
+the local executor. Published tier 2 pages use the generated handler client in
+the hosted shell. `patchy dev` on the production engine belongs to #404.
 
 ### Building a patch
 
@@ -134,12 +133,18 @@ keyring nor the production runtime log store is loaded.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
-identities and revision stamps, checks page imports while building one self-contained
-HTML bundle, typechecks and checks the evident tier. Stale declarations require `patchy refresh` before
-building; a bundle over 10 MiB names its largest contributors. `server/` is tier 2
-and refused; scripts require at least tier 1. File mode is never a build fallback.
-Tier 0 and tier 1 repos can define tables and stores and declare shared tables
-and Postgres connections.
+stamps and server module names, checks imports on each graph, builds and typechecks.
+All tiers produce one self-contained HTML bundle. Tier 2 also produces one
+closed server module with no dynamic imports. The page may import server types,
+never server implementations. Stale generation requires `patchy refresh`.
+`server/` below tier 2 is `tier_mismatch`; scripts require at least tier 1.
+File mode is never a build fallback. Tables and stores do not determine the tier.
+The manifest records `handlers` and the SDK entry points found in both graphs.
+The server reads the stored server bytes and derives descriptors in a throwaway
+process. Disagreement, a top-level throw, an unfinished initializer or an
+unresolvable module is `invalid_manifest`. Zero handlers publishes with a warning.
+Every JSON success includes `artifacts.html` with SHA-256 and byte count.
+Tier 2 adds `artifacts.server` and `handlers: [{ name, kind }]`, sorted by name.
 
 The **publish key** and complete request are saved under `.patchy/publish/` before
 sending. A create writes its returned id to `patchy.json` before clearing the
@@ -267,9 +272,9 @@ A **tier** is where a patch's code runs, and nothing else. Tier 0 is **static**:
 
 ### What a tier changes, and what it never changes
 
-A tier changes where code runs. It never changes ownership, sharing scopes, what a patch may define or declare, or its publishing, versioning and address model. A person opening a company patch signs in once and lands back on it; that door is the same for a tier 0 page and a tier 1 tool, and sits in front of the page, not inside it. Hosted runtimes are still to come.
+A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev and test instances; production requires fleet execution.
 
-Either built tier can be **public** — anyone with the link, no login. A public tier 0 patch is a static page; a public tier 1 patch can run browser code but receives no company capabilities for anyone, including signed-in members. It may still use the shell's route bridge. An authenticated company-data mode of a public patch is a separate future decision. The proposed tier 2 public model would use the patch's own identity; neither tier 2 nor that identity is built.
+Tiers 0 and 1 can be **public**, open to anyone with the link. A public tier 0 patch is a static page; a public tier 1 patch can run browser code but receives no company capabilities for anyone, including signed-in members. It may still use the shell's route bridge. An authenticated company-data mode of a public patch remains deferred. **Public tier 2 is deferred**: the patch identity grants no anonymous access. `tier2_not_public` refuses public sharing of a served tier 2 version, and a tier 2 publish to a public patch requires explicit `--share company`.
 
 ### Tier 0 — static
 
@@ -361,9 +366,11 @@ Tier 1 runs only while the viewer has the patch open. It cannot run background w
 
 ### Tier 2 — hosted
 
-Tier 2 is decided in [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md),
-but tier 2 publishing remains refused. Its engine, inspection, supervisor, local
-executor and host invocation lifetime are built. The host validates handler
+Tier 2 publication is built for dev and test instances, as defined in
+[ADR-0012](./adr/ADR-0012-credential-free-execution-service.md). The server stores
+both artifacts and inspects the server bytes before recording a version.
+Its engine, inspection, supervisor, local executor and host invocation lifetime
+are built. The host validates handler
 arguments and results, authorises callbacks, records invocations and settles
 admitted work independently of the browser connection. The supervisor terminates
 runaway version processes and unfinished initialisation. The local executor
@@ -376,7 +383,7 @@ conflicts up to three times within five seconds. A mutation key makes an explici
 retry after an unknown outcome recover a committed result without duplicate
 writes. Actions can transfer file bytes, call company integrations as the viewer
 and run sibling queries or mutations under their remaining deadline. Company
-tasks and the publish path remain separate work.
+tasks remain separate work; production refuses tier 2 admission until the fleet executor lands.
 
 Metering records calls and database-held milliseconds from the first admitted
 invocation, independently of best-effort request events. Invocation rows record
@@ -406,7 +413,7 @@ what is priced. Bound seconds need the fleet binding history, which is not built
 yet. An action's database time includes the connection time of its nested
 queries and mutations.
 
-The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
+The promise: **A tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
 internet: everything it does goes through Patchy, as you, while you have the
 patch open. It reaches outside systems only through your company's integrations,
@@ -437,9 +444,19 @@ ADR-0012.
 
 ### Declaring and changing a tier
 
-The tier is an explicit field in `patchy.config.ts`, written by `init`. The CLI checks the tree and built HTML: `server/` requires tier 2 and is refused today, and a bundle with script cannot claim tier 0. The server independently checks the submitted bundle: tier 0 must pass the safe-HTML policy, tier 1 runs only in the sandbox, and tier 2 and above are refused. Claiming a higher built tier than the code needs is fine. A tier 0 repo may provision tables and stores; resources do not make a tier.
+The tier is explicit in `patchy.config.ts`. Edit it and run `patchy refresh` before publishing a change. The CLI checks both graphs: `server/` requires tier 2, and script cannot claim tier 0. The server independently checks tier 0 against the safe-HTML policy and re-derives tier 2 descriptors from the stored server module. Dev and test instances admit tier 2; production requires fleet execution. Claiming a higher built tier than the code needs is fine, and tier 2 with zero handlers publishes with a warning. A tier 0 repo may provision tables and stores; resources do not make a tier.
 
 A **version** has exactly one tier; the patch's tier is the tier of the version it serves. Changing tier means publishing a new version, not moving an existing one in place. Primitives belong to the patch, not its tier, so their data persists across the change. Rollback selects the older version's tier without rolling back cumulative provisioning or sharing flags.
+
+The runtime loads the served tier beside the loaded version at admission.
+While a patch serves tier 2, an older lower-tier document gets `me` only;
+every other direct operation is `server_required`. The `served` frame makes
+the shell show "Reload to keep saving". Rollback to tier 1 reopens tier 1
+documents' direct operations. Rollback to the loaded version clears the notice.
+A tier 2 client remains server-only after any rollback, with `me` and the route
+bridge rather than name-based tables, files, shared resources, connections or
+members. Handle redemption, staging and generated downloads belong to their
+separate shell-capability tickets.
 
 ## Companies
 
@@ -836,6 +853,10 @@ it. Disconnecting the source makes subsequent calls fail `access_denied`, with
 the shell's first-party notice; reconnecting retains the connection identity.
 The current connect flow is admin-only on `/company/connections`, not a door
 that walks ordinary viewers into creating credentials.
+
+**Admin integration grants to the patch identity are deferred.** Tier 2 adds no
+connection entitlement: company integrations always re-check the initiating
+viewer. An admin cannot grant a patch independent connection access in this release.
 
 Personal connections would add a connect door before opening a patch: a viewer
 without the declared personal connection would connect it and return to the

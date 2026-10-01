@@ -85,7 +85,7 @@ const bodyOf = async (request: IncomingMessage) => {
 };
 
 const sdkSource = `
-import { action, query, createGuest, t } from "patchy/server";
+import { action, query, createGuest, t } from "../../patchy/dist/server.js";
 const read = query({ args: { id: t.text() }, result: t.json(), handler: async (ctx, args) => {
   ctx.log("read", { id: args.id });
   return { row: await ctx.tables.notes.get(args.id), viewer: ctx.viewer.user.id };

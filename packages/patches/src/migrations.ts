@@ -106,5 +106,18 @@ export const migrations: Migrations = {
   "0010_patches_lifecycle_revision": ddl(
     `ALTER TABLE patches
     ADD COLUMN lifecycle_revision BIGINT NOT NULL DEFAULT 0 CHECK (lifecycle_revision >= 0)`
+  ),
+  "0013_patches_server_artifact": ddl(
+    `ALTER TABLE patch_versions
+    ADD COLUMN server_object_key TEXT,
+    ADD COLUMN server_content_hash TEXT,
+    ADD COLUMN server_file_size INTEGER,
+    ADD CONSTRAINT patch_versions_server_artifact CHECK (
+      (server_object_key IS NULL AND server_content_hash IS NULL AND server_file_size IS NULL)
+      OR (server_object_key IS NOT NULL AND server_content_hash IS NOT NULL
+        AND server_file_size IS NOT NULL AND server_file_size >= 0)
+    )`,
+    `CREATE UNIQUE INDEX patch_versions_server_object_key_idx
+    ON patch_versions(server_object_key) WHERE server_object_key IS NOT NULL`
   )
 };

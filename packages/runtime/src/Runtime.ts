@@ -616,13 +616,8 @@ export const make = (
               input.op.startsWith("members."))
           )
             return yield* new ServerRequired();
-          if (input.op !== "me" && version.manifest.tier < 2) {
-            const served = yield* versions
-              .find(version.patchId)
-              .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
-            if (Option.isNone(served)) return yield* new AccessDenied({});
-            if (served.value.manifest.tier === 2) return yield* new ServerRequired();
-          }
+          if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
+            return yield* new ServerRequired();
           const attempt = yield* limits.consume({
             key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
             limit: settings.callsPerMinute,

@@ -42,6 +42,7 @@ import {
   ReservedName,
   InvalidDescription,
   VersionUnavailable,
+  Tier2NotPublic,
   ForceRequest,
   Retired,
   Deleted,
@@ -197,6 +198,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
         ReservedName,
         InvalidDescription,
         HasDependants,
+        Tier2NotPublic,
         NotAdditive,
         PublishUnavailable,
         Conflict,
@@ -205,13 +207,19 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       ]
     }).annotateMerge(
       describe(
-        "Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); " +
+        "Publish an HTML artifact, a manifest, and a server artifact on tier 2. Without `patchId` creates a patch (201); " +
           "with an owned live `patchId` publishes a version (200). Authenticate, then replay by owner " +
           "and `publishKey` before limits or release validation: identical payloads return the " +
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
-          "version from `GET /api/release`. Tiers 0 and 1 may define tables and file stores, provisioned additively; " +
-          "tiers 2 and above answer `tier_mismatch`. " +
+          "version from `GET /api/release`. Tiers 0, 1 and 2 may define tables and file stores, provisioned additively; " +
+          "tier 3 answers `tier_mismatch`. Tier 2 is admitted on dev and test instances; production requires the fleet executor. " +
+          "Tier 2 requires `server`, a closed JavaScript module. Stored bytes are inspected in a throwaway process: " +
+          "descriptor disagreement, load failure or timeout answers `invalid_manifest`. A server artifact below tier 2 is `tier_mismatch`. " +
+          "Zero handlers warns. `artifacts.html` is always returned; tier 2 also returns `artifacts.server` and " +
+          "`handlers: [{name, kind}]` sorted by name. Both artifact records carry `sha256` and UTF-8 `bytes`. " +
+          "Publishing tier 2 to a public patch requires explicit company scope, otherwise `tier2_not_public`. " +
+          "Stored versions retain their wire; tier 2 wire 1 fixes the guest protocol and workerd compatibility date. " +
           "Every table and file store requires a nonblank description; missing or blank descriptions " +
           "and table/store name collisions answer `invalid_manifest`. " +
           'Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. ' +
@@ -242,9 +250,9 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Reports and schema revision are persisted for replay. " +
           "Tier 0 HTML passes the safe-HTML policy; executable or otherwise unsafe content answers " +
           "`tier_mismatch`. Empty or oversized tier 0 documents retain the HTML validation refusal. " +
-          "Tier 1 bundles are stored raw, without safe-HTML validation or transformation. " +
-          "Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` " +
-          "(10 MiB), with oversized bundles refused as 413. Creates spend the per-token create limit " +
+          "Tier 1 and 2 HTML bundles are stored raw, without safe-HTML validation or transformation. " +
+          "Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); each scripted artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
+          "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
           "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
@@ -258,7 +266,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "cloud text remains. Descriptions collapse whitespace, permit at most 500 Unicode code points and " +
           "no control characters, and are returned with `descriptionUpdatedAt`. " +
           "`address` and `publicUrl` both name the absolute `/<company>/<name>` address. " +
-          "The JSON body cap is three times the larger configured HTML or bundle cap."
+          "The JSON body cap is three times the sum of the larger configured HTML or bundle cap and the server bundle cap."
       )
     ),
     HttpApiEndpoint.get("list", "/patches", {
@@ -340,12 +348,13 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: ShareRequest,
       success: Shared,
-      error: [...ownerRouteErrors, PayloadTooLarge]
+      error: [...ownerRouteErrors, Tier2NotPublic, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
           "`company` requires a company member's browser session; `public` lets anyone with the link open the current version. " +
           "Only the current version of a public patch is public; older versions stay behind the company door. " +
+          "Public sharing while the served version is tier 2 answers `tier2_not_public`. " +
           "A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company " +
           "answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds " +
           "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
@@ -404,12 +413,13 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: RollbackRequest,
       success: RolledBack,
-      error: [...ownerRouteErrors, VersionUnavailable, PayloadTooLarge]
+      error: [...ownerRouteErrors, VersionUnavailable, Tier2NotPublic, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Move an owned live patch's address to a retained `versionNumber`, creating no version. " +
           "Tables, files, sharing, name and description do not change. A missing version answers " +
           "422 `version_unavailable`; an off patch answers `wrong_state`. " +
+          "A rollback to tier 2 while the patch is public answers `tier2_not_public`. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
           "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
           "Rejected requests leave the patch unchanged."

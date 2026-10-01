@@ -13,6 +13,8 @@ import { Snapshot } from "./postgresSnapshot.js";
 import {
   HandlerDescriptors,
   HandlerModuleName,
+  HandlerKind,
+  HandlerName,
   handlerTablesValid,
   type HandlerSchema
 } from "./handlers.js";
@@ -119,6 +121,7 @@ export const SourcesOff = failure(409, {
 export const ReservedName = failure(422, { code: Schema.Literal("reserved_name") });
 export const InvalidDescription = failure(422, { code: Schema.Literal("invalid_description") });
 export const VersionUnavailable = failure(422, { code: Schema.Literal("version_unavailable") });
+export const Tier2NotPublic = failure(422, { code: Schema.Literal("tier2_not_public") });
 export const PublishRefused = failure(422, {
   code: Schema.Literals([
     "release_mismatch",
@@ -721,6 +724,7 @@ export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetad
 export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest")({
   manifest: Manifest,
   html: Schema.String,
+  server: Schema.optionalKey(Schema.String),
   patchId: Schema.optionalKey(PatchId),
   scope: Schema.optionalKey(SharingScope),
   force: Schema.optionalKey(Schema.Boolean),
@@ -733,6 +737,10 @@ export const ProvisioningReport = Schema.Struct({
   columns: Schema.Array(Schema.String),
   indexes: Schema.Array(Schema.String),
   stores: Schema.Array(Schema.String)
+});
+export const ArtifactMetadata = Schema.Struct({
+  sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  bytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 });
 const publishFields = {
   ok: Schema.Literal(true),
@@ -748,6 +756,13 @@ const publishFields = {
   schemaRevision: Schema.Int,
   provisioned: ProvisioningReport,
   unused: ProvisioningReport,
+  artifacts: Schema.Struct({
+    html: ArtifactMetadata,
+    server: Schema.optionalKey(ArtifactMetadata)
+  }),
+  handlers: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: HandlerName, kind: HandlerKind }))
+  ),
   warnings: Schema.Array(Schema.String),
   description: Schema.String,
   descriptionUpdatedAt: Schema.NullOr(Schema.String)

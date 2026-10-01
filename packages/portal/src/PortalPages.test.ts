@@ -15,6 +15,7 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION, sharedTableId } from "
 import { RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
+import { contentHash, sha256 } from "@patchy/core";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Patches } from "@patchy/patches";
@@ -109,7 +110,7 @@ const publish = Effect.fn("PortalPagesTest.publish")(function* (
     machineTokenId: person.machineTokenId,
     versionId: `ver_portal_${ordinal}`,
     objectKey: `patches/${patchId}/versions/${ordinal}.html`,
-    contentHash: `sha256:${ordinal}`,
+    contentHash: contentHash(String(ordinal)),
     fileSize: 1,
     filename: "patch.html",
     title: "A useful office tool",
@@ -132,6 +133,7 @@ const publish = Effect.fn("PortalPagesTest.publish")(function* (
   const patches = yield* Patches.Patches;
   yield* patches.preflight(input);
   yield* patches.prepareObject(input.objectKey);
+  if (input.server) yield* patches.prepareObject(input.server.objectKey);
   return yield* patches.record(input);
 });
 const publishSource = Effect.fn("PortalPagesTest.publishSource")(function* (
@@ -577,6 +579,40 @@ it.layer(layer)("portal pages on a socket", (it) => {
         text(yield* (yield* request(cardPath(patch.name), workspace.member)).text),
         "Anyone on the internet. No sign-in."
       );
+    })
+  );
+
+  it.effect("refuses public sharing while tier 2 is served and allows it after rollback", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "tier-two-scope", {
+        manifest: { ...manifest, name: "tier-two-scope", tier: 1 }
+      });
+      yield* publish(workspace.owner, patch.name, {
+        intent: "update",
+        patchId: patch.patchId,
+        manifest: { ...manifest, name: patch.name, tier: 2, handlers: {} },
+        server: {
+          objectKey: `patches/${patch.patchId}/scope-test.server.js`,
+          sha256: sha256(""),
+          bytes: 0
+        }
+      });
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      const refused = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
+        scope: "public",
+        expectedScope: "company"
+      });
+      assert.strictEqual(refused.status, 422);
+      assert.include(yield* refused.text, 'role="alert"');
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+      yield* (yield* Patches.Patches).rollback(patch.patchId, actor(workspace.owner), 1);
+      const shared = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
+        scope: "public",
+        expectedScope: "company"
+      });
+      assert.strictEqual(shared.status, 303);
+      assert.strictEqual((yield* readPatch(workspace.owner, patch.patchId)).patch.scope, "public");
     })
   );
 

@@ -278,7 +278,10 @@ it.layer(layer)("Invocation query snapshots", (it) => {
       });
       const handlers = yield* TableOperations.make.pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
-          find: () => Effect.succeed(Option.some(source.binding))
+          find: () =>
+            Effect.succeed(
+              Option.some({ ...source.binding, patchTier: source.binding.manifest.tier })
+            )
         })
       );
       const readers = yield* Effect.forEach([1, 2, 3], () => open(consumer.binding));
@@ -409,7 +412,10 @@ it.layer(local)("Invocation query snapshots / PGlite", (it) => {
       });
       const handlers = yield* TableOperations.make.pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
-          find: () => Effect.succeed(Option.some(source.binding))
+          find: () =>
+            Effect.succeed(
+              Option.some({ ...source.binding, patchTier: source.binding.manifest.tier })
+            )
         })
       );
       const { resource, capability } = yield* open(source.binding);

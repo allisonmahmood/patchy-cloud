@@ -5,11 +5,23 @@ description: "Build tier 2 queries, mutations and actions; type helpers, handle 
 
 # Server handlers
 
-Queries, mutations and actions run on the local executor in tests and the source
-checkout's existing `pnpm dev` cloud server for eligible `server.call` requests.
-See the checkout's `docs/DEVELOPMENT.md` for local startup.
-The tier 2 `patchy dev` lifecycle, server watch, production hosting,
-tier 2 publishing and server subscriptions land separately.
+Queries, mutations and actions from published tier 2 repos run on dev and test
+instances' local executor. See the checkout's `docs/DEVELOPMENT.md` for startup.
+Production admission requires the fleet executor. The tier 2 `patchy dev`
+lifecycle, server watch and server subscriptions land separately.
+
+Publish builds HTML and a closed server module, records handler descriptors
+and SDK imports, and sends both artifacts. The instance re-derives descriptors
+from the stored bytes in a throwaway process. Mismatch, top-level throw,
+unfinished initialization or unresolved imports return `invalid_manifest`,
+exit 2. Keep module initialization bounded and side-effect-free.
+`server/` below tier 2 is `tier_mismatch`; zero handlers publishes with a warning.
+After adding, removing or renaming a server module, run `pnpm patchy refresh`.
+
+Tier 2 is company-only. Publishing to a public patch needs `--share company`;
+public sharing is `tier2_not_public`. Older tier 1 pages lose direct operations
+while tier 2 is served, with `server_required` and a reload notice. A rollback
+to tier 1 reopens those pages' operations; tier 2 pages always use handlers.
 
 ## Define the contract
 

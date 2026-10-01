@@ -380,7 +380,7 @@ export const revisionsContract = Effect.fn("test.revisionsContract")(function* (
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
   const reader = yield* SubscriptionReads.makeDev.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some(binding))
+      find: () => Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
     })
   );
   const query = { op: "tables.list", args: { table: "notes" }, binding };
@@ -487,7 +487,7 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
           const found = current.get(patchId);
           return found === undefined || (versionId !== undefined && found.versionId !== versionId)
             ? Option.none()
-            : Option.some(found);
+            : Option.some({ ...found, patchTier: found.manifest.tier });
         })
       )
   });

@@ -4,15 +4,21 @@ A cloud for a company's internal tools, built for the agentic era.
 
 People at a company build **patches** — anything from a static page to a full CRM — and deploy them here. Anyone can build one: a person who codes, or a person whose agent codes for them. Agents are good at CLIs and at running code locally, so the CLI is the front door: tell your agent to publish, and the patch is up. Log in once and reach everything in your company you have access to.
 
-A patch runs at one of a few **tiers**: tier 0 is a static page with no patch code running anywhere, tier 1 runs in the viewer's browser, and tier 2 will add a hosted runtime. Patches use their own tables and files and reach company connections through Patchy, never through credentials of their own. Postgres is the first integration; Google Workspace and Salesforce are future integrations. [docs/product.md](docs/product.md) is the product's shape.
+A patch runs at one of a few **tiers**: tier 0 is a static page with no patch code, tier 1 runs in the viewer's browser, and tier 2 adds request-scoped server handlers. Tier 2 publication runs on dev and test instances; production admission requires the fleet executor. Patches use their own tables and files and reach company connections through Patchy, never through credentials of their own. Postgres is the first integration. [docs/product.md](docs/product.md) records what is built and what remains planned.
 
 ## Where it is today
 
 Tier 0 static pages and tier 1 sandboxed browser tools. `patchy publish <file>` publishes one safe HTML file; `patchy init` starts a repo with config builders, a typed client and project skills. `patchy dev` exercises the real handlers locally over PGlite and invented fixtures; repo publishing typechecks and builds one self-contained HTML bundle. New starts and publishes require the current package release; deployed bundles keep their stable wire contract.
 
+Tier 2 repos publish a second artifact, a closed server module. The instance
+re-derives its handlers from stored bytes before recording the version.
+Tier 2 is company-only. Its page calls generated server handlers rather than
+name-based resources; a served tier 2 version closes older tier 1 tabs' direct
+operations until reload or rollback.
+
 Patches have names at `/<company>/<patch>`, belong to users, and are shared with the company by default or made public on purpose. Tier 1 code acts as the viewer through the shell broker, never holding their login. It can read and write its own tables and files and read declared shared tables; company-data operations are unavailable on public tier 1 patches, even to members. Publish provisions resources additively in a Postgres database per company, preserving omitted definitions and data.
 
-`patchy login` hands the person a browser URL and code; confirmation lets the CLI mint and save a user-owned machine token. Clerk holds the browser session. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Admins manage Postgres connections, encrypted credentials, immutable schema snapshots and recent calls at `/company/connections`. Patches get generated clients for constrained read-only queries; every integration call and table/file mutation is logged. Tiers 2 and above remain future work.
+`patchy login` hands the person a browser URL and code; confirmation lets the CLI mint and save a user-owned machine token. Clerk holds the browser session. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Admins manage Postgres connections, encrypted credentials, immutable schema snapshots and recent calls at `/company/connections`. Patches get generated clients for constrained read-only queries; every integration call and table/file mutation is logged. Tier 2 fleet hosting and tiers above 2 remain future work.
 
 The signed-in `/` is the company's patch portal. Cards at `/patches/<name>` show descriptions, owners, sharing, versions and dependants, with management controls for owners and admins. Patches remain live or retired indefinitely; delete keeps them recoverable for 30 days. Owners can retire, delete, restore, roll back and describe through the CLI too. Admins can reassign patches and choose which to retire or restore when changing a user's active state; publish remains owner-only. Off addresses explain what happened and link colleagues to the card.
 

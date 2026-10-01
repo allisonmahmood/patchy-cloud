@@ -342,10 +342,15 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
         if (requestedVersion !== undefined)
           return Effect.succeed(
             patchId === version.patchId && requestedVersion === version.versionId
-              ? Option.some(version)
+              ? Option.some({ ...version, patchTier: version.manifest.tier })
               : Option.none()
           );
-        return Effect.succeed(Option.fromUndefinedOr(versions.get(patchId)));
+        return Effect.succeed(
+          Option.map(Option.fromUndefinedOr(versions.get(patchId)), (loaded) => ({
+            ...loaded,
+            patchTier: loaded.manifest.tier
+          }))
+        );
       }
     })
   );

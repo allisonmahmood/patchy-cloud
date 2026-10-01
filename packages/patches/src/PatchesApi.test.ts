@@ -1,4 +1,6 @@
 import { assert, expect, it } from "@effect/vitest";
+import { build } from "esbuild";
+import { sha256 } from "@patchy/core";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -46,6 +48,7 @@ import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
 import * as PatchesConfig from "./PatchesConfig.js";
+import * as DeletionSweep from "./DeletionSweep.js";
 import * as Fixtures from "./test/fixtures.js";
 
 const { admin, reader, sibling, uploader } = Fixtures.identities;
@@ -2141,7 +2144,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         publishKey: crypto.randomUUID(),
         metadata: { filename: "" }
       });
-      const padding = "x".repeat(3072 - Buffer.byteLength(JSON.stringify(envelope), "utf8"));
+      const padding = "x".repeat(6144 - Buffer.byteLength(JSON.stringify(envelope), "utf8"));
       const atBodyLimit = publishRequest({ ...envelope, metadata: { filename: padding } });
       const accepted = yield* api.publish({ payload: atBodyLimit });
       assert.strictEqual(accepted.tier, 1);
@@ -2162,7 +2165,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const patches = yield* Patches.Patches;
       const before = yield* patches.countQuotaPatches(admin.user.id);
       const cases = [
-        { manifest: { ...Fixtures.manifest, tier: 2 as const }, code: "tier_mismatch" },
+        { manifest: { ...Fixtures.manifest, tier: 2 as const }, code: "invalid_manifest" },
         { manifest: { ...Fixtures.manifest, tier: 3 as const }, code: "tier_mismatch" },
         {
           manifest: {
@@ -2843,5 +2846,279 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         declaration
       );
     }).pipe(Effect.scoped)
+  );
+});
+
+const tier2Handlers = {
+  "demo.write": { kind: "mutation" as const, args: {}, result: { kind: "text" as const } },
+  "demo.read": { kind: "query" as const, args: {}, result: { kind: "text" as const } }
+};
+const tier2Bundle = Effect.promise(async () => {
+  const built = await build({
+    stdin: {
+      contents: `import { createGuest, query, mutation, t } from "patchy/server";
+        export default createGuest({ demo: {
+          write: mutation({ args: {}, result: t.text(), handler: async () => "saved" }),
+          read: query({ args: {}, result: t.text(), handler: async () => "loaded" })
+        } });`,
+      resolveDir: new URL("../../patchy", import.meta.url).pathname,
+      sourcefile: "publish-acceptance.ts"
+    },
+    bundle: true,
+    write: false,
+    platform: "browser",
+    format: "esm",
+    target: "es2022",
+    conditions: ["development"]
+  });
+  return built.outputFiles[0]!.text;
+});
+
+it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
+  it.effect(
+    "retains both artifacts and prevents public sharing, publishing and rollback",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const server = yield* tier2Bundle;
+        const page = html("Two artifacts 東京");
+        const manifest = {
+          ...Fixtures.manifest,
+          tier: 2 as const,
+          handlers: tier2Handlers,
+          sdkImports: ["patchy/server"]
+        };
+        const payload = publishRequest({ html: page, server, manifest });
+        const created = yield* api.publish({ payload });
+        const params = { patchId: created.patchId };
+        assert.deepStrictEqual(created.artifacts, {
+          html: { sha256: sha256(page), bytes: Buffer.byteLength(page) },
+          server: { sha256: sha256(server), bytes: Buffer.byteLength(server) }
+        });
+        assert.deepStrictEqual(created.handlers, [
+          { name: "demo.read", kind: "query" },
+          { name: "demo.write", kind: "mutation" }
+        ]);
+        const patches = yield* Patches.Patches;
+        const stored = Option.getOrThrow(yield* patches.find(created.patchId));
+        assert.strictEqual(stored.patchTier, 2);
+        assert.strictEqual(stored.version.wireVersion, WIRE_VERSION);
+        assert.strictEqual(stored.version.server?.sha256, created.artifacts.server!.sha256);
+        assert.deepStrictEqual(stored.version.manifest.sdkImports, ["patchy/server"]);
+        assert.strictEqual(
+          yield* (yield* ContentStore.ContentStore).get(stored.version.server!.objectKey),
+          server
+        );
+        assert.deepStrictEqual({ ...(yield* api.publish({ payload })) }, { ...created });
+        const shared = yield* api.share({
+          params,
+          payload: new ShareRequest({ scope: "public" }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(shared.status, 422);
+        assert.include(yield* shared.json, { code: "tier2_not_public" });
+        assert.strictEqual(
+          Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
+          "company"
+        );
+        const lower = yield* api.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Tier one"),
+            manifest: { ...Fixtures.manifest, tier: 1 }
+          })
+        });
+        yield* api.share({ params, payload: new ShareRequest({ scope: "public" }) });
+        const rolledBack = yield* api.rollback({
+          params,
+          payload: new RollbackRequest({ versionNumber: 1 }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(rolledBack.status, 422);
+        assert.include(yield* rolledBack.json, { code: "tier2_not_public" });
+        const publicPublish = yield* api.publish({
+          payload: publishRequest({
+            ...payload,
+            patchId: created.patchId,
+            publishKey: crypto.randomUUID()
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(publicPublish.status, 422);
+        assert.include(yield* publicPublish.json, { code: "tier2_not_public" });
+        assert.strictEqual(
+          Option.getOrThrow(yield* patches.find(created.patchId)).version.id,
+          lower.versionId
+        );
+        const privateVersion = yield* api.publish({
+          payload: publishRequest({
+            ...payload,
+            patchId: created.patchId,
+            scope: "company",
+            publishKey: crypto.randomUUID()
+          })
+        });
+        assert.strictEqual(privateVersion.scope, "company");
+        const old = Option.getOrThrow(
+          yield* patches.find(created.patchId, undefined, lower.versionId)
+        );
+        assert.strictEqual(old.version.tier, 1);
+        assert.strictEqual(old.patchTier, 2);
+        yield* api.rollback({
+          params,
+          payload: new RollbackRequest({ versionNumber: lower.versionNumber })
+        });
+        assert.strictEqual(
+          Option.getOrThrow(yield* patches.find(created.patchId, undefined, lower.versionId))
+            .patchTier,
+          1
+        );
+        const event = events.find((event) => event.properties.patchId === created.patchId);
+        assert.deepInclude(event?.properties, {
+          tier: 2,
+          sdkImports: ["patchy/server"],
+          tables: [],
+          stores: [],
+          integrations: [],
+          queryHandlers: 1,
+          mutationHandlers: 1,
+          actionHandlers: 0,
+          htmlBytes: Buffer.byteLength(page),
+          serverBytes: Buffer.byteLength(server)
+        });
+      }),
+    30_000
+  );
+
+  it.effect(
+    "rejects tampering, throwing and nonterminating initialization and reclaims both failed artifacts",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const server = yield* tier2Bundle;
+        const manifest = { ...Fixtures.manifest, tier: 2 as const, handlers: tier2Handlers };
+        const created = yield* api.publish({
+          payload: publishRequest({ html: html("Retained"), server, manifest })
+        });
+        const patches = yield* Patches.Patches;
+        const objects = yield* ContentStore.ContentStore;
+        const original = Option.getOrThrow(yield* patches.find(created.patchId)).version;
+        for (const invalid of [
+          {
+            server,
+            manifest: {
+              ...manifest,
+              handlers: {
+                ...tier2Handlers,
+                "demo.read": { ...tier2Handlers["demo.read"], kind: "mutation" as const }
+              }
+            }
+          },
+          { server: `throw new Error("load failed");\n${server}`, manifest },
+          { server: `while (true) {}\n${server}`, manifest },
+          { server: `await Promise.withResolvers().promise;\n${server}`, manifest },
+          { server: `import "missing-package";\n${server}`, manifest }
+        ]) {
+          const refused = yield* api.publish({
+            payload: publishRequest({
+              patchId: created.patchId,
+              html: html("Invalid"),
+              ...invalid
+            }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(refused.status, 422);
+          assert.include(yield* refused.json, { code: "invalid_manifest" });
+          assert.strictEqual(
+            Option.getOrThrow(yield* patches.find(created.patchId)).version.id,
+            original.id
+          );
+        }
+        yield* TestClock.adjust("6 minutes");
+        const sweep = yield* DeletionSweep.make;
+        yield* sweep.sweep;
+        assert.deepStrictEqual(
+          (yield* Stream.runCollect(objects.list(`patches/${created.patchId}/`)))
+            .map((item) => item.key)
+            .sort(),
+          [original.objectKey, original.server!.objectKey].sort()
+        );
+        yield* patches.delete(created.patchId, { userId: uploader.user.id, admin: false });
+        yield* TestClock.adjust("30 days");
+        yield* sweep.sweep;
+        assert.deepStrictEqual(
+          yield* Stream.runCollect(objects.list(`patches/${created.patchId}/`)),
+          []
+        );
+      }),
+    30_000
+  );
+
+  it.effect(
+    "inspects stored bytes rather than the upload and warns on zero handlers",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const server = yield* tier2Bundle;
+        const objects = yield* ContentStore.ContentStore;
+        const corruptingStore = Layer.succeed(ContentStore.ContentStore, {
+          ...objects,
+          put: (key: string, bytes: string) =>
+            objects.put(
+              key,
+              key.endsWith(".server.js")
+                ? `throw new Error("storage corruption");\n${bytes}`
+                : bytes
+            )
+        });
+        const corruptedApi = yield* client.pipe(
+          Effect.provide(Fixtures.as(uploader)),
+          Effect.provide(
+            Layer.fresh(
+              PatchesApi.layer.pipe(
+                Layer.provide(Content.layer.pipe(Layer.provide(corruptingStore))),
+                Layer.provide(publishConfig())
+              )
+            )
+          )
+        );
+        const corrupted = yield* corruptedApi.publish({
+          payload: publishRequest({
+            html: html("Corrupt"),
+            server,
+            manifest: { ...Fixtures.manifest, tier: 2, handlers: tier2Handlers }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(corrupted.status, 422);
+        assert.include(yield* corrupted.json, { code: "invalid_manifest" });
+        const built = yield* Effect.promise(() =>
+          build({
+            stdin: {
+              contents:
+                'import { createGuest } from "patchy/server"; export default createGuest({});',
+              resolveDir: new URL("../../patchy", import.meta.url).pathname,
+              sourcefile: "empty-publish.ts"
+            },
+            bundle: true,
+            write: false,
+            platform: "browser",
+            format: "esm",
+            target: "es2022",
+            conditions: ["development"]
+          })
+        );
+        const empty = yield* api.publish({
+          payload: publishRequest({
+            html: html("No handlers"),
+            server: built.outputFiles[0]!.text,
+            manifest: { ...Fixtures.manifest, tier: 2, handlers: {} }
+          })
+        });
+        assert.deepStrictEqual(empty.handlers, []);
+        assert.include(empty.warnings, "Tier 2 has no handlers.");
+        assert.isDefined(empty.artifacts.server);
+      }),
+    30_000
   );
 });

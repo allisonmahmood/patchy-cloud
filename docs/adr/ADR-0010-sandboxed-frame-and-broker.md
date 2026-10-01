@@ -122,6 +122,20 @@ dismissal return focus to the frame. Reload warns that unsaved edits may be lost
 and opens the currently served address, even from a numbered-version document,
 preserving the client route, query and fragment.
 
+The runtime loads the patch tier beside the document's eligible version at
+admission. While the served tier is 2, lower-tier documents get `me` only;
+every other direct operation is `server_required`. Rolling back to tier 1
+reopens those documents' direct operations. A tier 2 document never gains
+name-based tables, files, shared resources, connections or members, even after
+rollback. Its generated client is server-only, with `me` and the route bridge;
+authorised handles, staged uploads and generated downloads remain separate
+shell capabilities as their implementation tickets land.
+
+Tier 2 is company-only. Publish to a public patch requires explicit
+`--share company`; public scope changes through the CLI or portal inspect the
+served version and refuse `tier2_not_public`. Rolling a public patch back to a
+tier 2 version is refused too; change its scope to company first.
+
 Tier 1 owned and shared-table `list` and `get` subscriptions return whole snapshots
 with decimal-string revision vectors. A missing `get` still depends on its table.
 The shell sends ordered subscribe/unsubscribe changes or replaces the complete
@@ -142,11 +156,11 @@ controller, which owns their emission and waiting UI.
 
 Tier 0 keeps **the patch cannot watch you**. A public shell runs only Patchy's own shell script, never analytics (tier 0 needs no script). At tier 1: **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** This scopes, rather than removes, ADR-0006's session and no-script guarantees.
 
-The decided tier 2 promise is separate: **a patch's server code runs on Patchy's
-machines, never on yours. It holds no login and no credential and has no path to
-the internet: everything it does goes through Patchy, as you, while you have the
+The tier 2 promise: **A tier 2 patch's server code runs on Patchy's machines,
+never on yours. It holds no login and no credential and has no path to the
+internet: everything it does goes through Patchy, as you, while you have the
 patch open. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.** ADR-0012 defines the
-credential-free execution boundary and its resource-principal rules. The engine
-and isolated inspection are built; this promise does not enable tier 2 admission
-or publishing before the host, supervisor and fleet enforcers land.
+credential-free execution boundary and its resource-principal rules. Dev and
+test instances admit published tier 2 versions on the local executor.
+Production admission stays closed until the fleet executor is available.

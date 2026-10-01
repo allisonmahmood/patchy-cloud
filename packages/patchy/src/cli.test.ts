@@ -155,6 +155,7 @@ const publish = (
   publicUrl: `http://instance.test/${DEV_SEED.companyHandle}/${name}`,
   scope,
   tier: 0,
+  artifacts: { html: { sha256: sha256(validHtml), bytes: Buffer.byteLength(validHtml) } },
   schemaRevision: 0,
   provisioned: { tables: [], columns: [], indexes: [], stores: [] },
   unused: { tables: [], columns: [], indexes: [], stores: [] },
@@ -1127,6 +1128,7 @@ describe("patchy publish", async () => {
       const file = htmlFile(dir, "page.html", validHtml);
       let phase: "lost" | "refused" | "recovered" = "lost";
       const response = Struct.omit(publish(201, "abcdefghijkl", 1), [
+        "artifacts",
         "description",
         "descriptionUpdatedAt"
       ]);
@@ -1200,6 +1202,7 @@ describe("patchy publish", async () => {
     const dir = tempDir();
     const file = htmlFile(dir, "page.html", validHtml);
     const legacy = Struct.omit(publish(201, "abcdefghijkl", 1), [
+      "artifacts",
       "description",
       "descriptionUpdatedAt"
     ]);
@@ -1222,6 +1225,7 @@ describe("patchy publish", async () => {
     const original = readFileSync(pendingFile(attemptPath), "utf8");
     for (const malformed of [
       { ...response, patchId: "not-a-patch-id" },
+      { ...response, artifacts: { html: { sha256: "invalid", bytes: -1 } } },
       { ...response, description: 42 }
     ]) {
       reply = malformed;
@@ -1649,6 +1653,8 @@ describe("patchy publish", async () => {
   it.each([
     { status: 422, code: "release_mismatch" },
     { status: 422, code: "patch_not_openable" },
+    { status: 422, code: "invalid_manifest" },
+    { status: 422, code: "tier2_not_public" },
     { status: 409, code: "publish_key_conflict" },
     { status: 409, code: "name_taken" }
   ])(
@@ -4833,6 +4839,7 @@ describe("repo publish recovery", () => {
   it("reapplies a moved update's legacy receipt and retains a conflicting author selection", async () => {
     let lost = true;
     const legacy = Struct.omit(publish(200, "abcdefghijkl", 2), [
+      "artifacts",
       "description",
       "descriptionUpdatedAt"
     ]);

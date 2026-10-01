@@ -37,9 +37,11 @@ and mutation transaction adapters run there. For mutations, verify committed
 replay with the same key, rollback after a handler failure, and parent-action
 database time for a nested mutation. Use real Postgres for serialization,
 cross-host key races and dropped-client connection cleanup; PGlite cannot prove
-concurrent-session behavior. This does not enable tier 2 publication or the
-patch-repo dev loop. The end-to-end browser path lands with publication in #401
-and `patchy dev` on the production engine in #404.
+concurrent-session behavior. Publish a tier 2 repo to this local instance and
+exercise its generated client in the hosted shell. Verify both artifact hashes,
+`invalid_manifest` for bad descriptors, `tier2_not_public` on public sharing and
+`server_required` in an older tier 1 tab, then rollback recovery. The patch-repo
+`patchy dev` production-engine loop remains #404.
 
 ## Patch repos and the local runtime
 

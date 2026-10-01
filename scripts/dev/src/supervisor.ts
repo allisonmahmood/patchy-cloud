@@ -223,7 +223,6 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           ...inherited,
           ...clerk,
           NODE_ENV: "development",
-          PATCHY_DEV_EXECUTION: "true",
           PATCHY_CREDENTIAL_KEYS: Redacted.value(credentialKeys),
           PORT: String(plan.ports.server),
           DATABASE_URL: plan.databaseUrl,

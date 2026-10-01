@@ -309,7 +309,8 @@ it.layer(services)("Invocation", (it) => {
         ).pipe(
           Effect.provideService(Invocation.Invocation, invocations),
           Effect.provideService(LoadedVersions.LoadedVersions, {
-            find: () => Effect.succeed(Option.some(binding))
+            find: () =>
+              Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
           })
         );
         const request = HttpServerRequest.fromWeb(

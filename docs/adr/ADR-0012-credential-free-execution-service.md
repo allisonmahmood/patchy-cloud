@@ -28,11 +28,11 @@ lifetime, capability registry, private callback gateway and invocation records.
 Issue #398 adds query read snapshots, action file and integration callbacks, and
 nested query calls on the local executor, composed into the existing `pnpm dev`
 instance. Eligible calls use the same host invocation lifetime, private callback
-gateway and snapshot adapter. Tier 2 publication remains refused until #401;
-`patchy dev` on the production engine belongs to #404. The end-to-end browser
-path lands with those tickets. Issue #400 adds host-owned SERIALIZABLE mutation
+gateway and snapshot adapter. Issue #400 adds host-owned SERIALIZABLE mutation
 transactions, mutation keys, explicit client retries and nested mutations.
-Hosted fleet wiring remains separate work.
+Issue #401 publishes both artifacts, re-derives descriptors from stored server
+bytes and serves tier 2 on dev and test instances. Production admission requires
+the fleet executor. The patch-repo `patchy dev` engine loop belongs to #404.
 
 ## Engine, guest wire and inspection
 

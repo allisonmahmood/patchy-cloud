@@ -199,6 +199,11 @@ export class AdminRequired extends Schema.TaggedError<AdminRequired>()("AdminReq
     return "Only a company administrator can reassign a patch.";
   }
 }
+export class Tier2NotPublic extends Schema.TaggedError<Tier2NotPublic>()("Tier2NotPublic", {}) {
+  override get message() {
+    return "Tier 2 versions cannot be served publicly. Keep the patch company-scoped.";
+  }
+}
 export type LifecycleError =
   | PatchUnavailable
   | NotOwner
@@ -319,6 +324,11 @@ export interface PatchVersion {
   readonly objectKey: string;
   readonly contentHash: string;
   readonly fileSize: number;
+  readonly server: {
+    readonly objectKey: string;
+    readonly sha256: string;
+    readonly bytes: number;
+  } | null;
   readonly createdByMachineTokenId: string;
   readonly sourceIp: string | null;
   readonly userAgent: string | null;
@@ -420,6 +430,7 @@ export interface PublishPreflight extends PublishTarget {
   readonly companyId: string;
   readonly manifest: typeof Manifest.Type;
   readonly filename: string | null;
+  readonly scope?: Patch["scope"] | undefined;
   readonly force?: boolean;
   readonly description?: string;
 }
@@ -443,6 +454,13 @@ export interface RecordInput extends PublishTarget {
   readonly objectKey: string;
   readonly contentHash: string;
   readonly fileSize: number;
+  readonly server?:
+    | {
+        readonly objectKey: string;
+        readonly sha256: string;
+        readonly bytes: number;
+      }
+    | undefined;
   readonly filename: string | null;
   readonly repoOrg: string | null;
   readonly repoName: string | null;
@@ -515,6 +533,9 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
   objectKey: Schema.String,
   contentHash: Schema.String,
   fileSize: Schema.Int,
+  serverObjectKey: Schema.NullOr(Schema.String),
+  serverContentHash: Schema.NullOr(Schema.String),
+  serverFileSize: Schema.NullOr(Schema.Int),
   createdByMachineTokenId: Schema.String,
   sourceIp: Schema.NullOr(Schema.String),
   userAgent: Schema.NullOr(Schema.String),
@@ -609,7 +630,10 @@ export class Patches extends Context.Service<
      */
     readonly preflight: (
       input: PublishPreflight
-    ) => Effect.Effect<void, LifecycleError | PatchConflict | NameTaken | ResourceError | SqlError>;
+    ) => Effect.Effect<
+      void,
+      LifecycleError | Tier2NotPublic | PatchConflict | NameTaken | ResourceError | SqlError
+    >;
     readonly inventory: (
       patchId: string,
       actorUserId: string
@@ -672,6 +696,7 @@ export class Patches extends Context.Service<
       | PendingObjectExpired
       | ResourceError
       | LifecycleError
+      | Tier2NotPublic
       | SqlError
     >;
     /** Changes a live patch's audience without creating a version. */
@@ -682,7 +707,7 @@ export class Patches extends Context.Service<
       expectedScope?: Patch["scope"]
     ) => Effect.Effect<
       { scope: Patch["scope"]; name: string; companyHandle: string },
-      LifecycleError | SqlError
+      LifecycleError | Tier2NotPublic | SqlError
     >;
     /** A retained name or redirect, including off and operator-disabled patches. */
     readonly resolveName: (
@@ -700,7 +725,10 @@ export class Patches extends Context.Service<
       patchId: string,
       versionNumber?: number,
       versionId?: string
-    ) => Effect.Effect<Option.Option<{ patch: Patch; version: PatchVersion }>, SqlError>;
+    ) => Effect.Effect<
+      Option.Option<{ patch: Patch; version: PatchVersion; patchTier: number }>,
+      SqlError
+    >;
     /** Address admission inspects retained metadata before choosing a notice, door or 404. */
     readonly findRetained: (
       patchId: string,
@@ -732,7 +760,10 @@ export class Patches extends Context.Service<
       actor: Actor,
       versionNumber: number,
       expectedCurrentVersionId?: string | null
-    ) => Effect.Effect<{ patch: Patch; currentVersion: number }, LifecycleError | SqlError>;
+    ) => Effect.Effect<
+      { patch: Patch; currentVersion: number },
+      LifecycleError | Tier2NotPublic | SqlError
+    >;
     readonly reassign: (
       patchId: string,
       actor: Actor,
@@ -750,7 +781,7 @@ export class Patches extends Context.Service<
     readonly purgeDeleted: (
       patchId: string
     ) => Effect.Effect<
-      Option.Option<{ companyId: string; objectKeys: ReadonlyArray<string> }>,
+      Option.Option<{ companyId: string; versionCount: number }>,
       SqlError | DatabaseError
     >;
   }
@@ -805,6 +836,14 @@ const toVersion = (row: VersionRow): PatchVersion => ({
   objectKey: row.objectKey,
   contentHash: row.contentHash,
   fileSize: row.fileSize,
+  server:
+    row.serverObjectKey === null
+      ? null
+      : {
+          objectKey: row.serverObjectKey,
+          sha256: row.serverContentHash!,
+          bytes: row.serverFileSize!
+        },
   createdByMachineTokenId: row.createdByMachineTokenId,
   sourceIp: row.sourceIp,
   userAgent: row.userAgent,
@@ -847,6 +886,8 @@ const PATCH_COLUMNS = `
 const VERSION_COLUMNS = `
   id, patch_id AS "patchId", version_number AS "versionNumber",
   object_key AS "objectKey", content_hash AS "contentHash", file_size AS "fileSize",
+  server_object_key AS "serverObjectKey", server_content_hash AS "serverContentHash",
+  server_file_size AS "serverFileSize",
   created_by_machine_token_id AS "createdByMachineTokenId", source_ip AS "sourceIp",
   user_agent AS "userAgent", cli_version AS "cliVersion", git_branch AS "gitBranch",
   git_commit_sha AS "gitCommitSha", original_filename AS "originalFilename",
@@ -948,15 +989,6 @@ export const make = Effect.gen(function* () {
       FROM patches
       WHERE patches.owner_user_id = ${ownerUserId}
         AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL`
-  });
-
-  const findPatch = SqlSchema.findOneOption({
-    Request: Schema.String,
-    Result: PatchRow,
-    execute: (patchId) => sql`
-      SELECT ${sql.unsafe(PATCH_COLUMNS)}
-      FROM patches JOIN companies ON companies.id = patches.company_id
-      WHERE patches.id = ${patchId}`
   });
 
   const companyPatchRows = SqlSchema.findAll({
@@ -1103,13 +1135,6 @@ export const make = Effect.gen(function* () {
       FROM patch_versions WHERE patch_id = ${patchId}`
   });
 
-  const objectKeysOf = SqlSchema.findAll({
-    Request: Schema.String,
-    Result: ObjectKey,
-    execute: (patchId) =>
-      sql`SELECT object_key AS "objectKey" FROM patch_versions WHERE patch_id = ${patchId}`
-  });
-
   // Company/public sharing admits every member of this company in any lifecycle
   // state. Disabled patches remain hidden; serving reads use the stricter gate.
   const lockOpenable = SqlSchema.findOneOption({
@@ -1180,21 +1205,44 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
     )
   );
+  const retainedRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      patchId: Schema.String,
+      versionNumber: Schema.UndefinedOr(Schema.Number),
+      versionId: Schema.UndefinedOr(Schema.String)
+    }),
+    Result: Schema.Struct({
+      ...PatchRow.fields,
+      patchTier: Schema.Int,
+      version: Schema.Struct({ ...VersionRow.fields, createdAt: Schema.DateFromString })
+    }),
+    execute: ({ patchId, versionNumber, versionId }) => sql`
+      SELECT ${sql.unsafe(PATCH_COLUMNS)}, served.tier AS "patchTier", to_jsonb(selected) AS version
+      FROM patches JOIN companies ON companies.id = patches.company_id
+      JOIN patch_versions served ON served.id = patches.current_version_id
+      JOIN LATERAL (
+        SELECT ${sql.unsafe(VERSION_COLUMNS)} FROM patch_versions
+        WHERE patch_id = patches.id AND ${
+          versionId !== undefined
+            ? sql`id = ${versionId}`
+            : versionNumber !== undefined
+              ? sql`version_number = ${versionNumber}`
+              : sql`id = patches.current_version_id`
+        }
+      ) selected ON true
+      WHERE patches.id = ${patchId}`
+  });
   const findRetained = Effect.fn("Patches.findRetained")(function* (
     patchId: string,
     versionNumber?: number,
     versionId?: string
   ) {
-    const patch = yield* findPatch(patchId);
-    if (Option.isNone(patch)) return Option.none();
-    const selectedId = versionId ?? patch.value.currentVersionId;
-    const version =
-      versionId === undefined && versionNumber !== undefined
-        ? yield* findVersionByNumber({ patchId, versionNumber })
-        : selectedId === null
-          ? Option.none()
-          : yield* findVersionById({ patchId, versionId: selectedId });
-    return Option.map(version, (row) => ({ patch: toPatch(patch.value), version: toVersion(row) }));
+    const found = yield* retainedRow({ patchId, versionNumber, versionId });
+    return Option.map(found, (row) => ({
+      patch: toPatch(row),
+      version: toVersion(row.version),
+      patchTier: row.patchTier
+    }));
   }, Effect.catchTags(dieOnSchemaError));
 
   const find = Effect.fn("Patches.find")(function* (
@@ -1530,6 +1578,7 @@ export const make = Effect.gen(function* () {
 
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
     yield* authorizePublish(input);
+    if (input.manifest.tier === 2 && input.scope === "public") return yield* new Tier2NotPublic();
     const description = input.description ?? input.manifest.description;
     if (description !== undefined) yield* normalizeDescription(description);
     if (input.manifest.name !== undefined && reservedName(input.manifest.name))
@@ -1550,6 +1599,8 @@ export const make = Effect.gen(function* () {
         : yield* sql.withTransaction(
             Effect.gen(function* () {
               const locked = yield* publishable(input);
+              if (input.manifest.tier === 2 && (input.scope ?? locked.scope) === "public")
+                return yield* new Tier2NotPublic();
               return {
                 companyId: locked.companyId,
                 snapshot: yield* readInventory(locked.companyId, input.patchId)
@@ -1644,6 +1695,7 @@ export const make = Effect.gen(function* () {
           AND NOT EXISTS (
             SELECT 1 FROM patch_versions
             WHERE patch_versions.object_key = pending_patch_objects.object_key
+              OR patch_versions.server_object_key = pending_patch_objects.object_key
           )
         ORDER BY expires_at, object_key
         LIMIT ${limit}
@@ -1671,6 +1723,8 @@ export const make = Effect.gen(function* () {
         yield* lockDependencies(input.ownerUserId);
         const millis = yield* Clock.currentTimeMillis;
         const existing = input.intent === "update" ? yield* publishable(input) : null;
+        if (input.manifest.tier === 2 && (input.scope ?? existing?.scope ?? "company") === "public")
+          return yield* new Tier2NotPublic();
         const incomingDescription = input.description ?? input.manifest.description;
         const normalizedDescription =
           incomingDescription === undefined
@@ -1687,13 +1741,14 @@ export const make = Effect.gen(function* () {
         // DELETE holds the intent's row lock until commit. A concurrent sweep
         // skips it; rollback restores it; a lost commit reply cannot orphan
         // live bytes because the version and intent change atomically.
-        const pending = yield* sql`
-            DELETE FROM pending_patch_objects
-            WHERE object_key = ${input.objectKey} AND NOT claimed
-              AND expires_at > ${stamp(millis)}
-            RETURNING object_key`;
-        if (pending.length === 0)
-          return yield* new PendingObjectExpired({ objectKey: input.objectKey });
+        for (const key of [input.objectKey, ...(input.server ? [input.server.objectKey] : [])]) {
+          const pending = yield* sql`
+              DELETE FROM pending_patch_objects
+              WHERE object_key = ${key} AND NOT claimed
+                AND expires_at > ${stamp(millis)}
+              RETURNING object_key`;
+          if (pending.length === 0) return yield* new PendingObjectExpired({ objectKey: key });
+        }
         let versionNumber: number;
         let scope: Patch["scope"] = input.scope ?? "company";
         let companyId = input.companyId;
@@ -1789,6 +1844,19 @@ export const make = Effect.gen(function* () {
           schemaRevision: resources.schemaRevision,
           provisioned: resources.provisioned,
           unused: resources.unused,
+          artifacts: {
+            html: { sha256: input.contentHash.slice("sha256:".length), bytes: input.fileSize },
+            ...(input.server
+              ? { server: { sha256: input.server.sha256, bytes: input.server.bytes } }
+              : {})
+          },
+          ...(input.manifest.tier === 2
+            ? {
+                handlers: Object.entries(input.manifest.handlers ?? {})
+                  .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+                  .map(([name, descriptor]) => ({ name, kind: descriptor.kind }))
+              }
+            : {}),
           warnings: [
             ...input.warnings,
             ...declarationWarnings,
@@ -1805,13 +1873,16 @@ export const make = Effect.gen(function* () {
         const [inserted] = yield* sql`
           INSERT INTO patch_versions (
             id, patch_id, version_number, object_key, content_hash, file_size,
+            server_object_key, server_content_hash, server_file_size,
             created_by_machine_token_id, source_ip, user_agent, cli_version,
             git_branch, git_commit_sha, original_filename,
             owner_user_id, tier, release, manifest_version, wire_version, schema_revision,
             manifest, publish_key, payload_digest, publish_response, publish_status, created_at
           ) VALUES (
             ${input.versionId}, ${input.patchId}, ${versionNumber}, ${input.objectKey},
-            ${input.contentHash}, ${input.fileSize}, ${input.machineTokenId}, ${input.sourceIp},
+            ${input.contentHash}, ${input.fileSize},
+            ${input.server?.objectKey ?? null}, ${input.server?.sha256 ?? null}, ${input.server?.bytes ?? null},
+            ${input.machineTokenId}, ${input.sourceIp},
             ${input.userAgent}, ${input.cliVersion}, ${input.gitBranch}, ${input.gitCommitSha},
             ${input.filename}, ${input.ownerUserId}, ${input.manifest.tier}, ${input.manifest.release},
             ${input.manifest.manifestVersion}, ${input.wireVersion}, ${resources.schemaRevision},
@@ -1870,6 +1941,12 @@ export const make = Effect.gen(function* () {
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
     if (expectedScope !== undefined && row.scope !== expectedScope)
       return yield* new StaleAction({ patchId });
+    if (scope === "public" && row.currentVersionId !== null) {
+      const served = yield* findVersionById({ patchId, versionId: row.currentVersionId }).pipe(
+        Effect.catchTags(dieOnSchemaError)
+      );
+      if (Option.isSome(served) && served.value.tier === 2) return yield* new Tier2NotPublic();
+    }
     const at = yield* now;
     yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
         lifecycle_revision = lifecycle_revision + 1,
@@ -1972,6 +2049,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTags(dieOnSchemaError)
     );
     if (Option.isNone(version)) return yield* new VersionUnavailable({ versionNumber });
+    if (row.scope === "public" && version.value.tier === 2) return yield* new Tier2NotPublic();
     const at = yield* now;
     yield* sql`UPDATE patches SET current_version_id = ${version.value.id}, updated_at = ${at},
         lifecycle_revision = lifecycle_revision + 1,
@@ -2062,14 +2140,17 @@ export const make = Effect.gen(function* () {
         return Option.none();
       const companyId = target.value.companyId;
       const removeRows = Effect.gen(function* () {
-        const keys = yield* objectKeysOf(patchId);
         yield* sql`INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
-          SELECT object_key, ${stamp(millis)}, true FROM patch_versions WHERE patch_id = ${patchId}`;
-        yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId}`;
+          SELECT object_key, ${stamp(millis)}, true FROM patch_versions WHERE patch_id = ${patchId}
+          UNION ALL
+          SELECT server_object_key, ${stamp(millis)}, true FROM patch_versions
+          WHERE patch_id = ${patchId} AND server_object_key IS NOT NULL`;
+        const removed =
+          yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId} RETURNING id`;
         yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
         yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
         yield* announce(patchId);
-        return Option.some({ companyId, objectKeys: keys.map((row) => row.objectKey) });
+        return Option.some({ companyId, versionCount: removed.length });
       });
       // No platform row disappears while a publisher holds its company inventory.
       // An absent placement means this patch never provisioned a namespace.

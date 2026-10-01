@@ -3616,6 +3616,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "schemaRevision",
     "provisioned",
     "unused",
+    "artifacts",
     "warnings"
   ];
   console.log("[packed-cli-e2e] tier 1: publishing the repo and opening the session-gated bundle");
@@ -3657,7 +3658,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
         stores: []
       },
       unused: { tables: [], columns: [], indexes: [], stores: [] },
-      warnings: []
+      warnings: [],
+      artifacts: published.artifacts
     }
   );
   assert.ok(Number.isFinite(Date.parse(published.descriptionUpdatedAt)));
@@ -3677,6 +3679,17 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       })
   );
   const hosted = await openNotes(published.address, published);
+  const assertHtmlArtifact = async (receipt) => {
+    const source = await page.locator("#patch").getAttribute("src");
+    assert.ok(source);
+    const response = await context.request.get(new URL(source, publicBaseUrl).href);
+    assert.equal(response.status(), 200);
+    const bytes = await response.body();
+    assert.deepEqual(receipt.artifacts, {
+      html: { sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length }
+    });
+  };
+  await assertHtmlArtifact(published);
   // Publish carries the application and schema, never local rows. Exercise the same
   // generated form in the cloud rather than silently seeding/copying production data.
   assert.deepEqual(hosted, { rows: [], cursor: null }, "local rows must not sync on publish");
@@ -3712,6 +3725,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     ...published,
     versionId: updated.versionId,
     versionNumber: 2,
+    artifacts: updated.artifacts,
     schemaRevision: 2,
     provisioned: { tables: [], columns: ["notes.detail"], indexes: [], stores: [] },
     warnings: [
@@ -3726,6 +3740,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     },
     "adding a column must retain hosted rows without importing local data"
   );
+  await assertHtmlArtifact(updated);
   await expect(notes.locator("#list li")).toHaveText(["Hosted note"]);
   console.log(
     "[packed-cli-e2e] lifecycle: dependant refusal, forced retirement, restore and rollback"

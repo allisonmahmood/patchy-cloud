@@ -14,19 +14,25 @@ const pageEntries = [
   "patchy/preact/jsx-dev-runtime",
   "patchy/csv"
 ];
+const serverEntries = ["patchy/server", "patchy/csv"];
 const modulePreloadPolyfill = "vite/modulepreload-polyfill";
 
-/** Check the actual page graph, before aliases, tree shaking, or package resolution hide imports. */
+/** Check each authored graph before aliases, tree shaking, or resolution hide imports. */
 export function pageImports(
   root: string,
-  refused: (error: LocalError | undefined) => void
+  refused: (error: LocalError | undefined) => void,
+  options: { readonly graph?: "page" | "server"; readonly sdkImports?: Set<string> } = {}
 ): Plugin {
   const sdkDirectory = realpathSync(path.join(root, "node_modules/patchy"));
+  const graph = options.graph ?? "page";
+  const entries = graph === "page" ? pageEntries : serverEntries;
   const sdkDirectories = [
     sdkDirectory,
-    ...["preact", "@preact/signals", "@preact/signals-core"].map((name) =>
-      realpathSync(path.join(sdkDirectory, "node_modules", name))
-    )
+    ...(graph === "page"
+      ? ["preact", "@preact/signals", "@preact/signals-core"].map((name) =>
+          realpathSync(path.join(sdkDirectory, "node_modules", name))
+        )
+      : [])
   ];
   const generatedDirectory = path.join(root, "patchy/_generated") + path.sep;
   const companyPath = (id: string) => {
@@ -46,14 +52,14 @@ export function pageImports(
       : packagePath.split("/")[0];
     const error = new LocalError({
       code: "import_refused",
-      message: `Package ${JSON.stringify(name)} (import ${JSON.stringify(source)}) in ${path.relative(root, importer)} is not a page entry point. Allowed: ${pageEntries.join(", ")}, and the generated client at patchy/_generated/client.js. anything else, write or copy into your patch as your company's own code. See "What the SDK gives you" in .agents/skills/patchy-loop/SKILL.md.`
+      message: `Package ${JSON.stringify(name)} (import ${JSON.stringify(source)}) in ${path.relative(root, importer)} is not a ${graph} entry point. Allowed: ${entries.join(", ")}${graph === "page" ? ", and the generated client at patchy/_generated/client.js" : ""}. anything else, write or copy into your patch as your company's own code. See "What the SDK gives you" in .agents/skills/patchy-loop/SKILL.md.`
     });
     refused(error);
     // Bundlers mutate thrown errors; retain the CLI refusal for watch and publish.
     throw new Error(error.message);
   };
   const checkTarget = (target: string, source: string, importer: string) => {
-    if (target.startsWith(path.join(root, "server") + path.sep))
+    if (graph === "page" && target.startsWith(path.join(root, "server") + path.sep))
       refuse(source, importer, "server/");
     const dependency = target.lastIndexOf(`${path.sep}node_modules${path.sep}`);
     if (dependency !== -1 && !companyPath(target))
@@ -70,8 +76,13 @@ export function pageImports(
       checkTarget(target, source, importer);
       return;
     }
-    if (pageEntries.includes(source)) return;
-    if (source === "patchy/client" && importer.startsWith(generatedDirectory)) return;
+    if (
+      entries.includes(source) ||
+      (graph === "page" && source === "patchy/client" && importer.startsWith(generatedDirectory))
+    ) {
+      options.sdkImports?.add(source);
+      return;
+    }
     refuse(source, importer);
   };
   const checkJavaScript = (code: string, id: string) => {
@@ -113,6 +124,14 @@ export function pageImports(
           (ts.isMetaProperty(target) &&
             target.keywordToken === ts.SyntaxKind.ImportKeyword &&
             target.name.text === "defer");
+        if (graph === "server" && target.kind === ts.SyntaxKind.ImportKeyword) {
+          const error = new LocalError({
+            code: "invalid_manifest",
+            message: `Server bundles must be closed modules without dynamic imports. Remove import() in ${path.relative(root, id)}.`
+          });
+          refused(error);
+          throw new Error(error.message);
+        }
         const argument = node.arguments[0];
         if (moduleCall && argument && ts.isStringLiteralLike(argument)) check(argument.text, id);
       }
@@ -123,7 +142,7 @@ export function pageImports(
   let resolveCss: ResolveFn;
   let publicDirectory: string;
   return {
-    name: "patchy-page-imports",
+    name: `patchy-${graph}-imports`,
     enforce: "pre",
     configResolved(config) {
       // Use the builder's resolver, including its CSS extensions and aliases.

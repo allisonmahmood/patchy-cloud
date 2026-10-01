@@ -137,6 +137,7 @@ describe("patch pages", () => {
     objectKey: "patches/patch12345ab/2.html",
     contentHash: "hash",
     fileSize: 12,
+    server: null,
     createdByMachineTokenId: DEV_SEED.tokenId,
     sourceIp: null,
     userAgent: null,
