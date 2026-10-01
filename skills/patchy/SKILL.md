@@ -391,10 +391,14 @@ browser sign-out is a separate control on **Your machines**.
   on stderr on failure. `kind` is `local`, `rejected` or `unreachable` and matches
   the exit code. Branch on `kind`/exit first, then `code` when present.
   Relay `warnings` even when a later step fails. Repo checks emit local
-  `instance_mismatch`, `release_mismatch`, `stale_generated`, `invalid_manifest`,
-  `too_large` and `tier_mismatch` (exit 1). Invalid description text caught before
-  sending a request is local `invalid_description`; the same code from the
-  instance is `rejected` (exit 2). Other local failures may have no code.
+  `instance_mismatch`, `release_mismatch`, `toolchain_unsupported`, `stale_generated`,
+  `invalid_manifest`, `too_large` and `tier_mismatch` (exit 1).
+  On `toolchain_unsupported`, run the upgrade command in the error to update the
+  builder-owned Vite and single-file plugin, then retry. `refresh` only warns and
+  never rewrites those dependencies.
+  Invalid description text caught before sending a request is local
+  `invalid_description`; the same code from the instance is `rejected` (exit 2).
+  Other local failures may have no code.
   For machine-branching remedies,
   read the [local-code contract](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes).
   `publish --json` prints the instance's response as it is on the wire

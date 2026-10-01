@@ -17,6 +17,8 @@ import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
+import { runToolchain } from "./toolchainProcess.js";
+import { releaseFromPin } from "./packagePin.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -178,7 +180,7 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
   if (pin !== tarball)
     return yield* new ReleaseMismatch({
       component: "pin",
-      loaded: /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ?? pin,
+      loaded: releaseFromPin(pin),
       current: release.release
     });
   yield* checkRelease(release.release, { cli: RELEASE });
@@ -202,6 +204,7 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
       })
   });
   yield* checkRelease(release.release, { cli: RELEASE, runtime: loadedRuntime });
+  return release.toolchain;
 });
 
 /** Recovery belongs to the caller and must finish before this starts any fresh work. */
@@ -209,7 +212,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   cwd: string,
   token: Redacted.Redacted
 ) {
-  yield* checkRepoRelease(cwd, token);
+  const toolchain = yield* checkRepoRelease(cwd, token);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, true);
@@ -260,19 +263,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const html = yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
-      const build = yield* processResult(cwd, process.execPath, [
-        path.join(cwd, "node_modules/vite/bin/vite.js"),
-        "build",
-        "--outDir",
-        output,
-        "--emptyOutDir"
-      ]);
-      if (build.code !== 0)
-        return yield* new LocalError({
-          message:
-            "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing.",
-          cause: build
-        });
+      yield* runToolchain(cwd, { build: output, toolchain });
       const entries = yield* fs.readDirectory(output, { recursive: true });
       const files: string[] = [];
       for (const entry of entries) {

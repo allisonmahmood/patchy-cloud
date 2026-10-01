@@ -42,6 +42,18 @@
     "./dev": {
       "types": "./dist/dev.d.ts",
       "import": "./dist/dev.js"
+    },
+    "./preact": {
+      "types": "./dist/preact.d.ts",
+      "import": "./dist/preact.js"
+    },
+    "./preact/jsx-runtime": {
+      "types": "./dist/preact/jsx-runtime.d.ts",
+      "import": "./dist/preact/jsx-runtime.js"
+    },
+    "./preact/jsx-dev-runtime": {
+      "types": "./dist/preact/jsx-dev-runtime.d.ts",
+      "import": "./dist/preact/jsx-dev-runtime.js"
     }
   },
   "files": [
@@ -71,17 +83,25 @@
     "@patchy/auth": "workspace:*",
     "@patchy/core": "workspace:*",
     "@types/css-tree": "^3.2.0",
+    "@types/semver": "^7.7.1",
     "css-tree": "^3.2.1",
     "effect": "catalog:",
     "parse5": "catalog:",
+    "semver": "^7.7.2",
     "typescript": "^6.0.3",
-    "vite-plugin-singlefile": "^2.3.0",
+    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^5.0.1"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.8"
+    "@electric-sql/pglite": "0.5.8",
+    "preact": "10.29.8",
+    "@preact/signals": "2.11.2",
+    "@preact/signals-core": "1.14.4"
   },
   "bundledDependencies": [
-    "@electric-sql/pglite"
+    "@electric-sql/pglite",
+    "preact",
+    "@preact/signals",
+    "@preact/signals-core"
   ]
 }

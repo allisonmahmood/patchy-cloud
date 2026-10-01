@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off — Node supplies SHA-512 and file-URL conversion; Effect has no digest service.
+// @effect-diagnostics nodeBuiltinImport:off — Node supplies content hashes and file-URL conversion; Effect has no digest service.
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as Config from "effect/Config";
@@ -6,8 +6,16 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { CURRENT_RELEASE, MANIFEST_VERSION, Release, WIRE_VERSION } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  MANIFEST_VERSION,
+  Release,
+  ReleaseToolchain,
+  WIRE_VERSION
+} from "@patchy/api";
+import { ContentStore } from "@patchy/content-store";
 
 export class ArtifactUnavailable extends Schema.TaggedError<ArtifactUnavailable>()(
   "ArtifactUnavailable",
@@ -19,7 +27,7 @@ export class ArtifactUnavailable extends Schema.TaggedError<ArtifactUnavailable>
 }
 
 export class ArtifactMismatch extends Schema.TaggedError<ArtifactMismatch>()("ArtifactMismatch", {
-  field: Schema.Literals(["release", "manifestVersion", "wireVersion", "integrity"]),
+  field: Schema.Literals(["release", "manifestVersion", "wireVersion", "digest", "integrity"]),
   expected: Schema.Union([Schema.String, Schema.Number]),
   actual: Schema.Union([Schema.String, Schema.Number])
 }) {
@@ -28,27 +36,60 @@ export class ArtifactMismatch extends Schema.TaggedError<ArtifactMismatch>()("Ar
   }
 }
 
+export class ArtifactRetentionFailed extends Schema.TaggedError<ArtifactRetentionFailed>()(
+  "ArtifactRetentionFailed",
+  { key: Schema.String, cause: Schema.Defect() }
+) {
+  override get message() {
+    return `Cannot retain the SDK release archive at ${this.key}; check the instance's content store before advertising this release.`;
+  }
+}
+
 const Metadata = Schema.Struct({
   release: Schema.String,
-  integrity: Schema.String,
+  digest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  integrity: Release.fields.package.fields.integrity,
   manifestVersion: Schema.Int,
-  wireVersion: Schema.Int
+  wireVersion: Schema.Int,
+  toolchain: ReleaseToolchain
 });
 const decodeMetadata = Schema.decodeUnknownEffect(Schema.fromJsonString(Metadata));
+const ArchiveFilename = Schema.String.check(
+  Schema.isPattern(/^patchy-[A-Za-z0-9][A-Za-z0-9.+-]*-[a-f0-9]{64}\.tgz$/)
+);
+const isArchiveFilename = Schema.is(ArchiveFilename);
+const verifyDigest = Effect.fnUntraced(function* (filename: string, bytes: Uint8Array) {
+  const expected = filename.slice(-68, -4);
+  const actual = createHash("sha256").update(bytes).digest("hex");
+  if (actual !== expected) {
+    return yield* new ArtifactMismatch({ field: "digest", expected, actual });
+  }
+  return bytes;
+});
 
 export class Artifact extends Context.Service<
   Artifact,
   {
     readonly release: Release;
-    readonly filename: string;
-    readonly bytes: Uint8Array;
+    readonly get: (
+      filename: string
+    ) => Effect.Effect<
+      Uint8Array,
+      | ArtifactMismatch
+      | ContentStore.InvalidObjectKey
+      | ContentStore.ObjectNotFound
+      | ContentStore.StoreUnavailable
+    >;
   }
 >()("@patchy/sdk/Artifact") {}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const store = yield* ContentStore.ContentStore;
   const base = yield* Config.String("PATCHY_PUBLIC_BASE_URL");
-  const metadataPath = fileURLToPath(new URL("../artifacts/release.json", import.meta.url));
+  const directory = fileURLToPath(new URL("../artifacts/", import.meta.url));
+  const metadataPath = path.join(directory, "release.json");
   const metadataText = yield* fs
     .readFileString(metadataPath)
     .pipe(
@@ -75,8 +116,8 @@ export const make = Effect.gen(function* () {
       });
     }
   }
-  const filename = `patchy-${metadata.release}.tgz`;
-  const tarballPath = fileURLToPath(new URL(`../artifacts/${filename}`, import.meta.url));
+  const filename = `patchy-${metadata.release}-${metadata.digest}.tgz`;
+  const tarballPath = path.join(directory, filename);
   const bytes = yield* fs
     .readFile(tarballPath)
     .pipe(
@@ -84,6 +125,7 @@ export const make = Effect.gen(function* () {
         (cause) => new ArtifactUnavailable({ path: tarballPath, stage: "read", cause })
       )
     );
+  yield* verifyDigest(filename, bytes);
   const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
   if (integrity !== metadata.integrity) {
     return yield* new ArtifactMismatch({
@@ -92,14 +134,31 @@ export const make = Effect.gen(function* () {
       actual: integrity
     });
   }
+
+  // Persist verified current bytes before discovery, repairing any damaged stored copy.
+  // The shared content store keeps historical URLs independently of local build outputs.
+  const key = `sdk/${filename}`;
+  yield* store
+    .putBytes(key, bytes)
+    .pipe(Effect.mapError((cause) => new ArtifactRetentionFailed({ key, cause })));
+
+  const get = Effect.fn("Artifact.get")(function* (filename: string) {
+    const key = `sdk/${filename}`;
+    if (!isArchiveFilename(filename)) {
+      return yield* new ContentStore.ObjectNotFound({ key });
+    }
+    return yield* store
+      .getBytes(key)
+      .pipe(Effect.flatMap((bytes) => verifyDigest(filename, bytes)));
+  });
   return Artifact.of({
-    filename,
-    bytes,
+    get,
     release: new Release({
       release: metadata.release,
       package: { tarball: `${base.replace(/\/+$/, "")}/sdk/${filename}`, integrity },
       manifestVersion: metadata.manifestVersion,
-      wireVersion: metadata.wireVersion
+      wireVersion: metadata.wireVersion,
+      toolchain: metadata.toolchain
     })
   });
 });

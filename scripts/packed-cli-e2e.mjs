@@ -226,12 +226,22 @@ try {
     timeoutMs: buildTimeoutMs
   });
 
-  console.log("[packed-cli-e2e] packing one exact tarball without rerunning prepack");
-  const packed = await run(
-    "npm",
-    ["pack", "--ignore-scripts", "--json", "--pack-destination", packDir],
-    { cwd: cliPackageDir }
+  console.log("[packed-cli-e2e] reading the exact digest-addressed release tarball");
+  const releaseArtifact = JSON.parse(
+    await checkedCall(() => readFile(path.join(cliPackageDir, "artifacts/release.json"), "utf8"))
   );
+  const releaseTarball = path.join(
+    cliPackageDir,
+    `artifacts/patchy-${releaseArtifact.release}-${releaseArtifact.digest}.tgz`
+  );
+  const packed = await run("npm", [
+    "pack",
+    releaseTarball,
+    "--ignore-scripts",
+    "--json",
+    "--pack-destination",
+    packDir
+  ]);
   const packResult = parsePackResult(packed.stdout);
   assert.equal(packResult.length, 1, "npm pack must produce exactly one artifact");
 

@@ -88,6 +88,18 @@ _Avoid_: mock backend, emulator, dev env
 The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: the package pin, generated client and metadata, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
 _Avoid_: scaffold (these parts continue to be maintained), all project files
 
+**Managed pin**:
+The exact `patchy` tarball URL maintained by refresh, including its content digest.
+Tier 2 init adds an exact `workerd` pin. The builder owns Vite, the single-file
+plugin, TypeScript and `@types/*`; they are caret ranges, not managed pins.
+_Avoid_: toolchain pin, overrides
+
+**Compat semantics**:
+The Preact behavior installed by `patchy/preact` before rendering, including
+compat components and input `onChange` handling, on the same bundled instance
+as hooks and signals. Transitions are synchronous; this is not React's scheduler.
+_Avoid_: React runtime, direct Preact dependency
+
 **Global skill**:
 The agent instructions for entering Patchy: choosing an instance, signing the machine in, discovering company tools and data sources, publishing a static file or starting a patch repo. Inside a patch repo, its project skills govern building.
 _Avoid_: project skill, template

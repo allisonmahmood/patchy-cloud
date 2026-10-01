@@ -463,10 +463,15 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
   .add(
     HttpApiEndpoint.get("release", "/release", { success: Release }).annotateMerge(
       describe(
-        "The current tooling release and its manifest and wire versions. Unauthenticated. " +
-          "GET /sdk/patchy-<release>.tgz serves this release's tarball without authentication " +
-          "with Cache-Control: public, max-age=31536000, immutable; integrity is its sha512 " +
-          "Subresource Integrity digest. Discovery is no-store; only the exact GET tarball path is reserved."
+        "The current tooling release, manifest and wire versions, and the builder toolchain's tested " +
+          "versions and accepted ranges. Unauthenticated. GET /sdk/patchy-<release>-<digest>.tgz " +
+          "serves the exact tarball without authentication with Cache-Control: public, " +
+          "max-age=31536000, immutable. The URL digest is lowercase SHA-256; integrity is the " +
+          "SHA-512 Subresource Integrity digest of those bytes. Every advertised URL remains " +
+          "retrievable after an upgrade or same-version rebuild. Discovery is no-store. Only " +
+          "GET tarball-shaped paths are reserved; sdk remains a valid company handle. Unknown " +
+          "or malformed archive names answer 404; storage failure or corrupt bytes answer 503, " +
+          "both no-store."
       )
     ),
     HttpApiEndpoint.post("generate", "/sdk/generate", {

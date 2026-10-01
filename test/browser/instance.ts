@@ -213,11 +213,15 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
     stage = "building CLI";
     await checked(pnpmCommand, [...pnpmPrefix, "--filter", "patchy", "build"], repoRoot, buildEnv);
     stage = "packing CLI";
+    const artifactsDir = path.join(repoRoot, "packages/patchy/artifacts");
+    const archives = (await readdir(artifactsDir)).filter((file) => file.endsWith(".tgz"));
+    if (archives.length !== 1) throw new Error("Build did not produce one exact CLI archive.");
     const packed = await checked(
       process.execPath,
       [
         path.join(repoRoot, "node_modules/npm/bin/npm-cli.js"),
         "pack",
+        path.join(artifactsDir, archives[0]!),
         "--ignore-scripts",
         "--json",
         "--pack-destination",

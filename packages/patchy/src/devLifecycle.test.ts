@@ -37,9 +37,11 @@ import {
   type Daemon
 } from "./devState.js";
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
+import toolchain from "./toolchain.json" with { type: "json" };
 
 const packageDir = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
+const tarballPath = `/sdk/patchy-${RELEASE}-${"a".repeat(64)}.tgz`;
 const decodeGenerate = Schema.decodeUnknownSync(GenerateRequest);
 const identity = new Identity({
   user: { id: "lifecycle-user", email: "lifecycle@example.test", name: "Lifecycle" },
@@ -190,9 +192,10 @@ const fixture = Effect.gen(function* () {
           if (url === "/api/release")
             return respond({
               release: RELEASE,
-              package: { tarball: "/sdk/patchy.tgz", integrity: `sha512-${"A".repeat(86)}==` },
+              package: { tarball: tarballPath, integrity: `sha512-${"A".repeat(86)}==` },
               manifestVersion: MANIFEST_VERSION,
-              wireVersion: WIRE_VERSION
+              wireVersion: WIRE_VERSION,
+              toolchain
             });
           if (url === "/api/me") return respond(identity);
           if (url === `/api/patches/${patchId}/inventory`) return respond(inventory);
@@ -278,7 +281,7 @@ const fixture = Effect.gen(function* () {
       name: "lifecycle-test",
       type: "module",
       private: true,
-      devDependencies: { patchy: `${instance}/sdk/patchy.tgz` }
+      devDependencies: { patchy: `${instance}${tarballPath}` }
     })
   );
   yield* fs.writeFileString(

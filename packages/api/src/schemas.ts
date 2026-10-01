@@ -586,6 +586,18 @@ export class PrimitiveDetail extends Schema.Class<PrimitiveDetail>("PrimitiveDet
   )
 }) {}
 
+const ToolchainVersion = Schema.Struct({
+  testedAgainst: NonEmptyText,
+  accepted: NonEmptyText
+});
+
+export const ReleaseToolchain = Schema.Struct({
+  vite: ToolchainVersion,
+  "vite-plugin-singlefile": ToolchainVersion,
+  typescript: ToolchainVersion,
+  "@types/node": ToolchainVersion
+});
+
 /** The package integrity is the sha512 SRI of the bytes at the immutable tarball URL. */
 export class Release extends Schema.Class<Release>("Release")({
   release: NonEmptyText,
@@ -594,7 +606,8 @@ export class Release extends Schema.Class<Release>("Release")({
     integrity: Schema.String.check(Schema.isPattern(/^sha512-[A-Za-z0-9+/]{86}==$/))
   }),
   manifestVersion: Schema.Int,
-  wireVersion: Schema.Int
+  wireVersion: Schema.Int,
+  toolchain: ReleaseToolchain
 }) {}
 
 /** What the CLI knows about where a document came from. Every field is optional. */

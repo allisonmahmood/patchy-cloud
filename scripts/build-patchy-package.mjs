@@ -1,7 +1,20 @@
 // Bundle all dependencies: the release installs offline, without registry access or scripts.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { access, chmod, copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -15,7 +28,8 @@ const distDir = path.join(packageDir, "dist");
 const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8"));
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
-const publicEntries = ["config", "client", "dev"];
+const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
+const publicEntries = ["config", "client", "dev", ...uiEntries];
 
 const literals = async (file) => {
   const source = ts.createSourceFile(
@@ -86,10 +100,23 @@ await esbuild.build({
   external: ["./executeConfig.js"]
 });
 await esbuild.build({
+  entryPoints: uiEntries.map((name) => path.join(packageDir, `src/${name}.ts`)),
+  outdir: distDir,
+  outbase: path.join(packageDir, "src"),
+  bundle: true,
+  splitting: true,
+  format: "esm",
+  platform: "browser",
+  target: "es2022",
+  sourcemap: true,
+  // Keep one physical UI stack, shared by the SDK entries, optimizer and debug support.
+  external: ["preact", "preact/*", "@preact/signals", "@preact/signals-core"]
+});
+await esbuild.build({
   ...common,
   external: [...common.external, "./dev.js"],
-  entryPoints: ["dev", "devChild", "executeConfig", "executeConfigChild"].map((name) =>
-    path.join(packageDir, `src/${name}.ts`)
+  entryPoints: ["dev", "devChild", "executeConfig", "executeConfigChild", "toolchainChild"].map(
+    (name) => path.join(packageDir, `src/${name}.ts`)
   ),
   outdir: distDir,
   platform: "node",
@@ -126,25 +153,48 @@ await copyFile(path.join(repoRoot, "LICENSE"), path.join(packageDir, "LICENSE"))
 if (!process.argv.includes("--bundle-only")) {
   const artifactsDir = path.join(packageDir, "artifacts");
   await mkdir(artifactsDir, { recursive: true });
-  execFileSync(
-    process.execPath,
-    [
-      path.join(repoRoot, "node_modules/npm/bin/npm-cli.js"),
-      "pack",
-      "--ignore-scripts",
-      "--pack-destination",
-      artifactsDir
-    ],
-    { cwd: packageDir, stdio: "inherit" }
-  );
+  // npm's bundled-dependency traversal cannot pack pnpm's Preact peer links.
+  // Materialize the exact installed packages into one node_modules before packing.
+  const staging = await mkdtemp(path.join(artifactsDir, ".pack-"));
+  try {
+    for (const file of ["package.json", "LICENSE", ...packageJson.files]) {
+      await cp(path.join(packageDir, file), path.join(staging, file), { recursive: true });
+    }
+    for (const dependency of packageJson.bundledDependencies) {
+      await cp(
+        await realpath(path.join(packageDir, "node_modules", dependency)),
+        path.join(staging, "node_modules", dependency),
+        { recursive: true }
+      );
+    }
+    execFileSync(
+      process.execPath,
+      [
+        path.join(repoRoot, "node_modules/npm/bin/npm-cli.js"),
+        "pack",
+        "--ignore-scripts",
+        "--pack-destination",
+        artifactsDir
+      ],
+      { cwd: staging, stdio: "inherit" }
+    );
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
   const name = `patchy-${packageJson.version}.tgz`;
   const tarball = await readFile(path.join(artifactsDir, name));
   const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;
+  const digest = createHash("sha256").update(tarball).digest("hex");
+  const filename = `patchy-${packageJson.version}-${digest}.tgz`;
+  await rename(path.join(artifactsDir, name), path.join(artifactsDir, filename));
+  const toolchain = JSON.parse(await readFile(path.join(packageDir, "src/toolchain.json"), "utf8"));
   await writeFile(
     path.join(artifactsDir, "release.json"),
     JSON.stringify(
       {
         release: packageJson.version,
+        digest,
+        toolchain,
         integrity,
         manifestVersion: api.MANIFEST_VERSION,
         wireVersion: api.WIRE_VERSION
@@ -153,6 +203,15 @@ if (!process.argv.includes("--bundle-only")) {
       2
     ) + "\n"
   );
+  for (const entry of await readdir(artifactsDir, { withFileTypes: true })) {
+    if (
+      entry.isFile() &&
+      entry.name !== filename &&
+      /^patchy-[A-Za-z0-9][A-Za-z0-9.+-]*-[a-f0-9]{64}\.tgz$/.test(entry.name)
+    ) {
+      await rm(path.join(artifactsDir, entry.name));
+    }
+  }
 }
 if (process.argv.includes("--stage-for-server")) {
   await import("./copy-sdk-artifact.mjs");

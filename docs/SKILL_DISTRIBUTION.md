@@ -11,11 +11,31 @@ The checked-in root `skills-lock.json` uses the `skills` CLI's lockfile format f
 Internal skills stay under `.agents/skills/`, outside the copied `skills/` tree, and carry `metadata.internal`: the local-instance loop `patchy-dev-loop`, and the `/code-review` review specs `effect-service-conventions` and `ui-consistency`.
 
 The package is private and not published to a registry. `pnpm --filter patchy build`
-packs `packages/patchy/artifacts/patchy-<release>.tgz`; the SDK build copies that
-artifact into `packages/sdk/artifacts/` for the server. Each build task owns its
-cached outputs. `GET /api/release` reports its exact tarball URL and SHA-512
-integrity; the unauthenticated tarball route is immutable. After installation,
-the global skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
+packs `packages/patchy/artifacts/patchy-<release>-<digest>.tgz`, where `digest` is
+the lowercase SHA-256 of the archive bytes. The SDK build copies only the current
+archive into `packages/sdk/artifacts/`. After a successful build or copy, each
+output directory retains only its current digest archive and `release.json`;
+obsolete generated archives are pruned without removing unrelated files.
+Each build task owns its cached outputs. `release.json` identifies the current
+archive, its SHA-512 integrity, and its tested and accepted toolchain versions.
+`GET /api/release` reports that archive's exact URL and integrity; the
+unauthenticated tarball route is immutable. A same-version rebuild with different
+bytes gets a different URL, which `refresh` writes into the managed `patchy` pin.
+After installation, the global skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
+
+Before serving discovery, the server validates the current archive's SHA-256 and
+SHA-512 against the metadata and writes those verified bytes under `sdk/` in its
+ContentStore. This also repairs a damaged stored copy of the current archive.
+Startup does not read historical local archives or stored objects. Downloads
+read the store and verify the filename's digest before returning bytes; a corrupt
+historical archive fails its own download, not current startup.
+
+Historical downloads do not depend on archives remaining in a later deployment
+image. All replicas must share the durable store; filesystem deployments must
+retain `PATCHY_STORAGE_DIR` across restarts and upgrades. Back up and migrate its
+`sdk/` objects along with patch content, and do not apply expiry or deletion rules
+to them. Losing that store loses the retention guarantee. Local build outputs and
+caches contain only the current release and do not replace durable storage.
 
 Bundling a skill and wiring it into this checkout do not publish it to a skill
 directory or start onboarding; onboarding runs only when the user asks.

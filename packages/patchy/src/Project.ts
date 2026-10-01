@@ -41,6 +41,8 @@ import { activateStarter, starterFiles, writeInitialGeneration } from "./initPro
 import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import { primitiveReminders } from "./primitiveReminders.js";
+import { runToolchain } from "./toolchainProcess.js";
+import { releaseFromPin } from "./packagePin.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
@@ -533,7 +535,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
             message: "package.json must pin patchy as a devDependency."
           });
         const pinChanged = previousPin !== tarball;
-        const from = /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(previousPin)?.[1] ?? previousPin;
+        const from = releaseFromPin(previousPin);
         const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
         const needsInstall =
           pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
@@ -549,7 +551,13 @@ export const refresh = Effect.fn("Project.refresh")(function* (
           yield* install(cwd);
         }
         const result = yield* runInstalledGenerate(cwd, token, release.release, skills, change);
-        const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, result.manifest))];
+        const toolchainWarnings = yield* runToolchain(cwd, { inspect: release.toolchain });
+        yield* Output.rememberWarnings(toolchainWarnings);
+        const warnings = [
+          ...syncWarnings,
+          ...toolchainWarnings,
+          ...(yield* primitiveReminders(cwd, result.manifest))
+        ];
         const changed = yield* localIO("Activate generated files", () =>
           transaction.activate(
             result.generated.files,
@@ -781,7 +789,14 @@ export const init = Effect.fn("Project.init")(function* (
     decodeName(candidate.length >= 3 ? candidate : "my-patch")
   );
   const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
-  const files = starterFiles({ instance: instance.apiUrl, name, tier, purpose, tarball });
+  const files = starterFiles({
+    instance: instance.apiUrl,
+    name,
+    tier,
+    purpose,
+    tarball,
+    toolchain: release.toolchain
+  });
   yield* Effect.acquireUseRelease(
     fs
       .makeTempDirectory({ directory: parent, prefix: ".patchy-init-" })
