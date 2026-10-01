@@ -13,6 +13,49 @@ export function releaseFromPin(pin: string) {
   return /(?:^|\/)patchy-([^/?#]+?)(?:-[a-f0-9]{64})?\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ?? pin;
 }
 
+/**
+ * pnpm 11 locks a tarball it finds already in its store without an integrity, then refuses that
+ * entry on the next install; pnpm 12 refuses it before running any script. Give the entry for this
+ * exact URL the integrity the instance reported, leaving every other byte of the lockfile alone.
+ * pnpm quotes URLs YAML would misread, such as an IPv6 host, so each quoting is matched.
+ */
+export function withTarballIntegrity(lockfile: string, tarball: string, integrity: string) {
+  const forms = ["", "'", '"'].map((quote) => `${quote}${tarball}${quote}`);
+  return lockfile
+    .split("\n")
+    .map((line) => {
+      const form = forms.find((url) => line.trim() === `resolution: {tarball: ${url}}`);
+      return form === undefined
+        ? line
+        : line.replace(
+            `resolution: {tarball: ${form}}`,
+            `resolution: {integrity: ${integrity}, tarball: ${form}}`
+          );
+    })
+    .join("\n");
+}
+
+/**
+ * The line of a failed pnpm install worth relaying: its first `ERR_PNPM_` line, or its first line.
+ * URLs lose credentials, queries and fragments, and the line is bounded, because a registry or
+ * tarball URL can carry a token.
+ */
+export function installFailureReason(output: string) {
+  const lines = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const reason = lines.find((line) => line.includes("ERR_PNPM_")) ?? lines[0];
+  return reason
+    ?.replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(
+      /\b(https?:\/\/)([^\s'"<>]+)/g,
+      (_, scheme: string, rest: string) =>
+        scheme + rest.replace(/^[^/@]*@/, "").replace(/[?#].*$/, "")
+    )
+    .slice(0, 300);
+}
+
 /** Edit one managed dependency without rewriting author-owned fields or formatting. */
 export function patchPackagePin(
   source: string,

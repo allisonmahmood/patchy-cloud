@@ -15,7 +15,8 @@ import {
   IsoTimestamp,
   Manifest,
   normalizeDescriptionText,
-  PatchName
+  PatchName,
+  type Release
 } from "@patchy/api";
 import { workerdVersion } from "@patchy/api/guest";
 import * as Api from "./Api.js";
@@ -43,7 +44,7 @@ import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
-import { releaseFromPin } from "./packagePin.js";
+import { installFailureReason, releaseFromPin, withTarballIntegrity } from "./packagePin.js";
 import { discoverServerModules } from "./serverModules.js";
 
 const repoSchema = Schema.Struct({
@@ -189,21 +190,26 @@ export const normalizeDescription = Effect.fn("Project.normalizeDescription")(fu
   );
 });
 
-const writeRepo = Effect.fn("Project.writeRepo")(function* (
+/** Swap a repo file in whole, so an interrupted write never leaves it half written. */
+const replaceFile = Effect.fn("Project.replaceFile")(function* (
   cwd: string,
-  repo: typeof repoSchema.Type,
+  name: string,
+  contents: string,
   failureMessage: string
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
+  const destination = yield* localIO(`Resolve ${name}`, () => safePath(cwd, name));
   yield* Effect.scoped(
     Effect.gen(function* () {
       const staged = yield* fs.makeTempFileScoped({ directory: cwd, prefix: ".patchy-repo-" });
-      yield* fs.writeFileString(staged, json(repo));
+      yield* fs.writeFileString(staged, contents);
       yield* fs.rename(staged, destination);
     })
   ).pipe(Effect.mapError((cause) => new LocalError({ message: failureMessage, cause })));
 });
+
+const writeRepo = (cwd: string, repo: typeof repoSchema.Type, failureMessage: string) =>
+  replaceFile(cwd, "patchy.json", json(repo), failureMessage);
 
 export const recordDescription = Effect.fn("Project.recordDescription")(function* (
   cwd: string,
@@ -338,18 +344,39 @@ const installedFailure = Effect.fn("Project.installedFailure")(function* (
   }
 });
 
-const install = Effect.fn("Project.install")(function* (cwd: string) {
+/** Write the release's integrity into the patchy pin's lockfile entry when pnpm left it out. */
+const recordIntegrity = Effect.fn("Project.recordIntegrity")(function* (
+  cwd: string,
+  pin: Release["package"]
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const lockfile = yield* localIO("Resolve pnpm-lock.yaml", () => safePath(cwd, "pnpm-lock.yaml"));
+  const source = yield* fs.exists(lockfile).pipe(
+    Effect.flatMap((exists) => (exists ? fs.readFileString(lockfile) : Effect.succeed(""))),
+    Effect.mapError((cause) => new LocalError({ message: "Could not read pnpm-lock.yaml.", cause }))
+  );
+  const recorded = withTarballIntegrity(source, pin.tarball, pin.integrity);
+  if (recorded !== source)
+    yield* replaceFile(cwd, "pnpm-lock.yaml", recorded, "Could not write pnpm-lock.yaml.");
+});
+
+/** A failure relays pnpm's first error line; a success leaves the patchy pin verifiable. */
+const install = Effect.fn("Project.install")(function* (cwd: string, pin: Release["package"]) {
   const result = yield* processResult(cwd, "pnpm", [
     "install",
     "--ignore-workspace",
     "--ignore-scripts",
     "--no-frozen-lockfile",
-    "--reporter=silent"
+    "--loglevel=error"
   ]);
-  if (result.code !== 0)
+  if (result.code !== 0) {
+    const reason = installFailureReason(`${result.stderr}\n${result.stdout}`);
     return yield* new LocalError({
-      message: "Dependency installation failed; the previous project set is preserved."
+      message: `Dependency installation failed; the previous project set is preserved.${reason === undefined ? "" : `\npnpm: ${reason}`}`,
+      cause: result
     });
+  }
+  yield* recordIntegrity(cwd, pin);
 });
 
 /** The installed release owns config execution; keep its private protocol in one place. */
@@ -566,7 +593,10 @@ export const refresh = Effect.fn("Project.refresh")(function* (
     .release()
     .pipe(Effect.catch((error) => Api.classify(error, "Could not read the instance release.")));
   const { warnings: syncWarnings } = yield* syncDescription(cwd, token);
-  const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
+  const pin = {
+    ...release.package,
+    tarball: new URL(release.package.tarball, `${instance.apiUrl}/`).href
+  };
   const executable = path.join(cwd, "node_modules/patchy/dist/index.js");
   const { changed, from, pinChanged, warnings, addedCapabilities } =
     yield* Effect.acquireUseRelease(
@@ -611,21 +641,23 @@ export const refresh = Effect.fn("Project.refresh")(function* (
             return yield* new LocalError({
               message: "package.json must pin patchy as a devDependency."
             });
-          let pinChanged = previousPin !== tarball;
+          let pinChanged = previousPin !== pin.tarball;
           const from = releaseFromPin(previousPin);
           const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
+          // An older CLI may have locked this same pin without its integrity, which pnpm refuses.
+          yield* recordIntegrity(cwd, pin);
           const needsInstall =
             pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
           if (pinChanged) {
             yield* localIO("Update package pin", () =>
-              transaction.setPin("patchy", previousPin, tarball)
+              transaction.setPin("patchy", previousPin, pin.tarball)
             ).pipe(Effect.uninterruptible);
           }
           if (needsInstall) {
             yield* localIO("Preserve previous installation", () =>
               transaction.prepareInstall()
             ).pipe(Effect.uninterruptible);
-            yield* install(cwd);
+            yield* install(cwd, pin);
           }
           const result = yield* runInstalledGenerate(cwd, token, release.release, skills, change);
           // The newly installed release chooses the engine pin, not the CLI doing the upgrade.
@@ -638,7 +670,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
               yield* localIO("Preserve previous installation", () =>
                 transaction.prepareInstall()
               ).pipe(Effect.uninterruptible);
-            yield* install(cwd);
+            yield* install(cwd, pin);
             pinChanged = true;
           }
           const generatedIndex = result.generated.files.find(
@@ -923,13 +955,16 @@ export const init = Effect.fn("Project.init")(function* (
   const name = yield* parse("Choose a project directory with a valid patch name", () =>
     decodeName(candidate.length >= 3 ? candidate : "my-patch")
   );
-  const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
+  const pin = {
+    ...release.package,
+    tarball: new URL(release.package.tarball, `${instance.apiUrl}/`).href
+  };
   const files = starterFiles({
     instance: instance.apiUrl,
     name,
     tier,
     purpose,
-    tarball,
+    tarball: pin.tarball,
     toolchain: release.toolchain
   });
   yield* Effect.acquireUseRelease(
@@ -959,7 +994,7 @@ export const init = Effect.fn("Project.init")(function* (
               )
             );
         }
-        yield* install(staging);
+        yield* install(staging, pin);
         const result = yield* runInstalledGenerate(staging, token, release.release, []);
         if (result.workerdPin !== null) {
           // The installed release, not the launcher, selects the engine for this private stage.
@@ -980,7 +1015,7 @@ export const init = Effect.fn("Project.init")(function* (
                   new LocalError({ message: "Could not write the release's workerd pin.", cause })
               )
             );
-          yield* install(staging);
+          yield* install(staging, pin);
         }
         const changed = yield* localIO("Write initial generation", () =>
           writeInitialGeneration(staging, result.generated.files, json(result.manifest))
