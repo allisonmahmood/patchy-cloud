@@ -79,15 +79,20 @@ export const basePort = (worktree: string): number =>
   20000 + (Math.abs(Hash.string(worktree)) % 10000) * 2;
 
 /**
- * The worktree's DNS label: an environment serves on `<label>.localhost`, so
- * its cookies never reach another worktree's instance on the same machine.
+ * The worktree's DNS label: its folder name plus a hash of its full path. An
+ * environment serves on `<label>.localhost` and keeps its files under the same
+ * label, so two worktrees named alike never share cookies or an environment.
  */
-export const hostLabel = (worktree: string): string =>
-  (worktree.split(/[\\/]/).filter(Boolean).at(-1) ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .slice(0, 63)
-    .replace(/^-+|-+$/g, "") || "patchy";
+export const hostLabel = (worktree: string): string => {
+  const name =
+    (worktree.split(/[\\/]/).filter(Boolean).at(-1) ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .slice(0, 56)
+      .replace(/^-+|-+$/g, "") || "patchy";
+  const hash = (Math.abs(Hash.string(worktree)) % 36 ** 6).toString(36).padStart(6, "0");
+  return `${name}-${hash}`;
+};
 
 /** How many pairs `computePlan` tries above the hashed base before giving up. */
 const SCAN_PAIRS = 50;

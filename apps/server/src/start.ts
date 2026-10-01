@@ -28,8 +28,11 @@ const announce = HttpServer.addressFormattedWith((address) =>
   Console.log(`Patchy Cloud server listening on ${address}`)
 );
 
+/** Dev personas sign anyone in, so their environments listen on loopback only. */
 const httpServer = Layer.unwrap(
-  Effect.map(Server.port, (port) => NodeHttpServer.layer(createServer, { port, host: "0.0.0.0" }))
+  Effect.map(Effect.all([Server.port, DevPersonas.enabled]), ([port, personas]) =>
+    NodeHttpServer.layer(createServer, { port, host: personas ? "127.0.0.1" : "0.0.0.0" })
+  )
 );
 
 const server = Layer.effectDiscard(

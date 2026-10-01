@@ -22,12 +22,41 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { hostLabel, type Plan } from "./plan.js";
 import { Person, publisherToken, type Scenario } from "./scenario.js";
 
-export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
+/** A step's command ran and exited non-zero; its output was printed to stderr. */
+export class StepExited extends Schema.TaggedError<StepExited>()("StepExited", {
   step: Schema.String,
-  detail: Schema.String
+  exitCode: Schema.Number
 }) {
   override get message() {
-    return `${this.step} failed:\n${this.detail}`;
+    return `${this.step} failed (exit ${this.exitCode}); its output is above.`;
+  }
+}
+
+/** A step's command could not be started at all. */
+export class StepUnavailable extends Schema.TaggedError<StepUnavailable>()("StepUnavailable", {
+  step: Schema.String,
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return `${this.step} could not start.`;
+  }
+}
+
+export class SampleDataFailed extends Schema.TaggedError<SampleDataFailed>()("SampleDataFailed", {
+  patch: Schema.String,
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return `Loading sample data in ${this.patch} failed. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again to finish, or press "Load sample data" yourself.`;
+  }
+}
+
+export class BrowsersStillRunning extends Schema.TaggedError<BrowsersStillRunning>()(
+  "BrowsersStillRunning",
+  { profiles: Schema.String }
+) {
+  override get message() {
+    return `Browsers using profiles in ${this.profiles} did not exit; close them and run \`pnpm dev down\` again. Nothing was deleted.`;
   }
 }
 
@@ -46,7 +75,18 @@ export class PersonNotFound extends Schema.TaggedError<PersonNotFound>()("Person
   }
 }
 
-/** `environment.json`: everything the card shows, written once `up` has finished. */
+const PublishedPatch = Schema.Struct({
+  /** The scenario's repo or file-patch name. */
+  key: Schema.String,
+  name: Schema.String,
+  address: Schema.String,
+  sampled: Schema.Boolean
+});
+
+/**
+ * `environment.json`: what the card shows, and `up`'s progress. It is written
+ * after each step, so an `up` that failed halfway resumes where it stopped.
+ */
 export const Manifest = Schema.Struct({
   apiUrl: Schema.String,
   scenario: Schema.String,
@@ -55,7 +95,8 @@ export const Manifest = Schema.Struct({
   publisher: Schema.String,
   /** The release tarball the CLI and repos were set up against. */
   release: Schema.String,
-  patches: Schema.Array(Schema.Struct({ name: Schema.String, address: Schema.String }))
+  patches: Schema.Array(PublishedPatch),
+  complete: Schema.Boolean
 });
 export type Manifest = typeof Manifest.Type;
 const ManifestJson = Schema.fromJsonString(Manifest, { space: 2 });
@@ -120,8 +161,8 @@ const childEnv = Effect.fn("childEnv")(function* (layout: Layout) {
   };
 });
 
-/** Runs one step to completion; a failure carries the tail of its output. */
-const run = Effect.fn("Environment.run")(function* (
+/** Runs a command to completion and reports its exit code and output. */
+const exec = Effect.fn("Environment.exec")(function* (
   step: string,
   command: string,
   args: ReadonlyArray<string>,
@@ -141,7 +182,7 @@ const run = Effect.fn("Environment.run")(function* (
               : Stream.make(new TextEncoder().encode(options.input))
         })
       );
-      const [stdout, stderr, code] = yield* Effect.all(
+      const [stdout, stderr, exitCode] = yield* Effect.all(
         [
           handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
           handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
@@ -149,18 +190,29 @@ const run = Effect.fn("Environment.run")(function* (
         ],
         { concurrency: "unbounded" }
       );
-      if (code !== 0)
-        return yield* new StepFailed({
-          step,
-          detail: (stderr.trim() || stdout.trim()).split("\n").slice(-12).join("\n")
-        });
-      return stdout;
+      return { stdout, stderr, exitCode };
     })
   ).pipe(
     Effect.catchTags({
-      PlatformError: (cause) => Effect.fail(new StepFailed({ step, detail: cause.message }))
+      PlatformError: (cause) => Effect.fail(new StepUnavailable({ step, cause }))
     })
   );
+});
+
+/** Runs one step; on failure the tail of its output goes to stderr, not into the error. */
+const run = Effect.fn("Environment.run")(function* (
+  step: string,
+  command: string,
+  args: ReadonlyArray<string>,
+  options: { readonly cwd: string; readonly env: Record<string, string>; readonly input?: string }
+) {
+  const result = yield* exec(step, command, args, options);
+  if (result.exitCode !== 0) {
+    const output = result.stderr.trim() || result.stdout.trim();
+    yield* Console.error(output.split("\n").slice(-12).join("\n"));
+    return yield* new StepExited({ step, exitCode: result.exitCode });
+  }
+  return result.stdout;
 });
 
 const ReleaseJson = Schema.fromJsonString(
@@ -304,11 +356,7 @@ const loadSampleData = Effect.fn("loadSampleData")(function* (
         await browser.close();
       }
     },
-    catch: (cause) =>
-      new StepFailed({
-        step: `Loading sample data in ${target}`,
-        detail: `${cause instanceof Error ? cause.message.split("\n")[0] : String(cause)}. Run \`pnpm exec playwright install chromium\` if the browser is missing, or press "Load sample data" yourself.`
-      })
+    catch: (cause) => new SampleDataFailed({ patch: target, cause })
   });
 });
 
@@ -355,72 +403,90 @@ const overlay = (
     }
   });
 
-/** Initializes, overlays, refreshes and publishes each scenario patch as the publisher. */
+/**
+ * Publishes each scenario patch as the publisher, then loads its sample data,
+ * recording each step in the manifest. Steps already recorded are skipped; a
+ * repo left half-built by an earlier failure is initialized again.
+ */
 const materialize = Effect.fn("materialize")(function* (
   layout: Layout,
   scenarioDir: string,
   scenario: Scenario,
-  apiUrl: string
+  manifest: Manifest
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const env = yield* childEnv(layout);
   const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
-  const published: Array<{ readonly name: string; readonly address: string }> = [];
+  let current = manifest;
+  const record = (entry: typeof PublishedPatch.Type) =>
+    Effect.gen(function* () {
+      current = {
+        ...current,
+        patches: [...current.patches.filter((patch) => patch.key !== entry.key), entry]
+      };
+      yield* fs.writeFileString(layout.manifest, encodeManifest(current));
+    });
   for (const patch of scenario.patches) {
+    const key = "repo" in patch ? patch.repo : patch.name;
+    let entry = current.patches.find((done) => done.key === key);
     if ("repo" in patch) {
       const repo = path.join(layout.workspace, patch.repo);
-      yield* Console.log(`  ${patch.repo}: init, build and publish`);
-      yield* run(
-        `Initializing ${patch.repo}`,
-        "patchy",
-        ["init", repo, "--tier", String(patch.tier), "--purpose", patch.description, "--json"],
-        { cwd: layout.workspace, env }
-      );
-      yield* overlay(path.join(scenarioDir, "patches", patch.repo), repo);
       // The repo's pinned CLI, run directly: it finds the repo's workerd for tier 2
       // inspection, and pnpm's own output stays out of the JSON.
       const pinned = path.join(repo, "node_modules", "patchy", "dist", "index.js");
-      yield* run(`Refreshing ${patch.repo}`, process.execPath, [pinned, "refresh", "--json"], {
-        cwd: repo,
-        env
-      });
-      const result = yield* decodePublish(
-        yield* run(`Publishing ${patch.repo}`, process.execPath, [pinned, "publish", "--json"], {
+      if (entry === undefined) {
+        yield* Console.error(`  ${patch.repo}: init, build and publish`);
+        yield* fs.remove(repo, { recursive: true, force: true });
+        yield* run(
+          `Initializing ${patch.repo}`,
+          "patchy",
+          ["init", repo, "--tier", String(patch.tier), "--purpose", patch.description, "--json"],
+          { cwd: layout.workspace, env }
+        );
+        yield* overlay(path.join(scenarioDir, "patches", patch.repo), repo);
+        yield* run(`Refreshing ${patch.repo}`, process.execPath, [pinned, "refresh", "--json"], {
           cwd: repo,
           env
-        })
-      );
-      published.push(result);
-      if (patch.sampleData === true) {
-        yield* Console.log(`  ${patch.repo}: loading sample data as ${publisher.name}`);
-        yield* loadSampleData(apiUrl, publisher.email, result.address);
+        });
+        const result = yield* decodePublish(
+          yield* run(`Publishing ${patch.repo}`, process.execPath, [pinned, "publish", "--json"], {
+            cwd: repo,
+            env
+          })
+        );
+        entry = { key, ...result, sampled: patch.sampleData !== true };
+        yield* record(entry);
       }
-    } else {
+      if (!entry.sampled) {
+        yield* Console.error(`  ${patch.repo}: loading sample data as ${publisher.name}`);
+        yield* loadSampleData(manifest.apiUrl, publisher.email, entry.address);
+        yield* record({ ...entry, sampled: true });
+      }
+    } else if (entry === undefined) {
       const dir = path.join(layout.workspace, "pages");
       yield* fs.makeDirectory(dir, { recursive: true });
       const file = path.join(dir, path.basename(patch.file));
       yield* fs.copyFile(path.join(scenarioDir, "files", patch.file), file);
-      yield* Console.log(`  ${patch.name}: publish`);
-      published.push(
-        yield* decodePublish(
-          yield* run(
-            `Publishing ${patch.file}`,
-            "patchy",
-            ["publish", file, "--name", patch.name, "--description", patch.description, "--json"],
-            { cwd: layout.workspace, env }
-          )
+      yield* Console.error(`  ${patch.name}: publish`);
+      const result = yield* decodePublish(
+        yield* run(
+          `Publishing ${patch.file}`,
+          "patchy",
+          ["publish", file, "--name", patch.name, "--description", patch.description, "--json"],
+          { cwd: layout.workspace, env }
         )
       );
+      yield* record({ key, ...result, sampled: true });
     }
   }
-  return published;
+  return current;
 });
 
 /**
- * Builds everything outside the instance, or, when it already exists, moves the
- * CLI and the workspace repos to the instance's current release (a restart
- * rebuilds the package with a new digest).
+ * Builds everything outside the instance, resuming an `up` that stopped
+ * halfway. A finished environment only moves its CLI and workspace repos to
+ * the instance's current release, which changes when bundled code changed.
  */
 export const setUp = Effect.fn("Environment.setUp")(function* (
   plan: Plan,
@@ -432,9 +498,9 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   const env = yield* childEnv(layout);
   const release = yield* currentRelease(plan.apiUrl);
   const existing = yield* readManifest(layout);
-  if (Option.isSome(existing)) {
+  if (Option.isSome(existing) && existing.value.complete) {
     if (existing.value.release === release) return existing.value;
-    yield* Console.log("The instance's release changed; updating the CLI and workspace repos.");
+    yield* Console.error("The instance's release changed; updating the CLI and workspace repos.");
     yield* installCli(layout, release);
     for (const repo of yield* workspaceRepos(layout))
       yield* run(`Refreshing ${path.basename(repo)}`, "patchy", ["refresh", "--json"], {
@@ -446,8 +512,19 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
     return manifest;
   }
   const { scenario } = loaded;
+  const started: Manifest = Option.getOrElse(existing, () => ({
+    apiUrl: plan.apiUrl,
+    scenario: loaded.name,
+    company: scenario.company,
+    people: scenario.people,
+    publisher: scenario.publisher,
+    release,
+    patches: [],
+    complete: false
+  }));
   yield* fs.makeDirectory(layout.workspace, { recursive: true });
-  yield* Console.log(`Setting up ${layout.dir}`);
+  yield* fs.writeFileString(layout.manifest, encodeManifest(started));
+  yield* Console.error(`${Option.isSome(existing) ? "Resuming" : "Setting up"} ${layout.dir}`);
   yield* installCli(layout, release);
   yield* run(
     "Logging the CLI in",
@@ -457,16 +534,16 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   );
   yield* writeWorkspace(layout);
   yield* writeLauncher(layout);
-  const patches = yield* materialize(layout, loaded.dir, scenario, plan.apiUrl);
-  const manifest: Manifest = {
-    apiUrl: plan.apiUrl,
-    scenario: loaded.name,
-    company: scenario.company,
-    people: scenario.people,
-    publisher: scenario.publisher,
-    release,
-    patches
-  };
+  // Repos published before an interruption are bound to the release they were
+  // built on; move them to this one before the manifest records it.
+  if (started.release !== release)
+    for (const done of started.patches) {
+      const repo = path.join(layout.workspace, done.key);
+      if (yield* fs.exists(path.join(repo, "patchy.json")))
+        yield* run(`Refreshing ${done.key}`, "patchy", ["refresh", "--json"], { cwd: repo, env });
+    }
+  const published = yield* materialize(layout, loaded.dir, scenario, { ...started, release });
+  const manifest: Manifest = { ...published, release, complete: true };
   yield* fs.writeFileString(layout.manifest, encodeManifest(manifest));
   return manifest;
 });
@@ -574,11 +651,29 @@ export const tearDown = Effect.fn("Environment.tearDown")(function* (worktree: s
         ["dev", "stop", "--json"],
         { cwd: repo, env }
       ).pipe(Effect.ignore);
-  // pkill exits 1 when nothing matched; either way the profiles' browsers are gone.
-  yield* run("Closing browsers", "pkill", ["-f", `--user-data-dir=${layout.browsers}`], {
-    cwd: layout.dir,
-    env
-  }).pipe(Effect.ignore);
+  // `--` keeps the pattern from reading as an option. pkill and pgrep exit 1
+  // when nothing matches and above 1 on failure. Profiles are deleted only
+  // once their browsers are confirmed gone.
+  const browsers = ["-f", "--", `--user-data-dir=${layout.browsers}`];
+  const options = { cwd: layout.dir, env };
+  const signal = Effect.fn("signalBrowsers")(function* (step: string, args: ReadonlyArray<string>) {
+    const { exitCode } = yield* exec(step, "pkill", args, options);
+    if (exitCode > 1) return yield* new StepExited({ step, exitCode });
+  });
+  const gone = Effect.fn("browsersGone")(function* (polls: number) {
+    for (let poll = 0; poll < polls; poll++) {
+      const { exitCode } = yield* exec("Waiting for browsers", "pgrep", browsers, options);
+      if (exitCode === 1) return true;
+      if (exitCode !== 0) return yield* new StepExited({ step: "Waiting for browsers", exitCode });
+      yield* Effect.sleep("250 millis");
+    }
+    return false;
+  });
+  yield* signal("Closing browsers", browsers);
+  if (!(yield* gone(20))) {
+    yield* signal("Killing browsers", ["-KILL", ...browsers]);
+    if (!(yield* gone(8))) return yield* new BrowsersStillRunning({ profiles: layout.browsers });
+  }
   yield* fs.remove(layout.dir, { recursive: true, force: true });
   return true;
 });

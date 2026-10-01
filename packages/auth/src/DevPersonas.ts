@@ -20,20 +20,28 @@ import { pageResponse, returnPath, withCookies } from "./page.js";
 /**
  * Dev personas: anyone signs in as any email, no Clerk. The dev runner's
  * environments (`pnpm dev up`) turn this on by setting
- * `PATCHY_DEV_PERSONAS_SECRET`. It refuses to start with `NODE_ENV=production`
- * or on a non-loopback public origin, so a stray secret cannot open a real
- * instance. `/dev/sign-in?as=<email>&return=<path>` signs in; `/dev/sign-in`
+ * `PATCHY_DEV_PERSONAS_SECRET`. It refuses to start unless `NODE_ENV` is
+ * development or test and the public origin is loopback, and the server then
+ * listens on loopback only, so neither a stray secret nor a LAN neighbour can
+ * sign in. `/dev/sign-in?as=<email>&return=<path>` signs in; `/dev/sign-in`
  * lists the active people to pick from.
  */
 
-export class DevPersonasRefused extends Schema.TaggedError<DevPersonasRefused>()(
-  "DevPersonasRefused",
-  { reason: Schema.Literals(["production", "public_origin"]), origin: Schema.String }
+export class DevPersonasOutsideDevelopment extends Schema.TaggedError<DevPersonasOutsideDevelopment>()(
+  "DevPersonasOutsideDevelopment",
+  { environment: Schema.String }
 ) {
   override get message() {
-    return this.reason === "production"
-      ? "Dev personas never run with NODE_ENV=production."
-      : `Dev personas run only on a loopback origin, not ${this.origin}.`;
+    return `Dev personas run only with NODE_ENV=development or test, not ${this.environment}.`;
+  }
+}
+
+export class DevPersonasOnPublicOrigin extends Schema.TaggedError<DevPersonasOnPublicOrigin>()(
+  "DevPersonasOnPublicOrigin",
+  { origin: Schema.String }
+) {
+  override get message() {
+    return `Dev personas run only on a loopback origin, not ${this.origin}.`;
   }
 }
 
@@ -42,10 +50,11 @@ export const enabled = Config.option(Config.Redacted("PATCHY_DEV_PERSONAS_SECRET
   Config.map(Option.isSome)
 );
 
+/** No default for NODE_ENV: personas need an explicit development or test process. */
 export const config = Config.all({
   secret: Config.Redacted("PATCHY_DEV_PERSONAS_SECRET"),
   publicUrl: Session.publicUrlConfig,
-  environment: Config.String("NODE_ENV").pipe(Config.withDefault("development"))
+  environment: Config.String("NODE_ENV")
 });
 
 export const COOKIE = "patchy_dev_person";
@@ -62,10 +71,10 @@ const decodeClaims = Schema.decodeUnknownOption(Schema.fromJsonString(Session.Se
 /** Settings checked once, plus the cookie codec both the Session and the route use. */
 const persona = Effect.gen(function* () {
   const { secret, publicUrl, environment } = yield* config;
-  if (environment === "production")
-    return yield* new DevPersonasRefused({ reason: "production", origin: publicUrl.origin });
+  if (environment !== "development" && environment !== "test")
+    return yield* new DevPersonasOutsideDevelopment({ environment });
   if (!isLoopback(publicUrl))
-    return yield* new DevPersonasRefused({ reason: "public_origin", origin: publicUrl.origin });
+    return yield* new DevPersonasOnPublicOrigin({ origin: publicUrl.origin });
   const mac = (payload: string) =>
     createHmac("sha256", Redacted.value(secret)).update(payload).digest();
   const attributes = `Path=/; HttpOnly; SameSite=Lax${publicUrl.protocol === "https:" ? "; Secure" : ""}`;

@@ -133,7 +133,10 @@ const identity = Layer.unwrap(
       personas
     ): Layer.Layer<
       Session.Session | InviteMail.InviteMail,
-      Config.ConfigError | Session.SessionError | DevPersonas.DevPersonasRefused
+      | Config.ConfigError
+      | Session.SessionError
+      | DevPersonas.DevPersonasOutsideDevelopment
+      | DevPersonas.DevPersonasOnPublicOrigin
     > =>
       personas
         ? Layer.merge(DevPersonas.layer, recordedInvites)

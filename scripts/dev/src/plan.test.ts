@@ -27,13 +27,16 @@ describe("basePort", () => {
 });
 
 describe("hostLabel", () => {
-  it("turns a worktree's folder into one DNS label", () => {
-    expect(hostLabel("/home/someone/.t3/worktrees/patchy-cloud/t3code-df809bf1")).toBe(
-      "t3code-df809bf1"
-    );
-    expect(hostLabel("/w/Feature_Branch.2/")).toBe("feature-branch-2");
-    expect(hostLabel("/w/___")).toBe("patchy");
-    expect(hostLabel(`/w/${"a".repeat(80)}`)).toHaveLength(63);
+  it("is the worktree's folder as a DNS label plus a hash of its full path", () => {
+    const label = hostLabel("/home/someone/.t3/worktrees/patchy-cloud/t3code-df809bf1");
+    expect(label).toMatch(/^t3code-df809bf1-[a-z0-9]{6}$/);
+    expect(hostLabel("/w/Feature_Branch.2/")).toMatch(/^feature-branch-2-[a-z0-9]{6}$/);
+    expect(hostLabel("/w/___")).toMatch(/^patchy-[a-z0-9]{6}$/);
+    expect(hostLabel(`/w/${"a".repeat(80)}`).length).toBeLessThanOrEqual(63);
+  });
+
+  it("differs between worktrees with the same folder name", () => {
+    expect(hostLabel("/a/patchy-cloud")).not.toBe(hostLabel("/b/patchy-cloud"));
   });
 });
 
@@ -41,7 +44,7 @@ it.layer(Platform)("computePlan", (it) => {
   it.effect("serves an environment on the worktree's own .localhost host", () =>
     Effect.gen(function* () {
       const plan = yield* computePlan("/w/env-a", free, { scenario: "team" });
-      expect(plan.apiUrl).toBe(`http://env-a.localhost:${basePort("/w/env-a")}`);
+      expect(plan.apiUrl).toBe(`http://${hostLabel("/w/env-a")}.localhost:${basePort("/w/env-a")}`);
       expect(plan.environment).toEqual({ scenario: "team" });
       expect(plan.databaseUrl).toContain("@127.0.0.1:");
     })

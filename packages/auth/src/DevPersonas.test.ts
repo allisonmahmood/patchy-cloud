@@ -122,18 +122,18 @@ it.layer(services)("dev personas", (it) => {
   );
 });
 
-it.effect("refuses to run in production or on a public origin", () =>
+it.effect("refuses outside development, without NODE_ENV, and on a public origin", () =>
   Effect.gen(function* () {
-    for (const [settings, reason] of [
-      [{ ...env, NODE_ENV: "production" }, "production"],
-      [{ ...env, PATCHY_PUBLIC_BASE_URL: "https://patchy.example/" }, "public_origin"]
+    for (const [settings, tag] of [
+      [{ ...env, NODE_ENV: "production" }, "DevPersonasOutsideDevelopment"],
+      [{ PATCHY_PUBLIC_BASE_URL: base, PATCHY_DEV_PERSONAS_SECRET: "s" }, "ConfigError"],
+      [{ ...env, PATCHY_PUBLIC_BASE_URL: "https://patchy.example/" }, "DevPersonasOnPublicOrigin"]
     ] as const) {
       const error = yield* DevPersonas.make.pipe(
         Effect.flip,
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings)))
       );
-      assert.strictEqual(error._tag, "DevPersonasRefused");
-      if (error._tag === "DevPersonasRefused") assert.strictEqual(error.reason, reason);
+      assert.strictEqual(error._tag, tag);
     }
   })
 );

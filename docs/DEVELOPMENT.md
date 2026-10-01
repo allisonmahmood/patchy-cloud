@@ -32,15 +32,17 @@ pnpm dev down              # stop everything up started and delete everything it
 - **People sign in as dev personas.** The server runs a dev Session instead of
   Clerk: `/dev/sign-in` lists everyone, and `/dev/sign-in?as=<email>&return=<path>`
   signs in as any email, including one that was only invited, so invitations
-  work too. Invitations are recorded, never mailed. The personas Session refuses
-  to start with `NODE_ENV=production` or on a non-loopback origin.
-- **Its own host.** The instance serves on `http://<worktree>.localhost:<port>`,
-  so its cookies never mix with another worktree's.
+  work too. Invitations are recorded, never mailed. The personas Session starts
+  only with `NODE_ENV` development or test and a loopback origin, and the
+  server then listens on `127.0.0.1` only, so nobody on the network can sign in.
+- **Its own host.** The instance serves on `http://<label>.localhost:<port>`,
+  where the label is the worktree's folder name plus a hash of its path, so its
+  cookies and files never mix with another worktree's.
 - **A CLI that already publishes.** `up` installs the instance's release in its
   own folder and logs it in as the scenario's publisher, with its own
   `PATCHY_STATE_DIR`. Nothing is installed globally and `~/.patchy` is untouched.
 - **An agent workspace.** Everything outside `.local/dev` lives in
-  `$XDG_DATA_HOME/patchy-dev/<worktree>/`, outside the worktree so the repo's
+  `$XDG_DATA_HOME/patchy-dev/<label>/`, outside the worktree so the repo's
   `CLAUDE.md` never loads there. Its `agent` launcher starts Claude Code in
   `workspace/` with only the Patchy skill, no personal settings or connectors,
   and pre-approved `patchy`/`pnpm` commands. Arguments pass through, e.g.
@@ -51,12 +53,17 @@ pnpm dev down              # stop everything up started and delete everything it
   tier 2 spend approvals, tier 1 kudos and a tier 0 brief, and takes about a
   minute.
 
-`up` is idempotent: a running environment just prints its card. After a restart
-(`pnpm dev stop`, then `pnpm dev` or `up`), `up` moves the CLI and the
-workspace's repos to the rebuilt release. An instance started with plain
-`pnpm dev` signs in with Clerk; `up` refuses to convert it. Run `down` first,
-which deletes its data. `down` also works on a plain instance, as a reset that
-doesn't start again.
+`up` is idempotent: a running environment just prints its card, and `--json`
+prints its manifest (progress goes to stderr). An `up` that failed halfway, for
+example without Playwright's browser for sample data, resumes where it stopped.
+After a restart (`pnpm dev stop`, then `pnpm dev` or `up`) the environment comes
+back on the same address, or refuses if another process took its ports; if
+bundled code changed, `up` also moves the CLI and the workspace's repos to the
+rebuilt release. `pnpm dev reset` rebuilds an environment from scratch. An
+instance started with plain `pnpm dev` signs in with Clerk, and `up` refuses to
+convert it: run `down` first, which deletes its data. `down` also works on a
+plain instance, as a reset that doesn't start again. It stops the workspace's
+patch dev sessions and the persons' browsers before deleting anything.
 
 ## The local instance: `pnpm dev`
 

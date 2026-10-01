@@ -112,6 +112,15 @@ class OtherScenario extends Schema.TaggedError<OtherScenario>()("OtherScenario",
   }
 }
 
+class EnvironmentPortsTaken extends Schema.TaggedError<EnvironmentPortsTaken>()(
+  "EnvironmentPortsTaken",
+  { apiUrl: Schema.String }
+) {
+  override get message() {
+    return `Another process holds this environment's ports (${this.apiUrl}); its CLI and repos point there. Free them, or \`pnpm dev down\` to start over.`;
+  }
+}
+
 class NoEnvironment extends Schema.TaggedError<NoEnvironment>()("NoEnvironment", {
   worktree: Schema.String
 }) {
@@ -171,8 +180,22 @@ const currentPlan = Effect.fn("currentPlan")(function* (
     if (plan.pids && (yield* alive(plan.pids.supervisor))) {
       return dryRun ? plan : yield* new SupervisorBusy({ pid: plan.pids.supervisor });
     }
-    // A stopped environment restarts as one; plain `pnpm dev` never turns it into Clerk.
-    return yield* computePlan(root, isPortFree, environment ?? plan.environment);
+    // A stopped environment restarts on the recorded ports its CLI and repos
+    // are bound to, or refuses; plain `pnpm dev` never turns it into Clerk.
+    if (plan.environment !== undefined) {
+      if (!(yield* isPortFree(plan.ports.server)) || !(yield* isPortFree(plan.ports.postgres)))
+        return yield* new EnvironmentPortsTaken({ apiUrl: plan.apiUrl });
+      return {
+        worktree: plan.worktree,
+        stateDir: plan.stateDir,
+        ports: plan.ports,
+        apiUrl: plan.apiUrl,
+        databaseUrl: plan.databaseUrl,
+        token: plan.token,
+        environment: plan.environment
+      } satisfies Plan;
+    }
+    return yield* computePlan(root, isPortFree, environment);
   }
   return yield* computePlan(root, isPortFree, environment);
 });
@@ -337,10 +360,16 @@ const status = Command.make(
   }, userFacing)
 ).pipe(Command.withDescription("Report what is running for this worktree; exit 1 unless healthy"));
 
-/** SIGTERM the recorded supervisor and wait; state stays for the next start. */
-const stopInstance = Effect.fn("stop")(function* (plan: Plan) {
+/**
+ * SIGTERM the recorded supervisor and wait; state stays for the next start.
+ * `say` reports progress: stdout for `stop`, stderr where stdout carries JSON.
+ */
+const stopInstance = Effect.fn("stop")(function* (
+  plan: Plan,
+  say: (line: string) => Effect.Effect<void> = Console.log
+) {
   const pids = plan.pids;
-  if (pids === undefined) return yield* Console.log("Nothing recorded to stop.");
+  if (pids === undefined) return yield* say("Nothing recorded to stop.");
   if (yield* alive(pids.supervisor)) {
     yield* signal(pids.supervisor, "SIGTERM");
     for (let attempt = 0; attempt < 60 && (yield* alive(pids.supervisor)); attempt++) {
@@ -353,11 +382,11 @@ const stopInstance = Effect.fn("stop")(function* (plan: Plan) {
     if (pid !== undefined && (yield* alive(pid))) yield* signal(pid, "SIGTERM");
   }
   const leftover = yield* alive(pids.supervisor);
-  yield* Console.log(leftover ? `Supervisor ${pids.supervisor} is still running.` : "Stopped.");
+  yield* say(leftover ? `Supervisor ${pids.supervisor} is still running.` : "Stopped.");
 });
 
 const stop = Command.make("stop", {}, () =>
-  Effect.flatMap(recordedPlan, stopInstance).pipe(userFacing)
+  Effect.flatMap(recordedPlan, (plan) => stopInstance(plan)).pipe(userFacing)
 ).pipe(Command.withDescription("Stop this worktree's instance, keeping its state"));
 
 const logs = Command.make(
@@ -384,13 +413,20 @@ const reset = Command.make(
     const recorded = yield* readPlan(stateDir).pipe(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
     );
-    if (Option.isSome(recorded)) yield* stopInstance(recorded.value);
-    yield* fs.remove(stateDir, { recursive: true, force: true });
     const environment = Option.isSome(recorded) ? recorded.value.environment : undefined;
-    const plan = yield* computePlan(root, isPortFree, environment);
-    yield* printPlan(yield* start(plan), json);
+    // An environment's workspace describes the data about to be wiped, so it goes too.
+    if (environment !== undefined) yield* tearDown(root);
+    if (Option.isSome(recorded)) yield* stopInstance(recorded.value, Console.error);
+    yield* fs.remove(stateDir, { recursive: true, force: true });
+    const plan = yield* start(yield* computePlan(root, isPortFree, environment));
+    if (environment === undefined) return yield* printPlan(plan, json);
+    const manifest = yield* setUp(plan, yield* loadScenario(root, environment.scenario));
+    if (json) return yield* Console.log(encodeManifest(manifest));
+    yield* printCard(manifest, yield* layoutFor(root));
   }, userFacing)
-).pipe(Command.withDescription("Stop, wipe .local/dev, and start a fresh seeded instance"));
+).pipe(
+  Command.withDescription("Stop, wipe .local/dev (and an environment's workspace), and start fresh")
+);
 
 const up = Command.make(
   "up",
