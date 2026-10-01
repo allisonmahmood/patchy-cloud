@@ -46,13 +46,13 @@
     "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "acorn": "8.15.0",
-    "acorn-walk": "8.3.4",
+    "acorn-walk": "8.3.5",
     "effect": "catalog:",
     "esbuild": "0.28.2",
     "workerd": "1.20260924.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.2"
   }
 }

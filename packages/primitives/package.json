@@ -35,6 +35,6 @@
     "@patchy/analytics": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.2"
   }
 }
