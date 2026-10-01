@@ -5,7 +5,7 @@ description: Define Patchy-owned tables, read or mutate rows, subscribe screens 
 
 # Owned tables
 
-Read `../patchy-loop/SKILL.md` first for the local-only workflow and tier 1 limits. Every readable row is available to whoever can open the patch; a browser filter is not authorization. Tier 1 has no outbound access or client storage. Use invented local rows, never production data, and leave generated files untouched.
+Read `../patchy-loop/SKILL.md` first for the local-only workflow and tier limits. On tier 1, every readable row is available to whoever can open the patch; a browser filter is not authorization. Tier 2 enforces rules in handlers using `ctx.tables`; the page has no direct table client. Use invented local rows, never production data, and leave generated files untouched.
 
 ## Check existing tables first
 
@@ -42,7 +42,7 @@ employeeId identifies the submitter; amount is integer USD cents." A label
 like "expenses table" does not explain the data. Table and file-store names
 must be distinct across the config.
 
-Run `pnpm patchy refresh`, then use the generated client from application source:
+Run `pnpm patchy refresh`, then use the generated client from tier 1 application source:
 
 ```ts
 import { patchy } from "../patchy/_generated/client.js";
@@ -58,10 +58,12 @@ await patchy.tables.notes.update(note.id, { done: true });
 ```
 
 The client is present in this release; running these calls needs the separate local dev runtime and broker. If unavailable, finish config, source and typechecking and report the runtime boundary rather than substituting a production connection.
+On tier 2, use these row operations on `ctx.tables` inside the handler kinds
+described in `../patchy-server/SKILL.md`, and call those handlers from the page.
 
 ## Row contract
 
-Kinds: `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.timestamp()` (ISO string), `t.json()` (read as `unknown`), `t.ref("notes")` (typed row id). Refs are indexed automatically but are not foreign keys: deleting a target may leave dangling refs. Validate unknown JSON before using its fields.
+Kinds: `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.timestamp()` (ISO string), `t.json()` (read as `unknown`), `t.ref("notes")` (typed row id). Refs have an automatic index named exactly after their column: the example's `parent` ref is queried with `list({ index: "parent", eq: { parent: note.id } })`. They are not foreign keys; deleting a target may leave dangling refs. Validate unknown JSON before using its fields.
 
 Each row has reserved `id`, `createdAt` and `updatedAt`. Patchy supplies and maintains them; never put them in insert or update input. `Row`, `Insert` and `Update` types from `patchy/config` can be inferred from `typeof config` and the table name.
 
@@ -81,7 +83,7 @@ Pass a non-null returned cursor to the same query for the next page. Cursors are
 
 ## Subscribed screens
 
-On company pages, subscribe instead of re-reading after each write:
+On tier 1 company pages, subscribe instead of re-reading after each write:
 
 ```tsx
 import { useQuery } from "patchy/preact";

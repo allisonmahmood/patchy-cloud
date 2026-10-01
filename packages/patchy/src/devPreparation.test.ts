@@ -32,12 +32,14 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   index,
   tier = 1,
   uses = "{}",
+  generatedServer,
   metadata = { postgres: {}, shared: {} },
   duringGeneration = () => Effect.void
 }: {
   readonly index: unknown;
   readonly tier?: 0 | 1 | 2;
   readonly uses?: string;
+  readonly generatedServer?: string;
   readonly metadata?: unknown;
   readonly duringGeneration?: (root: string) => Effect.Effect<void, unknown, FileSystem.FileSystem>;
 }) {
@@ -68,7 +70,12 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
         ok: true,
         uses: [],
         metadata,
-        files: [{ path: "patchy/_generated/index.json", contents: JSON.stringify(index) }]
+        files: [
+          { path: "patchy/_generated/index.json", contents: JSON.stringify(index) },
+          ...(generatedServer === undefined
+            ? []
+            : [{ path: "patchy/_generated/server.ts", contents: generatedServer }])
+        ]
       });
     }).pipe(Effect.provide(NodeServices.layer))
   );
@@ -82,17 +89,32 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
 const currentIndex = { release: RELEASE, manifestVersion: MANIFEST_VERSION, uses: [], skills: [] };
 
 it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
-  it.effect("discovers tier 2 source modules without evaluating unfinished server code", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const { root, generated, prepare } = yield* harness({ index: currentIndex, tier: 2 });
-      yield* fs.makeDirectory(path.join(root, "server"));
-      yield* fs.writeFileString(path.join(root, "server/leads.ts"), "incomplete TypeScript {");
-      yield* prepare;
-      assert.deepStrictEqual(generated[0]!.serverModules, ["leads"]);
-      assert.isUndefined(generated[0]!.manifest.handlers);
-    })
+  it.effect(
+    "discovers server modules without evaluating them or rewriting refresh-owned types",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, generated, prepare } = yield* harness({
+          index: currentIndex,
+          tier: 2,
+          generatedServer: "new module list"
+        });
+        yield* fs.makeDirectory(path.join(root, "patchy/_generated"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "patchy/_generated/server.ts"),
+          "refresh-owned list"
+        );
+        yield* fs.makeDirectory(path.join(root, "server"));
+        yield* fs.writeFileString(path.join(root, "server/leads.ts"), "incomplete TypeScript {");
+        yield* prepare;
+        assert.deepStrictEqual(generated[0]!.serverModules, ["leads"]);
+        assert.isUndefined(generated[0]!.manifest.handlers);
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(root, "patchy/_generated/server.ts")),
+          "refresh-owned list"
+        );
+      })
   );
   it.effect(
     "returns the manifest it generated from, even when an imported file changes mid-generation",

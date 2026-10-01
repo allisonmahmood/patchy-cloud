@@ -685,7 +685,7 @@ it.layer(layer)("SDK company generation", (it) => {
   );
 
   it.effect(
-    "seeds Preact on tiers 1 and 2 without changing tier 0 or removing installed skills",
+    "selects page and server skills by tier, with only the server skill removed on downgrade",
     () =>
       Effect.gen(function* () {
         const api = yield* sdkOver(Layer.empty);
@@ -697,13 +697,20 @@ it.layer(layer)("SDK company generation", (it) => {
             output.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md"),
             tier !== 0
           );
+          assert.strictEqual(
+            output.files.some(({ path }) => path === ".agents/skills/patchy-server/SKILL.md"),
+            tier === 2
+          );
           assert.isFalse(output.files.some(({ path }) => path.startsWith("src/")));
         }
         const downgraded = yield* api.generate({
-          payload: generateRequest(Fixtures.manifest, ["patchy-preact"])
+          payload: generateRequest(Fixtures.manifest, ["patchy-preact", "patchy-server"])
         });
         assert.isTrue(
           downgraded.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md")
+        );
+        assert.isFalse(
+          downgraded.files.some(({ path }) => path === ".agents/skills/patchy-server/SKILL.md")
         );
       })
   );

@@ -150,6 +150,7 @@ it("writes initial generated files and a local manifest while preserving existin
 it.each([
   ["a traversal", "patchy/_generated/../../outside.ts"],
   ["a server manifest", "patchy/_generated/manifest.json"],
+  ["an authored server module", "server/notes.ts"],
   ["a duplicate", "patchy/_generated/client.ts"]
 ])("rejects %s before writing generated output", async (_, rejectedPath) => {
   const staging = await temporaryDirectory();

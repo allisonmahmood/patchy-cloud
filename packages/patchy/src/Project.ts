@@ -17,6 +17,7 @@ import {
   normalizeDescriptionText,
   PatchName
 } from "@patchy/api";
+import { workerdVersion } from "@patchy/api/guest";
 import * as Api from "./Api.js";
 import {
   InstanceMismatch,
@@ -72,6 +73,7 @@ const childSchema = Schema.Struct({
   generated: Generated,
   manifest: Manifest,
   removedSkills: Schema.Array(Schema.String),
+  workerdPin: Schema.NullOr(Schema.String),
   configEdit: Schema.optionalKey(ConfigEdit)
 });
 const capabilitySchema = Schema.Struct({
@@ -475,6 +477,10 @@ export const generate = Effect.fn("Project.generate")(function* (
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
+  if (manifest.tier !== 2 && skills.includes("patchy-server")) {
+    removedSkills.push("patchy-server");
+    skills = skills.filter((name) => name !== "patchy-server");
+  }
   const serverModules = manifest.tier === 2 ? yield* discoverServerModules(cwd) : [];
   const client = yield* Api.client(token);
   const generated = yield* client
@@ -505,6 +511,7 @@ export const generate = Effect.fn("Project.generate")(function* (
       generated,
       manifest: { ...manifest, uses },
       removedSkills,
+      workerdPin: manifest.tier === 2 ? workerdVersion : null,
       ...(configEdit ? { configEdit } : {})
     },
     []
@@ -569,14 +576,14 @@ export const refresh = Effect.fn("Project.refresh")(function* (
             return yield* new LocalError({
               message: "package.json must pin patchy as a devDependency."
             });
-          const pinChanged = previousPin !== tarball;
+          let pinChanged = previousPin !== tarball;
           const from = releaseFromPin(previousPin);
           const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
           const needsInstall =
             pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
           if (pinChanged) {
             yield* localIO("Update package pin", () =>
-              transaction.setPin(previousPin, tarball)
+              transaction.setPin("patchy", previousPin, tarball)
             ).pipe(Effect.uninterruptible);
           }
           if (needsInstall) {
@@ -586,6 +593,19 @@ export const refresh = Effect.fn("Project.refresh")(function* (
             yield* install(cwd);
           }
           const result = yield* runInstalledGenerate(cwd, token, release.release, skills, change);
+          // The newly installed release chooses the engine pin, not the CLI doing the upgrade.
+          const workerdPin = result.workerdPin ?? undefined;
+          if (dependencies.workerd !== workerdPin) {
+            yield* localIO("Update workerd pin", () =>
+              transaction.setPin("workerd", dependencies.workerd, workerdPin)
+            ).pipe(Effect.uninterruptible);
+            if (!needsInstall)
+              yield* localIO("Preserve previous installation", () =>
+                transaction.prepareInstall()
+              ).pipe(Effect.uninterruptible);
+            yield* install(cwd);
+            pinChanged = true;
+          }
           const generatedIndex = result.generated.files.find(
             (file) => file.path === "patchy/_generated/index.json"
           );
@@ -666,7 +686,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
       [
         ...warnings,
         `Refreshed ${from} → ${release.release}.`,
-        ...(pinChanged ? ["Updated the patchy pin and installed the new release."] : []),
+        ...(pinChanged ? ["Updated managed pins and installed the release's dependencies."] : []),
         ...capabilityNotices,
         ...changed.generated,
         ...changed.skills,
@@ -774,7 +794,7 @@ export const init = Effect.fn("Project.init")(function* (
   cwd: string,
   token: Redacted.Redacted,
   directory: Option.Option<string>,
-  tier: 0 | 1,
+  tier: 0 | 1 | 2,
   purposeOption: Option.Option<string>
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -892,6 +912,27 @@ export const init = Effect.fn("Project.init")(function* (
         }
         yield* install(staging);
         const result = yield* runInstalledGenerate(staging, token, release.release, []);
+        if (result.workerdPin !== null) {
+          // The installed release, not the launcher, selects the engine for this private stage.
+          const pkg = yield* parse("Read starter package", () =>
+            decodePackage(files["package.json"]!)
+          );
+          const dependencies = yield* parse("Read starter dependencies", () =>
+            decodeDependencies(pkg.devDependencies)
+          );
+          yield* fs
+            .writeFileString(
+              path.join(staging, "package.json"),
+              json({ ...pkg, devDependencies: { ...dependencies, workerd: result.workerdPin } })
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new LocalError({ message: "Could not write the release's workerd pin.", cause })
+              )
+            );
+          yield* install(staging);
+        }
         const changed = yield* localIO("Write initial generation", () =>
           writeInitialGeneration(staging, result.generated.files, json(result.manifest))
         );
@@ -911,9 +952,14 @@ export const init = Effect.fn("Project.init")(function* (
           [
             `Initialized ${dir} (tier ${tier}, release ${release.release}).`,
             "Dependencies are installed. AGENTS.md and CLAUDE.md were written once.",
+            ...(tier === 2
+              ? ["The Preact page in src/ calls the hosted handlers in server/."]
+              : []),
             ...changed.generated,
             ...changed.skills,
-            "Test with: pnpm patchy dev"
+            tier === 2
+              ? "Typecheck, then publish to a development instance with invented data to exercise the handlers."
+              : "Test with: pnpm patchy dev"
           ]
         );
       }),

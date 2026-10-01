@@ -16,7 +16,7 @@ A **patch** is the unit of what people build and deploy on Patchy Cloud — anyt
 
 ### What a patch is made of
 
-A patch is a **file tree**. A **patch repo** is its local working copy, initialized by `patchy init` at tier 0 or tier 1. It contains application source and the single-file build, `patchy.config.ts`, `patchy.json`, the pinned `patchy` package, generated client and context, project skills and fixtures. `patchy.config.ts` holds the name and explicit tier, **defines** the tables and file stores the patch owns, and **declares** the connections and shared tables it uses. The CLI executes that config locally into a **manifest**; the server validates the manifest, never executable config.
+A patch is a **file tree**. A **patch repo** is its local working copy, initialized by `patchy init` at tier 0, 1 or 2. It contains application source and the single-file build, `patchy.config.ts`, `patchy.json`, managed package pins, generated client and context, project skills and fixtures. Tier 2 adds `server/` handlers beside the page. `patchy.config.ts` holds the name and explicit tier, **defines** the tables and file stores the patch owns, and **declares** the connections and shared tables it uses. The CLI executes that config locally into a **manifest**; the server validates the manifest, never executable config.
 
 `patchy.json` records the instance, description, last description-sync timestamp and optional patch id, never credentials. One repo is the working copy of exactly one patch. The first publish without an id creates the patch and writes its id back; later publishes update it. Cloning preserves that target, but only its owner may publish to it. A single HTML file is the simpler tier 0 route with no repo; its CLI cache remembers the published patch. A file-born patch can be adopted by putting its id in a repo's `patchy.json`.
 
@@ -85,32 +85,41 @@ the hosted shell. `patchy dev` on the production engine belongs to #404.
 
 ### Building a patch
 
-`patchy init [dir] --purpose <text>` starts a patch repo, defaulting to tier 1
-(`--tier 0` is available). It authenticates first, names the instance and identity,
-and lays down config, application source, the single-file build, typechecking,
-generated client and context, project skills and fixtures. It installs the pinned
-package, so an agent starts with `pnpm patchy --help` and `pnpm typecheck`, not
+`patchy init [dir] --purpose <text>` starts a patch repo, defaulting to tier 1.
+`--tier 0` and `--tier 2` are available. Choose tier 2 for enforced rules, atomic
+multi-row writes or server-side work such as combining connection data before
+the viewer sees it. Live sync and sequential operations already work on tier 1.
+Init authenticates first, names the instance and identity, and lays down config,
+application source, the single-file build, typechecking, generated client and
+context, project skills and fixtures. It installs the managed packages with
+scripts disabled, so an agent starts with `pnpm patchy --help` and `pnpm typecheck`, not
 another setup or installation ritual. A second initialization refuses the same
 repo. A company without connections gets the core skills and empty declarations.
 
-Tier 1 starts with `index.html` containing an empty root, `src/main.tsx` and
+Tiers 1 and 2 start with `index.html` containing an empty root, `src/main.tsx` and
 `src/App.tsx`. Preact and its compat behavior come through `patchy/preact` on
 the release's bundled instance. TypeScript and Vite use the same JSX import
 source; module preloading is off. The repo includes hooks/import lint and
 `helpers/` for company code, not a router, CSS framework, state library or test
 runner. Vanilla repos keep working through the framework-free generated client.
-Tier 0 is unchanged. Builders talk through edge cases and product behavior with
-the person before building, then typecheck and exercise the dev shell.
+Tier 2 adds starter handlers in `server/`, config-bound
+`patchy/_generated/server.ts`, the exact `workerd` managed pin and
+`patchy-server` alongside `patchy-preact` and `patchy-loop`. The page uses
+generated query and mutation calls; workerd runs from its platform package
+without a postinstall script. Tier 0 is unchanged. Builders talk through edge
+cases and product behavior with the person before building, then typecheck and
+exercise the supported runtime.
 
 `patchy.config.ts` defines what the patch owns and declares what it uses.
 `patchy.json` records the instance, description, optional patch id and description
 sync stamp, never credentials. `init --purpose` writes the initial description
-there and the independent purpose into write-once `AGENTS.md`, alongside layout,
-skill paths, "test with `patchy dev`" and the generated-index pointer.
-`CLAUDE.md` imports it. The local dev runtime
-uses real handlers over local data, never a production-data shortcut.
+there and the independent purpose into write-once `AGENTS.md`, alongside the
+`src/` page and `server/` handler split in words that hold on either tier,
+skill paths, runtime-check guidance and the generated-index pointer.
+`CLAUDE.md` imports it. The local dev runtime uses real handlers over local data,
+never a production-data shortcut.
 
-`patchy dev` checks the pin, CLI and runtime against the instance release, then
+For tiers 0 and 1, `patchy dev` checks the pin, CLI and runtime against the instance release, then
 authenticates a new session as the machine token's user. It refreshes declarations
 and pulls the published inventory when the repo has an id. It provisions the same
 table/store definitions over PGlite and serves the production shell, sandbox,
@@ -130,6 +139,11 @@ the published inventory determines additive changes and refusals, not the last
 local config; compatible additions preserve rows. Dev calls print compact wide
 events to the local dev log without PostHog delivery. Neither the connection
 keyring nor the production runtime log store is loaded.
+
+Tier 2 handlers can be published and exercised on a development instance with
+invented data. The production-engine `patchy dev` integration, live server
+rebinding and colleague mount belong to #404. Tier 2 query subscriptions belong
+to #403; init and refresh do not make those runtime integrations available.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
@@ -184,16 +198,20 @@ addition points to `/company`. Restore source access or correct the declaration.
 `patchy remove <alias>`
 reverses the declaration and generated surface, retaining its fixture.
 
-`patchy refresh` binds the whole change to one release: fetch, update pin and install
-if changed, re-exec the new CLI, execute config, generate, stage and activate.
-Failure leaves the old managed set intact. The **managed files** are exactly the
-pin, `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture stubs,
-the lockfile through install and the one `uses` edit for add/remove. App source,
-existing fixtures and the write-once agent instructions belong to the builder.
+`patchy refresh` binds the whole change to one release: fetch, reconcile managed
+pins with the release and tier, install as needed, re-exec the CLI, generate,
+stage and activate. Failure leaves the old managed set intact. The **managed
+files** are exactly the `patchy` pin and tier 2's `workerd` pin,
+`patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture stubs, the
+lockfile through install and the one `uses` edit for add/remove. Refresh alone
+updates managed pins and the generated server module list after init; publish
+refuses stale module names with `stale_generated`. Refresh removes stale
+generated context files. App source, existing fixtures and write-once agent
+instructions belong to the builder.
 
 Generation is authenticated and server-side. It accepts the manifest, current
-release, optional patch id and present skills, and returns finished files with
-resolved declaration ids and revision stamps. `patchy/_generated/index.json`
+release, optional patch id, present skills and server module names, and returns
+finished files with resolved declaration ids and revision stamps. `patchy/_generated/index.json`
 identifies each declaration, alias, stamp, skill and context path; its README says
 plainly that deleting `.patchy/` destroys local rows and files. The CLI alone writes
 `manifest.json` from config execution. Neither the server nor the CLI may write
@@ -202,19 +220,22 @@ arbitrary paths outside the managed roots.
 The **global skill** is the door for sign-in, static pages and `init`; inside a repo
 the **project skills** govern. Their sole source is `packages/sdk/skills/`:
 `patchy-loop`, `patchy-tables` and `patchy-files` are core;
-`patchy-preact` is added on tiers 1 and 2; `patchy-postgres` and `patchy-shared-tables` follow declarations. Refresh re-fetches
-every present skill and adds implied ones: presence is sticky, and a missing offer
-fails rather than preserving obsolete instructions. Explicit remove may retire a
+`patchy-preact` is added on tiers 1 and 2; `patchy-server` is added on tier 2.
+`patchy-postgres` and `patchy-shared-tables` follow declarations. Refresh
+re-fetches every present skill and adds implied ones. Skill presence is sticky,
+except that dropping below tier 2 removes `patchy-server` alongside the
+`workerd` pin and generated `server.ts`. A different missing skill offer fails
+rather than preserving obsolete instructions. Explicit remove may retire a
 declaration skill when no declaration of its kind remains.
 
 A **fixture stub** contains metadata and guidance, not company rows. The builder
 fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql` with invented
 local inserts. Existing files are never overwritten. Only metadata and inventory
 come from the instance; development never copies production rows or bytes.
-Every readable row in a company runtime is available to every admitted viewer;
-UI filters do not create access control. A public runtime gets no company data.
-Project skills teach this boundary and the tier 1 limits: no outbound access or
-client storage; durable data goes through Patchy.
+On tier 1, every readable row is available to every admitted viewer;
+UI filters do not create access control. Tier 2 enforces rules in handlers.
+A public runtime gets no company data. Project skills teach these boundaries
+and the limits of each tier; durable data goes through Patchy.
 
 ### Sharing and finding
 
@@ -445,6 +466,18 @@ ADR-0012.
 ### Declaring and changing a tier
 
 The tier is explicit in `patchy.config.ts`. Edit it and run `patchy refresh` before publishing a change. The CLI checks both graphs: `server/` requires tier 2, and script cannot claim tier 0. The server independently checks tier 0 against the safe-HTML policy and re-derives tier 2 descriptors from the stored server module. Dev and test instances admit tier 2; production requires fleet execution. Claiming a higher built tier than the code needs is fine, and tier 2 with zero handlers publishes with a warning. A tier 0 repo may provision tables and stores; resources do not make a tier.
+
+To move from tier 1 to 2, set `tier: 2`, create `server/` handlers and refresh.
+Refresh adds the exact `workerd` pin, generated `server.ts` and `patchy-server`
+skill. The generated client is server-only; typechecking identifies direct
+resource calls to move into handlers. A public patch needs `--share company`
+on that publish.
+
+To move from tier 2 to 1, set `tier: 1`, remove `server/` and refresh. Refresh
+removes those tier 2 managed parts, the one tier-keyed exception to sticky
+skills. Typechecking identifies `patchy.server.*` calls to rewrite. There is no
+codemod or tier-change command, and refresh never rewrites application source.
+Serving a tier 1 version by publish or rollback permits public sharing again.
 
 A **version** has exactly one tier; the patch's tier is the tier of the version it serves. Changing tier means publishing a new version, not moving an existing one in place. Primitives belong to the patch, not its tier, so their data persists across the change. Rollback selects the older version's tier without rolling back cumulative provisioning or sharing flags.
 

@@ -77,7 +77,7 @@ The exact version shared by Patchy's CLI, config builders, browser client and de
 _Avoid_: wire version, patch version
 
 **Server bundle**:
-The closed artifact containing one patch version's handler code, distinct from its browser HTML and its serializable handler descriptors.
+The single closed module built from a tier 2 version's handler code and stored beside its browser HTML. Its hash and handler descriptors identify the server artifact in the manifest; it is distinct from the generated server module list.
 _Avoid_: page bundle, manifest, hosted instance
 
 **Environment**:
@@ -89,7 +89,7 @@ The patch repo's local execution of real capabilities over disposable data, unde
 _Avoid_: mock backend, emulator, dev env
 
 **Managed files**:
-The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: the package pin, generated client and metadata, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
+The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: managed pins, generated client and metadata, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
 _Avoid_: scaffold (these parts continue to be maintained), all project files
 
 **Patchy SDK**:
@@ -113,9 +113,9 @@ The company maintains it; it still obeys the sandbox and bundle limits.
 _Avoid_: vendored package, third-party code
 
 **Managed pin**:
-The exact `patchy` tarball URL maintained by refresh, including its content digest.
-Tier 2 init adds an exact `workerd` pin. The builder owns Vite, the single-file
-plugin, TypeScript and `@types/*`; they are caret ranges, not managed pins.
+A release-selected dependency maintained by refresh rather than the builder:
+the exact content-digest `patchy` tarball URL, plus an exact `workerd` version
+only on tier 2. Builder-owned toolchain ranges are not managed pins.
 _Avoid_: toolchain pin, overrides
 
 **Compat semantics**:

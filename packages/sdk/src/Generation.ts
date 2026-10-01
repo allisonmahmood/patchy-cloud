@@ -106,7 +106,13 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 }
 
 const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
-const knownSkills = [...coreSkills, "patchy-preact", "patchy-postgres", "patchy-shared-tables"];
+const knownSkills = [
+  ...coreSkills,
+  "patchy-preact",
+  "patchy-server",
+  "patchy-postgres",
+  "patchy-shared-tables"
+];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -172,6 +178,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
     return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
   const skills = new Set([...coreSkills, ...request.skills]);
   if (request.manifest.tier === 1 || request.manifest.tier === 2) skills.add("patchy-preact");
+  if (request.manifest.tier === 2) skills.add("patchy-server");
+  else skills.delete("patchy-server");
   for (const skill of skills) {
     if (!knownSkills.includes(skill))
       return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });

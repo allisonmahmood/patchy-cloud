@@ -977,7 +977,7 @@ const init = Command.make(
   "init",
   {
     dir: Argument.String("dir").pipe(Argument.optional),
-    tier: Flag.Literals("tier", ["0", "1"]).pipe(Flag.withDefault("1")),
+    tier: Flag.Literals("tier", ["0", "1", "2"]).pipe(Flag.withDefault("1")),
     purpose: Flag.String("purpose").pipe(Flag.optional)
   },
   (options) =>
@@ -988,14 +988,14 @@ const init = Command.make(
           yield* Cwd,
           token,
           options.dir,
-          options.tier === "0" ? 0 : 1,
+          options.tier === "0" ? 0 : options.tier === "1" ? 1 : 2,
           options.purpose
         );
       })
     )
 ).pipe(
   Command.withDescription(
-    "Create a patch repo, install its pinned release and generate its client and skills."
+    "Create a patch repo at tier 1 by default, tier 2 with server handlers, or tier 0 without scripts."
   )
 );
 

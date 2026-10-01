@@ -79,7 +79,13 @@ export class ManagedProject {
   private readonly snapshots = new Map<string, boolean>();
   private readonly mutated = new Set<string>();
   private readonly createdFixtures = new Map<string, string>();
-  private pinEdit: { written: string; previousLiteral: string } | undefined;
+  private readonly pinEdits: Array<{
+    name: "patchy" | "workerd";
+    written: string | undefined;
+    previousLiteral: string | undefined;
+    before: string;
+    after: string;
+  }> = [];
   private readonly createdDirs = new Set<string>();
   private installed = false;
   private hadModules = false;
@@ -131,16 +137,31 @@ export class ManagedProject {
     }
   }
 
-  /** Only the pin is ours; later package scripts, dependencies and formatting remain the author's. */
-  async setPin(expected: string, pin: string): Promise<void> {
+  /** Only managed pins are ours; later scripts, dependencies and formatting remain the author's. */
+  async setPin(
+    name: "patchy" | "workerd",
+    expected: string | undefined,
+    pin: string | undefined
+  ): Promise<void> {
     // Keep the TypeScript parser out of commands that never edit package pins.
     const { patchPackagePin } = await import("./packagePin.js");
     const target = await safePath(this.root, "package.json");
     const source = await fs.readFile(target, "utf8");
-    const edited = patchPackagePin(source, expected, JSON.stringify(pin));
+    const edited = patchPackagePin(
+      source,
+      name,
+      expected,
+      pin === undefined ? undefined : JSON.stringify(pin)
+    );
     if (!edited) throw new ProjectChanged({ file: "package.json" });
     await this.replacePackage(edited.contents);
-    this.pinEdit = { written: pin, previousLiteral: edited.previousLiteral };
+    this.pinEdits.push({
+      name,
+      written: pin,
+      previousLiteral: edited.previousLiteral,
+      before: source,
+      after: edited.contents
+    });
   }
 
   private async replacePackage(contents: string): Promise<void> {
@@ -150,18 +171,22 @@ export class ManagedProject {
     await fs.rename(staged, target);
   }
 
-  private async restorePin(): Promise<void> {
-    if (!this.pinEdit) return;
+  private async restorePins(): Promise<void> {
+    if (this.pinEdits.length === 0) return;
     // Rollback is the same lazy compiler boundary as the forward pin edit.
     const { patchPackagePin } = await import("./packagePin.js");
     const target = await safePath(this.root, "package.json");
     if (!(await info(target))?.isFile()) return;
-    const edited = patchPackagePin(
-      await fs.readFile(target, "utf8"),
-      this.pinEdit.written,
-      this.pinEdit.previousLiteral
-    );
-    if (edited) await this.replacePackage(edited.contents);
+    let source = await fs.readFile(target, "utf8");
+    for (let index = this.pinEdits.length - 1; index >= 0; index--) {
+      const edit = this.pinEdits[index]!;
+      if (source === edit.after) source = edit.before;
+      else {
+        const restored = patchPackagePin(source, edit.name, edit.written, edit.previousLiteral);
+        if (restored) source = restored.contents;
+      }
+    }
+    await this.replacePackage(source);
   }
 
   /** Preserve the old installation too: rolling back a pin without its executable is not rollback. */
@@ -279,7 +304,7 @@ export class ManagedProject {
           await fs.rm(modules, { recursive: true, force: true });
           if (this.hadModules) await fs.rename(path.join(this.temporary, "node_modules"), modules);
         }
-        await this.restorePin();
+        await this.restorePins();
         for (const [name, contents] of this.createdFixtures) {
           const target = await safePath(this.root, name);
           if ((await info(target))?.isFile() && (await fs.readFile(target, "utf8")) === contents)

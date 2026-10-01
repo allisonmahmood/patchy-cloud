@@ -5,7 +5,7 @@ description: Add a company Postgres connection, read its generated relations, wr
 
 # Company Postgres reads
 
-Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever can open the patch; hiding a column in the UI does not protect it. Tier 1 has no outbound access or client storage. Company credentials stay behind Patchy, never in config, source, CLI arguments or agent transcripts. Development uses invented local fixture rows, never production data.
+Read `../patchy-loop/SKILL.md` first. On tier 1, every readable row is available to whoever can open the patch; hiding a column in the UI does not protect it. Tier 2 reaches connections through `ctx.connections` in actions and returns only the data its handlers authorize. Company credentials stay behind Patchy, never in config, source, CLI arguments or agent transcripts. Development uses invented local fixture rows, never production data.
 
 ## Declare a connected source
 
@@ -13,13 +13,16 @@ Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever
 2. Run `pnpm patchy add postgres/<handle> --as sales` with the chosen handle. For `warehouse`, it inserts `sales: { kind: "postgres", handle: "warehouse" }` into `uses` without changing imports, and generates client, context, fixture stub and this skill. When hand-editing config, you may instead import `postgres` from `patchy/config` and write the equivalent `sales: postgres("warehouse")`; run `pnpm patchy refresh` afterwards.
 3. Read `patchy/_generated/index.json`, then the context path for `sales`. Use only the discovered relations and columns it lists. It also names exclusions and relations without a usable primary key. Never invent generated methods or edit a snapshot stamp to clear an error.
 4. Fill `fixtures/postgres-warehouse.sql` with invented local `INSERT` statements, matching the stub's schema-qualified, quoted table and column names and source-native types, including modifiers such as `"pg_catalog"."numeric"(8,2)`. For example, only if its header actually lists `"public"."customers" ("id" integer, "name" text)`, use `INSERT INTO "public"."customers" ("id", "name") VALUES (1, 'Local customer');`. Views are synthetic local tables: insert fixture rows into them too. Preserve existing fixtures across refresh and removal.
-5. Run `pnpm typecheck`, then `pnpm patchy dev --json` and exercise the generated reads in its local shell. A missing fixture or unsupported local SQL feature fails locally with its reason, never falling back to production. After changing fixture rows, stop and start dev again.
+5. Run `pnpm typecheck`. On tier 1, run `pnpm patchy dev --json` and exercise the generated reads in its local shell. A missing fixture or unsupported local SQL feature fails locally with its reason, never falling back to production. After changing fixture rows, stop and start dev again. This release does not support tier 2 handler fixtures in `patchy dev`; follow `patchy-server` for how to exercise published handlers on a development instance.
 
 `pnpm patchy add postgres` chooses the sole connected Postgres connection; with several it lists choices from `list connections` and stops. Without `--as`, the alias is the handle with hyphens camel-cased. Prefer an explicit discovered handle for a reproducible command. To look for an existing tool or shared table instead, follow the loop skill's patch discovery chain. No matching patch means none you can use; check `--state retired` before concluding that tool does not exist. Patch state flags do not apply to connections.
 
 ## Generated APIs
 
 For an alias `sales`, public-schema relations live at `patchy.connections.sales.customers`; another schema lives at `patchy.connections.sales.analytics.orders`. Use bracket notation for names that need it. The generated context is authoritative for actual paths; `query` is reserved and colliding or unsupported relations are excluded and named.
+On tier 2 these same connection APIs live at `ctx.connections.<alias>` in an
+action, not on the page client or in a query or mutation. Read `patchy-server`
+for the current handler development boundary.
 
 If the snapshot contains these columns, application code can read:
 
@@ -40,15 +43,22 @@ Keyed cursors bind connection, relation, snapshot revision, filters and order; r
 
 ## Shaped SQL when relation reads are insufficient
 
-`patchy.connections.sales.query(sql, params, shape)` executes one read-only statement. Bind values in `params`, never interpolate user input into SQL. State columns explicitly rather than `SELECT *`:
+`patchy.connections.sales.query(sql, params, shape)` executes one read-only statement. Bind values in `params`, never interpolate user input into SQL. State columns explicitly rather than `SELECT *`. For a discovered `invoices` relation whose `amount_cents` is integer money in a single currency, keep the aggregate exact:
 
 ```ts
 const result = await patchy.connections.sales.query(
-  'SELECT "name" FROM "public"."customers" WHERE "id" = $1',
+  'SELECT COALESCE(SUM("amount_cents"), 0)::text AS "total_cents" FROM "public"."invoices" WHERE "customer_id" = $1',
   [1],
-  { name: { kind: "text" } }
+  { total_cents: { kind: "text" } }
 );
+const totalCents = BigInt(result.rows[0]!.total_cents);
 ```
+
+Use only relation and column names present in the generated context. PostgreSQL
+widens integer sums; casting back to `int` can overflow. Return the sum as text,
+not a JavaScript number, and use `BigInt` for exact integer-cent arithmetic.
+Keep decimal currency formatting exact, including cents. Convert a bigint back
+to a decimal string before a handler result or any JSON boundary.
 
 The result is `{ ok: true, rows }`. Page shapes use literal descriptors; `{ kind: "text", optional: true }` admits null. Defaults and refs are refused. Keep `patchy/config` imports in the config, outside the page graph. Missing or duplicate result names and null in a non-optional column fail; extra result columns are dropped. Import `isPatchyError` from the relative generated `client.js`; `isPatchyError(error, "shape_mismatch")` narrows the shared error's `code`, `message` and `details`. `invalid_query` may include SQLSTATE and position; fix the query instead of hiding the error.
 
