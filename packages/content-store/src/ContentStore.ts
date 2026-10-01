@@ -1,7 +1,7 @@
 /**
  * The content store: the platform's object store. HTML lives under version
  * keys, immutable file objects under files/, and retained SDK archives under
- * sdk/. FilesystemContentStore implements it for dev and tests; AzureContentStore
+ * sdk/. FilesystemContentStore implements it for dev and tests; S3ContentStore
  * for production. Object listing is infrastructure for orphan reclamation,
  * not the file primitive's indexed, authorised list operation.
  */
@@ -29,8 +29,8 @@ export class ObjectNotFound extends Schema.TaggedError<ObjectNotFound>()("Object
 }
 
 /**
- * The store could not carry an operation out — the disk or the blob service
- * refused. The driver's own error rides as `cause`.
+ * The filesystem or object store could not carry out an operation.
+ * The driver's underlying error is preserved as `cause`.
  */
 export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("StoreUnavailable", {
   operation: Schema.Literals(["put", "get", "delete", "list"]),

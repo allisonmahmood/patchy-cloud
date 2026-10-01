@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { contentStoreContract } from "../test/ContentStoreContract.js";
 import * as ContentStore from "./ContentStore.js";
 import * as FilesystemContentStore from "./FilesystemContentStore.js";
 
@@ -22,44 +23,7 @@ const storeInTempDir = Layer.unwrap(
 ).pipe(Layer.provideMerge(NodeFileSystem.layer));
 
 it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", (it) => {
-  it.effect("stores and reads an object back", () =>
-    Effect.gen(function* () {
-      const service = yield* ContentStore.ContentStore;
-      yield* service.put("patches/abc/versions/one.html", "<h1>hi</h1>");
-      assert.strictEqual(yield* service.get("patches/abc/versions/one.html"), "<h1>hi</h1>");
-    })
-  );
-
-  it.effect("preserves binary bytes and UTF-8 HTML through the same store", () =>
-    Effect.gen(function* () {
-      const service = yield* ContentStore.ContentStore;
-      const key = "files/abc/assets/binary";
-      const bytes = new Uint8Array([0, 255, 254, 128, 13, 10, 195, 169]);
-      yield* service.putBytes(key, bytes);
-      assert.deepStrictEqual(yield* service.getBytes(key), bytes);
-      yield* service.put("unicode.html", "\uFEFF<p>café 日本語</p>");
-      assert.strictEqual(yield* service.get("unicode.html"), "\uFEFF<p>café 日本語</p>");
-      yield* service.delete(key);
-      assert.strictEqual((yield* service.getBytes(key).pipe(Effect.flip))._tag, "ObjectNotFound");
-      assert.strictEqual(
-        (yield* service.putBytes("../escape", bytes).pipe(Effect.flip))._tag,
-        "InvalidObjectKey"
-      );
-    })
-  );
-
-  it.effect("deletes idempotently and reports a missing object by its key", () =>
-    Effect.gen(function* () {
-      const service = yield* ContentStore.ContentStore;
-      const key = "patches/abc/versions/gone.html";
-      yield* service.put(key, "<h1>hi</h1>");
-      yield* service.delete(key);
-      yield* service.delete(key);
-      const missing = yield* service.get(key).pipe(Effect.flip);
-      assert.strictEqual(missing._tag, "ObjectNotFound");
-      assert.strictEqual(missing.key, key);
-    })
-  );
+  contentStoreContract(it);
 
   it.effect("refuses a key that would leave the root", () =>
     Effect.gen(function* () {
@@ -67,33 +31,23 @@ it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", 
       const escaped = yield* service.put("../escape.html", "<h1>bad</h1>").pipe(Effect.flip);
       assert.strictEqual(escaped._tag, "InvalidObjectKey");
       assert.strictEqual(escaped.key, "../escape.html");
-      assert.strictEqual((yield* service.get("").pipe(Effect.flip))._tag, "InvalidObjectKey");
+      assert.strictEqual(
+        (yield* service.putBytes("../escape", new Uint8Array([1])).pipe(Effect.flip))._tag,
+        "InvalidObjectKey"
+      );
     })
   );
 
-  it.effect("lists nested objects by prefix with their modification times", () =>
+  it.effect("uses filesystem modification times and rejects escaping list prefixes", () =>
     Effect.gen(function* () {
       const service = yield* ContentStore.ContentStore;
       yield* service.put("files/listing/store/one", "one");
-      yield* service.put("files/listing/store/two", "two");
-      yield* service.put("files/other/store/three", "three");
       const fs = yield* FileSystem.FileSystem;
       const root = yield* FilesystemContentStore.rootDir;
       yield* fs.utimes(`${root}/files/listing/store/one`, 123456789, 123456789);
-      const objects = yield* service.list("files/listing/").pipe(Stream.runCollect);
-      assert.deepStrictEqual(objects.map((object) => object.key).sort(), [
-        "files/listing/store/one",
-        "files/listing/store/two"
+      assert.deepStrictEqual(yield* service.list("files/listing/").pipe(Stream.runCollect), [
+        { key: "files/listing/store/one", lastModified: 123456789000 }
       ]);
-      assert.strictEqual(
-        objects.find((object) => object.key === "files/listing/store/one")!.lastModified,
-        123456789000
-      );
-      yield* service.delete("files/listing/store/one");
-      assert.deepStrictEqual(
-        (yield* service.list("files/listing/").pipe(Stream.runCollect)).map((object) => object.key),
-        ["files/listing/store/two"]
-      );
       assert.strictEqual(
         (yield* service.list("../").pipe(Stream.runCollect, Effect.flip))._tag,
         "InvalidObjectKey"

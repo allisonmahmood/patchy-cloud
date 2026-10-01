@@ -16,6 +16,7 @@
     "seed:dev": "node scripts/seed-dev.mjs",
     "test": "vitest run",
     "test:clerk": "node --import tsx --conditions=development scripts/test-clerk.ts",
+    "test:content-store:live": "vitest run --config vitest.content-store-live.config.ts",
     "test:all": "sh scripts/test-all.sh",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
     "test:packed-preact-e2e": "node scripts/packed-preact-e2e.mjs",

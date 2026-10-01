@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The platform's object store for a patch's bytes: one ContentStore service (put, get, delete by key) with a filesystem layer for dev and tests and an Azure Blob layer for production.",
+  "description": "The platform's object store for patch bytes: a filesystem layer for dev and tests and an S3 layer for Neon Object Storage in production.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -21,8 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@azure/identity": "^4.13.3",
-    "@azure/storage-blob": "^12.27.0",
+    "@aws-sdk/client-s3": "^3.1141.0",
     "@effect/platform-node": "catalog:",
     "effect": "catalog:"
   },
