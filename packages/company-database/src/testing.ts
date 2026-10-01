@@ -10,6 +10,13 @@ import { registry } from "@patchy/limits/registry";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 import * as PgCompanyDatabases from "./PgCompanyDatabases.js";
+import * as ResourceChanges from "./ResourceChanges.js";
+
+/** Tests which do not observe delivery still install the port explicitly. */
+export const resourceChangesLayer = Layer.succeed(
+  ResourceChanges.ResourceChanges,
+  ResourceChanges.ResourceChanges.of({ publish: () => Effect.void })
+);
 
 /** Companies remain lazy; every test block owns its platform claims and their random database names. */
 export const layer = (options?: {

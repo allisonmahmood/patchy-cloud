@@ -1,8 +1,10 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as ResourceChanges from "./ResourceChanges.js";
 
 export class Placement extends Schema.Class<Placement>("Placement")({
   companyId: Schema.String,
@@ -78,6 +80,7 @@ export class PatchLock extends Context.Service<
   {
     readonly patchId: string;
     readonly sql: SqlClient.SqlClient;
+    readonly resources: Set<string>;
   }
 >()("@patchy/company-database/CompanyDatabases/PatchLock") {}
 
@@ -109,7 +112,16 @@ export class CompanyDatabases extends Context.Service<
       E | CompanyDatabaseError | CompanyDatabaseNotReady | CompanyIdentityMismatch | Busy,
       Exclude<R, CompanyConnection | SqlClient.SqlClient>
     >;
-    readonly withPatchLock: typeof withPatchLock;
+    readonly withPatchLock: (
+      patchId: string
+    ) => <A, E, R>(
+      effect: Effect.Effect<A, E, R>
+    ) => Effect.Effect<
+      A,
+      E | SqlError,
+      | Exclude<Exclude<R, PatchLock | SqlClient.SqlClient>, ResourceChanges.ResourceChanges>
+      | CompanyConnection
+    >;
     readonly withFileLock: typeof withFileLock;
     readonly listReady: Effect.Effect<
       ReadonlyArray<Placement>,
@@ -137,18 +149,32 @@ export const withPatchLock =
   ): Effect.Effect<
     A,
     E | SqlError,
-    Exclude<R, PatchLock | SqlClient.SqlClient> | CompanyConnection
+    | Exclude<R, PatchLock | SqlClient.SqlClient>
+    | CompanyConnection
+    | ResourceChanges.ResourceChanges
   > =>
-    Effect.flatMap(CompanyConnection, (sql) =>
-      sql.withTransaction(
+    Effect.gen(function* () {
+      const sql = yield* CompanyConnection;
+      const outer = yield* Effect.serviceOption(PatchLock);
+      const resources = new Set<string>();
+      const result = yield* sql.withTransaction(
         sql`SELECT pg_advisory_xact_lock(${advisoryLockKey(patchId)}::bigint)`.pipe(
           Effect.andThen(effect),
           Effect.provideContext(
-            Context.make(PatchLock, { patchId, sql }).pipe(Context.add(SqlClient.SqlClient, sql))
+            Context.make(PatchLock, { patchId, sql, resources }).pipe(
+              Context.add(SqlClient.SqlClient, sql)
+            )
           )
         )
-      )
-    );
+      );
+      if (Option.isSome(outer) && outer.value.sql === sql) {
+        for (const key of resources) outer.value.resources.add(key);
+      } else if (resources.size > 0) {
+        const changes = yield* ResourceChanges.ResourceChanges;
+        yield* changes.publish([...resources]);
+      }
+      return result;
+    });
 
 /** Serialize one file-index entry; blob I/O and platform state stay outside this transaction. */
 export const withFileLock =

@@ -20,6 +20,7 @@ import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
+import * as Wakes from "../../runtime/src/Wakes.js";
 
 const DAY = 24 * 60 * 60 * 1_000;
 const routes = Layer.merge(
@@ -30,7 +31,9 @@ const services = Layer.mergeAll(Patches.layer, Session.layer, Companies.layer, U
   Layer.provideMerge(ConnectionStoreDev.layer([])),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),
-  Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
+  Layer.provideMerge(Testing.resourceChangesLayer),
+  Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv()))),
+  Layer.provideMerge(Wakes.layer)
 );
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
@@ -1752,6 +1755,26 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
 
         const selection = [source.patchId, reader.patchId];
+        const wakes = yield* Wakes.Wakes;
+        const patchService = yield* Patches.Patches;
+        const userService = yield* Users.Users;
+        const committedKeys: string[][] = [];
+        yield* wakes.subscribe((keys) =>
+          Effect.gen(function* () {
+            if (!keys.some((key) => selection.some((id) => key === `patch:${id}`))) return;
+            assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+            for (const id of selection) {
+              const saved = yield* readPatch(workspace.admin, id);
+              assert.strictEqual(saved.patch.state, "retired");
+              assert.strictEqual(saved.patch.lifecycleRevision, "2");
+            }
+            committedKeys.push([...keys]);
+          }).pipe(
+            Effect.provideService(Patches.Patches, patchService),
+            Effect.provideService(Users.Users, userService),
+            Effect.orDie
+          )
+        );
         const preview = yield* post(path, workspace.admin, {
           choice: "selected",
           patch: selection
@@ -1765,6 +1788,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
         for (const patchId of selection)
           assert.strictEqual((yield* readPatch(workspace.admin, patchId)).patch.state, "live");
+        assert.deepStrictEqual(committedKeys, []);
 
         const committed = yield* post(path, workspace.admin, {
           choice: "confirm",
@@ -1773,6 +1797,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.strictEqual(committed.status, 303);
         assert.strictEqual(committed.headers.location, "/company");
         assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.deepStrictEqual(committedKeys, [selection.map((id) => `patch:${id}`).sort()]);
         for (const patchId of selection) {
           const saved = yield* readPatch(workspace.admin, patchId);
           assert.strictEqual(saved.patch.state, "retired");
@@ -1781,7 +1806,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           const card = yield* (yield* request(cardPath(saved.patch.name), workspace.member)).text;
           assert.include(text(card), "Retired by Sam");
         }
-      })
+      }).pipe(Effect.scoped)
   );
 
   it.effect(
@@ -1967,6 +1992,25 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           admin.patchId
         ]);
         assert.deepStrictEqual(inputs(confirmation, "ack", "checkbox"), []);
+        const wakes = yield* Wakes.Wakes;
+        const userService = yield* Users.Users;
+        const committedKeys: string[][] = [];
+        yield* wakes.subscribe((keys) =>
+          Effect.gen(function* () {
+            if (!keys.includes(`patch:${own.patchId}`)) return;
+            assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+            for (const patch of [own, admin]) {
+              const saved = yield* readPatch(workspace.admin, patch.patchId);
+              assert.strictEqual(saved.patch.state, "live");
+              assert.strictEqual(saved.patch.lifecycleRevision, "3");
+            }
+            committedKeys.push([...keys]);
+          }).pipe(
+            Effect.provideService(Patches.Patches, service),
+            Effect.provideService(Users.Users, userService),
+            Effect.orDie
+          )
+        );
         const committed = yield* post(path, workspace.admin, {
           choice: "confirm",
           patch: [own.patchId, admin.patchId]
@@ -1974,6 +2018,9 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.strictEqual(committed.status, 303);
         assert.strictEqual(committed.headers.location, "/company");
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.deepStrictEqual(committedKeys, [
+          [own.patchId, admin.patchId].sort().map((id) => `patch:${id}`)
+        ]);
         for (const patch of [own, admin]) {
           const saved = yield* readPatch(workspace.admin, patch.patchId);
           assert.strictEqual(saved.patch.state, "live");
@@ -1985,7 +2032,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.deepStrictEqual(stillDeleted.patch, beforeDeleted.patch);
         assert.isFalse(stillDeleted.owner.deactivated);
         assert.deepStrictEqual(yield* readPatch(workspace.admin, moved.patchId), beforeMoved);
-      })
+      }).pipe(Effect.scoped)
   );
 
   it.effect("restores a selected source chain without treating its own off sources as broken", () =>
@@ -2194,6 +2241,12 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       const beforeUser = yield* readUser(workspace.owner);
       const beforeFirst = yield* readPatch(workspace.admin, first.patchId);
       const beforeSecond = yield* readPatch(workspace.admin, second.patchId);
+      const announced: string[] = [];
+      yield* (yield* Wakes.Wakes).subscribe((keys) =>
+        Effect.sync(() => {
+          announced.push(...keys);
+        })
+      );
       let reachedDeactivation = false;
       const failDeactivation = Layer.succeed(Users.Users, {
         ...users,
@@ -2208,6 +2261,7 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
             (yield* readPatch(workspace.admin, second.patchId)).patch.state,
             "retired"
           );
+          assert.deepStrictEqual(announced, []);
           reachedDeactivation = true;
           return yield* new Users.UserNotFound(ref);
         })
@@ -2233,6 +2287,7 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
       assert.deepStrictEqual(yield* readPatch(workspace.admin, first.patchId), beforeFirst);
       assert.deepStrictEqual(yield* readPatch(workspace.admin, second.patchId), beforeSecond);
-    })
+      assert.deepStrictEqual(announced, []);
+    }).pipe(Effect.scoped)
   );
 });

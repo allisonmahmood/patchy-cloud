@@ -11,12 +11,11 @@ export interface ServerOnlyClient<Modules> {
   close(): void;
 }
 
-/** Lifecycle streaming does not yet admit server subscriptions. */
 const unavailableSubscriptions: QueryDriver = {
-  subscribe(_query, onFrame) {
+  subscribe(_request, onFrame) {
     onFrame({
       status: "error",
-      revision: 0,
+      permanent: true,
       error: new PatchyError(
         "server_required",
         "This runtime does not admit server subscriptions.",

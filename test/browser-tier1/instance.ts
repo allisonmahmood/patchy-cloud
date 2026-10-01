@@ -6,10 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { Transform } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
 import { Client } from "pg";
 import type EmbeddedPostgres from "embedded-postgres";
 import type { BrowserContext } from "@playwright/test";
+import type { Manifest } from "../../packages/api/src/index.js";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
 import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
@@ -50,13 +53,27 @@ export interface Instance {
     user?: "owner" | "colleague" | "expired" | "none",
     expiresInSeconds?: number
   ): Promise<string | null>;
-  publish(scope?: "company" | "public", html?: string, patchId?: string): Promise<Published>;
-  lifecycle(patchId: string, action: "rollback" | "retire", versionNumber?: number): Promise<void>;
+  publish(
+    scope?: "company" | "public",
+    html?: string,
+    patchId?: string,
+    declarations?: Partial<Pick<Manifest, "tables" | "uses">>
+  ): Promise<Published>;
+  lifecycle(
+    patchId: string,
+    action: "rollback" | "retire" | "restore",
+    versionNumber?: number,
+    force?: boolean
+  ): Promise<void>;
   share(patchId: string, scope: "company" | "public"): Promise<void>;
   restart(): Promise<void>;
+  /** A second real host sharing this instance's databases, storage and session verifier. */
+  startReplica(): Promise<{ origin: string; stop(signal?: "SIGTERM" | "SIGKILL"): Promise<void> }>;
   pauseStreams(paused: boolean): void;
   /** Drop the next stream's first bytes but retain its upstream socket until released. */
   loseNextStreamHello(): () => void;
+  /** Drop one admitted frame without interrupting either side of the live stream. */
+  loseNextAdmitted(sequence: number): Promise<void>;
   readonly streamConnections: Set<string>;
   company(): Promise<Client>;
   close(): Promise<void>;
@@ -79,11 +96,11 @@ async function stopServer(server: Server) {
   server.closeAllConnections();
   await closed.promise;
 }
-async function stopChild(child: ChildProcess) {
+async function stopChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL" = "SIGTERM") {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const done = Promise.withResolvers<void>();
   child.once("exit", () => done.resolve());
-  child.kill("SIGTERM");
+  child.kill(signal);
   const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
   try {
     await done.promise;
@@ -98,6 +115,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
   const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-"));
   let postgres: EmbeddedPostgres | undefined;
   let child: ChildProcess | undefined;
+  const children = new Set<ChildProcess>();
   let platform: Client | undefined;
   let proxy: Server | Http2SecureServer | undefined;
   const sessions = new Set<ServerHttp2Session>();
@@ -114,7 +132,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
       else await new Promise<void>((resolve) => proxy!.close(() => resolve()));
     }
     if (foreign) await stopServer(foreign);
-    if (child) await stopChild(child);
+    for (const server of children) await stopChild(server);
     if (platform) await platform.end();
     if (postgres) await postgres.stop();
     await rm(directory, { recursive: true, force: true });
@@ -153,6 +171,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
     const streamClosers = new Set<() => void>();
     let streamsPaused = false;
     let abandonNextStream: ((release: () => void) => void) | undefined;
+    let dropAdmitted: { readonly sequence: number; readonly dropped: () => void } | undefined;
     const foreignRequests: string[] = [];
     foreign = createServer((request, response) => {
       foreignRequests.push(request.url ?? "/");
@@ -288,6 +307,46 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
                 incoming.resume();
                 return;
               }
+              const decoder = new StringDecoder("utf8");
+              let buffered = "";
+              incoming
+                .pipe(
+                  new Transform({
+                    transform(chunk: Buffer, _encoding, callback) {
+                      buffered += decoder.write(chunk);
+                      let boundary: RegExpExecArray | null;
+                      while ((boundary = /\r?\n\r?\n/.exec(buffered)) !== null) {
+                        const event = buffered.slice(0, boundary.index + boundary[0].length);
+                        buffered = buffered.slice(event.length);
+                        const data = event.split(/\r?\n/).find((line) => line.startsWith("data:"));
+                        if (dropAdmitted && data) {
+                          const frame: unknown = JSON.parse(data.slice(5));
+                          if (
+                            frame !== null &&
+                            typeof frame === "object" &&
+                            "type" in frame &&
+                            frame.type === "admitted" &&
+                            "sequence" in frame &&
+                            frame.sequence === dropAdmitted.sequence
+                          ) {
+                            const dropped = dropAdmitted.dropped;
+                            dropAdmitted = undefined;
+                            dropped();
+                            continue;
+                          }
+                        }
+                        this.push(event);
+                      }
+                      callback();
+                    },
+                    flush(callback) {
+                      this.push(buffered + decoder.end());
+                      callback();
+                    }
+                  })
+                )
+                .pipe(response);
+              return;
             }
             incoming.pipe(response);
           }
@@ -305,10 +364,9 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
     const origin = `${options.tls ? "https" : "http"}://127.0.0.1:${await listen(proxy)}`;
     const backendOrigin = `http://127.0.0.1:${port}`;
     await stopServer(serverReservation);
-    let log = "";
-    const launch = async () => {
-      log = "";
-      child = spawn(process.execPath, [path.join(root, "apps/server/dist/start.js")], {
+    const launch = async (serverPort: number) => {
+      let log = "";
+      const server = spawn(process.execPath, [path.join(root, "apps/server/dist/start.js")], {
         cwd: root,
         env: {
           PATH: process.env.PATH,
@@ -316,7 +374,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
           NODE_ENV: "test",
           ...clerkEnv(),
           CLERK_AUTHORIZED_PARTIES: origin,
-          PORT: String(port),
+          PORT: String(serverPort),
           DATABASE_URL: databaseUrl,
           PATCHY_COMPANY_DB_ADMIN_URL: databaseUrl,
           PATCHY_COMPANY_DB_URL: databaseUrl,
@@ -326,20 +384,22 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         },
         stdio: ["ignore", "pipe", "pipe"]
       });
-      child.stdout!.on("data", (chunk: Buffer) => {
+      children.add(server);
+      server.stdout!.on("data", (chunk: Buffer) => {
         log += chunk.toString();
       });
-      child.stderr!.on("data", (chunk: Buffer) => {
+      server.stderr!.on("data", (chunk: Buffer) => {
         log += chunk.toString();
       });
       const deadline = Date.now() + 30_000;
       while (!log.includes("Patchy Cloud server listening on")) {
-        if (child.exitCode !== null || Date.now() > deadline)
+        if (server.exitCode !== null || Date.now() > deadline)
           throw new Error(`Tier 1 server failed to start: ${log}`);
         await delay(50);
       }
+      return server;
     };
-    await launch();
+    child = await launch(port);
     const health = await fetch(`${backendOrigin}/healthz`);
     if (!health.ok) throw new Error(`Tier 1 health returned ${health.status}`);
     const { applyDevSeed } = await import(
@@ -362,7 +422,11 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
       platform: "browser",
       format: "iife",
       write: false,
-      alias: { "patchy/client": path.join(root, "packages/patchy/dist/client.js") }
+      define: { "import.meta.env.DEV": "false" },
+      alias: {
+        "patchy/client": path.join(root, "packages/patchy/dist/client.js"),
+        "patchy/preact": path.join(root, "packages/patchy/dist/preact.js")
+      }
     });
     const html = `<!doctype html><html><head><title>Tier one acceptance</title><style>body{margin:0}td{height:20px}table{border-collapse:collapse}@media print{button{display:none}}</style></head><body><h1>Tier one acceptance</h1><p id="identity">waiting</p><p id="route"></p><button id="route-next">Next route</button><button id="download">Download file</button><img id="own-image" alt="Own file"><table><tbody id="rows"></tbody></table><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
     return {
@@ -388,15 +452,34 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
           release = undefined;
         };
       },
+      loseNextAdmitted(sequence) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        dropAdmitted = { sequence, dropped: resolve };
+        return promise;
+      },
       async restart() {
         await stopChild(child!);
-        await launch();
+        children.delete(child!);
+        child = await launch(port);
       },
-      async lifecycle(patchId, action, versionNumber) {
+      async startReplica() {
+        const reservation = createServer();
+        const replicaPort = await listen(reservation);
+        await stopServer(reservation);
+        const replica = await launch(replicaPort);
+        return {
+          origin: `http://127.0.0.1:${replicaPort}`,
+          async stop(signal) {
+            await stopChild(replica, signal);
+            children.delete(replica);
+          }
+        };
+      },
+      async lifecycle(patchId, action, versionNumber, force) {
         const response = await fetch(`${backendOrigin}/api/patches/${patchId}/${action}`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
-          body: JSON.stringify(action === "rollback" ? { versionNumber } : {})
+          body: JSON.stringify(action === "rollback" ? { versionNumber } : { force })
         });
         if (!response.ok) throw new Error(`${action}: ${response.status} ${await response.text()}`);
       },
@@ -442,7 +525,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         );
         return token;
       },
-      async publish(scope = "company", content = html, patchId) {
+      async publish(scope = "company", content = html, patchId, declarations) {
         const response = await fetch(`${backendOrigin}/api/publish`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
@@ -451,6 +534,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
             ...(patchId ? { patchId } : {}),
             manifest: {
               ...manifest,
+              ...declarations,
               release: release.release,
               manifestVersion: release.manifestVersion
             },

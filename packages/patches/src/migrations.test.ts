@@ -56,6 +56,10 @@ it.effect(
       assert.deepStrictEqual(yield* sql`SELECT id FROM patches ORDER BY id`, [
         { id: "replacement1" }
       ]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT lifecycle_revision::text AS revision FROM patches WHERE id = 'replacement1'`,
+        [{ revision: "0" }]
+      );
       assert.deepStrictEqual(yield* sql`SELECT name, patch_id FROM patch_names`, [
         { name: "reused-name", patch_id: "replacement1" }
       ]);
@@ -72,12 +76,17 @@ it.effect(
       );
 
       // A deletion under the new contract remains recoverable when migrations run again.
-      yield* sql`UPDATE patches SET deleted_at = now() WHERE id = 'replacement1'`;
+      yield* sql`UPDATE patches SET deleted_at = now(), lifecycle_revision = lifecycle_revision + 1
+        WHERE id = 'replacement1'`;
       assert.deepStrictEqual(yield* migrate({ ...previous, ...migrations }), []);
       assert.deepStrictEqual(
         yield* sql`SELECT patch_id FROM patch_names WHERE name = 'reused-name'`,
         [{ patch_id: "replacement1" }]
       );
       assert.deepStrictEqual(yield* sql`SELECT id FROM patches`, [{ id: "replacement1" }]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT lifecycle_revision::text AS revision FROM patches WHERE id = 'replacement1'`,
+        [{ revision: "1" }]
+      );
     }).pipe(Effect.provide(Testing.emptyLayer(previous)))
 );

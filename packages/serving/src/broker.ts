@@ -5,6 +5,7 @@ import {
   RuntimeRequest,
   RuntimeFailure,
   HandlerFailure,
+  RuntimeSubscription,
   runtimeOperations,
   runtimeBodyLimit,
   runtimeBodyLimitId,
@@ -27,6 +28,18 @@ const decodeHandlerFailure = Schema.decodeUnknownSync(HandlerFailure);
 const isMe = Schema.is(runtimeOperations.me.response);
 const routeArguments = Schema.Struct({ path: Schema.String });
 const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty: "error" });
+const decodeSubscription = Schema.decodeUnknownSync(
+  Schema.Struct({
+    id: RuntimeSubscription.fields.id,
+    op: RuntimeSubscription.fields.op,
+    args: RuntimeSubscription.fields.args
+  }),
+  { onExcessProperty: "error" }
+);
+const decodeUnsubscribe = Schema.decodeUnknownSync(
+  Schema.Struct({ id: RuntimeSubscription.fields.id }),
+  { onExcessProperty: "error" }
+);
 const decoder = new TextDecoder();
 type Operation = keyof typeof runtimeOperations;
 type Reply = { value: unknown; bytes?: ArrayBuffer; heldBytes: number };
@@ -461,7 +474,14 @@ function mount(frame: HTMLIFrameElement): void {
           throw invalid();
       }
       const op = message.op;
-      if (op !== "route.set" && op !== "download" && !Object.hasOwn(runtimeOperations, op))
+      const subscriptionOperation =
+        op === "subscriptions.subscribe" || op === "subscriptions.unsubscribe";
+      if (
+        op !== "route.set" &&
+        op !== "download" &&
+        !subscriptionOperation &&
+        !Object.hasOwn(runtimeOperations, op)
+      )
         throw invalid();
       if (pending.size >= MAX_PENDING)
         throw new Refusal(
@@ -492,9 +512,17 @@ function mount(frame: HTMLIFrameElement): void {
       admitted = true;
       let request: RuntimeRequest | undefined;
       let path: string | undefined;
+      let subscription: RuntimeSubscription | undefined;
+      let unsubscribeId: string | undefined;
       try {
         if (op === "route.set") path = routePath(decodeRoute(message.args).path);
-        else
+        else if (op === "subscriptions.subscribe") {
+          subscription = decodeSubscription(message.args);
+          const query = decodeRequest({ op: subscription.op, args: subscription.args });
+          subscription = { ...subscription, args: query.args };
+        } else if (op === "subscriptions.unsubscribe") {
+          unsubscribeId = decodeUnsubscribe(message.args).id;
+        } else
           request = decodeRequest({ op: op === "download" ? "files.get" : op, args: message.args });
       } catch (error) {
         throw error instanceof Refusal ? error : invalid();
@@ -504,7 +532,13 @@ function mount(frame: HTMLIFrameElement): void {
       const me = await identify();
       if (closed) return;
       let reply: Reply;
-      if (op === "route.set") {
+      if (subscriptionOperation) {
+        if (!stream)
+          throw new Refusal("not_available_on_public", "Subscriptions require a company document.");
+        if (subscription) stream.subscribe(subscription, size * 2);
+        else stream.unsubscribe(unsubscribeId!);
+        reply = { value: null, heldBytes: 0 };
+      } else if (op === "route.set") {
         const next = new URL(location.href);
         next.pathname = base + path!;
         history.pushState(null, "", next);
@@ -587,7 +621,7 @@ function mount(frame: HTMLIFrameElement): void {
   });
   window.addEventListener("popstate", announceRoute);
   window.addEventListener("pagehide", stop, { once: true });
-  if (frame.dataset.scope === "company") {
+  if (frame.dataset.scope === "company" || frame.dataset.scope === "local") {
     const viewerId = frame.dataset.viewerId;
     if (!viewerId) return notice("bootstrap_failed");
     principal = { userId: viewerId };
@@ -604,7 +638,9 @@ function mount(frame: HTMLIFrameElement): void {
         if (ready) send({ v: wire, kind: "event", event: "stream", data });
       },
       notice,
-      stale
+      stale,
+      reserve,
+      release
     });
   }
   // Install the one-shot load handoff before permitting the initial document to load.

@@ -4433,7 +4433,7 @@ document.body.textContent = JSON.stringify({
     expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
     for (const name of authoredPaths)
       expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
-  }, 30_000); // Real package archive creation, isolated pnpm installation and tsc, not CLI startup.
+  }, 60_000); // Real archive creation, isolated pnpm installation and tsc can exceed 30 seconds.
 });
 
 describe("patchy delete target selection", () => {

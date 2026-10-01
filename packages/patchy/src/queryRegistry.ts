@@ -26,15 +26,21 @@ export interface QueryCallable<Args, Result> {
 }
 
 export type QueryFrame<Result = unknown> =
-  | { readonly status: "ready"; readonly revision: number; readonly data: Result }
-  | { readonly status: "error"; readonly revision: number; readonly error: Error };
+  | { readonly status: "ready"; readonly revision: string; readonly data: Result }
+  | { readonly status: "up-to-date"; readonly revision: string }
+  | {
+      readonly status: "error";
+      readonly revision?: string;
+      readonly error: Error;
+      readonly permanent?: boolean;
+    };
 
 export interface QueryRequest {
   readonly handler: string;
   readonly args: Readonly<Record<string, unknown>>;
 }
 
-/** A later stream transport supplies this driver. The registry never runs a handler. */
+/** The document transport supplies frames; the registry never runs a query itself. */
 export interface QueryDriver {
   readonly subscribe: (request: QueryRequest, onFrame: (frame: QueryFrame) => void) => () => void;
 }
@@ -54,7 +60,7 @@ interface Entry {
   readonly store: QueryStore<unknown>;
   readonly listeners: Set<(snapshot: QuerySnapshot<unknown>) => void>;
   snapshot: QuerySnapshot<unknown>;
-  revision: number;
+  revision: bigint;
   generation: number;
   running: boolean;
   stop: (() => void) | undefined;
@@ -106,7 +112,7 @@ export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
       stop(entry);
       entries.delete(key);
       entry.snapshot = loadingSnapshot;
-      entry.revision = -1;
+      entry.revision = -1n;
     }, queryRemountGraceMs);
   };
   const errorSnapshot = (entry: Entry, error: Error): QuerySnapshot<unknown> => ({
@@ -125,7 +131,7 @@ export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
     const request: QueryRequest = { handler, args: JSON.parse(encodedArgs) };
     const entry: Entry = {
       snapshot: loadingSnapshot,
-      revision: -1,
+      revision: -1n,
       generation: 0,
       running: false,
       stop: undefined,
@@ -149,24 +155,35 @@ export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
           notify(listener, entry.snapshot);
           if (!entry.running && !closed) {
             entry.running = true;
+            entry.revision = -1n;
             const generation = ++entry.generation;
             try {
               const unsubscribe = driver.subscribe(request, (frame) => {
                 if (closed || !entry.running || generation !== entry.generation) return;
-                // A scalar comparison drops duplicate and stale results without inspecting data.
-                if (frame.revision <= entry.revision) return;
-                entry.revision = frame.revision;
-                publish(
-                  entry,
-                  frame.status === "ready"
-                    ? { status: "ready", data: frame.data, error: undefined, loading: false }
-                    : errorSnapshot(entry, frame.error)
-                );
+                if (frame.revision !== undefined) {
+                  const revision = BigInt(frame.revision);
+                  if (revision < entry.revision) return;
+                  if (revision === entry.revision && frame.status === "ready") return;
+                  entry.revision = revision;
+                }
+                if (frame.status === "error") {
+                  if (frame.permanent) stop(entry);
+                  publish(entry, errorSnapshot(entry, frame.error));
+                  if (frame.permanent && entry.listeners.size === 0) releaseAfterGrace(key, entry);
+                } else {
+                  publish(entry, {
+                    status: "ready",
+                    data: frame.status === "ready" ? frame.data : entry.snapshot.data,
+                    error: undefined,
+                    loading: false
+                  });
+                }
               });
               if (entry.running && generation === entry.generation) entry.stop = unsubscribe;
               else unsubscribe();
             } catch (cause) {
               if (!closed) {
+                stop(entry);
                 publish(
                   entry,
                   errorSnapshot(

@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { CURRENT_RELEASE, FilePage, Manifest, WIRE_VERSION } from "@patchy/api";
-import { CompanyDatabases } from "@patchy/company-database";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ContractLimits } from "@patchy/limits";
 import { Binding } from "@patchy/runtime";
@@ -142,10 +142,12 @@ const metadataCapContract = Effect.fn("test.filesContract.metadataCap")(function
 const storageFailureContract = Effect.fn("test.filesContract.storageFailure")(function* (
   companyId: string
 ) {
-  const { put, get, binding, readPointer } = yield* setup(companyId, "filewritebad");
+  const { put, get, binding, databases, readPointer } = yield* setup(companyId, "filewritebad");
   const original = new Uint8Array([0, 255, 10, 128]);
   yield* put("keep.bin", original);
   const previous = yield* readPointer("keep.bin");
+  const inventory = yield* Inventory.Inventory;
+  const before = yield* databases.withCompany(companyId)(inventory.read(binding.patchId));
   const content = yield* ContentStore.ContentStore;
   const cause = new Error("injected storage outage");
   const fault = Layer.succeed(
@@ -162,6 +164,8 @@ const storageFailureContract = Effect.fn("test.filesContract.storageFailure")(fu
     .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
   assert.strictEqual(failure.code, "source_unavailable");
   assert.deepStrictEqual(yield* readPointer("keep.bin"), previous);
+  const after = yield* databases.withCompany(companyId)(inventory.read(binding.patchId));
+  assert.strictEqual(after?.stores[0]?.resourceRevision, before?.stores[0]?.resourceRevision);
   const stored = yield* get("keep.bin");
   assert.deepStrictEqual(stored.bytes, original);
   assert.strictEqual(stored.contentType, "application/octet-stream");
@@ -170,7 +174,10 @@ const storageFailureContract = Effect.fn("test.filesContract.storageFailure")(fu
 const concurrentWritesContract = Effect.fn("test.filesContract.concurrentWrites")(function* (
   companyId: string
 ) {
-  const { put, get, remove, binding, readPointer } = yield* setup(companyId, "fileputraces");
+  const { put, get, remove, binding, databases, readPointer } = yield* setup(
+    companyId,
+    "fileputraces"
+  );
   const candidates = [new Uint8Array(8193).fill(19), new Uint8Array(16385).fill(251)];
   yield* Effect.all(
     candidates.map((bytes) => put("same.bin", bytes)),
@@ -200,6 +207,16 @@ const concurrentWritesContract = Effect.fn("test.filesContract.concurrentWrites"
     assert.strictEqual(Number(remaining[0]!.size), bytes.byteLength);
     assert.strictEqual(remaining[0]!.sha256, digest(bytes));
   }
+  const inventory = yield* Inventory.Inventory;
+  const snapshot = yield* databases.withCompany(companyId)(inventory.read(binding.patchId));
+  assert.strictEqual(
+    snapshot?.stores.find((store) => store.name === "docs")?.resourceRevision,
+    "4"
+  );
+  assert.strictEqual(
+    snapshot?.stores.find((store) => store.name === "images")?.resourceRevision,
+    "0"
+  );
 });
 
 const paginationContract = Effect.fn("test.filesContract.pagination")(function* (

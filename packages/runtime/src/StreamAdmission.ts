@@ -1,25 +1,38 @@
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
+import type { RuntimeMe } from "@patchy/api";
 import * as Runtime from "./Runtime.js";
 
 type Dependencies =
   | Session.Session
   | Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>;
-type Admission = Effect.Effect<
-  {
-    readonly companyId: string;
-    readonly viewerId: string;
-    readonly expiresAt: number;
-  },
-  Runtime.RuntimeError,
-  HttpServerRequest.HttpServerRequest
->;
+export interface Identity {
+  readonly companyId: string;
+  readonly viewerId: string;
+  readonly expiresAt: number;
+  readonly identity: NonNullable<RuntimeMe>;
+}
 
-/** Every open verifies the cookie and current viewer, then retains only the token deadline. */
-export const make: Effect.Effect<{ readonly admit: Admission }, never, Dependencies> = Effect.gen(
+/** Production verifies cookies; dev supplies its two explicit mount identities.
+ * @effect-expect-leaking HttpServerRequest
+ */
+export class StreamAdmission extends Context.Service<
+  StreamAdmission,
+  {
+    readonly admit: Effect.Effect<
+      Identity & { readonly recheck: Effect.Effect<Identity, Runtime.RuntimeError> },
+      Runtime.RuntimeError,
+      HttpServerRequest.HttpServerRequest
+    >;
+  }
+>()("@patchy/runtime/StreamAdmission") {}
+
+export const make: Effect.Effect<StreamAdmission["Service"], never, Dependencies> = Effect.gen(
   function* () {
     const session = yield* Session.Session;
     const viewerContext =
@@ -59,9 +72,29 @@ export const make: Effect.Effect<{ readonly admit: Admission }, never, Dependenc
       return {
         companyId: viewer.company.id,
         viewerId: viewer.user.id,
-        expiresAt: signedIn.claims.exp * 1_000
+        expiresAt: signedIn.claims.exp * 1_000,
+        identity: {
+          user: { id: viewer.user.id, name: viewer.user.name, email: viewer.user.email },
+          company: {
+            id: viewer.company.id,
+            name: viewer.company.name,
+            handle: viewer.company.handle
+          },
+          admin: viewer.role === "admin"
+        }
       };
     });
-    return { admit };
+    return StreamAdmission.of({
+      admit: Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const identity = yield* admit;
+        return {
+          ...identity,
+          recheck: admit.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request))
+        };
+      })
+    });
   }
 );
+
+export const layer = Layer.effect(StreamAdmission, make);

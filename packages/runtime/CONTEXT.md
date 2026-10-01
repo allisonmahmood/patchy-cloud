@@ -69,7 +69,7 @@ The identifier joining an operation's failure to its runtime-log record. It is c
 _Avoid_: Publish key, patch id
 
 **Stream**:
-The connection carrying a company's document lifecycle frames from Patchy. A document has at most one connected stream; reconnecting replaces its generation without changing its loaded version.
+The connection carrying a company document's lifecycle and subscription frames from Patchy. A document has at most one connected stream; reconnecting replaces its generation without changing its loaded version.
 _Avoid_: session, subscription (a query's desired live result)
 
 **Document**:
@@ -95,3 +95,31 @@ _Avoid_: current (the served version), live (the patch's state)
 **Stream generation**:
 The identity of one admitted connection. A replacement fences requests naming the previous generation.
 _Avoid_: document id, wire version
+
+**Subscription**:
+A document's desired live result for one read and canonical argument set. Tier 1 supports owned and declared shared-table `list` and `get`; writes and reconnects trigger reconciliation, not replay of mutations.
+_Avoid_: stream, polling loop
+
+**Revision**:
+A durable monotonic counter committed with a resource write or patch lifecycle change. Resource keys are `table:<patchId>:<name>`, `store:<patchId>:<name>` and `patch:<patchId>`; vectors encode counters as decimal strings and absence as `"-1"`.
+_Avoid_: version (a published bundle), timestamp
+
+**Wake**:
+A best-effort post-commit hint naming changed dependency keys, delivered locally and across hosts. It carries no rows or file bytes; durable revisions and periodic reconciliation recover lost hints.
+_Avoid_: snapshot, durable event
+
+**Snapshot**:
+A subscription's whole read result with the dependency revisions observed by that read. A missing `get` is a result and still depends on its table.
+_Avoid_: row diff, cached response
+
+**Dependency set**:
+The resource and source-patch keys a subscription has observed, including keys recorded before a read is refused. Keeping refused dependencies lets reshare and restore recover the subscription.
+_Avoid_: declared resources (the permitted capabilities), row locks
+
+**Fence**:
+The revision vector a subscription must reach for its current desired-set sequence before reconnect catch-up is complete. Reopening the stream alone does not satisfy it.
+_Avoid_: stream generation (connection identity), publish version
+
+**Resync**:
+Replacement of a document's desired subscriptions, with its latest vectors, after reconnect or an unrecoverable sequence gap. It fences prior work; equal vectors answer up-to-date without rerunning the read.
+_Avoid_: reload, mutation retry

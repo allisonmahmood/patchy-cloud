@@ -16,9 +16,9 @@ import { Companies, Users } from "@patchy/companies";
 import { newInternalId, newPatchId } from "../../../packages/core/src/index.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions as DurableVersions, Patches } from "@patchy/patches";
-import { LoadedVersions, RuntimeStream } from "@patchy/runtime";
+import { LoadedVersions, RuntimeStream, StreamAdmission, StreamLimits } from "@patchy/runtime";
+import { SubscriptionReads } from "@patchy/primitives";
 import * as Fixtures from "../../../packages/patches/src/test/fixtures.js";
-import * as Server from "./Server.js";
 
 const identity = Fixtures.identities.uploader;
 const dependencies = Layer.mergeAll(
@@ -89,7 +89,10 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
         let blocked = false;
         let shuttingDown = false;
         let reads = 0;
+        const lifecycleScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(lifecycleScope, Exit.void));
         const streams = yield* RuntimeStream.make.pipe(
+          Effect.provide(SubscriptionReads.layer),
           Effect.provideService(LoadedVersions.LoadedVersions, {
             find: (id, versionId) =>
               Effect.gen(function* () {
@@ -109,7 +112,9 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
                 return found;
               })
           }),
-          Effect.provide(WideEvents.layerNoop)
+          Effect.provide(WideEvents.layerNoop),
+          Effect.provide(Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer)),
+          Effect.provideService(Scope.Scope, lifecycleScope)
         );
         const firstPull = yield* streams
           .open({ patchId, versionId: original.versionId, documentId: "async_first_document" })
@@ -125,14 +130,6 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
         yield* firstPull;
         yield* otherPull;
         yield* otherPull;
-        const lifecycleScope = yield* Scope.make();
-        yield* Effect.addFinalizer(() => Scope.close(lifecycleScope, Exit.void));
-        yield* Layer.buildWithScope(
-          Server.streamLifecycle.pipe(
-            Layer.provide(Layer.succeed(RuntimeStream.RuntimeStream, streams))
-          ),
-          lifecycleScope
-        );
         blocked = true;
         const firstUpdate = yield* publish(patchId, "update");
         yield* Deferred.await(reading);

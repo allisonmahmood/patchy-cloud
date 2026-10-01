@@ -10,7 +10,7 @@ export function useQuery<Args, Result>(
   handler: QueryCallable<Args, Result>,
   args: Args
 ): QuerySnapshot<Result> {
-  const key = canonicalArgs(args);
+  const key = canonicalArgs(args === undefined ? {} : args);
   const query = useMemo(() => handler.__patchyQueryStore(key), [handler, key]);
   let snapshot = snapshots.get(query) as Signal<QuerySnapshot<Result>> | undefined;
   if (!snapshot) {

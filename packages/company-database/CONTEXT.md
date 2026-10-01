@@ -17,8 +17,12 @@ A patch's physical home inside its company database. It groups the patch's resou
 _Avoid_: database, company schema
 
 **Inventory**:
-The cumulative record of resources provisioned for a patch, including their descriptions, its schema revision and table sharing. A published version describes what it uses; the inventory describes what still exists.
+The cumulative record of resources provisioned for a patch, including their descriptions, its schema revision, table sharing and each resource's durable revision. A published version describes what it uses; the inventory describes what still exists.
 _Avoid_: active manifest, catalog snapshot
+
+**Resource revision**:
+A table or file store's durable count of committed changes, separate from the patch's schema revision. Runtime compares it with the source patch's lifecycle revision to identify changes a subscription depends on.
+_Avoid_: published version, schema revision
 
 **Patch lock**:
 The exclusive right to change a patch's resource definitions. It complements the platform patch-row lock rather than replacing it; ordinary file-content operations do not take it.

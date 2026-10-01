@@ -1,4 +1,5 @@
 import type { Config, Id, Indexes, Insert, Row, TableDefinition, Update } from "./config.js";
+import type { RuntimeSubscription } from "@patchy/api";
 import {
   createPostMessageTransport,
   type Call,
@@ -6,13 +7,21 @@ import {
   type Transport
 } from "./clientTransport.js";
 import { PatchyError } from "./clientError.js";
+import { canonicalArgs } from "@patchy/api/canonical-args";
+import { createQueryRegistry, type QueryCallable, type QueryRegistry } from "./queryRegistry.js";
 export * from "./clientError.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
 export { isHandlerError } from "./handlerError.js";
 export type { HandlerErrorGuard, MutationUnknownOutcome } from "./server.js";
 export { createQueryRegistry } from "./queryRegistry.js";
-export type { QueryDriver, QueryFrame, QuerySnapshot, QueryCallable } from "./queryRegistry.js";
+export type {
+  QueryDriver,
+  QueryFrame,
+  QuerySnapshot,
+  QueryCallable,
+  QueryRegistry
+} from "./queryRegistry.js";
 
 export interface Page<R> {
   readonly rows: readonly R[];
@@ -57,9 +66,9 @@ export interface ReadTable<
   R extends { readonly id: string },
   I extends Indexes = Record<never, never>
 > {
-  get(id: R["id"]): Promise<R | null>;
+  readonly get: QueryCallable<R["id"], R | null>;
   getMany(ids: readonly R["id"][]): Promise<readonly (R | null)[]>;
-  list(options?: ListOptions<R, I>): Promise<Page<R>>;
+  readonly list: QueryCallable<ListOptions<R, I> | undefined, Page<R>> & (() => Promise<Page<R>>);
 }
 export interface OwnedTable<
   C extends Config,
@@ -97,7 +106,7 @@ export interface FileStore {
   delete(name: string): Promise<null>;
   url(name: string): Promise<string>;
 }
-export type Factory<T = unknown> = (alias: string, call: Call) => T;
+export type Factory<T = unknown> = (alias: string, call: Call, queries: QueryRegistry) => T;
 export type Factories = Readonly<Record<string, Factory>>;
 type FactoryResults<F extends Factories> = {
   readonly [K in keyof F]: F[K] extends Factory<infer T> ? T : never;
@@ -124,14 +133,36 @@ export interface ClientManifest {
   readonly uses: Readonly<Record<string, { readonly kind: string }>>;
 }
 
+function tableQuery<Args, Result>(
+  op: RuntimeSubscription["op"],
+  argumentsFor: (args: Args) => Readonly<Record<string, unknown>>,
+  call: Call,
+  queries: QueryRegistry
+): QueryCallable<Args, Result> & (() => Promise<Result>) {
+  return Object.assign(
+    (args: Args = undefined as Args) => call(op, argumentsFor(args)) as Promise<Result>,
+    {
+      subscribe: (args: Args, listener: Parameters<QueryCallable<Args, Result>["subscribe"]>[1]) =>
+        queries.subscribe<Result>(op, argumentsFor(args), listener),
+      __patchyQueryStore: (canonical: string) =>
+        queries.getQuery<Result>(op, canonicalArgs(argumentsFor(JSON.parse(canonical))))
+    }
+  );
+}
+
 export function createSharedTable<
   R extends { readonly id: string },
   I extends Indexes = Record<never, never>
->(alias: string, call: Call): ReadTable<R, I> {
+>(alias: string, call: Call, queries: QueryRegistry): ReadTable<R, I> {
   return {
-    get: (id) => call("shared.get", { alias, id }) as Promise<R | null>,
+    get: tableQuery("shared.get", (id: R["id"]) => ({ alias, id }), call, queries),
     getMany: (ids) => call("shared.getMany", { alias, ids }) as Promise<readonly (R | null)[]>,
-    list: (options = {}) => call("shared.list", { ...options, alias }) as Promise<Page<R>>
+    list: tableQuery(
+      "shared.list",
+      (options?: ListOptions<R, I>) => ({ ...options, alias }),
+      call,
+      queries
+    )
   };
 }
 
@@ -150,6 +181,7 @@ export function createClient<
 ): Client<C, S, P> {
   const transport = options.transport ?? createPostMessageTransport();
   const call = transport.call;
+  const queries = createQueryRegistry(transport.queries);
   let identity: Promise<Me | null> | undefined;
   const urls = new Map<string, Map<string, Promise<string>>>();
   let closed = false;
@@ -157,9 +189,17 @@ export function createClient<
     Object.keys(manifest.tables).map((table) => {
       type R = Row<C, keyof C["tables"] & string>;
       const operations: OwnedTable<C, keyof C["tables"] & string> = {
-        get: (id) => call("tables.get", { table, id }) as Promise<R | null>,
+        get: tableQuery("tables.get", (id: R["id"]) => ({ table, id }), call, queries),
         getMany: (ids) => call("tables.getMany", { table, ids }) as Promise<readonly (R | null)[]>,
-        list: (args = {}) => call("tables.list", { ...args, table }) as Promise<Page<R>>,
+        list: tableQuery(
+          "tables.list",
+          (args?: ListOptions<R, TableIndexes<C["tables"][keyof C["tables"] & string]>>) => {
+            const options: object = args ?? {};
+            return { ...options, table };
+          },
+          call,
+          queries
+        ),
         insert: (row) => call("tables.insert", { table, row }) as Promise<R>,
         insertMany: (rows) => call("tables.insertMany", { table, rows }) as Promise<readonly R[]>,
         update: (id, patch) => call("tables.update", { table, id, patch }) as Promise<R>,
@@ -240,7 +280,7 @@ export function createClient<
               `Missing generated declaration for ${alias}; run patchy refresh.`,
               {}
             );
-          return [alias, factories[alias]!(alias, call)];
+          return [alias, factories[alias]!(alias, call, queries)];
         })
     );
   return {
@@ -253,6 +293,7 @@ export function createClient<
     close: () => {
       if (closed) return;
       closed = true;
+      queries.close();
       transport.close();
       for (const cache of urls.values()) {
         for (const value of cache.values())

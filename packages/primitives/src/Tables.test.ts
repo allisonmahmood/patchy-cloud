@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Tables from "./Tables.js";
+import * as TestWakes from "./test/wakes.js";
 import {
   additions,
   columnLimit,
@@ -39,7 +40,7 @@ for (const [name, layer] of [
   ["Postgres", postgres],
   ["PGlite", local]
 ] as const) {
-  it.layer(layer)(`Tables (${name})`, (it) => {
+  it.layer(layer.pipe(Layer.provideMerge(TestWakes.layer)))(`Tables (${name})`, (it) => {
     it.effect(
       "fills old rows and old-writer inserts, persists refs and maintains timestamps",
       () => additions("cmp_dev"),

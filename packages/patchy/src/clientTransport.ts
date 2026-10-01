@@ -4,12 +4,15 @@
 import { PatchyError, decodeError } from "./clientError.js";
 import { HandlerError, decodeHandlerError } from "./handlerError.js";
 import { WIRE_VERSION } from "./release.js";
+import type { QueryDriver, QueryFrame } from "./queryRegistry.js";
 
 export type Operation =
   | "me"
   | "server.call"
   | "route.set"
   | "download"
+  | "subscriptions.subscribe"
+  | "subscriptions.unsubscribe"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
   | `shared.${"get" | "getMany" | "list"}`
   | `files.${"get" | "put" | "list" | "delete"}`
@@ -23,6 +26,7 @@ export interface Route {
 export interface Transport {
   readonly call: Call;
   readonly route: Route;
+  readonly queries: QueryDriver;
   /** Current server-clock estimate from hello, unavailable before the document stream opens. */
   serverTime(): number | undefined;
   close(): void;
@@ -58,6 +62,8 @@ export function createPortTransport(
   let path = options.route ?? "/";
   let clock: { readonly serverTime: number; readonly receivedAt: number } | undefined;
   const listeners = new Set<(path: string) => void>();
+  const queries = new Map<string, (frame: QueryFrame) => void>();
+  let querySequence = 0;
   const notify = (listener: (path: string) => void, value: string) => {
     queueMicrotask(() => {
       if (!closed && listeners.has(listener)) listener(value);
@@ -108,6 +114,24 @@ export function createPortTransport(
         Number.isFinite(data.serverTime)
       )
         clock = { serverTime: data.serverTime, receivedAt: performance.now() };
+      if (value.event === "stream" && data !== null && typeof data === "object" && "type" in data) {
+        const frame = data as Record<string, unknown>;
+        if (typeof frame.id === "string") {
+          const listener = queries.get(frame.id);
+          if (!listener) return;
+          if (frame.type === "error") {
+            const error = decodeHandlerError(frame.error) ?? decodeError(frame.error);
+            if (!error || typeof frame.permanent !== "boolean") return;
+            if (frame.permanent) queries.delete(frame.id);
+            listener({ status: "error", error, permanent: frame.permanent });
+          } else if (typeof frame.revision === "string" && /^\d+$/.test(frame.revision)) {
+            if (frame.type === "snapshot")
+              listener({ status: "ready", revision: frame.revision, data: frame.result });
+            else if (frame.type === "up-to-date")
+              listener({ status: "up-to-date", revision: frame.revision });
+          }
+        }
+      }
       return;
     }
     if (typeof value.id !== "string") return;
@@ -145,6 +169,9 @@ export function createPortTransport(
     }
     pending.clear();
     listeners.clear();
+    for (const listener of queries.values())
+      listener({ status: "error", error: lost(), permanent: true });
+    queries.clear();
   };
   port.addEventListener("message", onMessage);
   port.addEventListener("messageerror", close);
@@ -197,6 +224,31 @@ export function createPortTransport(
   };
   return {
     call,
+    queries: {
+      subscribe(request, onFrame) {
+        if (closed) {
+          onFrame({ status: "error", error: lost(), permanent: true });
+          return () => {};
+        }
+        const id = `query-${++querySequence}`;
+        queries.set(id, onFrame);
+        void call("subscriptions.subscribe", { id, op: request.handler, args: request.args }).catch(
+          (error: unknown) => {
+            if (queries.get(id) !== onFrame) return;
+            queries.delete(id);
+            onFrame({
+              status: "error",
+              error: error instanceof Error ? error : lost(),
+              permanent: true
+            });
+          }
+        );
+        return () => {
+          if (!queries.delete(id) || closed) return;
+          void call("subscriptions.unsubscribe", { id }).catch(() => {});
+        };
+      }
+    },
     serverTime: () =>
       closed || clock === undefined
         ? undefined
@@ -288,6 +340,29 @@ export function createPostMessageTransport(
       return (await ready).call(op, args, bytes);
     },
     serverTime: () => (closed ? undefined : transport?.serverTime()),
+    queries: {
+      subscribe(request, onFrame) {
+        let active = !closed;
+        let unsubscribe: (() => void) | undefined;
+        void ready.then(
+          (transport) => {
+            if (active && !closed) unsubscribe = transport.queries.subscribe(request, onFrame);
+          },
+          (error: unknown) => {
+            if (active)
+              onFrame({
+                status: "error",
+                error: error instanceof Error ? error : lost(),
+                permanent: true
+              });
+          }
+        );
+        return () => {
+          active = false;
+          unsubscribe?.();
+        };
+      }
+    },
     route: {
       get: async () => {
         if (closed) throw lost();
@@ -405,8 +480,14 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
   };
   return {
     serverTime: () => undefined,
+    queries: {
+      subscribe() {
+        throw browserOnly();
+      }
+    },
     call: async (op, args, bytes) => {
-      if (op === "route.set" || op === "download") throw browserOnly();
+      if (op === "route.set" || op === "download" || op.startsWith("subscriptions."))
+        throw browserOnly();
       identity ??= dispatch("me", {}, null) as Promise<Me | null>;
       const me = await identity;
       if (op === "me") return me;

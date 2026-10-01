@@ -9,6 +9,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
+import * as ResourceChanges from "./ResourceChanges.js";
 
 export interface Options {
   readonly companyId: string;
@@ -17,6 +18,7 @@ export interface Options {
 
 /** The directory retains its company binding across clean close/reopen cycles. */
 export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options: Options) {
+  const changes = yield* ResourceChanges.ResourceChanges;
   const sql = yield* SqlClient.SqlClient;
   const companyContext = Context.make(SqlClient.SqlClient, sql).pipe(
     Context.add(CompanyDatabases.CompanyConnection, sql)
@@ -175,7 +177,10 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
     claim,
     ensureReady,
     withCompany,
-    withPatchLock: CompanyDatabases.withPatchLock,
+    withPatchLock: (patchId) => (effect) =>
+      CompanyDatabases.withPatchLock(patchId)(effect).pipe(
+        Effect.provideService(ResourceChanges.ResourceChanges, changes)
+      ),
     withFileLock: CompanyDatabases.withFileLock,
     listReady
   });

@@ -41,9 +41,21 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "useQuery adapter",
     entrypoints: ["patchy/preact"],
-    runs: "Page adapter for generated query callables",
+    runs: "Tier 1 page through the shell's subscribed own and shared table queries",
     limits:
-      "Returns status, data, error and loading; retains data through errors. Hosted subscriptions are not connected in this release and return server_required. Tier 1 table reads do not yet expose subscriptions."
+      "Returns status, data, error and loading; retains data through errors. Accepts table list/get callables. Handler subscriptions are not admitted yet."
+  },
+  {
+    id: "primitives.table-subscriptions",
+    group: "Primitives",
+    name: "Live table subscriptions",
+    entrypoints: [
+      "patchy/_generated/client.ts: table.list.subscribe and table.get.subscribe",
+      "patchy/preact: useQuery"
+    ],
+    runs: "Tier 1 company pages and patchy dev through the document stream",
+    limits:
+      "Own and shared tables. Render the whole result; get wakes at table grain. At most 64 subscriptions per document and 8 MiB per snapshot. A permanent error ends the subscription with its last value retained."
   },
   {
     id: "core.server-contract",
@@ -94,7 +106,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Record<(typeof groups)[number], string> = {
-  Core: "Hosted handler execution, live subscriptions, authorised file handles, staged uploads, useFileUrl and generated-file downloads are not available in this release.",
+  Core: "Hosted handler execution and handler subscriptions, authorised file handles, staged uploads, useFileUrl and generated-file downloads are not available in this release.",
   Primitives: "The member directory and shared file stores are not available in this release.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:

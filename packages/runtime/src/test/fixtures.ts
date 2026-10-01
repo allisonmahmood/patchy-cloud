@@ -23,6 +23,8 @@ import * as RuntimeProduction from "../RuntimeProduction.js";
 import * as RuntimeApi from "../RuntimeApi.js";
 import * as RuntimeLog from "../RuntimeLog.js";
 import { me } from "../me.js";
+import * as SubscriptionReads from "../SubscriptionReads.js";
+import * as Wakes from "../Wakes.js";
 
 export const patchId = "runtimepatch";
 export const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -62,6 +64,16 @@ const seed = Layer.effectDiscard(
     ('usr_member', 'user_member', ${DEV_SEED.companyId}, 'member@patchy.local', 'Member', 'member', NULL),
     ('usr_other', 'user_other', 'cmp_other', 'other@patchy.local', 'Other', 'member', NULL),
     ('usr_inactive', 'user_inactive', ${DEV_SEED.companyId}, 'inactive@patchy.local', 'Inactive', 'member', now())`;
+  })
+);
+
+/** Lifecycle-only suites explicitly refuse data reads; subscription suites supply storage. */
+export const streamPorts = Layer.mergeAll(
+  Wakes.layer,
+  Layer.succeed(SubscriptionReads.SubscriptionReads, {
+    admit: () => Effect.fail(new Runtime.InvalidRequest({})),
+    read: () => Effect.fail(new Runtime.InvalidRequest({})),
+    revisions: () => Effect.fail(new Runtime.InvalidRequest({}))
   })
 );
 

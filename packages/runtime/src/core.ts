@@ -2,4 +2,7 @@ export * as Binding from "./Binding.js";
 export * as LoadedVersions from "./LoadedVersions.js";
 export * as Runtime from "./Runtime.js";
 export * as RuntimeApi from "./RuntimeApi.js";
+export * as Wakes from "./Wakes.js";
+export * as SubscriptionReads from "./SubscriptionReads.js";
+export * as StreamAdmission from "./StreamAdmission.js";
 export { me } from "./me.js";

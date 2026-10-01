@@ -290,7 +290,8 @@ next publish, and Hide collapses it without dismissing. The tier-upgrade state
 clears the notice. Public documents have no company stream.
 
 The shell reconnects after a network cut or host restart, keeping its loaded
-version. A reconnecting pill appears after two seconds and clears on reopening.
+version and last subscription values. A reconnecting pill appears after two seconds
+and clears only after every desired subscription reaches its reconciliation fence.
 Hidden documents suspend after 30 seconds and reconnect on return. Presence is
 the open connection, never a heartbeat or stored lease. Retirement, deletion and
 session loss stop the document; every reconnect rechecks eligibility and authority.
@@ -298,8 +299,15 @@ A stale session token asks the browser to refresh rather than discarding the dra
 Version revocation is undecided in [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425);
 the wire reserves its frame, but there is no version-revocation operation or state.
 
-Lifecycle delivery is host-local today. Subscriptions, revision-fenced
-reconciliation and cross-host delivery are the next sync step.
+Tier 1 owned and declared shared-table `list` and `get` reads support `.subscribe`
+and `useQuery`. A colleague's write updates subscribed results without a reload.
+Missing rows remain subscribed at table grain. Errors preserve the last successful
+value; restoring or resharing a source lets a refused subscription recover.
+
+Resource writes and patch lifecycle changes commit durable revisions with their
+data. Post-commit hints reach other hosts through Postgres; reconciliation checks
+revisions every 30 seconds by default and on reconnect, so a missed hint cannot
+leave a document permanently stale. Reconnect never replays a mutation.
 
 Unsupported: outbound fetches, external links, popups and `target=_blank`, top
 navigation, in-frame downloads, cookies, localStorage, IndexedDB, workers,

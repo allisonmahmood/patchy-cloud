@@ -128,6 +128,52 @@ export const RuntimeStreamRequest = Schema.Struct({
 });
 export type RuntimeStreamRequest = typeof RuntimeStreamRequest.Type;
 
+export const RevisionVector = Schema.Record(
+  Schema.String,
+  Schema.String.check(Schema.isPattern(/^-?\d+$/))
+);
+export type RevisionVector = typeof RevisionVector.Type;
+const QueryRevision = Schema.String.check(Schema.isPattern(/^\d+$/));
+export const RuntimeSubscriptionId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
+export const RuntimeSubscriptionOperation = Schema.Literals([
+  "tables.list",
+  "tables.get",
+  "shared.list",
+  "shared.get"
+]);
+export const RuntimeSubscription = Schema.Struct({
+  id: RuntimeSubscriptionId,
+  op: RuntimeSubscriptionOperation,
+  args: Schema.Record(Schema.String, Schema.Json),
+  vector: Schema.optionalKey(RevisionVector),
+  revision: Schema.optionalKey(QueryRevision)
+});
+export type RuntimeSubscription = typeof RuntimeSubscription.Type;
+const subscriptionEnvelope = {
+  ...RuntimeStreamRequest.fields,
+  generation: Schema.NonEmptyString,
+  sequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+};
+export const RuntimeSubscriptionRequest = Schema.Union([
+  Schema.Struct({
+    ...subscriptionEnvelope,
+    type: Schema.Literal("subscribe"),
+    subscription: RuntimeSubscription
+  }),
+  Schema.Struct({
+    ...subscriptionEnvelope,
+    type: Schema.Literal("unsubscribe"),
+    id: RuntimeSubscriptionId
+  }),
+  Schema.Struct({
+    ...subscriptionEnvelope,
+    type: Schema.Literal("replace"),
+    subscriptions: Schema.Array(RuntimeSubscription)
+  })
+]);
+export type RuntimeSubscriptionRequest = typeof RuntimeSubscriptionRequest.Type;
+export const RuntimeSubscriptionAccepted = Schema.Struct({ ok: Schema.Literal(true) });
+
 export const RuntimeStreamFrame = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("hello"),
@@ -138,6 +184,27 @@ export const RuntimeStreamFrame = Schema.Union([
     type: Schema.Literal("served"),
     versionId: RuntimeVersionId,
     tier: Schema.Int
+  }),
+  Schema.Struct({
+    type: Schema.Literal("snapshot"),
+    id: RuntimeSubscriptionId,
+    revision: QueryRevision,
+    result: Schema.Json,
+    vector: RevisionVector
+  }),
+  Schema.Struct({
+    type: Schema.Literal("up-to-date"),
+    id: RuntimeSubscriptionId,
+    revision: QueryRevision,
+    vector: RevisionVector
+  }),
+  Schema.Struct({ type: Schema.Literal("admitted"), sequence: Schema.Int }),
+  Schema.Struct({ type: Schema.Literal("resync_required"), sequence: Schema.Int }),
+  Schema.Struct({
+    type: Schema.Literal("error"),
+    id: RuntimeSubscriptionId,
+    permanent: Schema.Boolean,
+    error: Schema.suspend(() => Schema.Union([RuntimeFailure, HandlerFailure]))
   }),
   Schema.Struct({ type: Schema.Literal("revoked") }),
   Schema.Struct({ type: Schema.Literal("session_expired") }),

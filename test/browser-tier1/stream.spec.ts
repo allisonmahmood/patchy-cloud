@@ -1,12 +1,16 @@
 import type { Frame } from "@playwright/test";
 import type { FixtureWindow } from "./fixture-client.js";
 import { test, expect, open, notice, installSessionRefreshBoundary } from "./fixtures.js";
+import { RuntimeSubscriptionRequest } from "../../packages/api/src/index.js";
+import * as Schema from "effect/Schema";
 
 test.use({ tls: true, ignoreHTTPSErrors: true });
 test.skip(
   ({ browserName }) => browserName !== "chromium",
   "Stream acceptance targets Chromium desktop."
 );
+
+const decodeSubscriptionRequest = Schema.decodeUnknownSync(RuntimeSubscriptionRequest);
 
 const generations = (frame: Frame) =>
   frame.evaluate(() =>
@@ -31,18 +35,8 @@ test("publish preserves editing, dismissal lasts until the next publish, and rol
   await expect(input).toBeFocused();
   await page.getByRole("button", { name: "Not now", exact: true }).click();
   await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeHidden();
-  // Re-announcing the same served version is not a new publish.
+  // A rollback to the already served version is not a new publish.
   await instance.lifecycle(patch.patchId, "rollback", 2);
-  await expect
-    .poll(() =>
-      frame.evaluate(
-        () =>
-          (window as unknown as FixtureWindow).harness.replies.filter(
-            (reply) => reply.event === "stream" && reply.data?.type === "served"
-          ).length
-      )
-    )
-    .toBe(3);
   await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeHidden();
   await instance.publish("company", instance.html, patch.patchId);
   await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeVisible();
@@ -208,18 +202,29 @@ test("a definitive sign-out stops at the token deadline without a runtime operat
   ).toHaveLength(calls);
 });
 
-test("a refreshed browser token re-admits the idle stream without stopping its document", async ({
+test("a refreshed browser token preserves query status and never flashes a data error", async ({
   page,
   context,
   instance
 }) => {
-  await instance.session(context, "owner", 2);
+  await instance.session(context, "owner", 5);
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await frame.evaluate(() => (window as unknown as FixtureWindow).harness.subscribeRows());
+  await expect(frame.locator("#subscription-status")).toHaveText("ready");
+  await frame.evaluate(() => {
+    (window as unknown as FixtureWindow).harness.queryStatuses.length = 0;
+  });
   await frame.locator("#pasted-copy").fill("Editing through token refresh");
   await instance.session(context);
   await expect.poll(async () => (await generations(frame)).length).toBeGreaterThan(1);
   await expect(frame.locator("#pasted-copy")).toHaveValue("Editing through token refresh");
+  await expect(frame.locator("#subscription-status")).toHaveText("ready");
+  await expect(frame.locator("#subscription-rows")).toHaveText("[]");
+  await expect(frame.getByRole("alert")).toHaveCount(0);
+  expect(
+    await frame.evaluate(() => (window as unknown as FixtureWindow).harness.queryStatuses)
+  ).not.toContain("error");
   await expect(page.locator("[data-notice]")).toHaveCount(0);
 });
 
@@ -388,21 +393,37 @@ test("a missed retirement frame is enforced when the document reconnects", async
   await notice(page, "access_denied");
 });
 
-test("a cut ingress stream delays its reconnect pill and clears it on re-admission", async ({
+test("a reconnect keeps its pill after hello until the desired subscriptions reach their fences", async ({
   page,
   instance
 }) => {
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await frame.evaluate(() => (window as unknown as FixtureWindow).harness.subscribeRows());
+  await expect(frame.locator("#subscription-rows")).toHaveText("[]");
   await frame.locator("#pasted-copy").fill("Keep the disconnected draft");
   const pill = page.locator('[data-stream-status="reconnecting"]');
   instance.pauseStreams(true);
   await expect(pill).toBeHidden();
   await expect(pill).toBeVisible();
-  instance.pauseStreams(false);
-  await expect.poll(async () => (await generations(frame)).length).toBe(2);
-  await expect(pill).toBeHidden();
-  await expect(frame.locator("#pasted-copy")).toHaveValue("Keep the disconnected draft");
+  const release = Promise.withResolvers<void>();
+  await page.route("**/api/runtime/subscriptions", async (route) => {
+    await release.promise;
+    await route.continue();
+  });
+  try {
+    instance.pauseStreams(false);
+    await expect.poll(async () => (await generations(frame)).length).toBe(2);
+    await expect(pill).toBeVisible();
+    await expect(frame.locator("#subscription-rows")).toHaveText("[]");
+    release.resolve();
+    await expect(pill).toBeHidden();
+    await expect(frame.locator("#pasted-copy")).toHaveValue("Keep the disconnected draft");
+  } finally {
+    release.resolve();
+    instance.pauseStreams(false);
+    await page.unroute("**/api/runtime/subscriptions");
+  }
 });
 
 test("a hidden document suspends after thirty seconds and resumes its loaded version", async ({
@@ -511,4 +532,115 @@ test("public documents do not open a company stream", async ({ page, instance })
       .slice(before)
       .filter((request) => request.path.startsWith("/api/runtime/stream"))
   ).toEqual([]);
+});
+
+test("a missing delta installs the full ordered desired set, then resumes using its last vectors", async ({
+  page,
+  instance
+}) => {
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  const commands: RuntimeSubscriptionRequest[] = [];
+  let dropped = false;
+  await page.route("**/api/runtime/subscriptions", async (route) => {
+    const command = decodeSubscriptionRequest(route.request().postDataJSON());
+    commands.push(command);
+    if (command.type === "subscribe" && !dropped) {
+      dropped = true;
+      await route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+    } else await route.continue();
+  });
+  await frame.evaluate(async () => {
+    const client = (window as unknown as FixtureWindow).harness.client;
+    await client.tables.rows!.insert({ label: "Ordered subscriptions" });
+    for (const limit of [1, 2]) {
+      const output = Object.assign(document.createElement("p"), { id: `ordered-${limit}` });
+      document.body.append(output);
+      client.tables.rows!.list.subscribe({ limit }, (snapshot) => {
+        if (snapshot.data)
+          output.textContent = JSON.stringify(snapshot.data.rows.map((row) => row.label));
+      });
+    }
+  });
+  await expect(frame.locator("#ordered-1")).toHaveText('["Ordered subscriptions"]', {
+    timeout: 15_000
+  });
+  await expect(frame.locator("#ordered-2")).toHaveText('["Ordered subscriptions"]');
+  const deltas = commands.filter((command) => command.type === "subscribe");
+  expect(deltas.map((command) => command.sequence)).toEqual([1, 2]);
+  const replacement = commands.find(
+    (command) => command.type === "replace" && command.sequence === 2
+  );
+  if (replacement?.type !== "replace")
+    throw new Error("The gap must be repaired with a desired set.");
+  expect(replacement.subscriptions.map((subscription) => subscription.id).sort()).toEqual(
+    deltas.map((command) => command.subscription.id).sort()
+  );
+  const lastSnapshots = await frame.evaluate(() =>
+    Object.fromEntries(
+      (window as unknown as FixtureWindow).harness.replies.flatMap(({ event, data }) =>
+        event === "stream" && (data?.type === "snapshot" || data?.type === "up-to-date")
+          ? [[data.id, { revision: data.revision, vector: data.vector }]]
+          : []
+      )
+    )
+  );
+  const before = commands.length;
+  instance.pauseStreams(true);
+  await expect(page.locator('[data-stream-status="reconnecting"]')).toBeVisible();
+  instance.pauseStreams(false);
+  await expect(page.locator('[data-stream-status="reconnecting"]')).toBeHidden();
+  const resumed = commands.slice(before).find((command) => command.type === "replace");
+  if (resumed?.type !== "replace")
+    throw new Error("A new generation must replace the desired set.");
+  expect(resumed.generation).not.toBe(replacement.generation);
+  expect(resumed.sequence).toBe(0);
+  expect(resumed.subscriptions.map((subscription) => subscription.id).sort()).toEqual(
+    replacement.subscriptions.map((subscription) => subscription.id).sort()
+  );
+  for (const subscription of resumed.subscriptions) {
+    expect({ revision: subscription.revision, vector: subscription.vector }).toEqual(
+      lastSnapshots[subscription.id]
+    );
+  }
+  await page.unroute("**/api/runtime/subscriptions");
+});
+
+test("a lost admitted frame repairs the desired set without replacing the live connection", async ({
+  page,
+  instance
+}) => {
+  await page.clock.install();
+  const commands: RuntimeSubscriptionRequest[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/runtime/subscriptions")
+      commands.push(decodeSubscriptionRequest(request.postDataJSON()));
+  });
+  const frame = await open(page, await instance.publish());
+  await frame.evaluate(() => (window as unknown as FixtureWindow).harness.subscribeRows());
+  await expect(frame.locator("#subscription-rows")).toHaveText("[]");
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  const pill = page.locator('[data-stream-status="reconnecting"]');
+  instance.pauseStreams(true);
+  try {
+    await expect(pill).toBeVisible();
+    const dropped = instance.loseNextAdmitted(0);
+    instance.pauseStreams(false);
+    await dropped;
+    await expect.poll(() => generations(frame)).toHaveLength(2);
+    await expect(pill).toBeHidden();
+    const generation = (await generations(frame))[1];
+    const replacements = commands.filter(
+      (command) => command.generation === generation && command.type === "replace"
+    );
+    expect(replacements.map((command) => command.sequence)).toEqual([0, 0]);
+    expect(instance.streamConnections.size).toBe(1);
+    await expect(frame.locator("#subscription-rows")).toHaveText("[]");
+    const completed = commands.length;
+    await page.clock.fastForward(31_000);
+    expect(commands).toHaveLength(completed);
+    expect(await generations(frame)).toHaveLength(2);
+  } finally {
+    instance.pauseStreams(false);
+  }
 });

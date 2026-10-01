@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { type Manifest, sharedTableId } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import { Wakes } from "@patchy/runtime/core";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -124,6 +125,97 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       run: (service, id, actor) => service.reassign(id, actor, reader.user.id)
     }
   ];
+
+  it.effect("wakes source consumers after each committed sharing and lifecycle change", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const wakes = yield* Wakes.Wakes;
+      const sql = yield* SqlClient.SqlClient;
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      yield* databases.ensureReady(uploader.company.id);
+      const manifest = tableManifest("lifecycle-wakes");
+      const request = input({ manifest });
+      const key = `patch:${request.patchId}`;
+      const revisions: string[] = [];
+      yield* wakes.subscribe((keys) =>
+        Effect.gen(function* () {
+          if (!keys.includes(key)) return;
+          assert.isTrue(Option.isNone(yield* Effect.serviceOption(sql.transactionService)));
+          const rows = yield* sql<{ revision: string }>`
+            SELECT lifecycle_revision::text AS revision FROM patches WHERE id = ${request.patchId}`;
+          revisions.push(rows[0]?.revision ?? "-1");
+        }).pipe(Effect.orDie)
+      );
+      yield* Fixtures.record(request);
+      yield* update(request.patchId, { manifest: tableManifest(manifest.name!, false) });
+      yield* update(request.patchId, { manifest });
+      yield* service.setScope(request.patchId, owner, "public");
+      yield* service.rollback(request.patchId, owner, 1);
+      const retired = yield* service.retire(request.patchId, owner);
+      assert.strictEqual(retired.lifecycleRevision, "6");
+      assert.isTrue(Option.isNone(yield* service.find(request.patchId)));
+      yield* service.restore(request.patchId, owner);
+      const deleted = yield* service.delete(request.patchId, owner);
+      assert.strictEqual(deleted.lifecycleRevision, "8");
+      yield* service.restore(request.patchId, owner);
+      const restored = Option.getOrThrow(yield* service.find(request.patchId));
+      assert.strictEqual(restored.version.id, request.versionId);
+      assert.strictEqual(restored.patch.lifecycleRevision, "9");
+      yield* service.delete(request.patchId, owner);
+      yield* TestClock.adjust(30 * DAY);
+      yield* service.purgeDeleted(request.patchId);
+      assert.deepStrictEqual(revisions, ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "-1"]);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("keeps lifecycle counters exact beyond JavaScript's safe integer range", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET lifecycle_revision = 9007199254740992 WHERE id = ${patch.patchId}`;
+      assert.strictEqual(
+        (yield* service.retire(patch.patchId, owner)).lifecycleRevision,
+        "9007199254740993"
+      );
+      assert.strictEqual(
+        (yield* service.restore(patch.patchId, owner)).lifecycleRevision,
+        "9007199254740994"
+      );
+    })
+  );
+
+  it.effect("announces only committed patches when a nested portal action rolls back", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const first = yield* create();
+      const second = yield* create();
+      const batches: string[][] = [];
+      yield* (yield* Wakes.Wakes).subscribe((keys) =>
+        Effect.sync(() => {
+          batches.push([...keys]);
+        })
+      );
+      yield* service.withDependencyLock(owner.userId)(
+        Effect.gen(function* () {
+          yield* service.retire(first.patchId, owner);
+          assert.strictEqual(
+            yield* service
+              .withDependencyLock(owner.userId)(
+                service.retire(second.patchId, owner).pipe(Effect.andThen(Effect.fail("cancel")))
+              )
+              .pipe(Effect.flip),
+            "cancel"
+          );
+          assert.deepStrictEqual(batches, []);
+        })
+      );
+      assert.deepStrictEqual(batches, [[`patch:${first.patchId}`]]);
+      assert.strictEqual((yield* stored(first.patchId)).lifecycle_revision, "2");
+      assert.strictEqual((yield* stored(second.patchId)).lifecycle_revision, "1");
+      assert.isTrue(Option.isSome(yield* service.find(second.patchId)));
+    }).pipe(Effect.scoped)
+  );
 
   for (const actor of [owner, administrator]) {
     for (const state of ["live", "retired", "deleted"] as const) {

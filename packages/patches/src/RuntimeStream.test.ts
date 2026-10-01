@@ -16,7 +16,9 @@ import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
 import { newInternalId, newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { RuntimeStream, Runtime, me } from "@patchy/runtime";
+import { RuntimeStream, Runtime, StreamAdmission, StreamLimits, me } from "@patchy/runtime";
+import { Wakes } from "@patchy/runtime/core";
+import { SubscriptionReads } from "@patchy/primitives";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
@@ -38,7 +40,12 @@ const dependencies = Layer.mergeAll(
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );
 const layer = RuntimeStream.layer.pipe(
-  Layer.provideMerge(LoadedVersions.layer.pipe(Layer.provideMerge(dependencies))),
+  Layer.provide(SubscriptionReads.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(LoadedVersions.layer, StreamAdmission.layer, StreamLimits.layer).pipe(
+      Layer.provideMerge(dependencies)
+    )
+  ),
   Layer.provide(WideEvents.layerNoop)
 );
 const request = HttpServerRequest.fromWeb(
@@ -80,12 +87,29 @@ const publish = (patchId: string, intent: "create" | "update") =>
     userAgent: null
   });
 
+const holdNextWake = Effect.gen(function* () {
+  const wakes = yield* Wakes.Wakes;
+  const committed = yield* Deferred.make<void>();
+  const resume = yield* Deferred.make<void>();
+  const patches = yield* Patches.make.pipe(
+    Effect.provideService(Wakes.Wakes, {
+      ...wakes,
+      publish: (keys) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(committed, undefined);
+          yield* Deferred.await(resume);
+          yield* wakes.publish(keys);
+        })
+    })
+  );
+  return { patches, committed, resume };
+});
+
 it.layer(layer)("committed patch lifecycle streams", (it) => {
   it.effect("publishes, rolls back and rechecks lifecycle eligibility on reconnect", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;
       const streams = yield* RuntimeStream.RuntimeStream;
-      yield* patches.listen((change) => streams.notify(change.patchId));
       const patchId = newPatchId();
       const original = yield* publish(patchId, "create");
       const input = {
@@ -155,50 +179,42 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
     }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
   );
 
-  it.effect(
-    "announces durable authority when served callbacks arrive in reverse commit order",
-    () =>
-      Effect.gen(function* () {
-        const patches = yield* Patches.Patches;
-        const streams = yield* RuntimeStream.RuntimeStream;
-        const patchId = newPatchId();
-        const initial = yield* publish(patchId, "create");
-        const pull = yield* Stream.toPull(
-          yield* streams.open({
-            patchId,
-            versionId: initial.versionId,
-            documentId: "reversed_served_document"
-          })
-        );
-        yield* pull;
-        yield* pull;
-        const committed = yield* Deferred.make<void>();
-        const resume = yield* Deferred.make<void>();
-        let delay = true;
-        yield* patches.listen((change) =>
-          Effect.gen(function* () {
-            if (change.type !== "served") return;
-            if (delay) {
-              delay = false;
-              yield* Deferred.succeed(committed, undefined);
-              yield* Deferred.await(resume);
-            }
-            yield* streams.notify(change.patchId);
-          })
-        );
-        const older = yield* publish(patchId, "update").pipe(Effect.forkScoped);
-        yield* Deferred.await(committed);
-        const latest = yield* publish(patchId, "update");
-        const current = { type: "served", versionId: latest.versionId, tier: 0 };
-        assert.deepStrictEqual(decode(yield* pull), current);
-        yield* Deferred.succeed(resume, undefined);
-        yield* Fiber.join(older);
-        assert.deepStrictEqual(decode(yield* pull), current);
-        assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 1);
-      }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
+  it.effect("announces durable authority when wakes arrive in reverse commit order", () =>
+    Effect.gen(function* () {
+      const streams = yield* RuntimeStream.RuntimeStream;
+      const patchId = newPatchId();
+      const initial = yield* publish(patchId, "create");
+      const pull = yield* Stream.toPull(
+        yield* streams.open({
+          patchId,
+          versionId: initial.versionId,
+          documentId: "reversed_served_document"
+        })
+      );
+      yield* pull;
+      yield* pull;
+      const held = yield* holdNextWake;
+      const older = yield* publish(patchId, "update").pipe(
+        Effect.provideService(Patches.Patches, held.patches),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(held.committed);
+      const latest = yield* publish(patchId, "update");
+      const current = { type: "served", versionId: latest.versionId, tier: 0 };
+      assert.deepStrictEqual(decode(yield* pull), current);
+      yield* Deferred.succeed(held.resume, undefined);
+      yield* Fiber.join(older);
+      const final = yield* publish(patchId, "update");
+      while (true) {
+        const frame = decode(yield* pull);
+        if (frame.type === "served" && frame.versionId === final.versionId) break;
+        assert.deepStrictEqual(frame, current);
+      }
+      assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 1);
+    }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
   );
 
-  it.effect("keeps a restored document connected after a stale access-denied callback", () =>
+  it.effect("keeps a restored document connected after a delayed retirement wake", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;
       const streams = yield* RuntimeStream.RuntimeStream;
@@ -213,24 +229,16 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       );
       yield* pull;
       yield* pull;
-      const committed = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      yield* patches.listen((change) =>
-        Effect.gen(function* () {
-          if (change.type !== "unavailable") return;
-          yield* Deferred.succeed(committed, undefined);
-          yield* Deferred.await(resume);
-          yield* streams.notify(change.patchId);
-        })
-      );
-      const retiring = yield* patches.retire(patchId, actor).pipe(Effect.forkScoped);
-      yield* Deferred.await(committed);
+      const held = yield* holdNextWake;
+      const retiring = yield* held.patches.retire(patchId, actor).pipe(Effect.forkScoped);
+      yield* Deferred.await(held.committed);
       yield* patches.restore(patchId, actor);
-      yield* Deferred.succeed(resume, undefined);
+      yield* Deferred.succeed(held.resume, undefined);
       yield* Fiber.join(retiring);
+      const following = yield* publish(patchId, "update");
       assert.deepStrictEqual(decode(yield* pull), {
         type: "served",
-        versionId: initial.versionId,
+        versionId: following.versionId,
         tier: 0
       });
       assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 1);
@@ -245,10 +253,10 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       const patches = yield* Patches.Patches;
       const patchId = newPatchId();
       yield* publish(patchId, "create");
-      const notices: Array<Patches.LifecycleChange> = [];
-      yield* patches.listen((change) =>
+      const notices: string[] = [];
+      yield* (yield* Wakes.Wakes).subscribe((keys) =>
         Effect.sync(() => {
-          notices.push(change);
+          notices.push(...keys);
         })
       );
       yield* patches

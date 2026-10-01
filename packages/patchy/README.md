@@ -61,8 +61,15 @@ runner is installed. Tier 0 is unchanged. Vanilla repos still use the
 framework-free generated client; refresh never replaces application source.
 The starter shows pending reads and saves, ignores an initial read after unmount,
 and prevents writes while the initial read or a save is pending.
-`useQuery(handler, args)` is available over the framework-free subscription
-registry; the hosted stream and query subscriptions land with their runtime tickets.
+`useQuery(read, args)` and `read.subscribe(args, listener)` support tier 1 owned
+and declared shared-table `list` and `get` in both local dev and hosted pages.
+For example, `useQuery(client.tables.notes.list, {})` returns
+`{ status, data, error, loading }`; render `data?.rows` and display `error` without
+discarding the last successful value. A missing `get` stays subscribed and
+updates when that row appears. Unsubscribe with the function returned by `.subscribe`.
+The shared registry canonicalizes arguments and has a one-second remount grace.
+Reconnect catches up to durable revision fences without replaying writes; the
+shell's reconnecting pill stays visible until catch-up completes.
 
 Dev and publish check the page graph, not `package.json`. Runtime imports may
 use `patchy/preact`, its two JSX runtimes, `patchy/csv` and the relative generated
@@ -106,12 +113,13 @@ optional columns remain nullable. Defaults and refs are table-only. Queries
 cannot write, mutations cannot reach shared data, connections, file bytes or
 `ctx.run`, and actions can call only sibling queries and mutations.
 
-`useQuery` returns `{ status, data, error, loading }`, shares canonical arguments
-between consumers, ignores stale revisions, and keeps the last value on a stream
-error. The registry has a one-second remount grace and no Preact dependency.
+The subscription registry is framework-free; `useQuery` is its Preact adapter.
+It ignores stale frames and preserves the last value on an error. Retryable
+source refusals recover on restore or reshare; permanent refusals end that
+subscription.
 
-These are contracts, generation and local subscription state, not hosted
-execution. The server still refuses tier 2 publish. Mutation-key execution and
+Tier 2 handlers remain contracts and generation, not hosted execution. The server
+still refuses tier 2 publish. Mutation-key execution and
 `unknown_outcome.retry()` behavior land with the mutations ticket. The
 `patchy-server` skill source documents the contract and embeds registry-generated
 limits; tier 2 init will install it.

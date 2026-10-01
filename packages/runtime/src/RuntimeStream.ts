@@ -15,16 +15,24 @@ import {
   RuntimePrincipal,
   RuntimeStreamFrame,
   RuntimeStreamRequest,
+  RuntimeSubscriptionRequest,
   WIRE_VERSION
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { newInternalId } from "@patchy/core";
-import { ContractLimits, OperatingLimits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
+import { registry } from "@patchy/limits/registry";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as StreamAdmission from "./StreamAdmission.js";
+import * as Binding from "./Binding.js";
+import * as StreamLimits from "./StreamLimits.js";
+import * as Subscriptions from "./Subscriptions.js";
+import * as Wakes from "./Wakes.js";
+import * as SubscriptionReads from "./SubscriptionReads.js";
 
 const decodeRequest = Schema.decodeUnknownEffect(RuntimeStreamRequest);
+const decodeSubscriptionRequest = Schema.decodeUnknownEffect(RuntimeSubscriptionRequest);
 const decodePrincipal = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePrincipal), {
   onExcessProperty: "error"
 });
@@ -51,12 +59,26 @@ export class StreamLimit extends Schema.TaggedError<StreamLimit>()("StreamLimit"
   }
 }
 
+export class DirectSubscriptionRequired extends Schema.TaggedError<DirectSubscriptionRequired>()(
+  "DirectSubscriptionRequired",
+  { loadedTier: Schema.Int, servedTier: Schema.Int }
+) {
+  readonly code = "server_required" as const;
+  readonly status = 403;
+  override get message() {
+    return "Direct subscriptions require a tier 1 document.";
+  }
+}
+
 type Entry = {
   readonly companyId: string;
   readonly patchId: string;
   readonly versionId: string;
   readonly viewerId: string;
   readonly generation: string;
+  lastServed: { readonly versionId: string; readonly tier: number } | undefined;
+  readonly recheck: Effect.Effect<void, Runtime.RuntimeError>;
+  readonly subscriptions: Subscriptions.DocumentSubscriptions;
   readonly send: (frame: RuntimeStreamFrame) => void;
   readonly close: (reason: string, frame?: RuntimeStreamFrame) => void;
 };
@@ -74,6 +96,13 @@ export class RuntimeStream extends Context.Service<
       Runtime.RuntimeError | StreamReplaced | StreamLimit,
       HttpServerRequest.HttpServerRequest | Scope.Scope
     >;
+    readonly update: (
+      input: unknown
+    ) => Effect.Effect<
+      void,
+      Runtime.RuntimeError | StreamReplaced,
+      HttpServerRequest.HttpServerRequest
+    >;
     readonly notify: (patchId: string) => Effect.Effect<void>;
     readonly connected: (companyId: string, patchId?: string) => Effect.Effect<number>;
     readonly drain: Effect.Effect<void>;
@@ -81,18 +110,26 @@ export class RuntimeStream extends Context.Service<
 >()("@patchy/runtime/RuntimeStream") {}
 
 type Dependencies =
-  | Effect.Services<typeof StreamAdmission.make>
+  | StreamAdmission.StreamAdmission
   | LoadedVersions.LoadedVersions
+  | Limits.Limits
   | WideEvents.WideEvents
-  | OperatingLimits.OperatingLimits;
+  | StreamLimits.StreamLimits
+  | Wakes.Wakes
+  | SubscriptionReads.SubscriptionReads;
 
 export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies | Scope.Scope> =
   Effect.gen(function* () {
-    const admission = yield* StreamAdmission.make;
+    const admission = yield* StreamAdmission.StreamAdmission;
     const versions = yield* LoadedVersions.LoadedVersions;
     const events = yield* WideEvents.WideEvents;
+    const limits = yield* Limits.Limits;
+    const callsPerMinute = yield* ContractLimits.get("runtime.calls.perMinute");
     const documentLimit = yield* ContractLimits.get("stream.documents");
-    const operatingLimits = yield* OperatingLimits.OperatingLimits;
+    const operatingLimits = yield* StreamLimits.StreamLimits;
+    const subscriptions = yield* Subscriptions.make;
+    const rootScope = yield* Scope.Scope;
+    const wakes = yield* Wakes.Wakes;
     const entries = new Map<string, Entry>();
     const companies = new Map<string, number>();
     const patches = new Map<string, number>();
@@ -129,13 +166,31 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
 
     // Commit callbacks can arrive out of order. Read authority while holding the same
     // gate as the initial snapshot, so an older read cannot follow a newer frame.
-    const refresh = (patchId: string, targets: readonly Entry[]) =>
+    const refresh = (patchId: string, targets: readonly Entry[], recheck = true) =>
       Effect.gen(function* () {
         if (targets.length === 0) return;
         const served = yield* versions.find(patchId);
         const retained = new Map<string, Option.Option<LoadedVersions.LoadedVersion>>();
         if (Option.isSome(served)) retained.set(served.value.versionId, served);
         for (const entry of targets) {
+          if (recheck) {
+            const allowed = yield* entry.recheck.pipe(
+              Effect.as(true),
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  if (error.code === "session_refresh_required") entry.close("reauthenticate");
+                  else if (error.code === "session_expired")
+                    entry.close(error.code, { type: "session_expired" });
+                  else if (error.code === "principal_changed")
+                    entry.close(error.code, { type: "principal_changed" });
+                  else if (error.code === "source_unavailable") entry.close(error.code);
+                  else entry.close("access_denied", { type: "access_denied" });
+                  return false;
+                })
+              )
+            );
+            if (!allowed) continue;
+          }
           if (Option.isNone(served) || served.value.companyId !== entry.companyId) {
             entry.close("access_denied", { type: "access_denied" });
             continue;
@@ -147,7 +202,14 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           }
           if (Option.isNone(eligible) || eligible.value.companyId !== entry.companyId) {
             entry.close("access_denied", { type: "access_denied" });
-          } else {
+          } else if (
+            entry.lastServed?.versionId !== served.value.versionId ||
+            entry.lastServed?.tier !== served.value.manifest.tier
+          ) {
+            entry.lastServed = {
+              versionId: served.value.versionId,
+              tier: served.value.manifest.tier
+            };
             entry.send({
               type: "served",
               versionId: served.value.versionId,
@@ -194,12 +256,10 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       if (Option.isNone(found) || found.value.companyId !== identity.companyId)
         return yield* new Runtime.AccessDenied({});
       const loaded = found.value;
-      const buffer = yield* operatingLimits
-        .get({
-          companyId: identity.companyId,
-          limitId: "stream.buffer.bytes"
-        })
-        .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+      const { buffer } = yield* operatingLimits.getMany({
+        companyId: identity.companyId,
+        limits: { buffer: "stream.buffer.bytes" }
+      });
       const bufferLimit = buffer.value;
       if (wire !== WIRE_VERSION || wire !== loaded.wireVersion)
         return yield* new Runtime.ShellOutdated({});
@@ -211,6 +271,18 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const viewerKey = `${identity.companyId}:${input.patchId}:${identity.viewerId}`;
       const patchKey = `${identity.companyId}:${input.patchId}`;
       const generation = newInternalId("stream");
+      let binding: Binding.Binding["Service"] = {
+        ...loaded,
+        principal,
+        identity: identity.identity,
+        correlationId: generation
+      };
+      const recheck = Effect.gen(function* () {
+        const current = yield* identity.recheck;
+        if (current.companyId !== identity.companyId) return yield* new Runtime.AccessDenied({});
+        if (current.viewerId !== identity.viewerId) return yield* new Runtime.PrincipalChanged({});
+        binding = { ...binding, identity: current.identity };
+      });
       const hello = encoder.encode(
         `data: ${encodeFrame({ type: "hello", generation, serverTime: now })}\n\n`
       );
@@ -230,6 +302,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const close = (reason: string, frame?: RuntimeStreamFrame) => {
         if (closeReason !== undefined) return;
         closeReason = reason;
+        documentSubscriptions.close();
         // Drop stale queued updates so the terminal reason is always next, even at capacity.
         while (Queue.takeUnsafe(queue) !== undefined) {
           /* discard pending frames */
@@ -244,12 +317,50 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           adjust(viewers, viewerKey, -1);
         }
       };
+      const documentSubscriptions = subscriptions.attach({
+        generation,
+        binding: () => binding,
+        scope,
+        send: (frame: RuntimeStreamFrame) => entry.send(frame),
+        check: Effect.gen(function* () {
+          yield* recheck;
+          const current = yield* find();
+          const eligible = yield* find(input.versionId);
+          if (
+            Option.isNone(current) ||
+            Option.isNone(eligible) ||
+            current.value.companyId !== identity.companyId ||
+            eligible.value.companyId !== identity.companyId
+          )
+            return yield* new Runtime.AccessDenied({});
+          if (eligible.value.scope === "public") return yield* new Runtime.PublicUnavailable({});
+          if (loaded.manifest.tier !== 1 || current.value.manifest.tier !== 1)
+            return yield* new DirectSubscriptionRequired({
+              loadedTier: loaded.manifest.tier,
+              servedTier: current.value.manifest.tier
+            });
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              if (error.code === "session_refresh_required") close("reauthenticate");
+              else if (error.code === "session_expired")
+                close(error.code, { type: "session_expired" });
+              else if (error.code === "principal_changed")
+                close(error.code, { type: "principal_changed" });
+              else if (error.code === "access_denied") close(error.code, { type: "access_denied" });
+            })
+          )
+        )
+      });
       const entry: Entry = {
         companyId: identity.companyId,
         patchId: input.patchId,
         versionId: input.versionId,
         viewerId: identity.viewerId,
         generation,
+        lastServed: undefined,
+        recheck,
+        subscriptions: documentSubscriptions,
         close,
         send: (frame) => {
           if (closeReason !== undefined) return;
@@ -283,7 +394,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           }
         ),
         () => disconnect
-      );
+      ).pipe(Effect.onError(() => disconnect));
       const admittedDocuments = viewers.get(viewerKey)!;
       yield* events
         .withEvent(
@@ -300,7 +411,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             Effect.ensuring(
               Effect.suspend(() =>
                 WideEvents.enrich({
-                  peakSubscriptions: 0,
+                  ...documentSubscriptions.metrics(),
                   bytes,
                   closeReason: closeReason ?? "disconnected",
                   limits: [
@@ -326,10 +437,30 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       yield* withPatch(
         input.patchId,
         Effect.suspend(() =>
-          closeReason === undefined ? refresh(input.patchId, [entry]) : Effect.void
+          closeReason === undefined ? refresh(input.patchId, [entry], false) : Effect.void
         )
       );
       yield* Effect.gen(function* () {
+        while (closeReason === undefined) {
+          const interval = yield* operatingLimits
+            .getMany({
+              companyId: identity.companyId,
+              limits: { interval: "subscriptions.reconcile.interval" }
+            })
+            .pipe(
+              Effect.map((limits) => limits.interval.value),
+              Effect.catch(() =>
+                Effect.succeed(registry["subscriptions.reconcile.interval"].default)
+              )
+            );
+          yield* Effect.sleep(interval);
+          if (closeReason !== undefined) return;
+          yield* withPatch(input.patchId, refresh(input.patchId, [entry]));
+          if (closeReason === undefined) yield* documentSubscriptions.reconcile();
+        }
+      }).pipe(Effect.forkIn(scope));
+      yield* Effect.gen(function* () {
+        if (!Number.isFinite(identity.expiresAt)) return;
         const now = yield* Clock.currentTimeMillis;
         yield* Effect.sleep(Math.max(0, identity.expiresAt - now));
         close("reauthenticate");
@@ -352,8 +483,95 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         )
       ).pipe(Stream.ensuring(disconnect));
     });
+    // Notification delivery must not wait for a document's durable authority lookup.
+    const lifecycleWorkers = new Map<string, { pending: boolean }>();
+    const wake = Effect.fnUntraced(function* (keys: readonly string[], cause?: string) {
+      const patches = new Set<string>();
+      for (const entry of entries.values()) {
+        yield* entry.subscriptions.reconcile(keys, cause);
+        if (keys.length === 0 || keys.includes(`patch:${entry.patchId}`))
+          patches.add(entry.patchId);
+      }
+      for (const patchId of patches) {
+        const previous = lifecycleWorkers.get(patchId);
+        if (previous !== undefined) {
+          previous.pending = true;
+          continue;
+        }
+        const worker = { pending: true };
+        lifecycleWorkers.set(patchId, worker);
+        yield* Effect.gen(function* () {
+          while (worker.pending) {
+            worker.pending = false;
+            yield* withPatch(
+              patchId,
+              Effect.suspend(() =>
+                refresh(
+                  patchId,
+                  [...entries.values()].filter((entry) => entry.patchId === patchId)
+                )
+              )
+            );
+          }
+          lifecycleWorkers.delete(patchId);
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (lifecycleWorkers.get(patchId) === worker) lifecycleWorkers.delete(patchId);
+            })
+          ),
+          Effect.forkIn(rootScope)
+        );
+      }
+    });
+    yield* wakes.subscribe(wake);
+    const update = Effect.fn("RuntimeStream.update")(function* (unknownInput: unknown) {
+      if (draining) return yield* new Runtime.Draining();
+      const input = yield* decodeSubscriptionRequest(unknownInput).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+      );
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      if (
+        request.headers.authorization !== undefined ||
+        request.headers["sec-fetch-site"] !== "same-origin"
+      )
+        return yield* new Runtime.AccessDenied({});
+      const wire = yield* Runtime.decodeWire(request.headers["x-patchy-wire"]).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+      );
+      if (wire !== WIRE_VERSION) return yield* new Runtime.ShellOutdated({});
+      const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+      );
+      const identity = yield* admission.admit;
+      if (principal === null || principal.userId !== identity.viewerId)
+        return yield* new Runtime.PrincipalChanged({});
+      const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
+      const entry = entries.get(key);
+      if (
+        entry === undefined ||
+        entry.generation !== input.generation ||
+        entry.viewerId !== identity.viewerId ||
+        entry.versionId !== input.versionId
+      )
+        return yield* new StreamReplaced();
+      // Share the call budget across documents and generations for this viewer and patch.
+      const attempt = yield* limits.consume({
+        key: `runtime:${identity.viewerId}:${input.patchId}`,
+        limit: callsPerMinute,
+        window: "1 minute"
+      });
+      if (!attempt.allowed)
+        return yield* new Runtime.RateLimited({
+          retryAfterSeconds: attempt.retryAfterSeconds,
+          limitId: attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
+          value: attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : callsPerMinute
+        });
+      yield* entry.subscriptions.update(input);
+    });
     return RuntimeStream.of({
       open,
+      update,
       notify: (patchId) =>
         withPatch(
           patchId,

@@ -127,6 +127,30 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       assert.deepStrictEqual(yield* sql.unsafe(`SELECT "body" FROM ${qualified}`), [
         { body: "kept" }
       ]);
+      // Retained inventory predating resource counters keeps its definitions and rows.
+      yield* sql.unsafe('ALTER TABLE "patchy"."tables" DROP COLUMN "resource_revision"');
+      yield* sql.unsafe('ALTER TABLE "patchy"."stores" DROP COLUMN "resource_revision"');
+      yield* Inventory.initialize;
+      yield* Inventory.initialize;
+      const upgraded = yield* inventory.read(patchId);
+      assert.deepStrictEqual(
+        upgraded,
+        new Inventory.Snapshot({
+          ...initial,
+          tables: initial.tables.map(
+            (row) => new Inventory.Table({ ...row, resourceRevision: "0" })
+          ),
+          stores: initial.stores.map(
+            (row) => new Inventory.Store({ ...row, resourceRevision: "0" })
+          )
+        })
+      );
+      yield* sql`UPDATE patchy.tables SET resource_revision = 9007199254740993
+        WHERE patch_id = ${patchId} AND name = ${table}`;
+      assert.strictEqual(
+        (yield* inventory.read(patchId))?.tables[0]?.resourceRevision,
+        "9007199254740993"
+      );
 
       // A later manifest can add rows and change sharing without erasing omissions.
       yield* databases.withPatchLock(patchId)(
@@ -177,6 +201,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       assert.deepStrictEqual(cumulative.indexes, initial.indexes);
       assert.deepStrictEqual(cumulative.createdAt, initial.createdAt);
       assert.deepStrictEqual(cumulative.tables[0]?.createdAt, initial.tables[0]?.createdAt);
+      assert.strictEqual(cumulative.tables[0]?.resourceRevision, "9007199254740995");
 
       const unlockedPatchId = "unlocked-new-patch";
       const writes: ReadonlyArray<Effect.Effect<unknown, SqlError, CompanyDatabases.PatchLock>> = [

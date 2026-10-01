@@ -20,10 +20,11 @@ import {
   Unauthorized
 } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { ResourceChanges } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
 import { SqlConnectionStore, CredentialKeys, PostgresSource } from "@patchy/integrations";
-import { RuntimeLog } from "@patchy/runtime";
+import { RuntimeLog, Wakes } from "@patchy/runtime";
 import * as Patches from "../Patches.js";
 
 export const manifest = {
@@ -119,9 +120,15 @@ export const integrations = SqlConnectionStore.layer.pipe(
   )
 );
 
+export const resourceChanges = Layer.effect(
+  ResourceChanges.ResourceChanges,
+  Effect.map(Wakes.Wakes, (wakes) => ResourceChanges.ResourceChanges.of({ publish: wakes.publish }))
+).pipe(Layer.provideMerge(Wakes.layer));
+
 /** The seeded template with the additional users and machines above. */
 export const database = Layer.mergeAll(Layer.effectDiscard(seed), Tables.layer, integrations).pipe(
-  Layer.provideMerge(CompanyTesting.layer())
+  Layer.provideMerge(CompanyTesting.layer()),
+  Layer.provideMerge(resourceChanges)
 );
 
 /** Revokes a fixture machine, as Auth's MachineTokens service would. */

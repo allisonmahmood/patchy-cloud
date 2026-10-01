@@ -12,6 +12,7 @@ import {
   WIRE_VERSION,
   runtimeOperations,
   type RuntimeCode,
+  type RuntimeFailure,
   type RuntimeBodyLimitId,
   type RuntimeEnvelope,
   type FileBody
@@ -230,6 +231,36 @@ export type RuntimeError =
   | SourceUnavailable
   | UnknownOutcome
   | OperationError;
+
+/** HTTP replies and stream errors use the same refusal projection. */
+export const toFailure = (error: RuntimeError): RuntimeFailure => {
+  const retryAfter =
+    (error.code === "rate_limited" ||
+      error.code === "limit_exceeded" ||
+      error.code === "too_many_requests" ||
+      error.code === "busy") &&
+    "retryAfterSeconds" in error
+      ? error.retryAfterSeconds
+      : undefined;
+  return {
+    ok: false,
+    source: "patchy",
+    code: error.code,
+    error: error.message,
+    ...("limitId" in error && error.limitId !== undefined
+      ? {
+          limitId: error.limitId,
+          ...(error.scope === undefined ? {} : { scope: error.scope }),
+          ...(error.value === undefined ? {} : { value: error.value })
+        }
+      : {}),
+    ...(retryAfter === undefined ? {} : { retryAfter }),
+    ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
+    ...("correlationId" in error && error.correlationId !== undefined
+      ? { correlationId: error.correlationId }
+      : {})
+  };
+};
 
 interface HandlerMetadata {
   readonly kind: "read" | "mutation" | "integration";
