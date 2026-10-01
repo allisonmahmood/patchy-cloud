@@ -9,7 +9,7 @@ import * as Runtime from "./Runtime.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
 
 class LifecycleChanged extends Schema.TaggedError<LifecycleChanged>()("QueryLifecycleChanged", {
-  patchId: Schema.String
+  resource: Schema.String
 }) {
   readonly code = "source_unavailable" as const;
   readonly status = 503;
@@ -80,7 +80,7 @@ export const make = Effect.gen(function* () {
       } else if (declaration.kind === "sharedStore") {
         allowed.add(`store:${declaration.patchId}:${declaration.store}`);
         allowed.add(`patch:${declaration.patchId}`);
-      }
+      } else if (declaration.kind === "members") allowed.add(`members:${binding.companyId}`);
     }
     // Resume keys are untrusted. Only fence declared resources; callbacks still
     // trace the actual dependencies, including accesses which fail.
@@ -97,6 +97,7 @@ export const make = Effect.gen(function* () {
     for (const declaration of Object.values(binding.manifest.uses))
       if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
         sources.add(`patch:${declaration.patchId}`);
+      else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
     const before = yield* reads.revisions(binding.companyId, [...sources]);
     const attempted = new Set<string>();
     let watermark: Readonly<Record<string, string>> = {};
@@ -115,14 +116,17 @@ export const make = Effect.gen(function* () {
       }
     );
     if (!reply.ok) return yield* new SubscriptionReads.HandlerRefusal({ failure: reply });
-    const sourceKeys = [...attempted].filter((key) => key.startsWith("patch:"));
+    const sourceKeys = [...attempted].filter(
+      (key) => key.startsWith("patch:") || key.startsWith("members:")
+    );
     const after = yield* reads.revisions(binding.companyId, sourceKeys);
     const changed = sourceKeys.find((key) => before[key] !== after[key]);
-    if (changed !== undefined)
-      return yield* new LifecycleChanged({ patchId: changed.slice("patch:".length) });
+    if (changed !== undefined) return yield* new LifecycleChanged({ resource: changed });
     const vector: Record<string, string> = {};
     for (const key of attempted)
-      vector[key] = (key.startsWith("patch:") ? before[key] : watermark[key]) ?? "-1";
+      vector[key] =
+        (key.startsWith("patch:") || key.startsWith("members:") ? before[key] : watermark[key]) ??
+        "-1";
     return { result: reply.value, vector };
   });
   return { admit, read, revisions: reads.revisions };

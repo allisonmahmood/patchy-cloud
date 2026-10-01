@@ -13,7 +13,7 @@ The internal, non-redirecting location of one version's bytes, protected by the 
 _Avoid_: address (the reader-facing location), download link, public URL
 
 **Serving guarantee**:
-The promise made about a patch at each tier: **the patch cannot watch you** at tier 0; at tier 1, **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** Pages are kept out of search results. A public shell runs only Patchy's own shell script, never analytics; a company shell also maintains the session.
+The promise made about a patch at each tier: **the patch cannot watch you** at tier 0; at tier 1, **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** Pages are kept out of search results. Public shells load no analytics. The shell maintains a session for company documents and for authenticated directory access on public tier 1 documents.
 _Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing controls access), anonymous as a promise about company pages (the host admits the viewer)
 
 **Page**:
@@ -21,7 +21,7 @@ A patch as a reader receives it: its document in a sandboxed frame and the surro
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
 
 **Shell**:
-The trusted page surrounding one loaded patch version. It owns the reader's address and, at tier 1, the broker; a company shell also keeps the session fresh. A historical page uses the selected version's tier.
+The trusted page surrounding one loaded patch version. It owns the reader's address and, at tier 1, the broker. It keeps the session fresh for company documents and authenticated public member-directory access. A historical page uses the selected version's tier.
 _Avoid_: patch (the untrusted content it contains), viewer (the person opening it)
 
 **Broker**:
@@ -29,7 +29,7 @@ The shell's gate between one patch document and Patchy. It binds requests to the
 _Avoid_: proxy URL (patches request operations, not arbitrary destinations), SDK (the client speaks to the broker)
 
 **Stream**:
-The company document's connection to Patchy, owned by the shell and relayed through its document-bound port.
+An authenticated document's connection to Patchy, owned by the shell and relayed through its document-bound port. Public tier 1 documents use it only for declared member-directory subscriptions.
 _Avoid_: session, subscription
 
 **Document**:

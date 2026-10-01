@@ -29,7 +29,16 @@ export class Column extends Schema.Class<Column>("Inventory.Column")({
   patchId: Schema.String,
   table: Schema.String,
   name: Schema.String,
-  kind: Schema.Literals(["text", "integer", "number", "boolean", "timestamp", "json", "ref"]),
+  kind: Schema.Literals([
+    "text",
+    "integer",
+    "number",
+    "boolean",
+    "timestamp",
+    "json",
+    "ref",
+    "member"
+  ]),
   refTable: Schema.NullOr(Schema.String),
   optional: Schema.Boolean,
   defaultKind: Schema.NullOr(Schema.Literals(["constant", "now"])),
@@ -288,6 +297,15 @@ export const layer = Layer.effect(Inventory, make);
  */
 export const upgrade = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const legacyColumnKinds = yield* sql`SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'patchy.columns'::regclass
+      AND conname = 'columns_kind_check'
+      AND pg_get_constraintdef(oid) NOT LIKE '%member%'`;
+  if (legacyColumnKinds.length !== 0)
+    yield* sql.unsafe(`ALTER TABLE patchy.columns
+      DROP CONSTRAINT columns_kind_check,
+      ADD CONSTRAINT columns_kind_check
+        CHECK (kind IN ('text', 'integer', 'number', 'boolean', 'timestamp', 'json', 'ref', 'member'))`);
   const uploads = yield* sql`SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'patchy' AND table_name = 'file_uploads'`;
   if (uploads.length === 0) {
@@ -407,7 +425,7 @@ export const initialize = Effect.gen(function* () {
     "patch_id" text NOT NULL,
     "table" text NOT NULL,
     "name" text NOT NULL,
-    "kind" text NOT NULL CHECK ("kind" IN ('text', 'integer', 'number', 'boolean', 'timestamp', 'json', 'ref')),
+    "kind" text NOT NULL CHECK ("kind" IN ('text', 'integer', 'number', 'boolean', 'timestamp', 'json', 'ref', 'member')),
     "ref_table" text,
     "optional" boolean NOT NULL,
     "default_kind" text CHECK ("default_kind" IN ('constant', 'now')),

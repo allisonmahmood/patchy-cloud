@@ -2506,7 +2506,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         assert.strictEqual(fileMode.status, 422);
         assert.include(yield* fileMode.json, { code: "has_primitives" });
         const loaded = Option.getOrThrow(yield* patches.find(created.patchId));
-        assert.strictEqual(loaded.version.manifest.uses.contacts?.id, declaration.id);
+        assert.deepInclude(loaded.version.manifest.uses.contacts, { id: declaration.id });
         yield* consumer.publish({
           payload: publishRequest({
             patchId: created.patchId,

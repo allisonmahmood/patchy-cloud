@@ -23,6 +23,7 @@ import { Binding, LoadedVersions, Wakes } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
 import * as SubscriptionReads from "../SubscriptionReads.js";
+import * as MemberDirectory from "../MemberDirectory.js";
 
 const decodeRow = Schema.decodeUnknownEffect(TableRow);
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(TableRow));
@@ -81,6 +82,160 @@ export const setup = Effect.fn("test.tableOperations.setup")(function* (
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
   return { databases, tables, handlers, binding, call };
+});
+
+export const memberAssignmentsContract = Effect.fn("test.memberAssignmentsContract")(function* (
+  companyId: string
+) {
+  const active = new Set(["owner", "colleague"]);
+  const checks: string[][] = [];
+  const directory = MemberDirectory.MemberDirectory.of({
+    candidates: (company, ids) =>
+      Effect.sync(() => {
+        checks.push([...ids]);
+        return company === companyId ? ids.filter((id) => active.has(id)) : [];
+      }),
+    list: () => Effect.die("Assignment checks must not list the directory"),
+    search: () => Effect.die("Assignment checks must not search the directory"),
+    get: () => Effect.die("Assignment checks must not resolve members"),
+    getMany: () => Effect.die("Assignment checks must not resolve members"),
+    revision: () => Effect.die("Assignments must not acquire directory dependencies")
+  });
+  for (const tier of [1, 2]) {
+    active.add("owner");
+    const definition: typeof Manifest.Type = {
+      ...manifest,
+      tier,
+      uses: { members: { kind: "members" } },
+      tables: {
+        assignments: {
+          description: "Member assignments",
+          columns: {
+            label: { kind: "text" },
+            owner: { kind: "member" },
+            reviewer: { kind: "member", optional: true }
+          },
+          indexes: {}
+        }
+      }
+    };
+    const fixture = yield* setup(companyId, `members${tier}`, definition).pipe(
+      Effect.provideService(MemberDirectory.MemberDirectory, directory)
+    );
+    const first = yield* fixture
+      .call("tables.insert", {
+        table: "assignments",
+        row: { label: "original", owner: "owner" }
+      })
+      .pipe(Effect.flatMap(decodeRow));
+    assert.strictEqual(first.owner, "owner");
+    assert.isNull(first.reviewer);
+    active.delete("owner");
+    checks.length = 0;
+    const unchanged = yield* fixture
+      .call("tables.update", {
+        table: "assignments",
+        id: first.id,
+        patch: { owner: "owner", reviewer: null, label: "kept" }
+      })
+      .pipe(Effect.flatMap(decodeRow));
+    assert.strictEqual(unchanged.owner, "owner");
+    assert.strictEqual(unchanged.label, "kept");
+    assert.isNull(unchanged.reviewer);
+    assert.deepStrictEqual(
+      yield* fixture.call("tables.insertMany", { table: "assignments", rows: [] }),
+      []
+    );
+    assert.deepStrictEqual(checks, []);
+    for (const row of [
+      { label: "missing-owner" },
+      { label: "copied", owner: "owner" },
+      { label: "unknown", owner: "unknown" },
+      { label: "other-company", owner: "outsider" }
+    ]) {
+      assert.strictEqual(
+        (yield* fixture.call("tables.insert", { table: "assignments", row }).pipe(Effect.flip))
+          .code,
+        "invalid_row"
+      );
+    }
+    checks.length = 0;
+    const invalidBatch = yield* fixture
+      .call("tables.insertMany", {
+        table: "assignments",
+        rows: [
+          { label: "valid", owner: "colleague" },
+          { label: "invalid-reviewer", owner: "colleague", reviewer: "outsider" },
+          { label: "invalid-owner", owner: "missing", reviewer: "outsider" }
+        ]
+      })
+      .pipe(Effect.flip);
+    assert.strictEqual(invalidBatch.code, "invalid_row");
+    assert.strictEqual(
+      invalidBatch.message,
+      "Invalid row for assignments.reviewer: invalid value."
+    );
+    assert.deepStrictEqual(checks, [["colleague", "outsider", "missing"]]);
+    const page = yield* fixture
+      .call("tables.list", { table: "assignments" })
+      .pipe(Effect.flatMap(decodePage));
+    assert.deepStrictEqual(page.rows, [unchanged]);
+    checks.length = 0;
+    const reassigned = yield* fixture
+      .call("tables.update", {
+        table: "assignments",
+        id: first.id,
+        patch: { owner: "colleague", reviewer: "colleague" }
+      })
+      .pipe(Effect.flatMap(decodeRow));
+    assert.strictEqual(reassigned.owner, "colleague");
+    assert.strictEqual(reassigned.reviewer, "colleague");
+    assert.deepStrictEqual(checks, [["colleague"]]);
+    for (const owner of ["owner", "outsider", "missing"]) {
+      assert.strictEqual(
+        (yield* fixture
+          .call("tables.update", {
+            table: "assignments",
+            id: first.id,
+            patch: { owner }
+          })
+          .pipe(Effect.flip)).code,
+        "invalid_row"
+      );
+    }
+    assert.deepStrictEqual(
+      yield* fixture.call("tables.get", { table: "assignments", id: first.id }),
+      reassigned
+    );
+    checks.length = 0;
+    const cleared = yield* fixture
+      .call("tables.update", {
+        table: "assignments",
+        id: first.id,
+        patch: { reviewer: null }
+      })
+      .pipe(Effect.flatMap(decodeRow));
+    assert.isNull(cleared.reviewer);
+    assert.deepStrictEqual(checks, []);
+    active.add("owner");
+    const rows = Array.from({ length: 1000 }, (_, index) => ({
+      label: `batch-${index}`,
+      owner: index % 2 === 0 ? "owner" : "colleague",
+      reviewer: "colleague"
+    }));
+    const inserted = yield* fixture
+      .call("tables.insertMany", { table: "assignments", rows })
+      .pipe(Effect.flatMap(decodeRows));
+    assert.deepStrictEqual(
+      inserted.map(({ label, owner, reviewer }) => ({ label, owner, reviewer })),
+      rows
+    );
+    assert.deepStrictEqual(checks, [["owner", "colleague"]]);
+    const stored = yield* fixture
+      .call("tables.getMany", { table: "assignments", ids: inserted.map((row) => row.id) })
+      .pipe(Effect.flatMap(decodeRows));
+    assert.deepStrictEqual(stored, inserted);
+  }
 });
 
 export const operationsContract = Effect.fn("test.operationsContract")(function* (

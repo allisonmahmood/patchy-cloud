@@ -116,6 +116,16 @@ release its re-run slot before cleanup settles or destroys the retained resource
 keys never reach revision reads, while declared keys still support equal-vector
 resume and failed-first-access recovery.
 
+`packages/companies/src/Directory.test.ts` checks candidate paging, resolution and
+directory revisions over Postgres, including notification delivery only after
+the outer transaction commits. `apps/server/src/Members.test.ts` publishes a
+directory-only patch, subscribes through its HTTP stream, then joins and
+deactivates a user through Companies and observes both candidate changes.
+The shared table-operation contracts check member assignments on PostgreSQL and
+PGlite. Both `patchy dev` mounts list only the machine's user and the fixture
+colleague; local development does not copy the company directory or simulate
+membership changes.
+
 `pnpm test:packed-preact-e2e` checks a clean installed SDK with Vite dependency
 optimisation enabled and its single-file production artifact. Signals, hooks,
 compat components and `useQuery` must update together, retain data through a
@@ -1279,6 +1289,8 @@ three `shared.*` reads, `files.list`/`files.delete`, and `postgres.list`/`postgr
 `postgres.getMany`/`postgres.query`; file bytes use separate routes.
 A company version needs a browser session, never the dev machine token; a current
 public version returns null for `me` and refuses owned-table, shared-table, file and Postgres access.
+Its declared `members.*` reads and subscriptions admit signed-in company members
+and refuse anonymous viewers, other-company viewers and deactivated members.
 Required headers and request shapes are in [API.md](API.md#runtime).
 The runtime log baseline is applied by all three migration entrypoints above.
 Postgres connection reads use one statement runner over native `pg` or a killable

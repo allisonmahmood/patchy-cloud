@@ -68,6 +68,8 @@ const invoke = async (
 it.each([
   { name: "a reference builder", column: t.ref("accounts") },
   { name: "a plain reference", column: { kind: "ref", table: "accounts" } },
+  { name: "a member builder", column: t.member() },
+  { name: "a plain member", column: { kind: "member" } },
   { name: "a defaulted builder", column: t.text().default("default") },
   { name: "a plain default", column: { kind: "text", default: "default" } },
   { name: "an extra plain field", column: { kind: "text", table: "accounts" } }

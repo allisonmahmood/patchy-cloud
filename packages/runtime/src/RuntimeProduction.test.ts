@@ -27,6 +27,7 @@ import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as RuntimeProduction from "./RuntimeProduction.js";
+import * as StreamAdmission from "./StreamAdmission.js";
 
 const NOW = 1_800_000_000_000;
 const liveSession = {
@@ -129,6 +130,7 @@ const admit = Effect.fn("RuntimeProductionTest.admit")(function* (token = signSe
     readonly reauthorize: Runtime.AdmittedIdentity["reauthorize"];
   }>();
   const runtime = yield* RuntimeProduction.make({}).pipe(
+    Effect.provide(StreamAdmission.layer),
     Effect.provideService(Invocation.Invocation, {
       call: (_args, binding, reauthorize) =>
         Deferred.succeed(captured, { binding, reauthorize }).pipe(

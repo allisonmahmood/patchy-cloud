@@ -25,6 +25,7 @@ import {
 } from "@patchy/runtime";
 import { SubscriptionReads } from "@patchy/primitives";
 import * as Fixtures from "../../../packages/patches/src/test/fixtures.js";
+import * as MemberDirectory from "./MemberDirectory.js";
 
 const identity = Fixtures.identities.uploader;
 const dependencies = Layer.mergeAll(
@@ -33,7 +34,8 @@ const dependencies = Layer.mergeAll(
   Limits.layer,
   Session.layer,
   Companies.layer,
-  Users.layer
+  Users.layer,
+  MemberDirectory.layer
 ).pipe(
   Layer.provideMerge(Fixtures.database),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))

@@ -14,7 +14,8 @@ import * as RuntimeLog from "./RuntimeLog.js";
 import { migrations } from "./migrations.js";
 
 const previous: Migrations = {
-  ...companiesMigrations,
+  "0001_companies_baseline": companiesMigrations["0001_companies_baseline"]!,
+  "0004_invites_expiry": companiesMigrations["0004_invites_expiry"]!,
   ...authMigrations,
   "0003_patches_baseline": patchesMigrations["0003_patches_baseline"]!,
   ...companyDatabaseMigrations

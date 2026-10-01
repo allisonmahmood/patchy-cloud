@@ -3,6 +3,7 @@ import {
   defineConfig,
   executeConfig,
   files,
+  members,
   postgres,
   sharedStore,
   sharedTable,
@@ -12,6 +13,8 @@ import {
 import type { Id, Insert, Row, Update } from "./config.js";
 import type { Manifest } from "@patchy/api";
 import type { ExecutedManifest } from "./executeConfig.js";
+import type { Client, Member } from "./client.js";
+import { useQuery } from "./preact.js";
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -42,6 +45,8 @@ const config = defineConfig({
         data: t.json(),
         dataOptional: t.json().optional(),
         dataDefault: t.json().default({ nested: [null, 1] }),
+        owner: t.member(),
+        ownerOptional: t.member().optional(),
         parent: t.ref("notes"),
         parentOptional: t.ref("notes").optional(),
         parentDefault: t.ref("notes").default("note-id" as Id<"notes">),
@@ -56,6 +61,7 @@ const config = defineConfig({
   },
   files: { attachments: files("Note attachments keyed by filename.", { shared: true }) },
   uses: {
+    members: members(),
     sales: postgres("warehouse"),
     customers: sharedTable("abcdefghijkl", "customers"),
     logos: sharedStore("abcdefghijkl", "logos")
@@ -81,6 +87,8 @@ export type ConfigAssertions = [
   Assert<Equal<Note["data"], unknown>>,
   Assert<Equal<Note["dataOptional"], unknown>>,
   Assert<Equal<Note["dataDefault"], unknown>>,
+  Assert<Equal<Note["owner"], string>>,
+  Assert<Equal<Note["ownerOptional"], string | null>>,
   Assert<Equal<Note["parent"], Id<"notes">>>,
   Assert<Equal<Note["parentOptional"], Id<"notes"> | null>>,
   Assert<Equal<Note["parentDefault"], Id<"notes">>>,
@@ -109,6 +117,7 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
     data: { nested: [null, 1] },
     dataOptional: null,
     dataDefault: { nested: null },
+    owner: "usr_owner",
     parent: noteId
   };
   const update: Update<typeof config, "notes"> = {
@@ -167,6 +176,10 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   t.boolean().default(1);
   // @ts-expect-error reference defaults must name the right target
   t.ref("notes").default(userId);
+  // @ts-expect-error member columns cannot have defaults
+  t.member().default("usr_owner");
+  // @ts-expect-error optional member columns cannot have defaults
+  t.member().optional().default("usr_owner");
   // @ts-expect-error system columns are reserved
   table("Notes identified by id.", { id: t.text() });
   // @ts-expect-error indexes can only name known or system columns
@@ -185,8 +198,6 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   table("Notes identified by id.", { file: t.fileHandle() });
   // @ts-expect-error composite schemas have no table default modifier
   t.object({ title: t.text() }).default({});
-  // @ts-expect-error the member directory builder belongs to its own ticket
-  t.member();
   return {
     insert,
     update,
@@ -212,3 +223,29 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
 };
 void boundaries;
 void config;
+
+const membersConsumer = async (client: Client<typeof config>) => {
+  const candidate = (await client.members.list()).rows[0];
+  const resolved: Member | null = await client.members.get("usr_owner");
+  await client.members.search("ann", { cursor: "next-page" });
+  await client.members.search({ text: "ann" });
+  const page = useQuery(client.members.search, { text: "ann" });
+  const name: string | undefined = page.data?.rows[0]?.name;
+  client.members.list.subscribe(undefined, () => {});
+  client.members.search.subscribe({ text: "ann" }, () => {});
+  client.members.get.subscribe("usr_owner", () => {});
+  client.members.getMany.subscribe(["usr_owner"], () => {});
+  // @ts-expect-error member directory results are readonly
+  if (candidate) candidate.name = "Changed";
+  // @ts-expect-error member resolution needs string user ids
+  await client.members.getMany([1]);
+  // @ts-expect-error directory page sizes are fixed
+  await client.members.list({ limit: 100 });
+  void [resolved, name];
+};
+const noMembers = defineConfig({ name: "without-members", tier: 1 });
+const absentMembers = (client: Client<typeof noMembers>) => {
+  // @ts-expect-error an undeclared directory has no typed client
+  void client.members;
+};
+void [membersConsumer, absentMembers, noMembers];

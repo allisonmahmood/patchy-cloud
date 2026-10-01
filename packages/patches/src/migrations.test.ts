@@ -11,7 +11,8 @@ import { migrations as integrations } from "../../integrations/src/migrations.js
 import { migrations } from "./migrations.js";
 
 const previous: Migrations = {
-  ...companies,
+  "0001_companies_baseline": companies["0001_companies_baseline"]!,
+  "0004_invites_expiry": companies["0004_invites_expiry"]!,
   ...auth,
   "0003_patches_baseline": migrations["0003_patches_baseline"]!,
   ...companyDatabase,

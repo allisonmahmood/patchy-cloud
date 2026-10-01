@@ -253,12 +253,13 @@ name their resource in `table` or `store`, never label a store as a table.
 
 ### Patch-repo commands and managed files
 
-| command                                                                                                                                                                 | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                            |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                                                                                 | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; tier 2 adds handlers and its managed engine pin. Target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
-| `patchy refresh`                                                                                                                                                        | Fetch one release, reconcile managed pins with the release and tier, install/re-exec as needed, generate and activate the managed set transactionally. Failure leaves the previous set intact.                                                                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
-| `patchy add postgres/<handle> [--as <alias>]`, `patchy add shared-table <patchId>/<table> [--as <alias>]` or `patchy add shared-store <patchId>/<store> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                                                                              | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
-| `patchy remove <alias>`                                                                                                                                                 | Remove the declaration and its generated output; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                                                                                 | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
+| command                                                                                                                                                                 | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                                                                                 | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; tier 2 adds handlers and its managed engine pin. Target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                                                   |
+| `patchy refresh`                                                                                                                                                        | Fetch one release, reconcile managed pins with the release and tier, install/re-exec as needed, generate and activate the managed set transactionally. Failure leaves the previous set intact.                                                                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }`  |
+| `patchy add postgres/<handle> [--as <alias>]`, `patchy add shared-table <patchId>/<table> [--as <alias>]` or `patchy add shared-store <patchId>/<store> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                                                                              | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                 |
+| `patchy add members`                                                                                                                                                    | Add `{ kind: "members" }` under the fixed `uses.members` alias, the typed client and `patchy-members` skill. No source id, revision stamp or fixture is generated.                                                                                                        | `{ ok, alias: "members", declaration: { kind: "members" }, generated, skills, addedCapabilities, warnings }` |
+| `patchy remove <alias>`                                                                                                                                                 | Remove the declaration and generated output; remove its skill when unused. Keep any fixture. Refuse `remove members` while any configured member column exists.                                                                                                           | `{ ok, alias, removed, addedCapabilities, warnings }`                                                        |
 
 `refresh` reports `changed.pin: true` when either managed pin changes, including
 adding or removing `workerd` on a tier change. Its transaction restores both
@@ -343,6 +344,16 @@ removes `patchy-shared-stores`, independently of the shared-table skill.
 Connection setup, reconnection and credential forms are browser-only for admins;
 no CLI command accepts connection secrets. A shared-source refusal names the
 source-access repair path.
+
+`patchy add members` accepts no target and its alias must remain `members`.
+Config validation rejects a `t.member()` column without that declaration.
+`remove members` checks the evaluated config before changing files and refuses
+with local exit 1, `code: "invalid_manifest"`, while a member column exists.
+A failed removal preserves the config, generated client and skills.
+The declaration adds `patchy.members` on tier 1 and `ctx.members` in every
+tier 2 handler kind. Refresh removes `patchy-members` when the declaration is
+absent; it is not sticky. The directory declaration has no generated
+stamp or metadata snapshot, and it does not provision a company database.
 
 Managed package pins are `devDependencies.patchy`, the release's content-digest
 tarball URL, and `devDependencies.workerd`, an exact version only on tier 2.
@@ -567,8 +578,9 @@ New patches default to `company`; updates preserve scope unless `--share` sets
 it. Only a public patch's current version is public, cached for at most 60 seconds
 at both addresses. Older versions stay behind the company door; company origin
 responses are `private, no-store`. Still-fresh public caches and downloaded copies
-cannot be recalled. Tier 1 public patches have no company capabilities, even for
-signed-in members; sharing publicly does not anonymously expose their resources.
+cannot be recalled. Tier 1 public patches expose the declared member directory
+only to signed-in company members. Other company capabilities remain unavailable;
+sharing publicly does not anonymously expose company data.
 
 Tier 2 is company-only. `share --share public`, positional public sharing and the
 portal scope form read the served version's tier, never local config, and answer

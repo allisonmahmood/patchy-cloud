@@ -59,6 +59,7 @@ const changeSchema = Schema.Union([
     kind: Schema.Literal("add"),
     alias: Schema.String,
     declaration: Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("members") }),
       Schema.Struct({ kind: Schema.Literal("postgres"), handle: Schema.String }),
       Schema.Struct({
         kind: Schema.Literal("sharedTable"),
@@ -444,6 +445,17 @@ export const generate = Effect.fn("Project.generate")(function* (
       const declaration = before.uses[change.alias];
       if (!declaration)
         return yield* new LocalError({ message: `No declaration named ${change.alias}.` });
+      if (
+        declaration.kind === "members" &&
+        Object.values(before.tables).some((table) =>
+          Object.values(table.columns).some((column) => column.kind === "member")
+        )
+      )
+        return yield* new LocalError({
+          code: "invalid_manifest",
+          message:
+            "Cannot remove members while a t.member() column exists. Remove those columns first."
+        });
       removedKind = declaration.kind;
     }
     // Static loading makes every lightweight command initialize TypeScript, including delete.
@@ -481,15 +493,21 @@ export const generate = Effect.fn("Project.generate")(function* (
     const skill =
       removedKind === "postgres"
         ? "patchy-postgres"
-        : removedKind === "sharedStore"
-          ? "patchy-shared-stores"
-          : "patchy-shared-tables";
+        : removedKind === "members"
+          ? "patchy-members"
+          : removedKind === "sharedStore"
+            ? "patchy-shared-stores"
+            : "patchy-shared-tables";
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
   if (manifest.tier !== 2 && skills.includes("patchy-server")) {
     removedSkills.push("patchy-server");
     skills = skills.filter((name) => name !== "patchy-server");
+  }
+  if (manifest.uses.members?.kind !== "members" && skills.includes("patchy-members")) {
+    removedSkills.push("patchy-members");
+    skills = skills.filter((name) => name !== "patchy-members");
   }
   const serverModules = manifest.tier === 2 ? yield* discoverServerModules(cwd) : [];
   const client = yield* Api.client(token);
@@ -506,11 +524,18 @@ export const generate = Effect.fn("Project.generate")(function* (
     .pipe(Effect.catch((error) => refusal(error, "Generation failed.")));
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
   const stamps = new Map(generated.uses.map((stamp) => [stamp.alias, stamp]));
-  if (stamps.size !== generated.uses.length || stamps.size !== Object.keys(manifest.uses).length)
+  const stampedDeclarations = Object.entries(manifest.uses).filter(
+    ([, declaration]) => declaration.kind !== "members"
+  );
+  if (stamps.size !== generated.uses.length || stamps.size !== stampedDeclarations.length)
     return yield* new LocalError({
       message: "Generation returned an inconsistent declaration set."
     });
   for (const [alias, declaration] of Object.entries(manifest.uses)) {
+    if (declaration.kind === "members") {
+      uses[alias] = declaration;
+      continue;
+    }
     const stamp = stamps.get(alias);
     if (!stamp)
       return yield* new LocalError({ message: `Generation returned no stamp for ${alias}.` });
@@ -680,7 +705,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
       { ok: true, alias: change.alias, removed: [change.alias], addedCapabilities, warnings },
       [
         ...warnings,
-        `Removed ${change.alias} and its generated declaration files. The fixture was left in fixtures/.`,
+        `Removed ${change.alias} and its generated declaration files.${change.alias === "members" ? "" : " The fixture was left in fixtures/."}`,
         ...capabilityNotices
       ]
     );
@@ -721,7 +746,14 @@ export const add = Effect.fn("Project.add")(function* (
   const instance = yield* Instance.Instance;
   let declaration: Declaration;
   let defaultAlias: string;
-  if (integration === "postgres" || integration.startsWith("postgres/")) {
+  if (integration === "members") {
+    if (Option.isSome(target) || (Option.isSome(as) && as.value !== "members"))
+      return yield* new LocalError({
+        message: "Use patchy add members. Its alias is always members."
+      });
+    declaration = { kind: "members" };
+    defaultAlias = "members";
+  } else if (integration === "postgres" || integration.startsWith("postgres/")) {
     if (Option.isSome(target))
       return yield* new LocalError({ message: "Use patchy add postgres/<handle> [--as <alias>]." });
     const handle = integration === "postgres" ? undefined : integration.slice("postgres/".length);
@@ -801,7 +833,7 @@ export const add = Effect.fn("Project.add")(function* (
   } else
     return yield* new LocalError({
       message:
-        "Use patchy add postgres/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
+        "Use patchy add members, patchy add postgres/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
     });
   const alias = Option.getOrElse(as, () => defaultAlias);
   yield* refresh(cwd, token, { kind: "add", alias, declaration });

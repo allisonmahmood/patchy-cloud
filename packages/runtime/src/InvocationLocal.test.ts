@@ -21,6 +21,7 @@ import * as TableOperations from "../../primitives/src/TableOperations.js";
 import * as QuerySnapshot from "../../primitives/src/QuerySnapshot.js";
 import * as MutationTransaction from "../../primitives/src/MutationTransaction.js";
 import * as TestWakes from "../../primitives/src/test/wakes.js";
+import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import * as Local from "../../execution/src/local.js";
 import * as Binding from "./Binding.js";
 import * as CallbackGateway from "./CallbackGateway.js";
@@ -79,6 +80,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(InvocationCapabilities.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(TestWakes.layer),
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(FetchHttpClient.layer),
   Layer.provideMerge(Layer.succeed(ContractLimits.overrides, { "tier2.action.deadline": 2_000 })),
   Layer.provideMerge(
@@ -174,6 +176,7 @@ it.live(
       );
       const runtime = yield* Runtime.make(handlers, {
         origin: "http://localhost",
+        bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
         identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }).pipe(Effect.provideService(Invocation.Invocation, invocations));
       const request = HttpServerRequest.fromWeb(

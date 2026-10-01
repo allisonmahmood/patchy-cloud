@@ -367,6 +367,10 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
   const skills = new Set(coreProjectSkills);
   if (manifest.tier === 2) skills.add("patchy-server");
   for (const [alias, declaration] of Object.entries(manifest.uses)) {
+    if (declaration.kind === "members") {
+      skills.add("patchy-members");
+      continue;
+    }
     if (declaration.kind === "sharedStore") {
       const stamp = {
         ...declaration,
@@ -4256,6 +4260,51 @@ document.body.textContent = JSON.stringify({
       }
     });
     expect(readFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), "utf8")).toBe(fixture);
+  });
+
+  it("adds the unstamped member directory and refuses removal until member columns are gone", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const added = await runCli(["add", "members", "--json"], { cwd: dir, env });
+    expect(added).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(added.stdout)).toMatchObject({
+      alias: "members",
+      declaration: { kind: "members" },
+      skills: expect.arrayContaining(["patchy-members"])
+    });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json")).uses).toEqual({
+      members: { kind: "members" }
+    });
+    expect(readJson(path.join(dir, "patchy/_generated/index.json")).uses).toEqual([]);
+    const configPath = path.join(dir, "patchy.config.ts");
+    const memberColumns = `import { defineConfig, members, table, t } from "patchy/config";
+export default defineConfig({ name: "member-assignments", tier: 1, uses: { members: members() },
+tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } });`;
+    writeFileSync(configPath, memberColumns);
+    const refused = await runCli(["remove", "members", "--json"], { cwd: dir, env });
+    expect(refused).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(refused.stderr)).toMatchObject({ kind: "local", code: "invalid_manifest" });
+    expect(readFileSync(configPath, "utf8")).toBe(memberColumns);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-members/SKILL.md"))).toBe(true);
+    writeFileSync(
+      configPath,
+      memberColumns.replace("t.member().optional()", "t.text().optional()")
+    );
+    const removed = await runCli(["remove", "members", "--json"], { cwd: dir, env });
+    expect(removed).toMatchObject({ status: 0, stderr: "" });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json")).uses).toEqual({});
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-members"))).toBe(false);
+    expect(instance.requests.some((request) => request.url.startsWith("/api/connections"))).toBe(
+      false
+    );
+  });
+
+  it("refuses a renamed member directory before generation", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const result = await runCli(["add", "members", "--as", "people", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
   });
 
   it("adds and stamps a shared store by canonical id, then removes it without touching fixtures", async () => {

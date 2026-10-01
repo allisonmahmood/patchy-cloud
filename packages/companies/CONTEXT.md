@@ -24,6 +24,10 @@ _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, whatever the user's ro
 A user with the role that manages the company's invitations, roles, deactivation, reactivation and [connections](../integrations/CONTEXT.md), and every [patch](../patches/CONTEXT.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
+**Directory revision**:
+The company's durable record that its directory has changed, advanced with each join, departure, reactivation or change to a user's name, email or role. It lets readers detect changes to [candidates and resolved users](../primitives/CONTEXT.md#language), including changes whose notification they missed.
+_Avoid_: roster version, membership timestamp
+
 **Group**:
 A named set of users used to grant access, never a container that owns patches or connections. Its future access model is recorded in [the product](../../docs/product.md#users-admins-groups).
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space

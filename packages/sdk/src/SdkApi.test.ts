@@ -715,6 +715,35 @@ it.layer(layer)("SDK company generation", (it) => {
       })
   );
 
+  it.effect("generates a member-only patch without external resource stamps or fixtures", () =>
+    Effect.gen(function* () {
+      const api = yield* sdkOver(Layer.empty);
+      const output = yield* api.generate({
+        payload: generateRequest({
+          ...Fixtures.manifest,
+          tier: 1,
+          uses: { members: { kind: "members" } }
+        })
+      });
+      assert.deepStrictEqual(output.uses, []);
+      assert.deepStrictEqual(output.metadata, { postgres: {}, shared: {} });
+      assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
+      assert.isTrue(
+        output.files.some(({ path }) => path === ".agents/skills/patchy-members/SKILL.md")
+      );
+      const index = JSON.parse(
+        output.files.find(({ path }) => path === "patchy/_generated/index.json")!.contents
+      );
+      assert.deepStrictEqual(index.uses, []);
+      const removed = yield* api.generate({
+        payload: generateRequest(Fixtures.manifest, ["patchy-members"])
+      });
+      assert.isFalse(
+        removed.files.some(({ path }) => path === ".agents/skills/patchy-members/SKILL.md")
+      );
+    })
+  );
+
   it.effect("renders capability runtime limits consistently with the generated catalogue", () =>
     Effect.gen(function* () {
       const api = yield* sdkOver(Layer.empty);
@@ -1039,7 +1068,9 @@ it.layer(layer)("SDK company generation", (it) => {
         assert.deepStrictEqual(shared.tables.members, members);
         assert.deepStrictEqual(shared.tables.teams, teams);
         assert.deepStrictEqual(
-          Object.values(shared.uses).map(({ id }) => id),
+          Object.values(shared.uses).flatMap((declaration) =>
+            declaration.kind === "members" ? [] : [declaration.id]
+          ),
           ["sdktarget001/people"]
         );
         // The generated fixture schema must provision without the source's omitted use.

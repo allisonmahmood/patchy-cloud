@@ -1,8 +1,9 @@
 // Compile-only checks; the generated fixture imports this module as types, just like a patch.
-import { t } from "./config.js";
+import { defineConfig, t } from "./config.js";
 import type { FileHandle, Id, Row, Upload } from "./config.js";
 import {
   HandlerError,
+  bindServer,
   isHandlerError,
   type HandlerArgs,
   type HandlerErrors,
@@ -40,6 +41,13 @@ export const list = query({
     const stage: "open" | "closed" | null = args.stage;
     const search: string | undefined = args.search;
     await ctx.shared.directory.list({ limit: 20 });
+    const members = await ctx.members.list();
+    await ctx.members.search("ann");
+    await ctx.members.getMany(["usr_owner"]);
+    // @ts-expect-error member results are readonly in handlers
+    if (members.rows[0]) members.rows[0].active = false;
+    // @ts-expect-error handler member reads do not expose browser subscriptions
+    ctx.members.list.subscribe(undefined, () => {});
     const ownFile = await ctx.files.documents.stat("invoice.pdf");
     const ownHandle: FileHandle | undefined = ownFile?.handle;
     const ownPage = await ctx.files.documents.list();
@@ -77,6 +85,7 @@ export const save = mutation({
   result: t.row("leads"),
   errors: ["duplicate"],
   handler: async (ctx, args) => {
+    await ctx.members.get("usr_owner");
     // @ts-expect-error mutations cannot reach connections
     void ctx.connections;
     // @ts-expect-error mutations cannot reach shared data
@@ -93,6 +102,7 @@ export const sync = action({
   args: { upload: t.upload(), name: t.text() },
   result: t.nullable(t.fileHandle()),
   handler: async (ctx, args) => {
+    await ctx.members.search({ text: "ann" });
     const records = await ctx.run.leads.list({ stage: null });
     const saved = await ctx.run.leads.save({ name: args.name });
     // @ts-expect-error nested queries retain argument validation
@@ -136,6 +146,7 @@ export type ServerAssertions = [
   Assert<Equal<HandlerArgs<typeof save>["note"], string | null | undefined>>,
   Assert<Equal<HandlerResult<typeof list>[number]["note"], string | null>>,
   Assert<Equal<HandlerResult<typeof list>[number]["id"], Id<"leads">>>,
+  Assert<Equal<HandlerResult<typeof list>[number]["owner"], string | null>>,
   Assert<Equal<HandlerResult<typeof sync>, FileHandle | null>>,
   Assert<Equal<HandlerArgs<typeof sync>["upload"], Upload>>
 ];
@@ -214,6 +225,8 @@ const fileConsumer = async (client: ServerOnlyClient<ServerModules>, handle: Fil
   });
   await client.server.leads.sync({ name: "invoice.pdf", upload });
   await client.files.discard(upload);
+  // @ts-expect-error tier 2 pages never expose the direct directory
+  void client.members;
   // @ts-expect-error an object id is not upload authority
   await client.files.discard("object-id");
   // @ts-expect-error upload metadata is host-measured and readonly
@@ -307,3 +320,29 @@ const schemas = () => {
   });
 };
 void schemas;
+
+const withoutMembers = defineConfig({ name: "no-members", tier: 2 });
+bindServer<typeof withoutMembers>().query({
+  args: {},
+  result: t.boolean(),
+  handler: (ctx) => {
+    // @ts-expect-error no members declaration means no typed handler directory
+    void ctx.members;
+    return true;
+  }
+});
+void withoutMembers;
+query({
+  // @ts-expect-error member schemas are table-only, including nested fields
+  args: { owner: t.object({ id: t.member() }) },
+  result: t.boolean(),
+  handler: () => true
+});
+query({
+  args: {},
+  // @ts-expect-error member schemas are not standalone handler results
+  result: t.member(),
+  handler: () => {
+    throw new Error("compile-only");
+  }
+});

@@ -157,12 +157,14 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       return remember(refused("invalid_request", "Malformed callback."), 400);
     const request = decoded.success;
     // Record the canonical owner before kind, live-viewer or resource access checks.
-    if (capability.onDependency !== undefined) {
+    if (capability.kind === "query" && capability.onDependency !== undefined) {
       const { binding } = capability;
       if (request.op.startsWith("tables.") && typeof request.args.table === "string")
         capability.onDependency(`table:${binding.patchId}:${request.args.table}`);
       else if (request.op.startsWith("files.") && typeof request.args.store === "string")
         capability.onDependency(`store:${binding.patchId}:${request.args.store}`);
+      else if (Object.hasOwn(members, request.op))
+        capability.onDependency(`members:${binding.companyId}`);
       else if (request.op.startsWith("shared.") && typeof request.args.alias === "string") {
         const declaration = Object.hasOwn(binding.manifest.uses, request.args.alias)
           ? binding.manifest.uses[request.args.alias]

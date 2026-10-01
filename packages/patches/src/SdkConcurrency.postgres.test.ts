@@ -18,6 +18,7 @@ import { Analytics } from "@patchy/analytics";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { Files, TableOperations, Tables } from "@patchy/primitives";
+import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import { Binding, LoadedVersions } from "@patchy/runtime";
 import * as Content from "./Content.js";
 import * as DeletionSweep from "./DeletionSweep.js";
@@ -88,6 +89,7 @@ const realPostgres = Layer.unwrap(
 
 const services = Layer.mergeAll(Content.layer, PatchLoadedVersions.layer, DeletionSweep.layer).pipe(
   Layer.provideMerge(Patches.layer),
+  Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(Layer.mergeAll(realPostgres, filesystem, Analytics.layerNoop))
 );
 

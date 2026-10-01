@@ -76,9 +76,8 @@ Results are readonly.
 
 An argument field's `.optional()` permits an omitted key. It does not permit
 null; use `t.nullable(...)` for null. A table column's `.optional()` instead means
-nullable. `.default()` and `t.ref()` remain table-only. `t.fileHandle()` is
-results-only. `t.upload()` is allowed only in action arguments. `t.member()`
-belongs to the member-directory release, not this contract.
+nullable. `.default()`, `t.ref()` and `t.member()` remain table-only.
+`t.fileHandle()` is results-only. `t.upload()` is allowed only in action arguments.
 
 ## Choose a kind
 
@@ -96,6 +95,11 @@ options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `put(name, upload)`
 - A mutation reads and writes owned tables in one atomic transaction. It cannot
   read file metadata. Use queries for file lists and metadata, and actions for
   file bytes, integrations and `ctx.run`.
+
+All three kinds expose `ctx.members` when `uses.members` is declared. Read
+`../patchy-members/SKILL.md` for candidates, resolution, member columns and
+the assignment check. Only queries track directory dependencies. Directory
+reads use the platform database, outside the query's company-database snapshot.
 
 `ctx.viewer` is never null. Owned resources act as the patch, company data as
 the viewer. Handler memory is not durable state, and handlers cannot schedule

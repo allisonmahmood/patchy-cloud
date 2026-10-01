@@ -1457,7 +1457,11 @@ export const make = Effect.gen(function* () {
         if (Object.hasOwn(definitions, column.table)) pending.push(column.table);
       }
     }
-    const uses = Tables.inventoryReferences(tables);
+    const uses = Object.fromEntries(
+      Object.entries(Tables.inventoryReferences(tables)).flatMap(([alias, declaration]) =>
+        declaration.kind === "sharedTable" ? [[alias, declaration] as const] : []
+      )
+    );
     return {
       id: sharedTableId(patchId, table),
       patchId,
@@ -1496,7 +1500,9 @@ export const make = Effect.gen(function* () {
   ) {
     const warnings: string[] = [];
     // Lock connections in stable order when called inside the publish transaction.
-    const declarations = Object.values(manifest.uses).sort((a, b) => a.id.localeCompare(b.id));
+    const declarations = Object.values(manifest.uses)
+      .filter((declaration) => declaration.kind !== "members")
+      .sort((a, b) => a.id.localeCompare(b.id));
     for (const declaration of declarations) {
       if (declaration.kind === "postgres") {
         yield* connections.resolve(companyId, declaration);

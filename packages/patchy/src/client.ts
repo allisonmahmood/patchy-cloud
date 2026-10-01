@@ -36,6 +36,32 @@ export interface Page<R> {
   readonly rows: readonly R[];
   readonly cursor: string | null;
 }
+export interface Member {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+  readonly admin: boolean;
+  readonly active: boolean;
+}
+export interface MemberListOptions {
+  readonly cursor?: string;
+}
+export interface MemberSearchOptions extends MemberListOptions {
+  readonly text: string;
+}
+export interface Members {
+  readonly list: QueryCallable<MemberListOptions | undefined, Page<Member>> &
+    (() => Promise<Page<Member>>);
+  readonly search: QueryCallable<MemberSearchOptions, Page<Member>> &
+    ((text: string, options?: MemberListOptions) => Promise<Page<Member>>);
+  readonly get: QueryCallable<string, Member | null>;
+  readonly getMany: QueryCallable<readonly string[], readonly (Member | null)[]>;
+}
+export type DeclaredMembers<C extends Config, Directory> = C["uses"] extends {
+  readonly members: { readonly kind: "members" };
+}
+  ? { readonly members: Directory }
+  : Record<never, never>;
 export type Range<R, K extends keyof R> = {
   [P in K]: {
     readonly column: P;
@@ -126,11 +152,11 @@ type FactoryResults<F extends Factories> = {
 type Aliases<C extends Config, Kind extends "postgres" | "sharedTable" | "sharedStore"> = {
   [N in keyof C["uses"]]: C["uses"][N]["kind"] extends Kind ? N : never;
 }[keyof C["uses"]];
-export interface Client<
+export type Client<
   C extends Config,
   S extends Factories = Record<never, never>,
   P extends Factories = Record<never, never>
-> {
+> = DeclaredMembers<C, Members> & {
   readonly tables: { readonly [N in keyof C["tables"] & string]: OwnedTable<C, N> };
   readonly files: { readonly [N in keyof C["files"]]: FileStore };
   readonly shared: FactoryResults<S>;
@@ -138,7 +164,7 @@ export interface Client<
   readonly route: Transport["route"];
   me(): Promise<Me | null>;
   close(): void;
-}
+};
 export interface ClientManifest {
   readonly tables: Readonly<Record<string, unknown>>;
   readonly files: Readonly<Record<string, unknown>>;
@@ -160,6 +186,30 @@ function tableQuery<Args, Result>(
         queries.getQuery<Result>(op, canonicalArgs(argumentsFor(JSON.parse(canonical))))
     }
   );
+}
+
+function createMembers(call: Call, queries: QueryRegistry): Members {
+  const search = tableQuery<MemberSearchOptions, Page<Member>>(
+    "members.search",
+    (options) => ({ ...options }),
+    call,
+    queries
+  );
+  return {
+    list: tableQuery(
+      "members.list",
+      (options?: MemberListOptions) => ({ ...options }),
+      call,
+      queries
+    ),
+    search: Object.assign(
+      (text: string | MemberSearchOptions, options?: MemberListOptions) =>
+        search(typeof text === "string" ? { ...options, text } : text),
+      { subscribe: search.subscribe, __patchyQueryStore: search.__patchyQueryStore }
+    ),
+    get: tableQuery("members.get", (id: string) => ({ id }), call, queries),
+    getMany: tableQuery("members.getMany", (ids: readonly string[]) => ({ ids }), call, queries)
+  };
 }
 
 export function createSharedTable<
@@ -343,6 +393,7 @@ export function createClient<
     files,
     shared: instantiate(options.shared, ["sharedTable", "sharedStore"]),
     connections: instantiate(options.connections, ["postgres"]),
+    ...(manifest.uses.members?.kind === "members" ? { members: createMembers(call, queries) } : {}),
     route: transport.route,
     me: () => (identity ??= call("me", {}) as Promise<Me | null>),
     close: () => {

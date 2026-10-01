@@ -159,6 +159,10 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
           .read(served.value.version)
           .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }))
       : "";
+  const publicDirectory =
+    isPublic &&
+    served.value.version.tier === 1 &&
+    served.value.version.manifest.uses.members?.kind === "members";
 
   // Count only successful requests that reach the origin. Cached reads may
   // undercount visits. A failed counter write must not deny the fetched page.
@@ -183,7 +187,11 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
             !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
               ? admission.user.id
               : undefined,
-          head: isPublic ? undefined : sessionScripts(session),
+          head: isPublic
+            ? publicDirectory
+              ? `<template id="patchy-session">${sessionScripts(session)}</template>`
+              : undefined
+            : sessionScripts(session),
           ...(selection !== undefined && served.value.version.tier >= 1
             ? {
                 nonce: newInternalId("boot"),
@@ -201,7 +209,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
           ? contentSecurityPolicy(served.value.version.tier)
           : shellContentSecurityPolicy(
               served.value.version.tier,
-              isPublic ? undefined : session.frontendApiHost
+              !isPublic || publicDirectory ? session.frontendApiHost : undefined
             ),
       ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
       "cache-control":

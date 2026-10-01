@@ -117,6 +117,12 @@ Its `addedCapabilities` JSON list names new SDK capabilities, where they run and
 their limits. Read the generated loop skill's catalogue before choosing imports.
 Never manually edit `patchy/_generated/` or managed project skills.
 
+For people assignments or directory display, run `pnpm patchy add members`.
+It adds `patchy-members` and the typed directory client without importing the
+company's users into the repo. Read that project skill before adding `t.member()`
+columns or directory queries. `pnpm patchy remove members` refuses while a
+configured member column remains.
+
 Publish from the repo root with `pnpm patchy publish [--share company|public]`.
 Tier 2 is company-only; a public patch needs `--share company` when publishing
 tier 2. Serving a tier 1 version makes public sharing possible again.
@@ -483,9 +489,10 @@ writes must be user-triggered and show a visible failure when unavailable.
 Async clipboard permission can still be denied for an opaque frame. A user-triggered
 `copy` event via `document.execCommand("copy")` is a compatibility fallback; if both
 paths fail, show selectable text and a visible error rather than claiming success.
-A public tier 1 patch renders signed out: `me` is null, and company-data operations
-reject with `not_available_on_public`, even for a signed-in reader. Patch code handles
-that error; it does not replace the page or disable local routing.
+A public tier 1 patch returns null from `me`. Signed-in company members can read
+its declared member directory; anonymous viewers and outsiders cannot. Tables,
+files and integrations reject with `not_available_on_public` even for members.
+Patch code handles that error; it does not replace the page or disable local routing.
 
 Runtime notices belong to Patchy, not the uploaded document. `session_expired`
 and `principal_changed` require the notice's Sign in link and a whole-page reload;

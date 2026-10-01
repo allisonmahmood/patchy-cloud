@@ -30,7 +30,7 @@ S3-compatible API; development and offline tests use the filesystem. A bucket
 belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. The current ledger has fourteen
+   baselines were rewritten before deployment. The current ledger has fifteen
    records across eight owners:
 
    | id   | owner            | record                          |
@@ -49,6 +49,7 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    | 0012 | Runtime          | `runtime_mutation_commit_proof` |
    | 0013 | Patches          | `patches_server_artifact`       |
    | 0014 | Execution        | `execution_fleet`               |
+   | 0015 | Companies        | `companies_directory`           |
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.
@@ -73,6 +74,17 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    settlement. A replay can establish success before the original finalizer
    writes its timing and metering, without fabricating those measurements or
    allowing a late unknown outcome to overwrite committed success.
+   Companies' directory revision lives in a separate row per company. A user
+   trigger advances it for joins, deletions, company moves and changes to the
+   directory's profile, role or active state, but not for unchanged values.
+   The separate row avoids reversing the company-before-user lock order used
+   by admin actions when sign-in refreshes a user's profile.
+   The trigger also sends the resource key on the shared platform NOTIFY
+   transport. PostgreSQL delivers the change fact only after the outermost
+   transaction commits, so a portal transaction can wrap a Companies service's
+   savepoint without waking readers early. Rollback discards both the revision
+   and notification. The existing host listener dispatches these keys locally
+   and across replicas; Companies imports neither Runtime nor Primitives.
 
 2. **Embedded Postgres is the cloud worktree and test store.** `pnpm dev`
    migrates and seeds one per worktree. `@patchy/sql/testing` gives each

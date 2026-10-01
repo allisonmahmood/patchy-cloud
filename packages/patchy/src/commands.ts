@@ -1064,7 +1064,7 @@ const add = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Add a Postgres connection, shared-table or shared-store declaration and generate its files."
+    "Add members, a Postgres connection, shared-table or shared-store declaration and generate its files."
   )
 );
 
@@ -1077,7 +1077,7 @@ const remove = Command.make("remove", { alias: Argument.String("alias") }, (opti
   )
 ).pipe(
   Command.withDescription(
-    "Remove a declaration and its unused integration skill, preserving its fixture."
+    "Remove a declaration and its unused skill, preserving fixtures. Members requires no member columns."
   )
 );
 

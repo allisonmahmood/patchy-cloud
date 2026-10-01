@@ -10,7 +10,17 @@ import type {
   Upload,
   ValueDescriptor
 } from "./config.js";
-import type { FileListOptions, FileMetadata, OwnedTable, ReadFileStore } from "./client.js";
+import type {
+  DeclaredMembers,
+  FileListOptions,
+  FileMetadata,
+  Member,
+  MemberListOptions,
+  MemberSearchOptions,
+  OwnedTable,
+  Page,
+  ReadFileStore
+} from "./client.js";
 import type { Me } from "./clientTransport.js";
 import type { QueryCallable } from "./queryRegistry.js";
 import type { HandlerError } from "./handlerError.js";
@@ -181,35 +191,43 @@ type ActionShared<Shared> = {
     ? ActionSharedFileStore
     : ReadonlyOperations<Shared[K]>;
 };
+export interface Members {
+  list(options?: MemberListOptions): Promise<Page<Member>>;
+  search(text: string | MemberSearchOptions, options?: MemberListOptions): Promise<Page<Member>>;
+  get(id: string): Promise<Member | null>;
+  getMany(ids: readonly string[]): Promise<readonly (Member | null)[]>;
+}
 export interface ContextBase {
   readonly viewer: Me;
   log(message: string, details?: Json): void;
 }
-export interface QueryContext<C extends Config, Shared = Empty> extends ContextBase {
-  readonly tables: {
-    readonly [N in keyof C["tables"] & string]: ReadonlyOperations<
-      Pick<OwnedTable<C, N>, "get" | "getMany" | "list">
-    >;
+export type QueryContext<C extends Config, Shared = Empty> = ContextBase &
+  DeclaredMembers<C, Members> & {
+    readonly tables: {
+      readonly [N in keyof C["tables"] & string]: ReadonlyOperations<
+        Pick<OwnedTable<C, N>, "get" | "getMany" | "list">
+      >;
+    };
+    readonly shared: QueryShared<Shared>;
+    readonly files: { readonly [N in keyof C["files"]]: QueryFileStore };
   };
-  readonly shared: QueryShared<Shared>;
-  readonly files: { readonly [N in keyof C["files"]]: QueryFileStore };
-}
-export interface MutationContext<C extends Config> extends ContextBase {
-  readonly tables: {
-    readonly [N in keyof C["tables"] & string]: ReadonlyOperations<OwnedTable<C, N>>;
+export type MutationContext<C extends Config> = ContextBase &
+  DeclaredMembers<C, Members> & {
+    readonly tables: {
+      readonly [N in keyof C["tables"] & string]: ReadonlyOperations<OwnedTable<C, N>>;
+    };
   };
-}
-export interface ActionContext<
+export type ActionContext<
   C extends Config,
   Modules = Empty,
   Shared = Empty,
   Connections = Empty
-> extends MutationContext<C> {
+> = MutationContext<C> & {
   readonly shared: ActionShared<Shared>;
   readonly files: { readonly [N in keyof C["files"]]: ActionFileStore };
   readonly connections: Connections;
   readonly run: RunClient<Modules>;
-}
+};
 
 type Position = "args" | "result";
 type SchemaProblem<
@@ -222,8 +240,8 @@ type SchemaProblem<
   ? never
   : "default" extends keyof D
     ? "Defaults are table-only"
-    : D extends { readonly kind: "ref" }
-      ? "References are table-only"
+    : D extends { readonly kind: "ref" | "member" }
+      ? "References and members are table-only"
       : D extends { readonly optional: true }
         ? Field extends false
           ? "Only fields may be optional"

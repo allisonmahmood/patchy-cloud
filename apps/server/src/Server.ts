@@ -61,7 +61,7 @@ import {
   PatchesApi
 } from "@patchy/patches";
 import { PortalPages } from "@patchy/portal";
-import { Tables, TableOperations, Files, SubscriptionReads } from "@patchy/primitives";
+import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
   Runtime,
@@ -83,6 +83,7 @@ import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 import * as FleetInvocation from "./FleetInvocation.js";
+import * as MemberDirectory from "./MemberDirectory.js";
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -128,15 +129,16 @@ const services = Layer.mergeAll(
     Effect.gen(function* () {
       const tables = yield* TableOperations.make;
       const files = yield* Files.make;
+      const members = yield* Members.make;
       const postgres = yield* PostgresOperations.makeHandlers;
-      const handlers = { me, ...tables, ...files, ...postgres };
+      const handlers = { me, ...tables, ...files, ...members, ...postgres };
       const runtime = Layer.merge(
         RuntimeProduction.layer(handlers),
         RuntimeStream.layer.pipe(
           Layer.provide(Subscriptions.layer),
-          Layer.provide([SubscriptionReads.layer, StreamAdmission.layer, StreamLimits.layer])
+          Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
         )
-      );
+      ).pipe(Layer.provide(StreamAdmission.layer));
       if (yield* FleetInvocation.enabled)
         return runtime.pipe(
           Layer.provide(
@@ -176,6 +178,7 @@ const services = Layer.mergeAll(
     )
   ),
   Layer.provideMerge(RuntimeLog.layer),
+  Layer.provideMerge(MemberDirectory.layer),
   Layer.provideMerge(resourceChanges),
   Layer.provideMerge(WakesPostgres.layer),
   Layer.provide(migrated)

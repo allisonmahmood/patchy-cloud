@@ -8,13 +8,15 @@ import {
   FileName,
   RuntimeSubscription,
   runtimeOperations,
+  isMemberOperation,
   runtimeBodyLimit,
   runtimeBodyLimitId,
   runtimeByteLimits,
   limitRefusal,
   WIRE_VERSION
 } from "@patchy/api";
-import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
+import { RuntimePrincipal } from "@patchy/api";
+import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe } from "@patchy/api";
 import { serverReplyTimeoutMs } from "@patchy/api/query-config";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
@@ -28,6 +30,7 @@ const MAX_PENDING = registry["frame.outstanding"].default;
 const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest, { onExcessProperty: "error" });
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 const decodeHandlerFailure = Schema.decodeUnknownSync(HandlerFailure);
+const decodePrincipal = Schema.decodeUnknownSync(RuntimePrincipal);
 const isMe = Schema.is(runtimeOperations.me.response);
 const routeArguments = Schema.Struct({ path: Schema.String });
 const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty: "error" });
@@ -190,6 +193,7 @@ function mount(frame: HTMLIFrameElement): void {
   const seen = new Set<string>();
   const downloads = new Map<string, { size: number; timer: number }>();
   let identity: Promise<RuntimeMe> | undefined;
+  let directoryPrincipal: Promise<void> | undefined;
   let principal: RuntimePrincipal = null;
   let stream: DocumentStream | undefined;
   let execution: "starting" | "ready" | "failed" =
@@ -295,7 +299,16 @@ function mount(frame: HTMLIFrameElement): void {
       }
     });
     if (error.code === "shell_outdated") stale();
-    else if (error.code === "session_expired" || error.code === "principal_changed")
+    else if (
+      (error.code === "session_expired" || error.code === "principal_changed") &&
+      (frame.dataset.scope !== "public" || principal !== null)
+    )
+      notice(error.code);
+    else if (
+      error.code === "access_denied" &&
+      frame.dataset.scope === "public" &&
+      principal !== null
+    )
       notice(error.code);
     else if (error.code === "access_denied") {
       // A source refusal is recoverable. Only lost access to this document stops its frame.
@@ -367,7 +380,11 @@ function mount(frame: HTMLIFrameElement): void {
       reader.releaseLock();
     }
   };
-  const runtime = async (op: Operation, args: unknown, bytes?: ArrayBuffer): Promise<Reply> => {
+  const runtime = async (
+    op: Operation | "principal",
+    args: unknown,
+    bytes?: ArrayBuffer
+  ): Promise<Reply> => {
     if (closed) throw lost();
     const readsBytes = op === "files.get" || op === "shared.files.get" || op === "files.redeem";
     const controller = new AbortController();
@@ -513,11 +530,61 @@ function mount(frame: HTMLIFrameElement): void {
         release(heldBytes);
         throw lost();
       }
-      principal = value === null ? null : { userId: value.user.id };
+      if (frame.dataset.scope !== "public")
+        principal = value === null ? null : { userId: value.user.id };
       // The cached identity remains accounted for until this document closes.
       return value;
     });
     return identity;
+  };
+  const maintainSession = async () => {
+    const template = document.getElementById("patchy-session");
+    if (!(template instanceof HTMLTemplateElement)) return;
+    for (const source of template.content.querySelectorAll("script")) {
+      if (source.hasAttribute("data-clerk-publishable-key") && "Clerk" in window) continue;
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement("script");
+        for (const attribute of source.attributes)
+          script.setAttribute(attribute.name, attribute.value);
+        script.async = false;
+        script.onload = () => resolve();
+        script.onerror = () => reject(lost());
+        document.head.append(script);
+      });
+    }
+    template.remove();
+  };
+  const bindDirectory = () => {
+    directoryPrincipal ??= (async () => {
+      let reply: Reply;
+      for (let attempts = 0; ; attempts++) {
+        try {
+          reply = await runtime("principal", {});
+          break;
+        } catch (error) {
+          if (
+            !(error instanceof Refusal) ||
+            error.code !== "session_refresh_required" ||
+            attempts >= 3
+          )
+            throw error;
+          await maintainSession();
+          if ((await window.patchySession?.refresh()) !== "refreshed") throw error;
+        }
+      }
+      try {
+        const admitted = decodePrincipal(reply.value);
+        if (admitted === null) throw lost();
+        principal = admitted;
+      } finally {
+        release(reply.heldBytes);
+      }
+      await maintainSession();
+    })().catch((error: unknown) => {
+      directoryPrincipal = undefined;
+      throw error;
+    });
+    return directoryPrincipal;
   };
   const identifyFailure = (error: unknown) => {
     if (
@@ -656,6 +723,14 @@ function mount(frame: HTMLIFrameElement): void {
         // deadline start only after ready; neither a lost stream nor a failed bind replays work.
         await awaitExecution();
       }
+      if (
+        frame.dataset.scope === "public" &&
+        (isMemberOperation(request?.op ?? "") || isMemberOperation(subscription?.op ?? ""))
+      ) {
+        await bindDirectory();
+        if (closed) return;
+        if (subscription) startStream();
+      }
       const me = await identify();
       if (closed) return;
       if (request?.op === "server.call" && execution !== "ready") await awaitExecution();
@@ -663,7 +738,10 @@ function mount(frame: HTMLIFrameElement): void {
       let reply: Reply;
       if (subscriptionOperation) {
         if (!stream)
-          throw new Refusal("not_available_on_public", "Subscriptions require a company document.");
+          throw new Refusal(
+            "not_available_on_public",
+            "Public documents support only authenticated member-directory subscriptions."
+          );
         if (subscription) stream.subscribe(subscription, size * 2);
         else stream.unsubscribe(unsubscribeId!);
         reply = { value: null, heldBytes: 0 };
@@ -765,10 +843,8 @@ function mount(frame: HTMLIFrameElement): void {
   });
   window.addEventListener("popstate", announceRoute);
   window.addEventListener("pagehide", stop, { once: true });
-  if (frame.dataset.scope === "company" || frame.dataset.scope === "local") {
-    const viewerId = frame.dataset.viewerId;
-    if (!viewerId) return notice("bootstrap_failed");
-    principal = { userId: viewerId };
+  const startStream = () => {
+    if (stream || closed) return;
     stream = openDocumentStream({
       frame,
       patchId,
@@ -787,6 +863,12 @@ function mount(frame: HTMLIFrameElement): void {
       reserve,
       release
     });
+  };
+  if (frame.dataset.scope === "company" || frame.dataset.scope === "local") {
+    const viewerId = frame.dataset.viewerId;
+    if (!viewerId) return notice("bootstrap_failed");
+    principal = { userId: viewerId };
+    startStream();
   }
   // Install the one-shot load handoff before permitting the initial document to load.
   frame.src = contentSrc;

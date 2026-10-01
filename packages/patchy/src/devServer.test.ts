@@ -66,7 +66,7 @@ it.live(
             }
           },
           files: {},
-          uses: {}
+          uses: { members: { kind: "members" } }
         },
         identity,
         metadata: { postgres: {}, shared: {} }
@@ -142,6 +142,51 @@ it.live(
       const colleagueClaims = yield* colleague.json;
       assert.nestedPropertyVal(colleagueClaims, "value.user.id", "usr_dev_colleague");
       assert.nestedPropertyVal(colleagueClaims, "value.admin", false);
+      const candidates = [
+        {
+          id: "usr_dev_colleague",
+          name: "Dev Colleague",
+          email: "colleague@patchy.local",
+          admin: false,
+          active: true
+        },
+        { ...identity.user, admin: true, active: true }
+      ];
+      for (const [target, viewerId] of [
+        [origin, identity.user.id],
+        [colleagueOrigin, "usr_dev_colleague"]
+      ]) {
+        const listed = yield* call("members.list", {}, target, viewerId, target);
+        assert.strictEqual(listed.status, 200);
+        assert.deepInclude(yield* listed.json, {
+          ok: true,
+          value: { rows: candidates, cursor: null }
+        });
+        const search = yield* call(
+          "members.search",
+          { text: "COLLEAGUE@" },
+          target,
+          viewerId,
+          target
+        );
+        assert.deepInclude(yield* search.json, {
+          ok: true,
+          value: { rows: [candidates[0]], cursor: null }
+        });
+        const suffix = yield* call("members.search", { text: "league" }, target, viewerId, target);
+        assert.deepInclude(yield* suffix.json, { ok: true, value: { rows: [], cursor: null } });
+        const resolved = yield* call(
+          "members.getMany",
+          { ids: [identity.user.id, "missing", "usr_dev_colleague", identity.user.id] },
+          target,
+          viewerId,
+          target
+        );
+        assert.deepInclude(yield* resolved.json, {
+          ok: true,
+          value: [candidates[1], null, candidates[0], candidates[1]]
+        });
+      }
       const impersonation = yield* call(
         "tables.insert",
         { table: "notes", row: { title: "Wrong viewer" } },
