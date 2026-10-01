@@ -52,6 +52,34 @@ _Avoid_: background job, transaction
 The credential-free side of the deployment that runs handler code and reaches Patchy only through callbacks.
 _Avoid_: sandbox (the browser's), worker (an engine term), lambda
 
+**Company task**:
+A company-exclusive execution task that hosts its loaded patch versions. Release stops it; another company never inherits it.
+_Avoid_: patch instance, reusable worker
+
+**Spare**:
+An execution task that has never been bound to a company and is available for a first bind.
+_Avoid_: idle company task, recycled task
+
+**Bind / release**:
+Assigning a spare to one company, and ending that assignment after fencing admissions and draining admitted work.
+_Avoid_: publish, process load, connection checkout
+
+**Housekeeping lease**:
+The temporary exclusive authority for one host replica to maintain the execution fleet.
+_Avoid_: document presence, binding epoch, process generation
+
+**Fleet promotion**:
+Selecting a prepared deployment revision for new company bindings and gradual replacement of existing tasks. An earlier revision can be promoted again for rollback.
+_Avoid_: host startup, patch publish
+
+**Stopping**:
+A binding whose admissions are fenced while admitted work drains and its task is stopped. It cannot be adopted or return to serving.
+_Avoid_: idle, spare, stopped
+
+**Paused**:
+A temporary patch-wide admission refusal after repeated process kills, across all its versions. Expiry or a new publish clears it.
+_Avoid_: retired, revoked, disabled
+
 **Supervisor**:
 The execution service's process owner. It loads patch versions, watches their processes and terminates or reaps them without deciding invocation commit outcomes.
 _Avoid_: fleet controller, handler, security boundary

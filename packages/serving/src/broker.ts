@@ -183,6 +183,40 @@ function mount(frame: HTMLIFrameElement): void {
   let identity: Promise<RuntimeMe> | undefined;
   let principal: RuntimePrincipal = null;
   let stream: DocumentStream | undefined;
+  let execution: "starting" | "ready" | "failed" =
+    Number(frame.dataset.tier) === 2 ? "starting" : "ready";
+  let startFailure: Refusal | undefined;
+  const heldCalls = new Set<{ resolve(): void; reject(error: Refusal): void }>();
+  const executionState = (state: "starting" | "ready" | "failed", metadata?: LimitMetadata) => {
+    const { retryAfter, scope, limitId, value } = metadata ?? {};
+    execution = state;
+    startFailure =
+      state === "failed"
+        ? new Refusal(
+            "busy",
+            "Your tools could not start. This request was not run and will not be retried.",
+            undefined,
+            undefined,
+            {
+              ...(retryAfter === undefined ? {} : { retryAfter }),
+              ...(scope === undefined ? {} : { scope }),
+              ...(limitId === undefined ? {} : { limitId }),
+              ...(value === undefined ? {} : { value })
+            }
+          )
+        : undefined;
+    if (state === "starting") return;
+    for (const call of heldCalls) {
+      if (startFailure) call.reject(startFailure);
+      else call.resolve();
+    }
+    heldCalls.clear();
+  };
+  const awaitExecution = () => {
+    if (execution === "ready") return;
+    if (startFailure) throw startFailure;
+    return new Promise<void>((resolve, reject) => heldCalls.add({ resolve, reject }));
+  };
   const reserve = (size: number) => {
     if (size > MAX_HELD - held) throw tooLarge(MAX_HELD, limitRefusal("frame.heldBytes"));
     held += size;
@@ -197,6 +231,8 @@ function mount(frame: HTMLIFrameElement): void {
     stream?.close();
     port?.close();
     port = undefined;
+    for (const call of heldCalls) call.reject(lost());
+    heldCalls.clear();
     // Work already admitted by Runtime keeps its original principal and is not replayed.
     // Only the reply channel closes; cancelling the HTTP request could interrupt a mutation.
     for (const [url, download] of downloads) {
@@ -554,9 +590,15 @@ function mount(frame: HTMLIFrameElement): void {
       } catch (error) {
         throw error instanceof Refusal ? error : invalid();
       }
-      if (request?.op === "server.call")
+      if (request?.op === "server.call") {
         jsonBytes(request.args.args, runtimeByteLimits.serverArgsBytes, "tier2.args.bytes");
+        // Keep the existing pending/byte reservations while held. Runtime admission and its
+        // deadline start only after ready; neither a lost stream nor a failed bind replays work.
+        await awaitExecution();
+      }
       const me = await identify();
+      if (closed) return;
+      if (request?.op === "server.call" && execution !== "ready") await awaitExecution();
       if (closed) return;
       let reply: Reply;
       if (subscriptionOperation) {
@@ -672,6 +714,7 @@ function mount(frame: HTMLIFrameElement): void {
       },
       notice,
       stale,
+      executionState,
       reserve,
       release
     });

@@ -25,6 +25,7 @@ import { registry, type LimitScope } from "@patchy/limits/registry";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Invocation from "./Invocation.js";
+import type * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 
 const textEncoder = new TextEncoder();
 
@@ -251,6 +252,7 @@ export type RuntimeError =
   | SourceUnavailable
   | InvocationUnavailable
   | UnknownOutcome
+  | ExecutionLifecycle.LifecycleError
   | OperationError;
 
 /** HTTP replies and stream errors use the same refusal projection. */
@@ -259,7 +261,9 @@ export const toFailure = (error: RuntimeError): RuntimeFailure => {
     (error.code === "rate_limited" ||
       error.code === "limit_exceeded" ||
       error.code === "too_many_requests" ||
-      error.code === "busy") &&
+      error.code === "busy" ||
+      error.code === "patch_paused" ||
+      error.code === "source_unavailable") &&
     "retryAfterSeconds" in error
       ? error.retryAfterSeconds
       : undefined;

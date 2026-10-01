@@ -11,6 +11,10 @@ import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
 import { Client } from "pg";
 import type EmbeddedPostgres from "embedded-postgres";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as LocalTaskProvider from "../../packages/execution/src/localTaskProvider.js";
 import type { BrowserContext } from "@playwright/test";
 import type { Manifest } from "../../packages/api/src/index.js";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
@@ -67,10 +71,12 @@ export interface Instance {
     force?: boolean
   ): Promise<void>;
   share(patchId: string, scope: "company" | "public"): Promise<void>;
-  restart(): Promise<void>;
+  restart(environment?: Readonly<Record<string, string>>): Promise<void>;
   /** A second real host sharing this instance's databases, storage and session verifier. */
   startReplica(): Promise<{ origin: string; stop(signal?: "SIGTERM" | "SIGKILL"): Promise<void> }>;
   pauseStreams(paused: boolean): void;
+  /** Hold real SSE bytes at ingress, without fabricating lifecycle frames. */
+  holdStreamFrames(held: boolean): void;
   /** Drop the next stream's first bytes but retain its upstream socket until released. */
   loseNextStreamHello(): () => void;
   /** Drop one admitted frame without interrupting either side of the live stream. */
@@ -112,7 +118,13 @@ async function stopChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL" = "S
 
 /** Only the front proxy's hostile navigation endpoints are synthetic.
  * Every publish, session verification, runtime call, file and database mutation is production. */
-export async function startInstance(options: { tls?: boolean } = {}): Promise<Instance> {
+export async function startInstance(
+  options: {
+    tls?: boolean;
+    environment?: Readonly<Record<string, string>>;
+  } = {}
+): Promise<Instance> {
+  let environment = options.environment ?? {};
   const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-"));
   let postgres: EmbeddedPostgres | undefined;
   let child: ChildProcess | undefined;
@@ -123,6 +135,9 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
   let foreign: Server | undefined;
   const connections = new Set<Client>();
   let closed = false;
+  const fleetDirectory = path.join(directory, "execution-fleet");
+  let fleetStarted = false;
+  let callbackPorts: number[] | undefined;
   const close = async () => {
     if (closed) return;
     closed = true;
@@ -134,6 +149,13 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
     }
     if (foreign) await stopServer(foreign);
     for (const server of children) await stopChild(server);
+    if (fleetStarted)
+      await Effect.runPromise(
+        LocalTaskProvider.cleanup(fleetDirectory).pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
+        )
+      );
     if (platform) await platform.end();
     if (postgres) await postgres.stop();
     await rm(directory, { recursive: true, force: true });
@@ -171,6 +193,8 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
     const streamConnections = new Set<string>();
     const streamClosers = new Set<() => void>();
     let streamsPaused = false;
+    let streamFramesHeld = false;
+    const releaseStreamFrames = new Set<() => void>();
     let abandonNextStream: ((release: () => void) => void) | undefined;
     let dropAdmitted: { readonly sequence: number; readonly dropped: () => void } | undefined;
     const foreignRequests: string[] = [];
@@ -310,43 +334,51 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
               }
               const decoder = new StringDecoder("utf8");
               let buffered = "";
-              incoming
-                .pipe(
-                  new Transform({
-                    transform(chunk: Buffer, _encoding, callback) {
-                      buffered += decoder.write(chunk);
-                      let boundary: RegExpExecArray | null;
-                      while ((boundary = /\r?\n\r?\n/.exec(buffered)) !== null) {
-                        const event = buffered.slice(0, boundary.index + boundary[0].length);
-                        buffered = buffered.slice(event.length);
-                        const data = event.split(/\r?\n/).find((line) => line.startsWith("data:"));
-                        if (dropAdmitted && data) {
-                          const frame: unknown = JSON.parse(data.slice(5));
-                          if (
-                            frame !== null &&
-                            typeof frame === "object" &&
-                            "type" in frame &&
-                            frame.type === "admitted" &&
-                            "sequence" in frame &&
-                            frame.sequence === dropAdmitted.sequence
-                          ) {
-                            const dropped = dropAdmitted.dropped;
-                            dropAdmitted = undefined;
-                            dropped();
-                            continue;
-                          }
-                        }
-                        this.push(event);
+              const heldFrames: string[] = [];
+              const releaseFrames = () => {
+                for (const event of heldFrames) streamTransform.push(event);
+                heldFrames.length = 0;
+              };
+              releaseStreamFrames.add(releaseFrames);
+              response.on("close", () => {
+                releaseStreamFrames.delete(releaseFrames);
+                heldFrames.length = 0;
+              });
+              const streamTransform = new Transform({
+                transform(chunk: Buffer, _encoding, callback) {
+                  buffered += decoder.write(chunk);
+                  let boundary: RegExpExecArray | null;
+                  while ((boundary = /\r?\n\r?\n/.exec(buffered)) !== null) {
+                    const event = buffered.slice(0, boundary.index + boundary[0].length);
+                    buffered = buffered.slice(event.length);
+                    const data = event.split(/\r?\n/).find((line) => line.startsWith("data:"));
+                    if (dropAdmitted && data) {
+                      const frame: unknown = JSON.parse(data.slice(5));
+                      if (
+                        frame !== null &&
+                        typeof frame === "object" &&
+                        "type" in frame &&
+                        frame.type === "admitted" &&
+                        "sequence" in frame &&
+                        frame.sequence === dropAdmitted.sequence
+                      ) {
+                        const dropped = dropAdmitted.dropped;
+                        dropAdmitted = undefined;
+                        dropped();
+                        continue;
                       }
-                      callback();
-                    },
-                    flush(callback) {
-                      this.push(buffered + decoder.end());
-                      callback();
                     }
-                  })
-                )
-                .pipe(response);
+                    if (streamFramesHeld) heldFrames.push(event);
+                    else this.push(event);
+                  }
+                  callback();
+                },
+                flush(callback) {
+                  this.push(buffered + decoder.end());
+                  callback();
+                }
+              });
+              incoming.pipe(streamTransform).pipe(response);
               return;
             }
             incoming.pipe(response);
@@ -365,7 +397,17 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
     const origin = `${options.tls ? "https" : "http"}://127.0.0.1:${await listen(proxy)}`;
     const backendOrigin = `http://127.0.0.1:${port}`;
     await stopServer(serverReservation);
-    const launch = async (serverPort: number) => {
+    const launch = async (serverPort: number, replica = false) => {
+      const fleet = environment.EXECUTION_PROVIDER === "local-fleet";
+      if (fleet && callbackPorts === undefined) {
+        const reservations = [createServer(), createServer()];
+        try {
+          callbackPorts = await Promise.all(reservations.map(listen));
+        } finally {
+          await Promise.all(reservations.map(stopServer));
+        }
+      }
+      if (fleet) fleetStarted = true;
       let log = "";
       const server = spawn(process.execPath, [path.join(root, "apps/server/dist/start.js")], {
         cwd: root,
@@ -381,7 +423,17 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
           PATCHY_COMPANY_DB_URL: databaseUrl,
           PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
           PATCHY_STORAGE_DIR: path.join(directory, "storage"),
-          PATCHY_PUBLIC_BASE_URL: origin
+          PATCHY_PUBLIC_BASE_URL: origin,
+          ...environment,
+          ...(fleet
+            ? {
+                EXECUTION_LOCAL_DIRECTORY: fleetDirectory,
+                EXECUTION_CALLBACK_PORT: String(callbackPorts![replica ? 1 : 0]),
+                EXECUTION_CALLBACK_URLS: JSON.stringify(
+                  callbackPorts!.map((port) => `http://127.0.0.1:${port}/callback`)
+                )
+              }
+            : {})
         },
         stdio: ["ignore", "pipe", "pipe"]
       });
@@ -443,6 +495,10 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         streamsPaused = paused;
         if (paused) for (const disconnect of streamClosers) disconnect();
       },
+      holdStreamFrames(held) {
+        streamFramesHeld = held;
+        if (!held) for (const release of releaseStreamFrames) release();
+      },
       loseNextStreamHello() {
         let release: (() => void) | undefined;
         abandonNextStream = (close) => {
@@ -458,7 +514,8 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         dropAdmitted = { sequence, dropped: resolve };
         return promise;
       },
-      async restart() {
+      async restart(nextEnvironment) {
+        if (nextEnvironment) environment = { ...environment, ...nextEnvironment };
         await stopChild(child!);
         children.delete(child!);
         child = await launch(port);
@@ -467,7 +524,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         const reservation = createServer();
         const replicaPort = await listen(reservation);
         await stopServer(reservation);
-        const replica = await launch(replicaPort);
+        const replica = await launch(replicaPort, true);
         return {
           origin: `http://127.0.0.1:${replicaPort}`,
           async stop(signal) {

@@ -169,8 +169,8 @@ export const WideEvent = Schema.Union([
 export type WideEvent = typeof WideEvent.Type;
 
 type Seed<E extends WideEvent> = E extends WideEvent
-  ? { readonly type: E["type"] } & Partial<
-      Omit<E, "type" | "durationMs" | "startedAt" | "sampleProbability" | "operations">
+  ? { readonly type: E["type"]; readonly endedAt?: number } & Partial<
+      Omit<E, "type" | "durationMs" | "sampleProbability" | "operations">
     >
   : never;
 export type EventSeed = Seed<WideEvent>;
@@ -191,6 +191,8 @@ export class WideEvents extends Context.Service<
       seed: EventSeed,
       work: Effect.Effect<A, E, R>
     ) => Effect.Effect<A, E, R>;
+    /** Deliver an already-finalized remote hop without rewriting its identity or timing. */
+    readonly emit: (event: WideEvent) => Effect.Effect<void>;
   }
 >()("@patchy/analytics/WideEvents") {}
 
@@ -303,12 +305,16 @@ const bestEffort = (work: Effect.Effect<void>) =>
 export const make = Effect.gen(function* () {
   const sink = yield* Sink;
   const identity = yield* metadata;
+  const emit: WideEvents["Service"]["emit"] = (event) =>
+    Effect.forkDetach(bestEffort(Effect.suspend(() => sink.write(event))), {
+      startImmediately: false
+    }).pipe(Effect.asVoid);
   const withEvent: WideEvents["Service"]["withEvent"] = (seed, work) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const parent = yield* current;
         const id = seed.eventId ?? (yield* eventId);
-        const startedAt = yield* Clock.currentTimeMillis;
+        const startedAt = seed.startedAt ?? (yield* Clock.currentTimeMillis);
         const event: Accumulator = {
           eventId: id,
           traceId: seed.traceId ?? parent?.traceId ?? id,
@@ -323,7 +329,7 @@ export const make = Effect.gen(function* () {
           Effect.onExit((exit) =>
             Effect.gen(function* () {
               event.closed = true;
-              const finishedAt = yield* Clock.currentTimeMillis;
+              const finishedAt = seed.endedAt ?? (yield* Clock.currentTimeMillis);
               const draft: Record<string, unknown> = {
                 ...event.fields,
                 type: seed.type,
@@ -360,25 +366,20 @@ export const make = Effect.gen(function* () {
               }
               // Scheduling is the only sink work done in the caller's finalizer. A
               // detached, bounded delivery does not close or wait on the request Scope.
-              yield* Effect.forkDetach(
-                bestEffort(Effect.suspend(() => sink.write(record as WideEvent))),
-                {
-                  startImmediately: false
-                }
-              );
+              yield* emit(record as WideEvent);
             })
           )
         );
       })
     );
-  return WideEvents.of({ withEvent });
+  return WideEvents.of({ withEvent, emit });
 });
 
 /** Tests can record through Sink and await their own Queue or Deferred. */
 export const layerWithSink = Layer.effect(WideEvents, make);
 export const layerNoop = Layer.succeed(
   WideEvents,
-  WideEvents.of({ withEvent: (_seed, work) => work })
+  WideEvents.of({ withEvent: (_seed, work) => work, emit: () => Effect.void })
 );
 
 export const formatJson = Schema.encodeSync(Schema.fromJsonString(WideEvent));

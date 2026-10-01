@@ -166,9 +166,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     )
   );
   const limit = (id: SupervisorLimitId): number => operatingLimits[id] ?? registry[id].default;
-  const interval = limit("execution.probe.interval");
   const deploymentRevision = options.deploymentRevision ?? "local";
-  const configRevision = options.configRevision ?? {
+  let configRevision = options.configRevision ?? {
     deploymentRevision: createHash("sha256")
       .update(operatingLimitIds.map((id) => `${id}=${limit(id)}`).join("\n"))
       .digest("hex"),
@@ -465,7 +464,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           )
         )
       ),
-      Effect.timeout(interval),
+      Effect.timeout(limit("execution.probe.interval")),
       Effect.ignore,
       Effect.ensuring(
         Effect.sync(() => {
@@ -517,7 +516,11 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     stampPeaks();
     yield* admission.withPermit(evict(0));
   });
-  yield* tick.pipe(Effect.andThen(Effect.sleep(interval)), Effect.forever, Effect.forkIn(scope));
+  yield* tick.pipe(
+    Effect.andThen(Effect.suspend(() => Effect.sleep(limit("execution.probe.interval")))),
+    Effect.forever,
+    Effect.forkIn(scope)
+  );
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       stopped = true;
@@ -549,6 +552,24 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           return yield* new SupervisorError({ operation: "bind", reason: "stale_epoch" });
         if (request.bundle !== undefined && request.bundle.companyId !== request.companyId)
           return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
+        if ((request.operatingLimits === undefined) !== (request.configRevision === undefined))
+          return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
+        if (request.operatingLimits !== undefined && request.configRevision !== undefined) {
+          if (
+            (request.operatingLimits["execution.probe.interval"] ??
+              limit("execution.probe.interval")) >= registry["execution.stall"].default
+          )
+            return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
+          // Late acknowledgements cannot restore an older company override snapshot.
+          if (
+            request.bindingEpoch > bindingEpoch ||
+            BigInt(request.configRevision.overrideRevision) >=
+              BigInt(configRevision.overrideRevision)
+          ) {
+            Object.assign(operatingLimits, request.operatingLimits);
+            configRevision = request.configRevision;
+          }
+        }
         companyId = request.companyId;
         bindingEpoch = request.bindingEpoch;
         if (request.bundle === undefined) return undefined;

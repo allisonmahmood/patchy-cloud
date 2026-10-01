@@ -37,6 +37,32 @@ const recording = Effect.gen(function* () {
 });
 
 it.effect(
+  "reconciles a binding event using provider stop time rather than reconciliation time",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* recording;
+      yield* Effect.gen(function* () {
+        const events = yield* WideEvents.WideEvents;
+        yield* events.withEvent(
+          {
+            type: "binding",
+            companyId: "company",
+            taskId: "lost-task",
+            startedAt: 1_000,
+            endedAt: 46_000,
+            releaseCause: "task_lost"
+          },
+          Effect.void
+        );
+        const event = yield* sink.take;
+        assert.strictEqual(event.startedAt, 1_000);
+        assert.strictEqual(event.durationMs, 45_000);
+        assert.strictEqual(event.type, "binding");
+      }).pipe(Effect.provide(sink.layer));
+    })
+);
+
+it.effect(
   "finalizes failure, defect and interruption once without changing the caller's exit",
   () =>
     Effect.gen(function* () {

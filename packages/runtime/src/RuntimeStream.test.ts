@@ -21,6 +21,7 @@ import { PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
+import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as Fixtures from "./test/fixtures.js";
 import { HandlerFailed } from "./Invocation.js";
 import * as Runtime from "./Runtime.js";
@@ -175,6 +176,7 @@ it.layer(layer)("document streams", (it) => {
         type: "handlers",
         kinds: { "leads.save": "query" }
       });
+      assert.deepStrictEqual(frame(yield* first.pull), { type: "ready" });
       yield* Scope.close(first.scope, Exit.void);
       authority.state.retained.set(initial.versionId, {
         ...initial,
@@ -196,6 +198,226 @@ it.layer(layer)("document streams", (it) => {
         type: "handlers",
         kinds: { "leads.save": "mutation", "added.save": "mutation" }
       });
+      assert.deepStrictEqual(frame(yield* reconnected.pull), { type: "ready" });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("fails a timed-out binding without ready and retries only on a new stream", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      authority.state.retained.set(authority.initial.versionId, {
+        ...authority.initial,
+        manifest: { ...authority.initial.manifest, tier: 2 }
+      });
+      const attempts = yield* Queue.unbounded<Deferred.Deferred<void>>();
+      let connected = 0;
+      const streams = yield* makeStreams.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop),
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () =>
+            Effect.gen(function* () {
+              yield* Effect.acquireRelease(
+                Effect.sync(() => connected++),
+                () =>
+                  Effect.sync(() => {
+                    connected--;
+                  })
+              );
+              const ready = yield* Deferred.make<void>();
+              yield* Queue.offer(attempts, ready);
+              yield* Deferred.await(ready);
+            }),
+          acquire: () => Effect.die("A stream cannot admit an invocation.")
+        })
+      );
+      const first = yield* open("starting_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      const hello = frame(yield* first.pull);
+      assert.strictEqual(hello.type, "hello");
+      if (hello.type !== "hello") return;
+      assert.strictEqual(frame(yield* first.pull).type, "served");
+      assert.deepStrictEqual(frame(yield* first.pull), { type: "starting" });
+      const abandoned = yield* Queue.take(attempts);
+      const received: RuntimeStreamFrame[] = [];
+      yield* first.pull.pipe(
+        Effect.tap((chunks) =>
+          Effect.sync(() => {
+            received.push(frame(chunks));
+          })
+        ),
+        Effect.forkChild
+      );
+      yield* TestClock.adjust("39 seconds");
+      assert.deepStrictEqual(received, []);
+      assert.strictEqual(connected, 1);
+      yield* TestClock.adjust("1 second");
+      assert.deepStrictEqual(received, [
+        {
+          type: "start_failed",
+          code: "busy",
+          retryAfter: 1,
+          scope: "company",
+          limitId: "execution.pool.wait",
+          value: 40000
+        }
+      ]);
+      assert.strictEqual(connected, 0);
+      yield* Deferred.succeed(abandoned, undefined);
+      const next = yield* open("starting_document", hello.generation).pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* next.pull).type, "hello");
+      assert.strictEqual(frame(yield* next.pull).type, "served");
+      assert.deepStrictEqual(frame(yield* next.pull), { type: "starting" });
+      assert.deepStrictEqual(frame(yield* first.pull), { type: "closed", reason: "replaced" });
+      yield* Deferred.succeed(yield* Queue.take(attempts), undefined);
+      assert.deepStrictEqual(frame(yield* next.pull), { type: "ready" });
+      assert.strictEqual(connected, 1);
+      yield* Scope.close(next.scope, Exit.void);
+      assert.strictEqual(connected, 0);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("preserves the effective pool limit on a refused bind", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      authority.state.retained.set(authority.initial.versionId, {
+        ...authority.initial,
+        manifest: { ...authority.initial.manifest, tier: 2 }
+      });
+      const streams = yield* makeStreams.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop),
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () =>
+            Effect.fail(
+              new ExecutionLifecycle.LifecycleError({
+                code: "busy",
+                status: 503,
+                retryAfterSeconds: 7,
+                limitId: "execution.pool.wait",
+                scope: "company",
+                value: 17000
+              })
+            ),
+          acquire: () => Effect.die("A stream cannot admit an invocation.")
+        })
+      );
+      const document = yield* open("refused_bind_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* document.pull).type, "hello");
+      assert.strictEqual(frame(yield* document.pull).type, "served");
+      assert.deepStrictEqual(frame(yield* document.pull), { type: "starting" });
+      assert.deepStrictEqual(frame(yield* document.pull), {
+        type: "start_failed",
+        code: "busy",
+        retryAfter: 7,
+        limitId: "execution.pool.wait",
+        scope: "company",
+        value: 17000
+      });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("keeps subscription dispatch behind ready", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      authority.state.retained.set(authority.initial.versionId, {
+        ...authority.initial,
+        manifest: {
+          ...authority.initial.manifest,
+          tier: 2,
+          handlers: { "demo.query": { kind: "query", args: {}, result: { kind: "integer" } } }
+        }
+      });
+      const ready = yield* Deferred.make<void>();
+      const departed = yield* Deferred.make<void>();
+      const streams = yield* makeStreams.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop),
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () =>
+            Effect.acquireRelease(Effect.void, () =>
+              Deferred.succeed(departed, undefined).pipe(Effect.asVoid)
+            ).pipe(Effect.andThen(Deferred.await(ready))),
+          acquire: () => Effect.die("A stream cannot admit an invocation.")
+        })
+      );
+      const document = yield* open("pending_subscriptions").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      const hello = frame(yield* document.pull);
+      if (hello.type !== "hello") return assert.fail("Expected hello");
+      assert.strictEqual(frame(yield* document.pull).type, "served");
+      assert.strictEqual(frame(yield* document.pull).type, "starting");
+      yield* streams
+        .update({
+          ...input("pending_subscriptions"),
+          generation: hello.generation,
+          sequence: 1,
+          type: "subscribe",
+          subscription: {
+            id: "query",
+            op: "server.call",
+            args: { handler: "demo.query", args: {} }
+          }
+        })
+        .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()));
+      assert.deepStrictEqual(frame(yield* document.pull), { type: "admitted", sequence: 1 });
+      const next = yield* document.pull.pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      assert.isUndefined(next.pollUnsafe());
+      yield* Deferred.succeed(ready, undefined);
+      assert.deepStrictEqual(frame(yield* Fiber.join(next)), { type: "ready" });
+      const error = frame(yield* document.pull);
+      assert.strictEqual(error.type, "error");
+      if (error.type === "error") assert.strictEqual(error.error.code, "source_unavailable");
+      yield* Scope.close(document.scope, Exit.void);
+      yield* Deferred.await(departed);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("releases a disconnected document while its binding is still pending", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      authority.state.retained.set(authority.initial.versionId, {
+        ...authority.initial,
+        manifest: { ...authority.initial.manifest, tier: 2 }
+      });
+      const entered = yield* Deferred.make<void>();
+      let connections = 0;
+      const streams = yield* makeStreams.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop),
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () =>
+            Effect.gen(function* () {
+              yield* Effect.acquireRelease(
+                Effect.sync(() => {
+                  connections++;
+                }),
+                () =>
+                  Effect.sync(() => {
+                    connections--;
+                  })
+              );
+              yield* Deferred.succeed(entered, undefined);
+              yield* Effect.never;
+            }),
+          acquire: () => Effect.die("A stream cannot admit an invocation.")
+        })
+      );
+      const document = yield* open("departed_starting_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      yield* Deferred.await(entered);
+      assert.strictEqual(connections, 1);
+      yield* Scope.close(document.scope, Exit.void);
+      assert.strictEqual(connections, 0);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
     }).pipe(Effect.scoped)
   );
 

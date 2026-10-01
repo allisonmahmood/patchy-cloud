@@ -766,8 +766,13 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "Publish and rollback send `served`; lost authority sends " +
           "`access_denied`, `principal_changed` or `session_expired`. `revoked` is reserved pending " +
           "the version-revocation decision in #425; no version-revocation state or action exists yet. " +
-          "`starting`, `ready` and `start_failed` (`code:'busy'`, `retryAfter` seconds) are reserved " +
-          "for fleet admission. `closed` names `slow_consumer` or `replaced`. Network drops and host drain " +
+          "Tier 2 opens and resumes send `starting` while ensuring a company task binding, then `ready`. " +
+          "The broker holds `server.call` requests within its frame bounds until ready; invocation deadlines begin only at admission. " +
+          "A stream drop keeps held calls held. After 40 seconds without a binding, " +
+          "`start_failed` (`code:'busy'`, `retryAfter` seconds, and the effective `scope`, `limitId`, `value`) refuses held calls once, without replay. " +
+          "The shell covers the frame after two seconds, on first open and resume, with an accessible focus-held starting element. " +
+          "Failure offers Retry and automatic backoff while the document stays open; later ready admits only new calls. " +
+          "`closed` names `slow_consumer` or `replaced`. Network drops and host drain " +
           "reconnect with backoff; hidden documents suspend after 30 seconds, then re-admit on " +
           "return without changing loaded version. Expiry of the authenticated token ends the " +
           "stream normally. A refreshable stale token answers `session_refresh_required` (401), " +

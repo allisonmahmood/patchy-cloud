@@ -6,6 +6,26 @@
   "type": "module",
   "description": "The supervised workerd execution engine, local executor and isolated handler inspection.",
   "exports": {
+    "./fleet": {
+      "development": "./src/fleet.ts",
+      "types": "./dist/fleet.d.ts",
+      "import": "./dist/fleet.js"
+    },
+    "./task-provider": {
+      "development": "./src/TaskProvider.ts",
+      "types": "./dist/TaskProvider.d.ts",
+      "import": "./dist/TaskProvider.js"
+    },
+    "./local-task-provider": {
+      "development": "./src/localTaskProvider.ts",
+      "types": "./dist/localTaskProvider.d.ts",
+      "import": "./dist/localTaskProvider.js"
+    },
+    "./migrations": {
+      "development": "./src/migrations.ts",
+      "types": "./dist/migrations.d.ts",
+      "import": "./dist/migrations.js"
+    },
     "./engine": {
       "development": "./src/engine.ts",
       "types": "./dist/engine.d.ts",
@@ -42,6 +62,9 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
+    "@patchy/analytics": "workspace:*",
+    "@patchy/core": "workspace:*",
+    "@patchy/sql": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",

@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
-// @effect-diagnostics globalTimers:off globalFetch:off globalRandom:off
-// This browser adapter owns fetch, visibility, timers and retry jitter without an Effect runtime.
+// @effect-diagnostics globalTimers:off globalFetch:off globalRandom:off globalDate:off
+// This browser adapter owns fetch, visibility, timers, retry deadlines and jitter without an Effect runtime.
 import {
   RuntimeFailure,
   RuntimeStreamFrame,
@@ -43,10 +43,20 @@ export function openDocumentStream(options: {
   readonly send: (frame: RuntimeStreamFrame) => void;
   readonly notice: (code: string) => void;
   readonly stale: () => void;
+  readonly executionState: (
+    state: "starting" | "ready" | "failed",
+    failure?: Extract<RuntimeStreamFrame, { readonly type: "start_failed" }>
+  ) => void;
   readonly reserve: (bytes: number) => void;
   readonly release: (bytes: number) => void;
 }): DocumentStream {
-  const status = createStreamStatus(options.frame, options.versionId, options.tier, options.base);
+  const status = createStreamStatus(
+    options.frame,
+    options.versionId,
+    options.tier,
+    options.base,
+    () => retryBinding()
+  );
   const url = new URL("/api/runtime/stream", location.origin);
   url.searchParams.set("patchId", options.patchId);
   url.searchParams.set("versionId", options.versionId);
@@ -60,6 +70,9 @@ export function openDocumentStream(options: {
   let reconciliationAttempts = 0;
   let failures = 0;
   let refreshAttempts = 0;
+  let bindingFailures = 0;
+  let bindingRetryAt = 0;
+  let execution: "starting" | "ready" | "failed" = options.tier === 2 ? "starting" : "ready";
   let hello: Extract<RuntimeStreamFrame, { readonly type: "hello" }> | undefined;
   let helloAt = 0;
   let served: Extract<RuntimeStreamFrame, { readonly type: "served" }> | undefined;
@@ -164,8 +177,27 @@ export function openDocumentStream(options: {
       replace();
     }, delay);
   };
+  const startExecution = () => {
+    if (options.tier !== 2) return;
+    const failed = execution === "failed";
+    execution = "starting";
+    options.executionState("starting");
+    status.starting(failed ? "retry" : undefined);
+  };
+  const retryBinding = () => {
+    if (closed || suspended || execution !== "failed") return;
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+    bindingRetryAt = 0;
+    controller?.abort();
+    controller = undefined;
+    void connect();
+  };
   const connect = async () => {
     if (closed || suspended) return;
+    // The first call can arrive before any stream bytes. Resume and bind retries need the
+    // same hold; a normal transport reconnect keeps an already-ready task usable.
+    if (execution !== "ready") startExecution();
     generation = undefined;
     admitted = -1;
     clearTimeout(reconciliationTimer);
@@ -248,6 +280,26 @@ export function openDocumentStream(options: {
           } else if (frame.type === "handlers") {
             handlers = frame;
           }
+          if (frame.type === "starting") {
+            startExecution();
+          } else if (frame.type === "ready") {
+            execution = "ready";
+            bindingFailures = 0;
+            bindingRetryAt = 0;
+            options.executionState("ready");
+            status.ready();
+            reconciled();
+          } else if (frame.type === "start_failed") {
+            execution = "failed";
+            const backoff = Math.min(30_000, 1_000 * 2 ** Math.min(bindingFailures++, 5));
+            bindingRetryAt = Date.now() + Math.max(frame.retryAfter * 1_000, backoff);
+            options.executionState("failed", frame);
+            status.startFailed();
+            options.send(frame);
+            // A fresh stream requests another bounded bind attempt. Failed calls are gone;
+            // only newly requested work can wait for its ready.
+            return;
+          }
           if (frame.type === "admitted") {
             admitted = Math.max(admitted, frame.sequence);
             reconciled();
@@ -312,7 +364,10 @@ export function openDocumentStream(options: {
         if (!closed && !suspended) {
           status.connecting();
           const ceiling = Math.min(30_000, 500 * 2 ** Math.min(failures++, 6));
-          const delay = ceiling * (0.5 + Math.random() * 0.5);
+          const delay = Math.max(
+            ceiling * (0.5 + Math.random() * 0.5),
+            bindingRetryAt - Date.now()
+          );
           retryTimer = window.setTimeout(() => {
             retryTimer = undefined;
             void connect();
@@ -322,6 +377,7 @@ export function openDocumentStream(options: {
     }
   };
   const visibility = () => {
+    status.visibility(document.hidden);
     clearTimeout(hiddenTimer);
     hiddenTimer = undefined;
     if (document.hidden) {
@@ -333,10 +389,16 @@ export function openDocumentStream(options: {
         clearTimeout(reconciliationTimer);
         reconciliationTimer = undefined;
         controller?.abort();
+        // The company can be released while this document is suspended.
+        if (options.tier === 2) {
+          execution = "starting";
+          options.executionState("starting");
+        }
       }, registry["stream.hidden.suspend"].default);
     } else if (suspended) {
       suspended = false;
       refreshAttempts = 0;
+      if (options.tier === 2) status.starting("resume");
       // Detach the aborted read before reconnecting; its finalizer cannot retry this generation.
       controller = undefined;
       void connect();

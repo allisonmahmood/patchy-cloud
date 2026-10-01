@@ -35,6 +35,10 @@ bytes and serves tier 2 on dev and test instances. Production admission requires
 the fleet executor. Issue #404 composes the same supervised engine and callback
 gateway into the patch-repo `patchy dev` loop over PGlite and fixtures, with
 atomic live server rebinding and a separate non-admin colleague listener.
+Issue #405 adds the host fleet controller over platform Postgres and a local task
+provider that launches separate supervisor processes. `EXECUTION_PROVIDER=local-fleet`
+selects that path on an isolated development or test host. Production remains closed
+until the ECS provider arrives; local processes do not prove Fargate containment.
 
 ## Engine, guest wire and inspection
 
@@ -176,6 +180,93 @@ Dedicated fleet tasks still count the supervisor, retained bundles and reports.
 Both modes enforce the same workerd process count, RSS ceilings and watchdog.
 Local execution proves engine compatibility and recovery, not Fargate containment
 or per-invocation CPU and memory guarantees.
+
+## Fleet controller
+
+`@patchy/execution/fleet` is host code, not another deployed service. Its task
+provider owns task launch, management transport, discovery and observed stop times.
+Migration `0014_execution_fleet` owns task identity and deployment revision, company
+bindings and their epochs, binding history, process reports, breaker state and the
+housekeeping lease. A partial unique index permits one admission-serving binding
+per company. A binding in stopping is no longer admission-serving and can never
+be adopted or become a spare.
+The local provider kills and reaps a process that misses its configured readiness
+deadline or sends an invalid ready message; reconciliation can reclaim that slot.
+Local provider instances use one private directory per platform database on the
+same Linux machine. Detached task owners and OS launch locks provide shared
+discovery, routing and stop records; a host's memory is not authoritative inventory.
+Hosts use a common callback allowlist and stable private callback ports. Host
+shutdown leaves the tasks available to another host. Explicit drain or disposable
+test cleanup stops them. This local provider does not claim cross-machine discovery.
+
+The controller records a spare claim before contacting its supervisor. An ambiguous
+management acknowledgement repeats that task identity and binding epoch, never a
+second spare claim. Runtime retains the exact task and epoch from admission through
+all attempts, nested calls and settlement. A deployment replacement routes new work
+to a fresh binding while the predecessor drains. Invocation callbacks retain the
+private URL of the host that owns their capabilities and transactions.
+Adoption requires the binding to have drained globally, advances its management
+epoch and rebinds the same task before returning to active. A stable binding id
+keeps its history and prior process reports associated across epoch changes.
+
+Host registration does not promote a deployment. The first deployment bootstraps
+after its spares are ready. For later rollouts, an operator stages a revision,
+housekeeping warms its spares, and promotion selects it for new bindings only after
+the capacity check passes. Existing companies move incrementally to already-ready
+replacement spares; their old admissions are fenced atomically with replacement
+claim, and previously admitted work drains on the predecessor. Staging and promoting
+an earlier revision performs rollback. A restarting old host cannot reverse promotion.
+
+Connected document and admitted invocation lifetimes hold shared database advisory
+locks. They are not presence rows, heartbeats or a document lease. The controller
+checks idle eligibility against those locks and atomically enters stopping under
+the binding owner check before stopping the provider task. A disconnected document
+releases its lock; an admitted call retains its separate lock through cleanup.
+Each replica uses one reserved database session for these locks, not one connection
+per document. A failed session is replaced and all still-held keys are reacquired,
+with reference counts preserved. A bounded session probe detects loss even when
+connected documents issue no requests; it does not create document presence rows.
+Admission also records protection through the maximum action deadline and cleanup
+bound. If the host dies and its session locks disappear, draining still waits
+through that bound. Normal final settlement clears this protection.
+
+One replica's housekeeping lease replenishes the pool, releases idle companies,
+reconciles lost tasks and retires superseded deployments. The target is
+`ceil(max(2, wakes / 900000 ms * measured cold-start ms))`, with every live or
+draining task counted against the fleet budget. The initial budget is 100 tasks,
+the pass interval five seconds and the lease fifteen seconds. These values come
+from the limits registry, not another timer or counter convention.
+Passes serialize within a replica. A scoped renewal fiber keeps the lease alive
+during provider waits, while mutation guards still fence a replica that loses it.
+Reacquisition after expiry has a new lease epoch, even for the same replica.
+Per-task failures are bounded and isolated, and replenishment does not depend on a
+successful stats or stop call for every bound task. An empty-pool open keeps waiting
+through housekeeping failures until its configured pool deadline.
+
+Process reports commit before their acknowledgement. Newly recorded process events
+are forwarded unchanged through the best-effort analytics sink. Binding history
+meters through the provider's stop time, including a stop discovered after its
+owner died. Binding wide events retain the original bind time, spare wait, peak
+processes and release cause, attributed to the emitting controller build; logging
+is not the source of metering.
+
+Three watchdog kills of a patch across versions and hosts within ten minutes pause
+its admission for ten minutes. The database is authoritative on each admission.
+A newer published version clears the window and pause on every host. Changing
+sharing or rolling back does not. The no-pool development executor has no breaker.
+Fleet operators call controller operations to release a company, drain a task,
+stage or promote a deployment, retire a deployment or set a limit override.
+None is a public HTTP endpoint.
+
+Tier 2 bootstrap and resume ensure a binding before admission. The stream sends
+starting, then ready, or start_failed with busy and retryAfter after forty seconds.
+Pool refusals retain their effective limit id, scope and value through the stream
+and broker. Breaker refusals carry the same fields on invocation admission.
+The shell holds calls inside its existing bounds and keeps them across stream
+loss. Failure refuses those calls once; later retries never replay them. The
+selected T-1 cover appears after two seconds on both first open and resume, holds
+focus under an accessible name and offers Try again after failure. Automatic retries
+back off while the document remains open.
 
 ## Seven hosting decisions
 

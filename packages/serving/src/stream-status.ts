@@ -1,12 +1,14 @@
 /// <reference lib="dom" />
-// @effect-diagnostics globalTimers:off
-// The served shell owns browser timers and DOM elements, without an Effect runtime.
+// @effect-diagnostics globalTimers:off globalDate:off
+// The served shell owns browser timers, the starting cover's elapsed clock and DOM elements, without an Effect runtime.
+import { registry } from "@patchy/limits/registry";
 
 export function createStreamStatus(
   frame: HTMLIFrameElement,
   versionId: string,
   tier: number,
-  base: string
+  base: string,
+  retry: () => void
 ) {
   const name = frame.title;
   const root = document.createElement("div");
@@ -47,6 +49,105 @@ export function createStreamStatus(
   version.setAttribute("role", "status");
   root.append(reconnecting, version);
   document.body.append(root);
+  // T-1 from #385: a static dim over the frame with one centred note. It holds focus until ready.
+  // The dialog's name stays fixed while the note inside switches between starting and failed.
+  const cover = document.createElement("dialog");
+  cover.className = "shell-scrim";
+  cover.dataset.streamStatus = "starting";
+  cover.setAttribute("aria-label", "Starting your tools");
+  cover.setAttribute("aria-describedby", "patchy-starting-message");
+  cover.tabIndex = -1;
+  const panel = document.createElement("section");
+  // Title and body are the live region; the elapsed line sits outside it so its ticks stay silent.
+  const message = document.createElement("div");
+  message.id = "patchy-starting-message";
+  message.setAttribute("role", "status");
+  const heading = text("", "note-title");
+  const body = document.createElement("p");
+  message.append(heading, body);
+  const elapsed = document.createElement("p");
+  elapsed.className = "supporting-text";
+  const retryButton = button("Try again", "btn-primary", () => {
+    failed = false;
+    startedAt = Date.now();
+    renderStarting();
+    retry();
+  });
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  actions.append(retryButton);
+  panel.append(message, elapsed, actions);
+  cover.append(panel);
+  document.body.append(cover);
+  cover.addEventListener("cancel", (event) => event.preventDefault());
+  cover.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    if (retryButton.hidden) cover.focus();
+    else retryButton.focus();
+  });
+  const waitSeconds = registry["execution.pool.wait"].default / 1_000;
+  let starting = false;
+  // Failed holds through automatic bind retries; only ready, Try again or a resume clears it.
+  let failed = false;
+  let startedAt = 0;
+  let hidden = document.hidden;
+  let startingTimer: number | undefined;
+  // The only thing that changes while starting is this text, rewritten once a second. No animation.
+  let elapsedTimer: number | undefined;
+  const tick = () => {
+    elapsed.textContent = `${Math.max(0, Math.floor((Date.now() - startedAt) / 1_000))} s so far`;
+  };
+  const stopTicking = () => {
+    clearInterval(elapsedTimer);
+    elapsedTimer = undefined;
+  };
+  const renderStarting = () => {
+    const copy = failed
+      ? {
+          title: "Your tools are taking longer than usual to start.",
+          body: "Anything you just did didn't go through. Patchy keeps trying; try again once they're ready."
+        }
+      : {
+          title: "Starting your tools",
+          body: `Your company's tools are waking up. This can take up to ${waitSeconds} seconds; the page works as soon as they're ready.`
+        };
+    const refocus = retryButton === document.activeElement && !failed;
+    panel.className = `note note-float ${failed ? "note-warn" : "note-info"}`;
+    heading.replaceChildren(glyph(), copy.title);
+    body.textContent = copy.body;
+    elapsed.hidden = failed;
+    retryButton.hidden = !failed;
+    if (refocus) cover.focus();
+    stopTicking();
+    if (failed || !cover.open) return;
+    tick();
+    elapsedTimer = window.setInterval(tick, 1_000);
+  };
+  const showStarting = () => {
+    if (hidden || cover.open) return;
+    cover.showModal();
+    renderStarting();
+    cover.focus();
+  };
+  const scheduleStarting = () => {
+    if (hidden || !starting || cover.open || startingTimer !== undefined) return;
+    startingTimer = window.setTimeout(() => {
+      startingTimer = undefined;
+      showStarting();
+    }, 2_000);
+  };
+  const clearStarting = () => {
+    starting = false;
+    failed = false;
+    clearTimeout(startingTimer);
+    startingTimer = undefined;
+    stopTicking();
+    if (cover.open) {
+      cover.close();
+      if (!hidden) frame.focus();
+    }
+  };
 
   let reconnectTimer: number | undefined;
   let served: { readonly versionId: string; readonly tier: number } | undefined;
@@ -119,7 +220,42 @@ export function createStreamStatus(
   };
 
   return {
+    // No reason: the first start. "retry": another bind after start_failed, automatic or Try again.
+    // "resume": a fresh start after a suspended document returns.
+    starting(reason?: "retry" | "resume") {
+      if (starting && reason === undefined) return;
+      if (!starting || reason === "resume") {
+        failed = false;
+        startedAt = Date.now();
+      }
+      starting = true;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+      reconnecting.hidden = true;
+      if (cover.open) renderStarting();
+      else scheduleStarting();
+    },
+    startFailed() {
+      starting = true;
+      failed = true;
+      if (cover.open) renderStarting();
+      else if (startingTimer === undefined) showStarting();
+    },
+    visibility(nextHidden: boolean) {
+      if (hidden === nextHidden) return;
+      hidden = nextHidden;
+      if (hidden) {
+        clearTimeout(startingTimer);
+        startingTimer = undefined;
+        stopTicking();
+        if (cover.open) cover.close();
+      } else scheduleStarting();
+    },
+    ready() {
+      clearStarting();
+    },
     connecting() {
+      if (starting) return;
       if (reconnecting.hidden && reconnectTimer === undefined) {
         reconnectTimer = window.setTimeout(() => {
           reconnectTimer = undefined;
@@ -142,6 +278,8 @@ export function createStreamStatus(
     },
     close() {
       clearTimeout(reconnectTimer);
+      clearStarting();
+      cover.remove();
       root.remove();
     }
   };

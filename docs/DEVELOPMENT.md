@@ -59,8 +59,8 @@ snapshot. The primitive snapshot tests use real Postgres for concurrent writes,
 live unsharing and deadline cancellation; PGlite does not prove production contention.
 `Invocation.test.ts` injects a non-returning executor to verify disconnected-client
 deadlines, inherited child budgets and unresolved-resource destruction. Fleet
-hosting remains separate work. These checks prove local execution and settlement,
-not Fargate containment.
+hosting can be exercised with the local task provider below. These checks prove
+local execution and settlement, not Fargate containment.
 
 Mutations use one host-owned SERIALIZABLE transaction and up to three
 whole-handler attempts within the original five-second deadline. They return
@@ -147,6 +147,66 @@ apply locally.
 The private management wire is documented in `docs/API.md`. The host must persist
 process reports before acknowledging them through `stats`. The supervisor has
 no database and reports interrupted attempt identities without classifying commits.
+
+### Exercising the fleet offline
+
+An isolated host can opt into `EXECUTION_PROVIDER=local-fleet` with `NODE_ENV=test`
+or `development`. The default dev executor remains no-pool; production refuses
+the local task provider. Do not use a daily-driver instance for fleet checks.
+
+This path runs the same controller that will receive the ECS provider, over the
+platform database. Local hosts on one Linux machine share a durable task directory;
+`flock` serializes launches, and detached task owners retain readiness, final process
+reports and observed stop times independently of the host that launched them.
+Each task still has a separate supervisor process. Children receive only local
+management identity, a generated deployment secret and trusted callback URLs, not
+the host's database, storage or login environment.
+
+Set these for every local-fleet host:
+
+- `EXECUTION_LOCAL_DIRECTORY`: the same private directory for hosts sharing one
+  platform database. Use a different directory for a different database.
+- `EXECUTION_CALLBACK_URLS`: a JSON array containing every host's trusted private
+  callback URL, such as `["http://127.0.0.1:41001/callback","http://127.0.0.1:41002/callback"]`.
+- `EXECUTION_CALLBACK_PORT`: that host's stable callback port, such as `41001`.
+  Its URL must appear in the common allowlist. Keep the port stable across restarts.
+
+Closing a host or provider scope does not stop shared tasks. Controller release
+and drain operations stop them. Disposable tests own a
+`LocalTaskProvider.resource({ callbackUrls })` scope or explicitly call
+`LocalTaskProvider.cleanup(directory)` before removing their directory.
+Hosts must share the local filesystem and process/network namespace. This provider
+does not support cross-machine discovery; that belongs to the ECS provider.
+
+The controller claims spare tasks, fences stopping bindings, drains retained
+invocations and reconciles provider stop times. Its housekeeping lease is shared
+by host replicas. `PATCHY_LIMITS_JSON` configures the registry's fleet budget,
+spare floor, housekeeping interval and lease. `PATCHY_REPLICA` identifies the host
+and `PATCHY_DEPLOYMENT_REVISION` identifies the deployment; neither is a binding
+epoch or process generation.
+
+Registering a new host revision does not switch the fleet. The first deployment
+warms and promotes automatically. Later rollouts call `stageDeployment(revision)`,
+let housekeeping prepare spares, then call `promoteDeployment(revision)`.
+Promotion returns false until the required warm capacity exists. Existing companies
+move to ready replacement tasks incrementally, retaining admitted work on the old
+binding. Rollback stages and promotes the earlier revision through the same operations.
+No direct row edits are needed.
+
+The housekeeping lease renews during provider work, and a failing task does not
+block unrelated reconciliation or replenishment. A lost activity database session
+is replaced and its live locks restored, including for documents making no requests.
+
+`packages/execution/src/Fleet.test.ts` covers controller transitions over Postgres.
+Its lease and housekeeping cases use `TestClock` with an explicit renewal barrier:
+the real SQL renewal must return and the next timer must be armed before time
+advances again. A committed row alone does not prove that the renewal fiber has
+resumed. These tests do not use wall-clock sleeps to race database I/O.
+`LocalTaskProvider.test.ts` executes real workerd and verifies final process reports
+survive task stop. The fleet case in `DevelopmentExecution.test.ts` opens a real
+document stream through `starting` and `ready`, then exercises nested callbacks
+and committed mutation-key replay. The ECS provider and containment checks remain
+the next ticket.
 
 ### Starting the local instance
 

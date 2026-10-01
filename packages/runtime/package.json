@@ -21,6 +21,11 @@
       "types": "./dist/Executor.d.ts",
       "import": "./dist/Executor.js"
     },
+    "./execution-lifecycle": {
+      "development": "./src/ExecutionLifecycle.ts",
+      "types": "./dist/ExecutionLifecycle.d.ts",
+      "import": "./dist/ExecutionLifecycle.js"
+    },
     "./dev": {
       "development": "./src/dev.ts",
       "types": "./dist/dev.d.ts",

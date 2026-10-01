@@ -527,6 +527,33 @@ export const registry = {
     refusal: null,
     overridable: true
   },
+  "execution.fleet.budget": {
+    kind: "operating",
+    default: 100,
+    unit: "tasks",
+    scope: "host",
+    measure: "Maximum live tasks across bound companies, draining tasks and spares",
+    refusal: "busy",
+    overridable: false
+  },
+  "execution.housekeeping.interval": {
+    kind: "operating",
+    default: 5000,
+    unit: "milliseconds",
+    scope: "host",
+    measure: "Interval between fleet reconciliation and replenishment passes",
+    refusal: null,
+    overridable: false
+  },
+  "execution.housekeeping.lease": {
+    kind: "operating",
+    default: 15000,
+    unit: "milliseconds",
+    scope: "host",
+    measure: "Exclusive fleet housekeeping ownership window",
+    refusal: null,
+    overridable: false
+  },
   "execution.pool.spares": {
     kind: "operating",
     default: 2,

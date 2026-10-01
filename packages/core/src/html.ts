@@ -76,6 +76,7 @@ export const shellStyles = `
 
     .note-refused { border-left-color: var(--danger); background: var(--paper-amber); }
     .note-ok { border-left-color: var(--green-ink); background: var(--paper-green); }
+    .supporting-text { color: var(--muted); font-size: .9rem; }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -164,6 +165,31 @@ export const shellStyles = `
     .shell-bottom, .shell-bottom * { box-sizing: border-box; }
     .shell-bottom > * { pointer-events: auto; }
     .shell-bottom [hidden] { display: none; }
+    /* shell-scrim: the T-1 cover. A static dim over the whole frame with one centred note-float; nothing moves or fades.
+       It is a modal dialog, so the dim is the dialog itself and the top-layer backdrop stays clear. */
+    .shell-scrim {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      max-width: none;
+      max-height: none;
+      margin: 0;
+      padding: 16px;
+      border: 0;
+      background: rgba(18, 17, 15, .38);
+      color: var(--ink-soft);
+      font-family: var(--font-sans);
+    }
+    .shell-scrim[open] { display: grid; place-items: center; }
+    .shell-scrim, .shell-scrim * { box-sizing: border-box; }
+    .shell-scrim::backdrop { background: transparent; }
+    .shell-scrim [hidden] { display: none; }
+    .shell-scrim > .note-float { width: min(420px, 100%); }
+    /* The elapsed line follows the note's live region rather than a p, so it takes the note's paragraph gap here. */
+    .shell-scrim .supporting-text { margin-top: 6px; }
+    .shell-scrim .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .shell-scrim .actions:has(> [hidden]) { display: none; }
     /* note-inline: a note-float laid out as one row (text, actions, then any Hide) for the bottom-centre bar. */
     .note-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; max-width: 620px; }
     .note-inline:has(> .note-collapse) { grid-template-columns: minmax(0, 1fr) auto auto; }
@@ -520,7 +546,6 @@ export function htmlPage(options: {
     }
     textarea.field { min-height: 110px; resize: vertical; }
     .field-hint { margin: 8px 0 20px; color: var(--muted); font-size: .85rem; }
-    .supporting-text { color: var(--muted); font-size: .9rem; }
     .field-error { margin: 8px 0 20px; color: var(--danger); font-size: .85rem; font-weight: 750; }
     .field[aria-invalid="true"] { border-color: var(--danger); }
     .field-choice, .confirmation-acknowledgement { display: flex; align-items: baseline; gap: 10px; min-height: 44px; padding: 8px 0; cursor: pointer; }

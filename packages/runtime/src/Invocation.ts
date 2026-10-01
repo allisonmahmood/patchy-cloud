@@ -28,6 +28,7 @@ import * as Schema from "effect/Schema";
 import * as Random from "effect/Random";
 import * as Binding from "./Binding.js";
 import * as Executor from "./Executor.js";
+import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
 import * as Runtime from "./Runtime.js";
@@ -158,6 +159,12 @@ interface Parent {
   readonly capability: InvocationCapabilities.Capability;
   readonly bundle: GuestProtocol.Bundle;
   readonly bound: Executor.BoundVersion;
+  readonly admission: RetainedAdmission | undefined;
+}
+
+interface RetainedAdmission {
+  readonly lease: ExecutionLifecycle.Admission;
+  owners: number;
 }
 
 // These codecs are compiled once for each retained manifest/handler, not once per callback.
@@ -227,6 +234,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
 ) {
   const scope = yield* Effect.scope;
   const executor = yield* Executor.Executor;
+  const lifecycle = yield* Effect.serviceOption(ExecutionLifecycle.ExecutionLifecycle);
   const bundles = yield* ServerBundles.ServerBundles;
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const log = yield* InvocationLog.InvocationLog;
@@ -327,6 +335,17 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     const resultCodec = codec.result;
     const invoke = Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
+        const admission =
+          parent !== undefined
+            ? parent.admission
+            : Option.isSome(lifecycle)
+              ? {
+                  lease: yield* restore(
+                    lifecycle.value.acquire(binding.companyId, binding.patchId)
+                  ),
+                  owners: 0
+                }
+              : undefined;
         if (actionLimits !== undefined) {
           for (const [used, limit, limitId, limitScope] of [
             [
@@ -353,9 +372,19 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 }
               ]
             });
-            if (used >= limit)
+            if (used >= limit) {
+              if (parent === undefined && admission !== undefined) yield* admission.lease.release;
               return yield* new InvocationBusy({ limitId, value: limit, scope: limitScope });
+            }
           }
+        }
+        if (admission !== undefined) admission.owners++;
+        const releaseAdmission = Effect.suspend(() =>
+          admission !== undefined && --admission.owners === 0
+            ? admission.lease.release
+            : Effect.void
+        );
+        if (actionLimits !== undefined) {
           companyActions.set(binding.companyId, (companyActions.get(binding.companyId) ?? 0) + 1);
           viewerActions.set(key, (viewerActions.get(key) ?? 0) + 1);
         }
@@ -457,7 +486,8 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 bundle.versionId !== (binding.executionVersionId ?? binding.versionId)
               )
                 return yield* new HandlerFailed({ correlationId: binding.correlationId });
-              const bound = parent?.bound ?? (yield* executor.bind(bundle));
+              const bound =
+                parent?.bound ?? (yield* executor.bind(bundle, admission?.lease.binding));
               if (
                 bound.processGeneration === undefined ||
                 canonicalArgs(bound.binding) !==
@@ -493,7 +523,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                           { ...binding, correlationId: newInternalId("call") },
                           reauthorize,
                           undefined,
-                          { capability: capability!, bundle, bound }
+                          { capability: capability!, bundle, bound, admission }
                         )
                     })
               });
@@ -523,15 +553,18 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 );
               attempts++;
               const observed = yield* executor
-                .invoke({
-                  wire: GuestProtocol.wireVersion,
-                  binding: bound.binding,
-                  ...capability.attempt,
-                  handler: input.handler,
-                  args: input.args,
-                  viewer,
-                  callback: { url: options.callbackUrl, capability: capability.token }
-                })
+                .invoke(
+                  {
+                    wire: GuestProtocol.wireVersion,
+                    binding: bound.binding,
+                    ...capability.attempt,
+                    handler: input.handler,
+                    args: input.args,
+                    viewer,
+                    callback: { url: options.callbackUrl, capability: capability.token }
+                  },
+                  admission?.lease.binding
+                )
                 .pipe(
                   Effect.flatMap(decodeReply),
                   Effect.mapError((cause) =>
@@ -784,6 +817,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           } else if (platform !== undefined) {
             // Metering settlement belongs to the host, never to reply delivery.
             // Retrying an ambiguous write keeps the same run id.
+            if (admission !== undefined) admission.owners++;
             yield* platform
               .settleQuietQuery({
                 runId: id,
@@ -800,7 +834,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 argsBytes,
                 resultBytes
               })
-              .pipe(Effect.forkIn(scope));
+              .pipe(Effect.ensuring(releaseAdmission), Effect.forkIn(scope));
           }
           yield* WideEvents.add({
             callbacks: capability?.counters.callbacks ?? 0,
@@ -886,7 +920,8 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 else counts.set(entry, count);
               }
             })
-          )
+          ),
+          Effect.ensuring(releaseAdmission)
         );
         const owner = yield* Effect.forkIn(
           Effect.interruptible(run).pipe(Effect.provideService(DatabaseMeter.current, meter)),

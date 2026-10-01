@@ -27,6 +27,12 @@ export class ExecutionError extends Schema.TaggedError<ExecutionError>()("Execut
   }
 }
 
+/** Host-only admission identity. It never crosses the guest protocol. */
+export interface ExecutionBinding {
+  readonly taskId: string;
+  readonly bindingEpoch: number;
+}
+
 export interface BoundVersion {
   readonly binding: GuestProtocol.BundleBinding;
   readonly processGeneration?: number;
@@ -36,9 +42,13 @@ export interface BoundVersion {
 export class Executor extends Context.Service<
   Executor,
   {
-    readonly bind: (bundle: GuestProtocol.Bundle) => Effect.Effect<BoundVersion, ExecutionError>;
+    readonly bind: (
+      bundle: GuestProtocol.Bundle,
+      binding?: ExecutionBinding
+    ) => Effect.Effect<BoundVersion, ExecutionError>;
     readonly invoke: (
-      request: GuestProtocol.Invoke
+      request: GuestProtocol.Invoke,
+      binding?: ExecutionBinding
     ) => Effect.Effect<GuestProtocol.InvokeReply, ExecutionError>;
   }
 >()("@patchy/runtime/Executor") {}
