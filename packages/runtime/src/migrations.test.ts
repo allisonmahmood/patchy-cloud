@@ -8,6 +8,9 @@ import { migrations as companiesMigrations } from "../../companies/src/migration
 import { migrations as companyDatabaseMigrations } from "../../company-database/src/migrations.js";
 import { migrations as patchesMigrations } from "../../patches/src/migrations.js";
 import { migrations as integrationsMigrations } from "../../integrations/src/migrations.js";
+import { migrations as limitsMigrations } from "../../limits/src/migrations.js";
+import * as InvocationLog from "./InvocationLog.js";
+import * as RuntimeLog from "./RuntimeLog.js";
 import { migrations } from "./migrations.js";
 
 const previous: Migrations = {
@@ -16,7 +19,10 @@ const previous: Migrations = {
   "0003_patches_baseline": patchesMigrations["0003_patches_baseline"]!,
   ...companyDatabaseMigrations
 };
-const withRuntime: Migrations = { ...previous, ...migrations };
+const withRuntime: Migrations = {
+  ...previous,
+  "0006_runtime_baseline": migrations["0006_runtime_baseline"]!
+};
 const withIntegrations: Migrations = {
   ...withRuntime,
   ...integrationsMigrations
@@ -24,6 +30,12 @@ const withIntegrations: Migrations = {
 const withLifecycle: Migrations = {
   ...withIntegrations,
   "0008_patches_lifecycle": patchesMigrations["0008_patches_lifecycle"]!
+};
+const current: Migrations = {
+  ...withLifecycle,
+  ...patchesMigrations,
+  ...limitsMigrations,
+  ...migrations
 };
 
 const company = Effect.flatMap(
@@ -87,4 +99,118 @@ it.effect(
       ]);
       assert.deepStrictEqual(fresh, upgraded);
     })
+);
+
+it.effect("upgrades retained calls with attribution and adds durable invocation records", () =>
+  Effect.gen(function* () {
+    yield* company;
+    yield* useMigratedTables;
+    assert.deepStrictEqual(yield* migrate(current), [
+      [9, "limits_overrides"],
+      [10, "patches_lifecycle_revision"],
+      [11, "runtime_invocations"]
+    ]);
+    assert.deepStrictEqual(yield* migrate(current), []);
+
+    const log = yield* RuntimeLog.make;
+    const recent = yield* log.recent({
+      companyId: "cmp_migration",
+      connectionId: "connection_migration"
+    });
+    assert.strictEqual(recent.length, 1);
+    assert.strictEqual(recent[0]?.userId, "usr_migration");
+    assert.strictEqual(recent[0]?.effectivePrincipal, "usr_migration");
+    assert.strictEqual(recent[0]?.invocationId, null);
+    assert.strictEqual(recent[0]?.outcome, "success");
+    assert.strictEqual(recent[0]?.durationMs, 12);
+    assert.strictEqual(recent[0]?.rowCount, 1);
+
+    const invocations = yield* InvocationLog.make;
+    const startedAt = Date.UTC(2026, 0, 1);
+    yield* invocations.begin({
+      id: "invocation_migration",
+      companyId: "cmp_migration",
+      patchId: "patch_migration",
+      versionId: "version_migration",
+      handler: "leads.approve",
+      kind: "mutation",
+      initiatingViewerId: "usr_migration",
+      parentId: null,
+      correlationId: "invocation_correlation",
+      startedAt,
+      deadline: startedAt + 5_000,
+      argsBytes: 2
+    });
+    yield* log.begin({
+      companyId: "cmp_migration",
+      patchId: "patch_migration",
+      versionId: "version_migration",
+      userId: null,
+      effectivePrincipal: "patch",
+      invocationId: "invocation_migration",
+      credentialKind: "session",
+      op: "tables.update",
+      resource: "leads",
+      connectionId: null,
+      correlationId: "callback_correlation"
+    });
+    yield* log.finish({
+      correlationId: "callback_correlation",
+      outcome: "handler_error",
+      outcomeCode: "approval_required",
+      durationMs: 10,
+      rowCount: null
+    });
+    const callback = yield* log.find({
+      companyId: "cmp_migration",
+      correlationId: "callback_correlation"
+    });
+    assert.strictEqual(callback?.userId, null);
+    assert.strictEqual(callback?.effectivePrincipal, "patch");
+    assert.strictEqual(callback?.invocationId, "invocation_migration");
+    assert.strictEqual(callback?.outcome, "handler_error");
+    assert.strictEqual(callback?.outcomeCode, "approval_required");
+    const invocation = yield* invocations.find({
+      companyId: "cmp_migration",
+      invocationId: "invocation_migration"
+    });
+    assert.strictEqual(invocation?.effectivePrincipal, "patch");
+    assert.strictEqual(invocation?.initiatingViewerId, "usr_migration");
+    assert.strictEqual(invocation?.outcome, "pending");
+  }).pipe(Effect.provide(Testing.emptyLayer(withLifecycle)))
+);
+
+it.effect("keys query rollups by UTC minute and deduplicates applied run ids", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO runtime_query_rollups
+      (company_id, patch_id, version_id, handler, minute, runs, db_ms)
+      VALUES ('cmp_rollup', 'patch_rollup', 'version_rollup', 'leads.list',
+        '2026-01-01T00:00:00Z', 1, 7)`;
+    const duplicate = yield* sql`INSERT INTO runtime_query_rollups
+      (company_id, patch_id, version_id, handler, minute)
+      VALUES ('cmp_rollup', 'patch_rollup', 'version_rollup', 'leads.list',
+        '2026-01-01T01:00:00+01:00')`.pipe(Effect.flip);
+    assert.strictEqual(duplicate._tag, "SqlError");
+    const unaligned = yield* sql`INSERT INTO runtime_query_rollups
+      (company_id, patch_id, version_id, handler, minute)
+      VALUES ('cmp_rollup', 'patch_rollup', 'version_rollup', 'leads.list',
+        '2026-01-01T00:01:01Z')`.pipe(Effect.flip);
+    assert.strictEqual(unaligned._tag, "SqlError");
+    yield* sql`INSERT INTO runtime_query_rollups
+      (company_id, patch_id, version_id, handler, minute, runs, db_ms)
+      VALUES ('cmp_rollup', 'patch_rollup', 'version_rollup', 'leads.list',
+        '2026-01-01T00:01:00Z', 2, 11)`;
+    assert.deepStrictEqual(
+      yield* sql`SELECT runs, db_ms FROM runtime_query_rollups ORDER BY minute`,
+      [
+        { runs: "1", db_ms: "7" },
+        { runs: "2", db_ms: "11" }
+      ]
+    );
+    yield* sql`INSERT INTO runtime_query_rollup_runs (run_id) VALUES ('run_rollup')`;
+    const replay = yield* sql`INSERT INTO runtime_query_rollup_runs (run_id)
+      VALUES ('run_rollup')`.pipe(Effect.flip);
+    assert.strictEqual(replay._tag, "SqlError");
+  }).pipe(Effect.provide(Testing.emptyLayer(current)))
 );

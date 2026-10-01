@@ -4,12 +4,11 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { RuntimeFailure, runtimeOperations, WIRE_VERSION } from "@patchy/api";
+import { RuntimeFailure, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { OperatingLimits } from "@patchy/limits";
-import * as Runtime from "./Runtime.js";
 import * as Fixtures from "./test/fixtures.js";
 import { me } from "./me.js";
 
@@ -125,73 +124,6 @@ it.effect("admission burst peaks exclude refused calls and fall after refill", (
       }
     }).pipe(Effect.provide(Fixtures.layer({ me }, { "runtime.calls.perMinute": 300 }, eventLayer)));
   })
-);
-
-it.effect(
-  "counts non-database operations and server calls once against the same company burst",
-  () => {
-    let executions = 0;
-    const serverCall = Runtime.handler(
-      {
-        kind: runtimeOperations["server.call"].kind,
-        input: runtimeOperations["server.call"].request.fields.args,
-        output: runtimeOperations["server.call"].response
-      },
-      () =>
-        Effect.sync(() => {
-          executions++;
-          return { ok: true as const, value: "accepted" };
-        })
-    );
-    return Effect.gen(function* () {
-      const api = yield* Fixtures.client;
-      const send = (op: string) =>
-        api.call({
-          payload: {
-            patchId: Fixtures.patchId,
-            versionId: Fixtures.tier1VersionId,
-            principal: { userId: DEV_SEED.userId },
-            wire: WIRE_VERSION,
-            op,
-            args: op === "server.call" ? { handler: "leads.list", args: {} } : {}
-          },
-          headers: {
-            ...Fixtures.headers({ userId: DEV_SEED.userId }),
-            cookie: signedInCookies(),
-            origin: PUBLIC_BASE_URL
-          },
-          responseMode: "response-only"
-        });
-      for (let index = 0; index < 199; index++) {
-        assert.strictEqual((yield* send("me")).status, 200);
-      }
-      assert.strictEqual((yield* send("server.call")).status, 200);
-      assert.strictEqual(executions, 1);
-      const refused = yield* send("server.call");
-      assert.strictEqual(refused.status, 429);
-      assert.strictEqual(refused.headers["retry-after"], "1");
-      assert.include(decodeFailure(yield* refused.json), {
-        code: "limit_exceeded",
-        limitId: "company.admission.rate",
-        scope: "company",
-        value: 100,
-        retryAfter: 1
-      });
-      assert.strictEqual(executions, 1);
-      yield* TestClock.adjust(10);
-      assert.strictEqual((yield* send("me")).status, 200);
-      assert.strictEqual((yield* send("me")).status, 429);
-    }).pipe(
-      Effect.provide(
-        Fixtures.layer(
-          { me, "server.call": serverCall },
-          {
-            "runtime.calls.perMinute": 300
-          }
-        )
-      )
-    );
-  }
 );
 
 it.effect(

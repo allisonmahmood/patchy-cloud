@@ -89,14 +89,14 @@ const recentCalls = (calls: ReadonlyArray<RuntimeLog.Call>) =>
       : `<ol class="list">${calls
           .map((call) => {
             const outcome =
-              call.outcome === "failure"
+              call.outcome === "failure" || call.outcome === "handler_error"
                 ? "Failed"
                 : call.outcome === "success"
                   ? "Succeeded"
                   : call.outcome === "unknown"
                     ? "Unknown"
                     : "Pending";
-            return `<li class="list-row"><p class="connection-status"><strong>${escapeHtml(call.op)}</strong><span class="pill${call.outcome === "success" ? " pill-done" : ""}">${outcome}</span>${call.outcomeCode === null ? "" : `<code>${escapeHtml(call.outcomeCode)}</code>`}</p><p class="supporting-text connection-meta">${time(call.at.toISOString())} · ${call.durationMs === null ? "Duration unknown" : `${call.durationMs} ms`} · ${call.rowCount === null ? "Row count unknown" : `${call.rowCount} rows`}</p><dl class="facts"><dt>Patch / version</dt><dd>${call.patchId === null ? "Connection administration" : `<code>${escapeHtml(call.patchId)}</code> / <code>${escapeHtml(call.versionId ?? "Unknown")}</code>`}</dd><dt>User</dt><dd><code>${escapeHtml(call.userId)}</code></dd><dt>Credential kind</dt><dd>${escapeHtml(call.credentialKind)}</dd>${call.resource === null ? "" : `<dt>Resource</dt><dd><code>${escapeHtml(call.resource)}</code></dd>`}<dt>Correlation ID</dt><dd><code>${escapeHtml(call.correlationId)}</code></dd></dl>${call.op === "postgres.query" && call.sql !== null ? `<details><summary>SQL query</summary><pre class="code-panel"><code>${escapeHtml(call.sql)}</code></pre></details>` : ""}</li>`;
+            return `<li class="list-row"><p class="connection-status"><strong>${escapeHtml(call.op)}</strong><span class="pill${call.outcome === "success" ? " pill-done" : ""}">${outcome}</span>${call.outcomeCode === null ? "" : `<code>${escapeHtml(call.outcomeCode)}</code>`}</p><p class="supporting-text connection-meta">${time(call.at.toISOString())} · ${call.durationMs === null ? "Duration unknown" : `${call.durationMs} ms`} · ${call.rowCount === null ? "Row count unknown" : `${call.rowCount} rows`}</p><dl class="facts"><dt>Patch / version</dt><dd>${call.patchId === null ? "Connection administration" : `<code>${escapeHtml(call.patchId)}</code> / <code>${escapeHtml(call.versionId ?? "Unknown")}</code>`}</dd><dt>Effective principal</dt><dd><code>${escapeHtml(call.effectivePrincipal)}</code></dd><dt>Credential kind</dt><dd>${escapeHtml(call.credentialKind)}</dd>${call.resource === null ? "" : `<dt>Resource</dt><dd><code>${escapeHtml(call.resource)}</code></dd>`}<dt>Correlation ID</dt><dd><code>${escapeHtml(call.correlationId)}</code></dd></dl>${call.op === "postgres.query" && call.sql !== null ? `<details><summary>SQL query</summary><pre class="code-panel"><code>${escapeHtml(call.sql)}</code></pre></details>` : ""}</li>`;
           })
           .join("")}</ol>`
   }</section>`;

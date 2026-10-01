@@ -1,6 +1,12 @@
 export * as Binding from "./Binding.js";
 export * as LoadedVersions from "./LoadedVersions.js";
 export * as Executor from "./Executor.js";
+export * as ServerBundles from "./ServerBundles.js";
+export * as Invocation from "./Invocation.js";
+export * as InvocationLog from "./InvocationLog.js";
+export * as InvocationCapabilities from "./InvocationCapabilities.js";
+export * as CallbackGateway from "./CallbackGateway.js";
+export * as CallbackGatewayApi from "./CallbackGatewayApi.js";
 export * as Runtime from "./Runtime.js";
 export * as RuntimeProduction from "./RuntimeProduction.js";
 export * as RuntimeApi from "./RuntimeApi.js";

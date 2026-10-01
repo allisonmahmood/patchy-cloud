@@ -25,7 +25,7 @@ The trusted page surrounding one loaded patch version. It owns the reader's addr
 _Avoid_: patch (the untrusted content it contains), viewer (the person opening it)
 
 **Broker**:
-The shell's gate between one patch document and Patchy. It binds requests to the loaded version and the initially admitted principal, never gives patch code a credential, and never lends a replacement document the old document's authority.
+The shell's gate between one patch document and Patchy. It binds requests to the loaded version and the initiating viewer, never gives patch code a credential, and never lends a replacement document the old document's authority.
 _Avoid_: proxy URL (patches request operations, not arbitrary destinations), SDK (the client speaks to the broker)
 
 **Stream**:
@@ -49,7 +49,7 @@ A loaded version that remains eligible after another version becomes served. Its
 _Avoid_: revoked, stale, outdated
 
 **Envelope**:
-One correlated request or reply between a patch document and its broker, carrying the bundle's wire version and operation data. It is a message contract, not permission to choose a patch, version or principal.
+One correlated request or reply between a patch document and its broker, carrying the bundle's wire version and operation data. It is a message contract, not permission to choose a patch, version or initiating viewer.
 _Avoid_: transport version (there is only the runtime wire), binding (the host's trusted context)
 
 **Route bridge**:
@@ -75,7 +75,3 @@ _Avoid_: auth wall, login page (the door is a moment on the way to the patch, no
 **Connect door**:
 The future admission in front of a patch that needs a personal connection the viewer has not made, distinct from today's admin-managed company connection pages. Its connection and return behavior lives in [the product](../../docs/product.md#declaring-granting-opening).
 _Avoid_: consent screen (there is no per-patch consent), OAuth prompt (one thing that may happen behind it)
-
-**Patch identity**:
-The future identity a tier 2 patch's server side uses for its own primitives, distinct from the viewer and accountable to the patch's owner. Its reach is described in [the product](../../docs/product.md#tier-2--hosted).
-_Avoid_: service account (the shape, not the term), the owner's token (the patch does not inherit the owner's reach)

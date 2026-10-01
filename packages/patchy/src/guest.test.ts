@@ -1,9 +1,11 @@
 // @effect-diagnostics preferSchemaOverJson:off -- exercise the guest's raw HTTP JSON request and response boundary.
 import { assert, it } from "@effect/vitest";
+import { limitRefusal } from "@patchy/api";
 import type * as GuestProtocol from "@patchy/api/guest";
 import { PatchyError } from "./clientError.js";
 import { t, type Config, type Json } from "./config.js";
 import { createGuest } from "./guest.js";
+import { HandlerError } from "./handlerError.js";
 import { bindServer } from "./server.js";
 
 type Key = { readonly id: string };
@@ -90,6 +92,110 @@ it.each([
   });
   assert.deepInclude(reply, { ok: false, source: "patchy", code: "handler_failed" });
 });
+
+it.each([{ errors: undefined }, { errors: ["declared_refusal"] }])(
+  "logs an undeclared HandlerError privately when declared errors are $errors",
+  async ({ errors }) => {
+    const error = new HandlerError("undeclared_refusal", { private: "details" });
+    error.message = "Private failure message.";
+    error.stack = "HandlerError: Private failure message.\n    at demo.run";
+    const definition = server.action({
+      args: {},
+      result: t.json(),
+      ...(errors === undefined ? {} : { errors }),
+      handler: () => {
+        throw error;
+      }
+    });
+    const logs: unknown[] = [];
+    const reply = await invoke(definition, async (operation) => {
+      logs.push(operation);
+      return { ok: true, value: null };
+    });
+    assert.deepStrictEqual(logs, [
+      { op: "log", args: { message: error.message, details: { stack: error.stack } } }
+    ]);
+    assert.deepStrictEqual(reply, {
+      ok: false,
+      source: "patchy",
+      code: "handler_failed",
+      error: "The handler failed."
+    });
+  }
+);
+
+it("returns a declared business refusal without logging its cause", async () => {
+  const error = new HandlerError("declared_refusal", { reason: "unavailable" });
+  error.message = "Private business error message.";
+  const definition = server.action({
+    args: {},
+    result: t.json(),
+    errors: ["declared_refusal"],
+    handler: () => {
+      throw error;
+    }
+  });
+  const operations: unknown[] = [];
+  const reply = await invoke(definition, async (operation) => {
+    operations.push(operation);
+    return { ok: true, value: null };
+  });
+  assert.deepStrictEqual(operations, []);
+  assert.deepStrictEqual(reply, {
+    ok: false,
+    source: "handler",
+    code: "declared_refusal",
+    details: { reason: "unavailable" }
+  });
+});
+
+it.each(["\u754c", "\ud83d\ude80", "\u0000"])(
+  "retains bounded private exception diagnostics for oversized %j text",
+  async (character) => {
+    const error = new Error(`Private message: ${character.repeat(40_000)}`);
+    error.stack = `Private stack: ${character.repeat(40_000)}`;
+    const definition = server.action({
+      args: {},
+      result: t.json(),
+      handler: () => {
+        throw error;
+      }
+    });
+    const logs: GuestProtocol.Callback["args"][] = [];
+    const reply = await invoke(definition, async (operation) => {
+      const { op, args } = operation as GuestProtocol.Callback;
+      assert.strictEqual(op, "log");
+      const bytes = new TextEncoder().encode(JSON.stringify(args)).byteLength;
+      if (bytes > limitRefusal("tier2.log.bytes").value)
+        return {
+          ok: false,
+          source: "patchy",
+          error: "Log budget exceeded.",
+          ...limitRefusal("tier2.log.bytes")
+        };
+      logs.push(args);
+      return { ok: true, value: null };
+    });
+    assert.strictEqual(logs.length, 1);
+    const diagnostic = logs[0]!;
+    assert.isString(diagnostic.message);
+    assert.match(diagnostic.message as string, /^Private message: /);
+    assert.include(diagnostic.message as string, character);
+    assert.isTrue((diagnostic.message as string).isWellFormed());
+    assert.notStrictEqual(diagnostic.message, error.message);
+    const { stack } = diagnostic.details as { stack: string };
+    assert.match(stack, /^Private stack: /);
+    assert.include(stack, character);
+    assert.isTrue(stack.isWellFormed());
+    assert.notStrictEqual(stack, error.stack);
+    assert.deepStrictEqual(reply, {
+      ok: false,
+      source: "patchy",
+      code: "handler_failed",
+      error: "The handler failed."
+    });
+  }
+);
 
 it("folds builder and plain query columns into the same wire shape", async () => {
   const definition = server.action({

@@ -40,9 +40,13 @@ The engine, inspection, supervisor and local executor are available independentl
 pool. A killed generation requires a fresh host bind, never an invocation replay.
 It refuses construction when `NODE_ENV` or its explicit environment is production.
 The tier 2 `patchy dev` integration is a separate ticket; the cloud dev runner and
-migrated test template do not start workerd. Hosted admission still needs the host
-and fleet tickets, and tier 2 publish remains refused. These tests prove execution
-compatibility and local recovery, not Fargate containment.
+migrated test template do not start workerd. Runtime's host invocation path is
+exercised by `packages/runtime/src/InvocationLocal.test.ts`: a real own-table
+handler runs through the private callback listener and supervised local executor.
+`Invocation.test.ts` injects a non-returning executor to verify disconnected-client
+deadlines and unresolved-resource destruction. The fleet and tier 2 publish path
+remain separate work; tier 2 publish remains refused. These checks prove local
+execution and settlement, not Fargate containment.
 
 To run only the execution task from this checkout:
 
@@ -890,9 +894,11 @@ Patches adds `0008_patches_lifecycle`, with lifecycle and actor stamps, descript
 and visit counts. Limits adds `0009_limits_overrides`, with company overrides,
 configuration revisions and attributed change history. Patches adds
 `0010_patches_lifecycle_revision`, the durable counter for source publishes,
-sharing and lifecycle changes. Published seed patches stay live until retired or
-deleted; only deletion starts their 30-day recovery window. Token and invitation
-expiry remain separate.
+sharing and lifecycle changes. Runtime adds `0011_runtime_invocations`, with
+invocation and query-rollup records, callback invocation/principal attribution
+and explicit unknown operation outcomes. Published seed patches stay live until
+retired or deleted; only deletion starts their 30-day recovery window. Token and
+invitation expiry remain separate.
 Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,

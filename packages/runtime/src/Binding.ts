@@ -9,5 +9,8 @@ export class Binding extends Context.Service<
     readonly principal: typeof RuntimePrincipal.Type;
     readonly identity: typeof RuntimeMe.Type;
     readonly correlationId: string;
+    /** Invocation callbacks retain the viewer but act as the patch for owned resources. */
+    readonly effectivePrincipal?: string;
+    readonly invocationId?: string;
   }
 >()("@patchy/runtime/Binding") {}

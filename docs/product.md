@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Hosted runtimes and patch identity, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle are future work.
+Tier 2 invocation admission, patch identity for own-resource callbacks, viewer reauthorization and bounded settlement are implemented behind the isolated local execution path. Hosted tier 2 publication and fleet wiring, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -77,8 +77,9 @@ serializable descriptors. Generation derives the server-only client's signatures
 from type-only server imports. `useQuery` shares local subscription state and
 retains its last value through errors. The pinned workerd engine, credential-free
 SDK guest, isolated descriptor inspection, process supervisor, private management
-listener and supervised local executor are implemented. Hosted admission still
-needs the host and fleet tickets, and the local tier 2 loop is not connected;
+listener and supervised local executor are implemented. Runtime now admits and
+settles invocations through a private capability gateway in isolated execution
+tests. Hosted fleet wiring and the local tier 2 loop remain separate work;
 tier 2 publish remains refused.
 
 ### Building a patch
@@ -359,13 +360,13 @@ Tier 1 runs only while the viewer has the patch open. It cannot run background w
 ### Tier 2 — hosted
 
 Tier 2 is decided in [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md),
-but is not admitted by today's hosted runtime. Its engine, inspection, supervisor
-and local executor are built. The supervisor terminates runaway version processes
-and unfinished initialization, and fails closed for a resident whose metering
-fails. The in-process local adapter counts actual host and child RSS, so its
-memory limit conservatively includes unrelated host allocations. It refuses
-production construction. The host and fleet still have to supply admission,
-settlement and company tasks.
+but tier 2 publishing remains refused. Its engine, inspection, supervisor, local
+executor and host invocation lifetime are built. The host validates handler
+arguments and results, authorises callbacks, records invocations and settles
+admitted work independently of the browser connection. The supervisor terminates
+runaway version processes and unfinished initialisation. The local executor
+refuses production construction. Query snapshots, mutation transactions and
+keys, nested handlers, company tasks and the publish path remain separate work.
 
 The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
@@ -377,13 +378,14 @@ The patch also has server-side code, and Patchy runs it **while a viewer has the
 
 The server side is handler-shaped code Patchy runs, with a fixed layout `init` lays down — not an arbitrary app listening on a port. Bringing a whole app is a second runtime with a second set of limits, and is not promised.
 
-When hosted admission lands, server-side code will have two identities available.
-Company data and integrations will be reached **as the initiating viewer**. The
-patch's own primitives will be reached as the **patch identity**, accountable to
-its owner. The host will choose and reauthorize the principal on each callback;
-the guest will not choose credentials or identity. No login, database or
-object-store credential will enter the execution service. Nothing will leave
-guest code except through Patchy.
+Server-side calls use two identities. The **initiating viewer** is the person
+whose live session admitted the invocation. The gateway chooses the **effective
+principal** for every callback: the patch identity for its own tables and stores,
+the viewer for shared resources and company integrations. Own resources inherit
+admission; access to company resources is re-checked live. The patch identity is
+its id, not its owner's account, so owner deactivation and reassignment do not
+change its authority. Guest code cannot select a principal or receive a login,
+database credential or object-store credential.
 
 When a patch asks for data the viewer may not reach, the viewer is told plainly that this is their access, not the patch being broken.
 
@@ -517,7 +519,7 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 - **Agent** — software acting for a user, with that user's machine token. Never a who, always a how; it is indistinguishable from its user except by the token's machine name.
 - **Member**, **admin** — the two roles a user has in the company.
 - **Owner**: the user a patch belongs to and the only user who publishes its code. Same-company admin actors may perform the other management acts; admitted viewers may write its data.
-- **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. Tier 1 patch code acts within that viewer's permissions; a public runtime has no such acting identity, even for a signed-in reader.
+- **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. Tier 1 patch code acts within that viewer's permissions. Tier 2 retains the initiating viewer and rechecks their live session and membership for company resources; its own-resource callbacks act as the patch. Public documents have no company runtime authority, even for a signed-in reader.
 - **Operator** — Patchy, running the platform. Platform powers only, never a role inside a company, and never the word for whoever drives the CLI — that is the agent, the CLI's primary **driver**.
 
 ## Primitives
@@ -879,4 +881,4 @@ against real Postgres in CI, not promised by the local dev loop.
 
 ### The edges
 
-A tier 2 patch's own **patch identity** against a shared connection is sketched under [Runtime tiers](#tier-2--hosted); its mechanics are settled when tier 2 is designed. Patch-owned shared tables already provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.
+A tier 2 invocation acts as the patch for its own tables and files, and as the initiating viewer for shared tables, company connections and members. The latter require live viewer reauthorization; patch identity does not grant shared-connection access. Patch-owned shared tables already provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.

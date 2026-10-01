@@ -635,7 +635,15 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`server.call { handler, args, mutationKey? }` names a one-level `module.export`. " +
           'Its declared business refusal is HTTP 200 `{ ok: false, source: "handler", code, details? }`; ' +
           "successful handler data stays inside `{ ok: true, value }`, even when the value resembles a refusal. " +
-          "This wire contract does not enable hosted execution: tier 2 publishing remains refused. " +
+          "Runtime validates the loaded version's handler descriptors and dispatches through its Executor. " +
+          "Admission requires a live session, an eligible loaded version and company scope; public documents cannot call handlers. " +
+          "Tier 2 documents cannot make name-based direct primitive or connection calls, even after rollback to tier 1 (`server_required`). " +
+          "While tier 2 is served, an older tier 1 document may call only `me`. " +
+          "Action concurrency defaults to eight per company and two per viewer per patch (`busy`). " +
+          "The host owns deadlines independently of the HTTP caller: 3 s for queries, 5 s for mutations, 60 s for actions, plus at most 5 s for cleanup. " +
+          "Unresolved effects remain `unknown_outcome`, never `handler_timeout`; a late guest reply cannot restore authority. " +
+          "`handler_failed` carries a host correlation id; exception messages and stacks remain in the invocation log. " +
+          "The isolated local executor exercises this host path; tier 2 publishing remains refused. " +
           "Request bodies allow 1 MiB plus envelope for " +
           "insert/update and 8 MiB plus envelope for insertMany; server.call handler arguments allow " +
           "1 MiB (`tier2.args.bytes`) with a 64 KiB allowance for the enclosing request. Postgres calls allow " +

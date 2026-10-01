@@ -46,6 +46,14 @@ const failure = (code: "invalid_request" | "handler_failed", error: string): Fai
   error
 });
 const handlerFailed = () => failure("handler_failed", "The handler failed.");
+// Two 2,048-code-unit fields stay below the 32 KiB tier2.log.bytes contract,
+// even at JSON's worst case of six bytes per code unit, with room for framing.
+const diagnosticText = (value: string): string => {
+  if (value.length <= 2048) return value;
+  const last = value.charCodeAt(2047);
+  const end = last >= 0xd800 && last <= 0xdbff ? 2047 : 2048;
+  return `${value.slice(0, end)} [truncated]`;
+};
 const json = (value: GuestProtocol.GuestReply | GuestProtocol.InspectionReply) =>
   new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
 
@@ -255,7 +263,8 @@ export function createGuest(modules: Readonly<Record<string, Readonly<Record<str
           if (
             "code" in error &&
             typeof error.code === "string" &&
-            isHandlerError(error, error.code)
+            isHandlerError(error, error.code) &&
+            entry.descriptor.errors?.includes(error.code)
           ) {
             try {
               const reply = decodeReply({
@@ -341,6 +350,22 @@ export function createGuest(modules: Readonly<Record<string, Readonly<Record<str
         reply = decodeReply({ ok: true, value: await entry.handler(context as never, input.args) });
       } catch (error) {
         reply = errorReply(error);
+        if (!reply.ok && reply.source === "patchy" && reply.code === "handler_failed") {
+          // Diagnostics travel only to the private, bounded invocation log.
+          // Failure to write diagnostics never replaces the generic handler failure.
+          try {
+            await call("log", {
+              message: diagnosticText(
+                error instanceof Error ? error.message : "The handler threw a non-Error value."
+              ),
+              ...(error instanceof Error && error.stack !== undefined
+                ? { details: { stack: diagnosticText(error.stack) } }
+                : {})
+            });
+          } catch {
+            // The host may already have fenced the invocation.
+          }
+        }
       }
       let logFailure: Failure | undefined;
       // log() is synchronous to handlers, but its callbacks belong to this invocation's reply.

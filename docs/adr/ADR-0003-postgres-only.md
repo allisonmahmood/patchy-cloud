@@ -30,7 +30,7 @@ S3-compatible API; development and offline tests use the filesystem. A bucket
 belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. The current ledger has ten
+   baselines were rewritten before deployment. The current ledger has eleven
    records across seven owners:
 
    | id   | owner            | record                       |
@@ -45,6 +45,7 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    | 0008 | Patches          | `patches_lifecycle`          |
    | 0009 | Limits           | `limits_overrides`           |
    | 0010 | Patches          | `patches_lifecycle_revision` |
+   | 0011 | Runtime          | `runtime_invocations`        |
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.
@@ -52,6 +53,16 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    delete, restore and rollback. Soft deletion keeps the counter; reclamation
    removes the row, leaving permanent absence as the final deletion evidence.
    Enumerated platform columns use text with check constraints, not Postgres enums.
+   Runtime invocation attribution keeps the initiating viewer separate from the
+   effective principal. The migration backfills existing call principals from
+   `user_id`, then permits patch callbacks with a null `user_id` and an
+   `invocation_id`. Both operation and invocation rows accept `handler_error`.
+   Invocation rows retain deadlines, settlement, log lines, reply delivery and
+   metering fields including database-held milliseconds. Settlement can reconcile
+   `unknown_outcome`, but cannot replace a final outcome.
+   The same migration creates minute-keyed query rollups and applied-run ids.
+   Rollup increments, deduplication transactions and pruning belong to the
+   metering implementation; host-owned mutation transactions are separate work.
 
 2. **Embedded Postgres is the cloud worktree and test store.** `pnpm dev`
    migrates and seeds one per worktree. `@patchy/sql/testing` gives each

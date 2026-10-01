@@ -80,7 +80,7 @@ const connection = new ConnectionStore.Connection({
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version) =>
     Effect.succeed(
-      patch === patchId && version === versionId
+      patch === patchId && (version === undefined || version === versionId)
         ? Option.some({
             patchId,
             versionId,

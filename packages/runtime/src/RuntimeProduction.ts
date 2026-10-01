@@ -39,14 +39,41 @@ export const make = (
       );
       if (HttpServerResponse.isHttpServerResponse(admission.result))
         return yield* new Runtime.SessionExpired({});
-      const viewer = yield* RequireSession.resolveViewer.pipe(
+      const claims = admission.result;
+      const resolveViewer = RequireSession.resolveViewer.pipe(
         Effect.provideContext(viewerContext),
-        Effect.provideService(RequireSession.SignedIn, admission.result),
+        Effect.provideService(RequireSession.SignedIn, claims),
         Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
       );
+      const viewer = yield* resolveViewer;
       if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
         return yield* new Runtime.AccessDenied({});
-      return { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" };
+      // Admission covers the JWT's remaining lifetime. After expiry, concurrent
+      // callbacks share one backend result for this invocation, including failures.
+      const activeAfterExpiry = yield* session.isActive(claims).pipe(
+        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+        Effect.cached
+      );
+      return {
+        viewer: { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" },
+        reauthorize: Effect.gen(function* () {
+          if ((yield* Clock.currentTimeMillis) >= claims.exp * 1_000 && !(yield* activeAfterExpiry))
+            return yield* new Runtime.SessionExpired({});
+          const current = yield* resolveViewer;
+          if (
+            current === null ||
+            HttpServerResponse.isHttpServerResponse(current) ||
+            current.user.id !== viewer.user.id ||
+            current.company.id !== viewer.company.id
+          )
+            return yield* new Runtime.AccessDenied({});
+          return {
+            user: current.user,
+            company: current.company,
+            admin: current.role === "admin"
+          };
+        })
+      };
     });
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,

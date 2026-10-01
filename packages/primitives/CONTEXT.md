@@ -1,6 +1,6 @@
 # Primitives
 
-The resources a patch defines and owns, and the operations its admitted viewers use to work with them. Their cumulative existence belongs to the [company database's inventory](../company-database/CONTEXT.md); access is bound by [Runtime](../runtime/CONTEXT.md) to the loaded version and acting identity.
+The resources a patch defines and owns, and the operations its admitted viewers use to work with them. Their cumulative existence belongs to the [company database's inventory](../company-database/CONTEXT.md); [Runtime](../runtime/CONTEXT.md) binds access to the loaded version and effective principal. Tier 1 operations act as the viewer. Tier 2 own-resource callbacks act as the patch; shared-resource callbacks require the initiating viewer's live authority.
 
 ## Language
 

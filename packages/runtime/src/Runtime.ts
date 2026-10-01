@@ -23,6 +23,7 @@ import { ContractLimits, Limits } from "@patchy/limits";
 import { registry, type LimitScope } from "@patchy/limits/registry";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
+import * as Invocation from "./Invocation.js";
 
 const textEncoder = new TextEncoder();
 
@@ -98,6 +99,14 @@ export class ShellOutdated extends Schema.TaggedError<ShellOutdated>()(
     return "Runtime request refused: shell_outdated.";
   }
 }
+export class ServerRequired extends Schema.TaggedError<ServerRequired>()("ServerRequired", {}) {
+  readonly code = "server_required" as const;
+  readonly status = 403;
+  override get message() {
+    return "This document must use server handlers instead of direct primitive operations.";
+  }
+}
+
 export class Draining extends Schema.TaggedError<Draining>()("Draining", {}) {
   readonly code = "busy" as const;
   readonly status = 503;
@@ -191,6 +200,16 @@ export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
     return "Runtime request refused: source_unavailable.";
   }
 }
+export class InvocationUnavailable extends Schema.TaggedError<InvocationUnavailable>()(
+  "InvocationUnavailable",
+  {}
+) {
+  readonly code = "source_unavailable" as const;
+  readonly status = 503;
+  override get message() {
+    return "The host has no server invocation service.";
+  }
+}
 export class UnknownOutcome extends Schema.TaggedError<UnknownOutcome>()("UnknownOutcome", {
   cause: Schema.Defect(),
   correlationId: Schema.String
@@ -229,6 +248,7 @@ export type RuntimeError =
   | RateLimited
   | LimitExceeded
   | SourceUnavailable
+  | InvocationUnavailable
   | UnknownOutcome
   | OperationError;
 
@@ -392,11 +412,19 @@ export interface Execution {
   readonly deadlineMs: number;
 }
 
+export interface AdmittedIdentity {
+  readonly viewer: NonNullable<Binding.Binding["Service"]["identity"]>;
+  readonly reauthorize: Effect.Effect<
+    NonNullable<Binding.Binding["Service"]["identity"]>,
+    RuntimeError
+  >;
+}
+
 /** Environment adapters choose identity and recording; admission and execution stay shared. */
 export interface Options {
   readonly origin: string;
   readonly identity: Effect.Effect<
-    NonNullable<Binding.Binding["Service"]["identity"]>,
+    AdmittedIdentity,
     RuntimeError,
     HttpServerRequest.HttpServerRequest
   >;
@@ -416,6 +444,7 @@ export const make = (
 ): Effect.Effect<Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
     const versions = yield* LoadedVersions.LoadedVersions;
+    const invocations = yield* Effect.serviceOption(Invocation.Invocation);
     const limits = yield* Limits.Limits;
     const settings = yield* config;
     const origin = options.origin;
@@ -483,7 +512,10 @@ export const make = (
             // A constrained SELECT can invoke functions: integrations require the same
             // exact Origin as mutations, never a Sec-Fetch-Site fallback.
             if (
-              ((operation?.kind === "mutation" || integration || request.method === "PUT") &&
+              ((input.op === "server.call" ||
+                operation?.kind === "mutation" ||
+                integration ||
+                request.method === "PUT") &&
                 request.headers.origin !== origin) ||
               (request.method === "GET" && request.headers["sec-fetch-site"] !== "same-origin")
             )
@@ -512,10 +544,13 @@ export const make = (
         )
           return yield* new ShellOutdated({});
         let identity: Binding.Binding["Service"]["identity"] = null;
+        let reauthorize: AdmittedIdentity["reauthorize"] = Effect.fail(new AccessDenied({}));
         if (version.scope === "public") {
           if (input.op !== "me") return yield* new PublicUnavailable({});
         } else {
-          identity = yield* options.identity;
+          const admitted = yield* options.identity;
+          identity = admitted.viewer;
+          reauthorize = admitted.reauthorize;
           yield* WideEvents.enrich({ viewerId: identity.user.id });
           if (identity.company.id !== version.companyId) return yield* new AccessDenied({});
         }
@@ -548,6 +583,22 @@ export const make = (
             if (principal === null ? input.op !== "me" : principal.userId !== identity.user.id)
               return yield* new PrincipalChanged({});
           }
+          if (
+            version.manifest.tier === 2 &&
+            (input.op.startsWith("tables.") ||
+              input.op.startsWith("files.") ||
+              input.op.startsWith("shared.") ||
+              input.op.startsWith("postgres.") ||
+              input.op.startsWith("members."))
+          )
+            return yield* new ServerRequired();
+          if (input.op !== "me" && version.manifest.tier < 2) {
+            const served = yield* versions
+              .find(version.patchId)
+              .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
+            if (Option.isNone(served)) return yield* new AccessDenied({});
+            if (served.value.manifest.tier === 2) return yield* new ServerRequired();
+          }
           const attempt = yield* limits.consume({
             key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
             limit: settings.callsPerMinute,
@@ -568,6 +619,13 @@ export const make = (
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.
         if (!integration) yield* admit;
+        if (input.op === "server.call") {
+          if (Option.isNone(invocations)) return yield* new InvocationUnavailable();
+          return yield* run({
+            kind: "read",
+            run: (args) => invocations.value.call(args, binding, reauthorize)
+          }).pipe(Effect.provideService(Binding.Binding, binding));
+        }
         if (operation === undefined) return yield* new InvalidRequest({});
         const execute = Effect.gen(function* () {
           if (integration) yield* admit;
