@@ -45,33 +45,37 @@ const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
 const healthy = Effect.fn("Dev.healthy")(function* (record: Daemon) {
   if (!record.url || !(yield* io("Could not inspect the dev process.", () => sameProcess(record))))
     return false;
-  const url = new URL(record.url);
-  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") return false;
   const http = yield* HttpClient.HttpClient;
-  return yield* http
-    .execute(
-      HttpClientRequest.get(`${url.origin}/healthz`).pipe(
-        HttpClientRequest.setHeader("x-patchy-dev", record.nonce)
+  for (const address of [record.url, ...(record.colleagueUrl ? [record.colleagueUrl] : [])]) {
+    const url = new URL(address);
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") return false;
+    const ready = yield* http
+      .execute(
+        HttpClientRequest.get(`${url.origin}/healthz`).pipe(
+          HttpClientRequest.setHeader("x-patchy-dev", record.nonce)
+        )
       )
-    )
-    .pipe(
-      Effect.flatMap((response) =>
-        Effect.gen(function* () {
-          if (response.status !== 200)
-            return yield* new LocalError({ message: "Dev runtime is not healthy." });
-          return yield* response.json;
-        })
-      ),
-      Effect.flatMap(decodeHealth),
-      Effect.map(
-        (body) =>
-          body.nonce === record.nonce &&
-          body.root === record.root &&
-          body.instance === record.instance
-      ),
-      Effect.timeout("2 seconds"),
-      Effect.catch(() => Effect.succeed(false))
-    );
+      .pipe(
+        Effect.flatMap((response) =>
+          Effect.gen(function* () {
+            if (response.status !== 200)
+              return yield* new LocalError({ message: "Dev runtime is not healthy." });
+            return yield* response.json;
+          })
+        ),
+        Effect.flatMap(decodeHealth),
+        Effect.map(
+          (body) =>
+            body.nonce === record.nonce &&
+            body.root === record.root &&
+            body.instance === record.instance
+        ),
+        Effect.timeout("2 seconds"),
+        Effect.catch(() => Effect.succeed(false))
+      );
+    if (!ready) return false;
+  }
+  return true;
 });
 
 const recorded = Effect.fn("Dev.recorded")(function* (
@@ -94,6 +98,7 @@ const report = (record: Daemon, stateDir: string, warnings: readonly string[] = 
       ok: true,
       healthy: true,
       url: record.url,
+      ...(record.colleagueUrl === undefined ? {} : { colleagueUrl: record.colleagueUrl }),
       logPath: logPath(stateDir),
       stop,
       pid: record.pid,
@@ -101,7 +106,13 @@ const report = (record: Daemon, stateDir: string, warnings: readonly string[] = 
       identity: record.identity,
       warnings
     },
-    [...warnings, record.url!, `Log: ${logPath(stateDir)}`, `Stop: ${stop}`]
+    [
+      ...warnings,
+      record.url!,
+      ...(record.colleagueUrl === undefined ? [] : [`Colleague: ${record.colleagueUrl}`]),
+      `Log: ${logPath(stateDir)}`,
+      `Stop: ${stop}`
+    ]
   );
 };
 
@@ -168,6 +179,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
         release: prepared.manifest.release,
         identity: prepared.identity,
         nonce,
+        logJson: yield* Output.JsonFlag,
         pid: process.pid,
         birth: yield* io("Could not identify this process.", async () => {
           const value = await birth(process.pid);

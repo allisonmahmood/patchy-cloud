@@ -300,6 +300,70 @@ it("learns query retry eligibility only from its nonce-bound parent bootstrap", 
   client.close();
 });
 
+it("updates cached server callables from trusted live handler kinds without reloading the client", async () => {
+  const port = new FakePort();
+  const transport = createPortTransport(port, {
+    handlerKinds: { "leads.change": "query", "leads.removed": "mutation" }
+  });
+  const client = createServerClient<{
+    leads: {
+      change: Handler<"query", Record<string, never>, string>;
+      removed: Handler<"mutation", Record<string, never>, string>;
+    };
+    added: { save: Handler<"mutation", Record<string, never>, string> };
+  }>({ transport });
+  const change = client.server.leads.change;
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "live", serverTime: 50_000 }
+  });
+  const before = change({});
+  await Promise.resolve();
+  expect(port.sent[0]!.args).toEqual({ handler: "leads.change", args: {} });
+  port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "old query" });
+  await expect(before).resolves.toBe("old query");
+
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "handlers", kinds: { "leads.change": "mutation", "added.save": "mutation" } }
+  });
+  const changed = change({});
+  const added = client.server.added.save({});
+  await Promise.resolve();
+  expect(port.sent[1]!.args).toMatchObject({
+    handler: "leads.change",
+    args: {},
+    mutationKey: expect.stringMatching(/^\d+-[A-Za-z0-9_-]{22}$/)
+  });
+  expect(port.sent[2]!.args).toMatchObject({
+    handler: "added.save",
+    args: {},
+    mutationKey: expect.stringMatching(/^\d+-[A-Za-z0-9_-]{22}$/)
+  });
+  expect(transport.handlerKind("leads.removed")).toBeUndefined();
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: "changed mutation" });
+  port.reply({ v: 1, kind: "result", id: port.sent[2]!.id, value: "new mutation" });
+  await expect(changed).resolves.toBe("changed mutation");
+  await expect(added).resolves.toBe("new mutation");
+
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "handlers", kinds: { "leads.change": "query" } }
+  });
+  const reverted = change({});
+  await Promise.resolve();
+  expect(port.sent[3]!.args).toEqual({ handler: "leads.change", args: {} });
+  port.reply({ v: 1, kind: "result", id: port.sent[3]!.id, value: "query again" });
+  await expect(reverted).resolves.toBe("query again");
+  client.close();
+});
+
 it("mints distinct 128-bit mutation keys from the advancing server clock, not the wall clock", async () => {
   vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
   vi.setSystemTime(new Date("2099-01-01T00:00:00Z"));

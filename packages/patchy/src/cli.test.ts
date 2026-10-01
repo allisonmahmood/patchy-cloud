@@ -5,6 +5,7 @@
  * files. What the commands do between those edges is the commands' own tests.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as Struct from "effect/Struct";
 import {
   existsSync,
@@ -58,8 +59,23 @@ const releaseArtifact = JSON.parse(
 const tarballPath = `/sdk/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`;
 const tempDirs: string[] = [];
 const servers: Server[] = [];
+const cliChildren = new Set<ChildProcess>();
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(
+    [...cliChildren].map(
+      (child) =>
+        new Promise<void>((resolve) => {
+          // Let the CLI interrupt its install child, then bound cleanup if shutdown stalls.
+          const force = setTimeout(() => child.kill("SIGKILL"), 1_000);
+          child.once("close", () => {
+            clearTimeout(force);
+            resolve();
+          });
+          child.kill("SIGTERM");
+        })
+    )
+  );
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   for (const server of servers.splice(0)) server.close();
 });
@@ -221,6 +237,7 @@ const runCli = (
         }
       }
     );
+    cliChildren.add(child);
     let stdout = "";
     let stderr = "";
     let answered = false;
@@ -233,7 +250,10 @@ const runCli = (
     });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
     child.on("error", reject);
-    child.on("close", (status) => resolve({ status, stdout, stderr, stateDir }));
+    child.on("close", (status) => {
+      cliChildren.delete(child);
+      resolve({ status, stdout, stderr, stateDir });
+    });
     if (!terminal) child.stdin.end(options.input ?? "");
     options.onSpawn?.(child);
   });
@@ -480,7 +500,7 @@ const localPackageRegistry = async () => {
   const dir = tempDir();
   const packages = new Map<
     string,
-    { manifest: Record<string, unknown>; version: string; tarball: string }
+    { manifest: Record<string, unknown>; version: string; tarball: string; integrity: string }
   >();
   const seen = new Set<string>();
   const resolvePackage = (name: string, from: string): string => {
@@ -502,11 +522,6 @@ const localPackageRegistry = async () => {
     seen.add(file);
     const manifest = decodePackageFixture(readJson(file));
     const tarball = path.join(dir, `${seen.size}.tgz`);
-    packages.set(`${manifest.name}@${manifest.version}`, {
-      manifest,
-      version: manifest.version,
-      tarball
-    });
     await exec("tar", [
       "-czf",
       tarball,
@@ -516,6 +531,12 @@ const localPackageRegistry = async () => {
       path.dirname(file),
       "."
     ]);
+    packages.set(`${manifest.name}@${manifest.version}`, {
+      manifest,
+      version: manifest.version,
+      tarball,
+      integrity: `sha512-${createHash("sha512").update(readFileSync(tarball)).digest("base64")}`
+    });
     for (const name of Object.keys(manifest.dependencies ?? {}))
       await pack(resolvePackage(name, file));
     for (const name of Object.keys(manifest.optionalDependencies ?? {})) {
@@ -565,7 +586,10 @@ const localPackageRegistry = async () => {
             entry.version,
             {
               ...entry.manifest,
-              dist: { tarball: `${url}/tarballs/${path.basename(entry.tarball)}` }
+              dist: {
+                tarball: `${url}/tarballs/${path.basename(entry.tarball)}`,
+                integrity: entry.integrity
+              }
             }
           ])
         )
@@ -577,12 +601,13 @@ const localPackageRegistry = async () => {
   const { port } = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${port}`;
   return {
-    npm_config_registry: url,
-    npm_config_store_dir: path.join(dir, "store"),
-    npm_config_cache: path.join(dir, "cache"),
-    npm_config_optional: "false",
-    npm_config_auto_install_peers: "false",
-    npm_config_update_notifier: "false"
+    // pnpm 11 reads its own config prefix; npm_config_* leaves the public registry active.
+    pnpm_config_registry: url,
+    pnpm_config_store_dir: path.join(dir, "store"),
+    pnpm_config_cache_dir: path.join(dir, "cache"),
+    pnpm_config_optional: "false",
+    pnpm_config_auto_install_peers: "false",
+    pnpm_config_update_notifier: "false"
   };
 };
 
@@ -2250,7 +2275,7 @@ describe("patchy delete", async () => {
     });
     expect(repeated.status).toBe(2);
     expect(JSON.parse(repeated.stderr)).toMatchObject({ kind: "rejected", code: "wrong_state" });
-  });
+  }, 30_000); // Five real CLI processes exercise publish, cache removal and repeated deletion.
 });
 
 describe("patch lifecycle commands", () => {
@@ -4286,10 +4311,10 @@ document.body.textContent = JSON.stringify({
         cwd: dir,
         env: {
           ...env,
-          npm_config_registry: instance.url,
-          npm_config_store_dir: path.join(tempDir(), "store"),
-          npm_config_cache: path.join(tempDir(), "cache"),
-          npm_config_update_notifier: "false"
+          pnpm_config_registry: instance.url,
+          pnpm_config_store_dir: path.join(tempDir(), "store"),
+          pnpm_config_cache_dir: path.join(tempDir(), "cache"),
+          pnpm_config_update_notifier: "false"
         }
       });
       const held = await barrier.wait(running);
@@ -4323,7 +4348,8 @@ document.body.textContent = JSON.stringify({
         ...authoredPackage,
         devDependencies: { patchy: originalPin }
       });
-    }
+    },
+    30_000 // A changed pin installs the real SDK before reaching the generation barrier.
   );
 
   it.each([

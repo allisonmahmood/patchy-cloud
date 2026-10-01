@@ -165,8 +165,8 @@ Tier 2 publication builds and uploads both HTML and server artifacts, then the
 instance re-derives handler descriptors from stored bytes before recording the
 version. It runs on the local executor in dev and test instances. Production
 hosting requires the fleet executor. Query subscriptions use that same hosted
-runtime. This release does not support the production-engine `patchy dev`
-integration, live server rebinding or colleague mount.
+runtime. `patchy dev` uses the supervised production handler engine and callback
+gateway, with live server rebinding and a separate non-admin colleague URL.
 The `patchy-server` skill documents handler behavior and registry limits.
 Authorised handles and staged upload adoption remain reserved contracts.
 
@@ -526,7 +526,7 @@ warnings and errors off the CLI's JSON stdout.
 
 Start this repo's local runtime, detached and idempotent. Exit 0 means the
 runtime and first single-file build are healthy; output contains the local
-page URL, log path and `pnpm patchy dev stop --api-url ...` command, using the
+page URL, `colleagueUrl` for tiers 1 and 2, log path and `pnpm patchy dev stop --api-url ...` command, using the
 repo's pinned CLI. A second start finds the same daemon without authenticating
 or checking a newer release. Start and status report the session's saved
 release and full `/api/me` identity, not the current login or a newer release.
@@ -535,23 +535,42 @@ New starts resolve a key, check the pin/CLI/installed runtime release, then
 authenticate `/api/me` and bind the viewer to the machine token's user. They pull
 published inventory if `patchy.json` has an id and regenerate declarations. The production shell,
 CSP, sandbox, broker and runtime admission are reused without Clerk or the
-production runtime log store. Each runtime request writes a compact wide event
-to local stdout, captured in the dev log, without PostHog delivery.
+production runtime log store. The primary URL uses the machine token's user;
+the colleague URL has a distinct origin and a fixed non-admin viewer in the
+same company. Both mounts share local tables, files, fixtures and subscriptions.
 Tier 0 adds only the trusted local reload script and its polling endpoint to its
-shell CSP. No connection keyring is loaded.
+shell CSP and has no colleague URL. No connection keyring is loaded.
 
-Vite runs in build-watch mode, not as an unrestricted dev server. Each complete
-single-file bundle is validated like publish, swapped atomically and followed
-by a whole-shell reload at the current route. Failed rebuilds leave the last
-successful bundle served and write the error to the log. Config and fixture
-changes need `dev stop` followed by `dev`.
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Contract limits (including result sizes,
+deadlines and registry limits) still apply; production operating capacity does
+not. Local PGlite results are not evidence for hosted `busy` or `write_conflict`
+behavior.
 
-| command             | behaviour                                                                                      | `--json` success                                                              |
-| ------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                            | `{ ok, healthy: true, url, logPath, stop, pid, release, identity, warnings }` |
-| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                        |
-| `dev logs`          | Print the dev log.                                                                             | `{ ok, log, text }`                                                           |
-| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                         |
+`dev.log` records each settled call's viewer, handler, outcome and milliseconds,
+plus `ctx.log` output. Handler failures include their original message and stack
+locally; browsers still receive the normal redacted error. A daemon started with
+`--json` writes full wide-event JSON and invocation records to the log. There are
+no runtime database log rows or PostHog delivery.
+
+Vite runs in build-watch mode, not as an unrestricted dev server. A successful
+`src/` rebuild atomically swaps the single-file page and reloads the whole shell.
+A `server/` edit rebuilds and atomically rebinds its bundle and descriptors without
+reloading the browser. New modules are discovered automatically; `dev.log` tells
+you to run `patchy refresh` for their types. In-flight calls and their nested calls
+finish on their original binding. Existing subscriptions rerun on the new one,
+discarding results that cross the swap; removed handlers or incompatible arguments
+end that subscription permanently. Failed builds keep the last good binding or
+page and log the error. Config and fixture changes need `dev stop` followed by `dev`.
+
+| command             | behaviour                                                                                      | `--json` success                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                            | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
+| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                                       |
+| `dev logs`          | Print the dev log.                                                                             | `{ ok, log, text }`                                                                          |
+| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                                        |
 
 `--foreground` waits and streams logs; Ctrl-C stops a session it started.
 Joining an existing session leaves it running on interruption. Under `--json`
@@ -576,6 +595,8 @@ and use cumulative source definitions, including retained ref targets whose
 declaration was omitted from the source's current manifest. Missing files fail naming the
 file, rather than silently generating an empty replacement. Invent the fixture
 rows; dev fetches metadata only, never production rows, bytes or credentials.
+Tier 2 handlers read these fixtures through `ctx.shared` and `ctx.connections`
+using the same callback operations as hosted execution.
 
 ### `patchy login [--complete [code]] [--wait <seconds>]`
 

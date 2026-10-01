@@ -32,7 +32,9 @@ gateway and snapshot adapter. Issue #400 adds host-owned SERIALIZABLE mutation
 transactions, mutation keys, explicit client retries and nested mutations.
 Issue #401 publishes both artifacts, re-derives descriptors from stored server
 bytes and serves tier 2 on dev and test instances. Production admission requires
-the fleet executor. The patch-repo `patchy dev` engine loop belongs to #404.
+the fleet executor. Issue #404 composes the same supervised engine and callback
+gateway into the patch-repo `patchy dev` loop over PGlite and fixtures, with
+atomic live server rebinding and a separate non-admin colleague listener.
 
 ## Engine, guest wire and inspection
 
@@ -43,9 +45,10 @@ its binding includes a verified SHA-256 of the exact bundle. Rebinding that
 identity to different bytes is refused. Worker Loader caches the isolate; each
 request obtains its own Worker handle because workerd handles are request-bound.
 
-The guest has no environment bindings. Its `globalOutbound` refuses fetch through
-a loopback. Closed-module validation prevents importing socket APIs; the loopback
-does not implement a TCP handler. The guest's `ctx.props` contains its invocation
+The guest has no environment bindings and its `globalOutbound` is `null`.
+Workerd refuses ambient fetch, WebSocket and TCP access even if a static import
+check misses a socket-module import. This restriction applies to inspection and
+production binding/invocation. The guest's `ctx.props` contains its invocation
 name and a callback RPC stub, never the capability or callback address. Each stub
 identifies one immutable attempt dispatch. A later dispatch with the same public
 identifiers cannot revive an old stub. The loader checks the deadline and liveness
@@ -97,11 +100,15 @@ in the loader-to-host Authorization header. Redirects are not followed.
 and result validation, per-kind permission checks and settlement belong to the
 host; the guest SDK is not an authorization boundary.
 
-Inspection loads the exact bundle in a fresh throwaway workerd process, with no
-company binding, callback service or Runtime dependency. It derives descriptors
-under a five-second load deadline by default; a module-load throw, malformed
-reply or unfinished initializer fails inspection. The scope kills and reaps the
-process and removes its temporary files on success, failure or interruption.
+Publication inspection loads the exact bundle in a fresh throwaway workerd
+process, with no company binding, callback service or Runtime dependency.
+Local dev reuses that credential-free process, but each inspection uses an
+uncached, request-owned Worker. Completing the request disposes that Worker and
+its background tasks; saved bundles never accumulate in the Loader's named cache.
+Both paths derive descriptors under a five-second load deadline by default.
+A module-load throw, malformed reply or unfinished initializer fails inspection
+and reaps the process. Closing the owning scope also reaps it and removes its
+temporary files.
 Descriptor discovery is bundle self-description and an exact-byte consistency
 check, not proof that arbitrary hostile code dispatches what it describes.
 
@@ -162,10 +169,11 @@ or `handler_timeout`; the host must classify every attempt by its commit outcome
 `@patchy/execution/local` implements Runtime's `Executor` without a pool.
 After a health kill, the host binds again to get a fresh process generation;
 the executor never replays the failed invocation. Construction refuses a
-production environment. The local supervisor runs in the host process, so
-aggregate RSS is the real `process.memoryUsage.rss()` plus sampled child RSS.
-This intentionally includes unrelated host allocations and is more conservative
-than a dedicated execution task. No fixed allowance replaces measured host RSS.
+production environment. The local supervisor runs in the host process, but its
+aggregate residency ceiling counts only sampled supervised workerd RSS. PGlite,
+fixtures, Vite and other host allocations do not consume the executor's budget.
+Dedicated fleet tasks still count the supervisor, retained bundles and reports.
+Both modes enforce the same workerd process count, RSS ceilings and watchdog.
 Local execution proves engine compatibility and recovery, not Fargate containment
 or per-invocation CPU and memory guarantees.
 
@@ -473,11 +481,14 @@ present, is incidental and unsupported rather than forbidden.
 The engine explicitly disables both `nodejs_compat` and `nodejs_compat_v2`; the
 pinned compatibility date would otherwise enable them by default. This is not
 alone an import boundary: workerd still exposes a minimal `node:process` module.
-Before loading either a bound or inspected guest, the loader parses the artifact
-and rejects imports, re-exports and dynamic imports, including dormant computed
-imports. This enforces the single closed-module contract rather than maintaining
-a partial list of denied built-ins. Socket APIs are inaccessible through the same
-boundary, and guest fetch is connected only to the refusing loopback.
+Before loading either a bound or inspected guest, the loader scans the artifact
+for imports, re-exports and dynamic imports to give an early closed-module error.
+This lexer is not a containment boundary. In particular, JavaScript's ambiguous
+division/regular-expression syntax can hide an import from it. Loaded Workers
+receive no ambient network capability regardless of that result. Regressions
+execute an unparenthesized `function(){} / import("cloudflare:sockets") / 1`
+bypass against real TCP, fetch and WebSocket listeners while preserving trusted
+callback RPC.
 
 Workers for Platforms is closed: it is not Patchy's backend, has one account as
 the blast radius, and had no credits. Self-hosting means Patchy supplies the

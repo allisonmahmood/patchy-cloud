@@ -412,21 +412,29 @@ authenticates `/api/me`; pulls published inventory and declaration metadata;
 regenerates; provisions local PGlite; and starts Vite build-watch with the
 production shell, CSP, sandbox, broker and dispatcher. It uses fixtures and local
 files, never production rows/bytes, Clerk, a connection keyring or the production
-runtime log store. Calls and bytes routes print compact wide events to local
-stdout without PostHog delivery. The existing `dev logs` response remains text.
+runtime log store. Each call logs viewer, handler, outcome and milliseconds, plus
+`ctx.log` output and dev-only failure message/stack, without PostHog delivery.
+A daemon started with `--json` writes full wide events and invocation JSON to
+`dev.log`; `dev logs --json` still returns `{ ok, log, text }`.
 Tier 0 retains its production shell policy with only the trusted local
 reload script and polling endpoint added; its content remains script-free.
-This patch-repo loop covers tiers 0 and 1. Tier 2 handler execution on a
-development instance is already available, but the production-engine
-`patchy dev` integration, live server rebinding and `colleagueUrl` belong to
-#404. Tier 2 query subscriptions belong to #403. Init and refresh do not
-claim those runtime integrations.
+Tiers 1 and 2 return a second `colleagueUrl` at a distinct loopback origin,
+authenticated as a fixed non-admin colleague in the same company. Both mounts
+share data, fixtures and subscriptions; the primary remains the machine user.
+Tier 2 uses the supervised workerd engine and private callback gateway.
 
-| command                 | `--json` success                                                              |
-| ----------------------- | ----------------------------------------------------------------------------- |
-| `dev`, `dev status`     | `{ ok, healthy: true, url, logPath, stop, pid, release, identity, warnings }` |
-| `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                               |
-| `dev logs`              | `{ ok, log, text }`                                                           |
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Fixed contract limits remain enforced;
+production operating capacity does not. PGlite is not evidence for hosted
+`busy` or `write_conflict` behavior.
+
+| command                 | `--json` success                                                                             |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| `dev`, `dev status`     | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
+| `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                                              |
+| `dev logs`              | `{ ok, log, text }`                                                                          |
 
 Start exits 0 only after the first valid single-file bundle and runtime are
 healthy. The daemon persists the checked release and full `/api/me` identity
@@ -437,12 +445,16 @@ local exit 1, `not_running`. Missing fixtures and local provisioning failures ar
 local; `not_additive` retains the provisioner's message/code. Instance refusals
 and transport failures use the ordinary ladder.
 
-Vite builds production bundles without HMR. Successful rebuilds replace the
-bundle atomically and reload the whole shell at the current route; failures keep
-the last successful bundle and log the diagnostic. Config and fixture changes
-require stop/start. Foreground streams logs in text mode; under `--json` it emits
-only readiness, leaving logs to `dev logs --json`. Interruption stops the session
-only if that foreground invocation started it.
+Vite builds production bundles without HMR. A successful `src/` rebuild replaces
+the page atomically and reloads the shell at its current route. A `server/` edit
+atomically rebinds bundle bytes and descriptors without a reload. New modules are
+discovered live with a log notice to refresh types. In-flight calls and nested
+calls retain their old binding. Subscriptions wake on the new one and discard
+results that cross the swap; removed handlers or incompatible arguments end
+permanently. Failed rebuilds retain the last successful page or binding and log
+the diagnostic. Config and fixture changes require stop/start. Foreground streams
+logs in text mode; under `--json` it emits only readiness, leaving logs to
+`dev logs --json`. Interruption stops only a session that invocation started.
 
 State lives under `.patchy/dev/<instance-hash>/`, bound to canonical repo and
 instance. Nonce-authenticated health and PID birth time identify the daemon;

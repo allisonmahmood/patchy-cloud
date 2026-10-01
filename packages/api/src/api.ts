@@ -751,6 +751,10 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "the patch becomes public. Frames are `data: <JSON>\\n\\n`, without an event field. " +
           "The first frame is `{type:'hello',generation,serverTime}`, with an opaque generation " +
           "and Unix milliseconds; the current `{type:'served',versionId,tier}` follows. " +
+          "Dev also sends `{type:'handlers',kinds}` with the complete host-inspected handler-kind map " +
+          "on open/reconnect and before subscription wakes after each successful server rebind. " +
+          "The trusted shell forwards this replacement to the existing document so newly added " +
+          "mutations receive client-minted mutation keys without a page reload. " +
           "Replacing an open document requires its latest generation in " +
           "`X-Patchy-Generation`; a stale replacement is `invalid_request` (409). " +
           "A successful stream sets the opaque `patchy_stream_affinity` cookie, scoped to " +

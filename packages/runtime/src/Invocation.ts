@@ -190,6 +190,8 @@ export interface QueryObservation {
   readonly onSnapshot: (watermark: Readonly<Record<string, string>>) => void;
 }
 
+export type DevSettlement = InvocationLog.Begin & InvocationLog.Finish;
+
 export class Invocation extends Context.Service<
   Invocation,
   {
@@ -202,19 +204,34 @@ export class Invocation extends Context.Service<
   }
 >()("@patchy/runtime/Invocation") {}
 
-/** Its scope, not the HTTP request, owns admitted work and deadline settlement. */
-export const make = Effect.fn("Invocation.make")(function* (options: {
+interface Options {
   readonly callbackUrl: string;
-}) {
+  readonly dev?: { readonly observe: (settlement: DevSettlement) => Effect.Effect<void> };
+}
+
+interface PlatformBehavior {
+  readonly actionLimits: (companyId: string) => Effect.Effect<
+    {
+      readonly company: OperatingLimits.EffectiveLimit;
+      readonly viewer: OperatingLimits.EffectiveLimit;
+    },
+    Runtime.RuntimeError
+  >;
+  readonly settleQuietQuery: (record: QueryRollups.Record) => Effect.Effect<void>;
+}
+
+/** Its scope, not the HTTP request, owns admitted work and deadline settlement. */
+const makeWithOptions = Effect.fn("Invocation.make")(function* (
+  options: Options,
+  platform?: PlatformBehavior
+) {
   const scope = yield* Effect.scope;
   const executor = yield* Executor.Executor;
   const bundles = yield* ServerBundles.ServerBundles;
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const log = yield* InvocationLog.InvocationLog;
-  const rollups = yield* QueryRollups.make;
   const snapshots = yield* QuerySnapshot.QuerySnapshot;
   const mutations = yield* MutationTransaction.MutationTransaction;
-  const operating = yield* OperatingLimits.OperatingLimits;
   const deployment = yield* DeploymentConfig.load;
   const mutationRetryDelay = deployment.get("tier2.mutation.retryDelayMs");
   const bounds = yield* Effect.all({
@@ -304,16 +321,8 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
         : undefined;
     const key = canonicalArgs([binding.companyId, binding.patchId, viewer.user.id]);
     const actionLimits =
-      descriptor.kind === "action"
-        ? yield* operating
-            .getMany({
-              companyId: binding.companyId,
-              limits: {
-                company: "tier2.actions.company",
-                viewer: "tier2.actions.viewer"
-              }
-            })
-            .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
+      descriptor.kind === "action" && platform !== undefined
+        ? yield* platform.actionLimits(binding.companyId)
         : undefined;
     const resultCodec = codec.result;
     const invoke = Effect.uninterruptibleMask((restore) =>
@@ -374,6 +383,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
         let storedOutcome: MutationTransaction.StoredOutcome | undefined;
         const meter = yield* DatabaseMeter.make;
         let logs: Array<typeof Schema.Json.Type> | undefined;
+        let observed = false;
         const begin = {
           id,
           companyId: binding.companyId,
@@ -394,23 +404,28 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
           until: number
         ) {
           const settledAt = yield* Clock.currentTimeMillis;
-          const written = yield* awaitUntil(
-            log.finish({
-              id,
-              outcome,
-              outcomeCode,
-              settledAt,
-              durationMs: settledAt - startedAt,
-              guestMs: Math.round(guestMs),
-              dbMs: Math.round(meter.snapshot()),
-              callbacks: capability?.counters.callbacks ?? 0,
-              resultBytes,
-              attempts,
-              logLines: capability?.logs ?? logs ?? [],
-              replyDelivered
-            }),
-            until
-          );
+          const settled: InvocationLog.Finish = {
+            id,
+            outcome,
+            outcomeCode,
+            settledAt,
+            durationMs: settledAt - startedAt,
+            guestMs: Math.round(guestMs),
+            dbMs: Math.round(meter.snapshot()),
+            callbacks: capability?.counters.callbacks ?? 0,
+            resultBytes,
+            attempts,
+            logLines: capability?.logs ?? logs ?? [],
+            replyDelivered
+          };
+          if (options.dev !== undefined && !observed) {
+            observed = true;
+            yield* options.dev.observe({
+              ...begin,
+              ...settled
+            });
+          }
+          const written = yield* awaitUntil(log.finish(settled), until);
           if (Option.isNone(written))
             return yield* new UnsettledInvocation({ correlationId: binding.correlationId });
           return yield* written.value.pipe(
@@ -439,7 +454,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               if (
                 bundle.companyId !== binding.companyId ||
                 bundle.patchId !== binding.patchId ||
-                bundle.versionId !== binding.versionId
+                bundle.versionId !== (binding.executionVersionId ?? binding.versionId)
               )
                 return yield* new HandlerFailed({ correlationId: binding.correlationId });
               const bound = parent?.bound ?? (yield* executor.bind(bundle));
@@ -736,6 +751,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
           }
           if (
             // Quiet queries meter separately from attribution rows.
+            options.dev !== undefined ||
             descriptor.kind !== "query" ||
             parent !== undefined ||
             Exit.isFailure(outcome) ||
@@ -765,11 +781,11 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 Exit.isSuccess(outcome) && !outcome.value.ok ? outcome.value.code : outcomeCode,
                 settlementDeadline
               );
-          } else {
+          } else if (platform !== undefined) {
             // Metering settlement belongs to the host, never to reply delivery.
             // Retrying an ambiguous write keeps the same run id.
-            yield* rollups
-              .settle({
+            yield* platform
+              .settleQuietQuery({
                 runId: id,
                 companyId: binding.companyId,
                 patchId: binding.patchId,
@@ -897,6 +913,29 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
   });
   return Invocation.of({ call });
 });
+
+export const make = Effect.fn("Invocation.makeProduction")(function* (options: {
+  readonly callbackUrl: string;
+}) {
+  const operating = yield* OperatingLimits.OperatingLimits;
+  const rollups = yield* QueryRollups.make;
+  return yield* makeWithOptions(options, {
+    actionLimits: (companyId) =>
+      operating
+        .getMany({
+          companyId,
+          limits: { company: "tier2.actions.company", viewer: "tier2.actions.viewer" }
+        })
+        .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
+    settleQuietQuery: rollups.settle
+  });
+});
+
+/** Dev skips both platform database services; all handler contract limits still apply. */
+export const makeDev = (options: {
+  readonly callbackUrl: string;
+  readonly observe: (settlement: DevSettlement) => Effect.Effect<void>;
+}) => makeWithOptions({ callbackUrl: options.callbackUrl, dev: { observe: options.observe } });
 
 export const layer = (options: { readonly callbackUrl: string }) =>
   Layer.effect(Invocation, make(options));

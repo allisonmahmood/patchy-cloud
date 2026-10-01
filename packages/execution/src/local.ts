@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Supervisor from "./supervisor.js";
 
-export interface Options extends Supervisor.Options {
+export interface Options extends Omit<Supervisor.Options, "residencyAccounting"> {
   readonly companyId: string;
   readonly environment?: "development" | "test" | "production";
 }
@@ -29,7 +29,7 @@ export const make = Effect.fn("LocalExecutor.make")(
         operation: "bind",
         reason: "production_refused"
       });
-    const supervisor = yield* Supervisor.make(options);
+    const supervisor = yield* Supervisor.make({ ...options, residencyAccounting: "workerd-only" });
     const bindingEpoch = 1;
     yield* supervisor.bind({ companyId: options.companyId, bindingEpoch });
     return Executor.Executor.of({

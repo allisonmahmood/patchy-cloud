@@ -81,12 +81,16 @@ The single closed module built from a tier 2 version's handler code and stored b
 _Avoid_: page bundle, manifest, hosted instance
 
 **Environment**:
-Where a patch runs: the cloud as its viewer, or the local dev runtime as the machine's user. Both expose the same declared capabilities; local data comes from fixtures, never copied company rows.
+Where a patch runs: the cloud as its viewer, or the local dev runtime as the machine's user or a non-admin colleague. Both expose the same declared capabilities; local data comes from fixtures, never copied company rows.
 _Avoid_: instance (the target cloud), dev env (the CLI's local-instance discovery record)
 
 **Dev runtime**:
-The patch repo's local execution of real capabilities over disposable data, under the cloud's operation contract and as the machine token's user. Its schema baseline is the published inventory once the patch exists; its declarations use synthetic [Fixtures](../integrations/CONTEXT.md), never production rows.
+The patch repo's local execution of real capabilities over disposable data, under the cloud's operation contract. Tier 2 uses the production handler engine and callback path with live server rebinding. Its primary viewer is the machine token's user; tiers 1 and 2 also expose a colleague mount. Its schema baseline is the published inventory once the patch exists; its declarations use synthetic [Fixtures](../integrations/CONTEXT.md), never production rows. Production scheduling, operating capacity and containment are not reproduced.
 _Avoid_: mock backend, emulator, dev env
+
+**Colleague mount**:
+A second local dev URL at a distinct origin, bound to a fixed non-admin viewer in the machine user's company. It shares the primary mount's data and subscriptions so builders can exercise multi-viewer behavior without another login.
+_Avoid_: impersonation, second company, second dev runtime
 
 **Managed files**:
 The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: managed pins, generated client and metadata, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.

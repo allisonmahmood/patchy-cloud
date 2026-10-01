@@ -90,6 +90,11 @@ it.live(
           yield* Effect.sleep("25 millis");
       }).pipe(Effect.raceFirst(Fiber.join(server)), Effect.timeout("15 seconds"));
       const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);
+      const record = yield* Effect.promise(() => readRecord(stateDir));
+      assert.isString(record?.colleagueUrl);
+      const colleagueOrigin = new URL(record!.colleagueUrl!).origin;
+      assert.notStrictEqual(colleagueOrigin, origin);
+      const client = yield* HttpClient.HttpClient;
       const http = (yield* HttpClient.HttpClient).pipe(
         HttpClient.mapRequest(HttpClientRequest.prependUrl(origin))
       );
@@ -103,24 +108,48 @@ it.live(
       assert.include(initial.headers["content-security-policy"]!, "connect-src 'none'");
       assert.include(yield* initial.text, "First local build");
 
-      const call = (op: string, args: unknown, from = origin) =>
-        http.execute(
-          HttpClientRequest.post("/api/runtime/call").pipe(
+      const call = (
+        op: string,
+        args: unknown,
+        from = origin,
+        viewerId = prepared.identity.user.id,
+        target = origin
+      ) =>
+        client.execute(
+          HttpClientRequest.post(`${target}/api/runtime/call`).pipe(
             HttpClientRequest.setHeaders({
               origin: from,
               "x-patchy-wire": String(WIRE_VERSION),
-              "x-patchy-principal": JSON.stringify({ userId: prepared.identity.user.id })
+              "x-patchy-principal": JSON.stringify({ userId: viewerId })
             }),
             HttpClientRequest.bodyJsonUnsafe({
               patchId: prepared.patchId,
               versionId: "ver_000000000000000000000000",
               wire: WIRE_VERSION,
-              principal: { userId: prepared.identity.user.id },
+              principal: { userId: viewerId },
               op,
               args
             })
           )
         );
+      const colleague = yield* call(
+        "me",
+        {},
+        colleagueOrigin,
+        "usr_dev_colleague",
+        colleagueOrigin
+      );
+      const colleagueClaims = yield* colleague.json;
+      assert.nestedPropertyVal(colleagueClaims, "value.user.id", "usr_dev_colleague");
+      assert.nestedPropertyVal(colleagueClaims, "value.admin", false);
+      const impersonation = yield* call(
+        "tables.insert",
+        { table: "notes", row: { title: "Wrong viewer" } },
+        colleagueOrigin,
+        prepared.identity.user.id,
+        colleagueOrigin
+      );
+      assert.strictEqual(impersonation.status, 409);
       const refused = yield* call(
         "tables.insert",
         { table: "notes", row: { title: "Forbidden" } },
@@ -191,10 +220,13 @@ it.live(
       const secondDocument = yield* subscribe("local-document-second");
       assert.deepStrictEqual(yield* firstDocument, { rows: [], cursor: null });
       assert.deepStrictEqual(yield* secondDocument, { rows: [], cursor: null });
-      const inserted = yield* call("tables.insert", {
-        table: "notes",
-        row: { title: "Local persisted note" }
-      });
+      const inserted = yield* call(
+        "tables.insert",
+        { table: "notes", row: { title: "Local persisted note" } },
+        colleagueOrigin,
+        "usr_dev_colleague",
+        colleagueOrigin
+      );
       assert.strictEqual(inserted.status, 200);
       assert.nestedPropertyVal(yield* inserted.json, "value.title", "Local persisted note");
       for (const next of [firstDocument, secondDocument]) {

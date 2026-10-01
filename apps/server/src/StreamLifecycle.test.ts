@@ -16,7 +16,13 @@ import { Companies, Users } from "@patchy/companies";
 import { contentHash, newInternalId, newPatchId } from "../../../packages/core/src/index.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions as DurableVersions, Patches } from "@patchy/patches";
-import { LoadedVersions, RuntimeStream, StreamAdmission, StreamLimits } from "@patchy/runtime";
+import {
+  LoadedVersions,
+  RuntimeStream,
+  StreamAdmission,
+  StreamLimits,
+  Subscriptions
+} from "@patchy/runtime";
 import { SubscriptionReads } from "@patchy/primitives";
 import * as Fixtures from "../../../packages/patches/src/test/fixtures.js";
 
@@ -92,6 +98,7 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
         const lifecycleScope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(lifecycleScope, Exit.void));
         const streams = yield* RuntimeStream.make.pipe(
+          Effect.provideServiceEffect(Subscriptions.Subscriptions, Subscriptions.make),
           Effect.provide(SubscriptionReads.layer),
           Effect.provideService(LoadedVersions.LoadedVersions, {
             find: (id, versionId) =>

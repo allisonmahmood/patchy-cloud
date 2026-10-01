@@ -63,6 +63,7 @@ export function openDocumentStream(options: {
   let hello: Extract<RuntimeStreamFrame, { readonly type: "hello" }> | undefined;
   let helloAt = 0;
   let served: Extract<RuntimeStreamFrame, { readonly type: "served" }> | undefined;
+  let handlers: Extract<RuntimeStreamFrame, { readonly type: "handlers" }> | undefined;
 
   let sequence = 0;
   let admitted = -1;
@@ -244,6 +245,8 @@ export function openDocumentStream(options: {
           } else if (frame.type === "served") {
             served = frame;
             status.served(frame);
+          } else if (frame.type === "handlers") {
+            handlers = frame;
           }
           if (frame.type === "admitted") {
             admitted = Math.max(admitted, frame.sequence);
@@ -390,6 +393,7 @@ export function openDocumentStream(options: {
       if (hello)
         options.send({ ...hello, serverTime: hello.serverTime + performance.now() - helloAt });
       if (served) options.send(served);
+      if (handlers) options.send(handlers);
     },
     close() {
       if (closed) return;

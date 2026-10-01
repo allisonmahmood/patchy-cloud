@@ -17,9 +17,11 @@ import * as RuntimeStreamApi from "./RuntimeStreamApi.js";
 import * as Fixtures from "./test/fixtures.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 import * as StreamLimits from "./StreamLimits.js";
+import * as Subscriptions from "./Subscriptions.js";
 
 const layer = RuntimeStreamApi.layer.pipe(
   Layer.provideMerge(RuntimeStream.layer),
+  Layer.provide(Subscriptions.layer),
   Layer.provide(StreamAdmission.layer),
   Layer.provide(StreamLimits.layer),
   Layer.provideMerge(Fixtures.streamPorts),
@@ -86,6 +88,7 @@ it.layer(layer)("stream HTTP admission", (it) => {
         })
       );
       const streams = yield* RuntimeStream.make.pipe(
+        Effect.provideServiceEffect(Subscriptions.Subscriptions, Subscriptions.make),
         Effect.provideService(StreamAdmission.StreamAdmission, admission),
         Effect.provide(StreamLimits.layer),
         Effect.provide(WideEvents.layerNoop)

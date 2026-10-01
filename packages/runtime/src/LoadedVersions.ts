@@ -7,6 +7,8 @@ import type { Manifest, SharingScope } from "@patchy/api";
 export interface LoadedVersion {
   readonly patchId: string;
   readonly versionId: string;
+  /** Dev keeps the document version stable while each server binding has its own execution id. */
+  readonly executionVersionId?: string;
   readonly companyId: string;
   readonly manifest: typeof Manifest.Type;
   /** Effective audience: historical versions of public patches remain company-only. */

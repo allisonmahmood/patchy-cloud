@@ -71,6 +71,7 @@ import {
   RuntimeStreamApi,
   StreamAdmission,
   StreamLimits,
+  Subscriptions,
   Wakes,
   WakesPostgres,
   me,
@@ -129,6 +130,7 @@ const services = Layer.mergeAll(
       const runtime = Layer.merge(
         RuntimeProduction.layer(handlers),
         RuntimeStream.layer.pipe(
+          Layer.provide(Subscriptions.layer),
           Layer.provide([SubscriptionReads.layer, StreamAdmission.layer, StreamLimits.layer])
         )
       );

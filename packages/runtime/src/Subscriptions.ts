@@ -1,10 +1,13 @@
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import {
   canonicalArgs,
+  type HandlerKind,
   type RuntimeStreamFrame,
   type RuntimeSubscription,
   type RuntimeSubscriptionRequest,
@@ -96,6 +99,24 @@ export interface DocumentSubscriptions {
   readonly metrics: () => { readonly peakSubscriptions: number; readonly reruns: number };
   readonly reconcile: (keys?: readonly string[], cause?: string) => Effect.Effect<void>;
 }
+
+export class Subscriptions extends Context.Service<
+  Subscriptions,
+  {
+    readonly attach: (
+      options: Pick<
+        Document,
+        "generation" | "binding" | "check" | "checkOperation" | "send" | "scope"
+      >
+    ) => DocumentSubscriptions;
+    /** Invalidates snapshots, including reads already in flight, after a dev binding swap. */
+    readonly rebind: (
+      patchId: string,
+      kinds: Readonly<Record<string, HandlerKind>>
+    ) => Effect.Effect<void>;
+    readonly handlerKinds: (patchId: string) => Readonly<Record<string, HandlerKind>> | undefined;
+  }
+>()("@patchy/runtime/Subscriptions") {}
 const equalVector = (left: RevisionVector | undefined, right: RevisionVector) =>
   left !== undefined &&
   Object.keys(left).length === Object.keys(right).length &&
@@ -131,6 +152,7 @@ export const make = Effect.gen(function* () {
   const bufferLimit = yield* ContractLimits.get("subscriptions.deltas.buffer");
   const gapMs = yield* ContractLimits.get("subscriptions.deltas.gap");
   const deadline = yield* ContractLimits.get("tier2.query.deadline");
+  const handlerKinds = new Map<string, Readonly<Record<string, HandlerKind>>>();
   const callBytes = yield* ContractLimits.get("runtime.call.bytes");
   const serverArgsBytes = yield* ContractLimits.get("tier2.args.bytes");
   const documents = new Set<Document>();
@@ -174,7 +196,7 @@ export const make = Effect.gen(function* () {
   const run = Effect.fnUntraced(function* (doc: Document, sub: Subscription) {
     if (!present(doc, sub)) return;
     const epoch = sub.epoch;
-    const binding = doc.binding();
+    let binding = doc.binding();
     const check = Effect.gen(function* () {
       yield* doc.check;
       if (doc.checkOperation !== undefined) yield* doc.checkOperation(sub.input.op);
@@ -239,7 +261,7 @@ export const make = Effect.gen(function* () {
         );
       }
     });
-    const input: SubscriptionReads.Input = {
+    let input: SubscriptionReads.Input = {
       op: sub.input.op,
       args: sub.input.args,
       binding,
@@ -254,6 +276,8 @@ export const make = Effect.gen(function* () {
     };
     const fence = yield* Effect.gen(function* () {
       yield* check;
+      binding = doc.binding();
+      input = { ...input, binding };
       const keys = yield* reads.admit(input);
       const fence = yield* reads.revisions(binding.companyId, keys);
       if (!present(doc, sub) || sub.epoch !== epoch) return;
@@ -617,5 +641,25 @@ export const make = Effect.gen(function* () {
         })
     };
   };
-  return { attach };
+  return Subscriptions.of({
+    attach,
+    handlerKinds: (patchId) => handlerKinds.get(patchId),
+    rebind: (patchId, kinds) =>
+      Effect.gen(function* () {
+        handlerKinds.set(patchId, kinds);
+        for (const doc of documents) {
+          if (doc.binding().patchId !== patchId) continue;
+          doc.send({ type: "handlers", kinds });
+          for (const sub of doc.subscriptions.values()) {
+            sub.epoch++;
+            sub.vector = undefined;
+            sub.dirty = true;
+            sub.retryAt = 0;
+          }
+        }
+        yield* schedule;
+      })
+  });
 });
+
+export const layer = Layer.effect(Subscriptions, make);

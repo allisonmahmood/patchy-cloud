@@ -126,4 +126,6 @@ The execution supervisor probes and samples process CPU/RSS every 250 ms. It kil
 
 Residency permits 12 loaded version processes and 1610612736 bytes aggregate RSS, including the supervisor, bundles, reports and overlapping versions. Enforcement continues while processes are loaded. Memory pressure evicts the largest idle process first; otherwise the oldest idle process goes first. If none is idle, new work receives busy. Processes idle for 60000 ms are reaped.
 
+The local executor applies the aggregate ceiling only to supervised workerd processes. Its PGlite, fixture and Vite host does not consume that budget. The dedicated fleet supervisor retains host-inclusive accounting; both modes keep the same process count, per-process RSS and watchdog enforcement.
+
 Process reports retain CPU seconds and peak RSS sampled before the operating system removes the process record. The host receives and acknowledges these reports over the private management channel. CPU is attributed to the patch version, not individual invocations. The company task is the security boundary; process separation provides availability isolation. Local execution uses the same watchdog but proves neither Fargate containment nor per-invocation CPU or memory isolation.

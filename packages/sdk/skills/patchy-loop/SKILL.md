@@ -17,7 +17,7 @@ Talk through edge cases and product behaviour with the person before building.
    - A vanilla tier 1 repo keeps its existing entrypoint and framework-free generated client. Refresh does not convert it to Preact.
      Read `../patchy-tables/SKILL.md` for rows, `../patchy-files/SKILL.md` for bytes, and each declaration's skill and generated context before using it. In a scripted page, import the generated client by relative path; from `src/App.tsx` or `src/main.ts`, use `import { patchy } from "../patchy/_generated/client.js"`.
 3. Edit source, config and invented fixtures. Run `pnpm patchy refresh` after changing definitions, declarations, tier or server module filenames. The generated index must name every declaration and its context before you use it. Run `pnpm typecheck` and, when `package.json` supplies a lint script, `pnpm lint`; the Preact scaffold supplies both. Repair source or config, never generated output.
-4. On tiers 0 and 1, run `pnpm patchy dev --json` and open its `url`. Inspect the static page or exercise the tool's interactions through the local shell, including its rows, files and declarations. The command returns only when healthy and is idempotent. Code rebuilds reload the whole shell at its current route. After config or fixture changes, stop and start dev again. A standalone Vite preview cannot exercise declared capabilities. This release does not support tier 2's production-engine dev loop, live server rebinding or colleague mount. Use a development instance and invented data to exercise published tier 2 handlers.
+4. Run `pnpm patchy dev --json` and open `url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed non-admin viewer sharing the same local data. Exercise both viewers through the real shell, using invented fixtures. The command is healthy on return and idempotent. `src/` rebuilds reload the shell; tier 2 `server/` saves atomically rebind without reload and discover new modules, logging a reminder to refresh types. Existing calls and nested calls finish on their old binding. Subscriptions rerun on the new one, discard crossing results and end permanently for removed handlers or incompatible arguments. Failed builds retain the last good binding. Config and fixture edits need stop/start. A standalone Vite preview cannot exercise capabilities.
 5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declarations and server module names, typechecks and builds the HTML bundle. Tier 2 also builds a closed server module; dev and test instances inspect and serve it. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Tier 2 is company-only: publish to a public patch with `--share company`. Report the address, scope, tier, version, artifacts, handlers, provisioned and unused resources.
 
 <!-- sdk-capabilities -->
@@ -55,7 +55,7 @@ Importing a helper at runtime also imports its dependency
 graph: a server import inside a helper leaks into the page. Keep shared helpers
 browser-safe and use `import type` for server contracts.
 
-Dev checks the page graph; publish checks page and server graphs, not `package.json`. An unsupported runtime
+Dev and publish check page and server graphs, not `package.json`. An unsupported runtime
 import is local `import_refused`, exit 1; the message names the package, importer
 and allowed entrypoints. Use the catalogue above, or write or copy the code into
 the patch as your company's own code. `patchy/config` is for config execution,
@@ -142,7 +142,15 @@ Commit config, `patchy.json` with its description and sync stamp, generated outp
 
 Development uses local PGlite data and agent-authored fixtures. Only metadata and published inventory come from the instance, never production rows or files. Fill each declaration's fixture stub with invented local `INSERT` statements matching its header; views are synthetic local tables. Missing fixtures are not permission to query production. Owned-table example rows are inserted through the local generated client, not a cloud data dump.
 
-New starts bind the local viewer from the publishing key's `/api/me` identity and refresh declaration metadata. Dev calls print compact events in the local dev log, without PostHog delivery or the production runtime log store; no connection keyring is loaded. Before the first publish, schema changes recreate local data. Afterwards, the published inventory is the baseline: additive changes preserve rows, and changes publish would refuse are refused locally with the same object/change/fix. A local-only schema incompatible with an otherwise valid config can be recreated.
+New starts bind the primary viewer from the publishing key's `/api/me` identity and refresh declaration metadata. Tiers 1 and 2 also mount a fixed non-admin colleague. `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` output and local-only failure message/stack. Starting with `--json` records full wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`. No runtime database log rows, PostHog delivery or connection keyring are used. Before the first publish, schema changes recreate local data. Afterwards, the published inventory is the baseline: additive changes preserve rows, and changes publish would refuse are refused locally with the same object/change/fix. A local-only schema incompatible with an otherwise valid config can be recreated.
+
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Contract limits still apply; production
+operating capacity does not. PGlite is not evidence for hosted `busy` or
+`write_conflict` behavior. Tier 2 reads invented shared and Postgres fixtures
+through `ctx.shared` and `ctx.connections`.
 
 On tier 1, every readable row is available to whoever can open the patch, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables and Postgres are read-only, checked against live source access. A public tier 1 patch returns null from `me()` and `not_available_on_public` for data operations, even for a signed-in member; tier 2 cannot be public.
 
@@ -152,9 +160,9 @@ Patchy owns presence through each document's stream, including reconnect and
 access-loss notices. Keep presence out of patch tables and heartbeat code.
 Render from the subscription's latest result rather than copying mutation
 replies into a second query-state cache. Tier 1 table subscriptions work in dev
-and hosted company pages. Tier 2 query subscriptions have generated types but
-have no runtime support in this release. Follow the current server skill's
-availability boundary rather than claiming a live flow works.
+and hosted company pages. Tier 2 query subscriptions work through the same
+document stream in local dev and published dev/test instances. Read
+`patchy-server` for handler and subscription limits.
 
 ## Tier 1 constraints
 

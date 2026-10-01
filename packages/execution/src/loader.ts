@@ -2,8 +2,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Schema from "effect/Schema";
-import { parse } from "acorn";
-import { full } from "acorn-walk";
+import { parse } from "es-module-lexer/minimal/js";
 
 interface Fetcher {
   fetch(input: string | Request, init?: RequestInit): Promise<Response>;
@@ -14,14 +13,14 @@ interface Worker {
 interface Environment {
   readonly loader: {
     get(
-      name: string,
+      name: string | null,
       create: () => {
         compatibilityDate: string;
         compatibilityFlags: readonly string[];
         mainModule: string;
         modules: Record<string, string>;
         env: Record<string, never>;
-        globalOutbound: Fetcher;
+        globalOutbound: null;
       }
     ): Worker;
   };
@@ -36,7 +35,6 @@ interface LoaderContext {
     Callbacks(options: { props: AttemptReference }): {
       call(operation: GuestProtocol.Callback): Promise<GuestProtocol.CallbackReply>;
     };
-    Outbound(options: { props: object }): Fetcher;
   };
 }
 interface BoundWorker {
@@ -91,35 +89,25 @@ async function describe(worker: Worker): Promise<GuestProtocol.InspectionReply> 
   return decodeInspectionReply(await response.json());
 }
 
-function load(env: Environment, ctx: LoaderContext, name: string, bundle: string): Worker {
+function load(env: Environment, name: string | null, bundle: string): Worker {
   return env.loader.get(name, () => {
-    // Built-in modules are not all governed by nodejs_compat. Require the closed
-    // artifact promised by wire 1, including in unreachable dynamic-import branches.
-    full(parse(bundle, { ecmaVersion: "latest", sourceType: "module" }), (node) => {
-      if (
-        node.type === "ImportDeclaration" ||
-        node.type === "ImportExpression" ||
-        node.type === "ExportAllDeclaration" ||
-        (node.type === "ExportNamedDeclaration" && "source" in node && node.source !== null)
-      )
-        throw new Error("Server bundles must be closed modules.");
-    });
+    // Early bundle validation, not a security boundary: a lexer can miss imports.
+    // import.meta is local metadata; workerd validates the remaining module syntax.
+    if (parse(bundle)[0].some((entry) => entry.d !== -2))
+      throw new Error("Server bundles must be closed modules.");
     return {
       compatibilityDate: GuestProtocol.compatibilityDate,
       compatibilityFlags: GuestProtocol.compatibilityFlags,
       mainModule: "server.js",
       modules: { "server.js": bundle },
       env: {},
-      globalOutbound: ctx.exports.Outbound({ props: {} })
+      // Remove the runtime network capability, including TCP and WebSocket transports.
+      globalOutbound: null
     };
   });
 }
 
-async function bind(
-  request: GuestProtocol.BindRequest,
-  env: Environment,
-  ctx: LoaderContext
-): Promise<Response> {
+async function bind(request: GuestProtocol.BindRequest, env: Environment): Promise<Response> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(request.bundle));
   const sha256 = Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, "0")
@@ -131,7 +119,7 @@ async function bind(
     return json({ ok: false, code: "binding_conflict" }, 409);
   if (entry === undefined) {
     try {
-      const worker = load(env, ctx, JSON.stringify([key, sha256]), request.bundle);
+      const worker = load(env, JSON.stringify([key, sha256]), request.bundle);
       entry = {
         sha256,
         bundle: request.bundle,
@@ -185,7 +173,6 @@ async function invoke(
     // Worker handles belong to one request; the loader caches the isolate, not this handle.
     const worker = load(
       env,
-      ctx,
       JSON.stringify([identity(request.binding), entry.sha256]),
       entry.bundle
     );
@@ -235,7 +222,7 @@ export default {
       } catch {
         return json({ ok: false, code: "invalid_request" }, 400);
       }
-      return bind(input, env, ctx);
+      return bind(input, env);
     }
     if (path === "/invoke") {
       let input: GuestProtocol.Invoke;
@@ -254,7 +241,8 @@ export default {
         return json(refusal("invalid_request", "Malformed inspection request."), 400);
       }
       try {
-        return json(await describe(load(env, ctx, "inspection", input.bundle)));
+        // Unnamed Workers are request-owned; named entries remain cached by workerd.
+        return json(await describe(load(env, null, input.bundle)));
       } catch {
         return json(refusal("handler_failed", "The bundle could not be loaded."));
       }
@@ -367,12 +355,5 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         ? refusal("timeout", "The invocation callback deadline has passed.")
         : refusal("source_unavailable", "The invocation callback could not complete.");
     }
-  }
-}
-
-/** Fetch reaches only this refusing loopback; closed bundles cannot import socket APIs. */
-export class Outbound extends WorkerEntrypoint {
-  fetch(): Response {
-    return json(refusal("access_denied", "Guest network access is refused."), 403);
   }
 }

@@ -10,12 +10,28 @@ Preact page, a starter `server/` module, config-bound generated builders and
 the exact `workerd` managed pin with install scripts disabled. Inside the repo,
 use `pnpm patchy`; read `patchy-loop` for changing an existing repo's tier.
 
-Queries, mutations, actions and query subscriptions from published tier 2 repos
-run on dev and test instances' local executor. See the checkout's
-`docs/DEVELOPMENT.md` for startup. Production admission requires the fleet
-executor. This release does not support the tier 2 `patchy dev` engine
-integration, live server rebinding or colleague mount. Exercise published
-handlers on a development instance with invented data.
+Run `pnpm patchy dev --json` and open `url` as the machine user and
+`colleagueUrl` as a fixed non-admin colleague. Both share disposable local data.
+Queries, mutations, actions and subscriptions use the production handler engine
+and callback gateway. `server/` saves atomically rebind without reloading the page;
+new modules log a reminder to refresh types. Calls and nested calls in flight
+finish on the old binding. Subscriptions rerun on the new one, discard crossing
+results and end permanently if a handler is removed or its arguments no longer fit.
+Failed builds retain the last good binding. `src/` saves still reload the shell.
+
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Contract limits still apply; production
+operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflict`
+behavior. Production hosting requires the fleet executor.
+
+Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
+rows for `ctx.shared` and `ctx.connections`; restart after fixture or config edits.
+Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
+output and local-only failure message/stack. Starting with `--json` records full
+wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`.
+No runtime database log rows are written.
 
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors

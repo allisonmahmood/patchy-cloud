@@ -148,6 +148,13 @@ export const HandlerDescriptors = Schema.Record(Schema.String, HandlerDescriptor
 );
 export type HandlerDescriptors = typeof HandlerDescriptors.Type;
 
+export const handlerKinds = (
+  handlers: HandlerDescriptors | undefined
+): Readonly<Record<string, HandlerKind>> =>
+  Object.fromEntries(
+    Object.entries(handlers ?? {}).map(([name, descriptor]) => [name, descriptor.kind])
+  );
+
 /** Resolve every row descriptor against this manifest, including nested descriptors. */
 export const handlerTablesValid = (manifest: {
   readonly tables: Readonly<Record<string, unknown>>;

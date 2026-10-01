@@ -76,7 +76,7 @@ export function createPortTransport(
     readonly handlerKinds?: unknown;
   } = {}
 ): Transport {
-  const handlerKinds = readHandlerKinds(options.handlerKinds);
+  let handlerKinds = readHandlerKinds(options.handlerKinds);
   let sequence = 0;
   let closed = false;
   let path = options.route ?? "/";
@@ -151,6 +151,11 @@ export function createPortTransport(
       }
       if (value.event === "stream" && data !== null && typeof data === "object" && "type" in data) {
         const frame = data as Record<string, unknown>;
+        if (frame.type === "handlers") {
+          const kinds = readHandlerKinds(frame.kinds);
+          if (kinds !== undefined) handlerKinds = kinds;
+          return;
+        }
         if (typeof frame.id === "string") {
           const listener = queries.get(frame.id);
           if (!listener) return;
