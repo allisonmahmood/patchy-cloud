@@ -34,8 +34,9 @@ without a login, and a saved login takes precedence over that seed.
 ## Config and browser client
 
 Public subpaths are explicit: `patchy/config` and `patchy/dev` for tooling,
-`patchy/client` for the generated browser client, and `patchy/preact`,
-`patchy/preact/jsx-runtime` and `patchy/preact/jsx-dev-runtime` for pages.
+`patchy/client` for the generated browser client, `patchy/server` for handler
+contracts, and `patchy/preact`, `patchy/preact/jsx-runtime` and
+`patchy/preact/jsx-dev-runtime` for pages.
 Unlisted `patchy/*` paths are not exported.
 
 ### Bundled UI runtime
@@ -53,14 +54,46 @@ Import UI functions from `patchy/preact`, for example `render`, `useState`,
 `oxc.jsx.importSource: "patchy/preact"` when writing TSX. Compat transitions
 are synchronous; there is no React scheduler.
 
-The tier 1 starter remains vanilla in this release. The Preact scaffold and
-`useQuery` land in their own tickets; this release ships the UI runtime.
+The tier 1 starter remains vanilla in this release. `useQuery(handler, args)` is
+available over the framework-free subscription registry; the hosted stream and
+query subscriptions land with their runtime tickets.
 
 Contributors can run `pnpm --filter patchy build` followed by
 `pnpm test:packed-preact-e2e`. It installs the real release with pnpm, checks
 the installed UI tree and JSX types, exercises optimized dev and the single-file
 production bundle in Chromium, and installs a same-version repack through a new
 digest URL.
+
+### Tier 2 contract
+
+`patchy/server` exports engine-neutral `query`, `mutation`, `action`,
+`HandlerError` and `t`. The SDK generates config-bound builders and helper
+context types in `patchy/_generated/server.ts`, plus a server-only client whose
+handler signatures come from type-only server imports. Runtime callables resolve
+lazily, so renaming an export in an existing module does not require regeneration.
+Refresh discovers module names from one-level `server/*.ts` filenames and sends
+them separately from manifest handler descriptors. Adding, removing or renaming
+a module needs refresh. It never loads or bundles those sources; unfinished
+handler code does not block generation. Nested modules, invalid names and
+symbolic links are refused locally.
+Declared business errors retain their `source: "handler"`, code and details across
+HTTP and broker transports; similarly shaped successful data remains data.
+
+`t` adds objects, arrays, enums, nullable values, full rows, result-only file
+handles and action-argument uploads. Optional argument keys may be absent;
+optional columns remain nullable. Defaults and refs are table-only. Queries
+cannot write, mutations cannot reach shared data, connections, file bytes or
+`ctx.run`, and actions can call only sibling queries and mutations.
+
+`useQuery` returns `{ status, data, error, loading }`, shares canonical arguments
+between consumers, ignores stale revisions, and keeps the last value on a stream
+error. The registry has a one-second remount grace and no Preact dependency.
+
+These are contracts, generation and local subscription state, not hosted
+execution. The server still refuses tier 2 publish. Mutation-key execution and
+`unknown_outcome.retry()` behavior land with the mutations ticket. The
+`patchy-server` skill source documents the contract and embeds registry-generated
+limits; tier 2 init will install it.
 
 ### Config
 

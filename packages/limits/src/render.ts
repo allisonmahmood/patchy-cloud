@@ -54,7 +54,7 @@ export function renderLimitsMarkdown(): string {
     "",
     "## Generation for the server skill",
     "",
-    "`renderServerSkillLimits()` from `@patchy/limits/render` generates the limits section for the `patchy-server` skill. `pnpm --filter @patchy/limits render-docs --skill` prints that section. The normal `render-docs` command updates this document and the checked-in skill-table snapshot at `packages/limits/generated/server-skill-limits.md`; tests fail if either output is stale.",
+    "`renderServerSkillLimits()` from `@patchy/limits/render` generates the limits section for the `patchy-server` skill. `pnpm --filter @patchy/limits render-docs --skill` prints that section. The normal `render-docs` command updates this document, the checked-in snapshot at `packages/limits/generated/server-skill-limits.md`, and the marked section in `packages/sdk/skills/patchy-server/SKILL.md`; tests fail if any output is stale.",
     "",
     "## Units and settlement",
     "",

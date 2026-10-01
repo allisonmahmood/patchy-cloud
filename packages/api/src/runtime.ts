@@ -5,6 +5,7 @@ import { registry } from "@patchy/limits/registry";
 import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
 import { limitRefusalFields } from "./limits.js";
+import { HandlerName } from "./handlers.js";
 
 /** Release contract shared by the browser broker and server runtime. */
 export const runtimeByteLimits = {
@@ -12,12 +13,17 @@ export const runtimeByteLimits = {
   rowBytes: registry["runtime.row.bytes"].default,
   batchBytes: registry["runtime.batch.bytes"].default,
   postgresBytes: registry["runtime.postgres.bytes"].default,
+  serverArgsBytes: registry["tier2.args.bytes"].default,
   resultBytes: registry["runtime.result.bytes"].default,
   fileBytes: registry["runtime.file.bytes"].default
 } as const;
 
 export type RuntimeBodyLimitId =
-  "runtime.call.bytes" | "runtime.row.bytes" | "runtime.batch.bytes" | "runtime.postgres.bytes";
+  | "runtime.call.bytes"
+  | "runtime.row.bytes"
+  | "runtime.batch.bytes"
+  | "runtime.postgres.bytes"
+  | "tier2.args.bytes";
 
 export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
   return op === "tables.insert" || op === "tables.update"
@@ -26,7 +32,9 @@ export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
       ? "runtime.batch.bytes"
       : op.startsWith("postgres.")
         ? "runtime.postgres.bytes"
-        : "runtime.call.bytes";
+        : op === "server.call"
+          ? "tier2.args.bytes"
+          : "runtime.call.bytes";
 }
 
 export function runtimeBodyLimit(
@@ -36,6 +44,7 @@ export function runtimeBodyLimit(
     readonly rowBytes: number;
     readonly batchBytes: number;
     readonly postgresBytes: number;
+    readonly serverArgsBytes: number;
   } = runtimeByteLimits
 ): number {
   switch (runtimeBodyLimitId(op)) {
@@ -45,6 +54,8 @@ export function runtimeBodyLimit(
       return limits.batchBytes + limits.callBytes;
     case "runtime.postgres.bytes":
       return limits.postgresBytes;
+    case "tier2.args.bytes":
+      return limits.serverArgsBytes + limits.callBytes;
     case "runtime.call.bytes":
       return limits.callBytes;
   }
@@ -142,9 +153,21 @@ export const TablePage = Schema.Struct({
   cursor: Schema.NullOr(Schema.String)
 });
 
+export const ServerCall = Schema.Struct({
+  handler: HandlerName,
+  args: Schema.Record(Schema.String, Schema.Json),
+  mutationKey: Schema.optionalKey(NonEmptyText)
+});
+export type ServerCall = typeof ServerCall.Type;
+
 /** Byte operations carry their bytes outside the JSON arguments. */
 export const runtimeOperations = {
   ...postgresOperations,
+  "server.call": {
+    request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
+    response: Schema.suspend(() => ServerCallReply),
+    kind: "mutation"
+  },
   me: {
     request: Schema.Struct({
       op: Schema.Literal("me"),
@@ -321,6 +344,13 @@ export const RuntimeCode = Schema.Literals([
   "rate_limited",
   "too_many_requests",
   "busy",
+  "handler_failed",
+  "handler_timeout",
+  "write_conflict",
+  "patch_paused",
+  "server_required",
+  "tier2_not_public",
+  "limit_exceeded",
   "offset_exhausted"
 ]).annotate({ identifier: "RuntimeCode" });
 export type RuntimeCode = typeof RuntimeCode.Type;
@@ -328,6 +358,7 @@ export type RuntimeCode = typeof RuntimeCode.Type;
 /** Logged failures carry their row's correlation id; read and shell-local failures do not. */
 export const RuntimeFailure = Schema.Struct({
   ok: Schema.Literal(false),
+  source: Schema.Literal("patchy"),
   error: Schema.String,
   code: RuntimeCode,
   ...limitRefusalFields,
@@ -336,8 +367,18 @@ export const RuntimeFailure = Schema.Struct({
 }).annotate({ identifier: "RuntimeFailure" });
 export type RuntimeFailure = typeof RuntimeFailure.Type;
 
+/** Declared handler errors are reply data, distinct from Patchy's refusals. */
+export const HandlerFailure = Schema.Struct({
+  ok: Schema.Literal(false),
+  source: Schema.Literal("handler"),
+  code: NonEmptyText,
+  details: Schema.optionalKey(Schema.Json)
+}).annotate({ identifier: "HandlerFailure" });
+export type HandlerFailure = typeof HandlerFailure.Type;
+
 /**
- * The server encodes each value with its operation's response schema before this envelope.
+ * Primitive responses encode their value before this envelope. server.call already returns
+ * ServerCallReply, preserving a declared HandlerFailure as an HTTP 200 reply.
  * `value` stays plain JSON: a union of every response would match a table row with `ok`
  * and `rows` columns to a Postgres result and drop the row's other keys.
  */
@@ -347,9 +388,17 @@ export const RuntimeSuccess = Schema.Struct({
 }).annotate({ identifier: "RuntimeSuccess" });
 export type RuntimeSuccess = typeof RuntimeSuccess.Type;
 
-export const RuntimeReply = Schema.Union([RuntimeSuccess, RuntimeFailure]).annotate({
-  identifier: "RuntimeReply"
+/** server.call resolves either validated handler data or a declared business error. */
+export const ServerCallReply = Schema.Union([RuntimeSuccess, HandlerFailure]).annotate({
+  identifier: "ServerCallReply"
 });
+export type ServerCallReply = typeof ServerCallReply.Type;
+
+export const RuntimeReply = Schema.Union([RuntimeSuccess, RuntimeFailure, HandlerFailure]).annotate(
+  {
+    identifier: "RuntimeReply"
+  }
+);
 export type RuntimeReply = typeof RuntimeReply.Type;
 
 /** Decode after admission; route params themselves stay permissive for runtime-shaped refusals. */

@@ -9,7 +9,14 @@ import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { isPatchId } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
+import {
+  HandlerDescriptors,
+  HandlerModuleName,
+  handlerTablesValid,
+  type HandlerSchema
+} from "./handlers.js";
 
 export const CURRENT_RELEASE = "0.0.1";
 export const MANIFEST_VERSION = 1;
@@ -362,6 +369,89 @@ export const TableDefinition = Schema.Struct({
   )
 );
 export const FileStoreDefinition = Schema.Struct({ description: PrimitiveDescription });
+
+const handlerScalars = {
+  text: PostgresText,
+  integer: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(-2147483648),
+    Schema.isLessThanOrEqualTo(2147483647)
+  ),
+  number: Schema.Number.check(Schema.isFinite()),
+  boolean: Schema.Boolean,
+  timestamp: IsoTimestamp,
+  json: Schema.Json
+};
+type HandlerTables = Readonly<Record<string, typeof TableDefinition.Type>>;
+
+/** Compile descriptors before invocation; no handler code is loaded or called here. */
+export const handlerValueSchema = (
+  descriptor: HandlerSchema,
+  tables: HandlerTables
+): Schema.Codec<unknown> => {
+  switch (descriptor.kind) {
+    case "text":
+    case "integer":
+    case "number":
+    case "boolean":
+    case "timestamp":
+    case "json":
+      return handlerScalars[descriptor.kind];
+    case "object":
+      return handlerArgsSchema(descriptor.fields, tables);
+    case "array":
+      return Schema.Array(handlerValueSchema(descriptor.element, tables));
+    case "enum":
+      return Schema.Literals(descriptor.values);
+    case "nullable":
+      return Schema.NullOr(handlerValueSchema(descriptor.value, tables));
+    case "fileHandle":
+      return Schema.String.check(
+        Schema.isLengthBetween(
+          registry["files.handle.length"].default,
+          registry["files.handle.length"].default
+        )
+      );
+    case "upload":
+      return NonEmptyText;
+    case "row": {
+      const table = Object.hasOwn(tables, descriptor.table) ? tables[descriptor.table] : undefined;
+      if (table === undefined) throw new TypeError(`Unknown row table "${descriptor.table}".`);
+      const fields: Record<string, Schema.Codec<unknown>> = {
+        id: PostgresText.check(Schema.isMinLength(1)),
+        createdAt: IsoTimestamp,
+        updatedAt: IsoTimestamp,
+        ...Object.fromEntries(
+          Object.entries(table.columns).map(([name, column]) => {
+            const value =
+              column.kind === "ref"
+                ? PostgresText
+                : column.kind === "json"
+                  ? PostgresJson.check(
+                      Schema.makeFilter((value) => value !== null || "Column is not nullable.")
+                    )
+                  : handlerScalars[column.kind];
+            return [name, column.optional === true ? Schema.NullOr(value) : value];
+          })
+        )
+      };
+      return Schema.Struct(fields);
+    }
+  }
+};
+
+/** Argument optionality omits a key; table optionality permits a null value. */
+export const handlerArgsSchema = (
+  fields: Readonly<Record<string, HandlerSchema>>,
+  tables: HandlerTables
+) =>
+  Schema.Struct(
+    Object.fromEntries(
+      Object.entries(fields).map(([name, descriptor]) => {
+        const value = handlerValueSchema(descriptor, tables);
+        return [name, descriptor.optional === true ? Schema.optionalKey(value) : value];
+      })
+    )
+  );
 export const PostgresDeclaration = Schema.Struct({
   kind: Schema.Literal("postgres"),
   handle: NonEmptyText,
@@ -397,8 +487,10 @@ export const Manifest = Schema.Struct({
   tier: Schema.Literals([0, 1, 2, 3]),
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
-  uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration]))
-}).check(distinctPrimitiveNames);
+  uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration])),
+  handlers: Schema.optionalKey(HandlerDescriptors),
+  sdkImports: Schema.optionalKey(Schema.Array(NonEmptyText))
+}).check(distinctPrimitiveNames, Schema.makeFilter(handlerTablesValid));
 
 /** Generation resolves declarations; existing stamps are hints, never authority. */
 export const GenerationManifest = Schema.Struct({
@@ -417,7 +509,7 @@ export const GenerationManifest = Schema.Struct({
       })
     ])
   )
-}).check(distinctPrimitiveNames);
+}).check(distinctPrimitiveNames, Schema.makeFilter(handlerTablesValid));
 
 export const ConnectionSummary = Schema.Struct({
   id: Schema.String,
@@ -458,6 +550,10 @@ export const ConnectionUnavailable = failure(503, {
 export const GenerateRequest = Schema.Struct({
   release: NonEmptyText,
   manifest: GenerationManifest,
+  serverModules: Schema.Array(HandlerModuleName).annotate({
+    description:
+      "One-level server/*.ts filename stems discovered locally for tier 2; empty for tiers 0 and 1. Used only for type-only imports, independently of manifest.handlers."
+  }),
   patchId: Schema.optionalKey(PatchId),
   skills: Schema.Array(NonEmptyText)
 });

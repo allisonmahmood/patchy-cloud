@@ -29,7 +29,7 @@ const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.jso
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
 const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
-const publicEntries = ["config", "client", "dev", ...uiEntries];
+const publicEntries = ["config", "client", "server", "dev", ...uiEntries];
 
 const literals = async (file) => {
   const source = ts.createSourceFile(
@@ -92,7 +92,9 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["config", "client"].map((name) => path.join(packageDir, `src/${name}.ts`)),
+  entryPoints: ["config", "client", "server"].map((name) =>
+    path.join(packageDir, `src/${name}.ts`)
+  ),
   outdir: distDir,
   platform: "browser",
   target: "es2022",
@@ -109,6 +111,7 @@ await esbuild.build({
   platform: "browser",
   target: "es2022",
   sourcemap: true,
+  conditions: common.conditions,
   // Keep one physical UI stack, shared by the SDK entries, optimizer and debug support.
   external: ["preact", "preact/*", "@preact/signals", "@preact/signals-core"]
 });

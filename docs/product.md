@@ -59,6 +59,13 @@ cause a mutation replay. Repo generation supplies this client surface and the
 same shell provides its broker locally and in the cloud. Initialization alone
 does not publish a patch.
 
+The tier 2 handler contract is available through `patchy/server`: typed queries,
+mutations and actions, config-bound helper contexts, business errors and
+serializable descriptors. Generation derives the server-only client's signatures
+from type-only server imports. `useQuery` shares local subscription state and
+retains its last value through errors. These additions do not enable hosted
+execution or tier 2 publish, which remain refused until the runtime build lands.
+
 ### Building a patch
 
 `patchy init [dir] --purpose <text>` starts a patch repo, defaulting to tier 1

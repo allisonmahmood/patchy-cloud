@@ -6,7 +6,13 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { PatchyApi, RuntimeEnvelope, RuntimeFailure, RuntimeSuccess } from "@patchy/api";
+import {
+  PatchyApi,
+  RuntimeEnvelope,
+  RuntimeFailure,
+  RuntimeSuccess,
+  ServerCallReply
+} from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Runtime from "./Runtime.js";
 
@@ -14,6 +20,7 @@ const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvel
   onExcessProperty: "error"
 });
 const encodeSuccess = Schema.encodeUnknownEffect(RuntimeSuccess);
+const encodeServerReply = Schema.encodeUnknownEffect(ServerCallReply);
 const encodeFailure = Schema.encodeSync(RuntimeFailure);
 const noStore = { "cache-control": "no-store" };
 
@@ -28,6 +35,7 @@ export const failure = (error: Runtime.RuntimeError) => {
   return HttpServerResponse.jsonUnsafe(
     encodeFailure({
       ok: false,
+      source: "patchy",
       code: error.code,
       error: error.message,
       ...("limitId" in error && error.limitId !== undefined ? { limitId: error.limitId } : {}),
@@ -190,11 +198,17 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         events.withEvent(
           { type: "request" },
           readCall(runtime).pipe(
-            Effect.flatMap(({ input, byteLength }) => runtime.call(input, byteLength)),
-            Effect.flatMap((value) =>
-              encodeSuccess({ ok: true, value }).pipe(
-                Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-              )
+            Effect.flatMap(({ input, byteLength }) =>
+              runtime
+                .call(input, byteLength)
+                .pipe(
+                  Effect.flatMap((value) =>
+                    (input.op === "server.call"
+                      ? encodeServerReply(value)
+                      : encodeSuccess({ ok: true, value })
+                    ).pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
+                  )
+                )
             ),
             Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: noStore })),
             Effect.catch(recordFailure)

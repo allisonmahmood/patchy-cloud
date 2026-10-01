@@ -16,6 +16,7 @@ import {
 } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import type { ColumnKind, Declaration, IndexDefinition, Json } from "./config.js";
+import type { HandlerDescriptor } from "./server.js";
 import { LocalError } from "./CliError.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
 
@@ -41,6 +42,8 @@ export interface ExecutedManifest {
   readonly name?: string;
   readonly description?: string;
   readonly tier: 0 | 1 | 2 | 3;
+  readonly handlers?: Readonly<Record<string, HandlerDescriptor>>;
+  readonly sdkImports?: readonly string[];
   readonly tables: Readonly<
     Record<
       string,

@@ -257,6 +257,7 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
   ).rejects.toMatchObject({ code: "invalid_request" });
   const failing = exports.createClient("alias", async () => ({
     ok: false,
+    source: "patchy",
     code: "invalid_query",
     error: "column missing",
     details: { sqlstate: "42703", message: "column missing", position: "8" }
@@ -267,6 +268,7 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
   } catch (error) {
     assert.isTrue(PatchyClient.isPatchyError(error, "invalid_query"));
     assert.instanceOf(error, PatchyClient.PatchyError);
+    assert.propertyVal(error, "source", "patchy");
     const parsed = Schema.decodeUnknownSync(
       Schema.Struct({ details: Schema.Struct({ sqlstate: Schema.String }) })
     )(error);

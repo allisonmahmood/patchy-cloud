@@ -11,6 +11,7 @@ import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./Man
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
 import { primitiveReminders } from "./primitiveReminders.js";
+import { discoverServerModules } from "./serverModules.js";
 
 export const Prepared = Schema.Struct({
   manifest: Manifest,
@@ -84,12 +85,14 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           if (info.type !== "File") return yield* new FixtureMissing({ path: relative });
         }
         const skills = yield* io("Read project skills", () => presentSkills(root));
+        const serverModules = unresolved.tier === 2 ? yield* discoverServerModules(root) : [];
         const generated = yield* client
           .generate({
             payload: {
               release: RELEASE,
               manifest: unresolved,
               skills,
+              serverModules,
               ...(repo.patch === undefined ? {} : { patchId: repo.patch })
             }
           })

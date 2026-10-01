@@ -23,6 +23,8 @@ import { registry, type LimitScope } from "@patchy/limits/registry";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 
+const textEncoder = new TextEncoder();
+
 const diagnostics = {
   cause: Schema.optionalKey(Schema.Defect()),
   correlationId: Schema.optionalKey(Schema.String)
@@ -93,6 +95,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.row.bytes",
     "runtime.batch.bytes",
     "runtime.postgres.bytes",
+    "tier2.args.bytes",
     "runtime.result.bytes",
     "runtime.file.bytes"
   ])
@@ -270,6 +273,7 @@ export const config = Effect.all({
   rowBytes: byteLimits.rowBytes,
   batchBytes: byteLimits.batchBytes,
   postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
+  serverArgsBytes: ContractLimits.get("tier2.args.bytes"),
   fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
   integrationDeadlineMs: ContractLimits.get("integration.deadline")
@@ -283,6 +287,9 @@ const decodeBodyPrincipal = Schema.decodeUnknownEffect(RuntimePrincipal, {
 });
 export const decodeWire = Schema.decodeUnknownEffect(
   Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0))
+);
+const encodeServerArgs = Schema.encodeUnknownEffect(
+  Schema.fromJsonString(runtimeOperations["server.call"].request.fields.args.fields.args)
 );
 
 /**
@@ -346,14 +353,17 @@ export const make = (
     const maxCallBytes = Math.max(
       settings.rowBytes + settings.callBytes,
       settings.batchBytes + settings.callBytes,
-      settings.postgresBytes
+      settings.postgresBytes,
+      settings.serverArgsBytes + settings.callBytes
     );
     const maxCallLimitId =
       maxCallBytes === settings.batchBytes + settings.callBytes
         ? "runtime.batch.bytes"
         : maxCallBytes === settings.rowBytes + settings.callBytes
           ? "runtime.row.bytes"
-          : "runtime.postgres.bytes";
+          : maxCallBytes === settings.serverArgsBytes + settings.callBytes
+            ? "tier2.args.bytes"
+            : "runtime.postgres.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -367,13 +377,28 @@ export const make = (
         if (operation !== undefined || Object.hasOwn(runtimeOperations, input.op))
           yield* WideEvents.operation(input.op);
         const integration = operation?.kind === "integration";
-        const boundedOp = operation === undefined ? "" : input.op;
+        const boundedOp = operation !== undefined || input.op === "server.call" ? input.op : "";
         const maxBytes = bodyLimit(boundedOp);
         const limitId = runtimeBodyLimitId(boundedOp);
         // Only integration refusals need trusted attribution before their size check.
         // Other operations, including unknown names, reject before loading a session or version.
         if (!integration && byteLength !== undefined && byteLength > maxBytes)
           return yield* new TooLarge({ maxBytes, limitId });
+        if (
+          input.op === "server.call" &&
+          input.args !== null &&
+          typeof input.args === "object" &&
+          "args" in input.args
+        ) {
+          const argsJson = yield* encodeServerArgs(input.args.args).pipe(
+            Effect.mapError((cause) => new InvalidRequest({ cause }))
+          );
+          if (textEncoder.encode(argsJson).byteLength > settings.serverArgsBytes)
+            return yield* new TooLarge({
+              maxBytes: settings.serverArgsBytes,
+              limitId: "tier2.args.bytes"
+            });
+        }
         const request = yield* HttpServerRequest.HttpServerRequest;
         if (request.headers.authorization !== undefined) return yield* new AccessDenied({});
         const requestAdmission = yield* Effect.exit(

@@ -8,6 +8,34 @@ Runtime is the path by which a loaded patch asks Patchy to act as its viewer. It
 One named request a patch makes through Patchy, with its own input and result contract. An operation is a read, a mutation, or an integration call.
 _Avoid_: endpoint (the transport, not the operation), arbitrary request
 
+**Handler**:
+A named query, mutation or action in a patch's server code, with declared arguments, result and optional business error codes.
+_Avoid_: endpoint, function route
+
+**Query**:
+A read-only handler whose result can be subscribed to as its viewer.
+_Avoid_: SQL query, polling function
+
+**Mutation**:
+A handler whose owned-table writes and validated result settle in one transaction; a failed attempt leaves no writes.
+_Avoid_: action, individual row write
+
+**Action**:
+A handler for work outside one transaction, including file bytes, company integrations and sibling queries or mutations.
+_Avoid_: background job, transaction
+
+**Context object**:
+The viewer and capabilities supplied to a handler, narrowed to its kind and declared resources.
+_Avoid_: binding, application state
+
+**Handler error**:
+A declared business refusal from patch code, distinct from a Patchy refusal or an unhandled handler failure.
+_Avoid_: runtime failure, transport error
+
+**Generated client**:
+The page's typed view of its server handlers, derived from their exports so changes to names and signatures reach callers.
+_Avoid_: server bundle, handwritten API wrapper
+
 **Binding**:
 The trusted context of one admitted operation: its company, owning patch, loaded version and manifest, acting principal, wire version and correlation id.
 _Avoid_: Client context, payload identity

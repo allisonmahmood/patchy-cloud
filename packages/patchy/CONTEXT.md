@@ -76,6 +76,10 @@ _Avoid_: publishing key, token
 The exact version shared by Patchy's CLI, config builders, browser client and dev runtime. An instance accepts only its current release for new publishing and dev starts; unresolved publishes remain recoverable and deployed versions keep their own wire contract.
 _Avoid_: wire version, patch version
 
+**Server bundle**:
+The closed artifact containing one patch version's handler code, distinct from its browser HTML and its serializable handler descriptors.
+_Avoid_: page bundle, manifest, hosted instance
+
 **Environment**:
 Where a patch runs: the cloud as its viewer, or the local dev runtime as the machine's user. Both expose the same declared capabilities; local data comes from fixtures, never copied company rows.
 _Avoid_: instance (the target cloud), dev env (the CLI's local-instance discovery record)

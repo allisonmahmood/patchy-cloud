@@ -71,7 +71,13 @@ import {
   GenerateRequest,
   Generated
 } from "./schemas.js";
-import { RuntimeBytes, RuntimeCall, RuntimeFailure, RuntimeSuccess } from "./runtime.js";
+import {
+  RuntimeBytes,
+  RuntimeCall,
+  RuntimeFailure,
+  RuntimeSuccess,
+  ServerCallReply
+} from "./runtime.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
 export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
@@ -486,6 +492,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
             "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. " +
             "Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, " +
             "typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots and shared-table definitions with recursive source ref targets and their shared declarations; it is never written to a generated file. Never returns manifest.json, credentials or business rows. " +
+            "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. " +
             "Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap."
         )
       )
@@ -554,7 +561,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
     HttpApiEndpoint.post("call", "/runtime/call", {
       headers: { ...runtimeHeaders, origin: Schema.optionalKey(Schema.String) },
       payload: RuntimeCall,
-      success: RuntimeSuccess,
+      success: ServerCallReply,
       error: runtimeErrors
     }).annotateMerge(
       describe(
@@ -615,12 +622,17 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "details retain the source message, SQLSTATE and position. Integration attempts are " +
           "logged before execution, including denials and failures with trusted attribution; " +
           "only query logs SQL text (up to 8 KiB), never parameters. " +
+          "`server.call { handler, args, mutationKey? }` names a one-level `module.export`. " +
+          'Its declared business refusal is HTTP 200 `{ ok: false, source: "handler", code, details? }`; ' +
+          "successful handler data stays inside `{ ok: true, value }`, even when the value resembles a refusal. " +
+          "This wire contract does not enable hosted execution: tier 2 publishing remains refused. " +
           "Request bodies allow 1 MiB plus envelope for " +
-          "insert/update and 8 MiB plus envelope for insertMany; Postgres calls allow 256 KiB " +
-          "including parameters, and other calls 64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +
+          "insert/update and 8 MiB plus envelope for insertMany; server.call handler arguments allow " +
+          "1 MiB (`tier2.args.bytes`) with a 64 KiB allowance for the enclosing request. Postgres calls allow " +
+          "256 KiB including parameters, and other calls 64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +
           "invalid fields/defaults answer `invalid_row`, uniqueness conflicts `unique_violation`, " +
           "and invalid pagination `invalid_cursor`. Unknown operations answer `invalid_request`. " +
-          "Failures are `{ ok: false, error, code, details?, correlationId?, scope?, limitId?, value?, retryAfter? }`; every table mutation is " +
+          'Patchy refusals use a non-200 status and `{ ok: false, source: "patchy", error, code, details?, correlationId?, scope?, limitId?, value?, retryAfter? }`; every table mutation is ' +
           "logged before execution and logged failures carry their runtime-log correlation id. " +
           "Table and file mutations have a 30-second deadline (`runtime.mutation.deadline`), " +
           "the same one their log records; past it the call fails `timeout` (504). " +

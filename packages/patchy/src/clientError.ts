@@ -23,6 +23,13 @@ export const errorCodes = {
   rate_limited: true,
   too_many_requests: true,
   busy: true,
+  handler_failed: true,
+  handler_timeout: true,
+  write_conflict: true,
+  patch_paused: true,
+  server_required: true,
+  tier2_not_public: true,
+  limit_exceeded: true,
   offset_exhausted: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
@@ -47,6 +54,7 @@ export type ErrorDetails<C extends ErrorCode> = C extends "invalid_query"
 
 export class PatchyError<C extends ErrorCode = ErrorCode> extends Error {
   override readonly name = "PatchyError";
+  readonly source = "patchy";
   readonly scope?: "viewer" | "patch" | "company" | "host";
   readonly limitId?: string;
   readonly value?: number;
@@ -74,6 +82,7 @@ export function decodeError(value: unknown): PatchyError | undefined {
   if (isPatchyError(value)) return value;
   if (value === null || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
+  if (record.source !== "patchy" || ("ok" in record && record.ok !== false)) return undefined;
   if (typeof record.code !== "string" || !Object.hasOwn(errorCodes, record.code)) return undefined;
   const message = typeof record.message === "string" ? record.message : record.error;
   if (typeof message !== "string") return undefined;

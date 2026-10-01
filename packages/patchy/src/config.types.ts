@@ -164,6 +164,14 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   table({ title: t.text() });
   // @ts-expect-error a file store description is required
   files();
+  // @ts-expect-error composite schemas are handler values, not table columns
+  table("Notes identified by id.", { nested: t.object({ title: t.text() }) });
+  // @ts-expect-error file handles are handler results, not table columns
+  table("Notes identified by id.", { file: t.fileHandle() });
+  // @ts-expect-error composite schemas have no table default modifier
+  t.object({ title: t.text() }).default({});
+  // @ts-expect-error the member directory builder belongs to its own ticket
+  t.member();
   return {
     insert,
     update,

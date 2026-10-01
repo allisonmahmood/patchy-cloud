@@ -5,6 +5,70 @@ import { test, expect, open, notice, prepare } from "./fixtures.js";
 import { printFirefoxFrame } from "./firefox-print.js";
 import { printChromiumFrame } from "./chromium-print.js";
 
+test("broker admits server arguments up to 1 MiB and stamps local and runtime refusals", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish();
+  const frame = await open(page, patch);
+  const before = instance.runtimeRequests.length;
+  await frame.evaluate((wire) => {
+    const harness = (window as unknown as FixtureWindow).harness;
+    const encoder = new TextEncoder();
+    const cap = 1024 * 1024;
+    for (const [id, bytes] of [
+      ["server-above-tier1", 64 * 1024 + 1],
+      ["server-boundary", cap],
+      ["server-overflow", cap + 1]
+    ] as const) {
+      const contentBytes = bytes - encoder.encode(JSON.stringify({ text: "" })).byteLength;
+      harness.raw({
+        v: wire,
+        id,
+        op: "server.call",
+        args: {
+          handler: "leads.read",
+          args: { text: "é".repeat(Math.floor(contentBytes / 2)) + "x".repeat(contentBytes % 2) }
+        }
+      });
+    }
+  }, instance.wire);
+  await expect
+    .poll(() =>
+      frame.evaluate(() =>
+        (window as unknown as FixtureWindow).harness.replies
+          .filter((reply) => reply.id?.startsWith("server-"))
+          .map((reply) => [reply.id, reply.error?.code])
+          .sort()
+      )
+    )
+    .toEqual([
+      ["server-above-tier1", "invalid_request"],
+      ["server-boundary", "invalid_request"],
+      ["server-overflow", "too_large"]
+    ]);
+  const replies = await frame.evaluate(() =>
+    (window as unknown as FixtureWindow).harness.replies.filter((reply) =>
+      reply.id?.startsWith("server-")
+    )
+  );
+  for (const reply of replies) expect(reply.error).toMatchObject({ source: "patchy" });
+  expect(replies.find((reply) => reply.id === "server-overflow")?.error).toMatchObject({
+    limitId: "tier2.args.bytes",
+    value: 1024 * 1024
+  });
+  // No server handler is installed: the admitted bodies reach Runtime, not execution.
+  const calls = instance.runtimeRequests
+    .slice(before)
+    .filter((request) => request.body.includes('"op":"server.call"'));
+  expect(calls).toHaveLength(2);
+  expect(
+    calls
+      .map((request) => Buffer.byteLength(JSON.stringify(JSON.parse(request.body).args.args)))
+      .sort((a, b) => a - b)
+  ).toEqual([64 * 1024 + 1, 1024 * 1024]);
+});
+
 test("route bridge, real client file URL, shell download, isolation and 2,000-row print", async ({
   page,
   instance,
