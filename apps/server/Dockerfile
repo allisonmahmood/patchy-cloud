@@ -1,4 +1,4 @@
-FROM node:24-slim AS builder
+FROM node:24-slim@sha256:6642ef280aebc09c4541bee0b15c9f89f0f3f3c247ddee79ae1d37eddfdcbbaa AS builder
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -7,48 +7,28 @@ WORKDIR /repo
 
 RUN corepack enable
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
-COPY eslint.config.js prettier.config.js ./
-COPY apps/server/package.json apps/server/package.json
-COPY packages/analytics/package.json packages/analytics/package.json
-COPY packages/api/package.json packages/api/package.json
-COPY packages/auth/package.json packages/auth/package.json
-COPY packages/patchy/package.json packages/patchy/package.json
-COPY packages/companies/package.json packages/companies/package.json
-COPY packages/company-database/package.json packages/company-database/package.json
-COPY packages/content-store/package.json packages/content-store/package.json
-COPY packages/core/package.json packages/core/package.json
-COPY packages/execution/package.json packages/execution/package.json
-COPY packages/integrations/package.json packages/integrations/package.json
-COPY packages/limits/package.json packages/limits/package.json
-COPY packages/patches/package.json packages/patches/package.json
-COPY packages/primitives/package.json packages/primitives/package.json
-COPY packages/runtime/package.json packages/runtime/package.json
-COPY packages/sdk/package.json packages/sdk/package.json
-COPY packages/serving/package.json packages/serving/package.json
-COPY packages/sql/package.json packages/sql/package.json
-COPY scripts/dev/package.json scripts/dev/package.json
-
+# Workspace prepare scripts and dependency patches are needed during install.
+COPY . .
 RUN pnpm install --frozen-lockfile
 
-COPY . .
-
-RUN pnpm --filter @patchy/server... build \
-  && find \
-    apps/server/dist \
-    packages/*/dist \
-    -type f \( -name '*.d.ts' -o -name '*.map' \) -delete \
-  && pnpm --filter @patchy/server deploy --prod --legacy /runtime
-
-FROM node:24-slim AS runner
-
-ARG VERSION=0.0.0-dev
+ARG SOURCE_DATE_EPOCH=0
 ARG REVISION=unknown
+ARG VERSION=0.0.0
+
+RUN SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" REVISION="$REVISION" VERSION="$VERSION" \
+  node scripts/build-server-image.mjs --stage /image-rootfs
+
+FROM node:24-slim@sha256:6642ef280aebc09c4541bee0b15c9f89f0f3f3c247ddee79ae1d37eddfdcbbaa AS runner
+
+ARG VERSION=0.0.0
+ARG REVISION=unknown
+ARG SOURCE_DATE_EPOCH=0
 
 LABEL org.opencontainers.image.source="https://github.com/allisonmahmood/patchy-cloud" \
   org.opencontainers.image.licenses="UNLICENSED" \
   org.opencontainers.image.version="$VERSION" \
-  org.opencontainers.image.revision="$REVISION"
+  org.opencontainers.image.revision="$REVISION" \
+  io.patchy.source-date-epoch="$SOURCE_DATE_EPOCH"
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -56,26 +36,8 @@ ENV PATCHY_STORAGE_DIR=/data/patches
 
 WORKDIR /app
 
-RUN rm -rf \
-    /opt/yarn-* \
-    /usr/local/include/node \
-    /usr/local/lib/node_modules/corepack \
-    /usr/local/lib/node_modules/npm \
-    /usr/local/share/doc/node \
-    /usr/local/share/man/man1/node.1 \
-  && rm -f \
-    /usr/local/bin/corepack \
-    /usr/local/bin/npm \
-    /usr/local/bin/npx \
-    /usr/local/bin/pnpm \
-    /usr/local/bin/pnpx \
-    /usr/local/bin/yarn \
-    /usr/local/bin/yarnpkg \
-  && mkdir /data \
-  && chown node:node /data
-
-COPY --from=builder /runtime/ ./
-COPY LICENSE ./LICENSE
+COPY --from=builder /image-rootfs/app/ ./
+COPY --from=builder --chown=node:node /image-rootfs/data/ /data/
 
 VOLUME ["/data"]
 
@@ -83,4 +45,5 @@ USER node
 
 EXPOSE 3000
 
+# Exec tasks override the command with ["node", "dist/exec.js"].
 CMD ["node", "dist/start.js"]

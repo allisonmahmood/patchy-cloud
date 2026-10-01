@@ -1,0 +1,60 @@
+name: Server image
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          # Matches the digest-pinned node:24-slim image and the local recipe.
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install pinned crane
+        env:
+          CRANE_VERSION: v0.22.1
+          CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+        run: |
+          mkdir -p "$RUNNER_TEMP/crane-bin"
+          curl --fail --location --silent --show-error \
+            "https://github.com/google/go-containerregistry/releases/download/$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" \
+            --output "$RUNNER_TEMP/crane.tar.gz"
+          echo "$CRANE_SHA256  $RUNNER_TEMP/crane.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/crane.tar.gz" -C "$RUNNER_TEMP/crane-bin" crane
+          echo "$RUNNER_TEMP/crane-bin" >> "$GITHUB_PATH"
+      - name: Build without Docker and verify reproducibility
+        run: |
+          node scripts/build-server-image.mjs --tag patchy-server:ci
+          node scripts/build-server-image.mjs --tag patchy-server:ci --output "$RUNNER_TEMP/server-image-rebuild.tar"
+          cmp .local/server-image.tar "$RUNNER_TEMP/server-image-rebuild.tar"
+          cmp .local/server-image.tar.json "$RUNNER_TEMP/server-image-rebuild.tar.json"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: server-image-linux-amd64
+          path: |
+            .local/server-image.tar
+            .local/server-image.tar.json
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

@@ -37,8 +37,9 @@ gateway into the patch-repo `patchy dev` loop over PGlite and fixtures, with
 atomic live server rebinding and a separate non-admin colleague listener.
 Issue #405 adds the host fleet controller over platform Postgres and a local task
 provider that launches separate supervisor processes. `EXECUTION_PROVIDER=local-fleet`
-selects that path on an isolated development or test host. Production remains closed
-until the ECS provider arrives; local processes do not prove Fargate containment.
+selects that path on an isolated development or test host. Issue #406 adds
+`EXECUTION_PROVIDER=ecs`, selecting the same controller over Fargate. Only that
+provider admits production tier 2; local processes do not prove Fargate containment.
 
 ## Engine, guest wire and inspection
 
@@ -65,6 +66,10 @@ trusted caller's responsibility, not patch input. Inspection configures none.
 The supervisor supplies the deployment's issuing-host addresses. Each workerd
 process can reach only its supervisor callback proxy, which forwards to those
 addresses after checking the current epoch and live process generation.
+Authenticated management binds register replacement hosts' private callback
+addresses without restarting a loaded process. The proxy selects the issuing
+host from the admitted invocation record, not a path or address supplied by guest
+code. Registrations cannot cross a stale binding epoch.
 
 `@patchy/api/guest` contains the private schemas, never public `HttpApi` routes.
 JSON callbacks carry `{ op, args }`; both callbacks and handler replies preserve
@@ -236,12 +241,19 @@ reconciles lost tasks and retires superseded deployments. The target is
 draining task counted against the fleet budget. The initial budget is 100 tasks,
 the pass interval five seconds and the lease fifteen seconds. These values come
 from the limits registry, not another timer or counter convention.
+Measured cold start spans the durable task request through readiness, including
+Fargate provisioning and image pull, rather than only time since ECS `RUNNING`.
 Passes serialize within a replica. A scoped renewal fiber keeps the lease alive
 during provider waits, while mutation guards still fence a replica that loses it.
 Reacquisition after expiry has a new lease epoch, even for the same replica.
 Per-task failures are bounded and isolated, and replenishment does not depend on a
 successful stats or stop call for every bound task. An empty-pool open keeps waiting
 through housekeeping failures until its configured pool deadline.
+An omitted ECS listing or transient `MISSING` description is not proof of exit.
+Known tasks remain budgeted until the provider confirms they stopped. A running
+task that reappears after a recorded stop is fenced and stopped again. If ECS
+has already forgotten a task and no stop observation exists, its unresolved
+reservation requires operator reconciliation rather than an inferred exit.
 
 Process reports commit before their acknowledgement. Newly recorded process events
 are forwarded unchanged through the best-effort analytics sink. Binding history
@@ -267,6 +279,116 @@ loss. Failure refuses those calls once; later retries never replay them. The
 selected T-1 cover appears after two seconds on both first open and resume, holds
 focus under an accessible name and offers Try again after failure. Automatic retries
 back off while the document remains open.
+
+## Fargate deployment and measurements
+
+Issue [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406) runs the
+same fleet controller through the ECS task provider. The image has a host default
+command and a separate exec entrypoint. CI assembles it without Docker, from a
+digest-pinned Node base, and compares two independently assembled archives.
+
+Exec tasks use a private subnet with no default internet route, no public IP
+and no task role. The bootstrap security group stays attached for image pulls,
+logs and private host callbacks. The sealed comparison group cannot pull the
+image and is not a post-start replacement. The root supervisor drops each
+workerd child to a distinct uid with an empty environment. Management and
+callback listeners bind the task's private address, not the ALB.
+The provider rejects exec definitions without an explicit root container user;
+it does not silently accept the image's default unprivileged host user.
+
+The initial spike run used two hosts, application-cookie affinity on
+`patchy_stream_affinity`, and 512-CPU-unit/2048-MiB exec tasks. First open claimed
+a ready spare and reached the stream's ready frame in **685 ms**. Sixty
+subscription control POSTs across two independently observed replicas had no
+generation refusal. Guest fetches to both metadata addresses, the public
+internet, the task's management address and management loopback all failed.
+Closing the document released the idle binding and stopped its ECS task.
+The acceptance overrides used a ten-second company idle window and one-second
+housekeeping interval; these are not new production defaults.
+On the final image, the observed task became ready 28.311 seconds after the
+controller requested it. Idle detection through physical ECS stop took
+49.844 seconds, including the idle window and task shutdown; a ten-second idle
+window is not a ten-second physical-stop guarantee.
+
+Adjacent host revisions served through both directions: a replacement host
+invoked the old bound task, then an old host invoked the replacement task.
+The original binding was durably released with cause `deployment`; the ALB
+kept the old hosts through its 90-second deregistration window before they
+stopped. A browser mutation was committed while its HTTP reply was deliberately
+dropped. Its actual SDK error exposed `retry()`, which returned the same stored
+nonce after task replacement and host drain, without reloading the document.
+
+Secret rotation ends with a sealing revision: the same current secret, without
+the previous-secret configuration, followed by promotion and another host drain.
+After sealing, the retired key returned HTTP 401 on all three running exec
+tasks; before sealing it authenticated to the overlap tasks. A nested action
+also crossed the real private callback listener and returned the expected
+viewer, company and query result. Thirty additional browser queries completed
+successfully, and the original keyed retry still replayed after sealing.
+
+Two distinct spinning version processes were measured alongside a healthy
+version on one half-vCPU task. Healthy probes were dispatched at 10/s. These
+are **host-observed request milliseconds**, including host/database overhead,
+not isolated guest CPU time:
+
+| Run | Baseline p50 / p95 / p99 (60 calls) | Both spin calls outstanding p50 / p95 / p99 | Outcomes                                                               |
+| --- | ----------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
+| A   | 1266 / 1716 / 1930                  | 778 / 1020 / 1033 (50 calls)                | 50/50 healthy replies                                                  |
+| B   | 1954 / 2985 / 3441                  | 724 / 1040 / 1443 (49 logged successes)     | 49/50 client requests succeeded; one non-200 response was not retained |
+
+The spinning calls ended after 6.35/6.75 seconds in A and 6.76/6.77 seconds in B.
+Their persisted process reports record `stall`, 1.37/1.45 CPU seconds in A and
+1.50/1.39 in B. The short windows and differing baselines do not establish a
+latency guarantee or a speed improvement. Process isolation stops the offending
+processes; it does **not** reserve a sibling's share of the task's CPU.
+
+The run was torn down after acceptance. Post-teardown checks found zero ECS
+tasks or services, no run target registrations, image tags or security-group
+rules, and no run platform database. ALB and target-group attributes matched
+their pre-run snapshots. The script removed run artifacts and company databases,
+and deregistered the run task definitions and requested their deletion.
+The pre-existing tagged AWS stack and
+Neon project remain available; CloudWatch run logs are retained as evidence.
+
+The initial acceptance run passed the deployer's IAM-user credentials to hosts.
+That path is removed: hosts must use the existing spike host task role.
+The first role-only probe was denied `ecs:ListTasks`; an operator subsequently
+granted the documented fleet policy and rotated the deployer's key, deleting the
+old one. Credential-bearing host definitions were deregistered and their deletion
+requested. Deleting a definition does not scrub CloudTrail history.
+
+A role-only rerun of PR #439 at `66eb974` verified the host role through the ECS
+credential endpoint, with no static AWS keys on hosts or execs. Hosts launched
+warm spares and stopped idle tasks; promotion and sealing used the same role.
+A fresh browser open bound an existing spare with zero spare wait and reached
+ready in 481 ms. Closing the last document led to physical ECS stop in 49.244
+seconds. The first two spares took 30.768 and 57.655 seconds from request to ready.
+These measurements do not promise cold admission within the 40-second wait bound.
+
+The rerun exercised both directions between adjacent deployment revisions.
+It replaced binding epoch 5 with 6 and then 7, and retained the 90-second ALB drain.
+The same browser document's keyed retry returned its original committed nonce after both
+replacement and sealing. A role-only control task received HTTP 200 with both
+management secrets during overlap; after sealing, the retired secret returned
+401 and the current secret returned 200 on the active bound task.
+
+Two repeat contention windows used action handlers so both spinning processes
+remained outstanding throughout the five-second dispatch window. Healthy probes
+ran at 10/s on a third version in the same half-vCPU task. These are
+**client-observed milliseconds**, including browser, network, host and database
+overhead, not directly comparable to the earlier host-observed measurements:
+
+| Run | Baseline p50 / p95 / p99 (60 calls) | Two-spinner p50 / p95 / p99 (50 calls) | Healthy replies |
+| --- | ----------------------------------- | -------------------------------------- | --------------- |
+| A   | 632 / 999 / 1245                    | 777 / 1189 / 1300                      | 50/50           |
+| B   | 638 / 768 / 928                     | 746 / 938 / 1034                       | 50/50           |
+
+The spinning calls ended after 6.590/6.595 seconds in A and 6.756/6.862 seconds
+in B. Four distinct process reports on the same task recorded `stall`, with
+1.35/1.36 and 1.46/1.41 CPU seconds respectively. Healthy p95 increased in both
+windows. Successful sibling replies are not evidence of unchanged sibling speed.
+The role-only run was torn down and its network configuration matched the pre-run
+snapshots. [Full measurements and teardown evidence are recorded on #406](https://github.com/allisonmahmood/patchy-cloud/issues/406#issuecomment-5920910104).
 
 ## Seven hosting decisions
 

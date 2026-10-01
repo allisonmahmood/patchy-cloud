@@ -154,7 +154,7 @@ An isolated host can opt into `EXECUTION_PROVIDER=local-fleet` with `NODE_ENV=te
 or `development`. The default dev executor remains no-pool; production refuses
 the local task provider. Do not use a daily-driver instance for fleet checks.
 
-This path runs the same controller that will receive the ECS provider, over the
+This path runs the same controller as the ECS provider, over the
 platform database. Local hosts on one Linux machine share a durable task directory;
 `flock` serializes launches, and detached task owners retain readiness, final process
 reports and observed stop times independently of the host that launched them.
@@ -196,6 +196,10 @@ No direct row edits are needed.
 The housekeeping lease renews during provider work, and a failing task does not
 block unrelated reconciliation or replenishment. A lost activity database session
 is replaced and its live locks restored, including for documents making no requests.
+An omitted ECS task or a `MISSING` response is not proof that the task stopped.
+The controller retains its durable allocation and budget until the provider
+confirms a stop. Cold-start sizing uses `ready_at - requested_at`, so placement
+and image-pull time count toward the spare target.
 
 `packages/execution/src/Fleet.test.ts` covers controller transitions over Postgres.
 Its lease and housekeeping cases use `TestClock` with an explicit renewal barrier:
@@ -205,8 +209,184 @@ resumed. These tests do not use wall-clock sleeps to race database I/O.
 `LocalTaskProvider.test.ts` executes real workerd and verifies final process reports
 survive task stop. The fleet case in `DevelopmentExecution.test.ts` opens a real
 document stream through `starting` and `ready`, then exercises nested callbacks
-and committed mutation-key replay. The ECS provider and containment checks remain
-the next ticket.
+and committed mutation-key replay. The ECS provider uses the same controller.
+
+### Deploying only the tier 2 spike
+
+`scripts/tier2-spike.mjs` reads its allowlist only from the existing private
+files below. It does not accept account, caller, region or project overrides
+from command-line arguments or the ambient environment.
+
+| Private file                            | Required identity fields                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.config/patchy-cloud/aws-spike.env`  | `AWS_ACCOUNT_ID` is the approved account; `SPIKE_IAM_USER` is the approved IAM user name, not an ARN. Together they specify the exact expected caller ARN, `arn:aws:iam::<account>:user/<user>`. |
+| `~/.config/patchy-cloud/neon-spike.env` | `NEON_PROJECT_ID` is the approved disposable project.                                                                                                                                            |
+
+Keep these files private and outside git. The AWS file also supplies the
+deployer's credentials and spike resource IDs; the Neon file supplies database,
+API and storage credentials. Missing or malformed identity fields fail closed.
+The script requires the exact STS account and caller, fixes AWS to `us-east-1`,
+and checks AWS resource ownership and tags before mutation. It resolves the
+configured project's database endpoint, branch storage endpoint and bucket
+through the Neon API, checking the project ID and `aws-us-east-1` region.
+It never uses the production Azure group. The initial stack must have no
+running tasks or services.
+
+Build on Linux x64 with Node 24.20.0, pnpm 11.5.2, GNU tar and crane v0.22.1:
+
+```sh
+pnpm install --frozen-lockfile
+node scripts/build-server-image.mjs --output .local/server-image.tar --tag patchy-server:spike
+node scripts/tier2-spike.mjs status
+node scripts/tier2-spike.mjs up .local/server-image.tar
+```
+
+The image pins the Node base digest and normalizes archive metadata.
+`.github/workflows/server-image.yml` builds it twice and compares the archives.
+The default command is `node dist/start.js`, as user `node`; exec tasks override
+it with `node dist/exec.js`. Only the supervisor runs as root, retaining the
+capabilities needed to chown temporary files, switch child uid/gid, sample and
+kill children. Workerd children have distinct unprivileged uids and empty
+environments. Neither image assembly nor CI publishes or deploys to production.
+Exec task definitions must declare a root supervisor user explicitly, such as
+`user: "0"`. The ECS provider rejects a missing user or a non-root user rather
+than relying on the image's default user.
+
+The spike starts two hosts behind the existing ALB and registers an exec task
+definition at 512 CPU units and 2048 MiB. There is no exec service or desired
+count. The controller launches tagged tasks in the private subnet, with no
+public IP, task role, environment file or secret reference. The task-execution
+role only lets Fargate pull the image and ship logs. The bootstrap security
+group stays attached, permitting the ECR/log endpoints, S3 image layers and
+the hosts' private callback port. The sealed comparison group still cannot
+pull an image; it is not attached after startup.
+
+Host port 8080 is the ALB target. Exec management port 8788 accepts only the
+host security group; host callback port 8789 accepts only exec. Neither private
+listener is an ALB route. `EXECUTION_MANAGEMENT_HOST=auto` and
+`EXECUTION_CALLBACK_HOST=auto` resolve exactly one private task IPv4 address;
+they require the corresponding `*_PRIVATE_INTERFACE=true` opt-in.
+
+The deploy snapshots ALB and security-group settings in mode-0600
+`.local/tier2-spike/state.json`. It enables HTTP/2, the 90-second deregistration
+delay, and application-cookie stickiness on `patchy_stream_affinity`. Keep the
+server-issued cookie: subscription control POSTs must reach the replica holding
+the document stream. The spike certificate is self-signed; only acceptance
+clients against this ALB may ignore its certificate error.
+
+Hosts and the disposable promotion task use only the existing
+`patchy-tier2-spike-host-task` role named by `SPIKE_HOST_TASK_ROLE_ARN` in the
+private AWS file. The script requires its exact ARN in the approved account.
+The AWS SDK obtains temporary credentials from the ECS task credential endpoint.
+The deployer's `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and session tokens
+are never added to host task definitions; there is no fallback to IAM user
+credentials. Neon storage credentials use the separate `PATCHY_S3_*` settings
+and are not part of the AWS credential chain. Exec tasks have no task role.
+
+An operator authorized to manage the existing host role must inspect its trust
+and permission policies before deployment and add missing fleet permissions.
+Do not assume the disposable deployer can inspect or change IAM policies.
+The deployer does not create roles or manage policies. Its local preflight
+rejects a different host role, credential overrides and environment files before
+host registration, and checks a stored host definition before promotion.
+This does not prove the role has the required IAM permissions. If the role
+still has no fleet policy, provision that policy before running `up`; do not
+forward user keys to work around an authorization failure.
+The [role-only acceptance on #406](https://github.com/allisonmahmood/patchy-cloud/issues/406#issuecomment-5920910104)
+verified temporary credentials from this role, warm-spare launch, idle task stop,
+promotion and secret retirement without static AWS keys on hosts. The initial
+`ecs:ListTasks` denial was resolved by an operator granting the policy below;
+the deployer made no IAM policy changes.
+
+The provider needs the following host-role permissions. Substitute the approved
+account and cluster name from the private AWS file. `<cluster-arn>` is the full
+ARN of `SPIKE_ECS_CLUSTER`; `<task-arns>` means
+`arn:aws:ecs:us-east-1:<account>:task/<cluster-name>/*`.
+
+| IAM action                   | Resource and restriction                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ecs:DescribeTaskDefinition` | `*`. AWS does not support resource-level permissions for this action.                                                                                                     |
+| `ecs:ListTasks`              | `*`, with `ArnEquals` on `ecs:cluster` set to `<cluster-arn>`. The provider lists running and stopped Fargate tasks without a container-instance target.                  |
+| `ecs:DescribeTasks`          | `<task-arns>`, with the approved `ecs:cluster` condition. The provider requests task tags with each description.                                                          |
+| `ecs:RunTask`                | `arn:aws:ecs:us-east-1:<account>:task-definition/patchy-tier2-spike-406-exec:*`, with the approved `ecs:cluster` condition. Do not grant the host task-definition family. |
+| `ecs:StopTask`               | `<task-arns>`, with the approved `ecs:cluster` and `aws:ResourceTag/patchy:role=exec` conditions.                                                                         |
+| `ecs:TagResource`            | `<task-arns>`, with `ecs:CreateAction=RunTask`. This authorizes tags at task creation, not arbitrary later tag changes.                                                   |
+| `iam:PassRole`               | Only `SPIKE_TASK_EXECUTION_ROLE_ARN`, the existing `patchy-tier2-spike-task-execution` role, with `iam:PassedToService=ecs-tasks.amazonaws.com`.                          |
+
+Restrict ECS actions to `us-east-1` with `aws:RequestedRegion`. The provider
+adds `patchy:execution-fleet`, `patchy:execution-task`,
+`patchy:deployment-revision` and `patchy:role=exec` tags, and propagates the
+exec task definition's tags. `RunTask` can require the role tag on the request.
+The `StopTask` policy can also require `patchy:execution-fleet` to match the
+active run's `fleetId` in the private state journal.
+Do not apply resource-tag conditions to the unscoped describe permission or
+to inventory listing. The host role does not need ECR, CloudWatch Logs, EC2,
+task-definition registration, role management or `sts:AssumeRole` permissions.
+Image pulls and log delivery remain permissions of the task-execution role.
+
+The host role trust policy must allow `sts:AssumeRole` for
+`ecs-tasks.amazonaws.com`, restricted by `aws:SourceAccount` to the approved
+account and `aws:SourceArn` to `arn:aws:ecs:us-east-1:<account>:*`.
+AWS does not support narrowing this trust condition to a specific cluster.
+The deployer separately needs `iam:PassRole` for both existing roles when
+registering and starting hosts; the host role itself may pass only the
+task-execution role. See AWS's [ECS authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonelasticcontainerservice.html),
+[tag-on-create permissions](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/supported-iam-actions-tagging.html)
+and [task role trust guidance](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html).
+
+The spike creates a separate platform database and a fresh signing key for
+fixture sessions; it does not create Clerk users or use a production session.
+Its native database connections use `sslmode=verify-full`; the supplied
+`channel_binding` URL parameter is not supported by the native driver.
+The script leaves the source credential files unchanged.
+The acceptance profile sets `execution.company.idle` to 10000 ms,
+`execution.housekeeping.interval` to 1000 ms and `execution.fleet.budget` to
+eight; the production registry defaults are unchanged.
+
+For a rollout, build the next image, then run:
+
+```sh
+node scripts/tier2-spike.mjs rollout .local/server-image.tar
+node scripts/tier2-spike.mjs promote
+node scripts/tier2-spike.mjs drain
+node scripts/tier2-spike.mjs seal .local/server-image.tar
+node scripts/tier2-spike.mjs promote
+node scripts/tier2-spike.mjs drain
+node scripts/tier2-spike.mjs down
+```
+
+`rollout` rotates the deployment secret and retains the previous revision,
+definition and secret. It leaves both host revisions registered.
+`promote` runs controller operations in a disposable host-role task, not direct
+database edits. The staged revision's hosts own replenishment; older hosts
+yield the housekeeping lease while continuing admitted requests. Promotion waits
+for warm spares. `drain` deregisters old hosts, waits the full 90 seconds, then
+signals them and waits for the old tasks to stop. `seal` starts a new revision
+using the same current secret but no previous-secret configuration. Promoting
+and draining that revision replaces the overlap hosts and execs, removing the
+old credential's authority without a mutable management endpoint. Rotation is
+not complete until this second drain finishes.
+
+EOF, stream reconnect/resync and explicit mutation-key `retry()` are the recovery
+protocol. `down` stops run-owned tasks, removes run databases, published objects,
+task definitions and image tags, and restores the snapshotted network settings.
+It stops controllers before inventorying exec tasks so they cannot replenish
+during teardown. Keep the private state until teardown succeeds.
+
+For a non-spike ECS deployment, select `EXECUTION_PROVIDER=ecs` and configure
+`ECS_CLUSTER`, `ECS_REGION`, `EXECUTION_FLEET_ID`, JSON `ECS_EXEC_SUBNET_IDS`,
+`ECS_EXEC_BOOTSTRAP_SECURITY_GROUP_ID`, and the exact revisioned
+`ECS_EXEC_TASK_DEFINITION` ARN. Set `EXECUTION_DEPLOYMENT_REVISION` equal to
+`PATCHY_DEPLOYMENT_REVISION`, `EXECUTION_MANAGEMENT_SECRET`, callback port/host
+settings, and JSON `EXECUTION_CALLBACK_URLS`. The host adds its own listener to
+that list; the deduplicated result must satisfy the private wire's 64-URL bound.
+During rollout also supply `ECS_EXEC_PREVIOUS_TASK_DEFINITION`,
+`EXECUTION_PREVIOUS_DEPLOYMENT_REVISION` and
+`EXECUTION_MANAGEMENT_PREVIOUS_SECRET` together. Both definitions use one family.
+After old hosts drain, deploy a sealing revision with the same current secret
+and all three previous-revision settings removed; promote it and drain the
+overlap revision before declaring the old secret retired.
+The fleet id stays constant across releases; task ids and binding epochs do not.
 
 ### Starting the local instance
 

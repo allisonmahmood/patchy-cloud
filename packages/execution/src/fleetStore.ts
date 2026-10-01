@@ -260,9 +260,27 @@ export const make = Effect.gen(function* () {
       FROM execution_bindings b WHERE h.binding_id = b.binding_id AND h.task_id = ${taskId}
         AND h.released_at IS NULL`;
   }, sql.withTransaction);
-  const lease = (owner: string, now: number, duration: number) =>
+  const recordOrphan = Effect.fn("FleetStore.recordOrphan")(function* (
+    task: { taskId: string; deploymentRevision: string; startedAt: number },
+    now: number
+  ) {
+    yield* sql`INSERT INTO execution_deployments(revision, retired)
+      VALUES (${task.deploymentRevision}, true) ON CONFLICT DO NOTHING`;
+    // The insert can race a reservation made after the inventory snapshot.
+    const rows = yield* sql`INSERT INTO execution_tasks
+      (task_id, deployment_revision, state, requested_at, started_at)
+      VALUES (${task.taskId}, ${task.deploymentRevision}, 'stopping', ${now}, ${task.startedAt})
+      ON CONFLICT (task_id) DO UPDATE SET state = 'stopping', stopped_at = NULL
+        WHERE execution_tasks.state = 'stopped'
+      RETURNING task_id`;
+    return rows.length === 1;
+  }, sql.withTransaction);
+  const lease = (owner: string, revision: string, now: number, duration: number) =>
     sql`INSERT INTO execution_housekeeping
-    (singleton, owner_id, lease_epoch, expires_at) VALUES (true, ${owner}, 1, ${now + duration})
+    (singleton, owner_id, lease_epoch, expires_at) SELECT true, ${owner}, 1, ${now + duration}
+    WHERE EXISTS (
+      SELECT 1 FROM execution_rollout WHERE COALESCE(staged_revision, current_revision) = ${revision}
+    )
     ON CONFLICT (singleton) DO UPDATE SET owner_id = EXCLUDED.owner_id,
       lease_epoch = CASE WHEN execution_housekeeping.owner_id = EXCLUDED.owner_id AND execution_housekeeping.expires_at > ${now}
         THEN execution_housekeeping.lease_epoch ELSE execution_housekeeping.lease_epoch + 1 END,
@@ -272,9 +290,18 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(decodeLeases),
       Effect.map((rows) => rows[0])
     );
-  const renewLease = (owner: string, epoch: number, now: number, duration: number) =>
+  const renewLease = (
+    owner: string,
+    revision: string,
+    epoch: number,
+    now: number,
+    duration: number
+  ) =>
     sql`UPDATE execution_housekeeping
     SET expires_at = ${now + duration} WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now}
+      AND EXISTS (
+        SELECT 1 FROM execution_rollout WHERE COALESCE(staged_revision, current_revision) = ${revision}
+      )
     RETURNING lease_epoch AS "leaseEpoch"`.pipe(
       Effect.flatMap(decodeLeases),
       Effect.map((rows) => rows.length === 1)
@@ -355,7 +382,7 @@ export const make = Effect.gen(function* () {
   const target = (now: number, window: number, revision: string) =>
     sql`SELECT
     (SELECT count(*)::integer FROM execution_binding_history WHERE bound_at >= ${now - window}) AS wakes,
-    COALESCE((SELECT avg(ready_at - started_at) FROM execution_tasks WHERE ready_at IS NOT NULL
+    COALESCE((SELECT avg(ready_at - requested_at) FROM execution_tasks WHERE ready_at IS NOT NULL
       AND requested_at >= ${now - window}), 0)::double precision AS "coldStart",
     (SELECT count(*)::integer FROM execution_tasks WHERE state IN ('starting', 'spare')
       AND deployment_revision = ${revision}) AS spares`.pipe(
@@ -450,6 +477,7 @@ export const make = Effect.gen(function* () {
     idleFence,
     drained,
     stopped,
+    recordOrphan,
     lease,
     renewLease,
     registerDeployment,

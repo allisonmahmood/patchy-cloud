@@ -16,7 +16,7 @@ export interface Task {
 export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
   "TaskProviderError",
   {
-    operation: Schema.Literals(["start", "list", "stop", "bind", "invoke", "stats"]),
+    operation: Schema.Literals(["start", "list", "quiesce", "stop", "bind", "invoke", "stats"]),
     taskId: Schema.optionalKey(Schema.String),
     reason: Schema.Union([Management.Refusal.fields.code, Schema.Literal("provider")]),
     limit: Schema.optionalKey(
@@ -37,9 +37,9 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
 }
 
 /**
- * All host clients address the same authoritative inventory. Identity survives ambiguous starts
+ * All host clients address the same shared inventory. Identity survives ambiguous starts
  * and stops; closing a host does not stop its tasks. A stopped observation certifies actual exit.
- * Management calls are bounded; timeout is not evidence that a task stopped.
+ * Omitted tasks and management timeouts are uncertainty, never evidence that a task stopped.
  */
 export class TaskProvider extends Context.Service<
   TaskProvider,
@@ -49,6 +49,11 @@ export class TaskProvider extends Context.Service<
       readonly deploymentRevision: string;
     }) => Effect.Effect<Task, TaskProviderError>;
     readonly list: Effect.Effect<readonly Task[], TaskProviderError>;
+    /** Stop guest processes but retain the supervisor until reports are persisted and acknowledged. */
+    readonly quiesce: (
+      taskId: string,
+      bindingEpoch: number
+    ) => Effect.Effect<void, TaskProviderError>;
     readonly stop: (taskId: string) => Effect.Effect<Task, TaskProviderError>;
     readonly bind: (
       taskId: string,

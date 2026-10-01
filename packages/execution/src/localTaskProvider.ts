@@ -162,7 +162,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
   });
   const post = Effect.fn("LocalTaskProvider.post")(function* (
     taskId: string,
-    operation: "bind" | "invoke" | "stats",
+    operation: "bind" | "invoke" | "stats" | "quiesce",
     body: unknown
   ) {
     const record = yield* current(taskId, operation);
@@ -173,7 +173,9 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
     );
     const response = yield* http
       .execute(
-        HttpClientRequest.post(`${record.url}/${operation}`).pipe(
+        HttpClientRequest.post(
+          `${record.url}/${operation === "quiesce" ? "stop" : operation}`
+        ).pipe(
           HttpClientRequest.setHeader("authorization", `Bearer ${request!.secret}`),
           HttpClientRequest.bodyJsonUnsafe(body)
         )
@@ -189,6 +191,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
             })
         )
       );
+    if (operation === "quiesce" && response.status === 204) return;
     const value = yield* response.json.pipe(
       Effect.mapError(
         (cause) =>
@@ -218,7 +221,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
     return value;
   });
   const bounded = <A, E>(
-    operation: "bind" | "invoke" | "stats",
+    operation: "bind" | "invoke" | "stats" | "quiesce",
     taskId: string,
     effect: Effect.Effect<A, E>,
     timeout = managementTimeout
@@ -301,6 +304,8 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
       return tasks;
     }),
     stop,
+    quiesce: (taskId, bindingEpoch) =>
+      bounded("quiesce", taskId, post(taskId, "quiesce", { bindingEpoch }).pipe(Effect.asVoid)),
     bind: (taskId, request) =>
       bounded("bind", taskId, post(taskId, "bind", request).pipe(Effect.flatMap(decodeBind))),
     invoke: (taskId, request) =>
