@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -14,7 +14,8 @@ import {
   FileName,
   runtimeOperations,
   sharedStoreId,
-  type FileList
+  type FileList,
+  type SharedStoreDeclaration
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
@@ -50,6 +51,13 @@ export class Busy extends Schema.TaggedError<Busy>()("FileBusy", {
   readonly status = 503;
   override get message() {
     return `Company database capacity (${this.value}) is exhausted. Try again shortly.`;
+  }
+}
+class NotFound extends Schema.TaggedError<NotFound>()("FileNotFound", {}) {
+  readonly code = "not_found" as const;
+  readonly status = 404;
+  override get message() {
+    return "The selected file no longer exists.";
   }
 }
 
@@ -93,6 +101,63 @@ const decodeSharedGet = Schema.decodeUnknownEffect(
   runtimeOperations["shared.files.get"].request.fields.args,
   { onExcessProperty: "error" }
 );
+const decodeRedeem = Schema.decodeUnknownEffect(
+  runtimeOperations["files.redeem"].request.fields.args,
+  {
+    onExcessProperty: "error"
+  }
+);
+const handleKey = SqlSchema.findOne({
+  Request: Schema.Void,
+  Result: Schema.Struct({ secret: Schema.String }),
+  execute: () =>
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`SELECT secret FROM patchy.file_handle_key WHERE singleton = true`
+    )
+})(undefined).pipe(
+  Effect.map(({ secret }) => Buffer.from(secret, "hex")),
+  Effect.catchTags({
+    SchemaError: Effect.die,
+    NoSuchElementError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
+  })
+);
+const findObject = SqlSchema.findOneOption({
+  Request: Schema.String,
+  Result: Schema.Struct({
+    patchId: Schema.String,
+    store: DefinitionName,
+    name: FileName,
+    objectId: Schema.String,
+    contentType: FileContentType
+  }),
+  execute: (objectId) =>
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) =>
+        sql`SELECT patch_id AS "patchId", store, name, object_id AS "objectId",
+        content_type AS "contentType" FROM patchy.files WHERE object_id = ${objectId}`
+    )
+});
+const encodeHandleBinding = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String)))
+);
+// The company-wide unique object locator commits its immutable source patch/store too.
+const handleMac = (secret: Uint8Array, binding: Binding.Binding["Service"], locator: string) =>
+  createHmac("sha256", secret)
+    .update(
+      encodeHandleBinding([
+        "patchy-file-handle-1",
+        binding.companyId,
+        binding.identity?.user.id ?? null,
+        binding.patchId,
+        binding.versionId,
+        locator
+      ])
+    )
+    .digest()
+    .subarray(0, 24)
+    .toString("base64url");
 const findFile = SqlSchema.findOneOption({
   Request: Schema.Struct({ patchId: Schema.String, store: DefinitionName, name: FileName }),
   Result: Schema.Struct({ objectId: Schema.String, contentType: FileContentType }),
@@ -105,6 +170,9 @@ const findFile = SqlSchema.findOneOption({
     )
 });
 const decodeFiles = Schema.decodeUnknownSync(Schema.Array(FileMetadata));
+const decodeFileRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ ...FileMetadata.fields, objectId: Schema.String }))
+);
 const encodePage = Schema.encodeSync(
   Schema.fromJsonString(runtimeOperations["files.list"].response)
 );
@@ -158,15 +226,10 @@ export const make = Effect.gen(function* () {
         return yield* new Runtime.InvalidRequest({});
       return yield* run(binding);
     });
-  const withSharedStore = Effect.fn("Files.withSharedStore")(function* <A>(
-    alias: string,
-    run: (owner: StoreOwner, store: string) => Effect.Effect<A, Runtime.RuntimeError>
+  const sharedSourceAccess = Effect.fn("Files.sharedSourceAccess")(function* (
+    binding: Binding.Binding["Service"],
+    declaration: typeof SharedStoreDeclaration.Type
   ) {
-    const binding = yield* Binding.Binding;
-    const declaration = Object.hasOwn(binding.manifest.uses, alias)
-      ? binding.manifest.uses[alias]
-      : undefined;
-    if (declaration?.kind !== "sharedStore") return yield* new Runtime.InvalidRequest({});
     if (
       declaration.id !== sharedStoreId(declaration.patchId, declaration.store) ||
       binding.identity === null ||
@@ -193,9 +256,25 @@ export const make = Effect.gen(function* () {
           return yield* new Runtime.AccessDenied({});
       })
     );
+  });
+  const withSharedStore = Effect.fn("Files.withSharedStore")(function* <A>(
+    alias: string,
+    run: (
+      owner: StoreOwner,
+      store: string,
+      consumer: Binding.Binding["Service"]
+    ) => Effect.Effect<A, Runtime.RuntimeError>
+  ) {
+    const binding = yield* Binding.Binding;
+    const declaration = Object.hasOwn(binding.manifest.uses, alias)
+      ? binding.manifest.uses[alias]
+      : undefined;
+    if (declaration?.kind !== "sharedStore") return yield* new Runtime.InvalidRequest({});
+    yield* sharedSourceAccess(binding, declaration);
     return yield* run(
       { companyId: binding.companyId, patchId: declaration.patchId },
-      declaration.store
+      declaration.store,
+      binding
     );
   });
   const withIndex = <A>(
@@ -313,9 +392,61 @@ export const make = Effect.gen(function* () {
         );
       })
   } satisfies Runtime.BytesGetHandler;
+  const redeem = {
+    kind: "read",
+    transport: "bytes-get",
+    run: (input: unknown) =>
+      Effect.gen(function* () {
+        const binding = yield* Binding.Binding;
+        if (binding.manifest.tier !== 2 || binding.identity === null)
+          return yield* new Runtime.AccessDenied({});
+        const { handle } = yield* decodeRedeem(input).pipe(
+          Effect.mapError((cause) => new Runtime.AccessDenied({ cause }))
+        );
+        const locator = handle.slice(0, 24);
+        const pointer = yield* withCompany(
+          binding.companyId,
+          Effect.gen(function* () {
+            const secret = yield* handleKey;
+            if (
+              !timingSafeEqual(
+                Buffer.from(handle.slice(25)),
+                Buffer.from(handleMac(secret, binding, locator))
+              )
+            )
+              return yield* new Runtime.AccessDenied({});
+            const pointer = yield* findObject(`obj_${locator}`);
+            if (Option.isNone(pointer)) return yield* new NotFound();
+            return pointer.value;
+          }).pipe(Effect.catchTags({ SchemaError: Effect.die }))
+        );
+        if (
+          pointer.patchId !== binding.patchId ||
+          !Object.hasOwn(binding.manifest.files, pointer.store)
+        ) {
+          const declaration = Object.values(binding.manifest.uses).find(
+            (use) =>
+              use.kind === "sharedStore" &&
+              use.patchId === pointer.patchId &&
+              use.store === pointer.store
+          );
+          if (declaration?.kind !== "sharedStore") return yield* new Runtime.AccessDenied({});
+          yield* sharedSourceAccess(binding, declaration);
+        }
+        const bytes = yield* content
+          .getBytes(objectKey(pointer.patchId, pointer.store, pointer.objectId))
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+        return { bytes, contentType: pointer.contentType, name: pointer.name };
+      })
+  } satisfies Runtime.BytesGetHandler;
   const listFiles = Effect.fnUntraced(
-    function* (binding: StoreOwner, args: typeof FileList.Type) {
+    function* (
+      binding: StoreOwner,
+      args: typeof FileList.Type,
+      consumer: Binding.Binding["Service"]
+    ) {
       const sql = yield* CompanyDatabases.CompanyConnection;
+      const key = consumer.manifest.tier === 2 ? yield* handleKey : undefined;
       const patchId = binding.patchId;
       const limit = args.limit ?? settings.defaultPage;
       if (limit > settings.maxPage) return yield* new PageLimit({ maxItems: settings.maxPage });
@@ -338,11 +469,12 @@ export const make = Effect.gen(function* () {
       }
       const { rows, hasMore } = yield* boundedRows(
         sql,
-        `SELECT name, size, "contentType", "updatedAt",
+        `SELECT name, size, "contentType", "updatedAt"${key === undefined ? "" : ", handle"},
               row_number() OVER (ORDER BY name COLLATE "C") AS "__position"
             FROM (
               SELECT name, size, content_type AS "contentType",
                 to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
+                ${key === undefined ? "" : ", substring(object_id FROM 5) || '.' || repeat('0', 32) AS handle"}
               FROM patchy.files WHERE patch_id = $1 AND store = $2
                 AND starts_with(name, $3) AND name COLLATE "C" > $4 COLLATE "C"
               ORDER BY name COLLATE "C" LIMIT $5
@@ -351,7 +483,14 @@ export const make = Effect.gen(function* () {
         limit,
         settings.resultBytes
       );
-      const files = decodeFiles(rows);
+      const metadata = decodeFiles(rows);
+      const files =
+        key === undefined
+          ? metadata
+          : metadata.map((file) => {
+              const locator = file.handle!.slice(0, 24);
+              return { ...file, handle: `${locator}.${handleMac(key, consumer, locator)}` };
+            });
       const last = files[files.length - 1];
       const result = {
         files,
@@ -383,7 +522,7 @@ export const make = Effect.gen(function* () {
       input: runtimeOperations["files.list"].request.fields.args,
       output: runtimeOperations["files.list"].response
     },
-    (args) => withStore(args.store, (binding) => listFiles(binding, args))
+    (args) => withStore(args.store, (binding) => listFiles(binding, args, binding))
   );
   const sharedList = Runtime.handler(
     {
@@ -391,16 +530,30 @@ export const make = Effect.gen(function* () {
       input: runtimeOperations["shared.files.list"].request.fields.args,
       output: runtimeOperations["shared.files.list"].response
     },
-    (args) => withSharedStore(args.alias, (owner, store) => listFiles(owner, { ...args, store }))
+    (args) =>
+      withSharedStore(args.alias, (owner, store, consumer) =>
+        listFiles(owner, { ...args, store }, consumer)
+      )
   );
   const statFile = Effect.fnUntraced(
-    function* (binding: StoreOwner, args: { readonly store: string; readonly name: string }) {
+    function* (
+      binding: StoreOwner,
+      args: { readonly store: string; readonly name: string },
+      consumer: Binding.Binding["Service"]
+    ) {
       const sql = yield* CompanyDatabases.CompanyConnection;
       const rows = yield* sql`SELECT name, size::integer AS size, content_type AS "contentType",
+              object_id AS "objectId",
               to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
               FROM patchy.files
               WHERE patch_id = ${binding.patchId} AND store = ${args.store} AND name = ${args.name}`;
-      return decodeFiles(rows)[0] ?? null;
+      const row = decodeFileRows(rows)[0];
+      if (row === undefined) return null;
+      const { objectId, ...file } = row;
+      if (consumer.manifest.tier !== 2) return file;
+      const secret = yield* handleKey;
+      const locator = objectId.slice(4);
+      return { ...file, handle: `${locator}.${handleMac(secret, consumer, locator)}` };
     },
     (effect, binding) => withCompany(binding.companyId, effect)
   );
@@ -410,7 +563,7 @@ export const make = Effect.gen(function* () {
       input: runtimeOperations["files.stat"].request.fields.args,
       output: runtimeOperations["files.stat"].response
     },
-    (args) => withStore(args.store, (binding) => statFile(binding, args))
+    (args) => withStore(args.store, (binding) => statFile(binding, args, binding))
   );
   const sharedStat = Runtime.handler(
     {
@@ -419,7 +572,9 @@ export const make = Effect.gen(function* () {
       output: runtimeOperations["shared.files.stat"].response
     },
     (args) =>
-      withSharedStore(args.alias, (owner, store) => statFile(owner, { store, name: args.name }))
+      withSharedStore(args.alias, (owner, store, consumer) =>
+        statFile(owner, { store, name: args.name }, consumer)
+      )
   );
   const remove = Runtime.handler(
     {
@@ -440,6 +595,7 @@ export const make = Effect.gen(function* () {
   return {
     "files.put": put,
     "files.get": get,
+    "files.redeem": redeem,
     "files.list": list,
     "files.stat": stat,
     "files.delete": remove,

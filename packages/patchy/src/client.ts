@@ -1,4 +1,13 @@
-import type { Config, Id, Indexes, Insert, Row, TableDefinition, Update } from "./config.js";
+import type {
+  Config,
+  FileHandle,
+  Id,
+  Indexes,
+  Insert,
+  Row,
+  TableDefinition,
+  Update
+} from "./config.js";
 import type { RuntimeSubscription } from "@patchy/api";
 import {
   createPostMessageTransport,
@@ -84,6 +93,7 @@ export interface FileMetadata {
   readonly size: number;
   readonly contentType: string;
   readonly updatedAt: string;
+  readonly handle?: FileHandle;
 }
 export interface FilePage {
   readonly files: readonly FileMetadata[];

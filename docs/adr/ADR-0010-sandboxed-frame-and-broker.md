@@ -127,8 +127,8 @@ admission. While the served tier is 2, lower-tier documents get `me` only;
 every other direct operation is `server_required`. Rolling back to tier 1
 reopens those documents' direct operations. A tier 2 document never gains
 name-based tables, files, shared resources, connections or members, even after
-rollback. Its generated client is server-only, with `me` and the route bridge;
-authorised handles, staged uploads and generated downloads remain separate
+rollback. Its generated client is server-only, with `me`, the route bridge and
+authorised file handles. Staged uploads and generated downloads remain separate
 shell capabilities as their implementation tickets land.
 
 Tier 2 is company-only. Publish to a public patch requires explicit
@@ -156,6 +156,26 @@ and refuses held calls on failure without replay. The selected T-1 cover appears
 after two seconds on first open and resume, holds focus with an accessible name,
 and replaces the reconnecting pill while starting. It offers Try again after failure
 and backs off automatic binding retries while open. Core owns its shared styles.
+
+## Authorised file handles
+
+Tier 2 metadata callbacks mint deterministic, viewer-bound handles; handlers
+choose which ones to return. The shell redeems `files.redeem { handle }` through
+the signed-in byte route, never through a public or bearer-authenticated URL.
+The MAC precedes the current object-pointer check, which precedes live source
+access. Replacement or deletion is `not_found` even when source access also
+changed; otherwise lost access is `access_denied`. Redemptions are unlogged
+reads. Neither the SDK nor the broker may reuse bytes without reauthorization.
+
+`patchy.files.url(handle)` creates a blob URL inside the frame.
+`useFileUrl(handle)` owns its URL through unmount and clears stale images on
+failure. Downloads use the selected D-1 bottom-right shell card, titled
+"<patch> has a file to download", with filename and size. The title identifies
+the offering patch, not who created a stored or shared file. Only its trusted
+Download click starts the download; a frame's claim
+of user activation is insufficient. Not now discards it, three offers remain
+visible and older ones fold under a count. Pending files are shell-local and
+are lost on close or reload. Core owns the shared styles.
 
 ## Tier-scoped promise
 

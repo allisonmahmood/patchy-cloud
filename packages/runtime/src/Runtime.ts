@@ -613,12 +613,15 @@ export const make = (
           }
           if (
             version.manifest.tier === 2 &&
+            input.op !== "files.redeem" &&
             (input.op.startsWith("tables.") ||
               input.op.startsWith("files.") ||
               input.op.startsWith("shared.") ||
               input.op.startsWith("postgres.") ||
               input.op.startsWith("members."))
           )
+            return yield* new ServerRequired();
+          if (input.op === "files.redeem" && version.manifest.tier !== 2)
             return yield* new ServerRequired();
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
             return yield* new ServerRequired();

@@ -1,16 +1,13 @@
 import { canonicalArgs } from "@patchy/api/canonical-args";
 import { PatchyError, isPatchyError } from "./clientError.js";
-import {
-  createPostMessageTransport,
-  LostReply,
-  type Me,
-  type Transport
-} from "./clientTransport.js";
+import { getDocumentTransport, LostReply, type Me, type Transport } from "./clientTransport.js";
 import { createQueryRegistry } from "./queryRegistry.js";
 import type { ServerClient } from "./server.js";
+import { createFileHandles, getDocumentFiles, type HandleFiles } from "./fileHandles.js";
 
 export interface ServerOnlyClient<Modules> {
   readonly server: ServerClient<Modules>;
+  readonly files: HandleFiles;
   readonly route: Transport["route"];
   me(): Promise<Me>;
   close(): void;
@@ -29,7 +26,8 @@ const mutationKey = (serverTime: number): string => {
 export function createServerClient<Modules>(
   options: { readonly transport?: Transport } = {}
 ): ServerOnlyClient<Modules> {
-  const transport = options.transport ?? createPostMessageTransport();
+  const transport = options.transport ?? getDocumentTransport();
+  const files = options.transport ? createFileHandles(transport) : getDocumentFiles();
   const registry = createQueryRegistry({
     subscribe: ({ handler, args }, onFrame) =>
       transport.queries.subscribe({ handler: "server.call", args: { handler, args } }, onFrame)
@@ -89,6 +87,7 @@ export function createServerClient<Modules>(
   let identity: Promise<Me> | undefined;
   return {
     server: server as ServerClient<Modules>,
+    files,
     route: transport.route,
     me: () =>
       (identity ??= transport.call("me", {}).then((value) => {
@@ -97,6 +96,7 @@ export function createServerClient<Modules>(
         return value as Me;
       })),
     close() {
+      files.close();
       registry.close();
       transport.close();
     }

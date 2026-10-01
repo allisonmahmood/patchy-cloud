@@ -144,11 +144,14 @@ export interface HandlerDescriptor {
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
 }
+export interface HandlerFileMetadata extends FileMetadata {
+  readonly handle: FileHandle;
+}
 export interface QueryFileStore {
   list(
     options?: FileListOptions
-  ): Promise<{ readonly files: readonly FileMetadata[]; readonly cursor: string | null }>;
-  stat(name: string): Promise<FileMetadata | null>;
+  ): Promise<{ readonly files: readonly HandlerFileMetadata[]; readonly cursor: string | null }>;
+  stat(name: string): Promise<HandlerFileMetadata | null>;
 }
 export interface ActionSharedFileStore extends QueryFileStore {
   get(name: string): Promise<Uint8Array>;

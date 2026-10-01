@@ -85,7 +85,7 @@ belongs to the member-directory release, not this contract.
 - A query reads owned tables, declared shared tables, and owned or shared file
   metadata. `ctx.tables` is read-only; `ctx.files.<store>` and shared store
   aliases under `ctx.shared` have `list` and `stat`, not byte reads.
-  `stat` returns metadata or null. File handles arrive separately.
+  `stat` returns metadata or null; every metadata entry includes `handle`.
   Read only what the screen needs, using filters and bounded pages.
 - An action reads and writes owned tables, reads shared tables, reaches declared
   connections and reads or writes file bytes. `ctx.files.<store>.put(name, bytes,
@@ -172,6 +172,34 @@ atomic. Report partial progress rather than rerunning the whole batch blindly.
 `ctx.log(message, details?)` writes lines on the invocation's row, up to 32 KiB
 per invocation. Exceeding it is `limit_exceeded`, not silent truncation. The log
 records attribution and outcomes, not an access audit.
+
+### Return selected files
+
+Return a metadata entry's `handle` using `t.fileHandle()` in the result schema,
+including results from nested `ctx.run` queries. The page uses
+`patchy.files.url(handle)` for a frame-local blob URL,
+`patchy.files.download(handle, filename?)` for a shell download, or
+`useFileUrl(handle)` from `patchy/preact` for an image with `{ url, error }`.
+The hook drops stale images on failure and releases its URL on unmount.
+
+What the page sees is what handlers return. A handle freezes that selection
+until the query reruns; filtering by viewer is the patch's code. Redemption
+does not rerun the filter. To cut off a file when a record narrows to private,
+is handed over or is deleted, re-put or delete it; handles already selected keep
+redeeming until then. Already delivered bytes cannot be recalled.
+
+The host mints deterministic 57-character handles bound to viewer, company,
+consuming patch, loaded version, source store and exact object. They contain no
+filename or clock and count against existing page and result limits. Publishing
+preserves an eligible open version's handles. Another viewer, company, patch
+or version cannot redeem them. `t.fileHandle()` belongs only in results, never
+arguments or stored columns.
+
+Every redemption needs the signed-in shell and rechecks live access.
+Replacement or deletion returns `not_found`; an unshared store or lost source
+access returns `access_denied`. If both happen, `not_found` takes precedence.
+Redemptions are reads, not logged operations. See `../patchy-files/SKILL.md`
+for URL lifetime, download offers and file limits.
 
 ## Results and failures
 

@@ -165,14 +165,17 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
     const events = yield* WideEvents.WideEvents;
     const file = Effect.fn("RuntimeApi.file")(function* (
       params: Readonly<Record<string, string>>,
-      shared = false
+      mode: "owned" | "shared" | "handle" = "owned"
     ) {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const operation = shared
-        ? "shared.files.get"
-        : request.method === "PUT"
-          ? "files.put"
-          : "files.get";
+      const operation =
+        mode === "handle"
+          ? "files.redeem"
+          : mode === "shared"
+            ? "shared.files.get"
+            : request.method === "PUT"
+              ? "files.put"
+              : "files.get";
       yield* WideEvents.operation(operation);
       const wire = yield* Runtime.decodeWire(request.headers["x-patchy-wire"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
@@ -183,13 +186,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         principal: null,
         wire,
         op: operation,
-        args: {
-          ...(shared ? { alias: params.alias } : { store: params.store }),
-          name: params["*"],
-          ...(request.method === "PUT"
-            ? { contentType: request.headers["content-type"] ?? "application/octet-stream" }
-            : {})
-        }
+        args:
+          mode === "handle"
+            ? { handle: params.handle }
+            : {
+                ...(mode === "shared" ? { alias: params.alias } : { store: params.store }),
+                name: params["*"],
+                ...(request.method === "PUT"
+                  ? { contentType: request.headers["content-type"] ?? "application/octet-stream" }
+                  : {})
+              }
       };
       if (request.method === "PUT") {
         const scope = yield* Scope.Scope;
@@ -217,6 +223,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         contentType: result.contentType,
         headers: {
           ...noStore,
+          ...(result.name === undefined
+            ? {}
+            : { "x-patchy-file-name": encodeURIComponent(result.name) }),
           "x-content-type-options": "nosniff",
           // Active uploads are bytes, never a same-origin executable document.
           "content-security-policy": "sandbox; default-src 'none'; frame-src 'none'",
@@ -283,7 +292,21 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
       .handleRaw("getSharedFile", ({ params }) =>
         events.withEvent(
           { type: "request" },
-          file(params, true).pipe(
+          file(params, "shared").pipe(
+            Effect.catch(recordFailure),
+            Effect.tap((response) =>
+              WideEvents.enrich({
+                responseBytes:
+                  response.body._tag === "Uint8Array" ? response.body.body.byteLength : 0
+              })
+            )
+          )
+        )
+      )
+      .handleRaw("redeemFile", ({ params }) =>
+        events.withEvent(
+          { type: "request" },
+          file(params, "handle").pipe(
             Effect.catch(recordFailure),
             Effect.tap((response) =>
               WideEvents.enrich({

@@ -12,7 +12,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { CURRENT_RELEASE, FilePage, Manifest, sharedStoreId, WIRE_VERSION } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  FileMetadata,
+  FilePage,
+  Manifest,
+  sharedStoreId,
+  WIRE_VERSION
+} from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ContractLimits } from "@patchy/limits";
@@ -21,6 +28,7 @@ import * as Files from "../Files.js";
 import * as Tables from "../Tables.js";
 
 const decodePage = Schema.decodeUnknownEffect(FilePage);
+const decodeMetadata = Schema.decodeUnknownEffect(Schema.NullOr(FileMetadata));
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 export const manifest: typeof Manifest.Type = {
   manifestVersion: 1,
@@ -590,9 +598,136 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
     yield* call("shared.files.stat", { alias: "documents", name: "folder/a.bin" }),
     first.files[0]
   );
+  binding = { ...binding, manifest: { ...binding.manifest, tier: 2 } };
+  const selected = yield* call("shared.files.list", { alias: "documents" }).pipe(
+    Effect.flatMap(decodePage)
+  );
+  const handle = selected.files[0]!.handle!;
+  assert.strictEqual(handle.length, 57);
+  assert.deepStrictEqual(
+    yield* call("shared.files.stat", { alias: "alternate", name: "folder/a.bin" }),
+    selected.files[0]
+  );
+  const redeem = handlers["files.redeem"]
+    .run({ handle })
+    .pipe(Effect.provideService(Binding.Binding, binding));
+  assert.deepStrictEqual(yield* redeem, {
+    bytes,
+    contentType: "application/octet-stream",
+    name: "folder/a.bin"
+  });
+  yield* sharing(false);
+  assert.propertyVal(yield* redeem.pipe(Effect.flip), "code", "access_denied");
+  yield* source.put("folder/a.bin", new Uint8Array([2]));
+  assert.propertyVal(yield* redeem.pipe(Effect.flip), "code", "not_found");
+  yield* sharing(true);
+  const replacement = yield* call("shared.files.stat", {
+    alias: "documents",
+    name: "folder/a.bin"
+  }).pipe(Effect.flatMap(decodeMetadata));
+  assert.notStrictEqual(replacement!.handle, handle);
+  const fresh = handlers["files.redeem"]
+    .run({ handle: replacement!.handle })
+    .pipe(Effect.provideService(Binding.Binding, binding));
+  assert.deepStrictEqual((yield* fresh).bytes, new Uint8Array([2]));
+  live = false;
+  assert.propertyVal(yield* fresh.pipe(Effect.flip), "code", "access_denied");
+  live = true;
+  assert.deepStrictEqual((yield* fresh).bytes, new Uint8Array([2]));
+});
+
+const handlesContract = Effect.fn("test.filesContract.handles")(function* (companyId: string) {
+  const fixture = yield* setup(companyId, "filehandles", { ...manifest, tier: 2 });
+  const identity = {
+    user: { id: "usr_selected", name: "Selected viewer", email: "selected@example.test" },
+    company: { id: companyId, handle: "company", name: "Company" },
+    admin: false
+  };
+  const binding = { ...fixture.binding, identity, principal: { userId: identity.user.id } };
+  const name = "folder/雪 % report.svg";
+  const bytes = new Uint8Array([0, 255, 128]);
+  yield* fixture.put(name, bytes, "image/svg+xml");
+  const page = yield* fixture.handlers["files.list"]
+    .run({ store: "docs" })
+    .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodePage));
+  const handle = page.files[0]!.handle!;
+  assert.strictEqual(handle.length, 57);
+  const stat = yield* fixture.handlers["files.stat"]
+    .run({ store: "docs", name })
+    .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeMetadata));
+  assert.deepStrictEqual(stat, page.files[0]);
+  yield* fixture.databases.withCompany(companyId)(Inventory.initialize);
+  yield* fixture.databases.withCompany(companyId)(Inventory.initialize);
+  const restarted = yield* Files.make;
+  const again = yield* restarted["files.list"].run({ store: "docs" }).pipe(
+    Effect.provideService(Binding.Binding, {
+      ...binding,
+      invocationId: "inv_nested",
+      effectivePrincipal: binding.patchId,
+      correlationId: "nested-call"
+    })
+  );
+  assert.deepStrictEqual(again, page);
+  const redeem = (selected: string, current = binding) =>
+    restarted["files.redeem"]
+      .run({ handle: selected })
+      .pipe(Effect.provideService(Binding.Binding, current));
+  assert.deepStrictEqual(yield* redeem(handle), { bytes, contentType: "image/svg+xml", name });
+  for (const current of [
+    { ...binding, identity: { ...identity, user: { ...identity.user, id: "another-viewer" } } },
+    { ...binding, patchId: "another-patch" },
+    { ...binding, versionId: "ver_bbbbbbbbbbbbbbbbbbbbbbbb" }
+  ]) {
+    assert.propertyVal(yield* redeem(handle, current).pipe(Effect.flip), "code", "access_denied");
+  }
+  for (const forged of [
+    "",
+    `${"0".repeat(24)}${handle.slice(24)}`,
+    `${handle.slice(0, 25)}${handle[25] === "A" ? "B" : "A"}${handle.slice(26)}`
+  ]) {
+    assert.propertyVal(yield* redeem(forged).pipe(Effect.flip), "code", "access_denied");
+  }
+  yield* fixture.put(name, bytes, "image/svg+xml");
+  assert.propertyVal(yield* redeem(handle).pipe(Effect.flip), "code", "not_found");
+  const replaced = yield* restarted["files.stat"]
+    .run({ store: "docs", name })
+    .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeMetadata));
+  assert.notStrictEqual(replaced!.handle, handle);
+  assert.deepStrictEqual(yield* redeem(replaced!.handle!), {
+    bytes,
+    contentType: "image/svg+xml",
+    name
+  });
+  yield* fixture.remove(name);
+  assert.propertyVal(yield* redeem(replaced!.handle!).pipe(Effect.flip), "code", "not_found");
+
+  yield* fixture.put("one", bytes);
+  const bounded = yield* Files.make.pipe(
+    Effect.provideService(ContractLimits.overrides, { "runtime.result.bytes": 170 })
+  );
+  const tier1 = yield* bounded["files.list"]
+    .run({ store: "docs" })
+    .pipe(
+      Effect.provideService(Binding.Binding, { ...binding, manifest: { ...manifest, tier: 1 } }),
+      Effect.flatMap(decodePage)
+    );
+  assert.deepStrictEqual(
+    tier1.files.map((file) => file.name),
+    ["one"]
+  );
+  assert.notProperty(tier1.files[0], "handle");
+  assert.propertyVal(
+    yield* bounded["files.list"]
+      .run({ store: "docs" })
+      .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip),
+    "code",
+    "too_large"
+  );
 });
 
 export const contracts = {
+  "binds deterministic handles to the selected viewer and document across replicas and replacements":
+    handlesContract,
   "rechecks source sharing and liveness for metadata and bytes, and recovers unchanged consumers":
     sharedStoreContract,
   "round-trips 20 MiB as binary and refuses one more byte without replacing it":

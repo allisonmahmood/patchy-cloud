@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { Frame, Page } from "@playwright/test";
 import type { Manifest } from "../../packages/api/src/index.js";
@@ -21,11 +22,21 @@ async function artifacts(shared: boolean, removed = false) {
     "rows.size": { kind: "query", args: { payload: { kind: "text" } }, result: { kind: "number" } },
     ...(!removed ? { "rows.obsolete": query } : {}),
     ...(shared ? { "rows.shared": query } : {}),
-    "rows.add": { kind: "mutation", args: { label: { kind: "text" } }, result: { kind: "json" } }
+    "rows.add": { kind: "mutation", args: { label: { kind: "text" } }, result: { kind: "json" } },
+    "files.select": {
+      kind: "query",
+      args: { name: { kind: "text" } },
+      result: { kind: "fileHandle" }
+    },
+    "files.put": {
+      kind: "action",
+      args: { name: { kind: "text" }, content: { kind: "text" } },
+      result: { kind: "boolean" }
+    }
   };
   const server = await build({
     stdin: {
-      contents: `import { query, mutation, createGuest, t } from "patchy/server";
+      contents: `import { query, mutation, action, createGuest, t } from "patchy/server";
 const list = query({ args: {}, result: t.array(t.text()), handler: async ctx =>
   (await ctx.tables.rows.list({ order: "asc" })).rows.map(row => row.label) });
 const shared = query({ args: {}, result: t.array(t.text()), handler: async ctx =>
@@ -38,7 +49,16 @@ const obsolete = query({ args: {}, result: t.array(t.text()), handler: async ctx
 const size = query({ args: { payload: t.text() }, result: t.number(), handler: (_ctx, args) => args.payload.length });
 const add = mutation({ args: { label: t.text() }, result: t.json(), handler: (ctx, args) =>
   ctx.tables.rows.insert(args) });
-export default createGuest({ rows: { list, size, add, ${removed ? "" : "obsolete,"} ${shared ? "shared," : ""} } });`,
+const select = query({ args: { name: t.text() }, result: t.fileHandle(), handler: async (ctx, args) => {
+  const metadata = await ctx.files.assets.stat(args.name);
+  if (!metadata) throw new Error("File missing");
+  return metadata.handle;
+} });
+const put = action({ args: { name: t.text(), content: t.text() }, result: t.boolean(), handler: async (ctx, args) => {
+  await ctx.files.assets.put(args.name, new TextEncoder().encode(args.content), { contentType: "image/svg+xml" });
+  return true;
+} });
+export default createGuest({ rows: { list, size, add, ${removed ? "" : "obsolete,"} ${shared ? "shared," : ""} }, files: { select, put } });`,
       resolveDir: packageRoot,
       sourcefile: "subscription-server.ts"
     },
@@ -51,7 +71,7 @@ export default createGuest({ rows: { list, size, add, ${removed ? "" : "obsolete
   const page = await build({
     stdin: {
       contents: `import { createServerClient } from "patchy/client";
-import { render, useQuery, useState } from "patchy/preact";
+import { render, useFileUrl, useQuery, useState } from "patchy/preact";
 const client = createServerClient();
 function Result({ name, handler }) {
   const snapshot = useQuery(handler, {});
@@ -72,7 +92,23 @@ function App() {
   </main>;
 }
 render(<App/>, document.getElementById("app"));
-Object.assign(window, { sizedQuery: client.server.rows.size });`,
+const filesRoot = document.createElement("div");
+document.body.append(filesRoot);
+function Image({ handle, index }) {
+  const { url, error } = useFileUrl(handle);
+  return <section data-file={index}>{url && <img src={url} alt={"Selected file " + index}/>}
+    {error && <p role="alert">{error.code}</p>}</section>;
+}
+Object.assign(window, {
+  sizedQuery: client.server.rows.size,
+  fileProbe: {
+    client,
+    show(handle, count = 1) {
+      render(<>{Array.from({length: count}, (_, index) => <Image key={index} index={index} handle={handle}/>)}</>, filesRoot);
+    },
+    clear() { render(null, filesRoot); }
+  }
+});`,
       resolveDir: packageRoot,
       sourcefile: "subscription-page.tsx",
       loader: "tsx"
@@ -292,4 +328,216 @@ test("server subscriptions use the handler argument budget rather than the direc
     }, bytes);
   expect(await subscribe(512 * 1024)).toEqual({ status: "ready", data: 512 * 1024, code: null });
   expect(await subscribe(1024 * 1024)).toEqual({ status: "error", data: null, code: "too_large" });
+});
+
+interface FileProbeWindow extends Window {
+  fileProbe: {
+    client: {
+      server: {
+        files: {
+          select(args: { name: string }): Promise<string>;
+          put(args: { name: string; content: string }): Promise<boolean>;
+        };
+      };
+      files: {
+        url(handle: string): Promise<string>;
+        download(handle: string, filename?: string): Promise<null>;
+      };
+      close(): void;
+    };
+    show(handle: string, count?: number): void;
+    clear(): void;
+  };
+}
+
+test("authorised handles display blob images, reauthorise and queue trusted shell downloads", async ({
+  page,
+  browser,
+  instance
+}) => {
+  const built = await artifacts(false);
+  const patch = await instance.publish(
+    "company",
+    built.html,
+    undefined,
+    {
+      tier: 2,
+      files: manifest.files,
+      handlers: built.handlers
+    },
+    { server: built.server }
+  );
+  const frame = await open(page, patch);
+  const filename = "résumé & report.svg";
+  const name = `logos/${filename}`;
+  const content =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><path fill="red" d="M0 0h1v1H0z"/></svg>';
+  const handle = await frame.evaluate(
+    async ({ name, content }) => {
+      const { client, show } = (window as unknown as FileProbeWindow).fileProbe;
+      await client.server.files.put({ name, content });
+      const handle = await client.server.files.select({ name });
+      show(handle, 2);
+      return handle;
+    },
+    { name, content }
+  );
+  expect(handle).toHaveLength(57);
+  await expect(frame.getByRole("img")).toHaveCount(2);
+  for (const image of await frame.getByRole("img").all())
+    await expect
+      .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
+      .toBe(1);
+  const firstUrl = await frame.getByRole("img").first().getAttribute("src");
+  expect(firstUrl).toMatch(/^blob:/);
+  const count = instance.runtimeRequests.filter((request) =>
+    request.path.includes("/file-handles/")
+  ).length;
+  const urls = await frame.evaluate(async (handle) => {
+    const { client } = (window as unknown as FileProbeWindow).fileProbe;
+    return Promise.all([client.files.url(handle), client.files.url(handle)]);
+  }, handle);
+  expect(new Set(urls).size).toBe(2);
+  expect(
+    instance.runtimeRequests.filter((request) => request.path.includes("/file-handles/")).length
+  ).toBe(count + 2);
+  await frame.evaluate(() => (window as unknown as FileProbeWindow).fileProbe.clear());
+  await expect(frame.getByRole("img")).toHaveCount(0);
+  const loads = (url: string) =>
+    frame.evaluate(async (url) => {
+      const image = new Image();
+      image.src = url;
+      try {
+        await image.decode();
+        return true;
+      } catch {
+        return false;
+      }
+    }, url);
+  await expect.poll(() => loads(firstUrl!)).toBe(false);
+  expect(await loads(urls[0]!)).toBe(true);
+
+  const downloads: string[] = [];
+  page.on("download", (download) => downloads.push(download.suggestedFilename()));
+  const cards = page.locator(".shell-corner");
+  for (const filename of ["", "../report.svg", "folder//report.svg", "x".repeat(513)]) {
+    expect(
+      await frame.evaluate(
+        async ({ handle, filename }) => {
+          try {
+            await (window as unknown as FileProbeWindow).fileProbe.client.files.download(
+              handle,
+              filename
+            );
+            return "unexpected_success";
+          } catch (error) {
+            return error instanceof Error && "code" in error ? error.code : "unexpected_error";
+          }
+        },
+        { handle, filename }
+      )
+    ).toBe("invalid_request");
+  }
+  await expect(cards).toBeHidden();
+  await frame.evaluate(
+    (handle) => (window as unknown as FileProbeWindow).fileProbe.client.files.download(handle),
+    handle
+  );
+  await expect(cards.getByText(filename, { exact: true })).toBeVisible();
+  await expect(
+    cards.getByText(`${Buffer.byteLength(content)} bytes`, { exact: true })
+  ).toBeVisible();
+  const defaultDownloadEvent = page.waitForEvent("download");
+  await cards.getByRole("button", { name: "Download", exact: true }).click();
+  const defaultDownload = await defaultDownloadEvent;
+  expect(defaultDownload.suggestedFilename()).toBe(filename);
+  expect(await readFile((await defaultDownload.path())!, "utf8")).toBe(content);
+  await expect(cards).toBeHidden();
+  await frame.evaluate(async (handle) => {
+    const { client } = (window as unknown as FileProbeWindow).fileProbe;
+    for (let index = 0; index < 5; index++)
+      await client.files.download(handle, `Report ${index}.svg`);
+  }, handle);
+  await expect(cards.locator(".note:visible")).toHaveCount(3);
+  await expect(cards.getByText("2 more files", { exact: true })).toBeVisible();
+  await cards
+    .getByRole("button", { name: "Download", exact: true })
+    .first()
+    .evaluate((button: HTMLButtonElement) => button.click());
+  expect(downloads).toEqual([filename]);
+  await expect(cards.locator(".note:visible")).toHaveCount(3);
+  const downloadEvent = page.waitForEvent("download");
+  await cards.getByRole("button", { name: "Download", exact: true }).first().click();
+  const downloaded = await downloadEvent;
+  expect(downloaded.suggestedFilename()).toBe("Report 4.svg");
+  expect(await readFile((await downloaded.path())!, "utf8")).toBe(content);
+  await expect(page.locator("#patch")).toBeFocused();
+  await cards.getByRole("button", { name: "Not now", exact: true }).first().click();
+  await expect(cards.getByText("Report 3.svg", { exact: true })).toHaveCount(0);
+  await expect(page.locator("#patch")).toBeFocused();
+  await page.setViewportSize({ width: 400, height: 800 });
+  const bounds = await cards.boundingBox();
+  expect(bounds?.x).toBe(0);
+  expect(bounds?.width).toBe(400);
+  // A genuine keyboard activation is trusted just like a pointer click.
+  await cards.getByRole("button", { name: "Download", exact: true }).first().focus();
+  const keyboardDownload = page.waitForEvent("download");
+  await page.keyboard.press("Enter");
+  expect((await keyboardDownload).suggestedFilename()).toBe("Report 2.svg");
+
+  await frame.evaluate(
+    async ({ name, content }) => {
+      const { client } = (window as unknown as FileProbeWindow).fileProbe;
+      await client.server.files.put({ name, content });
+    },
+    { name, content: content.replace("red", "blue") }
+  );
+  const replacement = await frame.evaluate(async (name) => {
+    const { client, show } = (window as unknown as FileProbeWindow).fileProbe;
+    const handle = await client.server.files.select({ name });
+    show(handle);
+    return handle;
+  }, name);
+  expect(replacement).not.toBe(handle);
+  await expect(frame.getByRole("img")).toHaveCount(1);
+  await frame.evaluate(
+    (handle) => (window as unknown as FileProbeWindow).fileProbe.show(handle),
+    handle
+  );
+  await expect(frame.getByRole("alert")).toHaveText("not_found");
+  await expect(frame.getByRole("img")).toHaveCount(0);
+  expect(
+    await frame.evaluate(async (handle) => {
+      try {
+        await (window as unknown as FileProbeWindow).fileProbe.client.files.url(handle);
+        return "unexpected_success";
+      } catch (error) {
+        return error instanceof Error && "code" in error ? error.code : "unexpected_error";
+      }
+    }, handle)
+  ).toBe("not_found");
+
+  const colleague = await browser.newContext();
+  try {
+    await prepare(colleague, instance);
+    await instance.session(colleague, "colleague");
+    const other = await open(await colleague.newPage(), patch);
+    expect(
+      await other.evaluate(async (handle) => {
+        try {
+          await (window as unknown as FileProbeWindow).fileProbe.client.files.url(handle);
+          return "unexpected_success";
+        } catch (error) {
+          return error instanceof Error && "code" in error ? error.code : "unexpected_error";
+        }
+      }, replacement)
+    ).toBe("access_denied");
+  } finally {
+    await colleague.close();
+  }
+  await frame.evaluate(() => (window as unknown as FileProbeWindow).fileProbe.client.close());
+  expect(await loads(urls[0]!)).toBe(false);
+  expect(await loads(urls[1]!)).toBe(false);
+  await page.reload();
+  await expect(page.locator(".shell-corner")).toBeHidden();
 });

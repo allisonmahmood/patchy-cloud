@@ -20,7 +20,8 @@ import type {
   ServerModules,
   config
 } from "./server.generated.types.js";
-import { useQuery } from "./preact.js";
+import { useFileUrl, useQuery } from "./preact.js";
+import type { ServerOnlyClient } from "./serverClient.js";
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -39,10 +40,15 @@ export const list = query({
     const stage: "open" | "closed" | null = args.stage;
     const search: string | undefined = args.search;
     await ctx.shared.directory.list({ limit: 20 });
-    await ctx.files.documents.stat("invoice.pdf");
-    await ctx.files.documents.list();
-    await ctx.shared.assets.list({ prefix: "logos/" });
-    await ctx.shared.assets.stat("logos/company.svg");
+    const ownFile = await ctx.files.documents.stat("invoice.pdf");
+    const ownHandle: FileHandle | undefined = ownFile?.handle;
+    const ownPage = await ctx.files.documents.list();
+    const listedHandle: FileHandle = ownPage.files[0]!.handle;
+    const sharedPage = await ctx.shared.assets.list({ prefix: "logos/" });
+    const sharedHandle: FileHandle = sharedPage.files[0]!.handle;
+    const sharedFile = await ctx.shared.assets.stat("logos/company.svg");
+    const statHandle: FileHandle | undefined = sharedFile?.handle;
+    void [ownHandle, listedHandle, sharedHandle, statHandle];
     // @ts-expect-error shared bytes require an action
     await ctx.shared.assets.get("logos/company.svg");
     // @ts-expect-error shared stores are read only in queries
@@ -118,8 +124,7 @@ export const sync = action({
     await ctx.files.documents.get(args.name);
     await ctx.files.documents.delete("obsolete.pdf");
     ctx.log(id);
-    await ctx.files.documents.stat(args.name);
-    return null;
+    return (await ctx.files.documents.stat(args.name))?.handle ?? null;
   }
 });
 
@@ -199,6 +204,27 @@ const consumer = async (
   void retried;
 };
 void consumer;
+
+const fileConsumer = async (client: ServerOnlyClient<ServerModules>, handle: FileHandle) => {
+  const url: string = await client.files.url(handle);
+  await client.files.download(handle);
+  await client.files.download(handle, "invoice.pdf");
+  const snapshot = useFileUrl(handle);
+  const image: string | undefined = snapshot.url;
+  const error: Error | undefined = snapshot.error;
+  useFileUrl(null);
+  useFileUrl(undefined);
+  // @ts-expect-error Tier 2 never accepts a name in place of a handle
+  await client.files.url("invoice.pdf");
+  // @ts-expect-error Tier 2 never accepts a name-based download
+  await client.files.download("invoice.pdf");
+  // @ts-expect-error Hooks require authorised handles
+  useFileUrl("invoice.pdf");
+  // @ts-expect-error Tier 2 pages have no named file store
+  await client.files.documents.get("invoice.pdf");
+  void [url, image, error];
+};
+void fileConsumer;
 
 const schemas = () => {
   query({

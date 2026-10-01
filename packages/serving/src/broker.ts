@@ -5,6 +5,7 @@ import {
   RuntimeRequest,
   RuntimeFailure,
   HandlerFailure,
+  FileName,
   RuntimeSubscription,
   runtimeOperations,
   runtimeBodyLimit,
@@ -18,6 +19,7 @@ import { serverReplyTimeoutMs } from "@patchy/api/query-config";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 import { openDocumentStream, type DocumentStream } from "./stream.js";
+import { createDownloads } from "./downloads.js";
 
 const MAX_HELD = registry["frame.heldBytes"].default;
 const MAX_FILE = runtimeByteLimits.fileBytes;
@@ -29,6 +31,13 @@ const decodeHandlerFailure = Schema.decodeUnknownSync(HandlerFailure);
 const isMe = Schema.is(runtimeOperations.me.response);
 const routeArguments = Schema.Struct({ path: Schema.String });
 const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty: "error" });
+const decodeHandleDownload = Schema.decodeUnknownSync(
+  Schema.Struct({
+    handle: Schema.String,
+    filename: Schema.optionalKey(FileName)
+  }),
+  { onExcessProperty: "error" }
+);
 const decodeSubscription = Schema.decodeUnknownSync(
   Schema.Struct({
     id: RuntimeSubscription.fields.id,
@@ -224,6 +233,7 @@ function mount(frame: HTMLIFrameElement): void {
   const release = (size: number) => {
     held -= size;
   };
+  const handleDownloads = createDownloads(frame, reserve, release);
   const stop = () => {
     if (closed) return;
     closed = true;
@@ -241,6 +251,7 @@ function mount(frame: HTMLIFrameElement): void {
       release(download.size);
     }
     downloads.clear();
+    handleDownloads.close();
     window.removeEventListener("popstate", announceRoute);
     window.removeEventListener("pagehide", stop);
   };
@@ -358,7 +369,7 @@ function mount(frame: HTMLIFrameElement): void {
   };
   const runtime = async (op: Operation, args: unknown, bytes?: ArrayBuffer): Promise<Reply> => {
     if (closed) throw lost();
-    const readsBytes = op === "files.get" || op === "shared.files.get";
+    const readsBytes = op === "files.get" || op === "shared.files.get" || op === "files.redeem";
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort(),
@@ -379,7 +390,13 @@ function mount(frame: HTMLIFrameElement): void {
         signal: controller.signal
       };
       let url = "/api/runtime/call";
-      if (readsBytes || op === "files.put") {
+      if (op === "files.redeem") {
+        const { handle } = args as { handle: string };
+        url =
+          "/api/runtime/file-handles/" +
+          [patchId, versionId, handle].map(encodeURIComponent).join("/");
+        init.method = "GET";
+      } else if (readsBytes || op === "files.put") {
         const file = args as { store?: string; alias?: string; name: string; contentType?: string };
         const shared = op === "shared.files.get";
         url =
@@ -416,12 +433,17 @@ function mount(frame: HTMLIFrameElement): void {
       );
       responseBytes = data.byteLength;
       if (readsBytes && response.ok) {
+        const encodedName =
+          op === "files.redeem" ? response.headers.get("X-Patchy-File-Name") : null;
+        if (op === "files.redeem" && encodedName === null) throw lost();
+        const value = {
+          contentType: response.headers.get("Content-Type") ?? "application/octet-stream",
+          ...(encodedName === null ? {} : { name: decodeURIComponent(encodedName) })
+        };
         const heldBytes = responseBytes;
         responseBytes = 0; // The caller owns this reservation until transfer or download revocation.
         return {
-          value: {
-            contentType: response.headers.get("Content-Type") ?? "application/octet-stream"
-          },
+          value,
           bytes: data.buffer,
           heldBytes
         };
@@ -545,6 +567,7 @@ function mount(frame: HTMLIFrameElement): void {
         op !== "route.set" &&
         op !== "download" &&
         op !== "shared.download" &&
+        op !== "files.download" &&
         !subscriptionOperation &&
         !Object.hasOwn(runtimeOperations, op)
       )
@@ -588,6 +611,7 @@ function mount(frame: HTMLIFrameElement): void {
       let path: string | undefined;
       let subscription: RuntimeSubscription | undefined;
       let unsubscribeId: string | undefined;
+      let downloadFilename: string | undefined;
       try {
         if (op === "route.set") path = routePath(decodeRoute(message.args).path);
         else if (op === "subscriptions.subscribe") {
@@ -600,6 +624,10 @@ function mount(frame: HTMLIFrameElement): void {
           subscription = { ...subscription, args: query.args };
         } else if (op === "subscriptions.unsubscribe") {
           unsubscribeId = decodeUnsubscribe(message.args).id;
+        } else if (op === "files.download") {
+          const download = decodeHandleDownload(message.args);
+          downloadFilename = download.filename;
+          request = decodeRequest({ op: "files.redeem", args: { handle: download.handle } });
         } else
           request = decodeRequest({
             op:
@@ -635,6 +663,15 @@ function mount(frame: HTMLIFrameElement): void {
       else reply = await runtime(request!.op, request!.args, bytes);
       replyBytes = reply.heldBytes;
       if (closed) return;
+      if (op === "files.download" && reply.bytes) {
+        const file = reply.value as { name: string; contentType: string };
+        handleDownloads.add(
+          downloadFilename ?? file.name.split("/").at(-1)!,
+          reply.bytes,
+          file.contentType
+        );
+        reply = { value: null, heldBytes: 0 };
+      }
       if ((op === "download" || op === "shared.download") && reply.bytes) {
         // Blob storage is a second held copy until the transferred response buffer is released.
         reserve(reply.bytes.byteLength);

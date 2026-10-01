@@ -106,6 +106,18 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "Objects are at most 20 MiB; names are at most 512 UTF-8 bytes. url(name) returns a frame-local blob URL, not a public link. A shared store publishes read access to every file."
   },
   {
+    id: "core.file-handles",
+    group: "Core",
+    name: "Authorised file handles",
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.files.url and patchy.files.download",
+      "patchy/preact: useFileUrl"
+    ],
+    runs: "Tier 2 company pages through the signed-in shell",
+    limits:
+      "Handlers return 57-character handles from file metadata. Every redemption checks live authority. url(handle) returns a frame-local blob URL; useFileUrl releases it on change or unmount and clears failed images. Downloads need a click on the shell's filename and size card. Closing or reloading discards pending downloads."
+  },
+  {
     id: "primitives.shared-tables",
     group: "Primitives",
     name: "Shared-table reads",
@@ -139,7 +151,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Record<(typeof groups)[number], string> = {
-  Core: "Production fleet hosting, authorised file handles, staged uploads, useFileUrl and generated-file downloads are not available in this release.",
+  Core: "Production fleet hosting, staged uploads and generated-file downloads are not available in this release.",
   Primitives: "The member directory is not available in this release.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:

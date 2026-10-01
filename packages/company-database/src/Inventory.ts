@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -287,6 +288,24 @@ export const layer = Layer.effect(Inventory, make);
  */
 export const upgrade = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const handleKeys = yield* sql`SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'patchy' AND table_name = 'file_handle_key'`;
+  if (handleKeys.length === 0) {
+    yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS patchy.file_handle_key (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      secret text NOT NULL
+    )`);
+  }
+  const handleKey = yield* sql`SELECT 1 FROM patchy.file_handle_key WHERE singleton = true`;
+  if (handleKey.length === 0)
+    yield* sql`INSERT INTO patchy.file_handle_key (secret)
+      VALUES (${randomBytes(32).toString("hex")}) ON CONFLICT (singleton) DO NOTHING`;
+  const objectLookup = yield* sql`SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'patchy' AND indexname = 'files_object_id'`;
+  if (objectLookup.length === 0)
+    yield* sql.unsafe(
+      "CREATE UNIQUE INDEX IF NOT EXISTS files_object_id ON patchy.files (object_id)"
+    );
   const mutationKeys = yield* sql`SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'patchy' AND table_name = 'mutation_keys'`;
   if (mutationKeys.length === 0) {

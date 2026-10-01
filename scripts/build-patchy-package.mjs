@@ -93,9 +93,7 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["config", "client", "server"].map((name) =>
-    path.join(packageDir, `src/${name}.ts`)
-  ),
+  entryPoints: ["config", "server"].map((name) => path.join(packageDir, `src/${name}.ts`)),
   outdir: distDir,
   platform: "browser",
   target: "es2022",
@@ -103,7 +101,7 @@ await esbuild.build({
   external: ["./executeConfig.js"]
 });
 await esbuild.build({
-  entryPoints: uiEntries.map((name) => path.join(packageDir, `src/${name}.ts`)),
+  entryPoints: ["client", ...uiEntries].map((name) => path.join(packageDir, `src/${name}.ts`)),
   outdir: distDir,
   outbase: path.join(packageDir, "src"),
   bundle: true,
@@ -113,7 +111,7 @@ await esbuild.build({
   target: "es2022",
   sourcemap: true,
   conditions: common.conditions,
-  // Keep one physical UI stack, shared by the SDK entries, optimizer and debug support.
+  // Client and hooks share the document port; all UI entries share one physical Preact stack.
   external: ["preact", "preact/*", "@preact/signals", "@preact/signals-core"]
 });
 await esbuild.build({

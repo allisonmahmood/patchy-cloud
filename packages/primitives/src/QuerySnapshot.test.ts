@@ -135,6 +135,7 @@ it.layer(layer)("Invocation query snapshots", (it) => {
     Effect.gen(function* () {
       const fixture = yield* setup("cmp_dev", "snapshotdata", {
         ...manifest,
+        tier: 2,
         files: { docs: { description: "Query snapshot files." } }
       });
       yield* fixture.call("tables.insert", {
@@ -161,9 +162,10 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         .run(
           files["files.list"]
             .run({ store: "docs" })
-            .pipe(Effect.provideService(Binding.Binding, fixture.binding))
+            .pipe(Effect.provideService(Binding.Binding, capability.binding))
         )
         .pipe(Effect.flatMap(filePage));
+      assert.strictEqual(beforeFiles.files[0]!.handle!.length, 57);
       yield* fixture.call("tables.insert", {
         table: "notes",
         row: { title: "after", slug: "after" }
@@ -186,16 +188,24 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         yield* resource.run(
           files["files.list"]
             .run({ store: "docs" })
-            .pipe(Effect.provideService(Binding.Binding, fixture.binding))
+            .pipe(Effect.provideService(Binding.Binding, capability.binding))
         ),
         beforeFiles
       );
       const stat = yield* resource.run(
         files["files.stat"]
           .run({ store: "docs", name: "first.txt" })
-          .pipe(Effect.provideService(Binding.Binding, fixture.binding))
+          .pipe(Effect.provideService(Binding.Binding, capability.binding))
       );
       assert.deepStrictEqual(stat, beforeFiles.files[0]);
+      // The page redeems outside the handler snapshot; redemption is not a guest callback.
+      assert.propertyVal(
+        yield* files["files.redeem"]
+          .run({ handle: beforeFiles.files[0]!.handle })
+          .pipe(Effect.provideService(Binding.Binding, capability.binding), Effect.flip),
+        "code",
+        "not_found"
+      );
       assert.isNull(
         yield* resource.run(
           files["files.stat"]
@@ -342,6 +352,7 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         .pipe(Effect.provideService(Binding.Binding, source.binding));
       const consumer = yield* setup("cmp_dev", "snapshotfileuse", {
         ...manifest,
+        tier: 2,
         tables: {},
         files: {},
         uses: {
@@ -373,6 +384,7 @@ it.layer(layer)("Invocation query snapshots", (it) => {
             .pipe(Effect.provideService(Binding.Binding, reader.capability.binding))
         );
       const initial = yield* read(readers[0]!, "shared.files.list").pipe(Effect.flatMap(filePage));
+      assert.strictEqual(initial.files[0]!.handle!.length, 57);
       assert.deepStrictEqual(
         initial.files.map((file) => [file.name, file.size]),
         [["one.bin", 1]]

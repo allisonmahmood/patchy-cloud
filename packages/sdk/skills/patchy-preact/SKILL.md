@@ -94,7 +94,19 @@ Tier 1 table subscriptions run in hosted company pages and `patchy dev`.
 Tier 2 query subscriptions run on published patches in dev and test instances;
 the tier 2 `patchy dev` engine and production fleet hosting remain separate.
 Arbitrary promises, `getMany`, integrations, mutations and actions are not query
-callables. `useFileUrl`, file handles and staged uploads are not available yet.
+callables. Staged uploads are not available yet.
+
+## useFileUrl
+
+On tier 2, handlers return selected file handles. Pass a handle to
+`useFileUrl(handle)` from `patchy/preact` and render its `{ url, error }`.
+The URL is a frame-local blob URL, not an HTTP link. The hook clears stale
+images on failure and releases its URL on unmount; show the error rather than
+substituting an older image. `patchy.files.download(handle, filename?)` offers
+a separate download in Patchy's shell.
+
+See `../patchy-files/SKILL.md` for selection, access and replacement rules.
+Tier 1 retains `patchy.files.<store>.url(name)` and `.download(name)`.
 
 ## Development and helpers
 

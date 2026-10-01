@@ -53,9 +53,40 @@ const page = await attachments.list({ prefix: "examples/", limit: 20 });
 
 Run this against the local dev runtime when available; this release's generated client does not by itself provide that runtime or its broker. Do not replace missing local support with direct cloud requests. For an image already saved in the local store, set an image element's `src` to `await attachments.url("examples/photo.png")`.
 On tier 2, queries use `ctx.files.<store>.list` and `.stat` for metadata;
-actions use the store's byte operations. The page calls those handlers.
-`../patchy-server/SKILL.md` owns the supported kinds and development boundary;
-authorised handles and staged uploads are not available yet.
+actions use the store's byte operations. Every list entry and non-null stat
+result carries a host-minted `handle`. Return it with `t.fileHandle()` in the
+handler's result schema. The page calls those handlers, then uses
+`patchy.files.url(handle)` or `patchy.files.download(handle, filename?)`.
+Staged uploads are not available yet. See `../patchy-server/SKILL.md` for
+handler kinds and the development boundary.
+
+## Tier 2 selection and display
+
+What the page sees is what handlers return. A handle freezes that selection
+until the query reruns; filtering by viewer is the patch's code, not a UI filter.
+To cut off a file when a record narrows to private, is handed over or is deleted,
+re-put or delete it; handles already selected keep redeeming until then.
+Bytes already shown or downloaded cannot be recalled.
+
+`patchy.files.url(handle)` returns a frame-local blob URL, never a shareable
+HTTP URL. Every call rechecks access. For Preact images, use
+`useFileUrl(handle)` from `patchy/preact`; render its `{ url, error }`, including
+the error. It drops a stale image on failure and releases the URL on unmount.
+`patchy.files.download(handle, filename?)` offers the file in Patchy's shell;
+the viewer clicks Download there. The default filename is the last segment of
+the stored name, as on tier 1: `logos/company.svg` downloads as `company.svg`.
+An explicit filename must satisfy the file-name rules below; empty names are
+`invalid_request`, not an instruction to choose a browser-generated name.
+`Not now` discards the offer, and closing or reloading loses pending downloads.
+
+Handles are 57 characters, with no filename or expiry clock, and count against
+page and result bounds. They bind the viewer, company, consuming patch, loaded
+version, source store and exact object. Another viewer or patch cannot redeem
+them. Publishing preserves handles in eligible open versions. Replacement or
+deletion makes an old handle `not_found`; unsharing or lost access makes it
+`access_denied`. Replacement takes precedence if both happen. The signed-in
+shell is required on every redemption; a handle is not a login or entitlement.
+Redemptions are reads and are not logged.
 
 ## Operations and limits
 

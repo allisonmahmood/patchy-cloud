@@ -4,6 +4,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
@@ -13,33 +14,57 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { RuntimeGroup, RuntimeFileParams, WIRE_VERSION } from "@patchy/api";
+import { FileMetadata, RuntimeGroup, RuntimeFileParams, WIRE_VERSION } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
-import { LoadedVersions, RuntimeProduction, RuntimeApi, RuntimeLog, me } from "@patchy/runtime";
+import {
+  Binding,
+  LoadedVersions,
+  RuntimeProduction,
+  RuntimeApi,
+  RuntimeLog,
+  me
+} from "@patchy/runtime";
 import * as Files from "./Files.js";
 import { companyId, manifest, services, setup, versionId } from "./test/files.js";
 
 const patchId = "filehttptest";
 const publicVersionId = "ver_bbbbbbbbbbbbbbbbbbbbbbbb";
 const omittedVersionId = "ver_cccccccccccccccccccccccc";
+const tier2VersionId = "ver_dddddddddddddddddddddddd";
+const gatedVersionId = "ver_eeeeeeeeeeeeeeeeeeeeeeee";
+const rollbackVersionId = "ver_ffffffffffffffffffffffff";
+const decodeMetadata = Schema.decodeUnknownEffect(Schema.NullOr(FileMetadata));
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version = versionId) =>
     Effect.succeed(
-      patch !== patchId || ![versionId, publicVersionId, omittedVersionId].includes(version)
+      patch !== patchId ||
+        ![
+          versionId,
+          publicVersionId,
+          omittedVersionId,
+          tier2VersionId,
+          gatedVersionId,
+          rollbackVersionId
+        ].includes(version)
         ? Option.none()
         : Option.some({
             patchId,
             versionId: version,
-            patchTier: manifest.tier,
+            patchTier: version === tier2VersionId || version === gatedVersionId ? 2 : manifest.tier,
             companyId,
             wireVersion: WIRE_VERSION,
             scope: version === publicVersionId ? ("public" as const) : ("company" as const),
-            manifest: version === omittedVersionId ? { ...manifest, files: {} } : manifest
+            manifest:
+              version === omittedVersionId
+                ? { ...manifest, files: {} }
+                : version === tier2VersionId || version === rollbackVersionId
+                  ? { ...manifest, tier: 2 }
+                  : manifest
           })
     )
 });
@@ -214,6 +239,135 @@ it.layer(socket)("Files HTTP / real operations", (it) => {
           assert.strictEqual(response.status, 400);
           assert.include(yield* response.json, { code: "invalid_request" });
         }
+      }),
+    60_000
+  );
+});
+
+it.layer(socket)("Files HTTP / authorised handles", (it) => {
+  it.effect(
+    "redeems only bound tier 2 documents with live pointer checks and no read logs",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* setup(patchId);
+        const client = yield* HttpClient.HttpClient;
+        const api = yield* HttpApiClient.makeWith(apiDefinition, { httpClient: client });
+        const identity = {
+          user: { id: "usr_dev", name: "Viewer", email: "viewer@example.test" },
+          company: { id: companyId, handle: "company", name: "Company" },
+          admin: false
+        };
+        const binding = {
+          ...fixture.binding,
+          versionId: tier2VersionId,
+          manifest: { ...manifest, tier: 2 },
+          identity,
+          principal: { userId: identity.user.id }
+        };
+        const name = "folder/雪 % active.svg";
+        const bytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>');
+        yield* fixture.put(name, bytes, "image/svg+xml");
+        const selected = yield* fixture.handlers["files.stat"]
+          .run({ store: "docs", name })
+          .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeMetadata));
+        const handle = selected!.handle!;
+        const url = (selectedHandle = handle, loadedVersion = tier2VersionId) =>
+          RuntimeGroup.endpoints.redeemFile.path
+            .replace(":patchId", patchId)
+            .replace(":versionId", loadedVersion)
+            .replace(":handle", selectedHandle);
+        const requestHeaders = { ...headers(), "sec-fetch-site": "same-origin" };
+        const read = yield* client.get(url(), { headers: requestHeaders });
+        assert.strictEqual(read.status, 200);
+        assert.deepStrictEqual(new Uint8Array(yield* read.arrayBuffer), bytes);
+        assert.strictEqual(read.headers["content-type"], "image/svg+xml");
+        assert.strictEqual(read.headers["x-patchy-file-name"], encodeURIComponent(name));
+        assert.strictEqual(read.headers["cache-control"], "no-store");
+        assert.strictEqual(read.headers["content-disposition"], "attachment");
+        assert.include(read.headers["content-security-policy"], "sandbox");
+        for (const [loadedVersion, sentHeaders, code] of [
+          [tier2VersionId, { ...requestHeaders, cookie: "" }, "session_expired"],
+          [tier2VersionId, { ...requestHeaders, "sec-fetch-site": "cross-site" }, "access_denied"],
+          [tier2VersionId, { ...requestHeaders, authorization: "Bearer ignored" }, "access_denied"],
+          [
+            tier2VersionId,
+            { ...requestHeaders, "x-patchy-principal": '{"userId":"other"}' },
+            "principal_changed"
+          ],
+          [tier2VersionId, { ...requestHeaders, "x-patchy-wire": "2" }, "shell_outdated"],
+          [rollbackVersionId, requestHeaders, "access_denied"],
+          [gatedVersionId, requestHeaders, "server_required"],
+          [versionId, requestHeaders, "server_required"],
+          [publicVersionId, requestHeaders, "not_available_on_public"]
+        ] as const) {
+          const refusal = yield* client.get(url(handle, loadedVersion), { headers: sentHeaders });
+          assert.include(yield* refusal.json, { code });
+          assert.notProperty(yield* refusal.json, "correlationId");
+        }
+        const companies = yield* Companies.Companies;
+        const { user: outsider } = yield* companies.create({
+          name: "Handle outsider",
+          handle: "handle-outsider",
+          clerkUserId: "user_handle_outsider",
+          email: "handle-outsider@example.test",
+          userName: "Handle outsider"
+        });
+        const outside = yield* client.get(url(), {
+          headers: {
+            ...requestHeaders,
+            cookie: signedInCookies(
+              signSession({ sub: outsider.clerkUserId, email: outsider.email })
+            ),
+            "x-patchy-principal": JSON.stringify({ userId: outsider.id })
+          }
+        });
+        assert.strictEqual(outside.status, 403);
+        assert.include(yield* outside.json, { code: "access_denied" });
+        const rollback = yield* fixture.handlers["files.stat"]
+          .run({ store: "docs", name })
+          .pipe(
+            Effect.provideService(Binding.Binding, { ...binding, versionId: rollbackVersionId }),
+            Effect.flatMap(decodeMetadata)
+          );
+        assert.strictEqual(
+          (yield* client.get(url(rollback!.handle!, rollbackVersionId), {
+            headers: requestHeaders
+          })).status,
+          200
+        );
+        const direct = yield* client.get(
+          fileUrl({
+            patchId,
+            versionId: tier2VersionId,
+            store: "docs",
+            name
+          }),
+          { headers: requestHeaders }
+        );
+        assert.include(yield* direct.json, { code: "server_required" });
+        const json = yield* api.call({
+          payload: {
+            patchId,
+            versionId: tier2VersionId,
+            wire: WIRE_VERSION,
+            principal: { userId: identity.user.id },
+            op: "files.redeem",
+            args: { handle }
+          },
+          headers: { ...headers(), origin: PUBLIC_BASE_URL },
+          responseMode: "response-only"
+        });
+        assert.include(yield* json.json, { code: "invalid_request" });
+        yield* fixture.put(name, new Uint8Array([1]), "image/svg+xml");
+        const stale = yield* client.get(url(), { headers: requestHeaders });
+        assert.strictEqual(stale.status, 404);
+        assert.include(yield* stale.json, { code: "not_found" });
+        const forged = yield* client.get(url(`${"0".repeat(24)}${handle.slice(24)}`), {
+          headers: requestHeaders
+        });
+        assert.strictEqual(forged.status, 403);
+        assert.include(yield* forged.json, { code: "access_denied" });
+        assert.deepStrictEqual(yield* fixture.platform`SELECT id FROM runtime_calls`, []);
       }),
     60_000
   );

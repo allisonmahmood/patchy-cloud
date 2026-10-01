@@ -39,6 +39,13 @@ Files are at most 20 MiB. Names are 1–512 UTF-8 bytes in slash-separated segme
 
 Queries use `ctx.shared.assets.list(options?)` and `.stat(name)` for metadata. `stat` returns null when the name is missing. Actions expose those methods and `.get(name)` for `Uint8Array` bytes. Mutations cannot read shared stores. Neither queries nor actions can write a shared store or use browser `url` and `download` methods. The page calls the generated handler client; see `../patchy-server/SKILL.md` for handler contracts.
 
+Every list entry and non-null stat result includes an authorised `handle`.
+Return selected handles through a `t.fileHandle()` result descriptor; the page
+uses `patchy.files.url(handle)`, `.download(handle, filename?)` or
+`useFileUrl(handle)` from `patchy/preact`. Every redemption rechecks source
+access and sharing. See `../patchy-files/SKILL.md` for the patch's filter and
+the re-put/delete rule for cutting off previously selected files.
+
 Subscribed queries track both the source store and its patch lifecycle. Source changes invalidate their metadata snapshots; a source refusal remains recoverable after access or sharing returns.
 
 The source's tier does not restrict consumption. A tier 1 consumer can read a tier 2 source. The consumer's served-tier gate still applies: an older tier 1 document of a patch now serving tier 2 gets `server_required`.

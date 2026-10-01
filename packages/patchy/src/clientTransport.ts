@@ -13,6 +13,8 @@ export type Operation =
   | "server.call"
   | "route.set"
   | "download"
+  | "files.download"
+  | "files.redeem"
   | "subscriptions.subscribe"
   | "subscriptions.unsubscribe"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
@@ -474,6 +476,11 @@ export function createPostMessageTransport(
   };
 }
 
+// The generated tier 2 client and handle-only hooks share the document's single broker port.
+let documentTransport: Transport | undefined;
+export const getDocumentTransport = (): Transport =>
+  (documentTransport ??= createPostMessageTransport());
+
 export interface HttpTransportOptions {
   readonly baseUrl: string;
   readonly patchId: string;
@@ -506,8 +513,20 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
     });
     const init: RequestInit = { credentials: "include", headers, signal: controller.signal };
     let url = new URL("/api/runtime/call", options.baseUrl);
-    const file = args as { store: string; alias: string; name: string; contentType?: string };
-    if (op === "files.get" || op === "files.put" || op === "shared.files.get") {
+    const file = args as {
+      store: string;
+      alias: string;
+      name: string;
+      handle: string;
+      contentType?: string;
+    };
+    if (op === "files.redeem") {
+      const path = [options.patchId, options.versionId, file.handle]
+        .map(encodeURIComponent)
+        .join("/");
+      url = new URL(`/api/runtime/file-handles/${path}`, options.baseUrl);
+      init.method = "GET";
+    } else if (op === "files.get" || op === "files.put" || op === "shared.files.get") {
       const shared = op === "shared.files.get";
       const path = [
         options.patchId,
@@ -542,11 +561,19 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
       throw lost();
     }
     try {
-      if ((op === "files.get" || op === "shared.files.get") && response.ok)
+      if (
+        (op === "files.get" || op === "shared.files.get" || op === "files.redeem") &&
+        response.ok
+      ) {
+        const encodedName =
+          op === "files.redeem" ? response.headers.get("X-Patchy-File-Name") : null;
+        if (op === "files.redeem" && encodedName === null) throw lost();
         return {
           bytes: new Uint8Array(await response.arrayBuffer()),
+          ...(encodedName === null ? {} : { name: decodeURIComponent(encodedName) }),
           contentType: response.headers.get("Content-Type") ?? "application/octet-stream"
         };
+      }
       if (op === "files.put" && response.ok) return null;
       const result: unknown = await response.json();
       if (result !== null && typeof result === "object" && "ok" in result && result.ok === false) {
@@ -585,6 +612,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
         op === "route.set" ||
         op === "download" ||
         op === "shared.download" ||
+        op === "files.download" ||
         op.startsWith("subscriptions.")
       )
         throw browserOnly();

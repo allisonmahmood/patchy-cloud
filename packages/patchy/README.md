@@ -132,6 +132,21 @@ including an initial access failure. `handler_failed`, invalid results and
 removed handlers end only their subscription; new consumers and reconnects do
 not restart an ended subscription while it remains mounted.
 
+Every tier 2 `ctx.files.<store>.list`, `ctx.shared.<alias>.list` and non-null
+`stat(name)` entry includes a branded `FileHandle`. Return selected handles
+with `t.fileHandle()`. The page uses `patchy.files.url(handle)` for a frame-local
+blob URL, `patchy.files.download(handle, filename?)` for a shell download, or
+`useFileUrl(handle)` from `patchy/preact` for `{ url, error }` with automatic URL
+cleanup. The hook clears stale images on failure. Tier 1 retains name-based
+store URLs and downloads.
+
+Handles bind the viewer, company, consuming patch, loaded version, source store
+and exact object. Every redemption rechecks live access. Replacement or deletion
+returns `not_found`; lost access or unsharing returns `access_denied`, with
+replacement taking precedence. Redemption does not rerun the handler's filter:
+to cut off an already selected file after a record narrows, re-put or delete it.
+Already delivered bytes cannot be recalled.
+
 The CLI's server build wraps discovered modules with `createGuest`, the wire-1
 entry exported by `patchy/server`. It derives descriptors from actual handler
 exports, builds kind-specific contexts and sends operations through an
@@ -148,7 +163,7 @@ company snapshot across its callbacks, with a 3-second deadline. Resource-free
 queries need no company database lease and report an empty watermark and zero
 database-held time.
 Shared-table authority is still checked live on every callback. File reads in
-queries are `list` and `stat`, returning metadata without handles. Actions have
+queries are `list` and `stat`, returning metadata with authorised handles. Actions have
 60 seconds, plain-byte file operations, declared connections with a 15-second
 per-call limit, and typed nested queries or mutations under the parent's remaining
 deadline. Actions have no transaction of their own.
@@ -168,7 +183,7 @@ hosting requires the fleet executor. Query subscriptions use that same hosted
 runtime. `patchy dev` uses the supervised production handler engine and callback
 gateway, with live server rebinding and a separate non-admin colleague URL.
 The `patchy-server` skill documents handler behavior and registry limits.
-Authorised handles and staged upload adoption remain reserved contracts.
+Staged upload adoption remains a reserved contract.
 
 ### Config
 

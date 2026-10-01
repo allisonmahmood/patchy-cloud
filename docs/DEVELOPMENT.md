@@ -90,6 +90,12 @@ after a publish; a new document sees the new handler set.
 The fixture owns disposable Postgres and offline browser sessions, not live Clerk
 or a daily-driver instance.
 
+The same browser suite exercises tier 2 authorised file handles, frame-local
+images and the shell's trusted download action. It covers stale replacements,
+another viewer, URL cleanup and narrow download-card layout. The Primitives
+file contracts cover live unsharing, replacement-before-access refusal order,
+durable signing keys and metadata-page byte limits on PostgreSQL and PGlite.
+
 `SubscriptionsSettlement.test.ts` exercises real invocation ownership with delayed
 executor and snapshot cancellation. A timeout or disconnected document must not
 release its re-run slot before cleanup settles or destroys the retained resources.

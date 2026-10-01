@@ -99,6 +99,13 @@ export const shellStyles = `
     .btn-danger { background: var(--paper-amber); color: var(--danger); }
     .btn:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--ink); }
     .btn:disabled { opacity: .55; cursor: not-allowed; }
+    code {
+      padding: .12em .4em;
+      border-radius: 5px;
+      background: rgba(18, 17, 15, .06);
+      font-family: var(--font-mono);
+      font-size: .9em;
+    }
     /* glyph-sm: the Patchy glyph at a floating element's title size, so the viewer knows Patchy is speaking. Use with glyph. */
     .glyph-sm { width: 18px; height: 18px; border-radius: 5px; box-shadow: 2px 2px 0 var(--ink); }
     .glyph-sm::after { top: 3px; right: 3px; width: 5px; height: 5px; }
@@ -165,6 +172,51 @@ export const shellStyles = `
     .shell-bottom, .shell-bottom * { box-sizing: border-box; }
     .shell-bottom > * { pointer-events: auto; }
     .shell-bottom [hidden] { display: none; }
+    /* shell-corner: D-1 downloads, bottom right, apart from the bottom-centre page state. Newest card on top; the stack grows
+       upward, so cards already up stay put. The end padding keeps the hard shadow inside the scroll box. */
+    .shell-corner {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      width: min(340px, calc(100% - 32px));
+      max-height: calc(100dvh - 32px);
+      overflow-y: auto;
+      padding: 0 4px 4px 0;
+      color: var(--ink-soft);
+      font-family: var(--font-sans);
+    }
+    .shell-corner, .shell-corner * { box-sizing: border-box; }
+    .shell-corner [hidden], .shell-corner[hidden] { display: none; }
+    .shell-downloads { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+    .shell-corner .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .shell-corner details { width: 100%; }
+    .shell-corner details > .shell-downloads { margin-top: 10px; }
+    /* "N more files": older cards fold into a status-chip; a static chevron flips when open. */
+    .shell-corner summary { display: flex; width: fit-content; min-height: 44px; margin-left: auto; cursor: pointer; list-style: none; }
+    .shell-corner summary::-webkit-details-marker { display: none; }
+    .shell-corner summary::after {
+      content: "";
+      width: 6px;
+      height: 6px;
+      margin: -3px 2px 0 4px;
+      border-right: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+      transform: rotate(45deg);
+    }
+    .shell-corner details[open] > summary::after { margin-top: 3px; transform: rotate(-135deg); }
+    /* The 481-1364px band: a 620px page-state bar centred at the bottom can reach the corner, so while page state is up
+       the downloads stack above it. --patchy-status-offset is the top of the page state, measured by the shell. */
+    @media (min-width: 481px) and (max-width: 1364px) {
+      body:has(.shell-bottom > :not([hidden])) .shell-corner {
+        bottom: calc(var(--patchy-status-offset, 0px) + 10px);
+        max-height: calc(100dvh - 26px - var(--patchy-status-offset, 0px));
+      }
+    }
     /* shell-scrim: the T-1 cover. A static dim over the whole frame with one centred note-float; nothing moves or fades.
        It is a modal dialog, so the dim is the dialog itself and the top-layer backdrop stays clear. */
     .shell-scrim {
@@ -206,6 +258,16 @@ export const shellStyles = `
         border-radius: var(--radius) var(--radius) 0 0;
         box-shadow: none;
       }
+      /* Downloads become bottom sheets too, stacked above the page state while it is up. */
+      .shell-corner { right: 0; bottom: 0; width: 100%; max-height: calc(100dvh - 16px); gap: 8px; padding: 0; }
+      body:has(.shell-bottom > :not([hidden])) .shell-corner {
+        bottom: calc(var(--patchy-status-offset, 0px) + 8px);
+        max-height: calc(100dvh - 24px - var(--patchy-status-offset, 0px));
+      }
+      .shell-downloads { gap: 8px; }
+      .shell-corner details > .shell-downloads { margin-top: 8px; }
+      .shell-corner summary { margin-right: auto; }
+      .shell-corner .note-float { border-radius: var(--radius) var(--radius) 0 0; box-shadow: none; }
     }
 `;
 
@@ -404,16 +466,8 @@ export function htmlPage(options: {
       text-underline-offset: 2px;
     }
 
-    code,
     pre {
       font-family: var(--font-mono);
-    }
-
-    code {
-      padding: .12em .4em;
-      border-radius: 5px;
-      background: rgba(18, 17, 15, .06);
-      font-size: .9em;
     }
 
     pre {
