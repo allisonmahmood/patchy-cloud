@@ -1,5 +1,4 @@
 import * as Cause from "effect/Cause";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -9,14 +8,16 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import {
   RuntimePrincipal,
   runtimeBodyLimit,
-  runtimeByteLimits,
+  runtimeBodyLimitId,
   WIRE_VERSION,
   type RuntimeCode,
+  type RuntimeBodyLimitId,
   type RuntimeEnvelope,
   type FileBody
 } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
-import { Limits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
+import { registry, type LimitScope } from "@patchy/limits/registry";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 
@@ -84,30 +85,56 @@ export class ShellOutdated extends Schema.TaggedError<ShellOutdated>()(
 }
 export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
   ...diagnostics,
-  maxBytes: Schema.Int
+  maxBytes: Schema.Int,
+  limitId: Schema.Literals([
+    "runtime.call.bytes",
+    "runtime.row.bytes",
+    "runtime.batch.bytes",
+    "runtime.postgres.bytes",
+    "runtime.result.bytes",
+    "runtime.file.bytes"
+  ])
 }) {
   readonly code = "too_large" as const;
   readonly status = 413;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
+  get value() {
+    return this.maxBytes;
+  }
   override get message() {
     return `Runtime request exceeds ${this.maxBytes} bytes.`;
   }
 }
 export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
   ...diagnostics,
-  deadlineMs: Schema.Int
+  deadlineMs: Schema.Int,
+  limitId: Schema.Literals(["runtime.mutation.deadline", "integration.deadline"])
 }) {
   readonly code = "timeout" as const;
   readonly status = 504;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
+  get value() {
+    return this.deadlineMs;
+  }
   override get message() {
     return `The call exceeded its ${this.deadlineMs} ms service deadline.`;
   }
 }
 export class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
   ...diagnostics,
-  retryAfterSeconds: Schema.Int
+  retryAfterSeconds: Schema.Int,
+  value: Schema.Int,
+  limitId: Schema.Literals(["runtime.calls.perMinute", "rate.trackedKeys"])
 }) {
   readonly code = "rate_limited" as const;
   readonly status = 429;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
   override get message() {
     return "Runtime request refused: rate_limited.";
   }
@@ -143,6 +170,9 @@ export interface OperationError {
   readonly message: string;
   readonly correlationId?: string;
   readonly retryAfterSeconds?: number;
+  readonly limitId?: string;
+  readonly scope?: LimitScope;
+  readonly value?: number;
   readonly details?: Readonly<Record<string, typeof Schema.Json.Type>>;
 }
 
@@ -226,37 +256,21 @@ export const handler = <
 };
 
 export const byteLimits = {
-  rowBytes: Config.Int("PATCHY_RUNTIME_ROW_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.rowBytes)
-  ),
-  batchBytes: Config.Int("PATCHY_RUNTIME_BATCH_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.batchBytes)
-  ),
-  resultBytes: Config.Int("PATCHY_RUNTIME_RESULT_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.resultBytes)
-  ),
-  fileBytes: Config.Int("PATCHY_RUNTIME_FILE_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.fileBytes)
-  )
+  rowBytes: ContractLimits.get("runtime.row.bytes"),
+  batchBytes: ContractLimits.get("runtime.batch.bytes"),
+  resultBytes: ContractLimits.get("runtime.result.bytes"),
+  fileBytes: ContractLimits.get("runtime.file.bytes")
 };
 
-export const config = Config.all({
-  callsPerMinute: Config.Int("PATCHY_RUNTIME_CALLS_PER_MINUTE").pipe(Config.withDefault(300)),
-  callBytes: Config.Int("PATCHY_RUNTIME_CALL_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.callBytes)
-  ),
+export const config = Effect.all({
+  callsPerMinute: ContractLimits.get("runtime.calls.perMinute"),
+  callBytes: ContractLimits.get("runtime.call.bytes"),
   rowBytes: byteLimits.rowBytes,
   batchBytes: byteLimits.batchBytes,
-  postgresBytes: Config.Int("PATCHY_RUNTIME_POSTGRES_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.postgresBytes)
-  ),
+  postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
   fileBytes: byteLimits.fileBytes,
-  mutationDeadlineMs: Config.Int("PATCHY_RUNTIME_MUTATION_DEADLINE_MS").pipe(
-    Config.withDefault(30_000)
-  ),
-  integrationDeadlineMs: Config.Int("PATCHY_RUNTIME_INTEGRATION_DEADLINE_MS").pipe(
-    Config.withDefault(15_000)
-  )
+  mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
+  integrationDeadlineMs: ContractLimits.get("integration.deadline")
 });
 
 const decodePrincipal = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePrincipal), {
@@ -278,6 +292,7 @@ export class Runtime extends Context.Service<
   {
     readonly bodyLimit: (op: string) => number;
     readonly maxCallBytes: number;
+    readonly maxCallLimitId: RuntimeBodyLimitId;
     readonly fileBytes: number;
     readonly call: (
       input: typeof RuntimeEnvelope.Type,
@@ -319,13 +334,24 @@ type Dependencies = LoadedVersions.LoadedVersions | Limits.Limits;
 export const make = (
   handlers: Readonly<Record<string, Handler>>,
   options: Options
-): Effect.Effect<Runtime["Service"], Config.ConfigError, Dependencies> =>
+): Effect.Effect<Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
     const versions = yield* LoadedVersions.LoadedVersions;
     const limits = yield* Limits.Limits;
     const settings = yield* config;
     const origin = options.origin;
     const bodyLimit = (op: string) => runtimeBodyLimit(op, settings);
+    const maxCallBytes = Math.max(
+      settings.rowBytes + settings.callBytes,
+      settings.batchBytes + settings.callBytes,
+      settings.postgresBytes
+    );
+    const maxCallLimitId =
+      maxCallBytes === settings.batchBytes + settings.callBytes
+        ? "runtime.batch.bytes"
+        : maxCallBytes === settings.rowBytes + settings.callBytes
+          ? "runtime.row.bytes"
+          : "runtime.postgres.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -337,11 +363,13 @@ export const make = (
       Effect.gen(function* () {
         const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
         const integration = operation?.kind === "integration";
-        const maxBytes = bodyLimit(operation === undefined ? "" : input.op);
+        const boundedOp = operation === undefined ? "" : input.op;
+        const maxBytes = bodyLimit(boundedOp);
+        const limitId = runtimeBodyLimitId(boundedOp);
         // Only integration refusals need trusted attribution before their size check.
         // Other operations, including unknown names, reject before loading a session or version.
         if (!integration && byteLength !== undefined && byteLength > maxBytes)
-          return yield* new TooLarge({ maxBytes });
+          return yield* new TooLarge({ maxBytes, limitId });
         const request = yield* HttpServerRequest.HttpServerRequest;
         if (request.headers.authorization !== undefined) return yield* new AccessDenied({});
         const requestAdmission = yield* Effect.exit(
@@ -391,7 +419,7 @@ export const make = (
         });
         const admit = Effect.gen(function* () {
           if (integration && byteLength !== undefined && byteLength > maxBytes)
-            return yield* new TooLarge({ maxBytes });
+            return yield* new TooLarge({ maxBytes, limitId });
           if (Exit.isFailure(requestAdmission))
             return yield* Effect.failCause(requestAdmission.cause);
           if (
@@ -418,7 +446,13 @@ export const make = (
             window: "1 minute"
           });
           if (!attempt.allowed)
-            return yield* new RateLimited({ retryAfterSeconds: attempt.retryAfterSeconds });
+            return yield* new RateLimited({
+              retryAfterSeconds: attempt.retryAfterSeconds,
+              limitId:
+                attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
+              value:
+                attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
+            });
         });
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.
@@ -437,7 +471,16 @@ export const make = (
         const runWithDeadline = execute.pipe(
           Effect.timeoutOrElse({
             duration: deadlineMs,
-            orElse: () => Effect.fail(new Timeout({ deadlineMs }))
+            orElse: () =>
+              Effect.fail(
+                new Timeout({
+                  deadlineMs,
+                  limitId:
+                    operation.kind === "mutation"
+                      ? "runtime.mutation.deadline"
+                      : "integration.deadline"
+                })
+              )
           })
         );
         const result = yield* options.record === undefined
@@ -485,12 +528,9 @@ export const make = (
             : Effect.fail(new InvalidRequest({}))
         ),
       bodyLimit,
-      // Must cover every runtimeBodyLimit branch: the limits are configured independently.
-      maxCallBytes: Math.max(
-        settings.rowBytes + settings.callBytes,
-        settings.batchBytes + settings.callBytes,
-        settings.postgresBytes
-      ),
+      // Cover every runtimeBodyLimit branch, including explicitly injected test bounds.
+      maxCallBytes,
+      maxCallLimitId,
       fileBytes: settings.fileBytes
     });
   });

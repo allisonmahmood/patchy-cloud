@@ -3,6 +3,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import { CURRENT_RELEASE } from "@patchy/api";
 import { DEFAULT_MAX_HTML_BYTES } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 
 /** The build binds production to its package version; tests can model an upgraded instance. */
 export const release = Context.Reference<string>("@patchy/patches/Release", {
@@ -25,7 +26,7 @@ export const maxBundleBytes = Config.Int("PATCHY_MAX_BUNDLE_BYTES").pipe(
 /** Creates admitted per token per minute, in memory. Updates never spend it. */
 export const patchCreateRateLimitPerMinute = Config.Int(
   "PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE"
-).pipe(Config.withDefault(10));
+).pipe(Config.withDefault(registry["rate.patchCreate.perMinute"].default));
 
 /** The patch quota: live patches one user may hold at once, counted from the database. */
 export const livePatchesPerUser = Config.Int("PATCHY_LIVE_PATCHES_PER_USER").pipe(
@@ -35,7 +36,7 @@ export const livePatchesPerUser = Config.Int("PATCHY_LIVE_PATCHES_PER_USER").pip
 /** New publish attempts admitted per token per minute, after replay lookup. */
 export const publishRateLimitPerMinute = Config.Int(
   "PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE"
-).pipe(Config.withDefault(20));
+).pipe(Config.withDefault(registry["rate.publish.perMinute"].default));
 
 /** Room for the HTML bundle escaped into JSON and its manifest. */
 export const maxPublishBodyBytes = Config.map(

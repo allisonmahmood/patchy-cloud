@@ -3,6 +3,7 @@ import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
 import { newInternalId } from "@patchy/core";
 import { RuntimeLog } from "@patchy/runtime";
+import { registry } from "@patchy/limits/registry";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -179,7 +180,7 @@ export const make = Effect.gen(function* () {
       resource: null,
       connectionId: input.id,
       correlationId,
-      deadlineMs: 15_000
+      deadlineMs: registry["integration.deadline"].default
     });
     return yield* source.inspect(credentials).pipe(
       Effect.flatMap((result) =>

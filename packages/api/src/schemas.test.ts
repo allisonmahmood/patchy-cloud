@@ -11,6 +11,7 @@ import {
   PrimitiveDetail,
   NotAdditive,
   RateLimited,
+  RuntimeFailure,
   Shared,
   ShareRequest,
   Unauthorized,
@@ -18,7 +19,8 @@ import {
   PublishRequest,
   CURRENT_RELEASE,
   MANIFEST_VERSION,
-  Manifest
+  Manifest,
+  limitRefusal
 } from "./index.js";
 
 /** Decoding then encoding a wire document hands back the same document. */
@@ -35,6 +37,38 @@ const manifest = {
 };
 const attempt = { manifest, publishKey: "test-key", metadata: {} };
 describe("wire schemas", () => {
+  it("preserves refusals from a newer registry without treating them as unknown outcomes", () => {
+    const refusal = {
+      ok: false as const,
+      error: "Company admission is busy.",
+      code: "busy" as const,
+      scope: "company" as const,
+      limitId: "future.admission.capacity",
+      value: 12,
+      retryAfter: 1
+    };
+    expect(roundTrip(RuntimeFailure, refusal)).toEqual(refusal);
+    expect(Schema.decodeUnknownExit(RuntimeFailure)({ ...refusal, limitId: "" })._tag).toBe(
+      "Failure"
+    );
+  });
+
+  it("includes retry timing only for safely retryable limit refusals", () => {
+    expect(limitRefusal("company.connections", 8, 2)).toEqual({
+      code: "busy",
+      scope: "company",
+      limitId: "company.connections",
+      value: 8,
+      retryAfter: 2
+    });
+    expect(limitRefusal("runtime.mutation.deadline", 30000, 2)).toEqual({
+      code: "timeout",
+      scope: "viewer",
+      limitId: "runtime.mutation.deadline",
+      value: 30000
+    });
+  });
+
   it("distinguishes an absent primitive default from an explicit null default", () => {
     const wire = {
       kind: "table" as const,

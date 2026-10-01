@@ -109,7 +109,7 @@ export class Busy extends Schema.TaggedError<Busy>()("TableBusy", {
   }
 }
 
-export const config = Config.all({
+export const config = Effect.all({
   rowBytes: Runtime.byteLimits.rowBytes,
   batchBytes: Runtime.byteLimits.batchBytes,
   resultBytes: Runtime.byteLimits.resultBytes,
@@ -206,9 +206,10 @@ const sqlFailure = (table: string, cause: SqlError): Runtime.RuntimeError => {
 const jsonBytes = (value: unknown) => Buffer.byteLength(encodeJson(value), "utf8");
 const byteLimit = Effect.fn("TableOperations.byteLimit")(function* (
   value: unknown,
-  maxBytes: number
+  maxBytes: number,
+  limitId: Runtime.TooLarge["limitId"]
 ) {
-  if (jsonBytes(value) > maxBytes) return yield* new Runtime.TooLarge({ maxBytes });
+  if (jsonBytes(value) > maxBytes) return yield* new Runtime.TooLarge({ maxBytes, limitId });
 });
 const validateRow = Effect.fn("TableOperations.validateRow")(function* (
   name: string,
@@ -356,7 +357,7 @@ export const make = Effect.gen(function* () {
       values
     );
     const { __storedRow, ...result } = rows[0]!;
-    yield* byteLimit(__storedRow, settings.rowBytes);
+    yield* byteLimit(__storedRow, settings.rowBytes, "runtime.row.bytes");
     return result;
   });
   const getRow = (sql: SqlClient.SqlClient, table: Table, qualified: string, id: string) =>
@@ -372,7 +373,7 @@ export const make = Effect.gen(function* () {
   ) {
     if (ids.length > settings.maxItems)
       return yield* new ItemLimit({ maxItems: settings.maxItems });
-    yield* byteLimit(ids, settings.batchBytes);
+    yield* byteLimit(ids, settings.batchBytes, "runtime.batch.bytes");
     if (ids.length === 0) return [];
     const { rows } = yield* boundedRows(
       sql,
@@ -388,7 +389,10 @@ export const make = Effect.gen(function* () {
       const found = byId.get(id);
       bytes += (result.length === 0 ? 0 : 1) + (found?.bytes ?? 4);
       if (bytes > settings.resultBytes)
-        return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+        return yield* new Runtime.TooLarge({
+          maxBytes: settings.resultBytes,
+          limitId: "runtime.result.bytes"
+        });
       result.push(found?.row ?? null);
     }
     return result;
@@ -422,7 +426,7 @@ export const make = Effect.gen(function* () {
     (args) =>
       withTable(args.table, (sql, table, qualified) =>
         Effect.gen(function* () {
-          yield* byteLimit(args.row, settings.rowBytes);
+          yield* byteLimit(args.row, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.row, true);
           return yield* sql.withTransaction(insert(sql, table, qualified, args.row));
         })
@@ -441,9 +445,9 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           if (args.rows.length > settings.maxItems)
             return yield* new ItemLimit({ maxItems: settings.maxItems });
-          yield* byteLimit(args.rows, settings.batchBytes);
+          yield* byteLimit(args.rows, settings.batchBytes, "runtime.batch.bytes");
           for (const row of args.rows) {
-            yield* byteLimit(row, settings.rowBytes);
+            yield* byteLimit(row, settings.rowBytes, "runtime.row.bytes");
             yield* validateRow(args.table, table, row, true);
           }
           return yield* sql.withTransaction(
@@ -454,7 +458,10 @@ export const make = Effect.gen(function* () {
                 const inserted = yield* insert(sql, table, qualified, row);
                 bytes += (result.length === 0 ? 0 : 1) + jsonBytes(inserted);
                 if (bytes > settings.resultBytes)
-                  return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+                  return yield* new Runtime.TooLarge({
+                    maxBytes: settings.resultBytes,
+                    limitId: "runtime.result.bytes"
+                  });
                 result.push(inserted);
               }
               return result;
@@ -474,7 +481,7 @@ export const make = Effect.gen(function* () {
     (args) =>
       withTable(args.table, (sql, table, qualified) =>
         Effect.gen(function* () {
-          yield* byteLimit(args.patch, settings.rowBytes);
+          yield* byteLimit(args.patch, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.patch, false);
           const keys = Object.keys(args.patch);
           const values = keys.map((key) => dbValue(table.columns[key]!, args.patch[key]));
@@ -496,7 +503,7 @@ export const make = Effect.gen(function* () {
               );
               if (rows.length === 0) return yield* new RowNotFound({ table: args.table });
               const { __storedRow, ...result } = rows[0]!;
-              yield* byteLimit(__storedRow, settings.rowBytes);
+              yield* byteLimit(__storedRow, settings.rowBytes, "runtime.row.bytes");
               return result;
             })
           );
@@ -658,7 +665,7 @@ export const make = Effect.gen(function* () {
           ).toString("base64url")
         : null;
     const result = { rows: page, cursor };
-    yield* byteLimit(result, settings.resultBytes);
+    yield* byteLimit(result, settings.resultBytes, "runtime.result.bytes");
     return result;
   });
   const list = Runtime.handler(

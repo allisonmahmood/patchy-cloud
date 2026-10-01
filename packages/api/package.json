@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "effect": "catalog:"
   }
 }

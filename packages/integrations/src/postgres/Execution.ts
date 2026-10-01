@@ -1,4 +1,5 @@
 import type { PostgresDeclaration, PostgresParameter } from "@patchy/api";
+import { registry } from "@patchy/limits/registry";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -31,20 +32,34 @@ export class InvalidQuery extends Schema.TaggedError<InvalidQuery>()("PostgresIn
 }
 export class Timeout extends Schema.TaggedError<Timeout>()("PostgresTimeout", {
   milliseconds: Schema.optionalKey(Schema.Int),
+  limitId: Schema.optionalKey(Schema.Literal("integration.deadline")),
   cause: Schema.optionalKey(SecretCause)
 }) {
   readonly code = "timeout";
   readonly status = 504;
+  get scope() {
+    return registry["integration.deadline"].scope;
+  }
+  get value() {
+    return this.milliseconds ?? registry["integration.deadline"].default;
+  }
   override get message() {
-    return `The database call exceeded its ${this.milliseconds ?? 15_000} ms deadline.`;
+    return `The database call exceeded its ${this.milliseconds ?? registry["integration.deadline"].default} ms deadline.`;
   }
 }
 export class TooLarge extends Schema.TaggedError<TooLarge>()("PostgresTooLarge", {
   bound: Schema.Literals(["rows", "bytes"]),
-  limit: Schema.Int
+  limit: Schema.Int,
+  limitId: Schema.optionalKey(Schema.Literal("runtime.result.bytes"))
 }) {
   readonly code = "too_large";
   readonly status = 413;
+  get scope() {
+    return registry["runtime.result.bytes"].scope;
+  }
+  get value() {
+    return this.limit;
+  }
   override get message() {
     return `A database call is limited to ${this.limit} ${this.bound}.`;
   }
@@ -109,9 +124,9 @@ export const specLimits: Limits = {
   maxBackends: 64,
   idleMs: 60_000,
   statementMs: 10_000,
-  deadlineMs: 15_000,
+  deadlineMs: registry["integration.deadline"].default,
   maxRows: 1_000,
-  maxBytes: 8 * 1024 * 1024
+  maxBytes: registry["runtime.result.bytes"].default
 };
 
 /** One leased backend. A refused row stops execution without retaining the remaining rows. */
@@ -267,7 +282,11 @@ export const runStatement = Effect.fn("Postgres.runStatement")(
             return queryError(cause, limits.statementMs);
           }
           if (bytes > limits.maxBytes)
-            return new TooLarge({ bound: "bytes", limit: limits.maxBytes });
+            return new TooLarge({
+              bound: "bytes",
+              limit: limits.maxBytes,
+              limitId: "runtime.result.bytes"
+            });
           rows.push(row);
           return undefined;
         })
@@ -551,7 +570,10 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
     ).pipe(
       Effect.timeoutOrElse({
         duration: limits.deadlineMs,
-        orElse: () => Effect.fail(new Timeout({ milliseconds: limits.deadlineMs }))
+        orElse: () =>
+          Effect.fail(
+            new Timeout({ milliseconds: limits.deadlineMs, limitId: "integration.deadline" })
+          )
       })
     )
   );

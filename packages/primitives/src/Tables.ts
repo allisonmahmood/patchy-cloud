@@ -10,7 +10,7 @@ import {
   sharedTableId
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
-import * as Config from "effect/Config";
+import { ContractLimits } from "@patchy/limits";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -494,9 +494,7 @@ const diff = Effect.fn("Tables.diff")(function* (
 
 export const make = Effect.gen(function* () {
   const inventory = yield* Inventory.Inventory;
-  const rowBytes = yield* Config.Int("PATCHY_RUNTIME_ROW_BYTES").pipe(
-    Config.withDefault(1024 * 1024)
-  );
+  const rowBytes = yield* ContractLimits.get("runtime.row.bytes");
   const validate = Effect.fn("Tables.validate")(function* (
     patchId: string,
     manifest: typeof Manifest.Type,

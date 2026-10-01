@@ -50,7 +50,7 @@ export class Busy extends Schema.TaggedError<Busy>()("FileBusy", {
   }
 }
 
-export const config = Config.all({
+export const config = Effect.all({
   fileBytes: Runtime.byteLimits.fileBytes,
   resultBytes: Runtime.byteLimits.resultBytes,
   defaultPage: Config.Int("PATCHY_FILE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
@@ -164,7 +164,10 @@ export const make = Effect.gen(function* () {
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
         if (bytes.byteLength > settings.fileBytes)
-          return yield* new Runtime.TooLarge({ maxBytes: settings.fileBytes });
+          return yield* new Runtime.TooLarge({
+            maxBytes: settings.fileBytes,
+            limitId: "runtime.file.bytes"
+          });
         return yield* withStore(args.store, (binding) =>
           Effect.gen(function* () {
             const objectId = newInternalId("obj");
@@ -274,7 +277,10 @@ export const make = Effect.gen(function* () {
                   : null
             };
             if (Buffer.byteLength(encodePage(result)) > settings.resultBytes)
-              return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+              return yield* new Runtime.TooLarge({
+                maxBytes: settings.resultBytes,
+                limitId: "runtime.result.bytes"
+              });
             return result;
           })
         )

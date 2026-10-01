@@ -234,8 +234,7 @@ export async function startInstance(): Promise<Instance> {
         PATCHY_COMPANY_DB_URL: databaseUrl,
         PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
         PATCHY_STORAGE_DIR: path.join(directory, "storage"),
-        PATCHY_PUBLIC_BASE_URL: origin,
-        PATCHY_RUNTIME_CALLS_PER_MINUTE: "10000"
+        PATCHY_PUBLIC_BASE_URL: origin
       },
       stdio: ["ignore", "pipe", "pipe"]
     });

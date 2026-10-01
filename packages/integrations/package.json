@@ -31,6 +31,7 @@
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:",
     "pg": "^8.23.0"
@@ -39,7 +40,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/sql": "workspace:*",
-    "@patchy/limits": "workspace:*",
     "@types/pg": "^8.23.1",
     "typescript": "^6.0.3",
     "vitest": "^5.0.1"

@@ -22,6 +22,7 @@ it.layer(Limits.layer)("Limits", (it) => {
       });
       assert.deepStrictEqual(yield* consume("client"), {
         allowed: false,
+        reason: "rate",
         remaining: 0,
         retryAfterSeconds: 1
       });
@@ -67,11 +68,17 @@ it.layer(Limits.layer)("Limits", (it) => {
       // Never seen before, and no room: refused, and told when room opens.
       assert.deepStrictEqual(yield* consume("late", 1), {
         allowed: false,
+        reason: "capacity",
         remaining: 0,
         retryAfterSeconds: 1
       });
       // A key already tracked is still served from its own window.
-      assert.isFalse((yield* consume("flood-0", 1)).allowed);
+      assert.deepStrictEqual(yield* consume("flood-0", 1), {
+        allowed: false,
+        reason: "rate",
+        remaining: 0,
+        retryAfterSeconds: 1
+      });
 
       yield* TestClock.setTime(101_000);
       assert.isTrue((yield* consume("late", 1)).allowed);

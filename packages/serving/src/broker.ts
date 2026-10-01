@@ -6,17 +6,18 @@ import {
   RuntimeFailure,
   runtimeOperations,
   runtimeBodyLimit,
+  runtimeBodyLimitId,
   runtimeByteLimits,
+  limitRefusal,
   WIRE_VERSION
 } from "@patchy/api";
-import type { RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
+import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import * as Schema from "effect/Schema";
+import { registry } from "@patchy/limits/registry";
 
-const KiB = 1024;
-const MiB = 1024 * KiB;
-const MAX_HELD = 64 * MiB;
+const MAX_HELD = registry["frame.heldBytes"].default;
 const MAX_FILE = runtimeByteLimits.fileBytes;
-const MAX_PENDING = 32;
+const MAX_PENDING = registry["frame.outstanding"].default;
 // The broker refuses unknown fields on its own inputs; the parser option is the only place that holds.
 const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest, { onExcessProperty: "error" });
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
@@ -26,19 +27,27 @@ const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty:
 const decoder = new TextDecoder();
 type Operation = keyof typeof runtimeOperations;
 type Reply = { value: unknown; bytes?: ArrayBuffer; heldBytes: number };
+type LimitMetadata = Pick<RuntimeFailure, "scope" | "limitId" | "value" | "retryAfter">;
 class Refusal extends Error {
   constructor(
     readonly code: RuntimeCode,
     message: string,
     readonly details?: Readonly<Record<string, unknown>>,
-    readonly correlationId?: string
+    readonly correlationId?: string,
+    readonly limit?: LimitMetadata
   ) {
     super(message);
   }
 }
 const invalid = () => new Refusal("invalid_request", "The broker request is malformed.");
-const tooLarge = (maxBytes: number) =>
-  new Refusal("too_large", `The operation exceeds ${maxBytes} bytes.`, { maxBytes });
+const tooLarge = (maxBytes: number, limit?: LimitMetadata) =>
+  new Refusal(
+    "too_large",
+    `The operation exceeds ${maxBytes} bytes.`,
+    { maxBytes },
+    undefined,
+    limit
+  );
 const lost = () =>
   new Refusal(
     "unknown_outcome",
@@ -46,13 +55,13 @@ const lost = () =>
   );
 
 /** Bound work before JSON.stringify or recursive Schema decoding touches hostile structured clones. */
-function jsonBytes(value: unknown, limit: number): number {
+function jsonBytes(value: unknown, limit: number, limitId: RuntimeBodyLimitId): number {
   let size = 0;
   let nodes = 0;
   const ancestors = new Set<object>();
   const add = (bytes: number) => {
     size += bytes;
-    if (size > limit) throw tooLarge(limit);
+    if (size > limit) throw tooLarge(limit, limitRefusal(limitId, limit));
   };
   const string = (text: string) => {
     add(2);
@@ -93,7 +102,7 @@ function jsonBytes(value: unknown, limit: number): number {
     add(2);
     let count = 0;
     if (array) {
-      if (item.length > limit) throw tooLarge(limit);
+      if (item.length > limit) throw tooLarge(limit, limitRefusal(limitId, limit));
       for (const entry of item) {
         if (count++) add(1);
         visit(entry, depth + 1);
@@ -150,7 +159,7 @@ function mount(frame: HTMLIFrameElement): void {
   let identity: Promise<RuntimeMe> | undefined;
   let principal: RuntimePrincipal = null;
   const reserve = (size: number) => {
-    if (size > MAX_HELD - held) throw tooLarge(MAX_HELD);
+    if (size > MAX_HELD - held) throw tooLarge(MAX_HELD, limitRefusal("frame.heldBytes"));
     held += size;
   };
   const release = (size: number) => {
@@ -204,6 +213,7 @@ function mount(frame: HTMLIFrameElement): void {
       error: {
         code: error.code,
         message: error.message,
+        ...error.limit,
         ...(error.details === undefined ? {} : { details: error.details }),
         ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
       }
@@ -230,7 +240,11 @@ function mount(frame: HTMLIFrameElement): void {
   if (wire !== WIRE_VERSION) return stale();
 
   /** Stream into a bounded buffer; reservations include both chunks and the final contiguous copy. */
-  const readBody = async (response: Response, limit: number): Promise<Uint8Array<ArrayBuffer>> => {
+  const readBody = async (
+    response: Response,
+    limit: number,
+    limitId: "runtime.file.bytes" | "runtime.result.bytes"
+  ): Promise<Uint8Array<ArrayBuffer>> => {
     if (!response.body) return new Uint8Array(0);
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -238,12 +252,13 @@ function mount(frame: HTMLIFrameElement): void {
     let copyReservation = 0;
     try {
       const declared = Number(response.headers.get("Content-Length"));
-      if (declared > limit) throw tooLarge(limit);
+      if (declared > limit) throw tooLarge(limit, limitRefusal(limitId, limit));
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;
         if (closed) throw lost();
-        if (chunk.value.byteLength > limit - length) throw tooLarge(limit);
+        if (chunk.value.byteLength > limit - length)
+          throw tooLarge(limit, limitRefusal(limitId, limit));
         reserve(chunk.value.byteLength);
         length += chunk.value.byteLength;
         chunks.push(chunk.value);
@@ -299,14 +314,15 @@ function mount(frame: HTMLIFrameElement): void {
         init.method = "POST";
         headers.set("Content-Type", "application/json");
         const body = { patchId, versionId, principal, wire, op, args };
-        jsonBytes(body, runtimeBodyLimit(op));
+        jsonBytes(body, runtimeBodyLimit(op), runtimeBodyLimitId(op));
         init.body = JSON.stringify(body);
       }
       const response = await fetch(url, init);
       if (closed) throw lost();
       const data = await readBody(
         response,
-        op === "files.get" && response.ok ? MAX_FILE : runtimeByteLimits.resultBytes
+        op === "files.get" && response.ok ? MAX_FILE : runtimeByteLimits.resultBytes,
+        op === "files.get" && response.ok ? "runtime.file.bytes" : "runtime.result.bytes"
       );
       responseBytes = data.byteLength;
       if (op === "files.get" && response.ok) {
@@ -332,7 +348,18 @@ function mount(frame: HTMLIFrameElement): void {
       }
       if (result && typeof result === "object" && "ok" in result && result.ok === false) {
         const error = decodeFailure(result);
-        throw new Refusal(error.code, error.error, error.details, error.correlationId);
+        const { scope, limitId, value, retryAfter } = error;
+        throw new Refusal(error.code, error.error, error.details, error.correlationId, {
+          ...(scope === undefined ? {} : { scope }),
+          ...(limitId === undefined ? {} : { limitId }),
+          ...(value === undefined ? {} : { value }),
+          ...(retryAfter !== undefined &&
+          (error.code === "rate_limited" ||
+            error.code === "too_many_requests" ||
+            error.code === "busy")
+            ? { retryAfter }
+            : {})
+        });
       }
       if (
         !response.ok ||
@@ -417,14 +444,22 @@ function mount(frame: HTMLIFrameElement): void {
       if (pending.size >= MAX_PENDING)
         throw new Refusal(
           "too_many_requests",
-          `At most ${MAX_PENDING} requests may be outstanding.`
+          `At most ${MAX_PENDING} requests may be outstanding.`,
+          undefined,
+          undefined,
+          limitRefusal("frame.outstanding")
         );
       const payload = message.bytes;
       if (op === "files.put" ? !(payload instanceof ArrayBuffer) : payload !== undefined)
         throw invalid();
       const bytes = payload as ArrayBuffer | undefined;
-      if (bytes && bytes.byteLength > MAX_FILE) throw tooLarge(MAX_FILE);
-      const size = jsonBytes({ v: message.v, id, op, args: message.args }, runtimeBodyLimit(op));
+      if (bytes && bytes.byteLength > MAX_FILE)
+        throw tooLarge(MAX_FILE, limitRefusal("runtime.file.bytes", MAX_FILE));
+      const size = jsonBytes(
+        { v: message.v, id, op, args: message.args },
+        runtimeBodyLimit(op),
+        runtimeBodyLimitId(op)
+      );
       const requestBytes = size * 3 + (bytes?.byteLength ?? 0);
       reserve(requestBytes);
       reserved = requestBytes;

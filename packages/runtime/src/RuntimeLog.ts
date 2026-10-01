@@ -9,8 +9,9 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { RuntimeCode } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 
-const MUTATION_DEADLINE_MS = 30_000;
+const MUTATION_DEADLINE_MS = registry["runtime.mutation.deadline"].default;
 const MAX_SQL_BYTES = 8_192;
 const encoder = new TextEncoder();
 

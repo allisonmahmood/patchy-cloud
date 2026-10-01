@@ -11,6 +11,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { registry } from "./registry.js";
 
 export interface ConsumeOptions {
   /**
@@ -23,16 +24,20 @@ export interface ConsumeOptions {
   readonly window: Duration.Input;
 }
 
-export interface ConsumeResult {
-  readonly allowed: boolean;
-  /** Attempts left in the current window; `0` when refused. */
-  readonly remaining: number;
-  /**
-   * What `Retry-After` should say: whole seconds until the window resets, at
-   * least `1` when refused, and `0` when the attempt was admitted.
-   */
-  readonly retryAfterSeconds: number;
-}
+export type ConsumeResult =
+  | {
+      readonly allowed: true;
+      readonly remaining: number;
+      readonly retryAfterSeconds: 0;
+    }
+  | {
+      readonly allowed: false;
+      /** The key's window is spent, or the host cannot track another key. */
+      readonly reason: "rate" | "capacity";
+      readonly remaining: 0;
+      /** Whole seconds until another attempt may be admitted, at least one. */
+      readonly retryAfterSeconds: number;
+    };
 
 /**
  * The most keys the in-memory store tracks at once. Past it the limiter fails
@@ -40,7 +45,7 @@ export interface ConsumeResult {
  * slot, so a flood of fresh addresses can exhaust memory no faster than it
  * can wait out a window.
  */
-export const MAX_TRACKED_KEYS = 10_000;
+export const MAX_TRACKED_KEYS = registry["rate.trackedKeys"].default;
 
 export class Limits extends Context.Service<
   Limits,
@@ -83,7 +88,9 @@ export const make = Effect.sync(() => {
     return earliestReset;
   };
 
-  const consume = Effect.fn("Limits.consume")(function* (options: ConsumeOptions) {
+  const consume = Effect.fn("Limits.consume")(function* (
+    options: ConsumeOptions
+  ): Effect.fn.Return<ConsumeResult> {
     const at = yield* now;
     const window = windows.get(options.key);
 
@@ -91,6 +98,7 @@ export const make = Effect.sync(() => {
       if (window.count >= options.limit) {
         return {
           allowed: false,
+          reason: "rate",
           remaining: 0,
           retryAfterSeconds: retryAfterSeconds(at, window.resetAt)
         };
@@ -104,6 +112,7 @@ export const make = Effect.sync(() => {
       if (windows.size >= MAX_TRACKED_KEYS) {
         return {
           allowed: false,
+          reason: "capacity",
           remaining: 0,
           retryAfterSeconds: retryAfterSeconds(at, earliestReset)
         };

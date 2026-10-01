@@ -1,0 +1,90 @@
+## Limits
+
+Contract limits are fixed for this release. Operating limits below are current defaults, not capacity promises; a company may have overrides. Handle the listed refusals. Admission is counted per host replica.
+
+A frame may have 32 requests outstanding, but company connections and action admission can refuse earlier. Callbacks and subscription re-runs do not spend the per-viewer call rate. Calls never automatically retry busy; subscriptions back off.
+
+PGlite dev has one connection. It does not reproduce production connection contention, serialization conflicts or containment. A watchdog kill is not proof of CPU abuse. Use bounded batches for long actions.
+
+<!-- prettier-ignore -->
+| Limit id | Kind | Default | Unit | Scope | Measures | Refusal | Company override | Configuration |
+| --- | --- | ---: | --- | --- | --- | --- | --- | --- |
+| `runtime.calls.perMinute` | contract | 300 | calls/minute | viewer | Calls per viewer per patch, excluding callbacks and subscription re-runs | `rate_limited` | No | release |
+| `frame.outstanding` | contract | 32 | requests | viewer | Outstanding requests per document, including calls held while starting | `too_many_requests` | No | release |
+| `frame.heldBytes` | contract | 67108864 | bytes | viewer | Total bytes held by one frame | `too_large` | No | release |
+| `runtime.call.bytes` | contract | 65536 | bytes | viewer | Tier 1 operation envelope | `too_large` | No | release |
+| `runtime.row.bytes` | contract | 1048576 | bytes | viewer | Encoded row per insert or update | `too_large` | No | release |
+| `runtime.batch.bytes` | contract | 8388608 | bytes | viewer | Encoded insertMany batch | `too_large` | No | release |
+| `runtime.postgres.bytes` | contract | 262144 | bytes | viewer | Postgres operation arguments | `too_large` | No | release |
+| `runtime.result.bytes` | contract | 8388608 | bytes | viewer | Tier 1 operation result | `too_large` | No | release |
+| `runtime.file.bytes` | contract | 20971520 | bytes | viewer | File bytes per operation | `too_large` | No | release |
+| `runtime.mutation.deadline` | contract | 30000 | milliseconds | viewer | Tier 1 mutation deadline | `timeout` | No | release |
+| `integration.deadline` | contract | 15000 | milliseconds | viewer | Each integration call within its parent deadline | `timeout` | No | release |
+| `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
+| `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
+| `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |
+| `tier2.query.kill` | contract | 4000 | milliseconds | patch | Terminate query guest if still running, one second after caller deadline | None | No | release |
+| `tier2.mutation.kill` | contract | 6000 | milliseconds | patch | Terminate mutation guest if still running, one second after caller deadline | None | No | release |
+| `tier2.action.kill` | contract | 61000 | milliseconds | patch | Terminate action guest if still running, one second after caller deadline | None | No | release |
+| `tier2.settlement.cleanup` | contract | 5000 | milliseconds | viewer | Settlement cleanup after deadline; unresolved connections are destroyed | `unknown_outcome` | No | release |
+| `execution.stall` | contract | 6000 | milliseconds | patch | Process event-loop stall before termination | None | No | release |
+| `execution.probe.interval` | operating | 250 | milliseconds | company | Supervisor health and resource sampling interval | None | Yes | deployment |
+| `tier2.args.bytes` | contract | 1048576 | bytes | viewer | Encoded server.call arguments | `too_large` | No | release |
+| `tier2.query.resultBytes` | contract | 8388608 | bytes | viewer | Encoded query result | `handler_failed` | No | release |
+| `tier2.action.resultBytes` | contract | 8388608 | bytes | viewer | Encoded action result | `handler_failed` | No | release |
+| `tier2.mutation.resultBytes` | contract | 65536 | bytes | viewer | Encoded mutation result, also the stored replay result cap | `handler_failed` | No | release |
+| `tier2.callbacks.count` | contract | 1000 | callbacks | viewer | Callbacks per invocation; nested invocations count separately | `limit_exceeded` | No | release |
+| `tier2.callbacks.outstanding` | contract | 8 | callbacks | viewer | Outstanding callbacks per invocation; excess work queues | None | No | release |
+| `tier2.callbacks.bytes` | contract | 67108864 | bytes | viewer | Callback bytes per call tree across attempts and children | `limit_exceeded` | No | release |
+| `tier2.callbacks.fileBytes` | contract | 20971520 | bytes | viewer | File bytes per callback body | `too_large` | No | release |
+| `tier2.log.bytes` | contract | 32768 | bytes | viewer | ctx.log bytes per invocation | `limit_exceeded` | No | release |
+| `tier2.mutation.keyLifetime` | contract | 86400000 | milliseconds | viewer | Mutation key retention and validity window | None | No | release |
+| `tier2.mutation.keyFutureSkew` | contract | 300000 | milliseconds | viewer | Maximum mutation key timestamp ahead of server clock | None | No | release |
+| `tier2.mutation.attempts` | contract | 3 | attempts | viewer | Maximum full handler attempts after serialization failures | `write_conflict` | No | release |
+| `tier2.capability.tombstone` | operating | 300000 | milliseconds | host | Expired capability replay tombstone lifetime | None | No | deployment |
+| `company.connections` | operating | 4 | connections | company | Company connections per host replica | `busy` | Yes | deployment |
+| `company.connections.hostBackends` | operating | 200 | connections | host | Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |
+| `company.connections.waiters` | operating | 32 | waiters | company | Queued company connection acquisitions per host replica | `busy` | Yes | deployment |
+| `company.connections.wait` | operating | 1000 | milliseconds | company | Maximum connection queue wait within caller deadline | `busy` | Yes | deployment |
+| `subscriptions.reruns.company` | operating | 2 | connections | company | Company connections occupied by subscription re-runs per host replica | `busy` | Yes | deployment |
+| `subscriptions.reruns.patch` | operating | 1 | runs | patch | Simultaneous subscription re-runs per patch per host replica | None | Yes | deployment |
+| `tier2.actions.company` | operating | 8 | actions | company | Actions in flight per company per host replica | `busy` | Yes | deployment |
+| `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
+| `company.admission.rate` | operating | 100 | calls/second | company | Tier 1 operations and tier 2 calls per host replica; excludes callbacks | `rate_limited` | Yes | deployment |
+| `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `rate_limited` | Yes | deployment |
+| `execution.process.rss` | operating | 536870912 | bytes | patch | Process RSS at termination; memory configured in MiB | None | Yes | deployment |
+| `execution.breaker.kills` | operating | 3 | kills | patch | Kills across all versions of one patch within the breaker window | `patch_paused` | Yes | deployment |
+| `execution.breaker.window` | operating | 600000 | milliseconds | patch | Window counting process kills; breaker is off in dev | None | Yes | deployment |
+| `execution.breaker.pause` | operating | 600000 | milliseconds | patch | Pause after repeated kills; a publish clears it | `patch_paused` | Yes | deployment |
+| `execution.task.cpu` | operating | 0.5 | vCPU | company | Fargate CPU allocation | None | Yes | deployment |
+| `execution.task.memory` | operating | 2147483648 | bytes | company | Fargate memory allocation, 2048 MiB | None | Yes | deployment |
+| `execution.residency.processes` | operating | 12 | processes | company | Loaded version processes; idle processes evicted first | `busy` | Yes | deployment |
+| `execution.residency.bytes` | operating | 1610612736 | bytes | company | Aggregate RSS including supervisor, bundles and overlapping versions | `busy` | Yes | deployment |
+| `execution.process.idle` | operating | 60000 | milliseconds | company | Process idle window before reap | None | Yes | deployment |
+| `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
+| `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
+| `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed; held calls are never replayed | `busy` | Yes | deployment |
+| `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no connected tier 2 documents and no in-flight work | None | Yes | deployment |
+| `execution.deploy.drain` | operating | 90000 | milliseconds | host | Deployment deregistration delay | None | No | deployment |
+| `files.handle.length` | contract | 57 | characters | viewer | Fixed authorised handle size; included in page and result bounds | None | No | release |
+| `files.stage.bytes` | contract | 20971520 | bytes | viewer | Bytes per staged upload | `too_large` | No | release |
+| `files.stage.count` | contract | 16 | stages | viewer | Outstanding stages per viewer per patch | `limit_exceeded` | No | release |
+| `files.stage.viewerBytes` | contract | 104857600 | bytes | viewer | Outstanding staged bytes per viewer per patch | `limit_exceeded` | No | release |
+| `files.stage.companyBytes` | operating | 1073741824 | bytes | company | Outstanding staged bytes per company | `limit_exceeded` | Yes | deployment |
+| `files.stage.lifetime` | contract | 3600000 | milliseconds | viewer | Unadopted stage lifetime before sweep | `not_found` | No | release |
+| `download.bytes` | contract | 20971520 | bytes | viewer | Generated-file download encoded bytes held by shell | `too_large` | No | release |
+| `csv.characters` | contract | 10000000 | characters | viewer | Decoded CSV input characters, enforced while parsing | `limit_exceeded` | No | release |
+| `csv.cells` | contract | 1000000 | cells | viewer | CSV input cells, enforced while parsing | `limit_exceeded` | No | release |
+| `members.page` | contract | 50 | members | viewer | Candidate list and prefix search page size | None | No | release |
+| `members.getMany` | contract | 1000 | ids | viewer | Member ids per getMany call | `limit_exceeded` | No | release |
+| `subscriptions.document` | contract | 64 | subscriptions | viewer | Subscriptions per document | `limit_exceeded` | No | release |
+| `subscriptions.patch` | operating | 256 | subscriptions | patch | Subscriptions per patch | `limit_exceeded` | Yes | deployment |
+| `subscriptions.company` | operating | 1024 | subscriptions | company | Subscriptions per company | `limit_exceeded` | Yes | deployment |
+| `stream.documents` | contract | 8 | documents | viewer | Connected documents per viewer per patch | `limit_exceeded` | No | release |
+| `subscriptions.snapshot.bytes` | contract | 8388608 | bytes | viewer | Snapshot result; frame held-byte cap still applies | `too_large` | No | release |
+| `stream.buffer.bytes` | operating | 16777216 | bytes | viewer | Stream output buffer; slow consumers close and resume by revision | None | Yes | deployment |
+| `subscriptions.deltas.buffer` | contract | 64 | deltas | viewer | Out-of-order stream deltas before resync_required | None | No | release |
+| `subscriptions.deltas.gap` | contract | 5000 | milliseconds | viewer | Open sequence gap before resync_required | None | No | release |
+| `subscriptions.reconcile.interval` | operating | 30000 | milliseconds | host | Reconcile durable revisions and document authority | None | No | deployment |
+| `stream.hidden.suspend` | contract | 30000 | milliseconds | viewer | Hidden document delay before suspension | None | No | release |
+| `stream.remount.grace` | contract | 1000 | milliseconds | viewer | Document remount grace | None | No | release |

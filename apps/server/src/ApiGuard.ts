@@ -33,16 +33,17 @@ import {
 } from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { Limits } from "@patchy/limits";
+import { registry } from "@patchy/limits/registry";
 
 /** Protected-API attempts admitted per source address per minute, in memory. */
 export const protectedApiRateLimitPerMinute = Config.Int(
   "PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE"
-).pipe(Config.withDefault(60));
+).pipe(Config.withDefault(registry["rate.protectedApi.perMinute"].default));
 
 /** Device-login starts admitted per source address per minute, in memory. */
 export const deviceLoginRateLimitPerMinute = Config.Int(
   "PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE"
-).pipe(Config.withDefault(5));
+).pipe(Config.withDefault(registry["rate.deviceLogin.perMinute"].default));
 
 /** Effect's router rejects a decoded parameter longer than this. */
 const routerParamLimit = 100;

@@ -25,6 +25,7 @@
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:"
   },
@@ -33,7 +34,6 @@
     "@effect/vitest": "catalog:",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
-    "@patchy/limits": "workspace:*",
     "vitest": "^5.0.1"
   }
 }

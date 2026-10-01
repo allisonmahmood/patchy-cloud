@@ -29,7 +29,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - [Company database](./packages/company-database/CONTEXT.md) — `packages/company-database`, company placement, lazy database creation, bounded pools, patch and file locks, cumulative inventory and orphan reclamation; the same inventory over PGlite for patch development ([ADR-0009](./docs/adr/ADR-0009-one-postgres-database-per-company.md))
 - [Content store](./packages/content-store/CONTEXT.md) — `packages/content-store`, the object store a patch's bytes go into; a filesystem layer and an Azure Blob layer
 - [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, the event service Patches and Auth report business moments through
-- [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the fixed-window rate limiter behind every per-minute limit
+- [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the contract and operating limits registry, company overrides with history, and the fixed-window rate limiter behind every per-minute limit
 - [Hosting](./apps/server/CONTEXT.md) — `apps/server`, the process that assembles and runs the hosting server. Its `CONTEXT.md` holds only wiring terms
 
 ## Relationships
@@ -53,6 +53,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Auth, Patches → Analytics**: report business events
 - **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines
 - **Hosting, Auth, Patches → Limits**: rely on shared rate limiting for API access, device login and publishing
+- **Limits → SQL**: persists company overrides, their configuration revisions and change history.
 - **Integrations → Companies**: a company owns its connections; active members read their safe metadata and admins manage them
 - **Hosting → runtime packages**: coordinates their lifetime, including database setup, API protection, page serving and deletion sweeping
 

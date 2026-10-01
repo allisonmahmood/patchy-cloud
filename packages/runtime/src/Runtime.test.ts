@@ -299,6 +299,8 @@ it.effect("a failing handler's HTTP correlation finds the attributed failure row
     });
     const failure = decodeFailure(yield* response.json);
     assert.strictEqual(failure.code, "too_large");
+    assert.include(failure, { scope: "viewer", limitId: "runtime.row.bytes", value: 1024 });
+    assert.notProperty(failure, "retryAfter");
     assert.strictEqual(response.status, 413);
     assert.include(failure.error, "1024");
     assert.isDefined(failure.correlationId);
@@ -331,7 +333,7 @@ it.effect("a failing handler's HTTP correlation finds the attributed failure row
         me,
         "tables.insert": {
           kind: "mutation",
-          run: () => new Runtime.TooLarge({ maxBytes: 1024 })
+          run: () => new Runtime.TooLarge({ maxBytes: 1024, limitId: "runtime.row.bytes" })
         }
       })
     )
@@ -369,6 +371,13 @@ it.effect(
         const failure = decodeFailure(yield* response.json);
         assert.strictEqual(response.status, 504);
         assert.strictEqual(failure.code, "timeout");
+        assert.include(failure, {
+          scope: "viewer",
+          limitId: "integration.deadline",
+          value: 15_000
+        });
+        assert.notProperty(failure, "retryAfter");
+        assert.isUndefined(response.headers["retry-after"]);
         assert.strictEqual(failure.correlationId, binding.correlationId);
         assert.isTrue(yield* Deferred.isDone(released));
         const call = yield* log.find(lookup);
@@ -422,6 +431,13 @@ it.effect("times out a mutation at its configured deadline and logs the deadline
       const failure = decodeFailure(yield* response.json);
       assert.strictEqual(response.status, 504);
       assert.strictEqual(failure.code, "timeout");
+      assert.include(failure, {
+        scope: "viewer",
+        limitId: "runtime.mutation.deadline",
+        value: 5_000
+      });
+      assert.notProperty(failure, "retryAfter");
+      assert.isUndefined(response.headers["retry-after"]);
       assert.strictEqual(failure.correlationId, binding.correlationId);
       assert.isTrue(yield* Deferred.isDone(released));
       const call = yield* log.find(lookup);
@@ -443,7 +459,7 @@ it.effect("times out a mutation at its configured deadline and logs the deadline
                 }).pipe(Effect.ensuring(Deferred.succeed(released, undefined)))
             }
           },
-          { PATCHY_RUNTIME_MUTATION_DEADLINE_MS: "5000" }
+          { "runtime.mutation.deadline": 5000 }
         )
       )
     );
@@ -493,25 +509,28 @@ it.effect(
 it.effect("operation body bounds count UTF-8 bytes and allow only the operation's own cap", () =>
   Effect.gen(function* () {
     const api = yield* Fixtures.client;
-    for (const [op, length, code] of [
-      ["me", 64 * 1024, "too_large"],
-      ["tables.insert", 64 * 1024, undefined],
-      ["tables.insert", 1100 * 1024, "too_large"],
-      ["tables.insertMany", 1100 * 1024, undefined],
-      ["tables.insertMany", 9 * 1024 * 1024, "too_large"],
-      ["postgres.query", 256 * 1024, "too_large"]
+    for (const [op, length, limitId, value] of [
+      ["me", 64 * 1024, "runtime.call.bytes", 64 * 1024],
+      ["tables.insert", 64 * 1024, undefined, undefined],
+      ["tables.insert", 1100 * 1024, "runtime.row.bytes", 1088 * 1024],
+      ["tables.insertMany", 1100 * 1024, undefined, undefined],
+      ["tables.insertMany", 9 * 1024 * 1024, "runtime.batch.bytes", 8256 * 1024],
+      ["postgres.query", 256 * 1024, "runtime.postgres.bytes", 256 * 1024],
+      ["postgres.unknown", 256 * 1024, "runtime.call.bytes", 64 * 1024]
     ] as const) {
       const response = yield* api.call({
         payload: envelope(op, { text: "é".repeat(Math.ceil(length / 2)) }),
         headers: authenticatedHeaders(),
         responseMode: "response-only"
       });
-      if (code === undefined) {
+      if (limitId === undefined) {
         assert.strictEqual(response.status, 200);
         assert.deepStrictEqual(yield* response.json, { ok: true, value: null });
       } else {
         assert.strictEqual(response.status, 413);
-        assert.include(yield* response.json, { code });
+        const failure = decodeFailure(yield* response.json);
+        assert.include(failure, { code: "too_large", scope: "viewer", limitId, value });
+        assert.notProperty(failure, "retryAfter");
       }
     }
   }).pipe(
@@ -519,7 +538,8 @@ it.effect("operation body bounds count UTF-8 bytes and allow only the operation'
       Fixtures.layer({
         me,
         "tables.insert": { kind: "mutation", run: () => Effect.succeed(null) },
-        "tables.insertMany": { kind: "mutation", run: () => Effect.succeed(null) }
+        "tables.insertMany": { kind: "mutation", run: () => Effect.succeed(null) },
+        "postgres.query": { kind: "integration", run: () => Effect.succeed(null) }
       })
     )
   )
@@ -539,10 +559,10 @@ it.effect("a single-row cap above the batch and postgres caps still admits the r
       Fixtures.layer(
         { me, "tables.insert": { kind: "mutation", run: () => Effect.succeed(null) } },
         {
-          PATCHY_RUNTIME_ROW_BYTES: "2048",
-          PATCHY_RUNTIME_BATCH_BYTES: "512",
-          PATCHY_RUNTIME_CALL_BYTES: "512",
-          PATCHY_RUNTIME_POSTGRES_BYTES: "512"
+          "runtime.row.bytes": 2048,
+          "runtime.batch.bytes": 512,
+          "runtime.call.bytes": 512,
+          "runtime.postgres.bytes": 512
         }
       )
     )
@@ -582,6 +602,12 @@ it.effect("a logged integration refusal preserves Retry-After with its correlati
     assert.strictEqual(response.status, 429);
     assert.strictEqual(response.headers["retry-after"], "12");
     assert.strictEqual(failure.code, "rate_limited");
+    assert.include(failure, {
+      scope: "viewer",
+      limitId: "runtime.calls.perMinute",
+      value: 3,
+      retryAfter: 12
+    });
     assert.isDefined(failure.correlationId);
     const log = yield* RuntimeLog.RuntimeLog;
     assert.strictEqual(
@@ -595,7 +621,12 @@ it.effect("a logged integration refusal preserves Retry-After with its correlati
         me,
         "postgres.query": {
           kind: "integration",
-          run: () => new Runtime.RateLimited({ retryAfterSeconds: 12 })
+          run: () =>
+            new Runtime.RateLimited({
+              retryAfterSeconds: 12,
+              value: 3,
+              limitId: "runtime.calls.perMinute"
+            })
         }
       })
     )

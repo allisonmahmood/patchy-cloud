@@ -1,8 +1,20 @@
 # Limits
 
-The shared attempt limits used by the hosting server, device login and publishing. Consumers choose what an attempt is counted against; [Patches](../patches/CONTEXT.md) owns the separate live-patch quota.
+The release's contract limits, operating defaults and company overrides, alongside the shared attempt limits used by the hosting server, device login and publishing. [Patches](../patches/CONTEXT.md) owns the separate live-patch quota.
 
 ## Language
+
+**Contract limit**:
+A bound patch code is written against, fixed per release and enforced identically in dev.
+_Avoid_: quota, setting
+
+**Operating limit**:
+A bound on how Patchy runs its services and execution fleet, supplied by deployment configuration with company overrides where applicable.
+_Avoid_: quota (a lasting count), tuning
+
+**Limit override**:
+A company's own value for an operating limit, set by a controller operation and kept with its history.
+_Avoid_: exception, plan
 
 **Rate limit**:
 A per-window ceiling on attempts attributed to an address, machine token, device code or user, according to the action. It is temporary admission control, not a lasting count of what someone owns.

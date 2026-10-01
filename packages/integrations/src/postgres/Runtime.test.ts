@@ -21,6 +21,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Dev from "./Dev.js";
+import * as Execution from "./Execution.js";
 import * as Operations from "./Operations.js";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
 
@@ -226,10 +227,40 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
               ["postgres.query", 1]
             ]
           );
+          const rowLimit = yield* send("postgres.list", {
+            connection: "sales",
+            relation,
+            limit: 1001
+          });
+          const rowFailure = decodeFailure(yield* rowLimit.json);
+          assert.strictEqual(rowLimit.status, 413);
+          assert.strictEqual(rowFailure.code, "too_large");
+          assert.notProperty(rowFailure, "limitId");
+          assert.notProperty(rowFailure, "scope");
+          assert.notProperty(rowFailure, "value");
+          const resultLimit = yield* send("postgres.query", {
+            connection: "sales",
+            sql: "SELECT repeat('x', 1025) AS value",
+            params: [],
+            shape: { value: { kind: "text" } }
+          });
+          const resultFailure = decodeFailure(yield* resultLimit.json);
+          assert.strictEqual(resultLimit.status, 413);
+          assert.include(resultFailure, {
+            code: "too_large",
+            scope: "viewer",
+            limitId: "runtime.result.bytes",
+            value: 1024
+          });
+          assert.notProperty(resultFailure, "retryAfter");
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
-              Dev.dev(snapshot, { root, connectionId: declaration.id, handle: declaration.handle }),
+              Dev.dev(
+                snapshot,
+                { root, connectionId: declaration.id, handle: declaration.handle },
+                { ...Execution.specLimits, maxBytes: 1024 }
+              ),
               ConnectionStoreDev.layer([{ connection, snapshots: [{ revision: 1, snapshot }] }])
             )
           )

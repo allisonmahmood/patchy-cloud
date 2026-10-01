@@ -412,7 +412,13 @@ export const dev = (
           .pipe(
             Effect.timeoutOrElse({
               duration: limits.deadlineMs,
-              orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: limits.deadlineMs }))
+              orElse: () =>
+                Effect.fail(
+                  new Execution.Timeout({
+                    milliseconds: limits.deadlineMs,
+                    limitId: "integration.deadline"
+                  })
+                )
             }),
             Effect.mapError((cause) =>
               cause._tag === "FixtureRowInvalid"
@@ -448,7 +454,13 @@ export const dev = (
         semaphore.withPermits(1),
         Effect.timeoutOrElse({
           duration: limits.deadlineMs,
-          orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: limits.deadlineMs }))
+          orElse: () =>
+            Effect.fail(
+              new Execution.Timeout({
+                milliseconds: limits.deadlineMs,
+                limitId: "integration.deadline"
+              })
+            )
         })
       );
       return Execution.Execution.of({ query });

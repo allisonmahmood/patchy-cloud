@@ -18,6 +18,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import { CompanyDatabases } from "@patchy/company-database";
+import { ContractLimits } from "@patchy/limits";
 import { Binding, LoadedVersions } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
@@ -444,12 +445,12 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
   }
   const bounded = yield* TableOperations.make.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, versions),
+    Effect.provideService(ContractLimits.overrides, { "runtime.result.bytes": 32 }),
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           PATCHY_TABLE_MAX_ITEMS: "2",
-          PATCHY_TABLE_MAX_PAGE: "2",
-          PATCHY_RUNTIME_RESULT_BYTES: "32"
+          PATCHY_TABLE_MAX_PAGE: "2"
         })
       )
     )
@@ -646,12 +647,14 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
 export const boundsContract = Effect.fn("test.boundsContract")(function* (companyId: string) {
   const { binding } = yield* setup(companyId, "bounds000001");
   const handlers = yield* TableOperations.make.pipe(
+    Effect.provideService(ContractLimits.overrides, {
+      "runtime.row.bytes": 512,
+      "runtime.batch.bytes": 1100,
+      "runtime.result.bytes": 600
+    }),
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          PATCHY_RUNTIME_ROW_BYTES: "512",
-          PATCHY_RUNTIME_BATCH_BYTES: "1100",
-          PATCHY_RUNTIME_RESULT_BYTES: "600",
           PATCHY_TABLE_MAX_ITEMS: "2",
           PATCHY_TABLE_MAX_PAGE: "2",
           PATCHY_TABLE_DEFAULT_PAGE: "1"
@@ -661,20 +664,23 @@ export const boundsContract = Effect.fn("test.boundsContract")(function* (compan
   );
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
-  for (const [op, args, limit] of [
-    ["tables.getMany", { table: "notes", ids: ["a", "b", "c"] }, 2],
-    ["tables.insertMany", { table: "notes", rows: [{}, {}, {}] }, 2],
-    ["tables.list", { table: "notes", limit: 3 }, 2],
+  for (const [op, args, limit, limitId] of [
+    ["tables.getMany", { table: "notes", ids: ["a", "b", "c"] }, 2, undefined],
+    ["tables.insertMany", { table: "notes", rows: [{}, {}, {}] }, 2, undefined],
+    ["tables.list", { table: "notes", limit: 3 }, 2, undefined],
     [
       "tables.insert",
       { table: "notes", row: { title: "large", slug: "large", body: "x".repeat(513) } },
-      512
+      512,
+      "runtime.row.bytes"
     ],
-    ["tables.getMany", { table: "notes", ids: ["x".repeat(1101)] }, 1100]
+    ["tables.getMany", { table: "notes", ids: ["x".repeat(1101)] }, 1100, "runtime.batch.bytes"]
   ] as const) {
     const failure = yield* call(op, args).pipe(Effect.flip);
     assert.strictEqual(failure.code, "too_large");
     assert.include(failure.message, String(limit));
+    if (limitId === undefined) assert.notProperty(failure, "limitId");
+    else assert.include(failure, { limitId, scope: "viewer", value: limit });
   }
   const row = yield* call("tables.insert", {
     table: "notes",
@@ -783,15 +789,11 @@ export const expandedResultsContract = Effect.fn("test.expandedResultsContract")
   };
   const { binding } = yield* setup(companyId, "expanded0001", definition);
   const handlers = yield* TableOperations.make.pipe(
-    Effect.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          PATCHY_RUNTIME_ROW_BYTES: "2048",
-          PATCHY_RUNTIME_BATCH_BYTES: "1024",
-          PATCHY_RUNTIME_RESULT_BYTES: "1800"
-        })
-      )
-    )
+    Effect.provideService(ContractLimits.overrides, {
+      "runtime.row.bytes": 2048,
+      "runtime.batch.bytes": 1024,
+      "runtime.result.bytes": 1800
+    })
   );
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
@@ -805,8 +807,15 @@ export const expandedResultsContract = Effect.fn("test.expandedResultsContract")
     ["tables.list", { table: "notes", index: "bySlug", limit: 2 }],
     ["tables.getMany", { table: "notes", ids: rows.map((row) => row.id) }],
     ["tables.getMany", { table: "notes", ids: [rows[0]!.id, rows[0]!.id] }]
-  ] as const)
-    assert.strictEqual((yield* call(op, args).pipe(Effect.flip)).code, "too_large");
+  ] as const) {
+    const failure = yield* call(op, args).pipe(Effect.flip);
+    assert.include(failure, {
+      code: "too_large",
+      scope: "viewer",
+      limitId: "runtime.result.bytes",
+      value: 1800
+    });
+  }
 
   // The lookahead row does not consume the page budget or lose timestamp precision.
   const first = yield* call("tables.list", { table: "notes", index: "bySlug", limit: 1 }).pipe(

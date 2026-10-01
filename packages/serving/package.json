@@ -30,6 +30,7 @@
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
     "effect": "catalog:"
   },
@@ -40,7 +41,6 @@
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/integrations": "workspace:*",
-    "@patchy/limits": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "@patchy/sql": "workspace:*",
     "vitest": "^5.0.1"

@@ -288,6 +288,7 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
         const short = yield* setup({ statementMs: 30 });
         const timeout = yield* short.execution.query(input("SELECT pg_sleep(1)")).pipe(Effect.flip);
         assert.instanceOf(timeout, Execution.Timeout);
+        assert.notProperty(timeout, "limitId");
         assert.isTrue(short.clients[0]!.connection.stream.destroyed);
         const deadline = yield* setup({
           statementMs: 100_000,
@@ -304,8 +305,14 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
           .pipe(Effect.flip, Effect.forkChild);
         yield* Deferred.await(checked);
         yield* TestClock.adjust("15 seconds");
-        assert.instanceOf(yield* Fiber.join(running), Execution.Timeout);
-        assert.instanceOf(yield* Fiber.join(queued), Execution.Timeout);
+        for (const failure of [yield* Fiber.join(running), yield* Fiber.join(queued)]) {
+          assert.instanceOf(failure, Execution.Timeout);
+          assert.include(failure, {
+            scope: "viewer",
+            limitId: "integration.deadline",
+            value: 15_000
+          });
+        }
         for (const client of deadline.clients) assert.isTrue(client.connection.stream.destroyed);
         const sql = yield* SqlClient.SqlClient;
         while (true) {
@@ -437,12 +444,14 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
           .pipe(Effect.flip);
         assert.instanceOf(rows, Execution.TooLarge);
         if (rows._tag === "PostgresTooLarge") assert.strictEqual(rows.bound, "rows");
+        assert.notProperty(rows, "limitId");
         assert.isTrue(clients[0]!.connection.stream.destroyed);
         const bytes = yield* execution
           .query(input("SELECT repeat('x', 8388609)"))
           .pipe(Effect.flip);
         assert.instanceOf(bytes, Execution.TooLarge);
         if (bytes._tag === "PostgresTooLarge") assert.strictEqual(bytes.bound, "bytes");
+        assert.include(bytes, { scope: "viewer", limitId: "runtime.result.bytes", value: 8388608 });
         assert.isTrue(clients[1]!.connection.stream.destroyed);
         assert.deepStrictEqual((yield* execution.query(input("SELECT 7"))).rows, [[7]]);
       })

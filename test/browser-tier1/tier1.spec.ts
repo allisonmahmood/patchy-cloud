@@ -332,6 +332,17 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
       ["inherited", "invalid_request"],
       ["large", "too_large"]
     ]);
+  expect(
+    await frame.evaluate(
+      () =>
+        (window as unknown as FixtureWindow).harness.replies.find((reply) => reply.id === "large")
+          ?.error
+    )
+  ).toMatchObject({
+    scope: "viewer",
+    limitId: "runtime.row.bytes",
+    value: 1088 * 1024
+  });
   expect(instance.runtimeRequests.slice(beforeMalformed)).toEqual([]);
 
   await frame.evaluate((wire) => {
@@ -353,10 +364,16 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
         () =>
           (window as unknown as FixtureWindow).harness.replies.find(
             (reply) => reply.id === "file-over-limit"
-          )?.error?.code
+          )?.error
       )
     )
-    .toBe("too_large");
+    .toMatchObject({
+      code: "too_large",
+      scope: "viewer",
+      limitId: "runtime.file.bytes",
+      value: 20 * 1024 * 1024,
+      details: { maxBytes: 20 * 1024 * 1024 }
+    });
   expect(instance.runtimeRequests.slice(beforeMalformed)).toEqual([]);
 
   await company.query("BEGIN");
@@ -426,10 +443,15 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
           () =>
             (window as unknown as FixtureWindow).harness.replies.find(
               (reply) => reply.id === "held-3"
-            )?.error?.code
+            )?.error
         )
       )
-      .toBe("too_large");
+      .toMatchObject({
+        code: "too_large",
+        scope: "viewer",
+        limitId: "frame.heldBytes",
+        value: 64 * 1024 * 1024
+      });
   } finally {
     await company.query("COMMIT");
   }

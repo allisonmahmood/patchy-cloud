@@ -12,6 +12,7 @@ import {
 } from "@patchy/api";
 import type { PostgresDeclaration } from "@patchy/api";
 import { Binding, Runtime } from "@patchy/runtime/core";
+import { registry } from "@patchy/limits/registry";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
@@ -137,7 +138,7 @@ export const Errors = Schema.Union([
 ]);
 
 const MAX_ROWS = 1_000;
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_BYTES = registry["runtime.result.bytes"].default;
 const SCHEMA_DRIFT = "Patchy source schema drift";
 const MAX_OFFSET = 10_000;
 type Row = Record<string, typeof Schema.Json.Type>;
@@ -188,7 +189,7 @@ const checkedBytes = Effect.fn("PostgresOperations.checkedBytes")(function* <
   A extends typeof Schema.Json.Type
 >(value: A) {
   if (Buffer.byteLength(encodeJson(value), "utf8") > MAX_BYTES)
-    return yield* new Runtime.TooLarge({ maxBytes: MAX_BYTES });
+    return yield* new Runtime.TooLarge({ maxBytes: MAX_BYTES, limitId: "runtime.result.bytes" });
   return value;
 });
 

@@ -1,18 +1,33 @@
 /** The browser runtime wire; operation schemas are shared by the shell and server. */
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import { registry } from "@patchy/limits/registry";
 import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
+import { limitRefusalFields } from "./limits.js";
 
-/** Byte defaults shared by the browser broker and configurable server runtime. */
+/** Release contract shared by the browser broker and server runtime. */
 export const runtimeByteLimits = {
-  callBytes: 64 * 1024,
-  rowBytes: 1024 * 1024,
-  batchBytes: 8 * 1024 * 1024,
-  postgresBytes: 256 * 1024,
-  resultBytes: 8 * 1024 * 1024,
-  fileBytes: 20 * 1024 * 1024
+  callBytes: registry["runtime.call.bytes"].default,
+  rowBytes: registry["runtime.row.bytes"].default,
+  batchBytes: registry["runtime.batch.bytes"].default,
+  postgresBytes: registry["runtime.postgres.bytes"].default,
+  resultBytes: registry["runtime.result.bytes"].default,
+  fileBytes: registry["runtime.file.bytes"].default
 } as const;
+
+export type RuntimeBodyLimitId =
+  "runtime.call.bytes" | "runtime.row.bytes" | "runtime.batch.bytes" | "runtime.postgres.bytes";
+
+export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
+  return op === "tables.insert" || op === "tables.update"
+    ? "runtime.row.bytes"
+    : op === "tables.insertMany"
+      ? "runtime.batch.bytes"
+      : op.startsWith("postgres.")
+        ? "runtime.postgres.bytes"
+        : "runtime.call.bytes";
+}
 
 export function runtimeBodyLimit(
   op: string,
@@ -23,13 +38,16 @@ export function runtimeBodyLimit(
     readonly postgresBytes: number;
   } = runtimeByteLimits
 ): number {
-  return op === "tables.insert" || op === "tables.update"
-    ? limits.rowBytes + limits.callBytes
-    : op === "tables.insertMany"
-      ? limits.batchBytes + limits.callBytes
-      : op.startsWith("postgres.")
-        ? limits.postgresBytes
-        : limits.callBytes;
+  switch (runtimeBodyLimitId(op)) {
+    case "runtime.row.bytes":
+      return limits.rowBytes + limits.callBytes;
+    case "runtime.batch.bytes":
+      return limits.batchBytes + limits.callBytes;
+    case "runtime.postgres.bytes":
+      return limits.postgresBytes;
+    case "runtime.call.bytes":
+      return limits.callBytes;
+  }
 }
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
@@ -312,6 +330,7 @@ export const RuntimeFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
   code: RuntimeCode,
+  ...limitRefusalFields,
   details: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
   correlationId: Schema.optionalKey(NonEmptyText)
 }).annotate({ identifier: "RuntimeFailure" });

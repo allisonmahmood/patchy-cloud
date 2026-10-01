@@ -14,8 +14,11 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { newInternalId } from "@patchy/core";
 import * as Sql from "@patchy/sql";
+import { registry } from "@patchy/limits/registry";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
+
+const COMPANY_CONNECTIONS = registry["company.connections"].default;
 
 export class CompanyDatabaseConfig extends Context.Service<
   CompanyDatabaseConfig,
@@ -59,9 +62,9 @@ export const config = Config.all({
   adminUrl: Config.schema(DatabaseUrl, "PATCHY_COMPANY_DB_ADMIN_URL"),
   dataUrl: Config.schema(DatabaseUrl, "PATCHY_COMPANY_DB_URL"),
   maxBackends: Config.schema(
-    Schema.Int.check(Schema.isGreaterThanOrEqualTo(4)),
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(COMPANY_CONNECTIONS)),
     "PATCHY_COMPANY_DB_MAX_BACKENDS"
-  ).pipe(Config.withDefault(200)),
+  ).pipe(Config.withDefault(registry["company.connections.hostBackends"].default)),
   capacity: Config.succeed(100)
 });
 
@@ -277,20 +280,20 @@ export const make = Effect.gen(function* () {
     lookup: Effect.fn("CompanyDatabases.openPool")(function* (key: PoolKey) {
       yield* Effect.acquireRelease(
         Effect.suspend(() => {
-          if (reservedBackends + 4 > settings.maxBackends) {
+          if (reservedBackends + COMPANY_CONNECTIONS > settings.maxBackends) {
             return Effect.fail(
               new CompanyDatabases.Busy({ resource: "backend budget", limit: settings.maxBackends })
             );
           }
-          reservedBackends += 4;
+          reservedBackends += COMPANY_CONNECTIONS;
           return Effect.void;
         }),
         () =>
           Effect.sync(() => {
-            reservedBackends -= 4;
+            reservedBackends -= COMPANY_CONNECTIONS;
           })
       );
-      const sql = yield* pool(settings.dataUrl, 4, key.databaseName).pipe(
+      const sql = yield* pool(settings.dataUrl, COMPANY_CONNECTIONS, key.databaseName).pipe(
         Effect.mapError(
           (cause) =>
             new CompanyDatabases.CompanyDatabaseError({
@@ -304,7 +307,7 @@ export const make = Effect.gen(function* () {
         context: Context.make(SqlClient.SqlClient, sql).pipe(
           Context.add(CompanyDatabases.CompanyConnection, sql)
         ),
-        permits: yield* Semaphore.make(4)
+        permits: yield* Semaphore.make(COMPANY_CONNECTIONS)
       };
     })
   });
@@ -352,7 +355,10 @@ export const make = Effect.gen(function* () {
               entry.permits.withPermitsIfAvailable(1)
             );
             if (Option.isNone(result)) {
-              return yield* new CompanyDatabases.Busy({ resource: "company operations", limit: 4 });
+              return yield* new CompanyDatabases.Busy({
+                resource: "company operations",
+                limit: COMPANY_CONNECTIONS
+              });
             }
             return result.value;
           })
