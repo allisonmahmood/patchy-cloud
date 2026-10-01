@@ -860,7 +860,7 @@ it.layer(services)("pages in memory", (it) => {
               assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
               assert.strictEqual(
                 response.headers.get("content-security-policy"),
-                `${CSP}; frame-ancestors 'none'; script-src 'self' https://${FRONTEND_API_HOST}; connect-src https://${FRONTEND_API_HOST}`
+                `${CSP}; frame-ancestors 'none'; script-src 'self' https://${FRONTEND_API_HOST}; connect-src https://${FRONTEND_API_HOST}; worker-src blob:`
               );
               assert.include(
                 body,

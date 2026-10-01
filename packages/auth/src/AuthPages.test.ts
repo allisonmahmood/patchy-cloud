@@ -131,6 +131,8 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.strictEqual(page.headers.get("referrer-policy"), "same-origin");
       assert.include(html, "clerk.headless.browser.js");
       assert.include(html, "/auth/session.js");
+      // Clerk refreshes the session cookie from a blob worker; blocking it signs out form POSTs.
+      assert.include(page.headers.get("content-security-policy")!, "worker-src blob:");
       const created = yield* send(
         enrollment,
         post({ action: "create", name: "Acme <Studio>", handle: "acme-enroll" }, sessionCookie)

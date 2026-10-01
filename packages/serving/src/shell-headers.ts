@@ -47,13 +47,14 @@ export function contentSecurityPolicy(tier: number): string {
   return tier >= 1 ? SCRIPTED_CONTENT_SECURITY_POLICY : STATIC_CONTENT_SECURITY_POLICY;
 }
 
+/** Clerk keeps the session cookie fresh from a blob worker wherever the shell loads it. */
 export function shellContentSecurityPolicy(tier: number, frontendApiHost?: string): string {
   const policy = tier >= 1 ? SCRIPTED_SHELL_SECURITY_POLICY : PATCH_CONTENT_SECURITY_POLICY;
   if (frontendApiHost === undefined) return policy;
   const sources = `https://${frontendApiHost}`;
   return tier >= 1
-    ? policy
+    ? `${policy
         .replace("script-src 'self'", `script-src 'self' ${sources}`)
-        .replace("connect-src 'self'", `connect-src 'self' ${sources}`)
-    : `${policy}; script-src 'self' ${sources}; connect-src ${sources}`;
+        .replace("connect-src 'self'", `connect-src 'self' ${sources}`)}; worker-src blob:`
+    : `${policy}; script-src 'self' ${sources}; connect-src ${sources}; worker-src blob:`;
 }
