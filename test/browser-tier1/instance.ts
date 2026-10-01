@@ -57,7 +57,8 @@ export interface Instance {
     scope?: "company" | "public",
     html?: string,
     patchId?: string,
-    declarations?: Partial<Pick<Manifest, "tables" | "uses">>
+    declarations?: Partial<Pick<Manifest, "tier" | "tables" | "files" | "uses" | "handlers">>,
+    options?: { readonly server?: string; readonly force?: boolean }
   ): Promise<Published>;
   lifecycle(
     patchId: string,
@@ -525,7 +526,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         );
         return token;
       },
-      async publish(scope = "company", content = html, patchId, declarations) {
+      async publish(scope = "company", content = html, patchId, declarations, options) {
         const response = await fetch(`${backendOrigin}/api/publish`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
@@ -540,6 +541,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
             },
             metadata: {},
             html: content,
+            ...options,
             scope
           })
         });

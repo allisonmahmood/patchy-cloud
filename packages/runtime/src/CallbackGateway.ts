@@ -147,6 +147,23 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     if (decoded._tag === "Failure")
       return remember(refused("invalid_request", "Malformed callback."), 400);
     const request = decoded.success;
+    // Record the canonical owner before kind, live-viewer or resource access checks.
+    if (capability.onDependency !== undefined) {
+      const { binding } = capability;
+      if (request.op.startsWith("tables.") && typeof request.args.table === "string")
+        capability.onDependency(`table:${binding.patchId}:${request.args.table}`);
+      else if (request.op.startsWith("files.") && typeof request.args.store === "string")
+        capability.onDependency(`store:${binding.patchId}:${request.args.store}`);
+      else if (request.op.startsWith("shared.") && typeof request.args.alias === "string") {
+        const declaration = Object.hasOwn(binding.manifest.uses, request.args.alias)
+          ? binding.manifest.uses[request.args.alias]
+          : undefined;
+        if (declaration?.kind === "sharedTable") {
+          capability.onDependency(`table:${declaration.patchId}:${declaration.table}`);
+          capability.onDependency(`patch:${declaration.patchId}`);
+        }
+      }
+    }
     if (request.op === "log" || request.op === "server.call" || Object.hasOwn(handlers, request.op))
       capability.counters.operations.add(request.op);
     if (request.body !== undefined)

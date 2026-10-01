@@ -768,7 +768,7 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "return without changing loaded version. Expiry of the authenticated token ends the " +
           "stream normally. A refreshable stale token answers `session_refresh_required` (401), " +
           "so the browser refreshes its cookie without discarding the document. Only definitive " +
-          "session loss is `session_expired`. Tier 1 table subscriptions share this stream. " +
+          "session loss is `session_expired`. Tier 1 table and tier 2 query subscriptions share this stream. " +
           "The registry bounds `stream.documents` at 8 per viewer per patch and " +
           "`stream.buffer.bytes` at 16 MiB; overflow closes with `slow_consumer`."
       )
@@ -796,8 +796,12 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "apply in order, starting at sequence 1. " +
           "A subscription is `{id,op,args,vector?,revision?}`; tier 1 supports `tables.list`, " +
           "`tables.get`, `shared.list` and `shared.get`. `get` watches the whole table. " +
+          "Tier 2 supports `server.call` with `{handler,args}` and no mutation key; only queries " +
+          "are admitted. Handlers belong to the document's retained loaded version, so publishing " +
+          "a version without a handler does not remove it from an already loaded document. " +
           "Optional `vector` and `revision` describe the snapshot the client actually received, " +
-          "not the last frame the server sent. " +
+          "not the last frame the server sent. Tier 2 resume revision checks ignore keys outside " +
+          "the loaded version's owned tables/stores and declared shared-table resources. " +
           "`{type:'replace',sequence,subscriptions}` installs the full desired set and supersedes " +
           "buffered deltas through that sequence; older replacements are refused. All requests " +
           "also carry `patchId`, `versionId`, `documentId` and `generation`. A gap after 5 seconds " +
@@ -808,10 +812,21 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "the result is unchanged or resume reaches an equal vector without running the query. " +
           "Successful equal-vector checks emit no `re-run` event. " +
           "`error` carries `id`, `permanent` and the structured runtime or handler `error`. " +
-          "Permanent failures remove the subscription, preserving its last browser value. " +
-          "Access refusals on a shared source retain dependencies so a reshare recovers. " +
+          "A missing loaded handler, `handler_failed` or a result schema failure ends only that " +
+          "subscription, preserving its last browser value. Declared business errors retain their " +
+          "`source:'handler'`, `code` and `details`. Refusals inside handlers remain recoverable; " +
+          "losing document authority sends a stopping lifecycle notice instead. The host traces " +
+          "callback resources before access checks, canonicalising shared aliases to their owner. " +
+          "Successful runs replace dependencies even for equal results; failed runs retain previous " +
+          "and attempted resources so first-access refusals wake on reshare. Mid-run wakes are retained. " +
+          "Only resources actually read are watched. Member reads, when declared, are outside the " +
+          "company-database query snapshot. Mutations return committed resource revisions; render " +
+          "from the subscription rather than replaying a mutation result into its data. " +
           "The newest subscription is refused at 64 per document, 256 per patch or 1024 per " +
-          "company; snapshots are at most 8 MiB. Periodic durable reconciliation repairs missed wakes."
+          "company; snapshots are at most 8 MiB. Re-runs occupy at most two slots per company " +
+          "and one per patch. Hosted query slots remain occupied until invocation resources settle, " +
+          "including after a timeout or document disconnect; `unknown_outcome` is retryable. " +
+          "Periodic durable reconciliation repairs missed wakes."
       )
     )
   )

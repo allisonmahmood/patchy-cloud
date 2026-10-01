@@ -280,12 +280,15 @@ it("clears a disconnected error on an equal-vector answer without replacing the 
   registry.close();
 });
 
-it("ends a permanent failure with the last value until an explicit page subscription starts again", () => {
+it("keeps a permanent failure and its last value for later consumers of the same subscription", () => {
+  vi.useFakeTimers();
   const { driver, subscriptions } = transport();
   const registry = createQueryRegistry(driver);
   const seen: QuerySnapshot<string>[] = [];
-  registry.subscribe<string>("tables.get", { table: "notes", id: "row" }, (snapshot) =>
-    seen.push(snapshot)
+  const release = registry.subscribe<string>(
+    "tables.get",
+    { table: "notes", id: "row" },
+    (snapshot) => seen.push(snapshot)
   );
   subscriptions[0]!.send({ status: "ready", revision: "9", data: "last value" });
   const error = new Error("Result refused");
@@ -293,8 +296,23 @@ it("ends a permanent failure with the last value until an explicit page subscrip
   expect(subscriptions[0]!.closed).toBe(true);
   subscriptions[0]!.send({ status: "ready", revision: "10", data: "late" });
   expect(seen.at(-1)).toEqual({ status: "error", data: "last value", error, loading: false });
-  registry.subscribe<string>("tables.get", { table: "notes", id: "row" }, () => {});
-  subscriptions[1]!.send({ status: "ready", revision: "1", data: "explicit retry" });
-  expect(seen.at(-1)?.data).toBe("explicit retry");
+  const joined: QuerySnapshot<string>[] = [];
+  const releaseJoined = registry.subscribe<string>(
+    "tables.get",
+    { table: "notes", id: "row" },
+    (snapshot) => joined.push(snapshot)
+  );
+  expect(joined.at(-1)).toBe(seen.at(-1));
+  expect(subscriptions).toHaveLength(1);
+  release();
+  releaseJoined();
+  vi.advanceTimersByTime(500);
+  const remounted: QuerySnapshot<string>[] = [];
+  registry.subscribe<string>("tables.get", { table: "notes", id: "row" }, (snapshot) =>
+    remounted.push(snapshot)
+  );
+  vi.advanceTimersByTime(1_000);
+  expect(remounted.at(-1)).toBe(seen.at(-1));
+  expect(subscriptions).toHaveLength(1);
   registry.close();
 });

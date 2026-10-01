@@ -185,13 +185,19 @@ const awaitUntil = Effect.fnUntraced(function* <A, E>(
   );
 });
 
+export interface QueryObservation {
+  readonly onDependency: (key: string) => void;
+  readonly onSnapshot: (watermark: Readonly<Record<string, string>>) => void;
+}
+
 export class Invocation extends Context.Service<
   Invocation,
   {
     readonly call: (
       args: unknown,
       binding: Binding.Binding["Service"],
-      reauthorize: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>
+      reauthorize: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>,
+      observation?: QueryObservation
     ) => Effect.Effect<ServerCallReply, Runtime.RuntimeError>;
   }
 >()("@patchy/runtime/Invocation") {}
@@ -235,6 +241,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
     args: unknown,
     binding: Binding.Binding["Service"],
     reauthorize: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>,
+    observation?: QueryObservation,
     parent?: Parent
   ): Effect.fn.Return<ServerCallReply, Runtime.RuntimeError> {
     if (binding.scope === "public") return yield* new Runtime.PublicUnavailable({});
@@ -246,6 +253,11 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
     );
     const descriptor = binding.manifest.handlers?.[input.handler];
     if (descriptor === undefined || !Object.hasOwn(binding.manifest.handlers!, input.handler))
+      return yield* new Runtime.InvalidRequest({});
+    if (
+      observation !== undefined &&
+      (descriptor.kind !== "query" || input.mutationKey !== undefined)
+    )
       return yield* new Runtime.InvalidRequest({});
     if (parent === undefined)
       yield* WideEvents.enrich({ handler: input.handler, kind: descriptor.kind });
@@ -454,6 +466,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 },
                 kind: descriptor.kind,
                 reauthorize,
+                ...(observation === undefined ? {} : { onDependency: observation.onDependency }),
                 tree,
                 ...(counters === undefined ? {} : { counters }),
                 ...(descriptor.kind !== "action"
@@ -464,6 +477,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                           args,
                           { ...binding, correlationId: newInternalId("call") },
                           reauthorize,
+                          undefined,
                           { capability: capability!, bundle, bound }
                         )
                     })
@@ -477,6 +491,8 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                       isCapabilityRefused(cause) ? new Runtime.AccessDenied({ cause }) : cause
                     )
                   );
+              if (capability.snapshot.value !== undefined)
+                observation?.onSnapshot(capability.snapshot.value.watermark);
               if (mutationKey !== undefined)
                 capability.mutation.value = yield* MutationTransaction.make(
                   capability,
@@ -760,7 +776,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 versionId: binding.versionId,
                 handler: input.handler,
                 startedAt,
-                reRun: false,
+                reRun: observation !== undefined,
                 failures: 0,
                 guestMs: Math.round(guestMs),
                 dbMs: Math.round(meter.snapshot()),

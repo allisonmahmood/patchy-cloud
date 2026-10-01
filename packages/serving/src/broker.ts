@@ -512,10 +512,18 @@ function mount(frame: HTMLIFrameElement): void {
       const bytes = payload as ArrayBuffer | undefined;
       if (bytes && bytes.byteLength > MAX_FILE)
         throw tooLarge(MAX_FILE, limitRefusal("runtime.file.bytes", MAX_FILE));
+      const bodyOp =
+        op === "subscriptions.subscribe" &&
+        message.args !== null &&
+        typeof message.args === "object" &&
+        "op" in message.args &&
+        message.args.op === "server.call"
+          ? "server.call"
+          : op;
       const size = jsonBytes(
         { v: message.v, id, op, args: message.args },
-        runtimeBodyLimit(op),
-        runtimeBodyLimitId(op)
+        runtimeBodyLimit(bodyOp),
+        runtimeBodyLimitId(bodyOp)
       );
       const requestBytes = size * 3 + (bytes?.byteLength ?? 0);
       reserve(requestBytes);
@@ -534,6 +542,10 @@ function mount(frame: HTMLIFrameElement): void {
         else if (op === "subscriptions.subscribe") {
           subscription = decodeSubscription(message.args);
           const query = decodeRequest({ op: subscription.op, args: subscription.args });
+          if (query.op === "server.call") {
+            if (query.args.mutationKey !== undefined) throw invalid();
+            jsonBytes(query.args.args, runtimeByteLimits.serverArgsBytes, "tier2.args.bytes");
+          }
           subscription = { ...subscription, args: query.args };
         } else if (op === "subscriptions.unsubscribe") {
           unsubscribeId = decodeUnsubscribe(message.args).id;

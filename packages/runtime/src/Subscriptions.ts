@@ -17,6 +17,8 @@ import type * as Binding from "./Binding.js";
 import * as Runtime from "./Runtime.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
+import * as Invocation from "./Invocation.js";
+import * as QuerySubscriptions from "./QuerySubscriptions.js";
 
 export class StaleSequence extends Schema.TaggedError<StaleSequence>()("StaleSequence", {}) {
   readonly code = "invalid_request" as const;
@@ -72,6 +74,7 @@ interface Document {
   readonly binding: () => Binding.Binding["Service"];
   readonly check: Effect.Effect<void, Runtime.RuntimeError>;
   readonly send: (frame: RuntimeStreamFrame) => void;
+  readonly checkOperation?: (op: string) => Effect.Effect<void, Runtime.RuntimeError>;
   readonly scope: Scope.Scope;
   readonly subscriptions: Map<string, Subscription>;
   readonly buffered: Map<number, RuntimeSubscriptionRequest>;
@@ -99,15 +102,17 @@ const equalVector = (left: RevisionVector | undefined, right: RevisionVector) =>
   Object.entries(right).every(([key, value]) => left[key] === value);
 const reachesFence = (vector: RevisionVector, fence: RevisionVector) =>
   Object.entries(fence).every(
-    ([key, value]) => vector[key] !== undefined && BigInt(vector[key]!) >= BigInt(value)
+    ([key, value]) => vector[key] === undefined || BigInt(vector[key]!) >= BigInt(value)
   );
 const encodeResult = Schema.encodeUnknownEffect(Schema.Json);
 const encoder = new TextEncoder();
+const isCallbackRefusal = Schema.is(Invocation.CallbackRefusal);
 const recoverable: Readonly<Record<string, true>> = {
   busy: true,
   rate_limited: true,
   source_unavailable: true,
   handler_timeout: true,
+  unknown_outcome: true,
   timeout: true,
   access_denied: true,
   patch_paused: true
@@ -116,7 +121,9 @@ const recoverable: Readonly<Record<string, true>> = {
 /** One registry per host, shared by all its document streams. */
 export const make = Effect.gen(function* () {
   const scope = yield* Scope.Scope;
-  const reads = yield* SubscriptionReads.SubscriptionReads;
+  // Wakes may run inside another owner's transaction. A re-run owns its own context.
+  const context = yield* Effect.context<never>();
+  const reads = yield* QuerySubscriptions.make;
   const limits = yield* StreamLimits.StreamLimits;
   const events = yield* WideEvents.WideEvents;
   const documentLimit = yield* ContractLimits.get("subscriptions.document");
@@ -125,6 +132,7 @@ export const make = Effect.gen(function* () {
   const gapMs = yield* ContractLimits.get("subscriptions.deltas.gap");
   const deadline = yield* ContractLimits.get("tier2.query.deadline");
   const callBytes = yield* ContractLimits.get("runtime.call.bytes");
+  const serverArgsBytes = yield* ContractLimits.get("tier2.args.bytes");
   const documents = new Set<Document>();
   const companyRunning = new Map<string, number>();
   const patchRunning = new Map<string, number>();
@@ -144,7 +152,8 @@ export const make = Effect.gen(function* () {
       | "subscriptions.patch"
       | "subscriptions.company"
       | "subscriptions.snapshot.bytes"
-      | "runtime.call.bytes",
+      | "runtime.call.bytes"
+      | "tier2.args.bytes",
     value: number
   ) => {
     doc.send({
@@ -166,6 +175,10 @@ export const make = Effect.gen(function* () {
     if (!present(doc, sub)) return;
     const epoch = sub.epoch;
     const binding = doc.binding();
+    const check = Effect.gen(function* () {
+      yield* doc.check;
+      if (doc.checkOperation !== undefined) yield* doc.checkOperation(sub.input.op);
+    });
     const attempted = new Set<string>();
     const observe = (key: string) => {
       attempted.add(key);
@@ -181,24 +194,35 @@ export const make = Effect.gen(function* () {
       versionId: binding.versionId,
       ...(binding.principal === null ? {} : { viewerId: binding.principal.userId }),
       tier: binding.manifest.tier,
-      handler: sub.input.op,
+      handler: sub.input.op === "server.call" ? String(sub.input.args.handler) : sub.input.op,
       kind: "query"
     };
-    const failed = Effect.fnUntraced(function* (error: Runtime.RuntimeError) {
+    const failed = Effect.fnUntraced(function* (
+      attemptError: Runtime.RuntimeError | SubscriptionReads.HandlerRefusal
+    ) {
+      if (!present(doc, sub) || sub.epoch !== epoch) return;
+      const error = yield* check.pipe(
+        Effect.as(attemptError),
+        Effect.catch((refusal) => Effect.succeed(refusal))
+      );
       if (!present(doc, sub) || sub.epoch !== epoch) return;
       for (const key of attempted) sub.dependencies.add(key);
-      const permanent = recoverable[error.code] !== true;
+      const handlerRefusal = SubscriptionReads.isHandlerRefusal(error);
+      const code = handlerRefusal ? error.failure.code : error.code;
+      const permanent = !handlerRefusal && !isCallbackRefusal(error) && recoverable[code] !== true;
       doc.send({
         type: "error",
         id: sub.input.id,
         permanent,
-        error: Runtime.toFailure(error)
+        error: handlerRefusal ? error.failure : Runtime.toFailure(error)
       });
-      yield* WideEvents.enrich({ outcome: "failure", code: error.code });
+      yield* WideEvents.enrich({ outcome: "failure", code });
       if (permanent) {
         doc.subscriptions.delete(sub.input.id);
       } else {
         sub.failures++;
+        // Business refusals wait for changed dependencies, not an automatic retry.
+        if (handlerRefusal) return;
         const delay = Math.max(
           Math.min(30_000, 250 * 2 ** Math.min(sub.failures - 1, 7)),
           "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 0) * 1000 : 0
@@ -215,14 +239,26 @@ export const make = Effect.gen(function* () {
         );
       }
     });
-    const input = { op: sub.input.op, args: sub.input.args, binding, onDependency: observe };
+    const input: SubscriptionReads.Input = {
+      op: sub.input.op,
+      args: sub.input.args,
+      binding,
+      onDependency: observe,
+      dependencies: [...new Set([...sub.dependencies, ...Object.keys(sub.vector ?? {})])],
+      reauthorize: Effect.gen(function* () {
+        yield* doc.check;
+        const identity = doc.binding().identity;
+        if (identity === null) return yield* new Runtime.AccessDenied({});
+        return identity;
+      })
+    };
     const fence = yield* Effect.gen(function* () {
-      yield* doc.check;
+      yield* check;
       const keys = yield* reads.admit(input);
       const fence = yield* reads.revisions(binding.companyId, keys);
       if (!present(doc, sub) || sub.epoch !== epoch) return;
-      if (equalVector(sub.vector, fence)) {
-        yield* doc.check;
+      if (sub.failures === 0 && equalVector(sub.vector, fence)) {
+        yield* check;
         if (!present(doc, sub) || sub.epoch !== epoch) return;
         sub.dependencies.clear();
         for (const key of keys) sub.dependencies.add(key);
@@ -244,13 +280,17 @@ export const make = Effect.gen(function* () {
       event,
       Effect.gen(function* () {
         doc.reruns++;
-        const snapshot = yield* reads.read(input).pipe(
-          Effect.timeout(deadline),
-          Effect.catchTags({
-            TimeoutError: (cause) =>
-              Effect.fail(new SubscriptionTimeout({ deadlineMs: deadline, cause }))
-          })
-        );
+        // Invocation owns the query deadline and settles retained resources before returning.
+        const read = reads.read(input);
+        const snapshot = yield* sub.input.op === "server.call"
+          ? read
+          : read.pipe(
+              Effect.timeout(deadline),
+              Effect.catchTags({
+                TimeoutError: (cause) =>
+                  Effect.fail(new SubscriptionTimeout({ deadlineMs: deadline, cause }))
+              })
+            );
         const result = yield* encodeResult(snapshot.result).pipe(
           Effect.mapError((cause) => new InvalidSnapshot({ cause }))
         );
@@ -278,15 +318,16 @@ export const make = Effect.gen(function* () {
           });
           return;
         }
-        // The pre-read watermark is a fence, not evidence that a stale snapshot is fresh.
-        if (!reachesFence(snapshot.vector, fence)) {
-          sub.dirty = true;
-          return;
-        }
-        yield* doc.check;
+        yield* check;
         if (!present(doc, sub) || sub.epoch !== epoch) return;
         sub.dependencies.clear();
         for (const key of Object.keys(snapshot.vector)) sub.dependencies.add(key);
+        // The pre-read watermark is a fence, not evidence that a stale snapshot is fresh.
+        if (!reachesFence(snapshot.vector, fence)) {
+          sub.vector = undefined;
+          sub.dirty = true;
+          return;
+        }
         sub.vector = snapshot.vector;
         sub.failures = 0;
         sub.retryAt = 0;
@@ -350,7 +391,8 @@ export const make = Effect.gen(function* () {
               yield* Effect.suspend(() => schedule);
             })
           ),
-          Effect.forkIn(doc.scope)
+          // Disconnect only drops delivery. Keep query slots until Invocation settles.
+          Effect.forkIn(sub.input.op === "server.call" ? scope : doc.scope)
         );
       }
     }
@@ -365,13 +407,17 @@ export const make = Effect.gen(function* () {
         })
       ),
       Effect.andThen(pump),
+      Effect.updateContext<never, never>(() => context),
       Effect.forkIn(scope),
       Effect.asVoid
     );
   });
 
   const attach = (
-    options: Pick<Document, "generation" | "binding" | "check" | "send" | "scope">
+    options: Pick<
+      Document,
+      "generation" | "binding" | "check" | "checkOperation" | "send" | "scope"
+    >
   ): DocumentSubscriptions => {
     const doc: Document = {
       ...options,
@@ -460,8 +506,14 @@ export const make = Effect.gen(function* () {
               return;
             }
             if (previous !== undefined) doc.subscriptions.delete(input.id);
-            if (encoder.encode(signature).byteLength > callBytes)
-              return refuse(doc, input.id, "runtime.call.bytes", callBytes);
+            const maximum = input.op === "server.call" ? serverArgsBytes + callBytes : callBytes;
+            if (encoder.encode(signature).byteLength > maximum)
+              return refuse(
+                doc,
+                input.id,
+                input.op === "server.call" ? "tier2.args.bytes" : "runtime.call.bytes",
+                input.op === "server.call" ? serverArgsBytes : callBytes
+              );
             let companyCount = 0;
             let patchCount = 0;
             for (const other of documents) {

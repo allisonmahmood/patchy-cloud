@@ -311,6 +311,31 @@ it.effect("keeps failed access dependencies and recovers on a source reshare", (
   }).pipe(Effect.scoped)
 );
 
+it.effect("reruns after a refusal even when the last successful vector is still equal", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
+    yield* f.next;
+    const initial = yield* f.next;
+    assert.strictEqual(initial.type, "snapshot");
+    f.state.failure = new Runtime.SourceUnavailable({ cause: "temporarily offline" });
+    yield* f.document.reconcile([key]);
+    const refused = yield* f.next;
+    assert.strictEqual(refused.type, "error");
+    if (refused.type === "error") assert.isFalse(refused.permanent);
+    f.state.failure = undefined;
+    f.state.value = { rows: [{ id: "one", value: "recovered after refusal" }], cursor: null };
+    yield* TestClock.adjust("250 millis");
+    assert.deepStrictEqual(yield* f.next, {
+      type: "snapshot",
+      id: query.id,
+      revision: "2",
+      result: { rows: [{ id: "one", value: "recovered after refusal" }], cursor: null },
+      vector: { [key]: "0", [lifecycle]: "0" }
+    });
+  }).pipe(Effect.scoped)
+);
+
 it.effect(
   "retains a wake received during a read and coalesces a burst into one following read",
   () =>

@@ -129,6 +129,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const operatingLimits = yield* StreamLimits.StreamLimits;
     const subscriptions = yield* Subscriptions.make;
     const rootScope = yield* Scope.Scope;
+    const context = yield* Effect.context<never>();
     const wakes = yield* Wakes.Wakes;
     const entries = new Map<string, Entry>();
     const companies = new Map<string, number>();
@@ -277,6 +278,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         identity: identity.identity,
         correlationId: generation
       };
+      let servedTier = loaded.patchTier;
       const recheck = Effect.gen(function* () {
         const current = yield* identity.recheck;
         if (current.companyId !== identity.companyId) return yield* new Runtime.AccessDenied({});
@@ -327,12 +329,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           const eligible = yield* find(input.versionId);
           if (Option.isNone(eligible) || eligible.value.companyId !== identity.companyId)
             return yield* new Runtime.AccessDenied({});
+          binding = { ...binding, ...eligible.value };
+          servedTier = eligible.value.patchTier;
           if (eligible.value.scope === "public") return yield* new Runtime.PublicUnavailable({});
-          if (loaded.manifest.tier !== 1 || eligible.value.patchTier !== 1)
-            return yield* new DirectSubscriptionRequired({
-              loadedTier: loaded.manifest.tier,
-              servedTier: eligible.value.patchTier
-            });
         }).pipe(
           Effect.tapError((error) =>
             Effect.sync(() => {
@@ -344,7 +343,16 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
               else if (error.code === "access_denied") close(error.code, { type: "access_denied" });
             })
           )
-        )
+        ),
+        checkOperation: (op) =>
+          Effect.gen(function* () {
+            if (op === "server.call" && loaded.manifest.tier === 2) return;
+            if (op === "server.call" || loaded.manifest.tier !== 1 || servedTier !== 1)
+              return yield* new DirectSubscriptionRequired({
+                loadedTier: loaded.manifest.tier,
+                servedTier
+              });
+          })
       });
       const entry: Entry = {
         companyId: identity.companyId,
@@ -479,45 +487,48 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     });
     // Notification delivery must not wait for a document's durable authority lookup.
     const lifecycleWorkers = new Map<string, { pending: boolean }>();
-    const wake = Effect.fnUntraced(function* (keys: readonly string[], cause?: string) {
-      const patches = new Set<string>();
-      for (const entry of entries.values()) {
-        yield* entry.subscriptions.reconcile(keys, cause);
-        if (keys.length === 0 || keys.includes(`patch:${entry.patchId}`))
-          patches.add(entry.patchId);
-      }
-      for (const patchId of patches) {
-        const previous = lifecycleWorkers.get(patchId);
-        if (previous !== undefined) {
-          previous.pending = true;
-          continue;
+    const wake = Effect.fnUntraced(
+      function* (keys: readonly string[], cause?: string) {
+        const patches = new Set<string>();
+        for (const entry of entries.values()) {
+          yield* entry.subscriptions.reconcile(keys, cause);
+          if (keys.length === 0 || keys.includes(`patch:${entry.patchId}`))
+            patches.add(entry.patchId);
         }
-        const worker = { pending: true };
-        lifecycleWorkers.set(patchId, worker);
-        yield* Effect.gen(function* () {
-          while (worker.pending) {
-            worker.pending = false;
-            yield* withPatch(
-              patchId,
-              Effect.suspend(() =>
-                refresh(
-                  patchId,
-                  [...entries.values()].filter((entry) => entry.patchId === patchId)
-                )
-              )
-            );
+        for (const patchId of patches) {
+          const previous = lifecycleWorkers.get(patchId);
+          if (previous !== undefined) {
+            previous.pending = true;
+            continue;
           }
-          lifecycleWorkers.delete(patchId);
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (lifecycleWorkers.get(patchId) === worker) lifecycleWorkers.delete(patchId);
-            })
-          ),
-          Effect.forkIn(rootScope)
-        );
-      }
-    });
+          const worker = { pending: true };
+          lifecycleWorkers.set(patchId, worker);
+          yield* Effect.gen(function* () {
+            while (worker.pending) {
+              worker.pending = false;
+              yield* withPatch(
+                patchId,
+                Effect.suspend(() =>
+                  refresh(
+                    patchId,
+                    [...entries.values()].filter((entry) => entry.patchId === patchId)
+                  )
+                )
+              );
+            }
+            lifecycleWorkers.delete(patchId);
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (lifecycleWorkers.get(patchId) === worker) lifecycleWorkers.delete(patchId);
+              })
+            ),
+            Effect.forkIn(rootScope)
+          );
+        }
+      },
+      Effect.updateContext<never, never>(() => context)
+    );
     yield* wakes.subscribe(wake);
     const update = Effect.fn("RuntimeStream.update")(function* (unknownInput: unknown) {
       if (draining) return yield* new Runtime.Draining();

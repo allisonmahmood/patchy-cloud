@@ -63,6 +63,7 @@ interface Entry {
   revision: bigint;
   generation: number;
   running: boolean;
+  permanent: boolean;
   stop: (() => void) | undefined;
   releaseTimer: ReturnType<typeof setTimeout> | undefined;
 }
@@ -113,6 +114,7 @@ export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
       entries.delete(key);
       entry.snapshot = loadingSnapshot;
       entry.revision = -1n;
+      entry.permanent = false;
     }, queryRemountGraceMs);
   };
   const errorSnapshot = (entry: Entry, error: Error): QuerySnapshot<unknown> => ({
@@ -134,6 +136,7 @@ export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
       revision: -1n,
       generation: 0,
       running: false,
+      permanent: false,
       stop: undefined,
       releaseTimer: undefined,
       listeners: new Set(),
@@ -153,7 +156,7 @@ export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
           const listener = (snapshot: QuerySnapshot<unknown>) => onSnapshot(snapshot);
           entry.listeners.add(listener);
           notify(listener, entry.snapshot);
-          if (!entry.running && !closed) {
+          if (!entry.running && !entry.permanent && !closed) {
             entry.running = true;
             entry.revision = -1n;
             const generation = ++entry.generation;
@@ -167,7 +170,10 @@ export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
                   entry.revision = revision;
                 }
                 if (frame.status === "error") {
-                  if (frame.permanent) stop(entry);
+                  if (frame.permanent) {
+                    entry.permanent = true;
+                    stop(entry);
+                  }
                   publish(entry, errorSnapshot(entry, frame.error));
                   if (frame.permanent && entry.listeners.size === 0) releaseAfterGrace(key, entry);
                 } else {

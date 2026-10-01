@@ -57,6 +57,8 @@ export interface Capability {
   readonly logs: Array<Schema.Json>;
   readonly refusals: Array<{ readonly failure: RuntimeFailure; readonly status: number }>;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  /** Host-observed resource attempts, recorded before callback authorisation. */
+  readonly onDependency?: (key: string) => void;
   readonly snapshot: { value?: Resource };
   readonly mutation: { value?: MutationTransaction.Resource };
   readonly observe: <A, E, R>(work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
@@ -69,6 +71,7 @@ export interface Issue {
   readonly tree?: TreeBudget;
   readonly counters?: Counters;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  readonly onDependency?: (key: string) => void;
 }
 
 /** Owners signal settled only after the commit or cancellation outcome is known. */
@@ -312,6 +315,7 @@ export const make = Effect.gen(function* () {
       observe: <A, E, R>(work: Effect.Effect<A, E, R>) =>
         observe(work.pipe(Effect.provideService(DatabaseMeter.current, meter))),
       ...(input.run === undefined ? {} : { run: input.run }),
+      ...(input.onDependency === undefined ? {} : { onDependency: input.onDependency }),
       counters,
       logs: counters.logs,
       refusals: []

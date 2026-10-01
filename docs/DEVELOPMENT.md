@@ -75,6 +75,27 @@ For a callback-free mutation on a fresh company, the host provisions the key
 store before execution. The replay check must begin with no company database;
 pre-provisioning a table would miss that first-call path.
 
+Tier 2 queries subscribe through the same document stream as tier 1. Run
+`pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium server-subscriptions.spec.ts`
+for two signed-in viewers on published workerd artifacts: mutation sync, reconnect
+and hidden-tab catch-up, unshare/reshare recovery including first-run refusals,
+and isolated permanent failures. Old documents retain their loaded handlers
+after a publish; a new document sees the new handler set.
+The fixture owns disposable Postgres and offline browser sessions, not live Clerk
+or a daily-driver instance.
+
+`SubscriptionsSettlement.test.ts` exercises real invocation ownership with delayed
+executor and snapshot cancellation. A timeout or disconnected document must not
+release its re-run slot before cleanup settles or destroys the retained resources.
+`QuerySubscriptions.test.ts` exercises forged resume vectors: undeclared resource
+keys never reach revision reads, while declared keys still support equal-vector
+resume and failed-first-access recovery.
+
+`pnpm test:packed-preact-e2e` checks a clean installed SDK with Vite dependency
+optimisation enabled and its single-file production artifact. Signals, hooks,
+compat components and `useQuery` must update together, retain data through a
+refusal, and keep a permanent query error for later mounted consumers.
+
 To run only the execution task from this checkout:
 
 ```sh

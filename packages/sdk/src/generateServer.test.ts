@@ -90,8 +90,26 @@ export const importRows = action({args:{name:t.text()},result:t.text(),handler:a
           await writeFile(
             path.join(directory, "page.ts"),
             `import patchy, {isHandlerError} from "./patchy/_generated/client.js";
+import {useQuery} from "patchy/preact";
 const name: Promise<string> = patchy.server.leads.find({});
 patchy.server.leads.create({name:"Ada"});
+const unsubscribe: () => void = patchy.server.leads.find.subscribe({}, snapshot => {
+  const latest: string | undefined = snapshot.data;
+  const error: Error | undefined = snapshot.error;
+  const loading: boolean = snapshot.loading;
+  void latest; void error; void loading;
+});
+unsubscribe();
+function Screen() {
+  const snapshot = useQuery(patchy.server.leads.find, {});
+  const latest: string | undefined = snapshot.data;
+  // @ts-expect-error mutations cannot be query hooks
+  useQuery(patchy.server.leads.create, {name:"Ada"});
+  // @ts-expect-error actions cannot be query hooks
+  useQuery(patchy.server.leads.importRows, {name:"Ada"});
+  return latest;
+}
+void Screen;
 try { await name; } catch(error) { if(isHandlerError(error,"missing")) { const code:"missing" = error.code; void code; } }
 // @ts-expect-error only declared business error codes are accepted
 isHandlerError(new Error(),"not_declared");
@@ -99,6 +117,8 @@ isHandlerError(new Error(),"not_declared");
 patchy.tables.leads.list();
 // @ts-expect-error mutations cannot subscribe
 patchy.server.leads.create.subscribe({name:"Ada"},()=>{});
+// @ts-expect-error actions cannot subscribe
+patchy.server.leads.importRows.subscribe({name:"Ada"},()=>{});
 `
           );
           const compile = () =>
@@ -126,7 +146,7 @@ patchy.server.leads.create.subscribe({name:"Ada"},()=>{});
           });
           await writeFile(
             path.join(directory, "page.ts"),
-            (await readFile(path.join(directory, "page.ts"), "utf8")).replace(
+            (await readFile(path.join(directory, "page.ts"), "utf8")).replaceAll(
               "patchy.server.leads.find",
               "patchy.server.leads.renamed"
             )

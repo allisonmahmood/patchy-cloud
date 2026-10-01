@@ -140,10 +140,9 @@ local config; compatible additions preserve rows. Dev calls print compact wide
 events to the local dev log without PostHog delivery. Neither the connection
 keyring nor the production runtime log store is loaded.
 
-Tier 2 handlers can be published and exercised on a development instance with
-invented data. The production-engine `patchy dev` integration, live server
-rebinding and colleague mount belong to #404. Tier 2 query subscriptions belong
-to #403; init and refresh do not make those runtime integrations available.
+Tier 2 handlers and query subscriptions can be published and exercised on a
+development instance with invented data. The production-engine `patchy dev`
+integration, live server rebinding and colleague mount belong to #404.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
@@ -335,6 +334,16 @@ Tier 1 owned and declared shared-table `list` and `get` reads support `.subscrib
 and `useQuery`. A colleague's write updates subscribed results without a reload.
 Missing rows remain subscribed at table grain. Errors preserve the last successful
 value; restoring or resharing a source lets a refused subscription recover.
+
+Tier 2 server queries support the same `.subscribe` and `useQuery` interfaces.
+The host traces callbacks, including refused reads, to the resource owner rather
+than the shared alias. Successful runs replace the dependency set even when the
+result is unchanged; failed runs retain previous and attempted resources.
+A source unshare keeps the last value and reports a recoverable refusal.
+Resharing wakes it, including when its first run was refused. Handler failures,
+invalid results and a missing loaded handler end only that subscription, keeping
+its last value. Publishing does not replace an open document's loaded handlers.
+Mutations return their committed revisions; pages render from subscriptions.
 
 Resource writes and patch lifecycle changes commit durable revisions with their
 data. Post-commit hints reach other hosts through Postgres; reconciliation checks
