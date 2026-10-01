@@ -288,6 +288,46 @@ export const layer = Layer.effect(Inventory, make);
  */
 export const upgrade = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const uploads = yield* sql`SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'patchy' AND table_name = 'file_uploads'`;
+  if (uploads.length === 0) {
+    yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS patchy.file_uploads (
+      object_id text PRIMARY KEY,
+      patch_id text NOT NULL,
+      token text UNIQUE,
+      viewer_id text,
+      version_id text,
+      size bigint NOT NULL CHECK (size >= 0),
+      content_type text NOT NULL,
+      sha256 text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      state text NOT NULL CHECK (state IN ('writing', 'staged', 'discarded')),
+      CHECK (token IS NULL OR (viewer_id IS NOT NULL AND version_id IS NOT NULL))
+    )`);
+  }
+  const legacyUploadState = yield* sql`SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'patchy.file_uploads'::regclass
+      AND conname = 'file_uploads_state_check'
+      AND pg_get_constraintdef(oid) LIKE '%adopted%'`;
+  if (legacyUploadState.length !== 0)
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        // Consumed uploads duplicate the file index; removing them never deletes bytes.
+        yield* sql`DELETE FROM patchy.file_uploads WHERE state = 'adopted'`;
+        yield* sql.unsafe(`ALTER TABLE patchy.file_uploads
+          DROP CONSTRAINT IF EXISTS file_uploads_state_check,
+          ADD CONSTRAINT file_uploads_state_check
+            CHECK (state IN ('writing', 'staged', 'discarded'))`);
+        yield* sql.unsafe("DROP INDEX IF EXISTS patchy.file_uploads_expiry");
+        yield* sql.unsafe(`CREATE INDEX file_uploads_expiry
+          ON patchy.file_uploads (expires_at)`);
+      })
+    );
+  const uploadExpiry = yield* sql`SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'patchy' AND indexname = 'file_uploads_expiry'`;
+  if (uploadExpiry.length === 0)
+    yield* sql.unsafe(`CREATE INDEX IF NOT EXISTS file_uploads_expiry
+      ON patchy.file_uploads (expires_at)`);
   const handleKeys = yield* sql`SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'patchy' AND table_name = 'file_handle_key'`;
   if (handleKeys.length === 0) {

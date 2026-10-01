@@ -127,7 +127,8 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.postgres.bytes",
     "tier2.args.bytes",
     "runtime.result.bytes",
-    "runtime.file.bytes"
+    "runtime.file.bytes",
+    "files.stage.bytes"
   ])
 }) {
   readonly code = "too_large" as const;
@@ -176,9 +177,14 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited"
 }
 export class LimitExceeded extends Schema.TaggedError<LimitExceeded>()("LimitExceeded", {
   ...diagnostics,
-  retryAfterSeconds: Schema.Int,
+  retryAfterSeconds: Schema.optionalKey(Schema.Int),
   value: Schema.Number,
-  limitId: Schema.Literal("company.admission.rate")
+  limitId: Schema.Literals([
+    "company.admission.rate",
+    "files.stage.count",
+    "files.stage.viewerBytes",
+    "files.stage.companyBytes"
+  ])
 }) {
   readonly code = "limit_exceeded" as const;
   readonly status = 429;
@@ -302,11 +308,11 @@ export interface JsonHandler extends HandlerMetadata {
 
 export interface BytesPutHandler extends HandlerMetadata {
   readonly transport: "bytes-put";
-  readonly kind: "mutation";
+  readonly kind: "read" | "mutation";
   readonly run: (
     args: unknown,
-    bytes: Uint8Array
-  ) => Effect.Effect<null, RuntimeError, Binding.Binding>;
+    bytes?: Uint8Array
+  ) => Effect.Effect<unknown, RuntimeError, Binding.Binding>;
 }
 
 export interface BytesGetHandler extends HandlerMetadata {
@@ -403,7 +409,7 @@ export class Runtime extends Context.Service<
     readonly putFile: (
       input: typeof RuntimeEnvelope.Type,
       readBytes: Effect.Effect<Uint8Array, RuntimeError, HttpServerRequest.HttpServerRequest>
-    ) => Effect.Effect<null, RuntimeError, HttpServerRequest.HttpServerRequest>;
+    ) => Effect.Effect<unknown, RuntimeError, HttpServerRequest.HttpServerRequest>;
     readonly getFile: (
       input: typeof RuntimeEnvelope.Type
     ) => Effect.Effect<FileBody, RuntimeError, HttpServerRequest.HttpServerRequest>;
@@ -541,6 +547,7 @@ export const make = (
             // exact Origin as mutations, never a Sec-Fetch-Site fallback.
             if (
               ((input.op === "server.call" ||
+                input.op === "files.discard" ||
                 operation?.kind === "mutation" ||
                 integration ||
                 request.method === "PUT") &&
@@ -614,6 +621,8 @@ export const make = (
           if (
             version.manifest.tier === 2 &&
             input.op !== "files.redeem" &&
+            input.op !== "files.stage" &&
+            input.op !== "files.discard" &&
             (input.op.startsWith("tables.") ||
               input.op.startsWith("files.") ||
               input.op.startsWith("shared.") ||
@@ -621,8 +630,14 @@ export const make = (
               input.op.startsWith("members."))
           )
             return yield* new ServerRequired();
-          if (input.op === "files.redeem" && version.manifest.tier !== 2)
+          if (
+            (input.op === "files.redeem" ||
+              input.op === "files.stage" ||
+              input.op === "files.discard") &&
+            version.manifest.tier !== 2
+          )
             return yield* new ServerRequired();
+          if (input.op === "files.inspectUpload") return yield* new AccessDenied({});
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
             return yield* new ServerRequired();
           const attempt = yield* limits.consume({

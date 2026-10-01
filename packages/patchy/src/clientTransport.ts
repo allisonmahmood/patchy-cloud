@@ -15,6 +15,8 @@ export type Operation =
   | "download"
   | "files.download"
   | "files.redeem"
+  | "files.stage"
+  | "files.discard"
   | "subscriptions.subscribe"
   | "subscriptions.unsubscribe"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
@@ -520,7 +522,13 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
       handle: string;
       contentType?: string;
     };
-    if (op === "files.redeem") {
+    if (op === "files.stage") {
+      const path = [options.patchId, options.versionId].map(encodeURIComponent).join("/");
+      url = new URL(`/api/runtime/staged-files/${path}`, options.baseUrl);
+      init.method = "PUT";
+      headers.set("Content-Type", file.contentType!);
+      init.body = bytes as BodyInit;
+    } else if (op === "files.redeem") {
       const path = [options.patchId, options.versionId, file.handle]
         .map(encodeURIComponent)
         .join("/");

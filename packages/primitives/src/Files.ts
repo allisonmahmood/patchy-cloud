@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -17,9 +18,12 @@ import {
   type FileList,
   type SharedStoreDeclaration
 } from "@patchy/api";
+import { WideEvents } from "@patchy/analytics";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
 import { newInternalId } from "@patchy/core";
+import { ContractLimits, OperatingLimits } from "@patchy/limits";
+import { registry } from "@patchy/limits/registry";
 import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
@@ -60,6 +64,23 @@ class NotFound extends Schema.TaggedError<NotFound>()("FileNotFound", {}) {
     return "The selected file no longer exists.";
   }
 }
+class UploadNotFound extends Schema.TaggedError<UploadNotFound>()("UploadNotFound", {}) {
+  readonly code = "not_found" as const;
+  readonly status = 404;
+  override get message() {
+    return "The selected upload no longer exists.";
+  }
+}
+class ReservationExpired extends Schema.TaggedError<ReservationExpired>()(
+  "FileReservationExpired",
+  {}
+) {
+  readonly code = "not_found" as const;
+  readonly status = 404;
+  override get message() {
+    return "The file upload reservation has expired.";
+  }
+}
 
 export const config = Effect.all({
   fileBytes: Runtime.byteLimits.fileBytes,
@@ -89,11 +110,16 @@ const resource: Runtime.Handler["resource"] = (args) =>
   isName(args.name)
     ? `${args.store}/${args.name}`
     : null;
-const objectKey = (patchId: string, store: string, objectId: string) =>
-  `files/${patchId}/${store}/${objectId}`;
+const objectKey = (patchId: string, objectId: string) => `files/${patchId}/${objectId}`;
 const decodePut = Schema.decodeUnknownEffect(runtimeOperations["files.put"].request.fields.args, {
   onExcessProperty: "error"
 });
+const decodeStage = Schema.decodeUnknownEffect(
+  runtimeOperations["files.stage"].request.fields.args,
+  {
+    onExcessProperty: "error"
+  }
+);
 const decodeGet = Schema.decodeUnknownEffect(runtimeOperations["files.get"].request.fields.args, {
   onExcessProperty: "error"
 });
@@ -177,17 +203,38 @@ const encodePage = Schema.encodeSync(
   Schema.fromJsonString(runtimeOperations["files.list"].response)
 );
 type StoreOwner = Pick<Binding.Binding["Service"], "companyId" | "patchId">;
+const uploadRow = Schema.Struct({
+  objectId: Schema.String,
+  size: Schema.Number,
+  contentType: FileContentType,
+  sha256: Schema.String
+});
+type UploadRow = typeof uploadRow.Type;
+const decodeUploadRows = Schema.decodeUnknownSync(Schema.Array(uploadRow));
 
-export const make = Effect.gen(function* () {
+const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
+  companyQuota: (
+    companyId: string
+  ) => Effect.Effect<
+    Pick<OperatingLimits.EffectiveLimit, "value" | "configRevision">,
+    Runtime.RuntimeError
+  >
+) {
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventory = yield* Inventory.Inventory;
   const versions = yield* LoadedVersions.LoadedVersions;
   const content = yield* ContentStore.ContentStore;
   const settings = yield* config;
   const wakes = yield* Wakes.Wakes;
+  const stageLimits = yield* Effect.all({
+    bytes: ContractLimits.get("files.stage.bytes"),
+    count: ContractLimits.get("files.stage.count"),
+    viewerBytes: ContractLimits.get("files.stage.viewerBytes"),
+    lifetime: ContractLimits.get("files.stage.lifetime")
+  });
   const withCompany = <A, R>(
     companyId: string,
-    effect: Effect.Effect<A, Runtime.RuntimeError | SqlError, R>
+    effect: Effect.Effect<A, Runtime.RuntimeError | ReservationExpired | SqlError, R>
   ) =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.serviceOption(ReadSnapshot.ReadSnapshot);
@@ -283,7 +330,11 @@ export const make = Effect.gen(function* () {
     name: string,
     run: (
       sql: SqlClient.SqlClient
-    ) => Effect.Effect<A, Runtime.RuntimeError | SqlError, SqlClient.SqlClient>
+    ) => Effect.Effect<
+      A,
+      Runtime.RuntimeError | ReservationExpired | SqlError,
+      SqlClient.SqlClient | CompanyDatabases.CompanyConnection
+    >
   ) =>
     withCompany(
       binding.companyId,
@@ -306,7 +357,11 @@ export const make = Effect.gen(function* () {
     name: string,
     run: (
       sql: SqlClient.SqlClient
-    ) => Effect.Effect<A, Runtime.RuntimeError | SqlError, SqlClient.SqlClient>
+    ) => Effect.Effect<
+      A,
+      Runtime.RuntimeError | ReservationExpired | SqlError,
+      SqlClient.SqlClient | CompanyDatabases.CompanyConnection
+    >
   ) =>
     Effect.gen(function* () {
       const result = yield* withIndex(binding, store, name, (sql) =>
@@ -320,15 +375,292 @@ export const make = Effect.gen(function* () {
       yield* wakes.publish([`store:${binding.patchId}:${store}`]);
       return result;
     });
+  const uploadBinding = Effect.gen(function* () {
+    const binding = yield* Binding.Binding;
+    if (
+      binding.manifest.tier !== 2 ||
+      binding.identity === null ||
+      binding.identity.company.id !== binding.companyId
+    )
+      return yield* new Runtime.AccessDenied({});
+    return binding;
+  });
+  const reserveUpload = Effect.fn("Files.reserveUpload")(function* (
+    binding: Binding.Binding["Service"],
+    bytes: Uint8Array,
+    contentType: string
+  ) {
+    const companyBytes = yield* companyQuota(binding.companyId);
+    yield* databases.ensureReady(binding.companyId).pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "Busy"
+          ? new Busy({
+              resource: cause.resource,
+              scope: cause.scope,
+              limitId: cause.limitId,
+              value: cause.value,
+              retryAfterSeconds: cause.retryAfterSeconds,
+              cause
+            })
+          : new Runtime.SourceUnavailable({ cause })
+      )
+    );
+    const row = {
+      objectId: newInternalId("obj"),
+      token: randomBytes(32).toString("base64url"),
+      size: bytes.byteLength,
+      contentType,
+      sha256: createHash("sha256").update(bytes).digest("hex")
+    };
+    yield* withCompany(
+      binding.companyId,
+      CompanyDatabases.withFileObjectsLock(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const now = DateTime.formatIso(yield* DateTime.now);
+          // Reservations count before blob I/O, including writers on other replicas.
+          const [usage] = yield* sql<{
+            count: number;
+            viewerBytes: number;
+            companyBytes: number;
+          }>`SELECT
+            count(*) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id})::integer AS count,
+            coalesce(sum(size) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id}), 0)::double precision AS "viewerBytes",
+            coalesce(sum(size), 0)::double precision AS "companyBytes"
+            FROM patchy.file_uploads
+            WHERE token IS NOT NULL AND state IN ('writing', 'staged') AND expires_at > ${now}::timestamptz`;
+          const contractRevision = { deploymentRevision: "contract", overrideRevision: "0" };
+          const limits = [
+            {
+              limitId: "files.stage.count",
+              value: stageLimits.count,
+              peak: usage!.count + 1,
+              configRevision: contractRevision
+            },
+            {
+              limitId: "files.stage.viewerBytes",
+              value: stageLimits.viewerBytes,
+              peak: usage!.viewerBytes + row.size,
+              configRevision: contractRevision
+            },
+            {
+              limitId: "files.stage.companyBytes",
+              value: companyBytes.value,
+              peak: usage!.companyBytes + row.size,
+              configRevision: companyBytes.configRevision
+            }
+          ] as const;
+          yield* WideEvents.enrich({ limits });
+          for (const { limitId, value, peak } of limits)
+            if (peak > value) return yield* new Runtime.LimitExceeded({ limitId, value });
+          yield* sql`INSERT INTO patchy.file_uploads
+            (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)
+            VALUES (${row.objectId}, ${binding.patchId}, ${row.token},
+              ${binding.identity!.user.id}, ${binding.versionId},
+              ${row.size}, ${row.contentType}, ${row.sha256},
+              ${now}::timestamptz + ${stageLimits.lifetime} * interval '1 millisecond', 'writing')`;
+        })
+      )
+    );
+    yield* content.putBytes(objectKey(binding.patchId, row.objectId), bytes).pipe(
+      Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+      Effect.onError(() =>
+        withCompany(
+          binding.companyId,
+          CompanyDatabases.withFileObjectsLock(
+            Effect.flatMap(
+              SqlClient.SqlClient,
+              (sql) =>
+                sql`UPDATE patchy.file_uploads SET state = 'discarded'
+                WHERE object_id = ${row.objectId} AND state = 'writing'`
+            )
+          )
+        ).pipe(Effect.catch(() => Effect.void))
+      )
+    );
+    return row;
+  });
+  const finishStage = Effect.fn("Files.finishStage")(function* (objectId: string) {
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const rows = yield* sql`UPDATE patchy.file_uploads SET state = 'staged'
+      WHERE object_id = ${objectId} AND state = 'writing' AND expires_at > ${now}::timestamptz
+      RETURNING object_id`;
+    if (rows.length === 0) return yield* new ReservationExpired();
+  });
+  const selectedUpload = Effect.fn("Files.selectedUpload")(function* (
+    binding: Binding.Binding["Service"],
+    token: string
+  ) {
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const rows = decodeUploadRows(
+      yield* sql`SELECT object_id AS "objectId", size::double precision AS size,
+      content_type AS "contentType", sha256 FROM patchy.file_uploads
+      WHERE token = ${token} AND patch_id = ${binding.patchId}
+        AND viewer_id = ${binding.identity!.user.id} AND version_id = ${binding.versionId}
+        AND state = 'staged' AND expires_at > ${now}::timestamptz FOR UPDATE`
+    );
+    if (rows.length === 0) return yield* new UploadNotFound();
+    return rows[0]!;
+  });
+  const indexObject = Effect.fn("Files.indexObject")(function* (
+    binding: StoreOwner,
+    store: string,
+    name: string,
+    row: UploadRow
+  ) {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
+      VALUES (${binding.patchId}, ${store}, ${name}, ${row.objectId}, ${row.size}, ${row.contentType}, ${row.sha256})
+      ON CONFLICT (patch_id, store, name) DO UPDATE SET
+        object_id = EXCLUDED.object_id, size = EXCLUDED.size, content_type = EXCLUDED.content_type,
+        sha256 = EXCLUDED.sha256, updated_at = clock_timestamp()`;
+    return null;
+  });
+  const removeDiscardedObject = Effect.fn("Files.removeDiscardedObject")(function* (
+    binding: StoreOwner,
+    objectId: string
+  ) {
+    yield* content
+      .delete(objectKey(binding.patchId, objectId))
+      .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+    yield* withCompany(
+      binding.companyId,
+      CompanyDatabases.withFileObjectsLock(
+        Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) =>
+            sql`DELETE FROM patchy.file_uploads WHERE object_id = ${objectId} AND state = 'discarded'`
+        )
+      )
+    );
+  });
+  const reclaimLateObject = Effect.fn("Files.reclaimLateObject")(function* (
+    binding: StoreOwner,
+    row: UploadRow
+  ) {
+    const discarded = yield* withCompany(
+      binding.companyId,
+      CompanyDatabases.withFileObjectsLock(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const referenced =
+            yield* sql`SELECT 1 FROM patchy.files WHERE object_id = ${row.objectId}`;
+          if (referenced.length !== 0) return false;
+          const now = DateTime.formatIso(yield* DateTime.now);
+          // Sweep may already have removed the writing row. Restore a tombstone so
+          // a failed deletion remains eligible for the next sweep, regardless of age.
+          const rows = yield* sql`INSERT INTO patchy.file_uploads
+          (object_id, patch_id, size, content_type, sha256, expires_at, state)
+          VALUES (${row.objectId}, ${binding.patchId}, ${row.size}, ${row.contentType}, ${row.sha256},
+            ${now}::timestamptz, 'discarded')
+          ON CONFLICT (object_id) DO UPDATE SET state = 'discarded'
+            WHERE patchy.file_uploads.state IN ('writing', 'discarded')
+          RETURNING object_id`;
+          return rows.length !== 0;
+        })
+      )
+    );
+    if (discarded) yield* removeDiscardedObject(binding, row.objectId);
+  });
+  const stage = {
+    kind: "read",
+    transport: "bytes-put",
+    run: (input: unknown, bytes?: Uint8Array) =>
+      Effect.gen(function* () {
+        const binding = yield* uploadBinding;
+        const args = yield* decodeStage(input).pipe(
+          Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+        );
+        if (bytes === undefined) return yield* new Runtime.InvalidRequest({});
+        if (bytes.byteLength > stageLimits.bytes)
+          return yield* new Runtime.TooLarge({
+            maxBytes: stageLimits.bytes,
+            limitId: "files.stage.bytes"
+          });
+        const row = yield* reserveUpload(binding, bytes, args.contentType);
+        yield* withCompany(
+          binding.companyId,
+          CompanyDatabases.withFileObjectsLock(finishStage(row.objectId))
+        ).pipe(
+          Effect.catchTags({
+            FileReservationExpired: () =>
+              reclaimLateObject(binding, row).pipe(
+                Effect.andThen(Effect.fail(new UploadNotFound()))
+              )
+          })
+        );
+        return { token: row.token, size: row.size, contentType: row.contentType };
+      })
+  } satisfies Runtime.BytesPutHandler;
+  const inspectUpload = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["files.inspectUpload"].request.fields.args,
+      output: runtimeOperations["files.inspectUpload"].response
+    },
+    (args) =>
+      Effect.gen(function* () {
+        const binding = yield* uploadBinding;
+        const row = yield* withCompany(
+          binding.companyId,
+          CompanyDatabases.withFileObjectsLock(selectedUpload(binding, args.upload.token))
+        );
+        return { token: args.upload.token, size: row.size, contentType: row.contentType };
+      })
+  );
+  const discard = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["files.discard"].request.fields.args,
+      output: runtimeOperations["files.discard"].response
+    },
+    (args) =>
+      Effect.gen(function* () {
+        const binding = yield* uploadBinding;
+        const row = yield* withCompany(
+          binding.companyId,
+          CompanyDatabases.withFileObjectsLock(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              const row = yield* selectedUpload(binding, args.upload.token);
+              yield* sql`UPDATE patchy.file_uploads SET state = 'discarded' WHERE object_id = ${row.objectId}`;
+              return row;
+            })
+          )
+        );
+        // Once discarded, no adoption can win. Blob I/O needs no company lease.
+        yield* removeDiscardedObject(binding, row.objectId);
+        return null;
+      })
+  );
   const put = {
     kind: "mutation",
     transport: "bytes-put",
     resource,
-    run: (input: unknown, bytes: Uint8Array) =>
+    run: (input: unknown, bytes?: Uint8Array) =>
       Effect.gen(function* () {
         const args = yield* decodePut(input).pipe(
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
+        if ("upload" in args) {
+          if (bytes !== undefined) return yield* new Runtime.InvalidRequest({});
+          const binding = yield* uploadBinding;
+          return yield* withStore(args.store, () =>
+            withWriteIndex(binding, args.store, args.name, () =>
+              CompanyDatabases.withFileObjectsLock(
+                Effect.gen(function* () {
+                  const sql = yield* SqlClient.SqlClient;
+                  const row = yield* selectedUpload(binding, args.upload.token);
+                  yield* sql`DELETE FROM patchy.file_uploads WHERE object_id = ${row.objectId}`;
+                  return yield* indexObject(binding, args.store, args.name, row);
+                })
+              )
+            )
+          );
+        }
+        if (bytes === undefined) return yield* new Runtime.InvalidRequest({});
         if (bytes.byteLength > settings.fileBytes)
           return yield* new Runtime.TooLarge({
             maxBytes: settings.fileBytes,
@@ -336,18 +668,17 @@ export const make = Effect.gen(function* () {
           });
         return yield* withStore(args.store, (binding) =>
           Effect.gen(function* () {
-            const objectId = newInternalId("obj");
-            const sha256 = createHash("sha256").update(bytes).digest("hex");
-            // Unique immutable objects need no lease or lock; only the later pointer change does.
+            const row = {
+              objectId: newInternalId("obj"),
+              size: bytes.byteLength,
+              contentType: args.contentType,
+              sha256: createHash("sha256").update(bytes).digest("hex")
+            };
             yield* content
-              .putBytes(objectKey(binding.patchId, args.store, objectId), bytes)
+              .putBytes(objectKey(binding.patchId, row.objectId), bytes)
               .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-            return yield* withWriteIndex(binding, args.store, args.name, (sql) =>
-              sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
-                VALUES (${binding.patchId}, ${args.store}, ${args.name}, ${objectId}, ${bytes.byteLength}, ${args.contentType}, ${sha256})
-                ON CONFLICT (patch_id, store, name) DO UPDATE SET
-                  object_id = EXCLUDED.object_id, size = EXCLUDED.size, content_type = EXCLUDED.content_type,
-                  sha256 = EXCLUDED.sha256, updated_at = clock_timestamp()`.pipe(Effect.as(null))
+            return yield* withWriteIndex(binding, args.store, args.name, () =>
+              indexObject(binding, args.store, args.name, row)
             );
           })
         );
@@ -364,7 +695,7 @@ export const make = Effect.gen(function* () {
     );
     if (Option.isNone(row)) return yield* new Runtime.InvalidRequest({});
     const bytes = yield* content
-      .getBytes(objectKey(binding.patchId, args.store, row.value.objectId))
+      .getBytes(objectKey(binding.patchId, row.value.objectId))
       .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
     return { bytes, contentType: row.value.contentType };
   });
@@ -434,7 +765,7 @@ export const make = Effect.gen(function* () {
           yield* sharedSourceAccess(binding, declaration);
         }
         const bytes = yield* content
-          .getBytes(objectKey(pointer.patchId, pointer.store, pointer.objectId))
+          .getBytes(objectKey(pointer.patchId, pointer.objectId))
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
         return { bytes, contentType: pointer.contentType, name: pointer.name };
       })
@@ -593,6 +924,9 @@ export const make = Effect.gen(function* () {
       )
   );
   return {
+    "files.stage": stage,
+    "files.discard": discard,
+    "files.inspectUpload": inspectUpload,
     "files.put": put,
     "files.get": get,
     "files.redeem": redeem,
@@ -604,3 +938,20 @@ export const make = Effect.gen(function* () {
     "shared.files.stat": sharedStat
   } satisfies Readonly<Record<string, Runtime.Handler>>;
 });
+
+export const make = Effect.gen(function* () {
+  const operating = yield* OperatingLimits.OperatingLimits;
+  return yield* makeWithCompanyQuota((companyId) =>
+    operating
+      .get({ companyId, limitId: "files.stage.companyBytes" })
+      .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
+  );
+});
+
+/** Local dev has no platform database or company operating-limit overrides. */
+export const makeLocal = makeWithCompanyQuota(() =>
+  Effect.succeed({
+    value: registry["files.stage.companyBytes"].default,
+    configRevision: { deploymentRevision: "local", overrideRevision: "0" }
+  })
+);

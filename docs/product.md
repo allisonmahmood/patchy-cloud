@@ -512,10 +512,10 @@ While a patch serves tier 2, an older lower-tier document gets `me` only;
 every other direct operation is `server_required`. The `served` frame makes
 the shell show "Reload to keep saving". Rollback to tier 1 reopens tier 1
 documents' direct operations. Rollback to the loaded version clears the notice.
-A tier 2 client remains server-only after any rollback, with `me` and the route
-bridge rather than name-based tables, files, shared resources, connections or
-members. Handle redemption, staging and generated downloads belong to their
-separate shell-capability tickets.
+A tier 2 client remains server-only after any rollback. Its shell exceptions are
+`me`, the route bridge, authorized file-handle redemption and downloads, and
+staging or discarding uploads. Name-based tables, files, shared resources,
+connections and members remain behind handlers.
 
 ## Companies
 
@@ -793,14 +793,14 @@ Names are 1–512 UTF-8 bytes, with `/`-separated nonempty segments and no `.` o
 `..` segments. Files are bounded to 20 MiB (`too_large`); list pages default
 to 100, at most 1,000, in name order with a literal prefix filter and a keyset
 cursor. Metadata pages share the 8 MiB runtime result bound, including the cursor.
-Each put writes a fresh immutable object before changing the file-index
+Each byte put writes a fresh immutable object before changing the file-index
 pointer; a failed byte write preserves the previous file. Concurrent replacements
 and deletion serialize per patch/store/name, so an index row never points at a
 partially replaced object. Blob transfers do not hold database locks or company
 leases; unrelated names remain independent. Deletion removes the pointer, not the object; unreferenced objects are
 swept after a day. Rollback and version cleanup never own stored files.
 
-Bytes live under `files/<patchId>/<store>/<objectId>`, never a version key.
+Bytes live under `files/<patchId>/<objectId>`, never a store or version key.
 Nothing under that storage prefix is served as a public URL. Runtime retrieval
 is authorized live and `no-store`, with the loaded version's store definition
 and the viewer's current company access. Raw GET requires same-origin fetch
@@ -838,6 +838,29 @@ a record narrows to private, is handed over or is deleted, re-put or delete it.
 Handles already selected keep redeeming until then, subject to Patchy's live
 access checks. Publishing does not invalidate an eligible open version's
 handles. Bytes already displayed or downloaded cannot be recalled.
+
+Tier 2 pages call `patchy.files.stage(bytes, { contentType })` to create a
+**staged upload** without sending the bytes through server code. The returned
+single-use `Upload` binds the viewer, consuming patch and loaded version.
+An action accepts it with `t.upload()` and sees the stored, measured `size`
+and claimed `contentType` before calling `ctx.files.<store>.put(name, upload)`.
+Adoption writes a pointer without copying bytes, into a store the loaded version
+defines. An object id alone never authorizes adoption. A content type is a claim.
+
+`patchy.files.discard(upload)` removes an unused stage early. Adoption and discard
+lock the same stage row; whichever commits first wins, and later attempts return
+`not_found`. Unadopted uploads expire after one hour. The sweep preserves every
+referenced or live-staged object and serializes deletion with adoption and
+unfinished staging writes. Staging and discard are unlogged transport; adoption logs
+the existing file write as the patch.
+
+A stage is at most 20 MiB. Each viewer may hold at most 16 stages and 100 MiB per
+patch; the company limit defaults to 1 GiB and supports operating overrides.
+Request wide events record stage-byte and outstanding-quota peaks with their
+limit ids and the effective company override revision, including refusals.
+Adoption followed by a mutation is not atomic. If the mutation fails, the adopted
+file remains, and the patch must show that partial outcome rather than report
+that nothing was saved.
 
 ### Shared file stores
 

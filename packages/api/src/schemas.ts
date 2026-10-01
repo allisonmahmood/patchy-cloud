@@ -383,6 +383,21 @@ export const FileStoreDefinition = Schema.Struct({
   shared: Schema.optionalKey(Schema.Boolean)
 });
 
+export const FileContentType = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      /^[a-zA-Z0-9!#$%&'*+.^_`|~-]+\/[a-zA-Z0-9!#$%&'*+.^_`|~-]+(?:;[\x20-\x7e]+)?$/.test(value) ||
+      "Content-Type must be a media type without control characters."
+  )
+);
+/** Opaque staged authority; the host resolves metadata before invoking an action. */
+export const Upload = Schema.Struct({
+  token: Schema.String.check(Schema.isMinLength(1)),
+  size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  contentType: FileContentType
+});
+export type Upload = typeof Upload.Type;
+
 const handlerScalars = {
   text: PostgresText,
   integer: Schema.Int.check(
@@ -425,7 +440,7 @@ export const handlerValueSchema = (
         )
       );
     case "upload":
-      return NonEmptyText;
+      return Upload;
     case "row": {
       const table = Object.hasOwn(tables, descriptor.table) ? tables[descriptor.table] : undefined;
       if (table === undefined) throw new TypeError(`Unknown row table "${descriptor.table}".`);

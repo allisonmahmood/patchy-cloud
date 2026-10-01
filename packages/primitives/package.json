@@ -21,6 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
@@ -32,7 +33,6 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@patchy/analytics": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "vitest": "^5.0.1"

@@ -694,7 +694,36 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`files.delete { store, name }` removes only the index row and returns null idempotently. " +
           "File mutations log store/name as their resource. `files.put`, `files.get`, " +
           "`shared.files.get` and `files.redeem` require raw bytes routes; they are refused on this JSON route, " +
-          "never serialized as JSON/base64."
+          "never serialized as JSON/base64. `files.discard { upload }` releases a staged upload and " +
+          "returns null without an operation log. It requires a loaded tier 2 document, the exact " +
+          "shell Origin, and the stage's company, viewer, patch and version binding. Missing, expired " +
+          "or consumed stages return `not_found`. Public JSON files.put remains refused, including " +
+          "the upload-adoption form reserved for private action callbacks."
+      )
+    ),
+    HttpApiEndpoint.put("stageFile", "/runtime/staged-files/:patchId/:versionId", {
+      params: { patchId: Schema.String, versionId: Schema.String },
+      headers: {
+        ...runtimeHeaders,
+        origin: Schema.optionalKey(Schema.String),
+        "content-type": Schema.optionalKey(Schema.String)
+      },
+      payload: RuntimeBytes,
+      success: RuntimeSuccess,
+      error: runtimeErrors
+    }).annotateMerge(
+      describe(
+        runtimeAdmission +
+          "Stages raw bytes for a tier 2 action. Requires the exact shell Origin and normal principal " +
+          "and wire headers. Returns `{ ok: true, value: { token, size, contentType } }` with no-store. " +
+          "The opaque token binds company, viewer, consuming patch and loaded version. Staging and " +
+          "discard are unlogged transport; neither operation is available to handler callbacks. " +
+          "An action adopts with `files.put { store, name, upload }` through its private callback; " +
+          "that mutation is logged as files.put and keeps the staged content type. Before the action " +
+          "handler runs, the host resolves all t.upload metadata from its stage records. Adoption " +
+          "and a subsequent mutation are not atomic. An upload is single-use and expires after one " +
+          "hour. Limits are 20 MiB per stage, 16 outstanding stages " +
+          "and 100 MiB per viewer per patch, and 1 GiB outstanding per company."
       )
     ),
     HttpApiEndpoint.put("putFile", "/runtime/files/:patchId/:versionId/:store/*", {

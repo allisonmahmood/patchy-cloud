@@ -1,24 +1,59 @@
-import type { FileHandle } from "./config.js";
+import type { FileHandle, Upload } from "./config.js";
 import { PatchyError } from "./clientError.js";
 import { getDocumentTransport, type Transport } from "./clientTransport.js";
+import { stagedUploadLimit } from "@patchy/api/file-config";
 
-export interface HandleFiles {
+export interface ServerFiles {
   url(handle: FileHandle): Promise<string>;
   download(handle: FileHandle, filename?: string): Promise<null>;
+  stage(
+    bytes: Uint8Array | ArrayBuffer | Blob,
+    options: { readonly contentType: string }
+  ): Promise<Upload>;
+  discard(upload: Upload): Promise<null>;
 }
 
-interface FileHandleClient extends HandleFiles {
+interface ServerFileClient extends ServerFiles {
   release(url: string): void;
   close(): void;
 }
 
-export function createFileHandles(transport: Transport) {
+export function createServerFiles(transport: Transport) {
   const urls = new Set<string>();
   let closed = false;
   const assertOpen = () => {
     if (closed) throw new PatchyError("unknown_outcome", "The client is closed.", {});
   };
   const files = {
+    async stage(
+      input: Uint8Array | ArrayBuffer | Blob,
+      options: { readonly contentType: string }
+    ): Promise<Upload> {
+      assertOpen();
+      const size = input instanceof Blob ? input.size : input.byteLength;
+      if (size > stagedUploadLimit.value)
+        throw new PatchyError(
+          "too_large",
+          `Staged uploads are limited to ${stagedUploadLimit.value} bytes.`,
+          { maxBytes: stagedUploadLimit.value },
+          undefined,
+          stagedUploadLimit
+        );
+      const bytes =
+        input instanceof Uint8Array
+          ? input
+          : new Uint8Array(input instanceof ArrayBuffer ? input : await input.arrayBuffer());
+      assertOpen();
+      return transport.call(
+        "files.stage",
+        { contentType: options.contentType },
+        bytes
+      ) as Promise<Upload>;
+    },
+    async discard(upload: Upload): Promise<null> {
+      assertOpen();
+      return transport.call("files.discard", { upload }) as Promise<null>;
+    },
     async url(handle: FileHandle): Promise<string> {
       assertOpen();
       // Never reuse bytes: each request must pass the host's live authority checks.
@@ -53,5 +88,5 @@ export function createFileHandles(transport: Transport) {
   return files;
 }
 
-let documentFiles: FileHandleClient | undefined;
-export const getDocumentFiles = () => (documentFiles ??= createFileHandles(getDocumentTransport()));
+let documentFiles: ServerFileClient | undefined;
+export const getDocumentFiles = () => (documentFiles ??= createServerFiles(getDocumentTransport()));

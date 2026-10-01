@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { FileHandle } from "./config.js";
-import { getDocumentFiles } from "./fileHandles.js";
+import { getDocumentFiles } from "./serverFiles.js";
 
 interface FileUrlState {
   readonly url: string | undefined;

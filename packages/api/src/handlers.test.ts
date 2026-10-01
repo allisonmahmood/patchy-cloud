@@ -224,6 +224,33 @@ describe("handler descriptors", () => {
     expect(() => handlerValueSchema({ kind: "row", table: "missing" }, tables)).toThrow(TypeError);
   });
 
+  it("validates nested upload objects and rejects legacy tokens or invalid metadata", () => {
+    const schema = handlerArgsSchema(
+      {
+        attachments: {
+          kind: "array",
+          element: { kind: "object", fields: { upload: { kind: "upload" } } }
+        }
+      },
+      tables
+    );
+    const upload = { token: "opaque-stage-token", size: 123, contentType: "image/png" };
+    const args = { attachments: [{ upload }] };
+    expect(Schema.decodeUnknownSync(schema)(args)).toEqual(args);
+    for (const invalid of [
+      upload.token,
+      { ...upload, token: "" },
+      { ...upload, size: -1 },
+      { ...upload, size: 1.5 },
+      { ...upload, contentType: "text/plain\r\nx-secret: forged" },
+      { size: upload.size, contentType: upload.contentType }
+    ]) {
+      expect(Schema.decodeUnknownExit(schema)({ attachments: [{ upload: invalid }] })._tag).toBe(
+        "Failure"
+      );
+    }
+  });
+
   it("round-trips calls and preserves handler errors separately from Patchy refusals", () => {
     const call = {
       op: "server.call" as const,

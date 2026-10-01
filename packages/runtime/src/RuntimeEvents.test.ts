@@ -360,7 +360,8 @@ it.effect(
           kind: "mutation",
           run: (_, bytes) =>
             Effect.sync(() => {
-              stored = bytes;
+              assert.isDefined(bytes);
+              stored = bytes!;
               return null;
             })
         },
@@ -541,5 +542,45 @@ it.effect("keeps concurrently active company and public request attribution sepa
       assert.deepStrictEqual(publicEvent.operations, ["me"]);
       yield* events.count(2);
     }).pipe(Effect.provide(Fixtures.layer(handlers, {}, events.layer)));
+  })
+);
+
+it.effect("records staged-byte peaks for advertised and streamed overflow", () =>
+  Effect.gen(function* () {
+    const events = yield* recordEvents;
+    yield* Effect.gen(function* () {
+      const api = yield* Fixtures.client;
+      for (const length of ["5", "1"]) {
+        const response = yield* api.stageFile({
+          params: { patchId: Fixtures.patchId, versionId: Fixtures.tier2VersionId },
+          payload: new Uint8Array(5),
+          headers: { ...authenticated(), "content-length": length },
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 413);
+        const event = yield* events.next;
+        assert.include(event, { outcome: "refused", limitId: "files.stage.bytes" });
+        assert.deepInclude(event.limits, {
+          limitId: "files.stage.bytes",
+          value: 4,
+          peak: 5,
+          configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+        });
+      }
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer(
+          {
+            "files.stage": {
+              kind: "read",
+              transport: "bytes-put",
+              run: () => Effect.die("Oversized staging must never reach the file handler.")
+            }
+          },
+          { "files.stage.bytes": 4 },
+          events.layer
+        )
+      )
+    );
   })
 );

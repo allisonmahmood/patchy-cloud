@@ -241,7 +241,7 @@ it.layer(
         };
         const created = yield* publish("<p>initial</p>", null, { manifest });
         const bytes = new Uint8Array([0, 255, 128, 1]);
-        const key = `files/${created.patchId}/attachments/immutable-object`;
+        const key = `files/${created.patchId}/immutable-object`;
         yield* store.service.putBytes(key, bytes);
         const sql = yield* SqlClient.SqlClient;
         const databases = yield* CompanyDatabases.CompanyDatabases;

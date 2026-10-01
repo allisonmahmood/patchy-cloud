@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { Frame, Page } from "@playwright/test";
 import type { Manifest } from "../../packages/api/src/index.js";
 import type { QueryCallable } from "../../packages/patchy/src/queryRegistry.js";
+import type { Upload } from "../../packages/patchy/src/config.js";
 import { test, expect, prepare } from "./fixtures.js";
 import { manifest, type Instance, type Published } from "./instance.js";
 
@@ -23,6 +24,11 @@ async function artifacts(shared: boolean, removed = false) {
     ...(!removed ? { "rows.obsolete": query } : {}),
     ...(shared ? { "rows.shared": query } : {}),
     "rows.add": { kind: "mutation", args: { label: { kind: "text" } }, result: { kind: "json" } },
+    "files.adopt": {
+      kind: "action",
+      args: { name: { kind: "text" }, upload: { kind: "upload" }, fail: { kind: "boolean" } },
+      result: { kind: "json" }
+    },
     "files.select": {
       kind: "query",
       args: { name: { kind: "text" } },
@@ -58,7 +64,12 @@ const put = action({ args: { name: t.text(), content: t.text() }, result: t.bool
   await ctx.files.assets.put(args.name, new TextEncoder().encode(args.content), { contentType: "image/svg+xml" });
   return true;
 } });
-export default createGuest({ rows: { list, size, add, ${removed ? "" : "obsolete,"} ${shared ? "shared," : ""} }, files: { select, put } });`,
+const adopt = action({ args: { name: t.text(), upload: t.upload(), fail: t.boolean() }, result: t.json(), handler: async (ctx, args) => {
+  await ctx.files.assets.put(args.name, args.upload);
+  if (args.fail) await ctx.run.rows.add({ label: 123 });
+  return { size: args.upload.size, contentType: args.upload.contentType };
+} });
+export default createGuest({ rows: { list, size, add, ${removed ? "" : "obsolete,"} ${shared ? "shared," : ""} }, files: { select, put, adopt } });`,
       resolveDir: packageRoot,
       sourcefile: "subscription-server.ts"
     },
@@ -337,11 +348,18 @@ interface FileProbeWindow extends Window {
         files: {
           select(args: { name: string }): Promise<string>;
           put(args: { name: string; content: string }): Promise<boolean>;
+          adopt(args: {
+            name: string;
+            upload: Upload;
+            fail: boolean;
+          }): Promise<{ size: number; contentType: string }>;
         };
       };
       files: {
         url(handle: string): Promise<string>;
         download(handle: string, filename?: string): Promise<null>;
+        stage(bytes: Uint8Array, options: { contentType: string }): Promise<Upload>;
+        discard(upload: Upload): Promise<null>;
       };
       close(): void;
     };
@@ -540,4 +558,96 @@ test("authorised handles display blob images, reauthorise and queue trusted shel
   expect(await loads(urls[1]!)).toBe(false);
   await page.reload();
   await expect(page.locator(".shell-corner")).toBeHidden();
+});
+
+test("staged uploads adopt once, ignore forged metadata and survive a failed follow-up mutation", async ({
+  page,
+  browser,
+  instance
+}) => {
+  const built = await artifacts(false);
+  const patch = await instance.publish(
+    "company",
+    built.html,
+    undefined,
+    {
+      tier: 2,
+      files: manifest.files,
+      handlers: built.handlers
+    },
+    { server: built.server }
+  );
+  const frame = await open(page, patch);
+  const upload = await frame.evaluate(async () => {
+    const { client } = (window as unknown as FileProbeWindow).fileProbe;
+    return client.files.stage(new TextEncoder().encode("Staged content"), {
+      contentType: "text/plain"
+    });
+  });
+  expect(upload.size).toBe(14);
+  const colleague = await browser.newContext();
+  try {
+    await prepare(colleague, instance);
+    await instance.session(colleague, "colleague");
+    const other = await open(await colleague.newPage(), patch);
+    expect(
+      await other.evaluate(async (upload) => {
+        try {
+          await (window as unknown as FileProbeWindow).fileProbe.client.files.discard(upload);
+          return "unexpected_success";
+        } catch (error) {
+          return error instanceof Error && "code" in error ? error.code : "unexpected_error";
+        }
+      }, upload)
+    ).toBe("not_found");
+  } finally {
+    await colleague.close();
+  }
+  const result = await frame.evaluate(async (upload) => {
+    const { client } = (window as unknown as FileProbeWindow).fileProbe;
+    const adopted = await client.server.files.adopt({
+      name: "staged.txt",
+      upload: { ...upload, size: 1, contentType: "image/png" },
+      fail: false
+    });
+    const refusal = async (operation: () => Promise<unknown>) => {
+      try {
+        await operation();
+        return "unexpected_success";
+      } catch (error) {
+        return error instanceof Error && "code" in error ? error.code : "unexpected_error";
+      }
+    };
+    const twice = await refusal(() =>
+      client.server.files.adopt({ name: "twice.txt", upload, fail: false })
+    );
+    const discarded = await client.files.stage(new Uint8Array([1]), {
+      contentType: "application/octet-stream"
+    });
+    await client.files.discard(discarded);
+    const afterDiscard = await refusal(() =>
+      client.server.files.adopt({ name: "discarded.txt", upload: discarded, fail: false })
+    );
+    const partial = await client.files.stage(new Uint8Array([2, 3]), {
+      contentType: "application/octet-stream"
+    });
+    const failedMutation = await refusal(() =>
+      client.server.files.adopt({ name: "partial.bin", upload: partial, fail: true })
+    );
+    const retained = await client.server.files.select({ name: "partial.bin" });
+    const handle = await client.server.files.select({ name: "staged.txt" });
+    await client.files.download(handle, "staged.txt");
+    return { adopted, twice, afterDiscard, failedMutation, retained };
+  }, upload);
+  expect(result.adopted).toEqual({ size: 14, contentType: "text/plain" });
+  expect(result.twice).toBe("not_found");
+  expect(result.afterDiscard).toBe("not_found");
+  expect(result.failedMutation).toBe("invalid_request");
+  expect(result.retained).toHaveLength(57);
+  const downloadEvent = page.waitForEvent("download");
+  await page
+    .locator(".shell-corner")
+    .getByRole("button", { name: "Download", exact: true })
+    .click();
+  expect(await readFile((await (await downloadEvent).path())!, "utf8")).toBe("Staged content");
 });

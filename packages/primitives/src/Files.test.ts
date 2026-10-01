@@ -8,11 +8,22 @@ import { Inventory } from "@patchy/company-database";
 import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
 import * as Testing from "@patchy/company-database/testing";
 import { LoadedVersions } from "@patchy/runtime";
+import { OperatingLimits } from "@patchy/limits";
 import * as Tables from "./Tables.js";
-import { contracts, filesystem, independentNamesContract } from "./test/filesContract.js";
+import {
+  companyStageBoundsContract,
+  contracts,
+  filesystem,
+  independentNamesContract,
+  lateStageSweepContract,
+  slowSweepDeleteContract
+} from "./test/filesContract.js";
 import * as TestWakes from "./test/wakes.js";
 
-const postgres = Layer.merge(filesystem, Tables.layer.pipe(Layer.provideMerge(Testing.layer())));
+const postgres = Layer.merge(
+  filesystem,
+  Layer.merge(Tables.layer, OperatingLimits.layer).pipe(Layer.provideMerge(Testing.layer()))
+);
 const local = Layer.merge(
   filesystem,
   Layer.unwrap(
@@ -48,6 +59,21 @@ for (const { name, layer, companyId } of [
       it.effect(description, () => contract(companyId), 60_000);
     }
     if (name === "Postgres") {
+      it.effect(
+        "enforces current company stage overrides across patches and fails closed on limit lookup errors",
+        () => companyStageBoundsContract(companyId),
+        60_000
+      );
+      it.effect(
+        "reclaims late staged bytes and preserves cleanup retries across delayed sweep acknowledgements",
+        () => lateStageSweepContract(companyId),
+        60_000
+      );
+      it.effect(
+        "keeps file writes and adoption progressing while sweep blob deletion is paused",
+        () => slowSweepDeleteContract(companyId),
+        60_000
+      );
       it.effect(
         "keeps unrelated names and list progressing while a same-name writer waits on another session",
         () => independentNamesContract(companyId),

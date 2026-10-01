@@ -231,7 +231,7 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
       catch: (cause) => new SharedFixtureInvalid({ path: fixture.path, cause })
     });
   }
-  const fileHandlers = yield* Files.make;
+  const fileHandlers = yield* Files.makeLocal;
   for (const fixture of state.storeFixtures) {
     const source = state.versions.get(fixture.patchId)!;
     const binding = Binding.Binding.of({

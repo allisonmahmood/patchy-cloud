@@ -3,11 +3,11 @@ import { PatchyError, isPatchyError } from "./clientError.js";
 import { getDocumentTransport, LostReply, type Me, type Transport } from "./clientTransport.js";
 import { createQueryRegistry } from "./queryRegistry.js";
 import type { ServerClient } from "./server.js";
-import { createFileHandles, getDocumentFiles, type HandleFiles } from "./fileHandles.js";
+import { createServerFiles, getDocumentFiles, type ServerFiles } from "./serverFiles.js";
 
 export interface ServerOnlyClient<Modules> {
   readonly server: ServerClient<Modules>;
-  readonly files: HandleFiles;
+  readonly files: ServerFiles;
   readonly route: Transport["route"];
   me(): Promise<Me>;
   close(): void;
@@ -27,7 +27,7 @@ export function createServerClient<Modules>(
   options: { readonly transport?: Transport } = {}
 ): ServerOnlyClient<Modules> {
   const transport = options.transport ?? getDocumentTransport();
-  const files = options.transport ? createFileHandles(transport) : getDocumentFiles();
+  const files = options.transport ? createServerFiles(transport) : getDocumentFiles();
   const registry = createQueryRegistry({
     subscribe: ({ handler, args }, onFrame) =>
       transport.queries.subscribe({ handler: "server.call", args: { handler, args } }, onFrame)

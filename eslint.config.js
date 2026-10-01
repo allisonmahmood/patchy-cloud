@@ -58,7 +58,7 @@ export default tseslint.config(
           patterns: [
             {
               regex:
-                "^@patchy/(?!(api|api/handlers|api/guest|api/canonical-args|api/query-config|core|execution/inspection)$)",
+                "^@patchy/(?!(api|api/handlers|api/guest|api/canonical-args|api/query-config|api/file-config|core|execution/inspection)$)",
               message:
                 "The CLI may depend only on @patchy/api, engine-neutral contract modules, @patchy/core and isolated execution/inspection."
             },

@@ -221,7 +221,7 @@ it.layer(services)("DeletionSweep", (it) => {
       const inventory = yield* Inventory.Inventory;
       const objects = yield* ContentStore.ContentStore;
       const created = yield* publish("locked-reclamation", true);
-      const fileKey = `files/${created.patchId}/docs/object`;
+      const fileKey = `files/${created.patchId}/object`;
       yield* objects.put(fileKey, "retained file");
       yield* patches.delete(created.patchId, actor);
       yield* TestClock.adjust(30 * DAY);

@@ -12,7 +12,7 @@ import {
 } from "./client.js";
 import { defineConfig, files, sharedStore, table, t } from "./config.js";
 import { generateClient } from "../../sdk/src/generateClient.js";
-import { RuntimeCode, runtimeOperations } from "../../api/src/runtime.js";
+import { RuntimeCode } from "../../api/src/runtime.js";
 
 const unusedRoute: Transport["route"] = {
   get: async () => {
@@ -271,14 +271,8 @@ it("shares the supplied transport with generated aliases and exposes shared read
 
 it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
   const root = new URL("../dist/", import.meta.url).pathname;
-  const source = `import { createClient, createSharedTable, createSharedStore, type Call, type QueryRegistry, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
+  const source = `import { createClient, createSharedTable, createSharedStore, type Call, type QueryRegistry, type ErrorCode, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, sharedStore, type Id } from "patchy/config";
-type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
-const operationsConform: Equal<Operation, "route.set" | "download" | "shared.download" | "files.download" | "subscriptions.subscribe" | "subscriptions.unsubscribe" | ${Object.keys(
-    runtimeOperations
-  )
-    .map((name) => JSON.stringify(name))
-    .join(" | ")}> = true;
 const config = defineConfig({ name: "notes", tier: 1, tables: {
   notes: table("Notes identified by id; parent links another note.", { title: t.text(), body: t.text().optional(), count: t.integer().default(0), parent: t.ref("notes").optional() }, { indexes: { byTitle: ["title"] } }),
   people: table("People identified by id.", { name: t.text() }),

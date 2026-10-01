@@ -48,6 +48,10 @@ _Avoid_: public files, copied store, shared folder
 The host-minted token a handler returns with a file's metadata, which lets the signed-in shell read that exact stored object's bytes for its viewer. It records the server's selection and grants no Patchy access of its own. It is deterministic for the viewer, company, consuming patch, loaded version, source store and object, with no filename or expiry clock. Replacement or deletion invalidates it; every redemption checks live access.
 _Avoid_: file URL, signed link, file reference
 
+**Staged upload**:
+A viewer's unreferenced file, bound to the consuming patch and loaded version, which an action can adopt into an owned file store once. Its Upload carries Patchy's measured size and the claimed content type; it expires after an hour or can be discarded before adoption.
+_Avoid_: file handle, object id, saved file
+
 **The patch's filter**:
 Which files and rows a patch's server code chooses to return, distinct from Patchy's live access checks. Redemption does not rerun this filter. To cut off a previously selected file when a record becomes private, changes hands or is deleted, the patch must re-put or delete the file. Already delivered bytes cannot be recalled.
 _Avoid_: permission, scope, access rule

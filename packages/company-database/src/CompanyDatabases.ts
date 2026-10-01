@@ -225,3 +225,16 @@ export const withFileLock =
         )
       )
     );
+
+/** Company-wide upload accounting and object reclamation share this transaction lock. */
+export const withFileObjectsLock = <A, E, R>(
+  effect: Effect.Effect<A, E, R>
+): Effect.Effect<A, E | SqlError, Exclude<R, SqlClient.SqlClient> | CompanyConnection> =>
+  Effect.flatMap(CompanyConnection, (sql) =>
+    sql.withTransaction(
+      sql`SELECT pg_advisory_xact_lock(${advisoryLockKey("file-objects")}::bigint)`.pipe(
+        Effect.andThen(effect),
+        Effect.provideService(SqlClient.SqlClient, sql)
+      )
+    )
+  );

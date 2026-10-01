@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { FilePutUpload } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as Effect from "effect/Effect";
@@ -7,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as CallbackGateway from "./CallbackGateway.js";
 import * as CallbackGatewayApi from "./CallbackGatewayApi.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
+import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
 
@@ -38,7 +40,8 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
             transport: "bytes-put",
             run: (_args, bytes) =>
               Effect.sync(() => {
-                stored = bytes;
+                assert.isDefined(bytes);
+                stored = bytes!;
                 return null;
               })
           },
@@ -114,6 +117,62 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           "returned"
         );
       }).pipe(Effect.scoped)
+  );
+
+  it.effect("the private listener adopts an upload over JSON without a byte body", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const upload = { token: "opaque-stage-token", size: 4, contentType: "image/png" };
+      let adopted = false;
+      const decode = Schema.decodeUnknownEffect(FilePutUpload, { onExcessProperty: "error" });
+      const gateway = yield* CallbackGateway.make({
+        "files.put": {
+          kind: "mutation",
+          transport: "bytes-put",
+          run: (input, bytes) =>
+            Effect.gen(function* () {
+              const args = yield* decode(input).pipe(
+                Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+              );
+              assert.isUndefined(bytes);
+              assert.deepStrictEqual(args.upload, upload);
+              adopted = true;
+              return null;
+            })
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const listener = yield* CallbackGatewayApi.listen().pipe(
+        Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+      );
+      const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+      const request = {
+        method: "POST",
+        headers: { ...headers(capability), "content-type": "application/json" }
+      };
+      assert.include(
+        yield* fetchJson(listener.url, {
+          ...request,
+          body: JSON.stringify({
+            op: "files.put",
+            args: { store: "docs", name: "photo.png", contentType: "image/png" }
+          })
+        }),
+        { ok: false, code: "invalid_request" }
+      );
+      assert.isFalse(adopted);
+      assert.deepStrictEqual(
+        yield* fetchJson(listener.url, {
+          ...request,
+          body: JSON.stringify({
+            op: "files.put",
+            args: { store: "docs", name: "photo.png", upload }
+          })
+        }),
+        { ok: true, value: null }
+      );
+      assert.isTrue(adopted);
+    }).pipe(Effect.scoped)
   );
 
   it.effect("chunked callback bodies stop at the byte bound without executing the callback", () =>

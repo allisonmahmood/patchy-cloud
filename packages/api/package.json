@@ -36,6 +36,11 @@
       "types": "./dist/queryConfig.d.ts",
       "import": "./dist/queryConfig.js"
     },
+    "./file-config": {
+      "development": "./src/fileConfig.ts",
+      "types": "./dist/fileConfig.d.ts",
+      "import": "./dist/fileConfig.js"
+    },
     "./postgres-snapshot": {
       "development": "./src/postgresSnapshot.ts",
       "types": "./dist/postgresSnapshot.d.ts",

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
@@ -595,4 +596,224 @@ it.effect("the API client decodes a row shaped like a Postgres result with every
       assert.deepStrictEqual(result, { ok: true, value: row }, op);
     }
   }).pipe(Effect.provide(Fixtures.layer({ me, ...rowHandlers })))
+);
+
+it.effect("staging returns measured metadata, enforces raw byte bounds and stays unlogged", () =>
+  Effect.gen(function* () {
+    let staged: Uint8Array | undefined;
+    let discarded = false;
+    const upload = { token: "opaque-stage-token", size: 4, contentType: "image/png" };
+    const decodeStage = Schema.decodeUnknownEffect(
+      runtimeOperations["files.stage"].request.fields.args,
+      { onExcessProperty: "error" }
+    );
+    yield* Effect.gen(function* () {
+      const api = yield* client;
+      const sql = yield* SqlClient.SqlClient;
+      const params = { patchId, versionId: Fixtures.tier2VersionId };
+      const authenticated = {
+        ...headers({ userId: DEV_SEED.userId }),
+        cookie: signedInCookies(),
+        origin: PUBLIC_BASE_URL,
+        "content-type": upload.contentType
+      };
+      const bytes = new Uint8Array([0, 128, 255, 1]);
+      const response = yield* api.stageFile({
+        params,
+        headers: authenticated,
+        payload: bytes,
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers["cache-control"], "no-store");
+      assert.deepStrictEqual(yield* response.json, { ok: true, value: upload });
+      assert.deepStrictEqual(staged, bytes);
+      for (const length of ["1", "5"]) {
+        const oversized = yield* api.stageFile({
+          params,
+          headers: { ...authenticated, "content-length": length },
+          payload: new Uint8Array(5),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(oversized.status, 413);
+        assert.include(yield* oversized.json, {
+          code: "too_large",
+          limitId: "files.stage.bytes",
+          value: 4
+        });
+        assert.deepStrictEqual(staged, bytes);
+      }
+      const discard = yield* api.call({
+        payload: {
+          ...params,
+          principal: { userId: DEV_SEED.userId },
+          wire: WIRE_VERSION,
+          op: "files.discard",
+          args: { upload }
+        },
+        headers: authenticated,
+        responseMode: "response-only"
+      });
+      assert.strictEqual(discard.status, 200);
+      assert.deepStrictEqual(yield* discard.json, { ok: true, value: null });
+      assert.isTrue(discarded);
+      assert.deepStrictEqual(yield* sql`SELECT op FROM runtime_calls`, []);
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer(
+          {
+            "files.stage": {
+              kind: "read",
+              transport: "bytes-put",
+              run: (input, bytes) =>
+                Effect.gen(function* () {
+                  const args = yield* decodeStage(input).pipe(
+                    Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+                  );
+                  assert.isDefined(bytes);
+                  staged = bytes!;
+                  return { ...upload, size: bytes!.byteLength, contentType: args.contentType };
+                })
+            },
+            "files.discard": Runtime.handler(
+              {
+                kind: "read",
+                input: runtimeOperations["files.discard"].request.fields.args,
+                output: runtimeOperations["files.discard"].response
+              },
+              (args) =>
+                Effect.sync(() => {
+                  assert.deepStrictEqual(args.upload, upload);
+                  discarded = true;
+                  return null;
+                })
+            )
+          },
+          { "files.stage.bytes": 4, "runtime.calls.perMinute": 100 }
+        )
+      )
+    );
+  })
+);
+
+it.effect("staging preserves browser admission, tier gates and private adoption", () =>
+  Effect.gen(function* () {
+    const api = yield* client;
+    const upload = { token: "opaque-stage-token", size: 1, contentType: "text/plain" };
+    const authenticated = {
+      ...headers({ userId: DEV_SEED.userId }),
+      cookie: signedInCookies(),
+      origin: PUBLIC_BASE_URL
+    };
+    const params = { patchId, versionId: Fixtures.tier2VersionId };
+    for (const [extra, code] of [
+      [{ origin: "" }, "access_denied"],
+      [{ origin: "null" }, "access_denied"],
+      [{ origin: "https://foreign.invalid" }, "access_denied"],
+      [{ authorization: "Bearer unrelated-authority" }, "access_denied"],
+      [{ "x-patchy-wire": "2" }, "shell_outdated"],
+      [{ "x-patchy-principal": JSON.stringify({ userId: "other" }) }, "principal_changed"],
+      [{ cookie: "" }, "session_expired"]
+    ] as const) {
+      const response = yield* api.stageFile({
+        params,
+        headers: { ...authenticated, ...extra },
+        payload: new Uint8Array([1]),
+        responseMode: "response-only"
+      });
+      assert.include(yield* response.json, { code });
+    }
+    for (const loadedVersion of [
+      Fixtures.versionId,
+      Fixtures.tier1VersionId,
+      Fixtures.staleTier1VersionId,
+      Fixtures.publicVersionId
+    ]) {
+      const code =
+        loadedVersion === Fixtures.publicVersionId ? "not_available_on_public" : "server_required";
+      const stage = yield* api.stageFile({
+        params: { patchId, versionId: loadedVersion },
+        headers: authenticated,
+        payload: new Uint8Array([1]),
+        responseMode: "response-only"
+      });
+      assert.include(yield* stage.json, { code });
+      const discard = yield* api.call({
+        payload: {
+          patchId,
+          versionId: loadedVersion,
+          principal: { userId: DEV_SEED.userId },
+          wire: WIRE_VERSION,
+          op: "files.discard",
+          args: { upload }
+        },
+        headers: authenticated,
+        responseMode: "response-only"
+      });
+      assert.include(yield* discard.json, { code });
+    }
+    for (const [op, args, extra, code] of [
+      ["files.discard", { upload }, { origin: "" }, "access_denied"],
+      ["files.stage", { contentType: "text/plain" }, {}, "invalid_request"],
+      ["files.put", { store: "docs", name: "a", upload }, {}, "server_required"],
+      ["files.inspectUpload", { upload }, {}, "server_required"]
+    ] as const) {
+      const response = yield* api.call({
+        payload: {
+          ...params,
+          principal: { userId: DEV_SEED.userId },
+          wire: WIRE_VERSION,
+          op,
+          args
+        },
+        headers: { ...authenticated, ...extra },
+        responseMode: "response-only"
+      });
+      assert.include(yield* response.json, { code });
+    }
+    for (const [op, args, code] of [
+      ["files.put", { store: "docs", name: "a", upload }, "invalid_request"],
+      ["files.inspectUpload", { upload }, "access_denied"]
+    ] as const) {
+      const response = yield* api.call({
+        payload: {
+          patchId,
+          versionId: Fixtures.tier1VersionId,
+          principal: { userId: DEV_SEED.userId },
+          wire: WIRE_VERSION,
+          op,
+          args
+        },
+        headers: authenticated,
+        responseMode: "response-only"
+      });
+      assert.include(yield* response.json, { code });
+    }
+  }).pipe(
+    Effect.provide(
+      Fixtures.layer(
+        {
+          "files.stage": {
+            kind: "read",
+            transport: "bytes-put",
+            run: () => Effect.die("Refused staging must not execute")
+          },
+          "files.discard": {
+            kind: "read",
+            run: () => Effect.die("Refused discard must not execute")
+          },
+          "files.inspectUpload": {
+            kind: "read",
+            run: () => Effect.die("Private inspection must not execute from the browser")
+          },
+          "files.put": {
+            kind: "mutation",
+            transport: "bytes-put",
+            run: () => Effect.die("JSON adoption must not execute from the browser")
+          }
+        },
+        { "runtime.calls.perMinute": 100 }
+      )
+    )
+  )
 );
