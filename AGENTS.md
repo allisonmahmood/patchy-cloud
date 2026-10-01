@@ -46,6 +46,7 @@ One line each; only the things you would not find by reading the tree.
 
 - `docs/product.md` — the product's shape: patches, tiers, companies, identity, integrations. Read it before designing anything user-facing.
 - `CONTEXT-MAP.md` and each package's `CONTEXT.md` — the vocabulary. Use their words; see `docs/agents/domain.md`.
+- `pnpm dev up [scenario]` / `pnpm dev down` — a whole local environment with people who sign in without Clerk, a logged-in CLI and an agent workspace; `scenarios/README.md` says what each scenario holds. Prefer it for multi-user checks and demos.
 - `docs/DEVELOPMENT.md` — required Clerk keys, `pnpm dev`, browser sign-in and CLI login, the seeded company/user/machine token, and offline/live test tiers. Read before starting a local instance or checking auth.
 - `packages/sql/README.md` — how migrations and row decoding work.
 - `docs/adr/ADR-0004-cli-contract-for-agents.md` — the CLI's exit codes and `--json` contract; keep it when touching `packages/patchy`.

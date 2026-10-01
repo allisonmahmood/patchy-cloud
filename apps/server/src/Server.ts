@@ -24,6 +24,7 @@ import {
   AuthApi,
   AuthPages,
   Authorization,
+  DevPersonas,
   DeviceLogins,
   migrations as authMigrations,
   MachineTokens,
@@ -114,6 +115,35 @@ const migrated = Layer.effectDiscard(
   })
 );
 
+/** Persona environments record invitations instead of mailing them through Clerk. */
+const recordedInvites = Layer.effect(
+  InviteMail.InviteMail,
+  Effect.provide(Effect.service(InviteMail.InviteMail), InviteMail.layerRecording)
+);
+
+/**
+ * Who signs people in. Clerk, unless the dev runner's environment set the
+ * personas secret: then anyone signs in as any email. Personas refuse
+ * production and public origins.
+ */
+const identity = Layer.unwrap(
+  Effect.map(
+    DevPersonas.enabled,
+    (
+      personas
+    ): Layer.Layer<
+      Session.Session | InviteMail.InviteMail,
+      | Config.ConfigError
+      | Session.SessionError
+      | DevPersonas.DevPersonasOutsideDevelopment
+      | DevPersonas.DevPersonasOnPublicOrigin
+    > =>
+      personas
+        ? Layer.merge(DevPersonas.layer, recordedInvites)
+        : Layer.merge(Session.layer, InviteMail.layer)
+  )
+);
+
 const resourceChanges = Layer.effect(
   ResourceChanges.ResourceChanges,
   Effect.map(Wakes.Wakes, (wakes) => ResourceChanges.ResourceChanges.of({ publish: wakes.publish }))
@@ -166,9 +196,8 @@ const services = Layer.mergeAll(
       MachineTokens.layer,
       Patches.layer,
       Companies.layer,
-      InviteMail.layer,
       Users.layer,
-      Session.layer
+      identity
     ).pipe(
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(Layer.provide([CredentialKeys.layer, PostgresSource.layer]))
@@ -276,6 +305,9 @@ const app = Layer.mergeAll(
   PortalPages.layer,
   landing,
   AuthPages.layer,
+  Layer.unwrap(
+    Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
+  ),
   ConnectionPages.layer,
   middleware
 );

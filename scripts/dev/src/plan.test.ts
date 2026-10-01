@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { describe, expect } from "vitest";
-import { PlanJson, basePort, computePlan, findWorktree } from "./plan.js";
+import { PlanJson, basePort, computePlan, findWorktree, hostLabel } from "./plan.js";
 
 const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
@@ -26,7 +26,30 @@ describe("basePort", () => {
   });
 });
 
+describe("hostLabel", () => {
+  it("is the worktree's folder as a DNS label plus a hash of its full path", () => {
+    const label = hostLabel("/home/someone/.t3/worktrees/patchy-cloud/t3code-df809bf1");
+    expect(label).toMatch(/^t3code-df809bf1-[a-z0-9]{6}$/);
+    expect(hostLabel("/w/Feature_Branch.2/")).toMatch(/^feature-branch-2-[a-z0-9]{6}$/);
+    expect(hostLabel("/w/___")).toMatch(/^patchy-[a-z0-9]{6}$/);
+    expect(hostLabel(`/w/${"a".repeat(80)}`).length).toBeLessThanOrEqual(63);
+  });
+
+  it("differs between worktrees with the same folder name", () => {
+    expect(hostLabel("/a/patchy-cloud")).not.toBe(hostLabel("/b/patchy-cloud"));
+  });
+});
+
 it.layer(Platform)("computePlan", (it) => {
+  it.effect("serves an environment on the worktree's own .localhost host", () =>
+    Effect.gen(function* () {
+      const plan = yield* computePlan("/w/env-a", free, { scenario: "team" });
+      expect(plan.apiUrl).toBe(`http://${hostLabel("/w/env-a")}.localhost:${basePort("/w/env-a")}`);
+      expect(plan.environment).toEqual({ scenario: "team" });
+      expect(plan.databaseUrl).toContain("@127.0.0.1:");
+    })
+  );
+
   it.effect("pairs the server with the next port and derives every URL from them", () =>
     Effect.gen(function* () {
       const plan = yield* computePlan("/w/a", free);

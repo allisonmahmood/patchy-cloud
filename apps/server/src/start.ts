@@ -16,7 +16,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/unstable/http/HttpServer";
-import { Session } from "@patchy/auth";
+import { DevPersonas, Session } from "@patchy/auth";
 import { PgCompanyDatabases } from "@patchy/company-database";
 import { CredentialKeys } from "@patchy/integrations";
 import * as Sql from "@patchy/sql";
@@ -28,8 +28,11 @@ const announce = HttpServer.addressFormattedWith((address) =>
   Console.log(`Patchy Cloud server listening on ${address}`)
 );
 
+/** Dev personas sign anyone in, so their environments listen on loopback only. */
 const httpServer = Layer.unwrap(
-  Effect.map(Server.port, (port) => NodeHttpServer.layer(createServer, { port, host: "0.0.0.0" }))
+  Effect.map(Effect.all([Server.port, DevPersonas.enabled]), ([port, personas]) =>
+    NodeHttpServer.layer(createServer, { port, host: personas ? "127.0.0.1" : "0.0.0.0" })
+  )
 );
 
 const server = Layer.effectDiscard(
@@ -58,15 +61,16 @@ const server = Layer.effectDiscard(
 ).pipe(Layer.provideMerge(Server.layer), Layer.provide(Sql.layer), Layer.provide(httpServer));
 
 // Check required settings before acquiring Postgres, so an unreachable database
-// cannot hide a missing Clerk key or public origin behind a connection error.
+// cannot hide a missing Clerk key (or personas secret) or public origin behind a connection error.
 NodeRuntime.runMain(
   Effect.gen(function* () {
     yield* Config.all([
       Config.Redacted("DATABASE_URL"),
       PgCompanyDatabases.config,
-      Session.config,
       CredentialKeys.config
     ]);
+    if (yield* DevPersonas.enabled) yield* DevPersonas.config;
+    else yield* Session.config;
     return yield* Layer.launch(server);
   })
 );

@@ -15,6 +15,13 @@ only meaningful when its reported tarball downloads with the reported integrity.
 A shell broker that does not compile fails `pnpm dev` or `reset` on stderr before
 anything is stopped or wiped; `stop`, `status` and `logs` still work.
 
+For anything with more than one person (live sync, assignments, admin-only
+rules, invitations) or a demo, use an environment instead of Clerk accounts:
+`pnpm dev up [scenario]`, then `pnpm dev open <person>` or Playwright on
+`<url>/dev/sign-in?as=<email>&return=<path>`, and `pnpm dev down` when done.
+It prints the card with the people, patches and the `agent` launcher; read
+DEVELOPMENT's **Environments**. Take down what you bring up.
+
 When the change needs live Clerk integration checks, read
 `docs/DEVELOPMENT.md`'s **Test tiers** first: `pnpm test:clerk` runs the
 Backend-API and Playwright tiers, uses isolated databases, creates temporary

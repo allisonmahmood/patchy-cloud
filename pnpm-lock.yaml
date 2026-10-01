@@ -828,6 +828,9 @@ importers:
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../../packages/company-database
+      '@patchy/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@patchy/execution':
         specifier: workspace:*
         version: link:../../packages/execution
@@ -846,6 +849,9 @@ importers:
       '@patchy/sql':
         specifier: workspace:*
         version: link:../../packages/sql
+      '@playwright/test':
+        specifier: ^1.63.0
+        version: 1.63.0
       effect:
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117

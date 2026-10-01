@@ -242,8 +242,7 @@ describe("patch pages", () => {
       scope: "company",
       html: '<p title="a&b">Private</p><script>alert(1)</script>',
       head: sessionScripts({
-        frontendApiHost: "clerk.example.test",
-        publishableKey: "pk_test_example"
+        clerk: { frontendApiHost: "clerk.example.test", publishableKey: "pk_test_example" }
       })
     });
     expect(

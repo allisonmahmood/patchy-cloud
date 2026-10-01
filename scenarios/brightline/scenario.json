@@ -1,0 +1,56 @@
+{
+  "company": { "name": "Brightline Studio", "handle": "brightline" },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@brightline.example",
+      "role": "admin"
+    },
+    {
+      "key": "jordan",
+      "name": "Jordan Lee",
+      "email": "jordan@brightline.example",
+      "role": "member"
+    },
+    { "key": "priya", "name": "Priya Shah", "email": "priya@brightline.example", "role": "member" },
+    {
+      "key": "marcus",
+      "name": "Marcus Chen",
+      "email": "marcus@brightline.example",
+      "role": "member"
+    },
+    {
+      "key": "sofia",
+      "name": "Sofia Alvarez",
+      "email": "sofia@brightline.example",
+      "role": "member"
+    }
+  ],
+  "publisher": "allison",
+  "patches": [
+    {
+      "repo": "new-business",
+      "tier": 2,
+      "description": "Brightline's new-business pipeline: track every pitch from first lead to signed work, with owners, stage rules and a live board the whole studio shares.",
+      "sampleData": true
+    },
+    {
+      "repo": "spend",
+      "tier": 2,
+      "description": "Request, approve and track studio and client-project spend, with receipts attached and approval rules that can't be bypassed.",
+      "sampleData": true
+    },
+    {
+      "repo": "kudos",
+      "tier": 1,
+      "description": "Give a colleague a public shout-out for great work; the whole studio sees kudos appear live.",
+      "sampleData": true
+    },
+    {
+      "file": "harbor-pine-kickoff.html",
+      "name": "harbor-pine-kickoff",
+      "description": "Kickoff brief for the Harbor & Pine Coffee rebrand: goals, scope, timeline, team, budget and risks."
+    }
+  ]
+}

@@ -5,6 +5,7 @@ export * as MachineTokens from "./MachineTokens.js";
 export * as DeviceLogins from "./DeviceLogins.js";
 export { migrations } from "./migrations.js";
 export * as Session from "./Session.js";
+export * as DevPersonas from "./DevPersonas.js";
 export * as RequireSession from "./RequireSession.js";
 export * as AuthPages from "./AuthPages.js";
 export {

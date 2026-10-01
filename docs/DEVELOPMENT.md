@@ -2,19 +2,68 @@
 
 ## T3 Code
 
-The root `t3.json` defaults new threads to isolated worktrees and offers five
+The root `t3.json` defaults new threads to isolated worktrees and offers eight
 actions. In T3 Code's project actions menu, import each action from **From
 t3.json** once. Imported actions are saved copies; later changes to `t3.json`
 do not update them automatically.
 
 **Setup** runs `pnpm install --frozen-lockfile` when T3 creates a worktree and
 holds the agent until installation exits. **Start dev**, **Stop dev** and
-**Restart dev** control that worktree's local instance. **Check** runs lint,
+**Restart dev** control that worktree's local instance. **Environment up**,
+**Demo up** (the `brightline` scenario) and **Environment down** run
+[`pnpm dev up` and `down`](#environments-pnpm-dev-up). **Check** runs lint,
 typecheck and offline tests in sequence, stopping at the first failure.
 
 Dev startup stays manual and requires the [Clerk development keys](#clerk-keys).
 Open the URL printed by the runner; each worktree gets its own port. Closing an
 action's terminal does not stop the dev instance, so use **Stop dev** when done.
+
+## Environments: `pnpm dev up`
+
+An environment is this worktree's instance plus everything around it needed to
+test multi-user behaviour or give a demo, with no Clerk accounts and no setup:
+
+```sh
+pnpm dev up [scenario]     # bring it up and print its card; the default scenario is team
+pnpm dev open <person>     # a browser window, own profile, signed in as that person
+pnpm dev down              # stop everything up started and delete everything it made
+```
+
+- **People sign in as dev personas.** The server runs a dev Session instead of
+  Clerk: `/dev/sign-in` lists everyone, and `/dev/sign-in?as=<email>&return=<path>`
+  signs in as any email, including one that was only invited, so invitations
+  work too. Invitations are recorded, never mailed. The personas Session starts
+  only with `NODE_ENV` development or test and a loopback origin, and the
+  server then listens on `127.0.0.1` only, so nobody on the network can sign in.
+- **Its own host.** The instance serves on `http://<label>.localhost:<port>`,
+  where the label is the worktree's folder name plus a hash of its path, so its
+  cookies and files never mix with another worktree's.
+- **A CLI that already publishes.** `up` installs the instance's release in its
+  own folder and logs it in as the scenario's publisher, with its own
+  `PATCHY_STATE_DIR`. Nothing is installed globally and `~/.patchy` is untouched.
+- **An agent workspace.** Everything outside `.local/dev` lives in
+  `$XDG_DATA_HOME/patchy-dev/<label>/`, outside the worktree so the repo's
+  `CLAUDE.md` never loads there. Its `agent` launcher starts Claude Code in
+  `workspace/` with only the Patchy skill, no personal settings or connectors,
+  and pre-approved `patchy`/`pnpm` commands. Arguments pass through, e.g.
+  `…/agent -p "<task>"`. The workspace pins the runner's Node and pnpm for mise.
+- **Scenarios** live in `scenarios/` (see its README). Each names a company, its
+  people and optional patches, which `up` publishes as the publisher and fills
+  with sample data. `brightline` is a five-person agency with a tier 2 CRM board,
+  tier 2 spend approvals, tier 1 kudos and a tier 0 brief, and takes about a
+  minute.
+
+`up` is idempotent: a running environment just prints its card, and `--json`
+prints its manifest (progress goes to stderr). An `up` that failed halfway, for
+example without Playwright's browser for sample data, resumes where it stopped.
+After a restart (`pnpm dev stop`, then `pnpm dev` or `up`) the environment comes
+back on the same address, or refuses if another process took its ports; if
+bundled code changed, `up` also moves the CLI and the workspace's repos to the
+rebuilt release. `pnpm dev reset` rebuilds an environment from scratch. An
+instance started with plain `pnpm dev` signs in with Clerk, and `up` refuses to
+convert it: run `down` first, which deletes its data. `down` also works on a
+plain instance, as a reset that doesn't start again. It stops the workspace's
+patch dev sessions and the persons' browsers before deleting anything.
 
 ## The local instance: `pnpm dev`
 

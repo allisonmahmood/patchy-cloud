@@ -30,28 +30,13 @@ export class Enrollment extends Context.Service<Enrollment, Viewer["Service"] | 
   "@patchy/auth/RequireSession/Enrollment"
 ) {}
 
-/** Account Portal has a different hostname in development and on a custom Clerk domain. */
-export function signInUrl(session: Session.Session["Service"], path: string): string {
-  const host = session.frontendApiHost;
-  const portalHost = host.endsWith(".clerk.accounts.dev")
-    ? host.replace(/\.clerk\.accounts\.dev$/, ".accounts.dev")
-    : host.replace(/^clerk\./, "accounts.");
-  const url = new URL(`https://${portalHost}/sign-in`);
-  const target = new URL(path, session.publicBaseUrl);
-  // A new sign-in must not replay the signed-out handshake that showed the door.
-  target.searchParams.delete("__clerk_handshake");
-  target.searchParams.delete("__clerk_handshake_nonce");
-  url.searchParams.set("redirect_url", target.href);
-  return url.href;
-}
-
 export function door(
   session: Session.Session["Service"],
   path: string,
   failed = false,
   status = 401
 ) {
-  const url = signInUrl(session, path);
+  const url = session.signInUrl(path);
   return pageResponse({
     title: failed ? "Sign-in could not complete" : "Sign in to Patchy",
     body: `<p>${failed ? "Try signing in again." : "Continue to your company."}</p><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(url)}">Sign in</a></div>`,

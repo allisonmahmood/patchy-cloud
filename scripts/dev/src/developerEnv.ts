@@ -25,6 +25,22 @@ export const readCredentialKeys = Effect.fn("readCredentialKeys")(function* (fil
   const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
   return yield* CredentialKeys.config.pipe(Effect.provide(ConfigProvider.layer(provider)));
 });
+/** An environment's personas secret: random once per state dir, private, kept across restarts. */
+export const readPersonasSecret = Effect.fn("readPersonasSecret")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) {
+    const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+    yield* fs.writeFileString(file, `PATCHY_DEV_PERSONAS_SECRET=${secret}\n`, {
+      flag: "wx",
+      mode: 0o600
+    });
+  }
+  const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
+  return yield* Config.Redacted("PATCHY_DEV_PERSONAS_SECRET").pipe(
+    Effect.provide(ConfigProvider.layer(provider))
+  );
+});
+
 const DEVELOPER_ENV_NAMES = [
   "CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
