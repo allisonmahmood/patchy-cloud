@@ -3291,11 +3291,68 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(initialized.release, release);
   assert.equal(initialized.tier, 1);
   assert.equal(initialized.installed, true);
-  assert.deepEqual(initialized.skills, ["patchy-files", "patchy-loop", "patchy-tables"]);
+  assert.deepEqual(initialized.skills, [
+    "patchy-files",
+    "patchy-loop",
+    "patchy-preact",
+    "patchy-tables"
+  ]);
   assert.ok(Array.isArray(initialized.generated));
   for (const file of initialized.generated) assert.equal(typeof file, "string");
   const repoCliPath = installedCliBinPath(dir);
   await checkedCall(() => access(repoCliPath));
+  await run("pnpm", ["typecheck"], options);
+  await run("pnpm", ["lint"], options);
+  const lintProbePath = path.join(dir, "helpers/lint-probe.ts");
+  await checkedCall(() =>
+    writeFile(
+      lintProbePath,
+      'import { useQuery } from "patchy/preact";\n' +
+        "export function useData(handler: Parameters<typeof useQuery>[0]) { return useQuery(handler, {}); }\n"
+    )
+  );
+  await run("pnpm", ["exec", "eslint", "helpers/lint-probe.ts"], options);
+  const forbiddenImports = [
+    "react",
+    "react/jsx-runtime",
+    "react-dom",
+    "react-dom/client",
+    "preact",
+    "preact/hooks",
+    "preact/compat",
+    "preact/compat/client"
+  ];
+  await checkedCall(() =>
+    writeFile(
+      lintProbePath,
+      forbiddenImports.map((specifier) => `import ${JSON.stringify(specifier)};`).join("\n") +
+        '\nimport { useEffect, useQuery } from "patchy/preact";\n' +
+        "export function useLintProbe(condition: boolean, value: string, handler: Parameters<typeof useQuery>[0]) {\n" +
+        "  if (condition) useQuery(handler, {});\n" +
+        "  useEffect(() => { console.log(value); }, []);\n" +
+        "}\n"
+    )
+  );
+  try {
+    const refused = await run(
+      "pnpm",
+      ["exec", "eslint", "helpers/lint-probe.ts", "--format", "json"],
+      {
+        ...options,
+        allowFailure: true
+      }
+    );
+    assert.equal(refused.code, 1);
+    const messages = JSON.parse(refused.stdout).flatMap((file) => file.messages);
+    assert.equal(
+      messages.filter((message) => message.ruleId === "no-restricted-imports").length,
+      forbiddenImports.length
+    );
+    assert.ok(messages.some((message) => message.ruleId === "react-hooks/rules-of-hooks"));
+    assert.ok(messages.some((message) => message.ruleId === "react-hooks/exhaustive-deps"));
+  } finally {
+    await checkedCall(() => rm(lintProbePath));
+  }
   const initialConfigPath = path.join(dir, "patchy.config.ts");
   const initialConfig = await checkedCall(() => readFile(initialConfigPath, "utf8"));
   await checkedCall(() =>
@@ -3310,10 +3367,9 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
         )
     )
   );
-  const appPath = path.join(dir, "src/main.ts");
+  const appPath = path.join(dir, "src/App.tsx");
   const appSource = await checkedCall(() => readFile(appPath, "utf8"));
   const insertNote = "await patchy.tables.notes.insert({ title });";
-  assert.ok(appSource.includes(insertNote));
   await checkedCall(() =>
     writeFile(
       appPath,
@@ -3372,11 +3428,30 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   throwIfSignalLatched();
   const browser = await checkedCall(() => chromium.connect(tier1BrowserServer.wsEndpoint()));
   const context = await checkedCall(() => browser.newContext());
+  const initialReadHeld = Promise.withResolvers();
+  const releaseInitialRead = Promise.withResolvers();
+  let holdInitialRead = true;
   // Match browser-tier1's offline boundary, without replacing any runtime response.
   await context.route("**/*", async (route) => {
     const hostname = new URL(route.request().url()).hostname;
-    if (hostname === "127.0.0.1" || hostname === "localhost") await route.continue();
-    else await route.abort("blockedbyclient");
+    if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+      await route.abort("blockedbyclient");
+      return;
+    }
+    if (
+      holdInitialRead &&
+      new URL(route.request().url()).pathname === "/api/runtime/call" &&
+      route.request().method() === "POST" &&
+      route.request().postDataJSON().op === "tables.list"
+    ) {
+      holdInitialRead = false;
+      const response = await route.fetch();
+      initialReadHeld.resolve();
+      await releaseInitialRead.promise;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
   });
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
@@ -3427,14 +3502,31 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       return result.value;
     }
   };
+  let inspectInitialLoading = true;
   const openNotes = async (url, published) => {
+    const checkLoading = inspectInitialLoading
+      ? (async () => {
+          await initialReadHeld.promise;
+          try {
+            await expect(notes.getByRole("status")).toHaveText("Loading notes...");
+            await expect(notes.getByRole("textbox", { name: "Title", exact: true })).toBeDisabled();
+            await expect(
+              notes.getByRole("button", { name: "Add note", exact: true })
+            ).toBeDisabled();
+          } finally {
+            releaseInitialRead.resolve();
+          }
+        })()
+      : Promise.resolve();
+    inspectInitialLoading = false;
     const [content, listed, shell] = await checkedCall(() =>
       Promise.all([
         page.waitForResponse((response) =>
           new URL(response.url()).pathname.startsWith("/~content/")
         ),
         readRuntime("tables.list", published),
-        page.goto(url)
+        page.goto(url),
+        checkLoading
       ])
     );
     assert.equal(shell.status(), 200);
@@ -3454,15 +3546,19 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     );
     await expect(notes.getByRole("heading", { name: "Notes", exact: true })).toBeVisible();
     await expect(notes.locator("#error")).toBeEmpty();
+    await expect(notes.getByRole("status")).toBeEmpty();
+    await expect(notes.getByRole("button", { name: "Add note", exact: true })).toBeEnabled();
     return listed;
   };
-  const addNote = async (title, published) => {
+  const addNote = async (title, published, keyboard = false) => {
     await notes.getByRole("textbox", { name: "Title", exact: true }).fill(title);
     const [row, listed] = await checkedCall(() =>
       Promise.all([
         readRuntime("tables.insert", published),
         readRuntime("tables.list", published),
-        notes.getByRole("button", { name: "Add note", exact: true }).click()
+        keyboard
+          ? notes.getByRole("textbox", { name: "Title", exact: true }).press("Enter")
+          : notes.getByRole("button", { name: "Add note", exact: true }).click()
       ])
     );
     assertDocumentKeys(row, ["id", "createdAt", "updatedAt", "title"]);
@@ -3475,11 +3571,20 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     });
     await expect(notes.locator("#list li")).toHaveText([title]);
     await expect(notes.locator("#error")).toBeEmpty();
+    await expect(notes.getByRole("textbox", { name: "Title", exact: true })).toHaveValue("");
     return row;
   };
 
   console.log("[packed-cli-e2e] tier 1: inserting through the generated app and dev shell");
   assert.deepEqual(await openNotes(dev.url), { rows: [], cursor: null });
+  await notes.getByRole("button", { name: "Add note", exact: true }).click();
+  assert.equal(
+    await notes
+      .getByRole("textbox", { name: "Title", exact: true })
+      .evaluate((input) => input.validity.valueMissing),
+    true
+  );
+  await expect(notes.locator("#list li")).toHaveCount(0);
   const localRow = await addNote("Local-only note");
   const stopped = parseJsonSuccess(await runCli(repoCliPath, ["dev", "stop", "--json"], options), [
     "ok",
@@ -3577,7 +3682,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.deepEqual(hosted, { rows: [], cursor: null }, "local rows must not sync on publish");
   await expect(notes.locator("#list li")).toHaveCount(0);
   console.log("[packed-cli-e2e] tier 1: local data is isolated; inserting a separate hosted note");
-  const hostedRow = await addNote("Hosted note", published);
+  const hostedRow = await addNote("Hosted note", published, true);
   assert.notEqual(hostedRow.id, localRow.id);
   assert.deepEqual(
     await openNotes(published.address, published),
@@ -3637,6 +3742,18 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     readerCli,
     ["add", "shared-table", `${published.patchId}/orders`, "--json"],
     readerOptions
+  );
+  // Existing vanilla pages keep using the framework-free generated client.
+  await checkedCall(() =>
+    Promise.all([
+      rm(path.join(readerDir, "src/main.tsx")),
+      rm(path.join(readerDir, "src/App.tsx")),
+      writeFile(
+        path.join(readerDir, "index.html"),
+        '<!doctype html><html lang="en"><head><meta charset="UTF-8"><title>Shared orders</title></head>' +
+          '<body><ul id="list"></ul><script type="module" src="/src/main.ts"></script></body></html>\n'
+      )
+    ])
   );
   await checkedCall(() =>
     writeFile(

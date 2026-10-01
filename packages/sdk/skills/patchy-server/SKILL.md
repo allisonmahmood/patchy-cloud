@@ -13,16 +13,19 @@ the tier 2 init ticket installs this skill when the runtime can enforce it.
 
 Export handlers from `server/<module>.ts`, one directory level deep. Each export
 must be a `query`, `mutation` or `action`; its name is `<module>.<export>`.
-Keep helpers in another directory. Import builders and bound context types from
-`patchy/_generated/server.js`, and `t` and `HandlerError` from `patchy/server`.
+Keep reusable company code in `helpers/`, outside handler discovery. Import
+builders and bound context types from `patchy/_generated/server.js`, and `t` and
+`HandlerError` from `patchy/server`.
 Each builder takes `{ args, result, errors?, handler }`. `args` is a field map;
 `result` is one descriptor. The handler receives `(ctx, args)`.
 
 The generated builders bind the config's table types. A helper can accept
 `QueryContext`, `MutationContext` or `ActionContext` without repeating generics.
 A type-only import of the server modules gives the page its handler names and
-arguments; renaming a handler breaks callers at compile time. Keep imports of
-server code out of the page's runtime dependency graph.
+arguments; renaming a handler breaks callers at compile time. A helper's runtime
+imports join its caller's dependency graph, so a helper that imports server code
+also leaks it into any page that imports the helper. Keep shared helpers
+browser-safe and use `import type` for server contracts.
 
 Scalar descriptors are `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`,
 `t.timestamp()` and `t.json()`. Compose them with `t.object(fields)`,

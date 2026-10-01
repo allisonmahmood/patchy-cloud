@@ -9,6 +9,7 @@ import type * as Vite from "vite";
 import satisfies from "semver/functions/satisfies.js";
 import { LocalError } from "./CliError.js";
 import toolchain from "./toolchain.json" with { type: "json" };
+import { pageImports } from "./pageImports.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -36,6 +37,7 @@ export async function runToolchain(
   const directories = new Map<string, { name?: string; version?: string } | undefined>();
   const seen = new Set<string>();
   let refusal: LocalError | undefined;
+  let importRefusal: LocalError | undefined;
   const check = (name: CheckedPackage, version: string) => {
     if (satisfies(version, versions[name].accepted)) return;
     const message = `Loaded ${name} ${version} is unsupported; this release accepts ${versions[name].accepted} (tested against ${versions[name].testedAgainst}). Run: ${toolchainUpgrade(versions)}`;
@@ -101,6 +103,13 @@ export async function runToolchain(
       root,
       plugins: [
         buildConfig?.plugins,
+        ...(buildConfig
+          ? [
+              pageImports(root, (error) => {
+                importRefusal = error;
+              })
+            ]
+          : []),
         {
           name: "patchy-toolchain-versions",
           enforce: "pre",
@@ -117,12 +126,12 @@ export async function runToolchain(
       return { warnings: [...warnings] };
     }
     const result = await vite.build(config);
-    return { result, warnings: [...warnings] };
+    return { result, warnings: [...warnings], importRefusal: () => importRefusal };
   } catch (cause) {
     // Refresh owns no builder config and must work while that config is incomplete.
     if (warnOnly) return { warnings: [...warnings] };
     // Config bundlers may wrap a resolution error; retain the CLI's refusal code.
-    throw refusal ?? cause;
+    throw refusal ?? importRefusal ?? cause;
   } finally {
     hooks.deregister();
   }

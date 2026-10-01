@@ -31,7 +31,7 @@ Use distinct names for tables and file stores. Publishing a store definition
 replaces its description; omission and rollback preserve it. Description-only
 changes do not advance the schema revision.
 
-From `src/main.ts`:
+From a module under `src/`:
 
 ```ts
 import { patchy } from "../patchy/_generated/client.js";

@@ -544,6 +544,9 @@ Every package with a `test` script carries its own `vitest.config.ts` that
 re-exports the shared config from `test/`; Vitest does not look up a parent
 directory's config, so a package without one runs its suite with no Postgres
 setup and no fetch guard, silently.
+Repo publish and cold-start PGlite integration scenarios can opt into a 30-second
+test deadline, matching the existing multi-process tests. This bounds the whole
+scenario on CI; it does not change production query or runtime timeouts.
 `pnpm test:packed-cli-e2e` installs the packed CLI offline with an empty npm cache
 and install scripts disabled, then exercises it against its own server and
 headless Chromium. Install the browser first with

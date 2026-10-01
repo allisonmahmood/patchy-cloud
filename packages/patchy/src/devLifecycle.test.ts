@@ -38,6 +38,7 @@ import {
 } from "./devState.js";
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
 import toolchain from "./toolchain.json" with { type: "json" };
+import { sdkCapabilities } from "../../sdk/src/sdkCapabilities.js";
 
 const packageDir = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -240,7 +241,8 @@ const fixture = Effect.gen(function* () {
                       release: RELEASE,
                       manifestVersion: MANIFEST_VERSION,
                       uses: [],
-                      skills: []
+                      skills: [],
+                      capabilities: sdkCapabilities
                     })
                   }
                 ]

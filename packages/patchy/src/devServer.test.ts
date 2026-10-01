@@ -37,6 +37,11 @@ it.live(
       const stateDir = path.join(root, ".patchy", "dev");
       yield* fs.makeDirectory(stateDir, { recursive: true });
       yield* fs.writeFileString(path.join(root, "package.json"), '{"type":"module"}');
+      yield* fs.makeDirectory(path.join(root, "node_modules"));
+      yield* fs.symlink(
+        path.join(process.cwd(), "packages/patchy"),
+        path.join(root, "node_modules/patchy")
+      );
       const document = (title: string) =>
         `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
       yield* fs.writeFileString(path.join(root, "index.html"), document("First local build"));
@@ -153,6 +158,11 @@ it.live(
       const stateDir = path.join(root, ".patchy", "dev");
       yield* fs.makeDirectory(stateDir, { recursive: true });
       yield* fs.writeFileString(path.join(root, "package.json"), '{"type":"module"}');
+      yield* fs.makeDirectory(path.join(root, "node_modules"));
+      yield* fs.symlink(
+        path.join(process.cwd(), "packages/patchy"),
+        path.join(root, "node_modules/patchy")
+      );
       yield* fs.writeFileString(
         path.join(root, "index.html"),
         "<!doctype html><html><head><title>Static patch</title></head><body>Static content</body></html>"

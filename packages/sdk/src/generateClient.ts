@@ -11,6 +11,7 @@ export function generateClient(options: ClientTemplateOptions = {}): string {
     return `import { createServerClient, isHandlerError as guard } from "patchy/client";
 import type { HandlerErrorGuard } from "patchy/client";
 import type { ServerModules } from "./server.js";
+export { isPatchyError } from "patchy/client";
 
 export const patchy = createServerClient<ServerModules>();
 export const isHandlerError: HandlerErrorGuard<ServerModules> = guard;
@@ -20,7 +21,8 @@ export default patchy;
   const imports: string[] = [
     'import type config from "../../patchy.config.js";',
     'import manifest from "./manifest.json";',
-    'import { createClient } from "patchy/client";'
+    'import { createClient } from "patchy/client";',
+    'export { isPatchyError } from "patchy/client";'
   ];
   const factories = (modules: Readonly<Record<string, string>>, prefix: string) => {
     return Object.entries(modules)

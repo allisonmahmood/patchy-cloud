@@ -69,15 +69,16 @@ local repo checks use exit 1 and `kind: "local"`; the same code received from th
 instance is `rejected` (exit 2). Not every local failure has a structured code
 (for example, compiler, bundle-completeness and local I/O errors).
 
-| `code`                  | Meaning and remedy                                                                                                                                                                                                                                                                                                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instance_mismatch`     | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal. |
-| `release_mismatch`      | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                             |
-| `toolchain_unsupported` | Dev or publish loaded Vite or `vite-plugin-singlefile` outside the release's accepted range. The diagnostic names the loaded version, accepted range and tested version, with the exact `pnpm add --save-dev` command. Change the builder-owned dependencies and any shared config's dependency resolution; refresh never writes those keys.         |
-| `stale_generated`       | Generated release metadata or declaration stamps no longer match the config. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                              |
-| `invalid_manifest`      | Config execution or manifest decoding failed. Fix `patchy.config.ts` and its imports/declarations before publishing.                                                                                                                                                                                                                                 |
-| `too_large`             | The HTML bundle exceeds its tier's local cap: 512 KiB at tier 0, 10 MiB at tier 1. Reduce the resources named in the largest-contributor report; size alone is not a tier mismatch.                                                                                                                                                                  |
-| `tier_mismatch`         | The evident capabilities do not fit the declared or supported tier. Remove unsupported server code/tier 2+, or use tier 1 for browser code; at tier 0 correct the reported core static-HTML policy violations.                                                                                                                                       |
+| `code`                  | Meaning and remedy                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instance_mismatch`     | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal.                   |
+| `release_mismatch`      | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                                               |
+| `toolchain_unsupported` | Dev or publish loaded Vite or `vite-plugin-singlefile` outside the release's accepted range. The diagnostic names the loaded version, accepted range and tested version, with the exact `pnpm add --save-dev` command. Change the builder-owned dependencies and any shared config's dependency resolution; refresh never writes those keys.                           |
+| `import_refused`        | The page graph imports outside its SDK entry points. The diagnostic names the package, importer and allowed entries and points to "What the SDK gives you" in `patchy-loop`. Remove the import; anything else, write or copy into your patch as your company's own code. This is a local build contract, not a security boundary or a `package.json` dependency check. |
+| `stale_generated`       | Generated release metadata or declaration stamps no longer match the config. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                                                |
+| `invalid_manifest`      | Config execution or manifest decoding failed. Fix `patchy.config.ts` and its imports/declarations before publishing.                                                                                                                                                                                                                                                   |
+| `too_large`             | The HTML bundle exceeds its tier's local cap: 512 KiB at tier 0, 10 MiB at tier 1. Reduce the resources named in the largest-contributor report; size alone is not a tier mismatch.                                                                                                                                                                                    |
+| `tier_mismatch`         | The evident capabilities do not fit the declared or supported tier. Remove unsupported server code/tier 2+, or use tier 1 for browser code; at tier 0 correct the reported core static-HTML policy violations.                                                                                                                                                         |
 
 Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
@@ -248,12 +249,12 @@ patch inventory and reads, table keys and types, then `add` by canonical id.
 
 ### Patch-repo commands and managed files
 
-| command                                                                                                     | behaviour                                                                                                                                                                                                                | `--json` success                                                                         |
-| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                               |
-| `patchy refresh`                                                                                            | Fetch one release, update/install the pin if needed, re-exec that CLI before config execution, generate and activate the managed set transactionally. Failure leaves the previous set intact.                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, warnings }` |
-| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                             | `{ ok, alias, declaration, generated, skills, warnings }`                                |
-| `patchy remove <alias>`                                                                                     | Remove the declaration and its generated surface; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                               | `{ ok, alias, removed, warnings }`                                                       |
+| command                                                                                                     | behaviour                                                                                                                                                                                                                | `--json` success                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
+| `patchy refresh`                                                                                            | Fetch one release, update/install the pin if needed, re-exec that CLI before config execution, generate and activate the managed set transactionally. Failure leaves the previous set intact.                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                             | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
+| `patchy remove <alias>`                                                                                     | Remove the declaration and its generated output; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                                | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
 
 Agent, JSON and non-terminal `init` calls require `--purpose`; purpose is never
 inferred. A company with no connections gets empty `uses` and core skills. The
@@ -267,6 +268,20 @@ and explains one row or object, its identifying keys, and relevant units.
 Config execution refuses blank descriptions and table/store name collisions
 as `invalid_manifest`, naming both conflicting definitions.
 The tree typechecks without more setup. Nothing identifying the person is committed.
+
+Tier 1 starts with an empty root in `index.html`, `src/main.tsx` and `src/App.tsx`,
+using Preact with compat semantics through `patchy/preact`. TypeScript and Vite
+share that JSX import source, and module preloading is off. `pnpm lint` checks
+hooks, including `useQuery`, and rejects React and direct Preact imports.
+Tier 0 stays static; vanilla tier 1 repos can keep using the generated core client.
+
+`addedCapabilities` contains `{ id, group, name, entrypoints, runs, limits }`
+entries newly present since the last generated capability inventory. Text output
+names each capability, where it runs and its limits. The inventory lives in
+`patchy/_generated/index.json`; generation uses the same release catalogue to
+render "What the SDK gives you" in `patchy-loop`. An older repo without an
+inventory receives the catalogue once; an unchanged refresh returns `[]`.
+Neither capability announcements nor refresh rewrite `src/` or `helpers/`.
 
 `patchy.json` is `{ instance, patch?, description, descriptionSyncedAt? }`.
 `init --purpose` writes its normalized purpose as `description`, with at most
@@ -343,6 +358,22 @@ Refresh reports required upgrades as text notices and JSON `warnings`, but
 never changes these builder-owned keys. It remains usable while the Vite config
 is incomplete. TypeScript and declaration packages are scaffold metadata, not
 additional dev/publish version gates.
+The scaffold's ESLint packages are builder-owned lint defaults, not loaded by
+dev or publish and not additional release compatibility gates. Hook lint
+recognizes `useQuery` by its `use` prefix; it is not an effect callback with a
+dependency array.
+
+Dev and publish check reachable page imports before bundling can remove them.
+The page entries are `patchy/preact`, its `jsx-runtime` and `jsx-dev-runtime`,
+`patchy/csv`, and the relative generated client. `patchy/csv` is reserved for its
+helper ticket and is not shipped yet. Generated clients use `patchy/client`
+internally. Tooling imports in config files and type-only imports are not page
+dependencies. A bare package import fails with `import_refused` even if aliased
+to a local file, or unused after tree shaking.
+The check follows nested CSS imports and runtime module syntax before alias
+rewriting. Relative paths into installed dependencies do not bypass it.
+Vite's injected module-preload helper is tooling, not an authored page import.
+Page imports from `server/` must be type-only.
 
 ### Local patch runtime
 
@@ -441,8 +472,8 @@ bundles survive tooling upgrades. Repo publish executes config only after the
 release check and checks the generated release, manifest version, declaration
 aliases/identities and resolved stamps in `patchy/_generated/index.json`.
 `stale_generated` is local and names refresh. Definitions may change without
-regeneration; publish writes the current manifest before `tsc --noEmit`, the
-Vite single-file build and evident-tier check. Residual files/external resource
+regeneration; publish writes the current manifest before the Vite single-file
+build and import check, `tsc --noEmit`, and evident-tier check. Residual files/external resource
 dependencies, an oversized bundle (512 KiB at tier 0, 10 MiB at tier 1, both
 `too_large` with largest contributors), `server/`, or script at tier 0 fail
 locally before attempt persistence. Compiler/build failures name the stage and

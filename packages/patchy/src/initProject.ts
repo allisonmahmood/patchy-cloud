@@ -22,27 +22,130 @@ export function starterFiles(options: {
   return {
     "patchy.json": json({ instance, description: purpose }),
     "fixtures/.gitkeep": "",
+    "helpers/.gitkeep": "",
     "package.json": json({
       name,
       private: true,
       type: "module",
-      scripts: { typecheck: "tsc --noEmit", build: "vite build" },
+      scripts: {
+        typecheck: "tsc --noEmit",
+        build: "vite build",
+        ...(tier === 1 ? { lint: "eslint ." } : {})
+      },
       devDependencies: {
         patchy: tarball,
         typescript: versions.typescript.accepted,
         vite: versions.vite.accepted,
         "vite-plugin-singlefile": versions["vite-plugin-singlefile"].accepted,
-        "@types/node": versions["@types/node"].accepted
+        "@types/node": versions["@types/node"].accepted,
+        ...(tier === 1
+          ? {
+              eslint: "^10.11.0",
+              "typescript-eslint": "^8.70.1",
+              "eslint-plugin-react-hooks": "^7.1.1"
+            }
+          : {})
       }
     }),
     "patchy.config.ts": `import { defineConfig, table, t } from "patchy/config";\n\nexport default defineConfig({\n  name: ${JSON.stringify(name)},\n  tier: ${tier},\n  tables: { notes: table("One note per id, with a title.", { title: t.text() }) },\n  files: {},\n  uses: {}\n});\n`,
     "index.html":
       tier === 1
-        ? '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title></head><body><h1>Notes</h1><form id="notes"><label>Title <input name="title" required></label><button type="button">Add note</button></form><p id="error" role="alert"></p><ul id="list"></ul><script type="module" src="/src/main.ts"></script></body></html>\n'
+        ? '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n'
         : '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My patch</title></head><body><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></body></html>\n',
-    "src/main.ts": `import { patchy } from "../patchy/_generated/client.js";\n\nconst form = document.querySelector<HTMLFormElement>("#notes")!;\nconst list = document.querySelector<HTMLUListElement>("#list")!;\nconst error = document.querySelector<HTMLParagraphElement>("#error")!;\nasync function render() {\n  const page = await patchy.tables.notes.list({ limit: 100 });\n  list.replaceChildren(...page.rows.map((note) => {\n    const item = document.createElement("li");\n    item.textContent = note.title;\n    return item;\n  }));\n}\nfunction save() {\n  if (!form.reportValidity()) return;\n  const title = String(new FormData(form).get("title") ?? "").trim();\n  if (!title) return;\n  void (async () => {\n    await patchy.tables.notes.insert({ title });\n    form.reset();\n    await render();\n  })().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n}\n// The sandbox blocks native form submission; save through the broker instead.\nform.querySelector("button")!.addEventListener("click", save);\nform.addEventListener("keydown", (event) => {\n  if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {\n    event.preventDefault();\n    save();\n  }\n});\nvoid render().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n`,
+    ...(tier === 1
+      ? {
+          "src/main.tsx": `import { render } from "patchy/preact";
+import { App } from "./App.js";
+
+render(<App />, document.getElementById("root")!);
+`,
+          "src/App.tsx": `import { useEffect, useState } from "patchy/preact";
+import { patchy } from "../patchy/_generated/client.js";
+
+export function App() {
+  const [notes, setNotes] = useState<readonly { id: string; title: string }[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void patchy.tables.notes.list({ limit: 100 })
+      .then((page) => { if (active) setNotes(page.rows); })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  function save(form: HTMLFormElement) {
+    if (loading || saving || !form.reportValidity()) return;
+    const title = String(new FormData(form).get("title") ?? "").trim();
+    if (!title) return;
+    setSaving(true);
+    setError("");
+    void (async () => {
+      await patchy.tables.notes.insert({ title });
+      form.reset();
+      const page = await patchy.tables.notes.list({ limit: 100 });
+      setNotes(page.rows);
+    })()
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSaving(false));
+  }
+
+  // The sandbox blocks native form submission; save through the broker instead.
+  return (
+    <>
+      <h1>Notes</h1>
+      <form id="notes" onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {
+          event.preventDefault();
+          save(event.currentTarget);
+        }
+      }}>
+        <label>Title <input name="title" required disabled={loading || saving} /></label>
+        <button type="button" disabled={loading || saving} onClick={(event) => save(event.currentTarget.form!)}>Add note</button>
+      </form>
+      <p role="status">{loading ? "Loading notes..." : saving ? "Saving note..." : ""}</p>
+      <p id="error" role="alert">{error}</p>
+      <ul id="list">{notes.map((note) => <li key={note.id}>{note.title}</li>)}</ul>
+    </>
+  );
+}
+`,
+          "eslint.config.js": `import tseslint from "typescript-eslint";
+import reactHooks from "eslint-plugin-react-hooks";
+
+export default [
+  { ignores: ["patchy/_generated/**", "dist/**", "node_modules/**"] },
+  {
+    files: ["src/**/*.{js,jsx,ts,tsx}", "helpers/**/*.{js,jsx,ts,tsx}", "server/**/*.{js,jsx,ts,tsx}"],
+    languageOptions: { parser: tseslint.parser },
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      // useQuery is recognized by its use-prefix; it has no effect dependency array.
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "error",
+      "no-restricted-imports": ["error", {
+        patterns: [{
+          regex: "^(?:react|react-dom|preact)(?:/|$)",
+          message: "Import Preact with compat semantics from patchy/preact."
+        }]
+      }]
+    }
+  }
+];
+`
+        }
+      : {
+          "src/main.ts": `import { patchy } from "../patchy/_generated/client.js";\n\nconst form = document.querySelector<HTMLFormElement>("#notes")!;\nconst list = document.querySelector<HTMLUListElement>("#list")!;\nconst error = document.querySelector<HTMLParagraphElement>("#error")!;\nasync function render() {\n  const page = await patchy.tables.notes.list({ limit: 100 });\n  list.replaceChildren(...page.rows.map((note) => {\n    const item = document.createElement("li");\n    item.textContent = note.title;\n    return item;\n  }));\n}\nfunction save() {\n  if (!form.reportValidity()) return;\n  const title = String(new FormData(form).get("title") ?? "").trim();\n  if (!title) return;\n  void (async () => {\n    await patchy.tables.notes.insert({ title });\n    form.reset();\n    await render();\n  })().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n}\n// The sandbox blocks native form submission; save through the broker instead.\nform.querySelector("button")!.addEventListener("click", save);\nform.addEventListener("keydown", (event) => {\n  if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {\n    event.preventDefault();\n    save();\n  }\n});\nvoid render().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n`
+        }),
     "vite.config.ts":
-      'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({ plugins: [viteSingleFile()], server: { host: "127.0.0.1" } });\n',
+      tier === 1
+        ? 'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({\n  plugins: [viteSingleFile()],\n  oxc: { jsx: { importSource: "patchy/preact" } },\n  build: { modulePreload: false },\n  server: { host: "127.0.0.1" }\n});\n'
+        : 'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({ plugins: [viteSingleFile()], server: { host: "127.0.0.1" } });\n',
     "tsconfig.json": json({
       compilerOptions: {
         target: "ES2022",
@@ -54,11 +157,25 @@ export function starterFiles(options: {
         resolveJsonModule: true,
         esModuleInterop: true,
         skipLibCheck: true,
-        types: ["node", "vite/client"]
+        types: ["node", "vite/client"],
+        ...(tier === 1
+          ? {
+              jsx: "react-jsx",
+              jsxImportSource: "patchy/preact",
+              isolatedModules: true,
+              verbatimModuleSyntax: true
+            }
+          : {})
       },
-      include: ["src", "patchy", "patchy.config.ts", "vite.config.ts"]
+      include: [
+        "src",
+        ...(tier === 1 ? ["helpers"] : []),
+        "patchy",
+        "patchy.config.ts",
+        "vite.config.ts"
+      ]
     }),
-    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- \`src/main.ts\`, \`index.html\`: the browser UI; \`vite.config.ts\` builds one HTML file.\n- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm patchy refresh\` after editing declarations. Deleting \`.patchy/\` destroys local rows and files.\n`,
+    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- \`src/\`, \`index.html\`: the page UI. Browser code runs only at tier 1 or above; \`vite.config.ts\` builds one HTML file.\n- \`server/\`: hosted handlers, only when tier 2 is supported and declared. Keep server implementation out of the page; page imports from here must be type-only.\n- \`helpers/\`: company-owned code shared by the page or server. Keep each helper's imports compatible with where it runs.\n- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- On tiers 1 and 2, read \`.agents/skills/patchy-preact/SKILL.md\` before building a Preact page.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm typecheck\` and, when \`package.json\` declares it, \`pnpm lint\` before publishing. Run \`pnpm patchy refresh\` after editing declarations. Refresh never edits \`src/\` or \`helpers/\`. Deleting \`.patchy/\` destroys local rows and files.\n`,
     "CLAUDE.md": "@AGENTS.md\n",
     ".gitignore": ".patchy/\nnode_modules/\ndist/\n"
   };

@@ -43,16 +43,14 @@ Keyed cursors bind connection, relation, snapshot revision, filters and order; r
 `patchy.connections.sales.query(sql, params, shape)` executes one read-only statement. Bind values in `params`, never interpolate user input into SQL. State columns explicitly rather than `SELECT *`:
 
 ```ts
-import { t } from "patchy/config";
-
 const result = await patchy.connections.sales.query(
   'SELECT "name" FROM "public"."customers" WHERE "id" = $1',
   [1],
-  { name: t.text() }
+  { name: { kind: "text" } }
 );
 ```
 
-The result is `{ ok: true, rows }`. Shape kinds use the column language; `.optional()` admits null, but `.default()` and `t.ref()` are refused. Missing or duplicate result names and null in a non-optional column fail; extra result columns are dropped. `isPatchyError(error, "shape_mismatch")` from `patchy/client` narrows the shared error's `code`, `message` and `details`. `invalid_query` may include SQLSTATE and position; fix the query instead of hiding the error.
+The result is `{ ok: true, rows }`. Page shapes use literal descriptors; `{ kind: "text", optional: true }` admits null. Defaults and refs are refused. Keep `patchy/config` imports in the config, outside the page graph. Missing or duplicate result names and null in a non-optional column fail; extra result columns are dropped. Import `isPatchyError` from the relative generated `client.js`; `isPatchyError(error, "shape_mismatch")` narrows the shared error's `code`, `message` and `details`. `invalid_query` may include SQLSTATE and position; fix the query instead of hiding the error.
 
 Type mapping matters: int2/int4 are numbers; int8 and numeric are strings, not JavaScript numbers. Floats must be finite. Timestamptz is UTC ISO, date is `YYYY-MM-DD`, timestamp without zone has no timezone, JSON and arrays are `unknown`; int8 and numeric array elements are strings too. Domains use their resolved type. Use the generated context for exclusions rather than guessing conversions.
 
