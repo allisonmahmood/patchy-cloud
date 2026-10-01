@@ -75,8 +75,10 @@ The tier 2 handler contract is available through `patchy/server`: typed queries,
 mutations and actions, config-bound helper contexts, business errors and
 serializable descriptors. Generation derives the server-only client's signatures
 from type-only server imports. `useQuery` shares local subscription state and
-retains its last value through errors. These additions do not enable hosted
-execution or tier 2 publish, which remain refused until the runtime build lands.
+retains its last value through errors. The pinned workerd engine, credential-free
+SDK guest and isolated descriptor inspection are implemented. Hosted admission,
+the supervisor and the local tier 2 loop are not connected; tier 2 publish remains
+refused.
 
 ### Building a patch
 
@@ -355,15 +357,38 @@ Tier 1 runs only while the viewer has the patch open. It cannot run background w
 
 ### Tier 2 — hosted
 
-This tier and its patch identity are proposed, not supported by today's runtime.
+Tier 2 is decided in [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md),
+but is not admitted by today's hosted runtime. Its engine and inspection process
+are built; the host and fleet still have to supply admission, settlement and
+termination.
+
+The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
+never on yours. It holds no login and no credential and has no path to the
+internet: everything it does goes through Patchy, as you, while you have the
+patch open. It reaches outside systems only through your company's integrations,
+and every write is logged for your company's admins.**
 
 The patch also has server-side code, and Patchy runs it **while a viewer has the patch open**: it starts when someone asks, serves requests and live connections to every open client (two people with the same patch open can be kept in sync), and stops when nobody is looking. It costs nothing when nobody has it open. The line to tier 3 is the question a builder can answer: _does this need to happen when nobody has it open?_ If yes, it is not tier 2.
 
 The server side is handler-shaped code Patchy runs, with a fixed layout `init` lays down — not an arbitrary app listening on a port. Bringing a whole app is a second runtime with a second set of limits, and is not promised.
 
-Server-side code has two identities available. Company data and integrations are reached **as the viewer** by default, exactly as at tier 1. The patch's own primitives are reached as the **patch identity**: a principal of its own, accountable to the patch's owner (reassignable, so a patch outlives its owner's account), starting with nothing but the patch's own primitives and gaining a shared integration only when a company admin grants it. Neither identity ever sees a raw credential; credentials stay behind Patchy at every tier. As at tier 1, nothing leaves except through Patchy.
+When hosted admission lands, server-side code will have two identities available.
+Company data and integrations will be reached **as the initiating viewer**. The
+patch's own primitives will be reached as the **patch identity**, accountable to
+its owner. The host will choose and reauthorize the principal on each callback;
+the guest will not choose credentials or identity. No login, database or
+object-store credential will enter the execution service. Nothing will leave
+guest code except through Patchy.
 
 When a patch asks for data the viewer may not reach, the viewer is told plainly that this is their access, not the patch being broken.
+
+The server runtime supports the release-tested `Intl` formatters (including exact
+decimal-string number formatting), Web Crypto, `TextEncoder`, `TextDecoder`,
+`structuredClone`, `URL`, `URLSearchParams`, `atob`, `btoa` and `BigInt`.
+Bundles are single closed modules. Outbound fetch, socket and Node module access,
+Node globals, `eval` and `new Function` are refused. Other workerd APIs are
+incidental, not a supported contract; the exact list and engine pin live in
+ADR-0012.
 
 ### Declaring and changing a tier
 

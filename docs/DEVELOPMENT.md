@@ -22,6 +22,26 @@ Use Node 22.22.0+ and the pnpm version in `package.json`, with dependencies inst
 by `pnpm install`. Embedded Postgres is included; no separately managed database
 is needed for this loop.
 
+### The execution engine
+
+`pnpm install` installs exact `workerd` `1.20260924.1` with its install script
+disabled. No global workerd installation is used: `packages/execution` resolves
+and verifies the platform package, then launches its binary directly so killing
+the child cannot leave a runtime behind a Node launcher.
+
+`pnpm exec vitest run packages/execution/src` exercises the loader Worker against
+stub callback hosts and checks the server runtime promise on the actual binary.
+Each harness scope owns its loopback port, process and temporary configuration.
+Inspection grants no callback service or company binding and kills and reaps
+non-terminating initializers under a load deadline.
+
+The engine and inspection are available independently. The supervised local
+executor and tier 2 `patchy dev` integration are separate tickets; the cloud dev
+runner and migrated test template do not start workerd. Tier 2 publish is still
+refused. These tests prove execution compatibility, not Fargate containment.
+
+### Starting the local instance
+
 `pnpm dev` runs a complete Patchy Cloud for the worktree you are in: embedded
 Postgres, migrations, a seeded dev company with a user-owned machine token, the
 packed `patchy` release, and the server. The package build runs before startup so

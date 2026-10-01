@@ -10,10 +10,6 @@ export function newInternalId(prefix = "id"): string {
   return `${prefix}_${randomId(24)}`;
 }
 
-export function isPatchId(value: string): boolean {
-  return /^[a-z0-9]{12}$/.test(value);
-}
-
 function randomId(length: number): string {
   let value = "";
   for (let index = 0; index < length; index += 1) {
