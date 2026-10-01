@@ -1,3 +1,188 @@
+/** Shared component subset for first-party pages and the served document's state notices. */
+export const shellStyles = `
+    :root {
+      --paper: #fffdf4;
+      --paper-blue: #eaf5ff;
+      --paper-green: #eff9e8;
+      --paper-amber: #fff7e4;
+      --white: #fffefa;
+      --ink: #12110f;
+      --ink-soft: #36332d;
+      --muted: #69645a;
+      --line: rgba(18, 17, 15, .14);
+      --line-strong: rgba(18, 17, 15, .30);
+      --blue: #1263e6;
+      --blue-dark: #093b92;
+      --green: #64c83f;
+      --green-ink: #2f6a17;
+      --yellow: #ffbf35;
+      --amber-ink: #8a5a00;
+      --danger: #963c22;
+      --field-radius: 6px;
+      --shadow-hard: 4px 4px 0 var(--ink);
+      --shadow-soft: 0 18px 50px rgba(18, 17, 15, .08);
+      --radius: 8px;
+      --radius-pill: 999px;
+      --font-sans: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    :focus-visible {
+      outline: 3px solid var(--blue);
+      outline-offset: 3px;
+      border-radius: 6px;
+    }
+    .glyph {
+      position: relative;
+      width: 30px;
+      height: 30px;
+      flex: none;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background: var(--green);
+      box-shadow: 3px 3px 0 var(--ink);
+      transform: rotate(-5deg);
+    }
+
+    .glyph::after {
+      content: "";
+      position: absolute;
+      top: 6px;
+      right: 5px;
+      width: 10px;
+      height: 10px;
+      border-top: 2px solid var(--ink);
+      border-right: 2px solid var(--ink);
+    }
+    .note {
+      margin: 1.25rem 0;
+      padding: 14px 16px 14px 18px;
+      border: 1.5px solid var(--line-strong);
+      border-left-width: 6px;
+      border-radius: var(--radius);
+      background: var(--white);
+    }
+
+    .note-title {
+      display: block;
+      margin-bottom: .25rem;
+      color: var(--ink);
+      font-weight: 800;
+    }
+
+    .note-warn {
+      border-left-color: var(--yellow);
+      background: var(--paper-amber);
+    }
+
+    .note-refused { border-left-color: var(--danger); background: var(--paper-amber); }
+    .note-ok { border-left-color: var(--green-ink); background: var(--paper-green); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 8px 14px;
+      border: 2px solid var(--ink);
+      border-radius: var(--radius);
+      background: var(--white);
+      color: var(--ink);
+      font: inherit;
+      font-size: .9rem;
+      font-weight: 750;
+      line-height: 1.3;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .btn-primary { background: var(--blue); color: var(--white); }
+    .btn-quiet { border-color: transparent; background: transparent; text-decoration: underline; }
+    .btn-danger { background: var(--paper-amber); color: var(--danger); }
+    .btn:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--ink); }
+    .btn:disabled { opacity: .55; cursor: not-allowed; }
+    /* glyph-sm: the Patchy glyph at a floating element's title size, so the viewer knows Patchy is speaking. Use with glyph. */
+    .glyph-sm { width: 18px; height: 18px; border-radius: 5px; box-shadow: 2px 2px 0 var(--ink); }
+    .glyph-sm::after { top: 3px; right: 3px; width: 5px; height: 5px; }
+    /* note-float: a note floating over the served frame; the ink border and hard shadow mark it first-party. */
+    .note-float {
+      margin: 0;
+      padding: 12px 14px;
+      border-width: 2px 2px 2px 6px;
+      border-top-color: var(--ink);
+      border-right-color: var(--ink);
+      border-bottom-color: var(--ink);
+      box-shadow: var(--shadow-hard);
+      font-size: .9rem;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .note-float .note-title { display: flex; align-items: center; gap: 8px; }
+    .note-float p { margin: 0; }
+    .note-float p + p { margin-top: 6px; }
+    /* note-info: Patchy offers something, such as a new version. */
+    .note-info { border-left-color: var(--blue); background: var(--paper-blue); }
+    /* status-chip: one line over the frame. Passive (reconnecting) it has no action; a folded note keeps one action and its paper. */
+    .status-chip {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 8px;
+      max-width: 100%;
+      min-height: 36px;
+      padding: 5px 14px 5px 8px;
+      border: 2px solid var(--ink);
+      border-radius: var(--radius-pill);
+      background: var(--white);
+      box-shadow: var(--shadow-hard);
+      color: var(--ink);
+      font-size: .85rem;
+      font-weight: 750;
+      line-height: 1.2;
+    }
+    .status-chip-detail { color: var(--muted); font-weight: 500; }
+    .status-chip:has(.btn) { padding: 3px 3px 3px 10px; border-radius: var(--radius); }
+    .status-chip .btn { margin-left: 6px; }
+    .status-chip-warn { background: var(--paper-amber); }
+    .status-chip-info { background: var(--paper-blue); }
+    /* note-collapse: the quiet Hide that folds a note-float into a status-chip without dismissing it. Negative margins keep the
+       44px target without growing the row; in a note-inline bar it takes the top-right cell, level with the title. */
+    .note-float .note-collapse { flex: none; margin: -12px -10px -12px auto; padding-inline: 10px; white-space: nowrap; }
+    .note-inline > .note-collapse { grid-area: 1 / -2; align-self: start; }
+    /* shell-bottom: bottom-centre stack for the served page's state. It grows upward, so the bar at the edge stays put. */
+    .shell-bottom {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      left: 16px;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+      color: var(--ink-soft);
+      font-family: var(--font-sans);
+    }
+    .shell-bottom, .shell-bottom * { box-sizing: border-box; }
+    .shell-bottom > * { pointer-events: auto; }
+    .shell-bottom [hidden] { display: none; }
+    /* note-inline: a note-float laid out as one row (text, actions, then any Hide) for the bottom-centre bar. */
+    .note-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; max-width: 620px; }
+    .note-inline:has(> .note-collapse) { grid-template-columns: minmax(0, 1fr) auto auto; }
+    .note-inline .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+    /* Under 480px the bar becomes a full-width bottom sheet with its actions on a second row; chips stay centred pills above it. */
+    @media (max-width: 480px) {
+      .note-inline { grid-template-columns: minmax(0, 1fr); }
+      .note-inline:has(> .note-collapse) { grid-template-columns: minmax(0, 1fr) auto; }
+      .note-inline .actions { grid-column: 1 / -1; }
+      .shell-bottom > .note-float {
+        align-self: stretch;
+        max-width: none;
+        margin: 0 -16px -16px;
+        border-radius: var(--radius) var(--radius) 0 0;
+        box-shadow: none;
+      }
+    }
+`;
+
 export interface AppShell {
   readonly viewer: {
     readonly user: { readonly name: string };
@@ -28,32 +213,7 @@ export function htmlPage(options: {
   <title>${escapeHtml(options.title)}</title>
   ${options.head ?? ""}
   <style>
-    :root {
-      --paper: #fffdf4;
-      --paper-blue: #eaf5ff;
-      --paper-green: #eff9e8;
-      --paper-amber: #fff7e4;
-      --white: #fffefa;
-      --ink: #12110f;
-      --ink-soft: #36332d;
-      --muted: #69645a;
-      --line: rgba(18, 17, 15, .14);
-      --line-strong: rgba(18, 17, 15, .30);
-      --blue: #1263e6;
-      --blue-dark: #093b92;
-      --green: #64c83f;
-      --green-ink: #2f6a17;
-      --yellow: #ffbf35;
-      --amber-ink: #8a5a00;
-      --danger: #963c22;
-      --field-radius: 6px;
-      --shadow-hard: 4px 4px 0 var(--ink);
-      --shadow-soft: 0 18px 50px rgba(18, 17, 15, .08);
-      --radius: 8px;
-      --radius-pill: 999px;
-      --font-sans: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
-      --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
-    }
+    ${shellStyles}
 
     * {
       box-sizing: border-box;
@@ -96,11 +256,6 @@ export function htmlPage(options: {
       color: var(--ink);
     }
 
-    :focus-visible {
-      outline: 3px solid var(--blue);
-      outline-offset: 3px;
-      border-radius: 6px;
-    }
 
     .wrap {
       width: min(980px, calc(100% - 40px));
@@ -135,28 +290,6 @@ export function htmlPage(options: {
       font-weight: 900;
     }
 
-    .glyph {
-      position: relative;
-      width: 30px;
-      height: 30px;
-      flex: none;
-      border: 2px solid var(--ink);
-      border-radius: 8px;
-      background: var(--green);
-      box-shadow: 3px 3px 0 var(--ink);
-      transform: rotate(-5deg);
-    }
-
-    .glyph::after {
-      content: "";
-      position: absolute;
-      top: 6px;
-      right: 5px;
-      width: 10px;
-      height: 10px;
-      border-top: 2px solid var(--ink);
-      border-right: 2px solid var(--ink);
-    }
 
     .kicker,
     .pill {
@@ -346,29 +479,6 @@ export function htmlPage(options: {
       transform: rotate(-3deg);
     }
 
-    .note {
-      margin: 1.25rem 0;
-      padding: 14px 16px 14px 18px;
-      border: 1.5px solid var(--line-strong);
-      border-left-width: 6px;
-      border-radius: var(--radius);
-      background: var(--white);
-    }
-
-    .note-title {
-      display: block;
-      margin-bottom: .25rem;
-      color: var(--ink);
-      font-weight: 800;
-    }
-
-    .note-warn {
-      border-left-color: var(--yellow);
-      background: var(--paper-amber);
-    }
-
-    .note-refused { border-left-color: var(--danger); background: var(--paper-amber); }
-    .note-ok { border-left-color: var(--green-ink); background: var(--paper-green); }
 
     .foot {
       color: var(--muted);
@@ -416,28 +526,6 @@ export function htmlPage(options: {
     .field-choice, .confirmation-acknowledgement { display: flex; align-items: baseline; gap: 10px; min-height: 44px; padding: 8px 0; cursor: pointer; }
     .field-checkbox, .field-radio { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--blue); cursor: pointer; }
     .field:disabled, .field-checkbox:disabled, .field-radio:disabled { opacity: .55; cursor: not-allowed; }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 44px;
-      padding: 8px 14px;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius);
-      background: var(--white);
-      color: var(--ink);
-      font: inherit;
-      font-size: .9rem;
-      font-weight: 750;
-      line-height: 1.3;
-      text-decoration: none;
-      cursor: pointer;
-    }
-    .btn-primary { background: var(--blue); color: var(--white); }
-    .btn-quiet { border-color: transparent; background: transparent; text-decoration: underline; }
-    .btn-danger { background: var(--paper-amber); color: var(--danger); }
-    .btn:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--ink); }
-    .btn:disabled { opacity: .55; cursor: not-allowed; }
     .auth-email { font-weight: 750; overflow-wrap: anywhere; }
     .auth-signout { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-strong); }
     .section { margin-top: 32px; }

@@ -48,6 +48,7 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   let bytes = new Uint8Array([1]);
   const transport: Transport = {
     route: unusedRoute,
+    serverTime: () => undefined,
     call: async (op, _args, input) => {
       calls.push(op);
       if (op === "files.get") return { bytes, contentType: "image/png" };
@@ -87,6 +88,7 @@ it.each(["put", "delete", "close"] as const)(
     let first = true;
     const transport: Transport = {
       route: unusedRoute,
+      serverTime: () => undefined,
       call: async (op) => {
         if (op !== "files.get") return null;
         if (first) {
@@ -139,7 +141,7 @@ it("shares the supplied transport with generated aliases and exposes shared read
     })
   };
   const client = createClient<typeof config, typeof shared, typeof connections>(manifest, {
-    transport: { call, route: unusedRoute, close() {} },
+    transport: { call, route: unusedRoute, serverTime: () => undefined, close() {} },
     shared,
     connections
   });

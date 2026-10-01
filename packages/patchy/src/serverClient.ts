@@ -11,7 +11,7 @@ export interface ServerOnlyClient<Modules> {
   close(): void;
 }
 
-/** The stream ticket replaces this refusal with its document-bound subscription driver. */
+/** Lifecycle streaming does not yet admit server subscriptions. */
 const unavailableSubscriptions: QueryDriver = {
   subscribe(_query, onFrame) {
     onFrame({

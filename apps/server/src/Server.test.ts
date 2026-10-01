@@ -5,10 +5,13 @@
  */
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import { PublishCreated, PublishUpdated, WIRE_VERSION } from "@patchy/api";
+import { PublishCreated, PublishUpdated, RuntimeStreamFrame, WIRE_VERSION } from "@patchy/api";
+import { RuntimeStream } from "@patchy/runtime";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -602,6 +605,7 @@ it.layer(
 
 const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
 const decodeUpdated = Schema.decodeUnknownSync(PublishUpdated);
+const decodeStreamFrame = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
 it.layer(server())("runtime over the real server and Patches resolver", (it) => {
   it.effect("binds exact versions and rechecks sharing without passing the bearer API guard", () =>
     Effect.gen(function* () {
@@ -693,5 +697,95 @@ it.layer(server())("runtime over the real server and Patches resolver", (it) => 
       assert.strictEqual(oversized.status, 413);
       assert.include(yield* oversized.json, { code: "too_large" });
     })
+  );
+
+  it.effect("re-admits a shared company document and ends its SSE on retirement", () =>
+    Effect.gen(function* () {
+      const created = decodeCreated(
+        yield* (yield* publish(DEV_SEED.token, { html: html("Socket stream lifecycle") })).json
+      );
+      const query = new URLSearchParams({
+        patchId: created.patchId,
+        versionId: created.versionId,
+        documentId: "socket_stream_document"
+      });
+      const streamRequest = HttpClientRequest.get(`/api/runtime/stream?${query}`).pipe(
+        HttpClientRequest.setHeaders({
+          "x-patchy-wire": String(WIRE_VERSION),
+          "x-patchy-principal": JSON.stringify({ userId: DEV_SEED.userId }),
+          "sec-fetch-site": "same-origin"
+        })
+      );
+      const refused = yield* send(streamRequest);
+      assert.strictEqual(refused.status, 401);
+      assert.include(yield* refused.json, { code: "session_expired" });
+      const response = yield* send(
+        streamRequest.pipe(HttpClientRequest.setHeader("cookie", signedInCookies()))
+      );
+      assert.strictEqual(response.status, 200);
+      assert.include(response.headers["content-type"], "text/event-stream");
+      assert.include(response.headers["cache-control"], "no-store");
+      const frames = yield* Queue.unbounded<RuntimeStreamFrame>();
+      const receiving = yield* response.stream.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.filter((line) => line.startsWith("data: ")),
+        Stream.map((line) => decodeStreamFrame(line.slice(6))),
+        Stream.runForEach((frame) => Queue.offer(frames, frame)),
+        Effect.forkScoped
+      );
+      const hello = yield* Queue.take(frames);
+      assert.strictEqual(hello.type, "hello");
+      if (hello.type !== "hello") return;
+      assert.deepStrictEqual(yield* Queue.take(frames), {
+        type: "served",
+        versionId: created.versionId,
+        tier: 0
+      });
+      const shared = yield* send(
+        HttpClientRequest.post(`/api/patches/${created.patchId}/share`).pipe(
+          HttpClientRequest.bearerToken(DEV_SEED.token),
+          HttpClientRequest.bodyJsonUnsafe({ scope: "public" })
+        )
+      );
+      assert.strictEqual(shared.status, 200);
+      const resumed = yield* send(
+        streamRequest.pipe(
+          HttpClientRequest.setHeaders({
+            cookie: signedInCookies(),
+            "x-patchy-generation": hello.generation
+          })
+        )
+      );
+      assert.strictEqual(resumed.status, 200);
+      assert.deepStrictEqual(yield* Queue.take(frames), { type: "closed", reason: "replaced" });
+      yield* Fiber.join(receiving);
+      const resumedFrames = yield* Queue.unbounded<RuntimeStreamFrame>();
+      const resumedReceiving = yield* resumed.stream.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.filter((line) => line.startsWith("data: ")),
+        Stream.map((line) => decodeStreamFrame(line.slice(6))),
+        Stream.runForEach((frame) => Queue.offer(resumedFrames, frame)),
+        Effect.forkScoped
+      );
+      assert.strictEqual((yield* Queue.take(resumedFrames)).type, "hello");
+      assert.deepStrictEqual(yield* Queue.take(resumedFrames), {
+        type: "served",
+        versionId: created.versionId,
+        tier: 0
+      });
+      const retired = yield* send(
+        HttpClientRequest.post(`/api/patches/${created.patchId}/retire`).pipe(
+          HttpClientRequest.bearerToken(DEV_SEED.token),
+          HttpClientRequest.bodyJsonUnsafe({})
+        )
+      );
+      assert.strictEqual(retired.status, 200);
+      assert.deepStrictEqual(yield* Queue.take(resumedFrames), { type: "access_denied" });
+      yield* Fiber.join(resumedReceiving);
+      const streams = yield* RuntimeStream.RuntimeStream;
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId, created.patchId), 0);
+    }).pipe(Effect.scoped)
   );
 });

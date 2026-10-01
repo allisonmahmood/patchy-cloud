@@ -128,6 +128,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
         if (route.split("/").some((segment) => segment.startsWith("~"))) return absent;
         return HttpServerResponse.text(
           renderPatchWrapper({
+            scope: "local",
             patch: { id: version.patchId, title: prepared.manifest.name ?? "Local patch" },
             version: {
               id: version.versionId,

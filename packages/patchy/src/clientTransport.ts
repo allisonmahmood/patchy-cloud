@@ -23,6 +23,8 @@ export interface Route {
 export interface Transport {
   readonly call: Call;
   readonly route: Route;
+  /** Current server-clock estimate from hello, unavailable before the document stream opens. */
+  serverTime(): number | undefined;
   close(): void;
 }
 export interface Me {
@@ -54,6 +56,7 @@ export function createPortTransport(
   let sequence = 0;
   let closed = false;
   let path = options.route ?? "/";
+  let clock: { readonly serverTime: number; readonly receivedAt: number } | undefined;
   const listeners = new Set<(path: string) => void>();
   const notify = (listener: (path: string) => void, value: string) => {
     queueMicrotask(() => {
@@ -92,6 +95,19 @@ export function createPortTransport(
         typeof data.path === "string"
       )
         updateRoute(data.path);
+      else if (
+        value.event === "stream" &&
+        data !== null &&
+        typeof data === "object" &&
+        "type" in data &&
+        data.type === "hello" &&
+        "generation" in data &&
+        typeof data.generation === "string" &&
+        "serverTime" in data &&
+        typeof data.serverTime === "number" &&
+        Number.isFinite(data.serverTime)
+      )
+        clock = { serverTime: data.serverTime, receivedAt: performance.now() };
       return;
     }
     if (typeof value.id !== "string") return;
@@ -181,6 +197,10 @@ export function createPortTransport(
   };
   return {
     call,
+    serverTime: () =>
+      closed || clock === undefined
+        ? undefined
+        : clock.serverTime + performance.now() - clock.receivedAt,
     route: {
       get: () => (closed ? Promise.reject(lost()) : Promise.resolve(path)),
       set: (path) => call("route.set", { path }) as Promise<null>,
@@ -267,6 +287,7 @@ export function createPostMessageTransport(
       if (closed) throw lost();
       return (await ready).call(op, args, bytes);
     },
+    serverTime: () => (closed ? undefined : transport?.serverTime()),
     route: {
       get: async () => {
         if (closed) throw lost();
@@ -383,6 +404,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
     }
   };
   return {
+    serverTime: () => undefined,
     call: async (op, args, bytes) => {
       if (op === "route.set" || op === "download") throw browserOnly();
       identity ??= dispatch("me", {}, null) as Promise<Me | null>;

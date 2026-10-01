@@ -4,22 +4,21 @@ import { startInstance } from "./instance.js";
 import type { Instance, Published } from "./instance.js";
 import type { FixtureWindow } from "./fixture-client.js";
 
-export const test = base.extend<object, { instance: Instance }>({
+export const test = base.extend<{ instance: Instance }, { tls: boolean }>({
+  tls: [false, { option: true, scope: "worker" }],
   instance: [
-    // Playwright requires destructuring even when a fixture has no dependencies.
-    // eslint-disable-next-line no-empty-pattern
-    async ({}, use) => {
-      const instance = await startInstance();
+    async ({ tls }, use) => {
+      const instance = await startInstance({ tls });
       try {
         await use(instance);
       } finally {
         await instance.close();
       }
     },
-    { scope: "worker", timeout: 120_000 }
+    { timeout: 120_000 }
   ]
 });
-/** Every context a test drives: offline even with real developer credentials in the invoking shell. Clerk JS is not faked. */
+/** Every context stays offline, even with developer credentials in the invoking shell. */
 export async function prepare(context: BrowserContext, instance: Instance) {
   await context.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -27,6 +26,26 @@ export async function prepare(context: BrowserContext, instance: Instance) {
     else await route.abort("blockedbyclient");
   });
   await instance.session(context);
+}
+/** Replace only Clerk's SDK boundary. The served session script and signed-cookie verification stay real. */
+export async function installSessionRefreshBoundary(
+  context: BrowserContext,
+  refresh: (options: { skipCache: boolean }) => Promise<string | null>
+) {
+  await context.exposeFunction("__tier1RefreshSession", refresh);
+  await context.addInitScript(() => {
+    const host = window as unknown as {
+      __tier1RefreshSession(options: { skipCache: boolean }): Promise<string | null>;
+      Clerk: {
+        load(): Promise<void>;
+        session: { getToken(options: { skipCache: boolean }): Promise<string | null> };
+      };
+    };
+    host.Clerk = {
+      load: () => Promise.resolve(),
+      session: { getToken: (options) => host.__tier1RefreshSession(options) }
+    };
+  });
 }
 test.beforeEach(({ context, instance }) => prepare(context, instance));
 export async function open(page: Page, patch: Published, suffix = ""): Promise<Frame> {

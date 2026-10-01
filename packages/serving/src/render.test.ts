@@ -214,6 +214,7 @@ describe("patch pages", () => {
     const html = renderPatchWrapper({
       patch,
       version,
+      scope: "public",
       html: '<p title="a&b">hi</p><script>alert(1)</script>'
     });
 
@@ -236,6 +237,7 @@ describe("patch pages", () => {
     const html = renderPatchWrapper({
       patch: { ...patch, title: "<b>Company</b>" },
       version,
+      scope: "company",
       html: '<p title="a&b">Private</p><script>alert(1)</script>',
       head: sessionScripts({
         frontendApiHost: "clerk.example.test",
@@ -259,6 +261,7 @@ describe("patch pages", () => {
     const html = renderPatchWrapper({
       patch: { ...patch, title: "<b>Q3</b> & beyond" },
       version,
+      scope: "public",
       html: "<p>hi</p>"
     });
 
@@ -271,6 +274,8 @@ describe("patch pages", () => {
     const html = renderPatchWrapper({
       patch,
       version: { ...version, tier: 1 },
+      scope: "company",
+      viewerId: "viewer-1",
       html: "<script>window.secret = 1</script>",
       nonce: "document-nonce",
       base: "/acme/report/~v/2",

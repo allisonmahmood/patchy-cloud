@@ -1,10 +1,18 @@
 import { createClient } from "patchy/client";
+import type { RuntimeStreamFrame } from "@patchy/api";
 
 export interface FixtureWindow extends Window {
   harness: {
     ready: boolean;
     readonly client: typeof client;
-    replies: Array<{ id?: string; kind?: string; error?: { code: string }; value?: unknown }>;
+    replies: Array<{
+      id?: string;
+      kind?: string;
+      event?: string;
+      data?: RuntimeStreamFrame;
+      error?: { code: string };
+      value?: unknown;
+    }>;
     raw(value: unknown, transfer?: Transferable[]): void;
     image(): Promise<void>;
     printRows(): void;

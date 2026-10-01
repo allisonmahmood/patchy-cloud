@@ -84,6 +84,7 @@ export function classify(method: string, requestTarget: string): Target {
   // Browser runtime admission owns its session, audience and per-viewer limit.
   if (
     (method === "POST" && pathname === "/api/runtime/call") ||
+    (method === "GET" && pathname === "/api/runtime/stream") ||
     ((method === "PUT" || method === "GET") &&
       /^\/api\/runtime\/files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname))
   )

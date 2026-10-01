@@ -16,6 +16,7 @@ export const errorCodes = {
   invalid_query: true,
   shape_mismatch: true,
   session_expired: true,
+  session_refresh_required: true,
   principal_changed: true,
   not_available_on_public: true,
   shell_outdated: true,

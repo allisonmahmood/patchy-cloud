@@ -1,0 +1,471 @@
+import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as SqlError from "effect/unstable/sql/SqlError";
+import { RuntimeStreamFrame } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import { Session } from "@patchy/auth";
+import { PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
+import { DEV_SEED } from "@patchy/auth/seed";
+import { OperatingLimits } from "@patchy/limits";
+import * as LoadedVersions from "./LoadedVersions.js";
+import * as Fixtures from "./test/fixtures.js";
+import * as Runtime from "./Runtime.js";
+import * as RuntimeStream from "./RuntimeStream.js";
+
+const decode = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
+const text = new TextDecoder();
+const frame = (chunks: readonly Uint8Array[]) => decode(text.decode(chunks[0]).slice(6).trim());
+const request = (generation?: string) =>
+  HttpServerRequest.fromWeb(
+    new Request(`${PUBLIC_BASE_URL}/api/runtime/stream`, {
+      headers: {
+        ...Fixtures.headers({ userId: DEV_SEED.userId }),
+        cookie: signedInCookies(),
+        "sec-fetch-site": "same-origin",
+        ...(generation === undefined ? {} : { "x-patchy-generation": generation })
+      }
+    })
+  );
+const input = (documentId: string) => ({
+  patchId: Fixtures.patchId,
+  versionId: Fixtures.versionId,
+  documentId
+});
+const open = Effect.fnUntraced(function* (
+  documentId: string,
+  generation?: string,
+  patchId = Fixtures.patchId
+) {
+  const streams = yield* RuntimeStream.RuntimeStream;
+  const scope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+  const body = yield* streams
+    .open({ ...input(documentId), patchId })
+    .pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, request(generation)),
+      Effect.provideService(Scope.Scope, scope)
+    );
+  const pull = yield* Stream.toPull(body).pipe(Effect.provideService(Scope.Scope, scope));
+  return { scope, pull };
+});
+const dependencies = Fixtures.layer();
+const layer = RuntimeStream.layer.pipe(
+  Layer.provide(WideEvents.layerNoop),
+  Layer.provideMerge(dependencies)
+);
+
+// LoadedVersions is Runtime's external persistence port. Each test controls committed
+// state separately from the order in which the lifecycle listener is called.
+const versionAuthority = Effect.gen(function* () {
+  const source = yield* LoadedVersions.LoadedVersions;
+  const initial = Option.getOrThrow(yield* source.find(Fixtures.patchId, Fixtures.versionId));
+  const latest = Option.getOrThrow(yield* source.find(Fixtures.patchId, Fixtures.tier1VersionId));
+  const state = {
+    current: initial.versionId as string | undefined,
+    retained: new Map([
+      [initial.versionId, initial],
+      [latest.versionId, latest]
+    ])
+  };
+  const find: LoadedVersions.LoadedVersions["Service"]["find"] = (patchId, versionId) =>
+    Effect.sync(() =>
+      patchId !== Fixtures.patchId || state.current === undefined
+        ? Option.none()
+        : Option.fromUndefinedOr(state.retained.get(versionId ?? state.current))
+    );
+  return {
+    state,
+    initial,
+    latest,
+    find,
+    layer: Layer.succeed(LoadedVersions.LoadedVersions, { find })
+  };
+});
+
+it.layer(layer)("document streams", (it) => {
+  it.effect("replaces only the current generation and ignores the old scope's departure", () =>
+    Effect.gen(function* () {
+      const streams = yield* RuntimeStream.RuntimeStream;
+      const first = yield* open("generation_document");
+      const hello = frame(yield* first.pull);
+      assert.strictEqual(hello.type, "hello");
+      if (hello.type !== "hello") return;
+      assert.deepStrictEqual(frame(yield* first.pull), {
+        type: "served",
+        versionId: Fixtures.versionId,
+        tier: 0
+      });
+      const second = yield* open("generation_document", hello.generation);
+      const nextHello = frame(yield* second.pull);
+      assert.strictEqual(nextHello.type, "hello");
+      if (nextHello.type !== "hello") return;
+      assert.notStrictEqual(nextHello.generation, hello.generation);
+      assert.deepStrictEqual(frame(yield* first.pull), { type: "closed", reason: "replaced" });
+      yield* Scope.close(first.scope, Exit.void);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId, Fixtures.patchId), 1);
+      const stale = yield* open("generation_document", hello.generation).pipe(Effect.flip);
+      assert.instanceOf(stale, RuntimeStream.StreamReplaced);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+      yield* Scope.close(second.scope, Exit.void);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("enforces the viewer document bound and frees slots on disconnect", () =>
+    Effect.gen(function* () {
+      const streams = yield* RuntimeStream.RuntimeStream;
+      const documents = [];
+      for (let index = 0; index < 8; index++)
+        documents.push(yield* open(`limited_document_${index}`));
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId, Fixtures.patchId), 8);
+      const refused = yield* open("limited_document_8").pipe(Effect.flip);
+      assert.instanceOf(refused, RuntimeStream.StreamLimit);
+      yield* Scope.close(documents[0]!.scope, Exit.void);
+      const admitted = yield* open("limited_document_8");
+      assert.strictEqual(frame(yield* admitted.pull).type, "hello");
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 8);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("closes a backed-up consumer with a readable reason and releases presence", () =>
+    Effect.gen(function* () {
+      const limits = yield* OperatingLimits.OperatingLimits;
+      const ref = {
+        companyId: DEV_SEED.companyId,
+        limitId: "stream.buffer.bytes",
+        actor: "stream-test"
+      };
+      yield* limits.setOverride({ ...ref, value: 256 });
+      yield* Effect.addFinalizer(() => limits.removeOverride(ref).pipe(Effect.orDie));
+      const streams = yield* RuntimeStream.RuntimeStream;
+      const document = yield* open("slow_consumer_document");
+      assert.strictEqual(frame(yield* document.pull).type, "hello");
+      yield* document.pull;
+      for (let index = 0; index < 10; index++) yield* streams.notify(Fixtures.patchId);
+      assert.deepStrictEqual(frame(yield* document.pull), {
+        type: "closed",
+        reason: "slow_consumer"
+      });
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("reconnects at the verified token deadline without idle authentication work", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Session;
+      let authentications = 0;
+      const externalSession = Layer.succeed(Session.Session, {
+        ...session,
+        authenticate: (request) =>
+          Effect.gen(function* () {
+            authentications++;
+            const signedIn = yield* session.authenticate(request);
+            if (signedIn.status !== "signed-in") return signedIn;
+            const now = yield* Clock.currentTimeMillis;
+            return {
+              ...signedIn,
+              claims: { ...signedIn.claims, exp: Math.floor(now / 1000) + 12 }
+            };
+          })
+      });
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(externalSession),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const document = yield* open("idle_session_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      yield* document.pull;
+      yield* document.pull;
+      yield* TestClock.adjust("11999 millis");
+      assert.strictEqual(authentications, 1);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+      yield* TestClock.adjust("1 millis");
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(document.pull)));
+      assert.strictEqual(authentications, 1);
+      const reconnected = yield* open("idle_session_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* reconnected.pull).type, "hello");
+      assert.strictEqual(authentications, 2);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("drains as EOF and refuses new documents", () =>
+    Effect.gen(function* () {
+      const streams = yield* RuntimeStream.make.pipe(Effect.provide(WideEvents.layerNoop));
+      const document = yield* open("draining_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      yield* document.pull;
+      yield* document.pull;
+      yield* streams.drain;
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+      const refused = yield* streams
+        .open(input("new_draining_document"))
+        .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.flip);
+      assert.instanceOf(refused, Runtime.Draining);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("emits one close event with delivered bytes and zero peak subscriptions", () =>
+    Effect.gen(function* () {
+      const recorded = yield* Queue.make<WideEvents.WideEvent>();
+      const authority = yield* versionAuthority;
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(recorded, event).pipe(Effect.asVoid)
+        })
+      );
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(authority.layer),
+        Effect.provideService(WideEvents.WideEvents, events)
+      );
+      const document = yield* open("wide_event_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      const hello = yield* document.pull;
+      const served = yield* document.pull;
+      authority.state.current = undefined;
+      yield* streams.notify(Fixtures.patchId);
+      const denied = yield* document.pull;
+      yield* Effect.exit(document.pull);
+      const event = yield* Queue.take(recorded);
+      assert.strictEqual(event.type, "stream");
+      if (event.type !== "stream") return;
+      assert.strictEqual(event.peakSubscriptions, 0);
+      assert.strictEqual(
+        event.bytes,
+        hello[0].byteLength + served[0].byteLength + denied[0].byteLength
+      );
+      assert.strictEqual(event.closeReason, "access_denied");
+      assert.strictEqual(event.companyId, DEV_SEED.companyId);
+      assert.strictEqual(event.patchId, Fixtures.patchId);
+      assert.strictEqual(yield* Queue.size(recorded), 0);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("orders an in-flight initial snapshot before a racing publish notification", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let holdCurrent = true;
+      const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
+        find: (patchId, versionId) =>
+          Effect.gen(function* () {
+            const found = yield* authority.find(patchId, versionId);
+            if (versionId === undefined && holdCurrent) {
+              holdCurrent = false;
+              yield* Deferred.succeed(reading, undefined);
+              yield* Deferred.await(resume);
+            }
+            return found;
+          })
+      });
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(delayed),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const opening = yield* open("initial_publish_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(reading);
+      authority.state.current = authority.latest.versionId;
+      const publishing = yield* streams
+        .notify(Fixtures.patchId)
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.succeed(resume, undefined);
+      const document = yield* Fiber.join(opening);
+      yield* Fiber.join(publishing);
+      assert.strictEqual(frame(yield* document.pull).type, "hello");
+      assert.deepStrictEqual(frame(yield* document.pull), {
+        type: "served",
+        versionId: authority.initial.versionId,
+        tier: authority.initial.manifest.tier
+      });
+      assert.deepStrictEqual(frame(yield* document.pull), {
+        type: "served",
+        versionId: authority.latest.versionId,
+        tier: authority.latest.manifest.tier
+      });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("rechecks patch retirement after an in-flight admission lookup", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let holdAdmission = true;
+      const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
+        find: (patchId, versionId) =>
+          Effect.gen(function* () {
+            const found = yield* authority.find(patchId, versionId);
+            if (holdAdmission) {
+              holdAdmission = false;
+              yield* Deferred.succeed(reading, undefined);
+              yield* Deferred.await(resume);
+            }
+            return found;
+          })
+      });
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(delayed),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const opening = yield* open("initial_retired_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(reading);
+      authority.state.current = undefined;
+      yield* Deferred.succeed(resume, undefined);
+      const document = yield* Fiber.join(opening);
+      assert.strictEqual(frame(yield* document.pull).type, "hello");
+      assert.deepStrictEqual(frame(yield* document.pull), { type: "access_denied" });
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("closes retryably when authority lookup fails after a committed lifecycle change", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      let unavailable = false;
+      const cause = new SqlError.SqlError({
+        reason: new SqlError.ConnectionError({ cause: new Error("database offline") })
+      });
+      const logs: unknown[] = [];
+      const failing = Layer.succeed(LoadedVersions.LoadedVersions, {
+        find: (patchId, versionId) =>
+          Effect.suspend(() =>
+            unavailable ? Effect.fail(cause) : authority.find(patchId, versionId)
+          )
+      });
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(failing),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const document = yield* open("failed_authority_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      yield* document.pull;
+      yield* document.pull;
+      authority.state.current = authority.latest.versionId;
+      unavailable = true;
+      yield* streams.notify(Fixtures.patchId).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make((event) => {
+              logs.push(event.message);
+            })
+          ])
+        )
+      );
+      const logged = logs.flat()[0];
+      assert.instanceOf(logged, Runtime.SourceUnavailable);
+      assert.strictEqual((logged as Runtime.SourceUnavailable).cause, cause);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(document.pull)));
+      unavailable = false;
+      const reconnected = yield* open("failed_authority_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* reconnected.pull).type, "hello");
+      assert.deepStrictEqual(frame(yield* reconnected.pull), {
+        type: "served",
+        versionId: authority.latest.versionId,
+        tier: authority.latest.manifest.tier
+      });
+    }).pipe(Effect.scoped)
+  );
+  it.effect("opens and refreshes another patch while one patch's snapshot is blocked", () =>
+    Effect.gen(function* () {
+      const source = yield* LoadedVersions.LoadedVersions;
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
+        find: (patchId, versionId) =>
+          Effect.gen(function* () {
+            const found = yield* source.find(patchId, versionId);
+            if (patchId === Fixtures.patchId && versionId === undefined) {
+              yield* Deferred.succeed(reading, undefined);
+              yield* Deferred.await(resume);
+            }
+            return found;
+          })
+      });
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(delayed),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const opening = yield* open("blocked_patch_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(reading);
+      const other = yield* open("independent_patch_document", undefined, "secondpatch1").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* other.pull).type, "hello");
+      yield* other.pull;
+      yield* streams.notify("secondpatch1");
+      assert.deepStrictEqual(frame(yield* other.pull), {
+        type: "served",
+        versionId: Fixtures.versionId,
+        tier: 0
+      });
+      yield* Deferred.succeed(resume, undefined);
+      const original = yield* Fiber.join(opening);
+      assert.strictEqual(frame(yield* original.pull).type, "hello");
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 2);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("keeps an authenticated company document eligible after public sharing", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const document = yield* open("shared_company_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      yield* document.pull;
+      yield* document.pull;
+      authority.state.retained.set(Fixtures.versionId, {
+        ...authority.initial,
+        scope: "public"
+      });
+      yield* streams.notify(Fixtures.patchId);
+      assert.deepStrictEqual(frame(yield* document.pull), {
+        type: "served",
+        versionId: Fixtures.versionId,
+        tier: 0
+      });
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+      yield* Scope.close(document.scope, Exit.void);
+      const reconnected = yield* open("shared_company_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* reconnected.pull).type, "hello");
+      assert.strictEqual(frame(yield* reconnected.pull).type, "served");
+    }).pipe(Effect.scoped)
+  );
+});

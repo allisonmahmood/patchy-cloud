@@ -4,5 +4,7 @@ export * as Runtime from "./Runtime.js";
 export * as RuntimeProduction from "./RuntimeProduction.js";
 export * as RuntimeApi from "./RuntimeApi.js";
 export * as RuntimeLog from "./RuntimeLog.js";
+export * as RuntimeStream from "./RuntimeStream.js";
+export * as RuntimeStreamApi from "./RuntimeStreamApi.js";
 export { migrations } from "./migrations.js";
 export { me } from "./me.js";

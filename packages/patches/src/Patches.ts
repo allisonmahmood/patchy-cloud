@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -580,9 +581,27 @@ class UnnamedPatch extends Schema.Class<UnnamedPatch>("UnnamedPatch")({
   title: Schema.String
 }) {}
 
+export type LifecycleChange =
+  | {
+      readonly type: "served";
+      readonly patchId: string;
+      readonly versionId: string;
+      readonly tier: number;
+    }
+  | { readonly type: "unavailable"; readonly patchId: string };
+
+const pendingLifecycle = Context.Reference<Array<LifecycleChange> | undefined>(
+  "@patchy/patches/pendingLifecycle",
+  { defaultValue: () => undefined }
+);
+
 export class Patches extends Context.Service<
   Patches,
   {
+    /** Same-host committed changes. The subscriber owns its lifetime. */
+    readonly listen: (
+      listener: (change: LifecycleChange) => Effect.Effect<void>
+    ) => Effect.Effect<void, never, Scope.Scope>;
     /** Non-deleted, enabled patches owned by this user, including retired patches. */
     readonly countQuotaPatches: (ownerUserId: string) => Effect.Effect<number, SqlError>;
     readonly authorizePublish: (
@@ -890,6 +909,46 @@ export const make = Effect.gen(function* () {
   const inventoryStore = yield* Inventory.Inventory;
   const tables = yield* Tables.Tables;
   const connections = yield* ConnectionStore.ConnectionStore;
+  const listeners = new Set<(change: LifecycleChange) => Effect.Effect<void>>();
+  const listen: Patches["Service"]["listen"] = (listener) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        listeners.add(listener);
+      }),
+      () =>
+        Effect.sync(() => {
+          listeners.delete(listener);
+        })
+    );
+  const announce = (change: LifecycleChange) =>
+    Effect.map(pendingLifecycle, (pending) => {
+      pending!.push(change);
+    });
+  // The company dependency lock is the outer transaction for portal bulk actions.
+  // Keep their notices until its commit; a failed batch emits none.
+  const withLifecycleTransaction = Effect.fnUntraced(function* <A, E, R>(
+    work: Effect.Effect<A, E, R>
+  ) {
+    const existing = yield* pendingLifecycle;
+    if (existing !== undefined) {
+      const length = existing.length;
+      return yield* sql.withTransaction(work).pipe(
+        Effect.onError(() =>
+          Effect.sync(() => {
+            existing.length = length;
+          })
+        )
+      );
+    }
+    const pending: Array<LifecycleChange> = [];
+    const result = yield* sql.withTransaction(
+      work.pipe(Effect.provideService(pendingLifecycle, pending))
+    );
+    for (const change of pending) {
+      for (const listener of listeners) yield* listener(change);
+    }
+    return result;
+  });
 
   /** An Effect-clock instant represented as a Postgres timestamp. */
   const stamp = (millis: number) => sql`to_timestamp(${millis / 1_000})`;
@@ -1098,7 +1157,7 @@ export const make = Effect.gen(function* () {
       FROM users WHERE id = ${userId}`
   );
   const withDependencyLock: Patches["Service"]["withDependencyLock"] = (actorUserId) => (effect) =>
-    sql.withTransaction(
+    withLifecycleTransaction(
       Effect.gen(function* () {
         yield* lockDependencies(actorUserId);
         return yield* effect;
@@ -1623,145 +1682,144 @@ export const make = Effect.gen(function* () {
   });
 
   const record = Effect.fn("Patches.record")((input: RecordInput) =>
-    sql
-      .withTransaction(
-        Effect.gen(function* () {
-          yield* sql`SET LOCAL statement_timeout = '60s'`;
-          yield* lockDependencies(input.ownerUserId);
-          const millis = yield* Clock.currentTimeMillis;
-          const existing = input.intent === "update" ? yield* publishable(input) : null;
-          const incomingDescription = input.description ?? input.manifest.description;
-          const normalizedDescription =
-            incomingDescription === undefined
-              ? undefined
-              : yield* normalizeDescription(incomingDescription);
-          const description = normalizedDescription ?? existing?.description ?? "";
-          const descriptionChanged = description !== (existing?.description ?? "");
-          const descriptionUpdatedAt = descriptionChanged
-            ? DateTime.formatIso(DateTime.makeUnsafe(millis))
-            : isoOrNull(existing?.descriptionUpdatedAt ?? null);
-          const descriptionUpdatedBy = descriptionChanged
-            ? input.ownerUserId
-            : (existing?.descriptionUpdatedBy ?? null);
-          // DELETE holds the intent's row lock until commit. A concurrent sweep
-          // skips it; rollback restores it; a lost commit reply cannot orphan
-          // live bytes because the version and intent change atomically.
-          const pending = yield* sql`
+    withLifecycleTransaction(
+      Effect.gen(function* () {
+        yield* sql`SET LOCAL statement_timeout = '60s'`;
+        yield* lockDependencies(input.ownerUserId);
+        const millis = yield* Clock.currentTimeMillis;
+        const existing = input.intent === "update" ? yield* publishable(input) : null;
+        const incomingDescription = input.description ?? input.manifest.description;
+        const normalizedDescription =
+          incomingDescription === undefined
+            ? undefined
+            : yield* normalizeDescription(incomingDescription);
+        const description = normalizedDescription ?? existing?.description ?? "";
+        const descriptionChanged = description !== (existing?.description ?? "");
+        const descriptionUpdatedAt = descriptionChanged
+          ? DateTime.formatIso(DateTime.makeUnsafe(millis))
+          : isoOrNull(existing?.descriptionUpdatedAt ?? null);
+        const descriptionUpdatedBy = descriptionChanged
+          ? input.ownerUserId
+          : (existing?.descriptionUpdatedBy ?? null);
+        // DELETE holds the intent's row lock until commit. A concurrent sweep
+        // skips it; rollback restores it; a lost commit reply cannot orphan
+        // live bytes because the version and intent change atomically.
+        const pending = yield* sql`
             DELETE FROM pending_patch_objects
             WHERE object_key = ${input.objectKey} AND NOT claimed
               AND expires_at > ${stamp(millis)}
             RETURNING object_key`;
-          if (pending.length === 0)
-            return yield* new PendingObjectExpired({ objectKey: input.objectKey });
-          let versionNumber: number;
-          let scope: Patch["scope"] = input.scope ?? "company";
-          let companyId = input.companyId;
-          let companyHandle: string;
-          let name: string;
-          let rename = false;
+        if (pending.length === 0)
+          return yield* new PendingObjectExpired({ objectKey: input.objectKey });
+        let versionNumber: number;
+        let scope: Patch["scope"] = input.scope ?? "company";
+        let companyId = input.companyId;
+        let companyHandle: string;
+        let name: string;
+        let rename = false;
 
-          if (input.intent === "update") {
-            // The row lock serialises concurrent updates of one patch: the
-            // version number is allocated after it, so each waits its turn and
-            // then sees the committed version before it.
-            const locked = existing!;
-            scope = input.scope ?? locked.scope;
-            companyId = locked.companyId;
-            companyHandle = locked.companyHandle;
-            name = input.manifest.name ?? locked.name;
-            rename = name !== locked.name;
-            versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
-          } else {
-            // Serialise quota accounting across distinct creates by the same owner.
-            const owner = yield* sql`SELECT id FROM users
+        if (input.intent === "update") {
+          // The row lock serialises concurrent updates of one patch: the
+          // version number is allocated after it, so each waits its turn and
+          // then sees the committed version before it.
+          const locked = existing!;
+          scope = input.scope ?? locked.scope;
+          companyId = locked.companyId;
+          companyHandle = locked.companyHandle;
+          name = input.manifest.name ?? locked.name;
+          rename = name !== locked.name;
+          versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
+        } else {
+          // Serialise quota accounting across distinct creates by the same owner.
+          const owner = yield* sql`SELECT id FROM users
               WHERE id = ${input.ownerUserId} AND company_id = ${companyId} AND deactivated_at IS NULL
               FOR UPDATE`;
-            if (owner.length === 0) return yield* new PatchUnavailable({ patchId: input.patchId });
-            if (
-              input.livePatchQuota !== undefined &&
-              (yield* countQuotaPatches(input.ownerUserId)) >= input.livePatchQuota
-            ) {
-              return yield* new PatchQuotaReached({ quota: input.livePatchQuota });
-            }
-            versionNumber = FIRST_VERSION_NUMBER;
-            companyHandle = (yield* companyHandleRow(companyId)).handle;
-            name =
-              input.manifest.name ??
-              deriveName(
-                input.filename === null ? input.title : input.filename.replace(/\.[^.]*$/, "")
-              );
-            if (reservedName(name)) return yield* new ReservedName({ name });
-            const created = yield* sql`
+          if (owner.length === 0) return yield* new PatchUnavailable({ patchId: input.patchId });
+          if (
+            input.livePatchQuota !== undefined &&
+            (yield* countQuotaPatches(input.ownerUserId)) >= input.livePatchQuota
+          ) {
+            return yield* new PatchQuotaReached({ quota: input.livePatchQuota });
+          }
+          versionNumber = FIRST_VERSION_NUMBER;
+          companyHandle = (yield* companyHandleRow(companyId)).handle;
+          name =
+            input.manifest.name ??
+            deriveName(
+              input.filename === null ? input.title : input.filename.replace(/\.[^.]*$/, "")
+            );
+          if (reservedName(name)) return yield* new ReservedName({ name });
+          const created = yield* sql`
             INSERT INTO patches (id, company_id, owner_user_id, scope, title, name, current_version_id, repo_org, repo_name, created_at, updated_at)
             VALUES (${input.patchId}, ${companyId}, ${input.ownerUserId}, ${scope},
                     ${input.title}, ${name}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${stamp(millis)}, ${stamp(millis)})
             ON CONFLICT (id) DO NOTHING
             RETURNING id`;
-            if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
+          if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
+        }
+        if (input.intent === "create" || rename) {
+          if (reservedName(name)) return yield* new ReservedName({ name });
+          const baseName = name;
+          let ordinal = 1;
+          while (Option.isNone(yield* claimName({ companyId, patchId: input.patchId, name }))) {
+            if (input.manifest.name !== undefined) return yield* new NameTaken({ name });
+            name = deriveName(baseName, ++ordinal);
           }
-          if (input.intent === "create" || rename) {
-            if (reservedName(name)) return yield* new ReservedName({ name });
-            const baseName = name;
-            let ordinal = 1;
-            while (Option.isNone(yield* claimName({ companyId, patchId: input.patchId, name }))) {
-              if (input.manifest.name !== undefined) return yield* new NameTaken({ name });
-              name = deriveName(baseName, ++ordinal);
-            }
-          }
-          if (rename) {
-            // Claim before retiring: opposing renames must refuse occupied names,
-            // not each hold their source name while waiting for the other's.
-            yield* sql`UPDATE patch_names SET current = false
+        }
+        if (rename) {
+          // Claim before retiring: opposing renames must refuse occupied names,
+          // not each hold their source name while waiting for the other's.
+          yield* sql`UPDATE patch_names SET current = false
               WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
-          }
-          const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
-          const resources = yield* provision({ ...input, companyId });
-          const declaringPatches = resources.sharing.some(
-            (table) => input.manifest.tables[table]!.shared !== true
-          )
-            ? new Map(
-                (yield* declaringPatchRows({
-                  patchId: input.patchId,
-                  companyId
-                })).map((row) => [row.table, row.count])
-              )
-            : new Map<string, number>();
-          const sharingWarnings = resources.sharing.map((table) =>
-            input.manifest.tables[table]!.shared === true
-              ? `\`${table}\` is now shared.`
-              : `\`${table}\` is no longer shared; ${declaringPatches.get(table) ?? 0} declaring patches are affected.`
-          );
-          const publicUrl = address(input.publicBaseUrl, companyHandle, name);
-          const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
-            ok: true,
-            patchId: input.patchId,
-            versionId: input.versionId,
-            versionNumber,
-            title: input.title,
-            scope,
-            name,
-            description,
-            descriptionUpdatedAt,
-            address: publicUrl,
-            publicUrl,
-            tier: input.manifest.tier,
-            schemaRevision: resources.schemaRevision,
-            provisioned: resources.provisioned,
-            unused: resources.unused,
-            warnings: [
-              ...input.warnings,
-              ...declarationWarnings,
-              ...resources.warnings,
-              ...sharingWarnings
-            ]
-          });
-          const status = input.intent === "create" ? (201 as const) : (200 as const);
-          const responseJson =
-            input.intent === "create"
-              ? encodePublishCreated(response)
-              : encodePublishUpdated(response);
+        }
+        const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
+        const resources = yield* provision({ ...input, companyId });
+        const declaringPatches = resources.sharing.some(
+          (table) => input.manifest.tables[table]!.shared !== true
+        )
+          ? new Map(
+              (yield* declaringPatchRows({
+                patchId: input.patchId,
+                companyId
+              })).map((row) => [row.table, row.count])
+            )
+          : new Map<string, number>();
+        const sharingWarnings = resources.sharing.map((table) =>
+          input.manifest.tables[table]!.shared === true
+            ? `\`${table}\` is now shared.`
+            : `\`${table}\` is no longer shared; ${declaringPatches.get(table) ?? 0} declaring patches are affected.`
+        );
+        const publicUrl = address(input.publicBaseUrl, companyHandle, name);
+        const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
+          ok: true,
+          patchId: input.patchId,
+          versionId: input.versionId,
+          versionNumber,
+          title: input.title,
+          scope,
+          name,
+          description,
+          descriptionUpdatedAt,
+          address: publicUrl,
+          publicUrl,
+          tier: input.manifest.tier,
+          schemaRevision: resources.schemaRevision,
+          provisioned: resources.provisioned,
+          unused: resources.unused,
+          warnings: [
+            ...input.warnings,
+            ...declarationWarnings,
+            ...resources.warnings,
+            ...sharingWarnings
+          ]
+        });
+        const status = input.intent === "create" ? (201 as const) : (200 as const);
+        const responseJson =
+          input.intent === "create"
+            ? encodePublishCreated(response)
+            : encodePublishUpdated(response);
 
-          const [inserted] = yield* sql`
+        const [inserted] = yield* sql`
           INSERT INTO patch_versions (
             id, patch_id, version_number, object_key, content_hash, file_size,
             created_by_machine_token_id, source_ip, user_agent, cli_version,
@@ -1778,14 +1836,14 @@ export const make = Effect.gen(function* () {
             ${responseJson}::jsonb, ${status}, ${stamp(millis)}
           ) ON CONFLICT (owner_user_id, publish_key) DO NOTHING
           RETURNING publish_response::text AS "responseBody"`.pipe(
-            Effect.flatMap(decodeResponseBodies)
-          );
-          if (inserted === undefined)
-            return yield* new PublishKeyTaken({
-              ownerUserId: input.ownerUserId,
-              publishKey: { length: input.publishKey.length }
-            });
-          yield* sql`
+          Effect.flatMap(decodeResponseBodies)
+        );
+        if (inserted === undefined)
+          return yield* new PublishKeyTaken({
+            ownerUserId: input.ownerUserId,
+            publishKey: { length: input.publishKey.length }
+          });
+        yield* sql`
           UPDATE patches
           SET current_version_id = ${input.versionId}, title = ${input.title}, scope = ${scope},
               name = ${name},
@@ -1799,10 +1857,15 @@ export const make = Effect.gen(function* () {
               last_changed_action = ${`published v${versionNumber}`}
           WHERE id = ${input.patchId}`;
 
-          return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
-        }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
-      )
-      .pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))
+        yield* announce({
+          type: "served",
+          patchId: input.patchId,
+          versionId: input.versionId,
+          tier: input.manifest.tier
+        });
+        return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
+      }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
+    ).pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))
   );
 
   const changedPatch = SqlSchema.findOne({
@@ -1852,8 +1915,9 @@ export const make = Effect.gen(function* () {
         updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'retired'
         WHERE id = ${patchId}`;
+    yield* announce({ type: "unavailable", patchId });
     return yield* afterChange(patchId);
-  }, sql.withTransaction);
+  }, withLifecycleTransaction);
   const delete_ = Effect.fn("Patches.delete")(function* (
     patchId: string,
     actor: Actor,
@@ -1869,8 +1933,9 @@ export const make = Effect.gen(function* () {
         updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'deleted'
         WHERE id = ${patchId}`;
+    yield* announce({ type: "unavailable", patchId });
     return yield* afterChange(patchId);
-  }, sql.withTransaction);
+  }, withLifecycleTransaction);
   const restore = Effect.fn("Patches.restore")(function* (
     patchId: string,
     actor: Actor,
@@ -1926,8 +1991,14 @@ export const make = Effect.gen(function* () {
     yield* sql`UPDATE patches SET current_version_id = ${version.value.id}, updated_at = ${at},
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = ${`rolled back to v${versionNumber}`} WHERE id = ${patchId}`;
+    yield* announce({
+      type: "served",
+      patchId,
+      versionId: version.value.id,
+      tier: version.value.tier
+    });
     return { patch: yield* afterChange(patchId), currentVersion: versionNumber };
-  }, sql.withTransaction);
+  }, withLifecycleTransaction);
   const reassign = Effect.fn("Patches.reassign")(function* (
     patchId: string,
     actor: Actor,
@@ -2039,6 +2110,7 @@ export const make = Effect.gen(function* () {
   );
 
   return Patches.of({
+    listen,
     countQuotaPatches,
     authorizePublish,
     replay,

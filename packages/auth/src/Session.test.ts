@@ -48,14 +48,16 @@ it.layer(configured())("Session", (it) => {
   it.effect("verifies cookie claims locally and refuses bearer-only page authentication", () =>
     Effect.gen(function* () {
       const session = yield* Session.Session;
-      const token = signSession();
+      const exp = Math.floor(Date.now() / 1_000) + 60;
+      const token = signSession({ exp });
       assert.deepStrictEqual(
         signedIn(yield* session.authenticate(request(signedInCookies(token)))).claims,
         {
           sub: "user_dev",
           email: "dev@patchy.local",
           name: "Patchy Dev",
-          sid: "sess_offline"
+          sid: "sess_offline",
+          exp
         }
       );
       const signedOut = yield* session.authenticate(request("__clerk_db_jwt=offline-browser"));

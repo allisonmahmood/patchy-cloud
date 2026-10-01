@@ -1,6 +1,6 @@
 /**
- * The patches capability's schema: baseline 3 and lifecycle migration 8 of
- * the global migration sequence (`packages/sql/CONTEXT.md`).
+ * The patches capability's schema: baseline 3, lifecycle 8 and version revocation 10
+ * in the global migration sequence (`packages/sql/CONTEXT.md`).
  */
 import { ddl, type Migrations } from "@patchy/sql";
 

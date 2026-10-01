@@ -77,7 +77,7 @@ One paragraph saying what a patch does, written by the building agent and editab
 _Avoid_: purpose (the agent instruction, kept separately), title (the document's `<title>`), summary
 
 **Version**:
-One immutable publication of a patch: its bundle, manifest, release and contract versions, the machine token that published it and where it came from. Numbered from 1 per patch; revocation does not erase provenance, and changing sharing does not change the content a version URL names.
+One immutable publication of a patch: its bundle, manifest, release and contract versions, the machine token that published it and where it came from. Numbered from 1 per patch; revoking its publishing machine token does not erase provenance, and changing sharing does not change the content a version URL names.
 _Avoid_: revision, upload (the act, not the record)
 
 **Publish contract**:

@@ -282,6 +282,25 @@ content has `connect-src 'none'`, and the shell's `frame-src 'self'` contains
 frame navigation. The shell validates operation arguments with the same wire
 schemas as the server; patch code has no direct runtime HTTP channel.
 
+Every company document on tiers 1 and 2 opens a shell-owned stream at bootstrap.
+Publish and rollback announce the served version without reloading the frame or
+discarding input. A bottom-centre notice offers Reload; Not now lasts until the
+next publish, and Hide collapses it without dismissing. The tier-upgrade state
+"Reload to keep saving" cannot be dismissed. Rolling back to the loaded version
+clears the notice. Public documents have no company stream.
+
+The shell reconnects after a network cut or host restart, keeping its loaded
+version. A reconnecting pill appears after two seconds and clears on reopening.
+Hidden documents suspend after 30 seconds and reconnect on return. Presence is
+the open connection, never a heartbeat or stored lease. Retirement, deletion and
+session loss stop the document; every reconnect rechecks eligibility and authority.
+A stale session token asks the browser to refresh rather than discarding the draft.
+Version revocation is undecided in [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425);
+the wire reserves its frame, but there is no version-revocation operation or state.
+
+Lifecycle delivery is host-local today. Subscriptions, revision-fenced
+reconciliation and cross-host delivery are the next sync step.
+
 Unsupported: outbound fetches, external links, popups and `target=_blank`, top
 navigation, in-frame downloads, cookies, localStorage, IndexedDB, workers,
 camera, microphone and geolocation. Clipboard write is delegated, not clipboard

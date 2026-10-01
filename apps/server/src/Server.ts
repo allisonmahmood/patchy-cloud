@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Scope from "effect/Scope";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -62,9 +63,12 @@ import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files } from "@patchy/primitives";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
+  Runtime,
   RuntimeProduction,
   RuntimeApi,
   RuntimeLog,
+  RuntimeStream,
+  RuntimeStreamApi,
   me,
   migrations as runtimeMigrations
 } from "@patchy/runtime";
@@ -106,6 +110,7 @@ const services = Layer.mergeAll(
   DeletionSweep.layer,
   DeviceLogins.layer,
   OrphanSweep.layer,
+  RuntimeStream.layer.pipe(Layer.provide(LoadedVersions.layer)),
   Layer.unwrap(
     Effect.gen(function* () {
       const tables = yield* TableOperations.make;
@@ -176,7 +181,8 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     PatchesApi.layer,
     ConnectionsApi.layer,
     SdkApi.layer,
-    RuntimeApi.layer
+    RuntimeApi.layer,
+    RuntimeStreamApi.layer
   ]),
   Layer.provide(Authorization.layer)
 );
@@ -234,8 +240,48 @@ const app = Layer.mergeAll(
   middleware
 );
 
+export const streamLifecycle = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const patches = yield* Patches.Patches;
+    const streams = yield* RuntimeStream.RuntimeStream;
+    const scope = yield* Scope.Scope;
+    const pending = new Map<string, { dirty: boolean }>();
+    yield* patches.listen((change) =>
+      Effect.gen(function* () {
+        const current = pending.get(change.patchId);
+        if (current !== undefined) {
+          current.dirty = true;
+          return;
+        }
+        const work = { dirty: true };
+        pending.set(change.patchId, work);
+        // Commit callbacks are hints. Keep at most one pending reread per patch,
+        // and let its scoped worker read authority outside the publishing request.
+        yield* Effect.gen(function* () {
+          while (work.dirty) {
+            work.dirty = false;
+            yield* streams.notify(change.patchId);
+          }
+          pending.delete(change.patchId);
+        }).pipe(
+          Effect.interruptible,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (pending.get(change.patchId) === work) pending.delete(change.patchId);
+            })
+          ),
+          Effect.forkIn(scope),
+          Effect.asVoid
+        );
+      }).pipe(Effect.uninterruptible)
+    );
+  })
+);
+
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }),
-  sweeper
+  sweeper,
+  streamLifecycle,
+  Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
 ).pipe(Layer.provide(services));

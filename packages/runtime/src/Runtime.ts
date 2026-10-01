@@ -57,6 +57,16 @@ export class SessionExpired extends Schema.TaggedError<SessionExpired>()(
     return "Runtime request refused: session_expired.";
   }
 }
+export class SessionRefreshRequired extends Schema.TaggedError<SessionRefreshRequired>()(
+  "SessionRefreshRequired",
+  diagnostics
+) {
+  readonly code = "session_refresh_required" as const;
+  readonly status = 401;
+  override get message() {
+    return "Refresh your session and reconnect.";
+  }
+}
 export class PrincipalChanged extends Schema.TaggedError<PrincipalChanged>()(
   "PrincipalChanged",
   diagnostics
@@ -85,6 +95,14 @@ export class ShellOutdated extends Schema.TaggedError<ShellOutdated>()(
   readonly status = 409;
   override get message() {
     return "Runtime request refused: shell_outdated.";
+  }
+}
+export class Draining extends Schema.TaggedError<Draining>()("Draining", {}) {
+  readonly code = "busy" as const;
+  readonly status = 503;
+  readonly retryAfterSeconds = 1;
+  override get message() {
+    return "The host is draining.";
   }
 }
 export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
@@ -200,9 +218,11 @@ export type RuntimeError =
   | InvalidRequest
   | AccessDenied
   | SessionExpired
+  | SessionRefreshRequired
   | PrincipalChanged
   | PublicUnavailable
   | ShellOutdated
+  | Draining
   | TooLarge
   | Timeout
   | RateLimited
@@ -316,6 +336,7 @@ export class Runtime extends Context.Service<
   Runtime,
   {
     readonly bodyLimit: (op: string) => number;
+    readonly drain: Effect.Effect<void>;
     readonly maxCallBytes: number;
     readonly maxCallLimitId: RuntimeBodyLimitId;
     readonly fileBytes: number;
@@ -367,6 +388,7 @@ export const make = (
     const limits = yield* Limits.Limits;
     const settings = yield* config;
     const origin = options.origin;
+    let draining = false;
     const bodyLimit = (op: string) => runtimeBodyLimit(op, settings);
     const maxCallBytes = Math.max(
       settings.rowBytes + settings.callBytes,
@@ -391,6 +413,7 @@ export const make = (
       byteLength?: number
     ) =>
       Effect.gen(function* () {
+        if (draining) return yield* new Draining();
         const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
         if (operation !== undefined || Object.hasOwn(runtimeOperations, input.op))
           yield* WideEvents.operation(input.op);
@@ -509,6 +532,7 @@ export const make = (
             });
           if (version.scope !== "public" && options.admitCompany !== undefined)
             yield* options.admitCompany(version.companyId);
+          if (draining) return yield* new Draining();
         });
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.
@@ -562,6 +586,9 @@ export const make = (
         return result.value;
       });
     return Runtime.of({
+      drain: Effect.sync(() => {
+        draining = true;
+      }),
       call: (input, byteLength) =>
         dispatch(
           input,

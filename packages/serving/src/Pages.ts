@@ -177,6 +177,11 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
       : renderPatchWrapper({
           ...served.value,
           html,
+          scope: isPublic ? "public" : "company",
+          viewerId:
+            !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
+              ? admission.user.id
+              : undefined,
           head: isPublic ? undefined : sessionScripts(session),
           ...(selection !== undefined && served.value.version.tier >= 1
             ? {
