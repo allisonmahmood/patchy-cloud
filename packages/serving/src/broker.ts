@@ -370,6 +370,7 @@ function mount(frame: HTMLIFrameElement): void {
           ...(value === undefined ? {} : { value }),
           ...(retryAfter !== undefined &&
           (error.code === "rate_limited" ||
+            error.code === "limit_exceeded" ||
             error.code === "too_many_requests" ||
             error.code === "busy")
             ? { retryAfter }

@@ -144,6 +144,21 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited"
     return "Runtime request refused: rate_limited.";
   }
 }
+export class LimitExceeded extends Schema.TaggedError<LimitExceeded>()("LimitExceeded", {
+  ...diagnostics,
+  retryAfterSeconds: Schema.Int,
+  value: Schema.Number,
+  limitId: Schema.Literal("company.admission.rate")
+}) {
+  readonly code = "limit_exceeded" as const;
+  readonly status = 429;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
+  override get message() {
+    return "Runtime request refused: limit_exceeded.";
+  }
+}
 export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
   "SourceUnavailable",
   {
@@ -191,6 +206,7 @@ export type RuntimeError =
   | TooLarge
   | Timeout
   | RateLimited
+  | LimitExceeded
   | SourceUnavailable
   | UnknownOutcome
   | OperationError;
@@ -332,6 +348,8 @@ export interface Options {
     RuntimeError,
     HttpServerRequest.HttpServerRequest
   >;
+  /** Production operating admission, once per incoming operation, never inside a handler. */
+  readonly admitCompany?: (companyId: string) => Effect.Effect<void, RuntimeError>;
   readonly record?: <A>(
     execution: Execution,
     run: Effect.Effect<A, RuntimeError, HttpServerRequest.HttpServerRequest>
@@ -489,6 +507,8 @@ export const make = (
               value:
                 attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
             });
+          if (version.scope !== "public" && options.admitCompany !== undefined)
+            yield* options.admitCompany(version.companyId);
         });
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.

@@ -66,8 +66,9 @@ Patchy's refusals have `source: "patchy"`; business errors have
 
 A mutation may run up to three times inside one call after serialization
 conflicts. Aborted attempts leave no writes. Exhaustion returns `write_conflict`,
-which means no commit and is safe to retry. `busy` means admission or capacity
-refused the call; respect its `retryAfter` rather than spinning.
+which means no commit and is safe to retry. Company call-rate admission returns
+`limit_exceeded`; connection or execution capacity returns `busy`. Respect the
+supplied `retryAfter` before retrying either refusal rather than spinning.
 
 An `unknown_outcome` mutation offers `retry()` using the same key and arguments.
 Use that method, not a fresh call. The key makes retry safe and does not stop a
@@ -138,14 +139,15 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `tier2.capability.tombstone` | operating | 300000 | milliseconds | host | Expired capability replay tombstone lifetime | None | No | deployment |
 | `company.connections` | operating | 4 | connections | company | Company connections per host replica | `busy` | Yes | deployment |
 | `company.connections.hostBackends` | operating | 200 | connections | host | Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |
+| `company.connections.pools` | operating | 100 | pools | host | Retained company pools per host replica | `busy` | No | legacy |
 | `company.connections.waiters` | operating | 32 | waiters | company | Queued company connection acquisitions per host replica | `busy` | Yes | deployment |
 | `company.connections.wait` | operating | 1000 | milliseconds | company | Maximum connection queue wait within caller deadline | `busy` | Yes | deployment |
 | `subscriptions.reruns.company` | operating | 2 | connections | company | Company connections occupied by subscription re-runs per host replica | `busy` | Yes | deployment |
 | `subscriptions.reruns.patch` | operating | 1 | runs | patch | Simultaneous subscription re-runs per patch per host replica | None | Yes | deployment |
 | `tier2.actions.company` | operating | 8 | actions | company | Actions in flight per company per host replica | `busy` | Yes | deployment |
 | `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
-| `company.admission.rate` | operating | 100 | calls/second | company | Tier 1 operations and tier 2 calls per host replica; excludes callbacks | `rate_limited` | Yes | deployment |
-| `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `rate_limited` | Yes | deployment |
+| `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
+| `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `limit_exceeded` | Yes | deployment |
 | `execution.process.rss` | operating | 536870912 | bytes | patch | Process RSS at termination; memory configured in MiB | None | Yes | deployment |
 | `execution.breaker.kills` | operating | 3 | kills | patch | Kills across all versions of one patch within the breaker window | `patch_paused` | Yes | deployment |
 | `execution.breaker.window` | operating | 600000 | milliseconds | patch | Window counting process kills; breaker is off in dev | None | Yes | deployment |

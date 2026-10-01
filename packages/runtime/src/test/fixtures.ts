@@ -14,7 +14,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { Companies, Users } from "@patchy/companies";
-import { ContractLimits, Limits } from "@patchy/limits";
+import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import type { ContractLimitId } from "@patchy/limits/registry";
 import * as Testing from "@patchy/sql/testing";
 import * as LoadedVersions from "../LoadedVersions.js";
@@ -41,13 +41,13 @@ const manifest = {
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version = versionId) =>
     Effect.succeed(
-      ![patchId, "secondpatch1"].includes(patch) ||
+      ![patchId, "secondpatch1", "otherpatch11"].includes(patch) ||
         ![versionId, publicVersionId, tier1VersionId].includes(version)
         ? Option.none()
         : Option.some({
             patchId: patch,
             versionId: version,
-            companyId: DEV_SEED.companyId,
+            companyId: patch === "otherpatch11" ? "cmp_other" : DEV_SEED.companyId,
             manifest: version === tier1VersionId ? { ...manifest, tier: 1 as const } : manifest,
             wireVersion: WIRE_VERSION,
             scope: version === publicVersionId ? ("public" as const) : ("company" as const)
@@ -78,6 +78,7 @@ export const layer = (
       Layer.mergeAll(
         versions,
         Limits.layer,
+        OperatingLimits.layer,
         RuntimeLog.layer,
         Session.layer,
         Users.layer,

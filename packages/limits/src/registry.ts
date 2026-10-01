@@ -344,6 +344,16 @@ export const registry = {
     refusal: "busy",
     overridable: false
   },
+  "company.connections.pools": {
+    kind: "operating",
+    configuration: "legacy",
+    default: 100,
+    unit: "pools",
+    scope: "host",
+    measure: "Retained company pools per host replica",
+    refusal: "busy",
+    overridable: false
+  },
   "company.connections.waiters": {
     kind: "operating",
     default: 32,
@@ -403,8 +413,9 @@ export const registry = {
     default: 100,
     unit: "calls/second",
     scope: "company",
-    measure: "Tier 1 operations and tier 2 calls per host replica; excludes callbacks",
-    refusal: "rate_limited",
+    measure:
+      "Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs",
+    refusal: "limit_exceeded",
     overridable: true
   },
   "company.admission.burst": {
@@ -413,7 +424,7 @@ export const registry = {
     unit: "calls",
     scope: "company",
     measure: "Company admission burst per host replica",
-    refusal: "rate_limited",
+    refusal: "limit_exceeded",
     overridable: true
   },
   "execution.process.rss": {

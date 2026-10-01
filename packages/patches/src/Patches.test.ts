@@ -1141,7 +1141,13 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
           reason: new ConnectionError({ cause: new Error("company database offline") })
         });
         for (const error of [
-          new CompanyDatabases.Busy({ resource: "pool", limit: 1 }),
+          new CompanyDatabases.Busy({
+            resource: "pool",
+            limitId: "company.connections",
+            scope: "company",
+            value: 1,
+            retryAfterSeconds: 1
+          }),
           new CompanyDatabases.CompanyDatabaseNotReady({
             companyId: access.companyId,
             status: "claimed"

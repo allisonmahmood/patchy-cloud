@@ -14,6 +14,20 @@ export class InvalidLimit extends Schema.TaggedError<InvalidLimit>()("InvalidLim
 }
 
 export const LimitValue = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0));
+export const LimitSetting = Schema.Struct({ limitId: Schema.String, value: LimitValue }).check(
+  Schema.makeFilter(
+    ({ limitId, value }) =>
+      (limitId !== "company.connections" &&
+        limitId !== "company.connections.waiters" &&
+        limitId !== "company.admission.burst") ||
+      Number.isSafeInteger(value),
+    {
+      message:
+        "Company connection, waiter and admission burst counts must be positive safe integers."
+    }
+  )
+);
+const decodeSetting = Schema.decodeUnknownEffect(LimitSetting);
 export type ManagedOperatingLimitId = {
   [Id in OperatingLimitId]: (typeof registry)[Id] extends { readonly configuration: "legacy" }
     ? never
@@ -50,7 +64,12 @@ const config = Config.schema(valuesJson, "PATCHY_LIMITS_JSON").pipe(
 /** Load managed operating values once, with a revision derived from resolved defaults and overrides. */
 export const load = Effect.gen(function* () {
   const overrides = yield* config;
-  for (const limitId of Object.keys(overrides)) yield* validateLimitId(limitId);
+  for (const [limitId, value] of Object.entries(overrides)) {
+    yield* validateLimitId(limitId);
+    yield* decodeSetting({ limitId, value }).pipe(
+      Effect.mapError((cause) => new Config.ConfigError(cause))
+    );
+  }
   const values = Object.fromEntries(
     managedIds.map((limitId) => [limitId, overrides[limitId] ?? registry[limitId].default])
   ) as Record<ManagedOperatingLimitId, number>;

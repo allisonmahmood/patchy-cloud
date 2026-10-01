@@ -6,7 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
-import { Limits } from "@patchy/limits";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import { Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
@@ -14,6 +15,7 @@ import * as RuntimeLog from "./RuntimeLog.js";
 type Dependencies =
   | LoadedVersions.LoadedVersions
   | Limits.Limits
+  | OperatingLimits.OperatingLimits
   | RuntimeLog.RuntimeLog
   | Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>;
 
@@ -23,6 +25,8 @@ export const make = (
   Effect.gen(function* () {
     const log = yield* RuntimeLog.RuntimeLog;
     const session = yield* Session.Session;
+    const operatingLimits = yield* OperatingLimits.OperatingLimits;
+    const companyTokens = yield* TokenBucket.make;
     // Capture Auth's viewer resolver requirements, without importing its Companies dependencies.
     const viewerContext =
       yield* Effect.context<
@@ -47,6 +51,43 @@ export const make = (
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,
       identity,
+      admitCompany: Effect.fn("Runtime.admitCompany")(function* (companyId: string) {
+        const { rate, burst } = yield* operatingLimits
+          .getMany({
+            companyId,
+            limits: { rate: "company.admission.rate", burst: "company.admission.burst" }
+          })
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+        const attempt = yield* companyTokens.consume({
+          key: `company.admission:${companyId}`,
+          rate: rate.value,
+          burst: burst.value
+        });
+        if (!attempt.allowed && attempt.reason === "capacity")
+          return yield* new Runtime.RateLimited({
+            retryAfterSeconds: attempt.retryAfterSeconds,
+            limitId: "rate.trackedKeys",
+            value: Limits.MAX_TRACKED_KEYS
+          });
+        yield* WideEvents.enrich({
+          limits: [
+            {
+              limitId: burst.limitId,
+              value: burst.value,
+              // Whole-token capacity depleted at admission; refused calls spend no token.
+              peak: burst.value - attempt.remaining,
+              configRevision: burst.configRevision
+            }
+          ]
+        });
+        if (!attempt.allowed) {
+          return yield* new Runtime.LimitExceeded({
+            retryAfterSeconds: attempt.retryAfterSeconds,
+            limitId: "company.admission.rate",
+            value: rate.value
+          });
+        }
+      }),
       record: ({ input, operation, binding, deadlineMs }, run) =>
         Effect.gen(function* () {
           const started = yield* Clock.currentTimeMillis;

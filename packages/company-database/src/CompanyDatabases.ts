@@ -16,10 +16,13 @@ export class Placement extends Schema.Class<Placement>("Placement")({
 
 export class Busy extends Schema.TaggedError<Busy>()("Busy", {
   resource: Schema.String,
-  limit: Schema.Int
+  scope: Schema.Literals(["company", "host"]),
+  limitId: Schema.String,
+  value: Schema.Number,
+  retryAfterSeconds: Schema.Number
 }) {
   override get message() {
-    return `Company database ${this.resource} capacity (${this.limit}) is exhausted. Try again shortly.`;
+    return `Company database ${this.resource} capacity (${this.value}) is exhausted. Try again shortly.`;
   }
 }
 

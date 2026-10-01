@@ -836,9 +836,47 @@ uses separate logins; the embedded superuser is only for disposable local runs.
 `PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 retained company-pool slots per
 process. Budget this across replicas, plus ordinary platform connections, two
 independent placement connections, one admin connection, and temporary provisioning
-data connections, against the server limit. Company-pool admission exhaustion returns `busy`. The
+data connections, against the server limit. Each company's pool defaults to four
+connections, with per-company overrides through `OperatingLimits.setOverride`.
+At saturation, up to 32 acquisitions wait at most one second within their caller's
+deadline; overflow or expiry returns `busy` with retry and limit metadata.
+The Runtime company token bucket separately defaults to 100 calls/second with a
+burst of 200, including company-scoped calls that use no company connection.
+Public `me` calls do not spend company tokens. Both counts are per host replica.
+Patch-local dev does not simulate these operating limits. The
 [company database ADR](adr/ADR-0009-one-postgres-database-per-company.md) owns the
 pool and lock contract; ordinary index creation can block writers.
+
+### Neon company databases
+
+Use direct Neon URLs and `sslmode=verify-full`. The native Effect driver does not
+support libpq's `channel_binding` URL parameter; a copied Neon URL containing it
+is rejected at startup. Configure a supported verified-TLS URL explicitly rather
+than relying on the application to silently discard connection settings.
+
+Provision roles as an operator. After each data-role `CREATE ROLE`, run
+`GRANT patchy_data TO patchy_admin WITH SET TRUE, INHERIT FALSE`, substituting
+the `PATCHY_COMPANY_DB_URL` data login and `PATCHY_COMPANY_DB_ADMIN_URL` provisioning
+login. These roles are shared across placements, not created per company.
+`createrole_self_grant = 'set'` on the
+creating admin is an alternative. The data login must remain unprivileged.
+Company creation uses `template0`, not `template1`: background workers connected
+to `template1` can block copying that database while the placement transaction is
+open. Patchy initializes its own inventory in the pristine database.
+
+To reclaim a disposable company database after its pools close, use one reserved
+maintenance connection: `SET ROLE patchy_data`, `DROP DATABASE <company_database>`,
+then `RESET ROLE`, outside a transaction. Never infer the database name from a
+company handle; use its placement. Normal patch reclamation drops namespaces,
+not whole company databases.
+
+Cancellation uses the driver's protocol request because Neon's proxy pid is not
+a server backend id. Idle disconnects remove pooled connections; the next work
+acquires a fresh one without replaying an interrupted mutation. Disable suspend
+on production compute; do not change the spike or production settings as part of
+local tests.
+
+### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,
 create or join a company, then run `pnpm patchy login --api-url <origin>` and

@@ -114,6 +114,20 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       assert.deepStrictEqual(initial.indexes[0]?.columns, ["body"]);
       assert.isTrue(initial.createdAt instanceof Date);
 
+      // Reinitializing retained databases must apply upgrades without losing inventory or rows.
+      yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
+      yield* Inventory.initialize;
+      yield* Inventory.initialize;
+      assert.deepStrictEqual(yield* inventory.read(patchId), initial);
+      assert.deepStrictEqual(
+        yield* sql`SELECT column_name FROM information_schema.columns
+          WHERE table_schema = 'patchy' AND table_name = 'columns' AND column_name = 'ref_table'`,
+        [{ column_name: "ref_table" }]
+      );
+      assert.deepStrictEqual(yield* sql.unsafe(`SELECT "body" FROM ${qualified}`), [
+        { body: "kept" }
+      ]);
+
       // A later manifest can add rows and change sharing without erasing omissions.
       yield* databases.withPatchLock(patchId)(
         Effect.gen(function* () {

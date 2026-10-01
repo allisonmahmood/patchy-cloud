@@ -263,6 +263,9 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.8
         version: 0.5.8
+      '@patchy/analytics':
+        specifier: workspace:*
+        version: link:../analytics
       '@patchy/content-store':
         specifier: workspace:*
         version: link:../content-store

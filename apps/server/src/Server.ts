@@ -48,7 +48,7 @@ import {
   PostgresOperations,
   migrations as integrationsMigrations
 } from "@patchy/integrations";
-import { Limits } from "@patchy/limits";
+import { Limits, OperatingLimits } from "@patchy/limits";
 import { migrations as limitsMigrations } from "@patchy/limits/migrations";
 import {
   Content,
@@ -120,6 +120,7 @@ const services = Layer.mergeAll(
       Analytics.layer,
       WideEventsPostHog.layer,
       Limits.layer,
+      OperatingLimits.layer,
       contentStore,
       MachineTokens.layer,
       Patches.layer,
