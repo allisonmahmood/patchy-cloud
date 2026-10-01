@@ -974,9 +974,13 @@ Every package with a `test` script carries its own `vitest.config.ts` that
 re-exports the shared config from `test/`; Vitest does not look up a parent
 directory's config, so a package without one runs its suite with no Postgres
 setup and no fetch guard, silently.
-Repo publish and cold-start PGlite integration scenarios can opt into a 30-second
-test deadline, matching the existing multi-process tests. This bounds the whole
-scenario on CI; it does not change production query or runtime timeouts.
+`packages/patchy/src/cli.test.ts` and `scripts/dev/src/main.test.ts` launch the
+real CLI in every case and set a file-local 30-second test deadline. Keep pure
+in-process cases in their module suites so they retain Vitest's five-second
+default. Mixed suites must scope a subprocess budget to the cases that launch
+processes; existing longer install and lifecycle scenario budgets remain explicit.
+Cold-start PGlite integration scenarios can also opt into a 30-second deadline.
+These deadlines bound whole test scenarios on CI, not production queries or runtimes.
 `pnpm test:packed-cli-e2e` installs the packed CLI offline with an empty npm cache
 and install scripts disabled, then exercises it against its own server and
 headless Chromium. Install the browser first with
@@ -1103,6 +1107,42 @@ subscription POSTs cannot operate a process-local stream registry. No load
 balancer or production configuration is needed for the single-host local loop.
 The `async-exit-hook` dependency patch preserves failure exit codes when embedded
 Postgres shuts down; without it, a failed Vitest suite can exit successfully.
+
+#### Packed tier 2 acceptance
+
+```sh
+pnpm exec playwright install chromium
+pnpm test:packed-tier2-e2e
+```
+
+The `tier2-smoke` CI job runs this separately from the unit suite and the
+existing CLI smoke job. It uses the packed, digest-addressed release, an isolated
+CLI state directory and package caches, disposable Postgres and file storage,
+the real host with the local workerd executor, and Chromium. It does not use a
+running dev instance, live Clerk, cloud credentials or company data. Initial
+toolchain installation needs registry access; browser requests stay on loopback.
+
+The journey initializes a tier 2 repo, authors a query, mutation and action,
+and exercises both `patchy dev` mounts over invented shared-table and shared-store
+fixtures. It then publishes both artifacts and opens two independently signed-in
+browser contexts. Assertions cover subscribed updates, valid member assignments
+and `invalid_row` for a non-member, shared reads and handle downloads, staged
+upload adoption, CSV import and download, and config-plus-refresh tier changes
+in both directions.
+
+For mutation recovery, the browser interceptor waits for a successful real
+mutation response before discarding it. The page calls the returned `retry()`;
+the check verifies the original key and result and exactly one stored row through
+the generated query. Subscription assertions wait for observable results, not
+wall-clock sleeps. The journey has a five-minute failure timeout after host setup.
+The existing packed runner owns process-group cleanup, including the detached
+patch dev runtime.
+
+This is assembled-behavior acceptance, not another implementation ticket.
+Product failures belong to the owning ticket in the tier 2 stack, not fixes in
+this e2e. The fresh-agent CRM journey and tier-picking check on #413 remain manual
+checks on `main` after the stack merges; neither runs in this job or ships an
+example CRM. This local-executor check does not prove Fargate containment.
 
 #### Live content store
 

@@ -349,6 +349,64 @@ try {
   assert.equal(auth.stderr, "");
   assert.ok(!`${auth.stdout}${auth.stderr}`.includes(DEV_SEED.token), "token leaked in CLI output");
 
+  if (process.argv[2] === "--tier2") {
+    const { runTier2Flow } = await import("./packed-tier2-e2e.mjs");
+    await seedOtherUserToken();
+    tier1BrowserServer = await chromium.launchServer({
+      headless: true,
+      host: "127.0.0.1",
+      env: sanitizedProcessEnv(),
+      handleSIGINT: false,
+      handleSIGTERM: false,
+      handleSIGHUP: false
+    });
+    registerSpawnedChild(tier1BrowserServer.process());
+    const browser = await checkedCall(() => chromium.connect(tier1BrowserServer.wsEndpoint()));
+    let journeyTimeout;
+    const timeout = new Promise((_, reject) => {
+      journeyTimeout = setTimeout(() => {
+        console.error("[packed-tier2-e2e] journey exceeded 5 minutes");
+        latchSignal("SIGTERM");
+        reject(new SignalAbort("SIGTERM"));
+      }, 300_000);
+    });
+    try {
+      await Promise.race([
+        timeout,
+        runTier2Flow({
+          cliPath,
+          cliEnv,
+          publicBaseUrl,
+          tempRoot,
+          browser,
+          authTesting,
+          run,
+          runCli,
+          installedCliBinPath,
+          startDev: async (cliPath, options) => {
+            patchDevCleanup = { cliPath, options };
+            const dev = JSON.parse((await runCli(cliPath, ["dev", "--json"], options)).stdout);
+            patchDevCleanup.pid = dev.pid;
+            trackedProcessGroups.add(dev.pid);
+            return dev;
+          },
+          stopDev: async () => {
+            await runCli(patchDevCleanup.cliPath, ["dev", "stop", "--json"], {
+              ...patchDevCleanup.options,
+              cleanup: true
+            });
+            trackedProcessGroups.delete(patchDevCleanup.pid);
+            patchDevCleanup = undefined;
+          }
+        })
+      ]);
+    } finally {
+      clearTimeout(journeyTimeout);
+      await browser.close();
+    }
+    throw new ProbeComplete();
+  }
+
   const whoami = await runCli(cliPath, ["whoami"], {
     cwd: consumerDir,
     env: cliEnv
