@@ -41,6 +41,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `tier2.mutation.keyLifetime` | contract | 86400000 | milliseconds | viewer | Mutation key retention and validity window | None | No | release |
 | `tier2.mutation.keyFutureSkew` | contract | 300000 | milliseconds | viewer | Maximum mutation key timestamp ahead of server clock | None | No | release |
 | `tier2.mutation.attempts` | contract | 3 | attempts | viewer | Maximum full handler attempts after serialization failures | `write_conflict` | No | release |
+| `tier2.mutation.retryDelayMs` | operating | 100 | milliseconds | host | Base serialization retry delay; doubles per retry with jitter, inside the invocation deadline | None | No | deployment |
 | `tier2.capability.tombstone` | operating | 300000 | milliseconds | host | Expired capability replay tombstone lifetime | None | No | deployment |
 | `company.connections` | operating | 4 | connections | company | Company connections per host replica | `busy` | Yes | deployment |
 | `company.connections.hostBackends` | operating | 200 | connections | host | Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |

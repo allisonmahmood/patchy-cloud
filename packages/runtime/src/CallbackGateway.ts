@@ -200,7 +200,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       }
       const handler = operation!;
       const perform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        handler.kind === "read" ? effect : capabilities.performEffect(capability, effect);
+        handler.kind === "read" || capability.kind === "mutation"
+          ? effect
+          : capabilities.performEffect(capability, effect);
       const now = yield* Clock.currentTimeMillis;
       const deadlineMs = Math.max(
         0,
@@ -313,6 +315,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             ? Cause.findErrorOption(result.cause)
             : Option.none();
           const reply = Exit.isSuccess(result) ? result.value : undefined;
+          if (Exit.isFailure(result)) capability.mutation.value?.abort(result.cause);
           const uncertain =
             Exit.isFailure(result) &&
             (Cause.hasInterrupts(result.cause) ||
@@ -379,7 +382,19 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         ? capability.snapshot.value === undefined
           ? Effect.fail(new Runtime.InvocationUnavailable())
           : capability.snapshot.value.run(run)
-        : run;
+        : capability.kind === "mutation"
+          ? capability.mutation.value === undefined
+            ? Effect.fail(new Runtime.InvocationUnavailable())
+            : capability.mutation.value
+                .run(run)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    isCapabilityRefused(cause) || "code" in cause
+                      ? cause
+                      : new Runtime.SourceUnavailable({ cause })
+                  )
+                )
+          : run;
     const result = yield* Effect.exit(capabilities.execute(capability, operationRun));
     let reply: GuestProtocol.CallbackReply;
     let status = 200;

@@ -116,8 +116,17 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
 
       // Reinitializing retained databases must apply upgrades without losing inventory or rows.
       yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
+      yield* sql.unsafe("DROP TABLE patchy.mutation_keys");
       yield* Inventory.initialize;
       yield* Inventory.initialize;
+      yield* sql`INSERT INTO patchy.mutation_keys
+        (key, issued_at, patch_id, version_id, handler, viewer_id, fingerprint, invocation_id, reply)
+        VALUES ('retained', now(), ${patchId}, 'version', 'demo.mutation', 'viewer', 'fingerprint', 'inv_retained', '{"ok":true,"value":42}'::jsonb)`;
+      yield* Inventory.initialize;
+      assert.deepStrictEqual(
+        yield* sql`SELECT invocation_id, reply FROM patchy.mutation_keys WHERE key = 'retained'`,
+        [{ invocation_id: "inv_retained", reply: { ok: true, value: 42 } }]
+      );
       assert.deepStrictEqual(yield* inventory.read(patchId), initial);
       assert.deepStrictEqual(
         yield* sql`SELECT column_name FROM information_schema.columns

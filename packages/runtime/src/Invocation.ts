@@ -2,6 +2,7 @@ import {
   canonicalArgs,
   handlerArgsSchema,
   handlerValueSchema,
+  limitRefusal,
   limitRefusalFields,
   RuntimeFailure,
   ServerCall,
@@ -14,7 +15,7 @@ import * as GuestProtocol from "@patchy/api/guest";
 import { newInternalId } from "@patchy/core";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as DatabaseMeter from "@patchy/analytics/database-meter";
-import { ContractLimits, OperatingLimits } from "@patchy/limits";
+import { ContractLimits, DeploymentConfig, OperatingLimits } from "@patchy/limits";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -24,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Random from "effect/Random";
 import * as Binding from "./Binding.js";
 import * as Executor from "./Executor.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
@@ -32,6 +34,7 @@ import * as Runtime from "./Runtime.js";
 import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import * as QueryRollups from "./QueryRollups.js";
+import * as MutationTransaction from "./MutationTransaction.js";
 
 export class HandlerFailed extends Schema.TaggedError<HandlerFailed>()("HandlerFailed", {
   correlationId: Schema.String,
@@ -204,7 +207,10 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
   const log = yield* InvocationLog.InvocationLog;
   const rollups = yield* QueryRollups.make;
   const snapshots = yield* QuerySnapshot.QuerySnapshot;
+  const mutations = yield* MutationTransaction.MutationTransaction;
   const operating = yield* OperatingLimits.OperatingLimits;
+  const deployment = yield* DeploymentConfig.load;
+  const mutationRetryDelay = deployment.get("tier2.mutation.retryDelayMs");
   const bounds = yield* Effect.all({
     query: ContractLimits.get("tier2.query.deadline"),
     mutation: ContractLimits.get("tier2.mutation.deadline"),
@@ -214,6 +220,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
     args: ContractLimits.get("tier2.args.bytes"),
     queryResult: ContractLimits.get("tier2.query.resultBytes"),
     mutationResult: ContractLimits.get("tier2.mutation.resultBytes"),
+    mutationAttempts: ContractLimits.get("tier2.mutation.attempts"),
     actionResult: ContractLimits.get("tier2.action.resultBytes"),
     callbacks: ContractLimits.get("tier2.callbacks.count"),
     outstanding: ContractLimits.get("tier2.callbacks.outstanding"),
@@ -246,7 +253,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
       yield* capabilities
         .resolve(parent.capability.token, parent.capability.attempt)
         .pipe(Effect.mapError((cause) => new Runtime.AccessDenied({ cause })));
-      if (descriptor.kind !== "query") return yield* new Runtime.AccessDenied({});
+      if (descriptor.kind === "action") return yield* new Runtime.AccessDenied({});
     }
     let cached = codecs.get(binding.manifest);
     if (cached === undefined) {
@@ -274,6 +281,15 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
     });
     if (argsBytes > bounds.args)
       return yield* new Runtime.TooLarge({ maxBytes: bounds.args, limitId: "tier2.args.bytes" });
+    const mutationKey =
+      descriptor.kind === "mutation"
+        ? yield* MutationTransaction.key(
+            parent === undefined ? input.mutationKey : yield* MutationTransaction.mint,
+            binding,
+            input.handler,
+            input.args
+          )
+        : undefined;
     const key = canonicalArgs([binding.companyId, binding.patchId, viewer.user.id]);
     const actionLimits =
       descriptor.kind === "action"
@@ -288,7 +304,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
         : undefined;
     const resultCodec = codec.result;
-    return yield* Effect.uninterruptibleMask((restore) =>
+    const invoke = Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         if (actionLimits !== undefined) {
           for (const [used, limit, limitId, limitScope] of [
@@ -329,16 +345,21 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
         );
         const settlementDeadline = deadline + bounds.cleanup;
         const id = newInternalId("inv");
-        const attemptId = newInternalId("attempt");
         let replyDelivered = true;
         let capability: InvocationCapabilities.Capability | undefined;
+        let counters: InvocationCapabilities.Counters | undefined;
+        const tree = parent?.capability.tree ?? { bytes: 0 };
         let execution:
-          | Fiber.Fiber<GuestProtocol.InvokeReply, Runtime.RuntimeError | Executor.ExecutionError>
+          | Fiber.Fiber<
+              ServerCallReply,
+              Runtime.RuntimeError | Executor.ExecutionError | MutationTransaction.Failure
+            >
           | undefined;
         let logStarted = false;
         let guestMs = 0;
         let resultBytes = 0;
         let attempts = 0;
+        let storedOutcome: MutationTransaction.StoredOutcome | undefined;
         const meter = yield* DatabaseMeter.make;
         let logs: Array<typeof Schema.Json.Type> | undefined;
         const begin = {
@@ -387,155 +408,111 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
           );
         });
         const run = Effect.gen(function* () {
-          const dispatch = Effect.gen(function* () {
-            if (descriptor.kind !== "query" || parent !== undefined) {
-              yield* log
-                .begin(begin)
-                .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-              logStarted = true;
-            }
-            if ((yield* Clock.currentTimeMillis) >= deadline)
-              return yield* new HandlerTimeout({ correlationId: binding.correlationId });
-            const bundle = parent?.bundle ?? (yield* bundles.load(binding));
-            if (
-              bundle.companyId !== binding.companyId ||
-              bundle.patchId !== binding.patchId ||
-              bundle.versionId !== binding.versionId
-            )
-              return yield* new HandlerFailed({ correlationId: binding.correlationId });
-            const bound = parent?.bound ?? (yield* executor.bind(bundle));
-            if (
-              bound.processGeneration === undefined ||
-              canonicalArgs(bound.binding) !==
-                canonicalArgs({
-                  companyId: bundle.companyId,
-                  patchId: bundle.patchId,
-                  versionId: bundle.versionId,
-                  sha256: bundle.sha256
-                })
-            )
-              return yield* new HandlerFailed({ correlationId: binding.correlationId });
-            if (parent === undefined)
-              yield* WideEvents.enrich({ processGeneration: bound.processGeneration });
-            if ((yield* Clock.currentTimeMillis) >= deadline)
-              return yield* new HandlerTimeout({ correlationId: binding.correlationId });
-            capability = yield* capabilities.issue({
-              binding: { ...binding, invocationId: id, effectivePrincipal: "patch" },
-              attempt: {
-                invocationId: id,
-                attemptId,
-                processGeneration: bound.processGeneration,
-                deadline
-              },
-              kind: descriptor.kind,
-              reauthorize,
-              ...(parent === undefined ? {} : { tree: parent.capability.tree }),
-              ...(descriptor.kind !== "action"
-                ? {}
-                : {
-                    run: (args: unknown) =>
-                      call(
-                        args,
-                        { ...binding, correlationId: newInternalId("call") },
-                        reauthorize,
-                        { capability: capability!, bundle, bound }
-                      )
-                  })
-            });
-            if (descriptor.kind === "query") {
-              capability.snapshot.value = yield* snapshots
-                .open(capability)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    isCapabilityRefused(cause) ? new Runtime.AccessDenied({ cause }) : cause
-                  )
-                );
-            }
-            attempts++;
-            return yield* executor.invoke({
-              wire: GuestProtocol.wireVersion,
-              binding: bound.binding,
-              ...capability.attempt,
-              handler: input.handler,
-              args: input.args,
-              viewer,
-              callback: { url: options.callbackUrl, capability: capability.token }
-            });
-          });
-          execution = yield* Effect.forkDetach(Effect.interruptible(dispatch));
-          const raced = yield* Fiber.await(execution).pipe(
-            Effect.map((exit) => ({ type: "completed" as const, exit })),
-            Effect.raceFirst(
-              Effect.sleep(Math.max(0, deadline - (yield* Clock.currentTimeMillis))).pipe(
-                Effect.as({ type: "deadline" as const })
-              )
-            )
-          );
-          const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
-          if (raced.type === "completed" && Exit.isSuccess(raced.exit)) {
-            const reported = yield* decodeReply(raced.exit.value).pipe(Effect.result);
-            if (reported._tag === "Success") guestMs = reported.success.guestMs;
-          }
-          const timedOut =
-            raced.type === "deadline" || (yield* Clock.currentTimeMillis) >= deadline;
-          let reason: InvocationCapabilities.EndReason = timedOut ? "deadline" : "returned";
-          if (raced.type === "completed" && Exit.isFailure(raced.exit)) {
-            const error = Cause.findErrorOption(raced.exit.cause);
-            if (
-              Option.isSome(error) &&
-              isExecutionError(error.value) &&
-              error.value.reason === "process_killed"
-            )
-              reason = "process_killed";
-          }
-          if (timedOut) execution.interruptUnsafe();
-          if (timedOut && parent === undefined)
-            yield* WideEvents.enrich({ limitId: `tier2.${descriptor.kind}.deadline` });
-          const settled =
-            capability === undefined
-              ? true
-              : yield* capabilities.settle(
-                  capability.token,
-                  reason,
-                  Math.max(
-                    0,
-                    Math.min(bounds.cleanup, settlementDeadline - (yield* Clock.currentTimeMillis))
-                  )
-                );
-          const outcome = yield* Effect.exit(
-            Effect.gen(function* () {
-              if (!settled)
-                return yield* new UnsettledInvocation({ correlationId: binding.correlationId });
-              if (timedOut)
-                return yield* new HandlerTimeout({ correlationId: binding.correlationId });
-              if (raced.type !== "completed")
-                return yield* new HandlerTimeout({ correlationId: binding.correlationId });
-              if (Exit.isFailure(raced.exit)) {
-                const error = Cause.findErrorOption(raced.exit.cause);
-                if (Option.isNone(error))
-                  return yield* new HandlerFailed({
-                    correlationId: binding.correlationId,
-                    cause: Cause.squash(raced.exit.cause)
-                  });
-                const failure = error.value;
-                if (isExecutionError(failure)) {
-                  if (failure.limits !== undefined)
-                    yield* WideEvents.enrich({ limits: failure.limits });
-                  if (failure.reason === "busy")
-                    return yield* new ExecutorBusy({ ...failure.limit, cause: failure });
-                  return yield* new HandlerFailed({
-                    correlationId: binding.correlationId,
-                    cause: failure
-                  });
-                }
-                return yield* Effect.fail(failure);
+          let outcome: Exit.Exit<ServerCallReply, Runtime.RuntimeError>;
+          while (true) {
+            const dispatch = Effect.gen(function* () {
+              if (!logStarted && (descriptor.kind !== "query" || parent !== undefined)) {
+                yield* log
+                  .begin(begin)
+                  .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+                logStarted = true;
               }
-              const observed = yield* decodeReply(raced.exit.value).pipe(
-                Effect.mapError(
-                  (cause) => new HandlerFailed({ correlationId: binding.correlationId, cause })
-                )
-              );
-              guestMs = observed.guestMs;
+              if (mutationKey !== undefined) {
+                storedOutcome = yield* mutations.lookup(binding, mutationKey);
+                if (storedOutcome !== undefined) return storedOutcome.reply;
+              }
+              if ((yield* Clock.currentTimeMillis) >= deadline)
+                return yield* new HandlerTimeout({ correlationId: binding.correlationId });
+              const bundle = parent?.bundle ?? (yield* bundles.load(binding));
+              if (
+                bundle.companyId !== binding.companyId ||
+                bundle.patchId !== binding.patchId ||
+                bundle.versionId !== binding.versionId
+              )
+                return yield* new HandlerFailed({ correlationId: binding.correlationId });
+              const bound = parent?.bound ?? (yield* executor.bind(bundle));
+              if (
+                bound.processGeneration === undefined ||
+                canonicalArgs(bound.binding) !==
+                  canonicalArgs({
+                    companyId: bundle.companyId,
+                    patchId: bundle.patchId,
+                    versionId: bundle.versionId,
+                    sha256: bundle.sha256
+                  })
+              )
+                return yield* new HandlerFailed({ correlationId: binding.correlationId });
+              if (parent === undefined)
+                yield* WideEvents.enrich({ processGeneration: bound.processGeneration });
+              capability = yield* capabilities.issue({
+                binding: { ...binding, invocationId: id, effectivePrincipal: "patch" },
+                attempt: {
+                  invocationId: id,
+                  attemptId: newInternalId("attempt"),
+                  processGeneration: bound.processGeneration,
+                  deadline
+                },
+                kind: descriptor.kind,
+                reauthorize,
+                tree,
+                ...(counters === undefined ? {} : { counters }),
+                ...(descriptor.kind !== "action"
+                  ? {}
+                  : {
+                      run: (args: unknown) =>
+                        call(
+                          args,
+                          { ...binding, correlationId: newInternalId("call") },
+                          reauthorize,
+                          { capability: capability!, bundle, bound }
+                        )
+                    })
+              });
+              counters = capability.counters;
+              if (descriptor.kind === "query")
+                capability.snapshot.value = yield* snapshots
+                  .open(capability)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      isCapabilityRefused(cause) ? new Runtime.AccessDenied({ cause }) : cause
+                    )
+                  );
+              if (mutationKey !== undefined)
+                capability.mutation.value = yield* MutationTransaction.make(
+                  capability,
+                  mutationKey,
+                  scope
+                ).pipe(
+                  Effect.provideService(MutationTransaction.MutationTransaction, mutations),
+                  Effect.provideService(
+                    InvocationCapabilities.InvocationCapabilities,
+                    capabilities
+                  ),
+                  Effect.mapError((cause) => new Runtime.AccessDenied({ cause }))
+                );
+              attempts++;
+              const observed = yield* executor
+                .invoke({
+                  wire: GuestProtocol.wireVersion,
+                  binding: bound.binding,
+                  ...capability.attempt,
+                  handler: input.handler,
+                  args: input.args,
+                  viewer,
+                  callback: { url: options.callbackUrl, capability: capability.token }
+                })
+                .pipe(
+                  Effect.flatMap(decodeReply),
+                  Effect.mapError((cause) =>
+                    isExecutionError(cause)
+                      ? cause
+                      : new HandlerFailed({ correlationId: binding.correlationId, cause })
+                  )
+                );
+              capability.mutation.value?.close();
+              guestMs += observed.guestMs;
+              const serializationConflict = capability.mutation.value?.conflict;
+              if (serializationConflict !== undefined) return yield* serializationConflict;
               if (observed.outcome !== "returned")
                 return yield* new HandlerFailed({ correlationId: binding.correlationId });
               const reply = observed.reply;
@@ -544,7 +521,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                   if (!descriptor.errors?.includes(reply.code))
                     return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 } else {
-                  const trusted = capability?.refusals.find(
+                  const trusted = capability.refusals.find(
                     (entry) => canonicalArgs(entry.failure) === canonicalArgs(reply)
                   );
                   if (trusted !== undefined) return yield* new CallbackRefusal(trusted);
@@ -570,9 +547,154 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                   limitId: `tier2.${descriptor.kind}.resultBytes`,
                   value: maximum
                 });
-              return reply.ok ? { ok: true as const, value } : reply;
-            })
-          );
+              const validated = reply.ok ? { ok: true as const, value } : reply;
+              // Declared handler failures roll back writes; only validated success may commit.
+              return mutationKey !== undefined && validated.ok
+                ? yield* capability.mutation
+                    .value!.complete(validated)
+                    .pipe(
+                      Effect.mapError((cause) =>
+                        isCapabilityRefused(cause) ? new Runtime.AccessDenied({ cause }) : cause
+                      )
+                    )
+                : validated;
+            });
+            execution = yield* Effect.forkDetach(Effect.interruptible(dispatch));
+            const raced = yield* Fiber.await(execution).pipe(
+              Effect.map((exit) => ({ type: "completed" as const, exit })),
+              Effect.raceFirst(
+                Effect.sleep(Math.max(0, deadline - (yield* Clock.currentTimeMillis))).pipe(
+                  Effect.as({ type: "deadline" as const })
+                )
+              )
+            );
+            const timedOut = raced.type === "deadline";
+            const raw: Exit.Exit<
+              ServerCallReply,
+              Runtime.RuntimeError | Executor.ExecutionError | MutationTransaction.Failure
+            > =
+              raced.type === "completed"
+                ? raced.exit
+                : Exit.fail(new HandlerTimeout({ correlationId: binding.correlationId }));
+            const failure = Exit.isFailure(raw) ? Cause.findErrorOption(raw.cause) : Option.none();
+            const conflict =
+              capability?.mutation.value?.conflict !== undefined ||
+              (Exit.isFailure(raw) && MutationTransaction.isSerializationCause(raw.cause));
+            const reason: InvocationCapabilities.EndReason = timedOut
+              ? "deadline"
+              : conflict
+                ? "superseded"
+                : Option.isSome(failure) &&
+                    isExecutionError(failure.value) &&
+                    failure.value.reason === "process_killed"
+                  ? "process_killed"
+                  : "returned";
+            if (timedOut) execution.interruptUnsafe();
+            if (timedOut && parent === undefined)
+              yield* WideEvents.enrich({ limitId: `tier2.${descriptor.kind}.deadline` });
+            const settled =
+              capability === undefined
+                ? true
+                : yield* capabilities.settle(
+                    capability.token,
+                    reason,
+                    Math.max(
+                      0,
+                      Math.min(
+                        bounds.cleanup,
+                        settlementDeadline - (yield* Clock.currentTimeMillis)
+                      )
+                    )
+                  );
+            const committedReply = capability?.mutation.value?.committedReply;
+            if (committedReply !== undefined) {
+              outcome = Exit.succeed(committedReply);
+              break;
+            }
+            const uncertain = !settled || capability?.mutation.value?.uncertain === true;
+            const keyRace = Option.isSome(failure) && MutationTransaction.isKeyRace(failure.value);
+            if (mutationKey !== undefined && (uncertain || keyRace || timedOut)) {
+              const resolved = yield* awaitUntil(
+                mutations.lookup(binding, mutationKey),
+                settlementDeadline
+              );
+              if (
+                Option.isSome(resolved) &&
+                Exit.isSuccess(resolved.value) &&
+                resolved.value.value !== undefined
+              ) {
+                storedOutcome = resolved.value.value;
+                outcome = Exit.succeed(storedOutcome.reply);
+                break;
+              }
+              if (keyRace && Option.isSome(resolved) && Exit.isFailure(resolved.value)) {
+                outcome = Exit.failCause(resolved.value.cause);
+                break;
+              }
+            }
+            if (uncertain)
+              outcome = Exit.fail(
+                new UnsettledInvocation({ correlationId: binding.correlationId })
+              );
+            else if (timedOut)
+              outcome = Exit.fail(new HandlerTimeout({ correlationId: binding.correlationId }));
+            else if (conflict) {
+              if (
+                attempts < bounds.mutationAttempts &&
+                (yield* Clock.currentTimeMillis) < deadline
+              ) {
+                capability = undefined;
+                // Retrying immediately makes the same hot-row writers collide again.
+                // Jitter spreads retries without holding a connection or renewing the deadline.
+                const backoff = mutationRetryDelay * 2 ** (attempts - 1);
+                const wait = yield* Random.nextIntBetween(backoff, backoff * 4);
+                yield* Effect.sleep(
+                  Math.min(wait, Math.max(0, deadline - (yield* Clock.currentTimeMillis)))
+                );
+                continue;
+              }
+              if (parent === undefined)
+                yield* WideEvents.enrich({ limitId: "tier2.mutation.attempts" });
+              outcome = Exit.fail(
+                new MutationTransaction.WriteConflict(
+                  limitRefusal("tier2.mutation.attempts", bounds.mutationAttempts)
+                )
+              );
+            } else if (Exit.isSuccess(raw)) outcome = Exit.succeed(raw.value);
+            else if (Option.isSome(failure)) {
+              const error = failure.value;
+              if (isExecutionError(error)) {
+                if (error.limits !== undefined) yield* WideEvents.enrich({ limits: error.limits });
+                outcome = Exit.fail(
+                  error.reason === "busy"
+                    ? new ExecutorBusy({ ...error.limit, cause: error })
+                    : new HandlerFailed({ correlationId: binding.correlationId, cause: error })
+                );
+              } else
+                outcome = Exit.fail(
+                  "code" in error ? error : new Runtime.SourceUnavailable({ cause: error })
+                );
+            } else
+              outcome = Exit.fail(
+                new HandlerFailed({
+                  correlationId: binding.correlationId,
+                  cause: Cause.squash(raw.cause)
+                })
+              );
+            break;
+          }
+          if (storedOutcome !== undefined) {
+            // Journal failure or a stuck driver cannot invalidate a proven commit.
+            // Leave cleanup time for this invocation's own settlement.
+            yield* awaitUntil(
+              log.reconcileMutation({
+                companyId: binding.companyId,
+                invocationId: storedOutcome.invocationId
+              }),
+              deadline
+            );
+          }
+          const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
           const failure = Exit.isFailure(outcome)
             ? Cause.findErrorOption(outcome.cause)
             : Option.none();
@@ -658,6 +780,9 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             yield* WideEvents.operation(operation);
           const peaks = [
             [`tier2.${descriptor.kind}.deadline`, bounds[descriptor.kind], elapsed],
+            ...(descriptor.kind === "mutation"
+              ? [["tier2.mutation.attempts", bounds.mutationAttempts, attempts] as const]
+              : []),
             [
               `tier2.${descriptor.kind}.resultBytes`,
               bounds[`${descriptor.kind}Result`],
@@ -744,6 +869,15 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
         );
       })
     );
+    return yield* parent !== undefined && descriptor.kind === "mutation"
+      ? capabilities
+          .performEffect(parent.capability, invoke)
+          .pipe(
+            Effect.mapError((cause) =>
+              isCapabilityRefused(cause) ? new Runtime.AccessDenied({ cause }) : cause
+            )
+          )
+      : invoke;
   });
   return Invocation.of({ call });
 });

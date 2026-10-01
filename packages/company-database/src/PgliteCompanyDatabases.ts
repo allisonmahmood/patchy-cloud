@@ -1,4 +1,5 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
+import { protocol, type PGliteInterface } from "@electric-sql/pglite";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -11,6 +12,7 @@ import * as Scope from "effect/Scope";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlError from "effect/unstable/sql/SqlError";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as ConnectionTiming from "./ConnectionTiming.js";
 import * as Inventory from "./Inventory.js";
@@ -175,8 +177,32 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
           new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
       )
     );
+    const native = connection as typeof connection & { readonly pglite: PGliteInterface };
+    const acknowledged = Object.assign(Object.create(connection) as typeof connection, {
+      executeRaw: (statement: string, params: ReadonlyArray<unknown>) =>
+        statement === "COMMIT" || statement === "ROLLBACK"
+          ? Effect.tryPromise({
+              try: async () => {
+                const result = await native.pglite.execProtocol(
+                  protocol.serialize.query(statement)
+                );
+                const completed = result.messages.find(
+                  (message) => message.name === "commandComplete"
+                );
+                return {
+                  command:
+                    completed !== undefined && "text" in completed ? completed.text : undefined
+                };
+              },
+              catch: (cause) =>
+                new SqlError.SqlError({
+                  reason: new SqlError.UnknownError({ cause, operation: "commit" })
+                })
+            })
+          : connection.executeRaw(statement, params)
+    });
     const retained = yield* SqlClient.make({
-      acquirer: Effect.succeed(connection),
+      acquirer: Effect.succeed(acknowledged),
       compiler: PgliteClient.makeCompiler(),
       spanAttributes: []
     }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));

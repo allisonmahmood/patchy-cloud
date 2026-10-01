@@ -30,12 +30,16 @@ starting the cloud or touching Clerk. Prove that a killed generation cannot
 forward callbacks and a fresh bind recovers without replay. Local execution
 proves engine compatibility, not Fargate containment.
 
-For tier 2 query/action changes, follow DEVELOPMENT's **The execution engine**
+For tier 2 handler changes, follow DEVELOPMENT's **The execution engine**
 guidance and exercise an eligible `server.call` through the existing `pnpm dev`
-server composition. The local executor, private callback gateway and snapshot
-adapter run there; this does not enable tier 2 publication or the patch-repo
-dev loop. The end-to-end browser path lands with publication in #401 and
-`patchy dev` on the production engine in #404.
+server composition. The local executor, private callback gateway, query snapshot
+and mutation transaction adapters run there. For mutations, verify committed
+replay with the same key, rollback after a handler failure, and parent-action
+database time for a nested mutation. Use real Postgres for serialization,
+cross-host key races and dropped-client connection cleanup; PGlite cannot prove
+concurrent-session behavior. This does not enable tier 2 publication or the
+patch-repo dev loop. The end-to-end browser path lands with publication in #401
+and `patchy dev` on the production engine in #404.
 
 ## Patch repos and the local runtime
 

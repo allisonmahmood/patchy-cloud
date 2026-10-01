@@ -25,7 +25,8 @@ import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
-import { snapshot } from "./test/callbacks.js";
+import { snapshot, mutations } from "./test/callbacks.js";
+import * as MutationTransaction from "./MutationTransaction.js";
 
 const viewer = {
   user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Dev" },
@@ -85,6 +86,7 @@ const services = Layer.mergeAll(
 const makeInvocation = (invoke: Executor.Executor["Service"]["invoke"]) =>
   Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" }).pipe(
     Effect.provideService(QuerySnapshot.QuerySnapshot, { open: () => Effect.succeed(snapshot) }),
+    Effect.provideService(MutationTransaction.MutationTransaction, mutations),
     Effect.provideService(Executor.Executor, { bind: () => Effect.succeed(bound), invoke }),
     Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
   );
@@ -327,7 +329,11 @@ it.layer(services)("Invocation", (it) => {
             wire: 1,
             principal: binding.principal,
             op: "server.call",
-            args: { handler: "demo.mutation", args: {} }
+            args: {
+              handler: "demo.mutation",
+              args: {},
+              mutationKey: yield* MutationTransaction.mint
+            }
           })
           .pipe(
             Effect.provideService(HttpServerRequest.HttpServerRequest, request),
@@ -384,7 +390,11 @@ it.layer(services)("Invocation", (it) => {
           })
         );
         const caller = yield* invocations
-          .call({ handler: "demo.mutation", args: {} }, binding, Effect.succeed(viewer))
+          .call(
+            { handler: "demo.mutation", args: {}, mutationKey: yield* MutationTransaction.mint },
+            binding,
+            Effect.succeed(viewer)
+          )
           .pipe(Effect.result, Effect.forkChild);
         const request = yield* Queue.take(seen);
         yield* TestClock.adjust("5 seconds");

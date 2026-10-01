@@ -60,6 +60,8 @@ export class PatchyError<C extends ErrorCode = ErrorCode> extends Error {
   readonly limitId?: string;
   readonly value?: number;
   readonly retryAfter?: number;
+  /** Present only on an uncertain mutation; retry preserves its key and arguments. */
+  declare readonly retry?: C extends "unknown_outcome" ? () => Promise<unknown> : never;
   constructor(
     readonly code: C,
     message: string,

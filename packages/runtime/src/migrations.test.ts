@@ -31,12 +31,13 @@ const withLifecycle: Migrations = {
   ...withIntegrations,
   "0008_patches_lifecycle": patchesMigrations["0008_patches_lifecycle"]!
 };
-const current: Migrations = {
+const withInvocations: Migrations = {
   ...withLifecycle,
   ...patchesMigrations,
   ...limitsMigrations,
-  ...migrations
+  "0011_runtime_invocations": migrations["0011_runtime_invocations"]!
 };
+const current: Migrations = { ...withInvocations, ...migrations };
 
 const company = Effect.flatMap(
   SqlClient.SqlClient,
@@ -108,7 +109,8 @@ it.effect("upgrades retained calls with attribution and adds durable invocation 
     assert.deepStrictEqual(yield* migrate(current), [
       [9, "limits_overrides"],
       [10, "patches_lifecycle_revision"],
-      [11, "runtime_invocations"]
+      [11, "runtime_invocations"],
+      [12, "runtime_mutation_commit_proof"]
     ]);
     assert.deepStrictEqual(yield* migrate(current), []);
 
@@ -178,6 +180,42 @@ it.effect("upgrades retained calls with attribution and adds durable invocation 
     assert.strictEqual(invocation?.initiatingViewerId, "usr_migration");
     assert.strictEqual(invocation?.outcome, "pending");
   }).pipe(Effect.provide(Testing.emptyLayer(withLifecycle)))
+);
+
+it.effect(
+  "adds mutation commit proof to retained invocations without inventing settlement facts",
+  () =>
+    Effect.gen(function* () {
+      const invocations = yield* InvocationLog.make;
+      const input: InvocationLog.Begin = {
+        id: "invocation_retained_proof",
+        companyId: "cmp_retained_proof",
+        patchId: "patch_retained_proof",
+        versionId: "version_retained_proof",
+        handler: "leads.approve",
+        kind: "mutation",
+        initiatingViewerId: "usr_retained_proof",
+        parentId: null,
+        correlationId: "correlation_retained_proof",
+        startedAt: 0,
+        deadline: 5_000,
+        argsBytes: 2
+      };
+      yield* invocations.begin(input);
+      assert.deepStrictEqual(yield* migrate(current), [[12, "runtime_mutation_commit_proof"]]);
+      assert.deepStrictEqual(yield* migrate(current), []);
+      const lookup = { companyId: input.companyId, invocationId: input.id };
+      const retained = yield* invocations.find(lookup);
+      assert.strictEqual(retained?.outcome, "pending");
+      assert.isNull(retained?.settledAt);
+      assert.isNull(retained?.durationMs);
+      assert.isFalse(retained?.replyDelivered);
+      yield* invocations.reconcileMutation(lookup);
+      assert.deepStrictEqual(
+        yield* invocations.find(lookup),
+        new InvocationLog.Invocation({ ...retained!, outcome: "success", outcomeCode: null })
+      );
+    }).pipe(Effect.provide(Testing.emptyLayer(withInvocations)))
 );
 
 it.effect("keys query rollups by UTC minute and deduplicates applied run ids", () =>

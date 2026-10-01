@@ -4,6 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Binding from "../Binding.js";
 import * as InvocationCapabilities from "../InvocationCapabilities.js";
 import type { Resource } from "../QuerySnapshot.js";
+import * as MutationTransaction from "../MutationTransaction.js";
+
+/** These executor/journal fixtures never reach company storage. */
+export const mutations = MutationTransaction.MutationTransaction.of({
+  lookup: () => Effect.succeed(undefined),
+  open: () => Effect.die("Unexpected company transaction in an executor-only fixture")
+});
 
 /** Gateway-only fixtures have no SQL resources; snapshot semantics have their own suite. */
 export const snapshot: Resource = {
@@ -55,5 +62,14 @@ export const issue = Effect.fnUntraced(function* (
     ...options
   });
   capability.snapshot.value = snapshot;
+  capability.mutation.value = {
+    ...snapshot,
+    complete: (reply) => Effect.succeed(reply),
+    close: () => {},
+    abort: () => {},
+    conflict: undefined,
+    committedReply: undefined,
+    uncertain: false
+  };
   return capability;
 });

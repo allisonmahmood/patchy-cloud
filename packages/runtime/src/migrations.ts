@@ -101,5 +101,8 @@ export const migrations: Migrations = {
     )`,
     `CREATE INDEX runtime_query_rollup_runs_applied
       ON runtime_query_rollup_runs (applied_at)`
+  ),
+  "0012_runtime_mutation_commit_proof": ddl(
+    `ALTER TABLE runtime_invocations ADD COLUMN mutation_committed BOOLEAN NOT NULL DEFAULT false`
   )
 };

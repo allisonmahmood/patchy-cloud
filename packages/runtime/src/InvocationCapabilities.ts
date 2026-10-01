@@ -25,6 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Binding from "./Binding.js";
 import type { RuntimeError } from "./Runtime.js";
 import type { Resource } from "./QuerySnapshot.js";
+import type * as MutationTransaction from "./MutationTransaction.js";
 
 export type EndReason = "returned" | "deadline" | "superseded" | "process_killed";
 export type AttemptIdentity = Pick<
@@ -57,6 +58,7 @@ export interface Capability {
   readonly refusals: Array<{ readonly failure: RuntimeFailure; readonly status: number }>;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
   readonly snapshot: { value?: Resource };
+  readonly mutation: { value?: MutationTransaction.Resource };
   readonly observe: <A, E, R>(work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 export interface Issue {
@@ -65,6 +67,7 @@ export interface Issue {
   readonly kind: HandlerKind;
   readonly reauthorize: Effect.Effect<NonNullable<RuntimeMe>, RuntimeError>;
   readonly tree?: TreeBudget;
+  readonly counters?: Counters;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
 }
 
@@ -273,7 +276,7 @@ export const make = Effect.gen(function* () {
     return entry.capability;
   });
   const issue = Effect.fn("InvocationCapabilities.issue")(function* (input: Issue) {
-    const counters: Counters = {
+    const counters: Counters = input.counters ?? {
       callbacks: 0,
       logBytes: 0,
       logs: [],
@@ -305,6 +308,7 @@ export const make = Effect.gen(function* () {
       reauthorize: input.reauthorize,
       tree: input.tree ?? { bytes: 0 },
       snapshot: {},
+      mutation: {},
       observe: <A, E, R>(work: Effect.Effect<A, E, R>) =>
         observe(work.pipe(Effect.provideService(DatabaseMeter.current, meter))),
       ...(input.run === undefined ? {} : { run: input.run }),
@@ -428,7 +432,9 @@ export const make = Effect.gen(function* () {
       Option.isSome(result) &&
       entry.effectsPending === 0 &&
       !entry.effectsUncertain &&
-      (entry.reason === "returned" || !entry.effectsStarted);
+      (entry.capability.kind === "mutation" ||
+        entry.reason === "returned" ||
+        !entry.effectsStarted);
     for (const retained of entry.resources) {
       if (!resourceSettled(retained)) {
         settled = false;

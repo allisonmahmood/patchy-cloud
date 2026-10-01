@@ -29,8 +29,12 @@ export interface Transport {
   readonly call: Call;
   readonly route: Route;
   readonly queries: QueryDriver;
+  /** Wait for the document-bound transport and its trusted handler descriptors. */
+  ready(): Promise<void>;
   /** Current server-clock estimate from hello, unavailable before the document stream opens. */
   serverTime(): number | undefined;
+  /** Wait for hello without substituting the browser's wall clock. */
+  waitForServerTime(): Promise<number>;
   /** The loaded version's host-inspected kind, never inferred from the caller's types. */
   handlerKind(name: string): HandlerKindName | undefined;
   close(): void;
@@ -77,6 +81,15 @@ export function createPortTransport(
   let closed = false;
   let path = options.route ?? "/";
   let clock: { readonly serverTime: number; readonly receivedAt: number } | undefined;
+  const serverTime = () =>
+    closed || clock === undefined
+      ? undefined
+      : clock.serverTime + performance.now() - clock.receivedAt;
+  const clockWaiters = new Set<{
+    resolve(time: number): void;
+    reject(error: unknown): void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
   const listeners = new Set<(path: string) => void>();
   const queries = new Map<string, (frame: QueryFrame) => void>();
   let querySequence = 0;
@@ -128,8 +141,14 @@ export function createPortTransport(
         "serverTime" in data &&
         typeof data.serverTime === "number" &&
         Number.isFinite(data.serverTime)
-      )
+      ) {
         clock = { serverTime: data.serverTime, receivedAt: performance.now() };
+        for (const waiter of clockWaiters) {
+          clearTimeout(waiter.timer);
+          waiter.resolve(data.serverTime);
+        }
+        clockWaiters.clear();
+      }
       if (value.event === "stream" && data !== null && typeof data === "object" && "type" in data) {
         const frame = data as Record<string, unknown>;
         if (typeof frame.id === "string") {
@@ -188,6 +207,11 @@ export function createPortTransport(
       request.reject(lost());
     }
     pending.clear();
+    for (const waiter of clockWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(lost());
+    }
+    clockWaiters.clear();
     listeners.clear();
     for (const listener of queries.values())
       listener({ status: "error", error: lost(), permanent: true });
@@ -246,6 +270,7 @@ export function createPortTransport(
     return promise;
   };
   return {
+    ready: () => (closed ? Promise.reject(lost()) : Promise.resolve()),
     handlerKind: (name) => (closed ? undefined : handlerKinds?.[name]),
     call,
     queries: {
@@ -273,10 +298,23 @@ export function createPortTransport(
         };
       }
     },
-    serverTime: () =>
-      closed || clock === undefined
-        ? undefined
-        : clock.serverTime + performance.now() - clock.receivedAt,
+    serverTime,
+    waitForServerTime() {
+      if (closed) return Promise.reject(lost());
+      const time = serverTime();
+      if (time !== undefined) return Promise.resolve(time);
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          clockWaiters.delete(waiter);
+          reject(new PatchyError("timeout", "The document stream did not provide its clock.", {}));
+        }, options.timeoutMs ?? 10_000)
+      };
+      clockWaiters.add(waiter);
+      return promise;
+    },
     route: {
       get: () => (closed ? Promise.reject(lost()) : Promise.resolve(path)),
       set: (path) => call("route.set", { path }) as Promise<null>,
@@ -363,11 +401,20 @@ export function createPostMessageTransport(
   };
   frame?.addEventListener("pagehide", close, { once: true });
   return {
+    ready: async () => {
+      if (closed) throw lost();
+      await ready;
+      if (closed) throw lost();
+    },
     call: async (op, args, bytes) => {
       if (closed) throw lost();
       return (await ready).call(op, args, bytes);
     },
     serverTime: () => (closed ? undefined : transport?.serverTime()),
+    waitForServerTime: async () => {
+      if (closed) throw lost();
+      return (await ready).waitForServerTime();
+    },
     handlerKind: (name) => (closed ? undefined : transport?.handlerKind(name)),
     queries: {
       subscribe(request, onFrame) {
@@ -511,7 +558,9 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
     }
   };
   return {
+    ready: () => (controller.signal.aborted ? Promise.reject(lost()) : Promise.resolve()),
     serverTime: () => undefined,
+    waitForServerTime: () => Promise.reject(browserOnly()),
     handlerKind: (name) => (controller.signal.aborted ? undefined : handlerKinds?.[name]),
     queries: {
       subscribe() {

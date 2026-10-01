@@ -69,7 +69,7 @@ Each row has reserved `id`, `createdAt` and `updatedAt`. Patchy supplies and mai
 - Update: omitted fields stay unchanged; null clears an optional field; required/defaulted null is refused. `update(id, patch)` returns the updated row or `row_not_found`.
 - `get(id)` returns a row or null. `getMany(ids)` preserves input order with null for each missing or dangling id.
 - `insert(row)` returns the inserted row. `insertMany(rows)` returns the inserted rows and is all-or-nothing.
-- `delete(id)` is idempotent, returning null even when already absent. Writes are last-write-wins; there is no cross-table transaction or automatic mutation retry.
+- `delete(id)` is idempotent, returning null even when already absent. Tier 1 direct writes are last-write-wins; they have no cross-table transaction or automatic mutation retry. Tier 2 mutation handlers group their owned-table operations into one `SERIALIZABLE` transaction, with up to three whole-handler attempts. See `patchy-server` for `write_conflict` and keyed `retry()`.
 
 Rows are bounded to 1 MiB, batches to 1,000 items and 8 MiB, list/getMany results to 8 MiB. Handle `invalid_row`, `unique_violation`, `row_not_found` and `too_large` as visible failures. For a lost reply, follow the loop skill's `unknown_outcome` rule.
 

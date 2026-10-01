@@ -316,6 +316,16 @@ export const registry = {
     refusal: "write_conflict",
     overridable: false
   },
+  "tier2.mutation.retryDelayMs": {
+    kind: "operating",
+    default: 100,
+    unit: "milliseconds",
+    scope: "host",
+    measure:
+      "Base serialization retry delay; doubles per retry with jitter, inside the invocation deadline",
+    refusal: null,
+    overridable: false
+  },
   "tier2.capability.tombstone": {
     kind: "operating",
     default: 300000,

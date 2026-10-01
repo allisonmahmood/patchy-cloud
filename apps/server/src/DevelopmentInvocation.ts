@@ -2,7 +2,7 @@ import type { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as Local from "@patchy/execution/local";
 import type { OperatingLimits } from "@patchy/limits";
 import type { InvalidLimit } from "@patchy/limits/deployment-config";
-import { QuerySnapshot } from "@patchy/primitives";
+import { MutationTransaction, QuerySnapshot } from "@patchy/primitives";
 import {
   CallbackGateway,
   CallbackGatewayApi,
@@ -11,9 +11,11 @@ import {
   InvocationCapabilities,
   InvocationLog,
   Runtime,
+  type MutationTransaction as RuntimeMutationTransaction,
   type QuerySnapshot as RuntimeQuerySnapshot,
   type RuntimeLog,
-  ServerBundles
+  ServerBundles,
+  type Wakes
 } from "@patchy/runtime";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -49,6 +51,7 @@ type Dependencies =
   | InvocationLog.InvocationLog
   | SqlClient.SqlClient
   | RuntimeQuerySnapshot.QuerySnapshot
+  | RuntimeMutationTransaction.MutationTransaction
   | OperatingLimits.OperatingLimits;
 
 /** Only the existing repository dev supervisor opts the cloud server into this layer. */
@@ -133,12 +136,13 @@ export const layer = (
   StartupError,
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory
+  | Wakes.Wakes
   | OperatingLimits.OperatingLimits
   | RuntimeLog.RuntimeLog
   | SqlClient.SqlClient
 > =>
   Layer.effect(Invocation.Invocation, make(handlers)).pipe(
-    Layer.provide([InvocationLog.layer, QuerySnapshot.layer]),
+    Layer.provide([InvocationLog.layer, QuerySnapshot.layer, MutationTransaction.layer]),
     Layer.provide(InvocationCapabilities.layer),
     Layer.provide(FetchHttpClient.layer)
   );

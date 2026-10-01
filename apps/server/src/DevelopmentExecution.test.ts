@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { CURRENT_RELEASE, WIRE_VERSION, type Manifest } from "@patchy/api";
@@ -40,7 +40,21 @@ const manifest: typeof Manifest.Type = {
   uses: {},
   handlers: {
     "demo.read": { kind: "query", args: { value: { kind: "number" } }, result: { kind: "json" } },
-    "demo.nested": { kind: "action", args: { value: { kind: "number" } }, result: { kind: "json" } }
+    "demo.nested": {
+      kind: "action",
+      args: { value: { kind: "number" } },
+      result: { kind: "json" }
+    },
+    "demo.commit": {
+      kind: "mutation",
+      args: { value: { kind: "number" } },
+      result: { kind: "json" }
+    },
+    "demo.nestedMutation": {
+      kind: "action",
+      args: { value: { kind: "number" } },
+      result: { kind: "json" }
+    }
   }
 };
 
@@ -71,7 +85,7 @@ const bundles = Layer.effect(
     const built = yield* Effect.promise(() =>
       build({
         stdin: {
-          contents: `import { query, action, createGuest, t } from "patchy/server";
+          contents: `import { query, mutation, action, createGuest, t } from "patchy/server";
 const read = query({
   args: { value: t.number() }, result: t.json(),
   handler: async (ctx, args) => ({
@@ -84,7 +98,17 @@ const nested = action({
     ...await ctx.run.demo.read({ value: args.value + 1 }), via: "action"
   })
 });
-export default createGuest({ demo: { read, nested } });`,
+const commit = mutation({
+  args: { value: t.number() }, result: t.json(),
+  handler: async (ctx, args) => ({
+    answer: args.value * 2, viewer: ctx.viewer.user.id, nonce: crypto.randomUUID()
+  })
+});
+const nestedMutation = action({
+  args: { value: t.number() }, result: t.json(),
+  handler: async (ctx, args) => ctx.run.demo.commit(args)
+});
+export default createGuest({ demo: { read, nested, commit, nestedMutation } });`,
           resolveDir: new URL("../../../packages/execution/src", import.meta.url).pathname,
           sourcefile: "development-execution-fixture.ts"
         },
@@ -129,7 +153,8 @@ export default createGuest({ demo: { read, nested } });`,
 const call = (
   fixture: (typeof fixtures)[number],
   handler: string,
-  viewer: (typeof fixtures)[number] = fixture
+  viewer: (typeof fixtures)[number] = fixture,
+  mutationKey?: string
 ) =>
   send(
     HttpClientRequest.post("/api/runtime/call").pipe(
@@ -147,7 +172,11 @@ const call = (
         wire: WIRE_VERSION,
         principal: { userId: viewer.userId },
         op: "server.call",
-        args: { handler, args: { value: 20 } }
+        args: {
+          handler,
+          args: { value: 20 },
+          ...(mutationKey === undefined ? {} : { mutationKey })
+        }
       })
     )
   );
@@ -203,6 +232,46 @@ it.layer(
           }))
         );
         assert.deepStrictEqual(yield* sql`SELECT company_id FROM company_databases`, []);
+      }),
+    30_000
+  );
+});
+
+it.layer(
+  server({ PATCHY_DEV_EXECUTION: "true", NODE_ENV: "development" }).pipe(Layer.provide(bundles)),
+  { excludeTestServices: true }
+)("mutations through the existing dev cloud server", (it) => {
+  it.effect(
+    "commits a callback-free mutation once per key and admits an action's nested mutation",
+    () =>
+      Effect.gen(function* () {
+        const fixture = fixtures[0];
+        yield* retain(fixture);
+        const mutationKey = `${Date.now()}-${randomBytes(16).toString("base64url")}`;
+        const committed = yield* answer(yield* call(fixture, "demo.commit", fixture, mutationKey));
+        assert.strictEqual(committed.status, 200);
+        assert.deepInclude(committed.body, { ok: true });
+        assert.deepStrictEqual(
+          yield* answer(yield* call(fixture, "demo.commit", fixture, mutationKey)),
+          committed
+        );
+        const nested = yield* answer(yield* call(fixture, "demo.nestedMutation"));
+        assert.strictEqual(nested.status, 200);
+        assert.deepInclude(nested.body, { ok: true });
+        const sql = yield* SqlClient.SqlClient;
+        const tree = yield* sql<{
+          handler: string;
+          outcome: string;
+          child_ms: number;
+          parent_ms: number;
+        }>`
+          SELECT child.handler, child.outcome, child.db_ms AS child_ms, parent.db_ms AS parent_ms
+          FROM runtime_invocations child JOIN runtime_invocations parent ON child.parent_id = parent.id
+          WHERE parent.handler = 'demo.nestedMutation'`;
+        assert.strictEqual(tree.length, 1);
+        assert.strictEqual(tree[0]!.handler, "demo.commit");
+        assert.strictEqual(tree[0]!.outcome, "success");
+        assert.isAtLeast(tree[0]!.parent_ms, tree[0]!.child_ms);
       }),
     30_000
   );

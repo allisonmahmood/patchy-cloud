@@ -180,6 +180,50 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
       })
   );
 
+  it.effect(
+    "keeps commit proof while a late original finalizer fills pending settlement facts",
+    () =>
+      Effect.gen(function* () {
+        const log = yield* InvocationLog.InvocationLog;
+        const input = begin("invocation-committed-pending");
+        const lookup = { companyId: input.companyId, invocationId: input.id };
+        yield* log.begin(input);
+        yield* TestClock.setTime(input.deadline + 1);
+        const overdue = yield* log.find(lookup);
+        assert.strictEqual(overdue?.outcome, "unknown_outcome");
+        assert.isNull(overdue?.settledAt);
+        yield* log.reconcileMutation({ ...lookup, companyId: "cmp_other" });
+        assert.deepStrictEqual(yield* log.find(lookup), overdue);
+        yield* log.reconcileMutation(lookup);
+        const proven = yield* log.find(lookup);
+        assert.deepStrictEqual(
+          proven,
+          new InvocationLog.Invocation({ ...overdue!, outcome: "success", outcomeCode: null })
+        );
+        const late: InvocationLog.Finish = {
+          ...finish(input.id),
+          outcome: "unknown_outcome",
+          outcomeCode: "unknown_outcome",
+          replyDelivered: false
+        };
+        yield* log.finish(late);
+        const settled = yield* log.find(lookup);
+        assert.deepStrictEqual(
+          settled,
+          new InvocationLog.Invocation({
+            ...proven!,
+            ...late,
+            outcome: "success",
+            outcomeCode: null,
+            settledAt: new Date(late.settledAt)
+          })
+        );
+        yield* log.finish({ ...late, callbacks: 0, guestMs: 0, dbMs: 0, replyDelivered: true });
+        yield* log.reconcileMutation(lookup);
+        assert.deepStrictEqual(yield* log.find(lookup), settled);
+      })
+  );
+
   it.effect("refuses duplicate admission ids and correlations without replacing attribution", () =>
     Effect.gen(function* () {
       const log = yield* InvocationLog.InvocationLog;

@@ -64,16 +64,16 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/server", "patchy/_generated/server.ts"],
     runs: "Build time, for server handler definitions and types",
     limits:
-      "Query, mutation and action builders are available. Mutation execution and tier 2 publishing are not admitted in this release. Runtime imports of server code do not belong in the page graph."
+      "Query, mutation and action builders are available. Tier 2 publishing is not admitted in this release. Runtime imports of server code do not belong in the page graph."
   },
   {
     id: "core.server-calls",
     group: "Core",
-    name: "Server queries and actions",
+    name: "Server handlers",
     entrypoints: ["patchy/_generated/client.ts: patchy.server", "patchy/_generated/server.ts"],
     runs: "Local executor in tests and the source checkout's existing pnpm dev cloud server for eligible server.call requests",
     limits:
-      "Data-bearing queries share one read-only snapshot with a 3-second deadline; resource-free queries need no company database. Actions have 60 seconds, declared connections and nested queries. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB and results 8 MiB. Tier 2 patchy dev lifecycle, server watch, production hosting, mutations and handler subscriptions remain separate."
+      "Queries share a read-only snapshot with a 3-second deadline; resource-free queries need no company database. Mutations use one SERIALIZABLE transaction, up to three attempts in 5 seconds and a keyed retry() for unknown outcomes. Actions have 60 seconds, declared connections and nested queries or mutations. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB, mutation results 64 KiB and query/action results 8 MiB. Tier 2 patchy dev lifecycle, server watch, production hosting and handler subscriptions remain separate."
   },
   {
     id: "primitives.tables",

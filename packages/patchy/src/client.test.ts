@@ -59,6 +59,10 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   let bytes = new Uint8Array([1]);
   const transport: Transport = {
     route: unusedRoute,
+    ready: async () => {},
+    waitForServerTime: async () => {
+      throw new Error("This test does not implement the server clock.");
+    },
     serverTime: () => undefined,
     handlerKind: () => undefined,
     queries: unusedQueries,
@@ -101,6 +105,10 @@ it.each(["put", "delete", "close"] as const)(
     let first = true;
     const transport: Transport = {
       route: unusedRoute,
+      ready: async () => {},
+      waitForServerTime: async () => {
+        throw new Error("This test does not implement the server clock.");
+      },
       serverTime: () => undefined,
       handlerKind: () => undefined,
       queries: unusedQueries,
@@ -160,6 +168,10 @@ it("shares the supplied transport with generated aliases and exposes shared read
       call,
       route: unusedRoute,
       queries: unusedQueries,
+      ready: async () => {},
+      waitForServerTime: async () => {
+        throw new Error("This test does not implement the server clock.");
+      },
       serverTime: () => undefined,
       handlerKind: () => undefined,
       close() {}

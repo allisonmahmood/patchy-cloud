@@ -83,6 +83,11 @@ export class InvocationLog extends Context.Service<
   {
     readonly begin: (input: Begin) => Effect.Effect<string, SqlError>;
     readonly finish: (input: Finish) => Effect.Effect<void, SqlError>;
+    /** Apply stored mutation commit proof without replacing the original settlement facts. */
+    readonly reconcileMutation: (input: {
+      readonly companyId: string;
+      readonly invocationId: string;
+    }) => Effect.Effect<void, SqlError>;
     readonly find: (input: {
       readonly companyId: string;
       readonly invocationId: string;
@@ -103,9 +108,11 @@ export const make = Effect.gen(function* () {
       SELECT id, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
         handler, kind, initiating_viewer_id AS "initiatingViewerId",
         effective_principal AS "effectivePrincipal", parent_id AS "parentId",
-        CASE WHEN outcome = 'pending' AND deadline <= to_timestamp(${now / 1_000})
+        CASE WHEN mutation_committed THEN 'success'
+          WHEN outcome = 'pending' AND deadline <= to_timestamp(${now / 1_000})
           THEN 'unknown_outcome' ELSE outcome END AS outcome,
-        outcome_code AS "outcomeCode", correlation_id AS "correlationId",
+        CASE WHEN mutation_committed THEN NULL ELSE outcome_code END AS "outcomeCode",
+        correlation_id AS "correlationId",
         started_at AS "startedAt", deadline, settled_at AS "settledAt",
         duration_ms AS "durationMs", guest_ms AS "guestMs", db_ms AS "dbMs", callbacks,
         args_bytes AS "argsBytes", result_bytes AS "resultBytes", attempts,
@@ -128,7 +135,9 @@ export const make = Effect.gen(function* () {
 
   const finish = Effect.fn("InvocationLog.finish")(function* (input: Finish) {
     yield* sql`
-      UPDATE runtime_invocations SET outcome = ${input.outcome}, outcome_code = ${input.outcomeCode},
+      UPDATE runtime_invocations
+      SET outcome = CASE WHEN mutation_committed THEN 'success' ELSE ${input.outcome} END,
+        outcome_code = CASE WHEN mutation_committed THEN NULL ELSE ${input.outcomeCode} END,
         settled_at = to_timestamp(${input.settledAt / 1_000}), duration_ms = ${input.durationMs},
         guest_ms = ${input.guestMs}, db_ms = ${input.dbMs}, callbacks = ${input.callbacks},
         result_bytes = ${input.resultBytes}, attempts = ${input.attempts},
@@ -137,6 +146,19 @@ export const make = Effect.gen(function* () {
         AND (outcome = 'pending'
           OR (outcome = 'unknown_outcome'
             AND ${input.outcome} IN ('success', 'handler_error', 'failure')))`;
+  });
+
+  const reconcileMutation = Effect.fn("InvocationLog.reconcileMutation")(function* (
+    input: Parameters<InvocationLog["Service"]["reconcileMutation"]>[0]
+  ) {
+    // Pending rows may outlive a dead host. A live finalizer can still fill their
+    // settlement facts once, but cannot undo success proved by the company commit.
+    yield* sql`
+      UPDATE runtime_invocations SET mutation_committed = true,
+        outcome = CASE WHEN outcome = 'pending' THEN outcome ELSE 'success' END,
+        outcome_code = NULL
+      WHERE company_id = ${input.companyId} AND id = ${input.invocationId}
+        AND kind = 'mutation' AND outcome IN ('pending', 'unknown_outcome')`;
   });
 
   const find = Effect.fn("InvocationLog.find")(function* (
@@ -148,7 +170,7 @@ export const make = Effect.gen(function* () {
     return Option.getOrNull(row);
   });
 
-  return InvocationLog.of({ begin, finish, find });
+  return InvocationLog.of({ begin, finish, reconcileMutation, find });
 });
 
 export const layer = Layer.effect(InvocationLog, make);

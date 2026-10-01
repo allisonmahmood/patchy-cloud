@@ -285,6 +285,24 @@ export const layer = Layer.effect(Inventory, make);
  */
 export const upgrade = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const mutationKeys = yield* sql`SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'patchy' AND table_name = 'mutation_keys'`;
+  if (mutationKeys.length === 0) {
+    yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."mutation_keys" (
+    "key" text CONSTRAINT mutation_keys_key PRIMARY KEY,
+    "issued_at" timestamptz NOT NULL,
+    "patch_id" text NOT NULL,
+    "version_id" text NOT NULL,
+    "handler" text NOT NULL,
+    "viewer_id" text NOT NULL,
+    "fingerprint" text NOT NULL,
+    "invocation_id" text NOT NULL,
+    "reply" jsonb NOT NULL
+  )`);
+    yield* sql.unsafe(
+      "CREATE INDEX IF NOT EXISTS mutation_keys_issued_at ON patchy.mutation_keys (issued_at)"
+    );
+  }
   const present = yield* sql`SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'patchy' AND table_name = 'columns' AND column_name = 'ref_table'`;
   if (present.length === 0) {
