@@ -32,6 +32,10 @@ _Avoid_: Release, schema revision, transport version
 The admin-only attributed record of production mutations, integration calls and admin discovery, begun before execution; ordinary reads and local dev calls are absent. A pending outcome past its deadline is unknown, not evidence that the operation failed or is safe to replay.
 _Avoid_: Call log (Integrations' pointer to this record), analytics event
 
+**Request event**:
+The best-effort operational record of one runtime request, including reads and refused attempts. Its attribution is limited to the loaded version and authenticated viewer established during admission; it is not the runtime log.
+_Avoid_: Audit record, runtime-log entry
+
 **Correlation id**:
 The identifier joining an operation's failure to its runtime-log record. It is created by Patchy, never supplied by patch code.
 _Avoid_: Publish key, patch id

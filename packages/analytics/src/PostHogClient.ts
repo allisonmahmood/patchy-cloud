@@ -7,6 +7,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { PostHog } from "posthog-node";
@@ -26,7 +27,7 @@ export interface CaptureMessage {
   readonly properties: Record<string, unknown>;
 }
 
-/** The key that switches reporting on. Unset (the default) means an instance reports nothing. */
+/** Unset means no PostHog delivery. Wide events still emit to stdout. */
 export const apiKey = Config.Redacted("PATCHY_POSTHOG_API_KEY");
 
 /**
@@ -54,6 +55,8 @@ const CAPTURE_REQUEST_TIMEOUT_MS = 3_000;
 const CAPTURE_FLUSH_AT = 20;
 const CAPTURE_FLUSH_INTERVAL_MS = 10_000;
 
+export const SHUTDOWN_FLUSH_TIMEOUT = "3 seconds";
+
 export class PostHogClient extends Context.Service<
   PostHogClient,
   {
@@ -65,7 +68,11 @@ export class PostHogClient extends Context.Service<
 >()("@patchy/analytics/PostHogClient") {}
 
 export const make = Effect.gen(function* () {
-  const key = yield* apiKey;
+  const configuredKey = yield* Config.option(apiKey);
+  if (Option.isNone(configuredKey)) {
+    return PostHogClient.of({ capture: () => Effect.void, shutdown: Effect.void });
+  }
+  const key = configuredKey.value;
   const client = new PostHog(Redacted.value(key), {
     host: yield* host,
     flushAt: CAPTURE_FLUSH_AT,
@@ -90,4 +97,18 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(PostHogClient, make);
+/** One finalizer belongs to the shared client, not to either event producer. */
+export const layerShutdown = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const client = yield* PostHogClient;
+    yield* Effect.addFinalizer(() =>
+      client.shutdown.pipe(
+        Effect.interruptible,
+        Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT),
+        Effect.catchCause((cause) => Effect.logWarning("Analytics shutdown flush failed.", cause))
+      )
+    );
+  })
+);
+
+export const layer = layerShutdown.pipe(Layer.provideMerge(Layer.effect(PostHogClient, make)));

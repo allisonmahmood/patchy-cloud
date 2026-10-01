@@ -340,9 +340,10 @@ start resolves a key; checks the exact pin, CLI and installed runtime release;
 authenticates `/api/me`; pulls published inventory and declaration metadata;
 regenerates; provisions local PGlite; and starts Vite build-watch with the
 production shell, CSP, sandbox, broker and dispatcher. It uses fixtures and local
-files, never production rows/bytes, Clerk, a connection keyring or runtime call
-logging. The same dispatcher admits calls and bytes routes without logging dev
-calls. Tier 0 retains its production shell policy with only the trusted local
+files, never production rows/bytes, Clerk, a connection keyring or the production
+runtime log store. Calls and bytes routes print compact wide events to local
+stdout without PostHog delivery. The existing `dev logs` response remains text.
+Tier 0 retains its production shell policy with only the trusted local
 reload script and polling endpoint added; its content remains script-free.
 
 | command                 | `--json` success                                                              |

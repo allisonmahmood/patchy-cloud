@@ -850,6 +850,35 @@ The seed is for development only.
 `pnpm seed:dev` publishes the accepted HTML fixture corpus. Both `PATCHY_API_URL`
 and `PATCHY_API_TOKEN` are required; neither has a default.
 
+### Runtime wide events
+
+The server emits one JSON line for each runtime call or file-byte request,
+including refusals and failures. No key is needed for stdout. `pnpm dev` captures
+these lines with the other server output; `pnpm dev logs` displays them.
+
+For PostHog delivery when running the server by hand, set
+`PATCHY_POSTHOG_API_KEY` securely. `PATCHY_POSTHOG_HOST` defaults to
+`https://us.i.posthog.com` and accepts an HTTP(S) collector URL for local checks.
+Business events and wide events share one client and one shutdown flush, bounded
+to three seconds. The worktree runner does not forward these optional settings.
+
+Set `PATCHY_REPLICA` and `PATCHY_DEPLOYMENT_REVISION` in a deployment to identify
+its host and running build. Without them, the server generates a replica id at
+startup and uses revision `development`. The event's top-level `deploymentRevision`
+identifies that build; `limits[].configRevision.deploymentRevision` is instead the
+automatically computed operating-limit fingerprint described in [Limits](limits.md).
+Each limit measurement also carries the company's `overrideRevision`.
+Request records include known operation names, outcome, refusal code and limit id
+when present, duration, trace linkage and trusted attribution. Tier 1 operations
+have no patch-authored handler, so `handler` and `kind` are omitted.
+Records omit request bodies, filenames, SQL and credentials.
+Every event has `sampleProbability: 1`; delivery is best effort, not metering.
+
+The patch repo's local runtime uses the same record with compact stdout output.
+`@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and
+`layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs
+to the tier 2 dev-loop ticket; the existing CLI log response is unchanged.
+
 ## Postgres
 
 `DATABASE_URL` is required: Postgres is the only store. The server migrates

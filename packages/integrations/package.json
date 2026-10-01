@@ -39,6 +39,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@patchy/analytics": "workspace:*",
     "@patchy/sql": "workspace:*",
     "@types/pg": "^8.23.1",
     "typescript": "^6.0.3",

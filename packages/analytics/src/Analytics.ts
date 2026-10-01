@@ -1,31 +1,19 @@
 /**
- * Server-side analytics: the service every business event the instance
- * reports goes through. Two guarantees shape it, both structural:
- *
- * **Readers stay unwatched.** Nothing here ever runs in a reader's browser: a
- * served patch carries no script source of any kind. Serving a patch is
- * deliberately not an event. Visits are counted in the database and never
- * reported here. No event carries a source address, page content, filename
- * or URL, only ids, sizes, counts and states.
- *
- * **A user's request never depends on it.** `track` never fails: a failing
- * backend is a warning in the log and no difference at all to the response.
- *
- * An instance with no key configured gets the no-op layer, which accepts
- * every event and reports none. That is the default: reporting is something
- * an operator switches on, never something an instance starts on its own.
+ * Server-side business moments. Serving a page is not a business analytics event;
+ * visits remain database counts today. Wide events report runtime work, including
+ * viewer ids and handler names, through the same PostHog client.
+ * Neither event family carries page content, filenames, source addresses or URLs.
+ * A reporting failure never fails the caller's request.
  */
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PostHogClient from "./PostHogClient.js";
 
 /**
  * Business-shaped events, named for what happened. `token.minted` reports the
  * device-login poll's one-time mint with its user and replacement state.
- * The list is closed on purpose — serving a patch is not on it.
+ * Runtime work is reported separately by WideEvents.
  */
 export type AnalyticsEventName =
   "token.minted" | "patch.created" | "patch.updated" | "patch.deleted" | "patch.purged";
@@ -43,15 +31,8 @@ export interface AnalyticsEvent {
   readonly properties: Record<string, AnalyticsPropertyValue>;
 }
 
-/**
- * Who an event belongs to when no principal performed it. A constant rather
- * than a per-patch or per-address id: the alternative is inventing a person
- * out of a reader, which is exactly what the serving guarantee forbids.
- */
+/** The principal used for business events no user performed, such as a sweep. */
 export const INSTANCE_DISTINCT_ID = "patchy-instance";
-
-/** How long the shutdown flush may take before the process stops waiting for it. */
-export const SHUTDOWN_FLUSH_TIMEOUT = "3 seconds";
 
 export class Analytics extends Context.Service<
   Analytics,
@@ -61,20 +42,9 @@ export class Analytics extends Context.Service<
   }
 >()("@patchy/analytics/Analytics") {}
 
-/**
- * The reporting implementation over a `PostHogClient`. Its finalizer gives
- * whatever is still queued one bounded chance to go out, so a slow analytics
- * backend never holds a shutdown.
- */
+/** The shared PostHog client owns its one bounded shutdown flush. */
 export const make = Effect.gen(function* () {
   const client = yield* PostHogClient.PostHogClient;
-
-  yield* Effect.addFinalizer(() =>
-    client.shutdown.pipe(
-      Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT),
-      Effect.catchCause((cause) => Effect.logWarning("Analytics shutdown flush failed.", cause))
-    )
-  );
 
   const track = Effect.fn("Analytics.track")((event: AnalyticsEvent) =>
     client
@@ -84,7 +54,6 @@ export const make = Effect.gen(function* () {
         properties: {
           ...event.properties,
           // User ids attribute business events without creating person profiles.
-          // Reader visits are never analytics events.
           $process_person_profile: false
         }
       })
@@ -103,12 +72,8 @@ export const make = Effect.gen(function* () {
 /** Reports through PostHog; needs a `PostHogClient`. */
 export const layerPostHog = Layer.effect(Analytics, make);
 
-/** Accepts every event and reports none — tests, and instances with no key. */
+/** Accepts every event and reports none. */
 export const layerNoop = Layer.succeed(Analytics, Analytics.of({ track: () => Effect.void }));
 
-/** What an instance runs with: reporting when a key is configured, no-op when it is not. */
-export const layer = Layer.unwrap(
-  Effect.map(Config.option(PostHogClient.apiKey), (key) =>
-    Option.isNone(key) ? layerNoop : layerPostHog.pipe(Layer.provide(PostHogClient.layer))
-  )
-);
+/** PostHog reporting is optional; the shared client owns that configuration. */
+export const layer = layerPostHog.pipe(Layer.provide(PostHogClient.layer));

@@ -11,6 +11,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import { CURRENT_RELEASE, RuntimeFailure, RuntimeGroup, WIRE_VERSION } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
@@ -110,6 +111,7 @@ const TestApi = HttpApi.make("patchy").add(
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 const services = Layer.mergeAll(
   Session.layer,
+  WideEvents.layerNoop,
   Companies.layer,
   Users.layer,
   Limits.layer,
