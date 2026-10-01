@@ -600,9 +600,15 @@ importers:
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
+      '@patchy/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@patchy/patches':
         specifier: workspace:*
         version: link:../patches
+      '@patchy/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       effect:
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117
@@ -616,9 +622,6 @@ importers:
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database
-      '@patchy/integrations':
-        specifier: workspace:*
-        version: link:../integrations
       '@patchy/primitives':
         specifier: workspace:*
         version: link:../primitives

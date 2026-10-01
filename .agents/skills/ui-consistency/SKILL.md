@@ -34,10 +34,11 @@ Three page kinds:
 - Supporting text: `supporting-text` for metadata and page-level guidance; reserve `field-hint` for a field's hint.
 - Fact lists: `facts` on a `dl` with `dt`/`dd`; item lists: `list` and `list-row`, with `list-compact` for dense rows and `list-link` for selectable linked rows. `aria-current="page"` marks the selected row.
 - Code panels: `code-panel` on `pre` preserves wrapping and caps long content at a scrollable height. Expandable list rows use the shell's `summary` spacing and pointer.
-- Tables: `table` with native `th`, `td` and `scope` semantics. `copy-address` makes an address selectable as a whole.
+- Trees: `list-tree` on a `list list-compact` indents a row's children under a left rule, such as the steps inside a log entry, each in sentence form ("leads.create (mutation) · as the patch").
+- Tables: `table` with native `th`, `td` and `scope` semantics. An expandable row is a `table-expand` row after its entry, one full-width cell holding a `details`; the shell joins the pair and spaces its `summary`. A wide table scrolls inside the page's own overflow wrapper (the portal's `portal-table`) on narrow screens rather than squeezing its columns. `copy-address` makes an address selectable as a whole.
 - Notices: `note`, `note-warn`, `note-refused`, `note-ok` and `note-title`. Refusals use `role="alert"`; completed actions use `role="status"`.
 - Headings and sections: `page-heading`, `section-heading`, `section`; `verification-code` is the device confirmation's code display, not a page-specific heading scale.
-- Pills: `pill`, `pill-progress` and `pill-done`.
+- Pills: `pill`, `pill-progress`, `pill-done` and `pill-failed` (failed and refused outcomes).
 - Confirmation forms: `confirmation-form`, `confirmation-consequence`, `confirmation-list`, `confirmation-acknowledgement` and `confirmation-actions`; compose the shared fields and buttons for acknowledgement, submit and cancel. Ordinary action groups use `actions`.
 - Shell page state: `shell-bottom`, `shell-scrim`, `glyph-sm`, `supporting-text`, `note-float`, `note-info`, `note-collapse`, `status-chip`, `status-chip-detail`, `status-chip-warn`, `status-chip-info`, `note-inline` and `note-inline-text`. The served shell imports this subset from core, not the full app shell stylesheet.
 - Shell downloads: `shell-corner` and `shell-downloads`, composed with `note-float`, `note-info`, `glyph-sm`, `status-chip`, `code` and the shared buttons. Core owns this subset too, including the base `code` style.

@@ -16,6 +16,10 @@ _Avoid_: sidebar, list (the CLI's `patchy list` is discovery, not this), table
 One patch's page at `/patches/<name>`: its address, description, owner, current version, who can open it and what reads it, with the management acts for whoever may perform them. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
+**Log**:
+One patch's page at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first, each expanding into the calls it made and its `ctx.log` lines, filtered and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal only reads it.
+_Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
+
 **Manage**:
 The owner or admin's controls on a card: description, who can open it, served version and uncomplicated restore stay inline. Retire, delete, restore with off sources and admin-only reassign lead to confirmation pages.
 _Avoid_: settings, admin panel, edit mode
@@ -41,5 +45,5 @@ The shared frame for the portal, Company, Connections and Your machines: the hea
 _Avoid_: layout, template, theme
 
 **Component set**:
-The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists, version tables, copyable addresses, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
+The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists and trees, version tables and expandable table rows, copyable addresses, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
 _Avoid_: design system (there is one theme and no library), component library, utility classes

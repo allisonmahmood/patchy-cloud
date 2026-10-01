@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import {
   CURRENT_RELEASE,
   MANIFEST_VERSION,
@@ -23,19 +25,47 @@ import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "@patchy/core";
 import * as Testing from "@patchy/company-database/testing";
+import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
-import * as Wakes from "../../runtime/src/Wakes.js";
+import { InvocationLog, RuntimeLog, Wakes } from "@patchy/runtime";
 
 const DAY = 24 * 60 * 60 * 1_000;
 const routes = Layer.merge(
   PortalPages.layer,
   HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
 );
-const services = Layer.mergeAll(Patches.layer, Session.layer, Companies.layer, Users.layer).pipe(
-  Layer.provideMerge(ConnectionStoreDev.layer([])),
+const services = Layer.mergeAll(
+  Patches.layer,
+  Session.layer,
+  Companies.layer,
+  Users.layer,
+  InvocationLog.layer
+).pipe(
+  Layer.provideMerge(
+    ConnectionStoreDev.layer([
+      {
+        connection: new ConnectionStore.Connection({
+          id: "con_warehouse",
+          companyId: "cmp_portal_log",
+          integration: "postgres",
+          handle: "warehouse",
+          description: "The sales warehouse",
+          mode: "company",
+          status: "connected",
+          display: { host: "db.example.com", port: 5432, database: "sales", role: "reader" },
+          credentialRevision: 1,
+          metadataRevision: 1,
+          lastTestedAt: null,
+          lastDiscoveredAt: null,
+          createdBy: "usr_portal_log"
+        }),
+        snapshots: []
+      }
+    ])
+  ),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(Testing.resourceChangesLayer),
@@ -58,11 +88,11 @@ interface Person {
   readonly machineTokenId: string;
 }
 let counter = 0;
-const company = Effect.fn("PortalPagesTest.company")(function* () {
+const company = Effect.fn("PortalPagesTest.company")(function* (companyId?: string) {
   yield* TestClock.setTime(1_767_225_600_000);
   const sql = yield* SqlClient.SqlClient;
-  const id = `cmp_portal_${++counter}`;
-  const handle = `portal-${counter}`;
+  const id = companyId ?? `cmp_portal_${++counter}`;
+  const handle = companyId === undefined ? `portal-${counter}` : `portal-${companyId.slice(11)}`;
   yield* sql`INSERT INTO companies (id, handle, name) VALUES (${id}, ${handle}, 'Northwind')`;
   const people: Person[] = [];
   for (const [name, role] of [
@@ -1634,6 +1664,317 @@ it.layer(layer)("portal pages on a socket", (it) => {
           );
         }
       })
+  );
+});
+
+interface Seed {
+  readonly companyId: string;
+  readonly patchId: string;
+  readonly versionId: string;
+}
+/** Writes one settled invocation the way Runtime does, starting now; returns its id. */
+const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
+  seed: Seed,
+  viewer: Person,
+  input: {
+    readonly handler: string;
+    readonly kind: "query" | "mutation" | "action";
+    readonly outcome?: Exclude<InvocationLog.Outcome, "pending">;
+    readonly outcomeCode?: string | null;
+    readonly parentId?: string;
+    readonly durationMs?: number;
+    readonly attempts?: number;
+    readonly logLines?: InvocationLog.Finish["logLines"];
+    readonly replyDelivered?: boolean;
+    /** Runs between admission and settlement, such as the calls the invocation makes. */
+    readonly inside?: (
+      id: string
+    ) => Effect.Effect<
+      void,
+      SqlError,
+      RuntimeLog.RuntimeLog | InvocationLog.InvocationLog | SqlClient.SqlClient
+    >;
+  }
+) {
+  const log = yield* InvocationLog.InvocationLog;
+  const id = `inv_portal_${++counter}`;
+  const startedAt = yield* Clock.currentTimeMillis;
+  yield* log.begin({
+    id,
+    companyId: seed.companyId,
+    patchId: seed.patchId,
+    versionId: seed.versionId,
+    handler: input.handler,
+    kind: input.kind,
+    initiatingViewerId: viewer.id,
+    parentId: input.parentId ?? null,
+    correlationId: `correlation-${id}`,
+    startedAt,
+    deadline: startedAt + 60_000,
+    argsBytes: 2
+  });
+  if (input.inside) yield* input.inside(id).pipe(Effect.provide(RuntimeLog.layer));
+  yield* log.finish({
+    id,
+    outcome: input.outcome ?? "success",
+    outcomeCode: input.outcomeCode ?? null,
+    settledAt: startedAt + (input.durationMs ?? 30),
+    durationMs: input.durationMs ?? 30,
+    guestMs: 0,
+    dbMs: 0,
+    callbacks: 0,
+    resultBytes: 0,
+    attempts: input.attempts ?? 1,
+    logLines: input.logLines ?? [],
+    replyDelivered: input.replyDelivered ?? true
+  });
+  yield* TestClock.adjust(1_000);
+  return id;
+});
+/** One logged operation row inside an invocation, a second after the last step. */
+const operation = Effect.fn("PortalPagesTest.operation")(function* (
+  seed: Seed,
+  invocationId: string,
+  input: {
+    readonly op: string;
+    readonly resource: string;
+    readonly as: Person | "patch";
+    readonly outcome: "success" | "failure";
+    readonly outcomeCode?: string;
+    readonly rowCount: number | null;
+  }
+) {
+  yield* TestClock.adjust(1_000);
+  const log = yield* RuntimeLog.RuntimeLog;
+  const correlationId = `correlation-call-${++counter}`;
+  const principal = input.as === "patch" ? "patch" : input.as.id;
+  yield* log.begin({
+    companyId: seed.companyId,
+    patchId: seed.patchId,
+    versionId: seed.versionId,
+    userId: principal === "patch" ? null : principal,
+    effectivePrincipal: principal,
+    invocationId,
+    credentialKind: "session",
+    op: input.op,
+    resource: input.resource,
+    connectionId: input.op.startsWith("postgres.") ? "con_warehouse" : null,
+    correlationId
+  });
+  yield* log.finish({
+    correlationId,
+    outcome: input.outcome,
+    outcomeCode: input.outcomeCode ?? null,
+    durationMs: 12,
+    rowCount: input.rowCount
+  });
+});
+const seedOf = (companyId: string, recorded: Patches.Recorded): Seed => ({
+  companyId,
+  patchId: recorded.patchId,
+  versionId: recorded.versionId
+});
+const logPath = (name: string, query = "") => `${cardPath(name)}/log${query}`;
+
+it.layer(layer)("patch log on a socket", (it) => {
+  it.effect("shows an owner the tree of a failed action and refuses another owner's log", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company("cmp_portal_log");
+      const crm = yield* publish(workspace.owner, "sales-crm", { title: "Sales CRM" });
+      const other = yield* publish(workspace.member, "other-tool");
+      const seed = seedOf(workspace.id, crm);
+      yield* invoke(seedOf(workspace.id, other), workspace.member, {
+        handler: "secret.export",
+        kind: "action"
+      });
+      yield* invoke(seed, workspace.member, {
+        handler: "leads.import",
+        kind: "action",
+        outcome: "failure",
+        outcomeCode: "handler_failed",
+        durationMs: 2_400,
+        logLines: [
+          { message: "importing 412 rows from warehouse" },
+          { message: "row 57 is invalid", details: { owner: "<sam@>" } }
+        ],
+        inside: (id) =>
+          Effect.gen(function* () {
+            yield* operation(seed, id, {
+              op: "postgres.list",
+              resource: '"public"."customers"',
+              as: workspace.member,
+              outcome: "success",
+              rowCount: 412
+            });
+            yield* TestClock.adjust(1_000);
+            yield* invoke(seed, workspace.member, {
+              handler: "leads.create",
+              kind: "mutation",
+              parentId: id,
+              attempts: 2,
+              inside: (nested) =>
+                operation(seed, nested, {
+                  op: "tables.insert",
+                  resource: "leads",
+                  as: "patch",
+                  outcome: "success",
+                  rowCount: 1
+                })
+            });
+          })
+      });
+
+      const response = yield* request(logPath(crm.name), workspace.owner);
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers["cache-control"], "private, no-store");
+      const html = yield* response.text;
+      const page = text(html);
+      assert.strictEqual(heading(html), "Log of sales-crm");
+      assert.include(page, "This is an attribution record, not an access audit.");
+      assert.include(page, "Log lines are written by the patch itself.");
+      assert.notInclude(page, "secret.export");
+      assert.include(page, "Alex v1 leads.import action Failed handler_failed 2.4 s");
+      const tree = text(html.match(/<details open>([\s\S]*?)<\/details>/)?.[1] ?? "");
+      assert.strictEqual(
+        tree,
+        [
+          "3 calls · 2 log lines",
+          "warehouse.customers.list (connection call) · as Alex Succeeded 12 ms · 412 rows",
+          "leads.create (mutation) · as the patch Succeeded 30 ms · 2 attempts",
+          "tables.insert leads (table write) · as the patch Succeeded 12 ms · 1 row",
+          `importing 412 rows from warehouse row 57 is invalid {&quot;owner&quot;:&quot;&lt;sam@&gt;&quot;}`
+        ].join(" ")
+      );
+
+      const refused = yield* request(logPath(other.name), workspace.owner);
+      assert.strictEqual(refused.status, 403);
+      const card = yield* refused.text;
+      assert.include(text(card), "Only the owner or an admin can read this patch's log.");
+      assert.notInclude(card, "secret.export");
+    })
+  );
+
+  it.effect("lets admins read every log and moves the owner's access on reassignment", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const first = yield* publish(workspace.owner, "first-tool");
+      const second = yield* publish(workspace.member, "second-tool");
+      yield* invoke(seedOf(workspace.id, first), workspace.owner, {
+        handler: "first.save",
+        kind: "mutation"
+      });
+      yield* invoke(seedOf(workspace.id, second), workspace.member, {
+        handler: "second.save",
+        kind: "mutation"
+      });
+      for (const [patch, handler] of [
+        [first, "first.save"],
+        [second, "second.save"]
+      ] as const) {
+        const response = yield* request(logPath(patch.name), workspace.admin);
+        assert.strictEqual(response.status, 200);
+        assert.include(text(yield* response.text), handler);
+      }
+      yield* (yield* Patches.Patches).reassign(
+        first.patchId,
+        actor(workspace.admin),
+        workspace.member.id
+      );
+      assert.strictEqual((yield* request(logPath(first.name), workspace.owner)).status, 403);
+      const moved = yield* request(logPath(first.name), workspace.member);
+      assert.strictEqual(moved.status, 200);
+      assert.include(text(yield* moved.text), "first.save");
+    })
+  );
+
+  it.effect("shows the card's recent activity only to the owner and admins", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "busy-tool", { title: "Busy Tool" });
+      const seed = seedOf(workspace.id, patch);
+      yield* invoke(seed, workspace.member, { handler: "oldest.run", kind: "action" });
+      yield* invoke(seed, workspace.member, {
+        handler: "leads.export",
+        kind: "action",
+        durationMs: 1_800,
+        replyDelivered: false
+      });
+      yield* invoke(seed, workspace.owner, {
+        handler: "deals.moveStage",
+        kind: "mutation",
+        outcome: "failure",
+        outcomeCode: "write_conflict",
+        attempts: 3
+      });
+      yield* invoke(seed, workspace.admin, { handler: "pipeline.summary", kind: "query" });
+      for (const person of [workspace.owner, workspace.admin]) {
+        const html = yield* (yield* request(cardPath(patch.name), person)).text;
+        const section = text(
+          html.match(/<section[^>]*activity-heading[\s\S]*?<\/section>/)?.[0] ?? ""
+        );
+        assert.strictEqual(
+          section,
+          [
+            "Recent activity",
+            "Sam · Busy Tool v1 · pipeline.summary (query) Succeeded 1 Jan 00:00 UTC · 30 ms",
+            "Priya · Busy Tool v1 · deals.moveStage (mutation) Refused write_conflict 1 Jan 00:00 UTC · 30 ms · 3 attempts",
+            "Alex · Busy Tool v1 · leads.export (action) Succeeded 1 Jan 00:00 UTC · 1.8 s · reply not delivered",
+            "See the full log"
+          ].join(" ")
+        );
+        assert.include(
+          links(html).map((link) => link.href),
+          logPath(patch.name)
+        );
+      }
+      const member = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
+      assert.notInclude(text(member), "Recent activity");
+      assert.notInclude(member, logPath(patch.name));
+    })
+  );
+
+  it.effect("pages by cursor, filters, and says when nothing is logged or matches", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "paged-tool");
+      const empty = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
+      assert.include(text(empty), "Nothing logged yet.");
+      assert.notInclude(empty, "<table");
+      const seed = seedOf(workspace.id, patch);
+      for (let index = 0; index < 26; index++)
+        yield* invoke(seed, workspace.member, {
+          handler: `step.${String(index).padStart(2, "0")}`,
+          kind: "mutation",
+          ...(index === 0 ? { outcome: "handler_error" as const, outcomeCode: "not_allowed" } : {})
+        });
+      const first = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
+      const handlers = (html: string) =>
+        [...html.matchAll(/<td><code>(step\.\d+)<\/code><\/td>/g)].map((match) => match[1]);
+      assert.strictEqual(handlers(first).length, 25);
+      assert.strictEqual(handlers(first)[0], "step.25");
+      const older = links(first).find((link) => link.text === "Older entries");
+      assert.isDefined(older);
+      const second = yield* (yield* request(older!.href.replaceAll("&amp;", "&"), workspace.owner))
+        .text;
+      assert.deepStrictEqual(handlers(second), ["step.00"]);
+      assert.include(text(second), "Refused not_allowed");
+      assert.isUndefined(links(second).find((link) => link.text === "Older entries"));
+
+      const failed = yield* (yield* request(
+        logPath(patch.name, "?outcome=failed"),
+        workspace.owner
+      )).text;
+      assert.deepStrictEqual(handlers(failed), ["step.00"]);
+      const nothing = yield* (yield* request(
+        logPath(patch.name, `?outcome=failed&person=${workspace.owner.id}`),
+        workspace.owner
+      )).text;
+      assert.include(text(nothing), "No entries match these filters.");
+      assert.strictEqual(
+        links(nothing).find((link) => link.text === "Clear filters")?.href,
+        logPath(patch.name)
+      );
+    })
   );
 });
 

@@ -30,6 +30,7 @@ import { SubscriptionReads, TableOperations } from "@patchy/primitives";
 import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import {
   Binding,
+  InvocationLog,
   RuntimeStream,
   StreamAdmission,
   StreamLimits,
@@ -92,6 +93,7 @@ const layer = HttpRouter.serve(PortalPages.layer, {
   disableListenLog: true
 }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(InvocationLog.layer),
   Layer.provideMerge(runtime),
   Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
 );

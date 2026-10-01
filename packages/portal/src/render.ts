@@ -15,9 +15,19 @@ export const styles = `
   .portal-address { align-items: center; }
   .portal-subpage { max-width: 760px; margin-inline: auto; }
   .portal-table { overflow-x: auto; }
+  .log-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0 12px; align-items: end; margin: 8px 0 20px; }
+  .log-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .log-outcome { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  /* Log cells keep words whole, so on a phone the table scrolls in portal-table rather than splitting "Version". */
+  .log-table { min-width: 880px; overflow-wrap: break-word; }
+  .log-table time { white-space: nowrap; }
   @media (max-width: 860px) {
     .portal { grid-template-columns: minmax(0, 1fr); }
     .portal-card { position: static; }
+  }
+  @media (max-width: 760px) {
+    .log-filters { grid-template-columns: minmax(0, 1fr); }
+    .log-filters > :last-child { margin-top: 16px; }
   }
   @media (max-width: 480px) {
     .portal-stop-actions { grid-template-columns: minmax(0, 1fr); }
@@ -223,6 +233,8 @@ const renderCard = (input: {
   readonly all: boolean;
   readonly now: number;
   readonly publicBaseUrl: string;
+  /** Recent activity, rendered only for the owner and admins. */
+  readonly activity: string;
   readonly submittedDescription?: string;
   readonly descriptionError?: string;
 }): string => {
@@ -292,7 +304,7 @@ const renderCard = (input: {
   const management = manage
     ? `${adminLine}<section class="section" aria-labelledby="manage-heading"><h2 class="section-heading" id="manage-heading">Manage</h2>${restoreActions}${patch.state === "deleted" ? "" : descriptionForm(card, all, input.submittedDescription, input.descriptionError)}${live ? scopeForm(card, all) + versionsSection(card, viewer, all, now) + stop : ""}</section>`
     : "";
-  return `<article class="portal-card"><p class="supporting-text">${escapeHtml(patch.companyHandle)} / ${escapeHtml(patch.name)}</p><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}${descriptionBlock(card)}${open}${facts}${offNote}${deactivated}${management}</article>`;
+  return `<article class="portal-card"><p class="supporting-text">${escapeHtml(patch.companyHandle)} / ${escapeHtml(patch.name)}</p><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}${descriptionBlock(card)}${open}${facts}${offNote}${deactivated}${input.activity}${management}</article>`;
 };
 
 export const renderPortal = (input: {
@@ -302,6 +314,7 @@ export const renderPortal = (input: {
   readonly all: boolean;
   readonly now: number;
   readonly publicBaseUrl: string;
+  readonly activity: string;
   readonly notice?: string;
   readonly submittedDescription?: string;
   readonly descriptionError?: string;

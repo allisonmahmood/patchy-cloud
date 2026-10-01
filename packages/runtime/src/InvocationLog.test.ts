@@ -1,10 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as Testing from "@patchy/sql/testing";
 import * as InvocationLog from "./InvocationLog.js";
+import * as RuntimeLog from "./RuntimeLog.js";
 
 const NOW = Date.UTC(2026, 0, 1);
 const begin = (id: string): InvocationLog.Begin => ({
@@ -240,6 +243,118 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
       }
       assert.deepStrictEqual(yield* log.find(lookup), original);
       assert.isNull(yield* log.find({ ...lookup, invocationId: "invocation-same-correlation" }));
+    })
+  );
+
+  it.effect(
+    "bounds an entry's tree keeping every step's parent, reads overdue entries as unknown and scopes cursors",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const log = yield* InvocationLog.InvocationLog;
+        const calls = yield* RuntimeLog.make;
+        const scope = { companyId: DEV_SEED.companyId, patchId: "treepatch" };
+        const root = { ...begin("tree-root"), ...scope, kind: "action" as const };
+        yield* log.begin(root);
+        const call = (invocationId: string, index: number) =>
+          calls.begin({
+            companyId: scope.companyId,
+            patchId: scope.patchId,
+            versionId: root.versionId,
+            userId: null,
+            effectivePrincipal: "patch",
+            invocationId,
+            credentialKind: "session",
+            op: "tables.insert",
+            resource: "leads",
+            connectionId: null,
+            correlationId: `tree-call-${index}`,
+            deadlineMs: 1_000
+          });
+        for (let index = 0; index < InvocationLog.TREE_LIMIT - 1; index++) {
+          yield* TestClock.adjust(1);
+          yield* call(root.id, index);
+        }
+        // The 50th step is a nested handler whose own call lands in the same millisecond;
+        // a time-ordered cut would keep the call ("call_…" sorts first) and drop its parent.
+        yield* TestClock.adjust(1);
+        const nested = {
+          ...begin("tree-nested"),
+          ...scope,
+          parentId: root.id,
+          startedAt: yield* Clock.currentTimeMillis
+        };
+        yield* log.begin(nested);
+        yield* call(nested.id, 99);
+        const overdue = { ...begin("tree-overdue"), ...scope, startedAt: NOW + 100 };
+        yield* log.begin(overdue);
+        yield* TestClock.setTime(overdue.deadline);
+
+        const page = yield* log.page({ ...scope, limit: 1 });
+        assert.deepStrictEqual(
+          page.entries.map((entry) => [entry.invocation.id, entry.invocation.outcome]),
+          [["tree-overdue", "unknown_outcome"]]
+        );
+        assert.strictEqual(page.next, "tree-overdue");
+        const older = yield* log.page({ ...scope, before: "tree-overdue", limit: 1 });
+        const [entry] = older.entries;
+        assert.strictEqual(entry?.invocation.id, root.id);
+        assert.strictEqual(entry?.tree.length, InvocationLog.TREE_LIMIT);
+        assert.isTrue(entry?.truncated);
+        assert.strictEqual(entry?.tree.at(-1)?.id, nested.id);
+        const kept = new Set([root.id, ...(entry?.tree ?? []).map((item) => item.id)]);
+        assert.isTrue(entry?.tree.every((item) => kept.has(item.parentId)));
+        assert.deepStrictEqual(entry?.tree[0]?.outcome, "unknown_outcome");
+        assert.isNull(older.next);
+        const summary = yield* log.page({
+          ...scope,
+          before: "tree-overdue",
+          limit: 1,
+          trees: false
+        });
+        assert.deepStrictEqual(summary.entries[0]?.tree, []);
+        assert.strictEqual(
+          (yield* log.page({ ...scope, filter: { outcome: "unknown" }, limit: 5 })).entries.length,
+          2
+        );
+        assert.deepStrictEqual(
+          yield* log.page({ ...scope, patchId: "otherpatch", before: "tree-overdue", limit: 5 }),
+          { entries: [], next: null, windowEnded: false }
+        );
+        assert.deepStrictEqual(yield* log.choices(scope), {
+          handlers: ["leads.approve"],
+          viewerIds: [DEV_SEED.userId]
+        });
+      })
+  );
+
+  it.effect("filters within a bounded window of entries and carries on past its edge", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const log = yield* InvocationLog.InvocationLog;
+      const scope = { companyId: DEV_SEED.companyId, patchId: "windowpatch" };
+      // The oldest entry is the only match, one entry beyond the newest window.
+      yield* sql`
+        INSERT INTO runtime_invocations (id, company_id, patch_id, version_id, handler, kind,
+          initiating_viewer_id, effective_principal, correlation_id, started_at, deadline,
+          args_bytes)
+        SELECT 'window-' || lpad(n::text, 5, '0'), ${scope.companyId}, ${scope.patchId}, 'ver_window',
+          CASE WHEN n = 0 THEN 'rare.run' ELSE 'common.run' END, 'mutation', ${DEV_SEED.userId},
+          'patch', 'window-correlation-' || n, to_timestamp(${NOW / 1_000} + n),
+          to_timestamp(${NOW / 1_000} + n + 5), 1
+        FROM generate_series(0, ${InvocationLog.FILTER_WINDOW}) AS n`;
+      const filter = { handler: "rare.run" };
+      const first = yield* log.page({ ...scope, filter, limit: 25 });
+      assert.deepStrictEqual(first.entries, []);
+      assert.isTrue(first.windowEnded);
+      assert.strictEqual(first.next, "window-00001");
+      const rest = yield* log.page({ ...scope, filter, before: first.next!, limit: 25 });
+      assert.deepStrictEqual(
+        rest.entries.map((entry) => entry.invocation.id),
+        ["window-00000"]
+      );
+      assert.isFalse(rest.windowEnded);
+      assert.isNull(rest.next);
     })
   );
 });
