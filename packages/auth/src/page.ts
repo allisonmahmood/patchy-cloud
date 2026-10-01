@@ -90,7 +90,10 @@ export function pageResponse(
           ...(shell
             ? [
                 `script-src 'self' https://${shell.frontendApiHost}`,
-                `connect-src https://${shell.frontendApiHost}`
+                `connect-src https://${shell.frontendApiHost}`,
+                // Clerk's session poller runs on a blob worker; without it the 60s
+                // session cookie goes stale and the page's next form POST is signed out.
+                "worker-src blob:"
               ]
             : [])
         ].join("; ")
