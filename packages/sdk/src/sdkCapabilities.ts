@@ -28,6 +28,15 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "Import by relative path. The generated implementation uses patchy/client; app code does not import it directly. Tier 2 uses server handlers, not direct named resources. me() is null on public tier 1 patches. Routing is shell-mediated; there is no outbound fetch or client storage."
   },
   {
+    id: "core.generated-downloads",
+    group: "Core",
+    name: "Generated-file downloads",
+    entrypoints: ["patchy/_generated/client.ts: patchy.download"],
+    runs: "Tier 1 and 2 pages through the shell, including public tier 1 pages and patchy dev",
+    limits:
+      "download(name, data) accepts Blob, Uint8Array or ArrayBuffer, up to 20 MiB of encoded bytes enforced by the shell. The viewer approves the shell's filename and size card; Not now rejects. Success means browser handoff, not a saved file. Reloading or closing loses pending files. Separate from stored-file downloads."
+  },
+  {
     id: "core.preact",
     group: "Core",
     name: "Preact with compat semantics",
@@ -171,22 +180,31 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     runs: "Tier 1 page through Patchy; synthetic fixtures in patchy dev",
     limits:
       "Declare a connected company source. Read-only queries return at most 1,000 rows and 8 MiB, with a 10-second statement timeout. Credentials stay with Patchy. Postgres reads are not live-query dependencies."
+  },
+  {
+    id: "helpers.csv",
+    group: "Helpers",
+    name: "CSV text codec",
+    entrypoints: ["patchy/csv"],
+    runs: "Page and server import graphs; tier 1 and 2 pages and tier 2 handlers",
+    limits:
+      "Based on PapaParse with Patchy's own synchronous parse, records and stringify API. Parsing allows 10,000,000 input characters and 1,000,000 cells. Records reject duplicate headers and report wrong-width rows by physical line without padding. Stringify writes CRLF; formula protection is on by default, leaves numbers untouched and is not lossless."
   }
 ];
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
-  Core: "Production fleet hosting and generated-file downloads are not available in this release.",
+  Core: "Production fleet hosting is not available in this release. window.print() works in the frame, including browser print-to-PDF.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:
-    "No Helpers ship in this release. patchy/csv is reserved, not implemented. The SDK does not yet offer PDF, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
+    "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
 };
 
 /** Rendered into the release-bound loop skill alongside the same metadata in index.json. */
 export const sdkCapabilitiesMarkdown = [
   "## What the SDK gives you",
   "",
-  "This catalogue describes the installed release, not future capabilities. Import the generated client by a relative path. Page runtime imports are patchy/preact and its JSX runtimes; patchy/csv is reserved. Everything else is company code: write or copy it into the patch.",
+  "This catalogue describes the installed release, not future capabilities. Import the generated client by a relative path. Page runtime imports are patchy/preact with its JSX runtimes and patchy/csv; server runtime imports are patchy/server and patchy/csv. Everything else is company code: write or copy it into the patch.",
   "",
   ...groups.flatMap((group) => [
     `### ${group}`,

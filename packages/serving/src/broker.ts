@@ -41,6 +41,10 @@ const decodeHandleDownload = Schema.decodeUnknownSync(
   }),
   { onExcessProperty: "error" }
 );
+const decodeGeneratedDownload = Schema.decodeUnknownSync(
+  Schema.Struct({ name: FileName, contentType: Schema.String }),
+  { onExcessProperty: "error" }
+);
 const decodeSubscription = Schema.decodeUnknownSync(
   Schema.Struct({
     id: RuntimeSubscription.fields.id,
@@ -642,6 +646,7 @@ function mount(frame: HTMLIFrameElement): void {
         op !== "download" &&
         op !== "shared.download" &&
         op !== "files.download" &&
+        op !== "download.generated" &&
         !subscriptionOperation &&
         !Object.hasOwn(runtimeOperations, op)
       )
@@ -654,17 +659,17 @@ function mount(frame: HTMLIFrameElement): void {
           undefined,
           limitRefusal("frame.outstanding")
         );
-      const payload = message.bytes;
+      let payload = message.bytes;
       if (
-        op === "files.put" || op === "files.stage"
+        op === "files.put" || op === "files.stage" || op === "download.generated"
           ? !(payload instanceof ArrayBuffer)
           : payload !== undefined
       )
         throw invalid();
-      const bytes = payload as ArrayBuffer | undefined;
+      let bytes = payload as ArrayBuffer | undefined;
       const fileLimitId = op === "files.stage" ? "files.stage.bytes" : "runtime.file.bytes";
       const fileLimit = registry[fileLimitId].default;
-      if (bytes && bytes.byteLength > fileLimit)
+      if (bytes && op !== "download.generated" && bytes.byteLength > fileLimit)
         throw tooLarge(fileLimit, limitRefusal(fileLimitId, fileLimit));
       const bodyOp =
         op === "subscriptions.subscribe" &&
@@ -679,7 +684,9 @@ function mount(frame: HTMLIFrameElement): void {
         runtimeBodyLimit(bodyOp),
         runtimeBodyLimitId(bodyOp)
       );
-      const requestBytes = size * 3 + (bytes?.byteLength ?? 0);
+      const generatedTooLarge =
+        op === "download.generated" && bytes!.byteLength > registry["download.bytes"].default;
+      const requestBytes = size * 3 + (generatedTooLarge ? 0 : (bytes?.byteLength ?? 0));
       reserve(requestBytes);
       reserved = requestBytes;
       // Account for the retained id plus the Set entry, not only in-flight request bodies.
@@ -687,6 +694,38 @@ function mount(frame: HTMLIFrameElement): void {
       seen.add(id);
       pending.add(id);
       admitted = true;
+      if (op === "download.generated") {
+        let download: { name: string; contentType: string };
+        try {
+          download = decodeGeneratedDownload(message.args);
+        } catch {
+          throw invalid();
+        }
+        if (generatedTooLarge) {
+          handleDownloads.refuse(
+            download.name,
+            bytes!.byteLength,
+            registry["download.bytes"].default
+          );
+          throw tooLarge(registry["download.bytes"].default, limitRefusal("download.bytes"));
+        }
+        const offered = handleDownloads.add(download.name, bytes!, download.contentType, true);
+        // The card now owns the Blob; keep only the envelope and pending slot while
+        // awaiting approval, not the transferred buffer or its byte reservation.
+        release(bytes!.byteLength);
+        reserved -= bytes!.byteLength;
+        message.bytes = undefined;
+        payload = undefined;
+        bytes = undefined;
+        const downloaded = await offered;
+        if (closed) return;
+        if (!downloaded)
+          throw new Refusal("invalid_request", "The download was discarded.", {
+            reason: "download_discarded"
+          });
+        send({ v: wire, id, kind: "result", value: null });
+        return;
+      }
       let request: RuntimeRequest | undefined;
       let path: string | undefined;
       let subscription: RuntimeSubscription | undefined;
@@ -756,7 +795,7 @@ function mount(frame: HTMLIFrameElement): void {
       if (closed) return;
       if (op === "files.download" && reply.bytes) {
         const file = reply.value as { name: string; contentType: string };
-        handleDownloads.add(
+        void handleDownloads.add(
           downloadFilename ?? file.name.split("/").at(-1)!,
           reply.bytes,
           file.contentType

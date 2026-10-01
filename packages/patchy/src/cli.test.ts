@@ -3571,13 +3571,18 @@ describe("patchy list", () => {
     expect(instance.requests).toEqual([]);
   });
 
-  it.each([
-    { state: "retired", ref: "directory", filter: "retired", refusedFlags: [] },
-    { state: "deleted", ref: summary.id, filter: "all", refusedFlags: [] },
-    { state: "live", ref: "directory", filter: "live", refusedFlags: ["--state", "retired"] }
-  ])(
-    "preserves $state refusals and applies --state at both patch depths",
-    async ({ state, ref, filter, refusedFlags }) => {
+  it.each(
+    [
+      { state: "retired", ref: "directory", filter: "retired", refusedFlags: [] },
+      { state: "deleted", ref: summary.id, filter: "all", refusedFlags: [] },
+      { state: "live", ref: "directory", filter: "live", refusedFlags: ["--state", "retired"] }
+    ].flatMap(({ ref, ...entry }) => [
+      { ...entry, path: [ref] },
+      { ...entry, path: [ref, "people"] }
+    ])
+  )(
+    "preserves $state refusals and applies --state at $path",
+    async ({ state, path, filter, refusedFlags }) => {
       const detail = { ...projectSource, state, retiredAt: "2026-09-01T00:00:00.000Z" };
       const instance = await stubInstance((request, respond) => {
         const url = new URL(request.url, "http://instance.test");
@@ -3590,24 +3595,22 @@ describe("patchy list", () => {
           });
         respond(200, url.pathname.includes("/primitives/") ? primitive : detail);
       });
-      for (const path of [[ref], [ref, "people"]]) {
-        const args = ["list", ...path, "--api-url", instance.url];
-        const refused = await runCli([...args, ...refusedFlags], { env });
-        expect(refused).toMatchObject({ status: 2, stdout: "" });
-        expect(refused.stderr).toContain(`${state}; pass --state ${filter}`);
-        const refusedJson = await runCli([...args, ...refusedFlags, "--json"], { env });
-        expect(refusedJson).toMatchObject({ status: 2, stdout: "" });
-        expect(JSON.parse(refusedJson.stderr)).toEqual({
-          ok: false,
-          error: expect.stringContaining(`${state}; pass --state ${filter}`),
-          kind: "rejected",
-          code: "wrong_state",
-          state
-        });
-        const accepted = await runCli([...args, "--state", filter, "--json"], { env });
-        expect(accepted).toMatchObject({ status: 0, stderr: "" });
-        expect(JSON.parse(accepted.stdout)).toEqual(path.length === 1 ? detail : primitive);
-      }
+      const args = ["list", ...path, "--api-url", instance.url];
+      const refused = await runCli([...args, ...refusedFlags], { env });
+      expect(refused).toMatchObject({ status: 2, stdout: "" });
+      expect(refused.stderr).toContain(`${state}; pass --state ${filter}`);
+      const refusedJson = await runCli([...args, ...refusedFlags, "--json"], { env });
+      expect(refusedJson).toMatchObject({ status: 2, stdout: "" });
+      expect(JSON.parse(refusedJson.stderr)).toEqual({
+        ok: false,
+        error: expect.stringContaining(`${state}; pass --state ${filter}`),
+        kind: "rejected",
+        code: "wrong_state",
+        state
+      });
+      const accepted = await runCli([...args, "--state", filter, "--json"], { env });
+      expect(accepted).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(accepted.stdout)).toEqual(path.length === 1 ? detail : primitive);
     }
   );
 

@@ -43,6 +43,10 @@
       "types": "./dist/server.d.ts",
       "import": "./dist/server.js"
     },
+    "./csv": {
+      "types": "./dist/csv.d.ts",
+      "import": "./dist/csv.js"
+    },
     "./dev": {
       "types": "./dist/dev.d.ts",
       "import": "./dist/dev.js"
@@ -88,10 +92,12 @@
     "@patchy/runtime": "workspace:*",
     "@patchy/serving": "workspace:*",
     "@types/css-tree": "^3.2.0",
+    "@types/papaparse": "5.5.2",
     "@types/semver": "^7.7.1",
     "css-tree": "^3.2.1",
     "effect": "catalog:",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "papaparse": "5.7.0",
     "parse5": "catalog:",
     "semver": "^7.7.2",
     "typescript": "^6.0.3",

@@ -13,6 +13,7 @@ export type Operation =
   | "server.call"
   | "route.set"
   | "download"
+  | "download.generated"
   | "files.download"
   | "files.redeem"
   | "files.stage"
@@ -118,7 +119,7 @@ export function createPortTransport(
       resolve(value: unknown): void;
       op: Operation;
       reject(error: unknown): void;
-      timer: ReturnType<typeof setTimeout>;
+      timer: ReturnType<typeof setTimeout> | undefined;
       path?: string;
     }
   >();
@@ -237,13 +238,17 @@ export function createPortTransport(
     if (closed) return Promise.reject(lost());
     const id = String(++sequence);
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    const timer = setTimeout(
-      () => {
-        pending.delete(id);
-        reject(lost());
-      },
-      options.timeoutMs ?? (op === "server.call" ? serverReplyTimeout : 35_000)
-    );
+    // A shell-local offer waits for the person, not a runtime reply deadline.
+    const timer =
+      op === "download.generated"
+        ? undefined
+        : setTimeout(
+            () => {
+              pending.delete(id);
+              reject(lost());
+            },
+            options.timeoutMs ?? (op === "server.call" ? serverReplyTimeout : 35_000)
+          );
     pending.set(id, {
       op,
       resolve,
@@ -622,6 +627,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
         op === "download" ||
         op === "shared.download" ||
         op === "files.download" ||
+        op === "download.generated" ||
         op.startsWith("subscriptions.")
       )
         throw browserOnly();

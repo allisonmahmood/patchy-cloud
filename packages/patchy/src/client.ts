@@ -18,6 +18,7 @@ import {
 import { PatchyError } from "./clientError.js";
 import { canonicalArgs } from "@patchy/api/canonical-args";
 import { createQueryRegistry, type QueryCallable, type QueryRegistry } from "./queryRegistry.js";
+import { createDownload, type Download } from "./download.js";
 export * from "./clientError.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
@@ -162,6 +163,7 @@ export type Client<
   readonly shared: FactoryResults<S>;
   readonly connections: FactoryResults<P>;
   readonly route: Transport["route"];
+  readonly download: Download;
   me(): Promise<Me | null>;
   close(): void;
 };
@@ -395,6 +397,7 @@ export function createClient<
     connections: instantiate(options.connections, ["postgres"]),
     ...(manifest.uses.members?.kind === "members" ? { members: createMembers(call, queries) } : {}),
     route: transport.route,
+    download: createDownload(call),
     me: () => (identity ??= call("me", {}) as Promise<Me | null>),
     close: () => {
       if (closed) return;

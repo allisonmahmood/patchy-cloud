@@ -61,6 +61,79 @@ and allowed entrypoints. Use the catalogue above, or write or copy the code into
 the patch as your company's own code. `patchy/config` is for config execution,
 not page runtime imports. Framework-free tier 1 pages still use the generated client.
 
+## CSV import and export
+
+`patchy/csv` is based on PapaParse. It has its own synchronous text API, not
+PapaParse's options, and works in both page and server import graphs:
+
+```ts
+import { parse, records, stringify, CsvError } from "patchy/csv";
+
+parse(text); // string[][]
+records(text); // { headers: string[], records: Record<string, string>[],
+//   errors: { line: number, expected: number, actual: number }[] }
+stringify(rows, { formulaProtection: true }); // string
+```
+
+`parse` and `records` accept a leading BOM, CRLF or LF and quoted multiline
+fields. Cells stay strings, with no trimming or type conversion. Only empty
+physical lines are skipped; whitespace-only, quoted-empty and delimiter-only
+rows remain. A final line terminator adds no extra row. `parse` preserves each
+row's field count, including empty cells and uneven widths.
+A closing quote must be followed immediately by a comma, line break or EOF.
+Whitespace outside it is `invalid_quotes`; put intended whitespace inside the quotes.
+
+`records` uses the first retained row as headers. Duplicate headers throw.
+A wrong-width row is omitted from `records` and reported in `errors` with
+its 1-based starting physical line, expected field count and actual field
+count. Rows are never padded or truncated. Empty input returns empty headers,
+records and errors.
+
+Both parsers enforce 10,000,000 input characters and 1,000,000 cells while
+parsing. Fatal failures throw `CsvError` with `code` and a 1-based physical
+`line` when applicable. An unterminated quote fails the entire parse and
+names the opening quote's physical line; no partial result is returned.
+Limit errors carry `code: "limit_exceeded"`, `limitId` of `csv.characters`
+or `csv.cells`, and `value` containing that limit's fixed bound.
+
+`stringify(rows, options?)` accepts readonly rows of strings and numbers,
+writes CRLF and quotes fields as needed. Formula protection defaults to
+`true`: a text cell starting with `=`, `+`, `-`, `@`, a tab or a CR gets a
+leading `'`. Numbers are untouched. This is not lossless; parsing protected
+output preserves the added apostrophe. Use `{ formulaProtection: false }`
+only when the export needs the original text rather than this protection.
+
+## Generated downloads and printing
+
+The generated client's `patchy.download(name, data): Promise<null>` accepts
+`Blob`, `Uint8Array` or `ArrayBuffer` on tier 1 and 2 pages, including public
+tier 1 patches. It is Core, separate from stored-file downloads in
+`../patchy-files/SKILL.md`; it needs no file store.
+Byte inputs are copied before transfer to the shell, so the caller can reuse
+them after dismissal or download.
+
+```ts
+const csv = stringify([
+  ["Name", "Balance"],
+  ["Avery", -12]
+]);
+await patchy.download("balances.csv", new Blob([csv], { type: "text/csv" }));
+```
+
+The shell enforces 20 MiB of encoded bytes, not characters, and shows a
+download card with the filename and size. The viewer must click Download
+there; a claimed click inside the frame grants no permission. `Not now`
+discards the offer and rejects with `invalid_request` and
+`details.reason: "download_discarded"`. The promise waits for the viewer without
+a runtime-call timeout. Resolution means browser handoff, not that the person
+saved the file to disk. Closing or reloading loses pending files; closing the
+client rejects pending calls with `unknown_outcome`. Show export success only
+after the handoff.
+
+`window.print()` works in the frame, including the browser's print-to-PDF.
+The catalogue states which generation and formatting helpers the SDK does
+not yet offer; those gaps are not prohibitions on company code.
+
 ## Description notices
 
 `patchy.json.description` is the patch's published description; front-load what

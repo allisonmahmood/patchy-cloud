@@ -780,9 +780,6 @@ it.layer(layer)("SDK company generation", (it) => {
           id
         );
       }
-      assert.isFalse(
-        index.capabilities.some(({ entrypoints }) => entrypoints.includes("patchy/csv"))
-      );
     })
   );
 

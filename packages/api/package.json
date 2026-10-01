@@ -41,6 +41,11 @@
       "types": "./dist/fileConfig.d.ts",
       "import": "./dist/fileConfig.js"
     },
+    "./csv-config": {
+      "development": "./src/csvConfig.ts",
+      "types": "./dist/csvConfig.d.ts",
+      "import": "./dist/csvConfig.js"
+    },
     "./postgres-snapshot": {
       "development": "./src/postgresSnapshot.ts",
       "types": "./dist/postgresSnapshot.d.ts",

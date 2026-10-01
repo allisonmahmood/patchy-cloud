@@ -102,12 +102,13 @@ Integrations and Helpers. It is the code Patchy maintains and supports.
 _Avoid_: allowlist, standard library
 
 **Core**:
-The SDK's generated client, contract, UI foundation and shell capabilities.
+The SDK's generated client, contract, UI foundation and shell capabilities,
+including generated-file downloads separate from stored-file access.
 The client stays framework-free; the UI foundation is Preact with compat semantics.
 
 **Helper**:
-An optional SDK module for a common pattern, bundled into the patch that imports it.
-CSV is the next planned helper. A helper update reaches stored code after refresh,
+An optional SDK module for a common pattern, bundled into the patch that imports it,
+such as `patchy/csv` for CSV text. A helper update reaches stored code after refresh,
 rebuild and publish.
 _Avoid_: utility, plugin, extension
 
