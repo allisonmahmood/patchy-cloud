@@ -13,9 +13,9 @@ Use the loop skill's discovery chain to find a tool by description with
 `pnpm patchy list`, inspect its stores and reads with `list <patch>`, and inspect
 a store's definition with `list <patch> <store>`. No match means none you can
 use; check retired patches before concluding absence. These commands return
-metadata, not file names or bytes. A store is `declarable: false` with
-`reason: "not_shareable"`; there is no file-store `add` path. Define a store
-owned by this patch when it needs to save files.
+metadata, not file names or bytes. A shared, openable store is
+`declarable: true`; read `../patchy-shared-stores/SKILL.md` to declare it.
+Define a store owned by this patch when it needs to save files.
 
 ## Define and use a store
 
@@ -30,6 +30,13 @@ temperature exports keyed by YYYY-MM-DD.csv; readings are degrees Celsius."
 Use distinct names for tables and file stores. Publishing a store definition
 replaces its description; omission and rollback preserve it. Description-only
 changes do not advance the schema revision.
+
+To publish read access to every file in the store, use
+`files("Company logos keyed by filename.", { shared: true })`. Sharing is
+whole-store, not per file. Omission and rollback preserve sharing. Publishing
+the store with `shared: false` or without `shared` unshares it; this refuses
+while other live patches depend on it unless publishing with `--force`.
+See `../patchy-shared-stores/SKILL.md` for consumer access and recovery.
 
 From a tier 1 module under `src/`:
 

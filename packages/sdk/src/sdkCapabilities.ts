@@ -103,7 +103,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/_generated/client.ts: patchy.files"],
     runs: "Tier 1 page through Patchy; downloads through the shell",
     limits:
-      "Objects are at most 20 MiB; names are at most 512 UTF-8 bytes. url(name) returns a frame-local blob URL, not a public link. Stores are not shareable in this release."
+      "Objects are at most 20 MiB; names are at most 512 UTF-8 bytes. url(name) returns a frame-local blob URL, not a public link. A shared store publishes read access to every file."
   },
   {
     id: "primitives.shared-tables",
@@ -113,6 +113,18 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     runs: "Tier 1 page through Patchy; synthetic fixtures in patchy dev",
     limits:
       "Declare a shared source first. Reads are bounded and indexed; writes are unavailable. Source sharing and access are checked live."
+  },
+  {
+    id: "primitives.shared-stores",
+    group: "Primitives",
+    name: "Shared file-store reads",
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.shared",
+      "patchy/_generated/server.ts: ctx.shared"
+    ],
+    runs: "Tier 1 pages through the broker; tier 2 queries and actions; invented file fixtures in patchy dev",
+    limits:
+      "Stores are shared whole and read-only. Tier 2 queries read list and stat metadata; actions also read bytes. Every read and download checks live source access and sharing. Files are at most 20 MiB; list pages at most 1,000 files."
   },
   {
     id: "integrations.postgres",
@@ -128,7 +140,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Record<(typeof groups)[number], string> = {
   Core: "Production fleet hosting, authorised file handles, staged uploads, useFileUrl and generated-file downloads are not available in this release.",
-  Primitives: "The member directory and shared file stores are not available in this release.",
+  Primitives: "The member directory is not available in this release.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:
     "No Helpers ship in this release. patchy/csv is reserved, not implemented. The SDK does not yet offer PDF, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."

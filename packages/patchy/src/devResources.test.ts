@@ -5,11 +5,13 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   DeclarationMetadata,
   Identity,
+  FilePage,
   PatchInventory,
   PostgresRows,
   TablePage
 } from "@patchy/api";
 import { Binding } from "@patchy/runtime/dev";
+import { SubscriptionReads } from "@patchy/primitives";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -22,6 +24,7 @@ const decodeMetadata = Schema.decodeUnknownEffect(DeclarationMetadata);
 const decodePage = Schema.decodeUnknownEffect(TablePage);
 const decodePostgresRows = Schema.decodeUnknownEffect(PostgresRows);
 
+const decodeFiles = Schema.decodeUnknownEffect(FilePage);
 it.live(
   "provisions shared fixture refs to undeclared recursive source tables without requiring target rows",
   () =>
@@ -129,6 +132,145 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
         .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
       assert.strictEqual(undeclared._tag, "TableNotDeclared");
       assert.strictEqual(yield* fs.readFileString(fixturePath), fixture);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
+  { timeout: 30_000 }
+);
+
+it.live(
+  "reloads shared store bytes, inferred media types and deletions without replacing owned data or fixtures",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-shared-store-" });
+      const fixture = path.join(root, "fixtures/shared-assets");
+      yield* fs.makeDirectory(path.join(fixture, "nested"), { recursive: true });
+      yield* fs.writeFileString(path.join(fixture, "README.md"), "Fixture instructions");
+      yield* fs.writeFile(path.join(fixture, "nested/asset.bin"), new Uint8Array([0, 255, 1]));
+      yield* fs.writeFileString(
+        path.join(fixture, "nested/logo.SVG"),
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
+      );
+      yield* fs.writeFileString(path.join(fixture, "removed.txt"), "Remove on restart");
+      const assets = {
+        kind: "sharedStore" as const,
+        patchId: "refsource001",
+        store: "documents",
+        id: "refsource001/documents",
+        revision: 1
+      };
+      const prepared: Prepared = {
+        patchId: "localdev0000",
+        identity: new Identity({
+          user: { id: "local-user", email: "local@example.test", name: "Local" },
+          company: { id: "local-company", handle: "local", name: "Local" },
+          role: "admin",
+          machine: { id: "local-machine", name: "Local machine" }
+        }),
+        manifest: {
+          release: RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          tier: 1,
+          tables: {},
+          files: { uploads: { description: "Owned files" } },
+          uses: { assets }
+        },
+        metadata: {
+          postgres: {},
+          shared: {
+            assets: {
+              declaration: assets,
+              definition: { description: "Shared documents", shared: true }
+            }
+          }
+        }
+      };
+      const storeKey = `store:${assets.patchId}:${assets.store}`;
+      let previousVector: Readonly<Record<string, string>> = {};
+      const session = Effect.fn("test.sharedStoreSession")(function* (first: boolean) {
+        const resources = yield* DevResources.prepare(
+          prepared,
+          root,
+          path.join(root, ".patchy/dev")
+        );
+        const binding = Binding.Binding.of({
+          ...resources.version,
+          identity: {
+            user: prepared.identity.user,
+            company: prepared.identity.company,
+            role: prepared.identity.role
+          },
+          principal: { userId: prepared.identity.user.id },
+          correlationId: "shared-store-fixture"
+        });
+        if (first)
+          yield* resources.handlers["files.put"]
+            .run(
+              { store: "uploads", name: "keep.txt", contentType: "text/plain" },
+              new TextEncoder().encode("Owned")
+            )
+            .pipe(Effect.provideService(Binding.Binding, binding));
+        const page = yield* resources.handlers["shared.files.list"]
+          .run({ alias: "assets" })
+          .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeFiles));
+        for (const [name, contentType] of [
+          ["nested/logo.SVG", "image/svg+xml"],
+          ["nested/asset.bin", "application/octet-stream"]
+        ] as const) {
+          assert.include(
+            page.files.find((file) => file.name === name),
+            { contentType }
+          );
+          const metadata = yield* resources.handlers["shared.files.stat"]
+            .run({ alias: "assets", name })
+            .pipe(Effect.provideService(Binding.Binding, binding));
+          assert.include(metadata, { name, contentType });
+          const bytes = yield* resources.handlers["shared.files.get"]
+            .run({ alias: "assets", name })
+            .pipe(Effect.provideService(Binding.Binding, binding));
+          assert.strictEqual(bytes.contentType, contentType);
+        }
+        const body = yield* resources.handlers["shared.files.get"]
+          .run({ alias: "assets", name: "nested/asset.bin" })
+          .pipe(Effect.provideService(Binding.Binding, binding));
+        const owned = yield* resources.handlers["files.get"]
+          .run({ store: "uploads", name: "keep.txt" })
+          .pipe(Effect.provideService(Binding.Binding, binding));
+        assert.strictEqual(new TextDecoder().decode(owned.bytes), "Owned");
+        const reads = yield* SubscriptionReads.makeDev.pipe(
+          Effect.provideContext(resources.context)
+        );
+        previousVector = yield* reads.revisions(prepared.identity.company.id, [storeKey]);
+        return { names: page.files.map((file) => file.name), bytes: Array.from(body.bytes) };
+      });
+      assert.deepStrictEqual(yield* session(true).pipe(Effect.scoped), {
+        names: ["nested/asset.bin", "nested/logo.SVG", "removed.txt"],
+        bytes: [0, 255, 1]
+      });
+      yield* fs.remove(path.join(fixture, "removed.txt"));
+      yield* fs.writeFile(path.join(fixture, "nested/asset.bin"), new Uint8Array([2, 0, 254]));
+      assert.deepStrictEqual(yield* session(false).pipe(Effect.scoped), {
+        names: ["nested/asset.bin", "nested/logo.SVG"],
+        bytes: [2, 0, 254]
+      });
+      yield* fs.remove(path.join(fixture, "nested/asset.bin"));
+      yield* fs.remove(path.join(fixture, "nested/logo.SVG"));
+      const resources = yield* DevResources.prepare(prepared, root, path.join(root, ".patchy/dev"));
+      const sql = yield* PgliteClient.PgliteClient.pipe(Effect.provideContext(resources.context));
+      assert.deepStrictEqual(
+        yield* sql`SELECT name FROM patchy.files WHERE patch_id = ${assets.patchId}`,
+        []
+      );
+      const reads = yield* SubscriptionReads.makeDev.pipe(Effect.provideContext(resources.context));
+      assert.notDeepEqual(
+        yield* reads.revisions(prepared.identity.company.id, [storeKey]),
+        previousVector,
+        "Removing the last fixture file must invalidate a resumed subscription."
+      );
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(fixture, "README.md")),
+        "Fixture instructions"
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
   { timeout: 30_000 }
 );

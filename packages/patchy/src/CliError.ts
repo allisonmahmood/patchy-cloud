@@ -74,11 +74,11 @@ const refusalMessage = (value: typeof refusal.Type): string => {
       break;
     case "has_dependants":
       if ("dependants" in value)
-        return `Other live patches read these tables.\n${value.dependants.map((patch) => `- ${patch.patchId} ${patch.name} (${patch.owner.name})`).join("\n")}\nAsk the person you are working for before forcing.`;
+        return `Other live patches read these resources.\n${value.dependants.map((patch) => `- ${patch.patchId} ${patch.name} (${patch.owner.name})`).join("\n")}\nAsk the person you are working for before forcing.`;
       break;
     case "sources_off":
       if ("sources" in value)
-        return `This patch reads sources that are off.\n${value.sources.map((source) => `- ${source.patchId}${source.name === undefined ? "" : ` ${source.name}`} / ${source.table}: ${source.state}`).join("\n")}\nAsk the person you are working for before forcing.`;
+        return `This patch reads sources that are off.\n${value.sources.map((source) => `- ${source.patchId}${source.name === undefined ? "" : ` ${source.name}`} / ${"store" in source ? source.store : source.table}: ${source.state}`).join("\n")}\nAsk the person you are working for before forcing.`;
       break;
     case "wrong_state":
       if ("state" in value)

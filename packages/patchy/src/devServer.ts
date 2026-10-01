@@ -78,7 +78,15 @@ export const serve = Effect.fn("Dev.serve")(function* (
   );
   const events = yield* Layer.build(DevLog.layer(record.logJson ?? false));
   const nextServer =
-    prepared.manifest.tier === 2 ? yield* DevServerWatch.watch(record.root, toolchain) : undefined;
+    prepared.manifest.tier === 2
+      ? yield* DevServerWatch.watch(
+          record.root,
+          toolchain,
+          Object.entries(prepared.manifest.uses)
+            .filter(([, declaration]) => declaration.kind === "sharedStore")
+            .map(([alias]) => alias)
+        )
+      : undefined;
   const initialServer = nextServer === undefined ? undefined : yield* nextServer;
   const resources = yield* DevResources.prepare(prepared, record.root, stateDir, {
     ...(initialServer === undefined

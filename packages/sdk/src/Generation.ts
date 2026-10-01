@@ -17,7 +17,7 @@ import { ConnectionStore, Postgres } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
-import { generateClient } from "./generateClient.js";
+import { generateClient, generateSharedStoreClient } from "./generateClient.js";
 import { generateServer } from "./generateServer.js";
 
 export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("SdkReleaseMismatch", {
@@ -71,12 +71,15 @@ export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
   {
     patchId: Schema.String,
     table: Schema.optionalKey(Schema.String),
+    store: Schema.optionalKey(Schema.String),
     cause: Schema.optionalKey(Schema.Defect())
   }
 ) {
   readonly code = "patch_not_openable" as const;
   override get message() {
-    return `Patch or shared table ${this.patchId}${this.table === undefined ? "" : `/${this.table}`} is not openable. Ask its owner or an administrator at /company.`;
+    const resource = this.store ?? this.table;
+    const kind = this.store === undefined ? "table" : "store";
+    return `Patch or shared ${kind} ${this.patchId}${resource === undefined ? "" : `/${resource}`} is not openable. Ask its owner or an administrator at /company.`;
   }
 }
 export type GenerationRefused =
@@ -93,6 +96,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
       "connection-list",
       "connection-snapshot",
       "shared-table",
+      "shared-store",
       "release-skill",
       "release-skill-template"
     ]),
@@ -105,13 +109,42 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
   }
 }
 
+const sharedSourceErrors = (
+  declaration: Exclude<
+    (typeof GenerateRequest.Type)["manifest"]["uses"][string],
+    { kind: "postgres" }
+  >
+) => {
+  const source =
+    declaration.kind === "sharedStore"
+      ? { store: declaration.store }
+      : { table: declaration.table };
+  const unavailable = (cause: unknown) =>
+    Effect.fail(
+      new GenerationUnavailable({
+        stage: declaration.kind === "sharedStore" ? "shared-store" : "shared-table",
+        resource: `${declaration.patchId}/${source.store ?? source.table}`.slice(0, 256),
+        cause
+      })
+    );
+  return {
+    SqlError: Effect.die,
+    CompanyIdentityMismatch: Effect.die,
+    CompanyDatabaseError: unavailable,
+    CompanyDatabaseNotReady: unavailable,
+    PatchNotOpenable: (cause: unknown) =>
+      Effect.fail(new PatchNotOpenable({ patchId: declaration.patchId, ...source, cause }))
+  };
+};
+
 const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
 const knownSkills = [
   ...coreSkills,
   "patchy-preact",
   "patchy-server",
   "patchy-postgres",
-  "patchy-shared-tables"
+  "patchy-shared-tables",
+  "patchy-shared-stores"
 ];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -275,39 +308,39 @@ export const generate = Effect.fn("Generation.generate")(function* (
         client,
         fixture
       });
+    } else if (declaration.kind === "sharedStore") {
+      const source = yield* patches
+        .sharedStore(declaration.patchId, declaration.store, companyId)
+        .pipe(Effect.catchTags(sharedSourceErrors(declaration)));
+      const fixture = `fixtures/shared-${alias}/README.md`;
+      const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
+      metadata.shared[alias] = { declaration: resolved, definition: source.definition };
+      files.set(client, generateSharedStoreClient());
+      files.set(
+        context,
+        definitionContext(`Shared file store ${alias}`, { ...source, fixture }) +
+          "\nThe whole store is read-only. Tier 1 provides list, get, url and download. Tier 2 queries provide list and stat; actions also provide get bytes. Every read checks source access and sharing live.\n"
+      );
+      files.set(
+        fixture,
+        `# Shared files from ${source.patchId}/${source.store}\n\nPut invented files here to stand in for the source store ${source.store}. Subdirectories become part of each file name. Dev loads this directory at start and skips README.md metadata. Content types come from file extensions, ignoring case: svg, png, jpg, jpeg, gif, webp, pdf, txt, csv, json and html. Other extensions or no extension use application/octet-stream; bytes are not inspected or changed. Edit these files and restart dev to reload them. Refresh preserves an existing fixture directory. Production files and authority changes are not simulated.\n`
+      );
+      shared[alias] = `./uses/${alias}.js`;
+      skills.add("patchy-shared-stores");
+      uses.push({
+        alias,
+        id: source.id,
+        revision: source.schemaRevision,
+        declaration: resolved,
+        skill: ".agents/skills/patchy-shared-stores/SKILL.md",
+        context,
+        client,
+        fixture
+      });
     } else {
       const source = yield* patches
         .sharedTable(declaration.patchId, declaration.table, companyId)
-        .pipe(
-          Effect.catchTags({
-            SqlError: Effect.die,
-            CompanyIdentityMismatch: Effect.die,
-            CompanyDatabaseError: (cause) =>
-              Effect.fail(
-                new GenerationUnavailable({
-                  stage: "shared-table",
-                  resource: `${declaration.patchId}/${declaration.table}`.slice(0, 256),
-                  cause
-                })
-              ),
-            CompanyDatabaseNotReady: (cause) =>
-              Effect.fail(
-                new GenerationUnavailable({
-                  stage: "shared-table",
-                  resource: `${declaration.patchId}/${declaration.table}`.slice(0, 256),
-                  cause
-                })
-              ),
-            PatchNotOpenable: (cause) =>
-              Effect.fail(
-                new PatchNotOpenable({
-                  patchId: declaration.patchId,
-                  table: declaration.table,
-                  cause
-                })
-              )
-          })
-        );
+        .pipe(Effect.catchTags(sharedSourceErrors(declaration)));
       const fixture = `fixtures/shared-${alias}.sql`;
       const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
       metadata.shared[alias] = {

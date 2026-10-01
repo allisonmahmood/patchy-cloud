@@ -90,6 +90,23 @@ const shared = (call: Call, alias: string) => ({
   list: (options: object = {}) => call("shared.list", { ...options, alias })
 });
 
+const sharedStore = (call: Call, callback: Callback, alias: string, bytes: boolean) => {
+  const read = {
+    list: (options: object = {}) => call("shared.files.list", { ...options, alias }),
+    stat: (name: string) => call("shared.files.stat", { alias, name })
+  };
+  return bytes
+    ? {
+        ...read,
+        async get(name: string) {
+          const reply = await callback("shared.files.get", { alias, name });
+          if (!reply.ok || !("body" in reply)) throw new Error("Invalid file callback reply.");
+          return reply.body.bytes;
+        }
+      }
+    : read;
+};
+
 const fileStore = (call: Call, callback: Callback, store: string, writable: boolean) => {
   const read = {
     list: (options: object = {}) => call("files.list", { ...options, store }),
@@ -215,7 +232,10 @@ const postgres = (call: Call, connection: string, invalidRequest: (message: stri
 };
 
 /** Worker entry for server bundles, without importing privileged Workers APIs. */
-export function createGuest(modules: Readonly<Record<string, Readonly<Record<string, unknown>>>>) {
+export function createGuest(
+  modules: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+  sharedStores: readonly string[] = []
+) {
   const descriptors = extractHandlerDescriptors(modules);
   const handlers = new Map(
     Object.entries(descriptors).map(([name, descriptor]) => {
@@ -329,7 +349,11 @@ export function createGuest(modules: Readonly<Record<string, Readonly<Record<str
         ...(kind === "mutation"
           ? {}
           : {
-              shared: names((alias) => shared(call, alias)),
+              shared: names((alias) =>
+                sharedStores.includes(alias)
+                  ? sharedStore(call, callback, alias, kind === "action")
+                  : shared(call, alias)
+              ),
               files: names((store) => fileStore(call, callback, store, kind === "action"))
             }),
         ...(kind !== "action"

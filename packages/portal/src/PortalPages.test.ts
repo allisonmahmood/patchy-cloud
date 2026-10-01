@@ -11,7 +11,13 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION, sharedTableId } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  MANIFEST_VERSION,
+  WIRE_VERSION,
+  sharedTableId,
+  sharedStoreId
+} from "@patchy/api";
 import { RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
@@ -138,7 +144,8 @@ const publish = Effect.fn("PortalPagesTest.publish")(function* (
 });
 const publishSource = Effect.fn("PortalPagesTest.publishSource")(function* (
   person: Person,
-  name: string
+  name: string,
+  kind: "table" | "store" = "table"
 ) {
   return yield* publish(person, name, {
     filename: null,
@@ -146,14 +153,21 @@ const publishSource = Effect.fn("PortalPagesTest.publishSource")(function* (
       ...manifest,
       name,
       tier: 1,
-      tables: {
-        notes: {
-          description: "Notes keyed by id",
-          columns: { body: { kind: "text" } },
-          indexes: {},
-          shared: true
-        }
-      }
+      tables:
+        kind === "table"
+          ? {
+              notes: {
+                description: "Notes keyed by id",
+                columns: { body: { kind: "text" } },
+                indexes: {},
+                shared: true
+              }
+            }
+          : {},
+      files:
+        kind === "store"
+          ? { photos: { description: "Photos keyed by file name.", shared: true } }
+          : {}
     }
   });
 });
@@ -167,10 +181,26 @@ const sourceDeclaration = (patchId: string) => ({
 const publishDependant = Effect.fn("PortalPagesTest.publishDependant")(function* (
   person: Person,
   name: string,
-  sourceId: string
+  sourceId: string,
+  kind: "table" | "store" = "table"
 ) {
   return yield* publish(person, name, {
-    manifest: { ...manifest, name, uses: { source: sourceDeclaration(sourceId) } }
+    manifest: {
+      ...manifest,
+      name,
+      uses: {
+        source:
+          kind === "table"
+            ? sourceDeclaration(sourceId)
+            : {
+                kind: "sharedStore",
+                patchId: sourceId,
+                store: "photos",
+                id: sharedStoreId(sourceId, "photos"),
+                revision: 1
+              }
+      }
+    }
   });
 });
 const readPatch = Effect.fn("PortalPagesTest.readPatch")(function* (
@@ -698,48 +728,65 @@ it.layer(layer)("portal pages on a socket", (it) => {
         })
     );
 
-    it.effect(`${action} recomputes dependants after GET and requires exactly ack=1`, () =>
-      Effect.gen(function* () {
-        const workspace = yield* company();
-        const source = yield* publishSource(workspace.owner, `${action}-source`);
-        const first = yield* publishDependant(workspace.member, `${action}-first`, source.patchId);
-        const path = `${cardPath(source.name)}/${action}?all=1`;
-        const page = yield* request(path, workspace.owner);
-        assert.strictEqual(page.status, 200);
-        const html = yield* page.text;
-        assert.include(text(html), first.name);
-        assert.include(text(html), workspace.member.name);
-        assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
-        const later = yield* publishDependant(workspace.owner, `${action}-later`, source.patchId);
-        const before = yield* readPatch(workspace.owner, source.patchId);
-        const fields = {
-          expectedPatchId: source.patchId,
-          expectedState: action === "retire" ? "live" : "not-deleted",
-          ...(action === "delete" ? { confirm: source.name } : {})
-        };
-        for (const acknowledgement of [{}, { ack: "on" }]) {
-          const refused = yield* post(path, workspace.owner, { ...fields, ...acknowledgement });
-          assert.strictEqual(refused.status, 409);
-          const fresh = yield* refused.text;
-          assert.include(text(fresh), first.name);
-          assert.include(text(fresh), later.name);
-          assert.include(forms(fresh), path);
-          assert.strictEqual(inputs(fresh, "ack", "checkbox").length, 1);
-          assert.deepStrictEqual(yield* readPatch(workspace.owner, source.patchId), before);
-        }
-        const accepted = yield* post(path, workspace.admin, { ...fields, ack: "1" });
-        assert.strictEqual(accepted.status, 303);
-        assert.strictEqual(accepted.headers.location, `${cardPath(source.name)}?all=1`);
-        const saved = yield* readPatch(workspace.owner, source.patchId);
-        assert.strictEqual(saved.patch.state, action === "retire" ? "retired" : "deleted");
-        assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
-        for (const dependant of [first, later]) {
-          const read = yield* readPatch(workspace.owner, dependant.patchId);
-          assert.strictEqual(read.patch.state, "live");
-          assert.strictEqual(read.reads[0]!.state, saved.patch.state);
-        }
-      })
-    );
+    for (const kind of ["table", "store"] as const)
+      it.effect(
+        `${action} recomputes ${kind} dependants after GET and requires exactly ack=1`,
+        () =>
+          Effect.gen(function* () {
+            const workspace = yield* company();
+            const source = yield* publishSource(workspace.owner, `${action}-${kind}-source`, kind);
+            const first = yield* publishDependant(
+              workspace.member,
+              `${action}-first`,
+              source.patchId,
+              kind
+            );
+            const path = `${cardPath(source.name)}/${action}?all=1`;
+            const page = yield* request(path, workspace.owner);
+            assert.strictEqual(page.status, 200);
+            const html = yield* page.text;
+            assert.include(text(html), first.name);
+            assert.include(text(html), kind === "table" ? "notes" : "photos");
+            const card = yield* (yield* request(cardPath(source.name), workspace.owner)).text;
+            assert.include(text(card), first.name);
+            assert.include(text(card), kind === "table" ? "notes" : "photos");
+            assert.include(text(html), workspace.member.name);
+            assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+            const later = yield* publishDependant(
+              workspace.owner,
+              `${action}-later`,
+              source.patchId,
+              kind
+            );
+            const before = yield* readPatch(workspace.owner, source.patchId);
+            const fields = {
+              expectedPatchId: source.patchId,
+              expectedState: action === "retire" ? "live" : "not-deleted",
+              ...(action === "delete" ? { confirm: source.name } : {})
+            };
+            for (const acknowledgement of [{}, { ack: "on" }]) {
+              const refused = yield* post(path, workspace.owner, { ...fields, ...acknowledgement });
+              assert.strictEqual(refused.status, 409);
+              const fresh = yield* refused.text;
+              assert.include(text(fresh), first.name);
+              assert.include(text(fresh), later.name);
+              assert.include(forms(fresh), path);
+              assert.strictEqual(inputs(fresh, "ack", "checkbox").length, 1);
+              assert.deepStrictEqual(yield* readPatch(workspace.owner, source.patchId), before);
+            }
+            const accepted = yield* post(path, workspace.admin, { ...fields, ack: "1" });
+            assert.strictEqual(accepted.status, 303);
+            assert.strictEqual(accepted.headers.location, `${cardPath(source.name)}?all=1`);
+            const saved = yield* readPatch(workspace.owner, source.patchId);
+            assert.strictEqual(saved.patch.state, action === "retire" ? "retired" : "deleted");
+            assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
+            for (const dependant of [first, later]) {
+              const read = yield* readPatch(workspace.owner, dependant.patchId);
+              assert.strictEqual(read.patch.state, "live");
+              assert.strictEqual(read.reads[0]!.state, saved.patch.state);
+            }
+          })
+      );
 
     it.effect(`refuses a stale ${action} confirmation with the fresh state and actor`, () =>
       Effect.gen(function* () {

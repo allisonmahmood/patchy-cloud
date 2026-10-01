@@ -24,7 +24,7 @@ const fixture = async (
   await writeFile(join(directory, "package.json"), '{"type":"module"}');
   await writeFile(
     path,
-    `import { defineConfig, table, t, files, postgres, sharedTable } from ${JSON.stringify(builders)};\n${source}`
+    `import { defineConfig, table, t, files, postgres, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n${source}`
   );
   if (index !== null) {
     await mkdir(join(directory, "patchy/_generated"), { recursive: true });
@@ -53,8 +53,9 @@ describe("executeConfig", () => {
           data: t.json().default({ nested: [null, true] }),
           parent: t.ref("notes").optional()
         }, { indexes: { byCount: ["count"], byTitle: { columns: ["title"], unique: true } }, shared: true })
-      }, files: { attachments: files("Note attachments keyed by filename.") }, uses: {
-        sales: postgres("warehouse"), contacts: sharedTable("abcdefghijkl", "contacts")
+      }, files: { attachments: files("Note attachments keyed by filename.", { shared: true }) }, uses: {
+        sales: postgres("warehouse"), contacts: sharedTable("abcdefghijkl", "contacts"),
+        assets: sharedStore("abcdefghijkl", "logos")
       } });
     `,
       {
@@ -70,6 +71,18 @@ describe("executeConfig", () => {
               handle: "warehouse",
               id: "connection-real",
               revision: 7
+            }
+          },
+          {
+            alias: "assets",
+            id: "abcdefghijkl/logos",
+            revision: 3,
+            declaration: {
+              kind: "sharedStore",
+              patchId: "abcdefghijkl",
+              store: "logos",
+              id: "abcdefghijkl/logos",
+              revision: 3
             }
           },
           {
@@ -115,9 +128,16 @@ describe("executeConfig", () => {
           shared: true
         }
       },
-      files: { attachments: { description: "Note attachments keyed by filename." } },
+      files: { attachments: { description: "Note attachments keyed by filename.", shared: true } },
       uses: {
         sales: { kind: "postgres", handle: "warehouse", id: "connection-real", revision: 7 },
+        assets: {
+          kind: "sharedStore",
+          patchId: "abcdefghijkl",
+          store: "logos",
+          id: "abcdefghijkl/logos",
+          revision: 3
+        },
         contacts: {
           kind: "sharedTable",
           patchId: "abcdefghijkl",
@@ -297,30 +317,36 @@ describe("executeConfig", () => {
     await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
   });
 
-  it("does not rebind a changed shared declaration to its old generated identity", async () => {
-    const path = await fixture(
-      'export default defineConfig({ name: "changed-shared", tier: 1, uses: { contacts: sharedTable("abcdefghijkl", "contacts") } });',
-      {
-        release: RELEASE,
-        manifestVersion: MANIFEST_VERSION,
-        uses: [
-          {
-            alias: "contacts",
-            id: "abcdefghijkl/other",
-            revision: 1,
-            declaration: {
-              kind: "sharedTable",
-              patchId: "abcdefghijkl",
-              table: "other",
+  it.each([
+    { builder: "sharedTable", kind: "sharedTable", field: "table" },
+    { builder: "sharedStore", kind: "sharedStore", field: "store" }
+  ])(
+    "does not rebind a changed $kind declaration to its old generated identity",
+    async ({ builder, kind, field }) => {
+      const path = await fixture(
+        `export default defineConfig({ name: "changed-shared", tier: 1, uses: { contacts: ${builder}("abcdefghijkl", "contacts") } });`,
+        {
+          release: RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          uses: [
+            {
+              alias: "contacts",
               id: "abcdefghijkl/other",
-              revision: 1
+              revision: 1,
+              declaration: {
+                kind,
+                patchId: "abcdefghijkl",
+                [field]: "other",
+                id: "abcdefghijkl/other",
+                revision: 1
+              }
             }
-          }
-        ]
-      }
-    );
-    await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
-  });
+          ]
+        }
+      );
+      await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
+    }
+  );
 
   it("evaluates staged edits with relative imports without replacing the author's config", async () => {
     const path = await fixture('export default defineConfig({ name: "original-name", tier: 1 });');

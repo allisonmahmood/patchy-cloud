@@ -41,6 +41,14 @@ export const list = query({
     await ctx.shared.directory.list({ limit: 20 });
     await ctx.files.documents.stat("invoice.pdf");
     await ctx.files.documents.list();
+    await ctx.shared.assets.list({ prefix: "logos/" });
+    await ctx.shared.assets.stat("logos/company.svg");
+    // @ts-expect-error shared bytes require an action
+    await ctx.shared.assets.get("logos/company.svg");
+    // @ts-expect-error shared stores are read only in queries
+    await ctx.shared.assets.put("logo.svg", new Uint8Array());
+    // @ts-expect-error browser URL operations are not server callbacks
+    await ctx.shared.assets.url("logo.svg");
     // @ts-expect-error query tables cannot write
     await ctx.tables.leads.insert({ name: "forbidden" });
     // @ts-expect-error query file reads expose no bytes
@@ -96,6 +104,15 @@ export const sync = action({
     await ctx.shared.directory.list();
     // @ts-expect-error server shared reads cannot start browser subscriptions
     void ctx.shared.directory.get.subscribe;
+    const bytes: Uint8Array = await ctx.shared.assets.get("logos/company.svg");
+    await ctx.shared.assets.list();
+    await ctx.shared.assets.stat("logos/company.svg");
+    // @ts-expect-error actions cannot write shared stores
+    await ctx.shared.assets.put("logo.svg", bytes);
+    // @ts-expect-error actions cannot delete shared files
+    await ctx.shared.assets.delete("logo.svg");
+    // @ts-expect-error browser downloads are not server callbacks
+    await ctx.shared.assets.download("logo.svg");
     await ctx.files.documents.put(args.name, args.upload);
     await ctx.files.documents.put("bytes.bin", new Uint8Array([1, 2, 3]));
     await ctx.files.documents.get(args.name);

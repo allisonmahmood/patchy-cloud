@@ -10,7 +10,7 @@ import type {
   Upload,
   ValueDescriptor
 } from "./config.js";
-import type { FileListOptions, FileMetadata, OwnedTable } from "./client.js";
+import type { FileListOptions, FileMetadata, OwnedTable, ReadFileStore } from "./client.js";
 import type { Me } from "./clientTransport.js";
 import type { QueryCallable } from "./queryRegistry.js";
 import type { HandlerError } from "./handlerError.js";
@@ -150,13 +150,15 @@ export interface QueryFileStore {
   ): Promise<{ readonly files: readonly FileMetadata[]; readonly cursor: string | null }>;
   stat(name: string): Promise<FileMetadata | null>;
 }
-export interface ActionFileStore extends QueryFileStore {
+export interface ActionSharedFileStore extends QueryFileStore {
+  get(name: string): Promise<Uint8Array>;
+}
+export interface ActionFileStore extends ActionSharedFileStore {
   put(
     name: string,
     bytes: Uint8Array | ArrayBuffer | Blob | Upload,
     options?: { readonly contentType: string }
   ): Promise<null>;
-  get(name: string): Promise<Uint8Array>;
   delete(name: string): Promise<null>;
 }
 type ReadonlyOperations<T> = {
@@ -167,8 +169,13 @@ type ReadonlyOperations<T> = {
       : T[K];
 };
 type QueryShared<Shared> = {
-  readonly [K in keyof Shared]: Shared[K] extends QueryFileStore
+  readonly [K in keyof Shared]: Shared[K] extends ReadFileStore
     ? QueryFileStore
+    : ReadonlyOperations<Shared[K]>;
+};
+type ActionShared<Shared> = {
+  readonly [K in keyof Shared]: Shared[K] extends ReadFileStore
+    ? ActionSharedFileStore
     : ReadonlyOperations<Shared[K]>;
 };
 export interface ContextBase {
@@ -195,7 +202,7 @@ export interface ActionContext<
   Shared = Empty,
   Connections = Empty
 > extends MutationContext<C> {
-  readonly shared: QueryShared<Shared>;
+  readonly shared: ActionShared<Shared>;
   readonly files: { readonly [N in keyof C["files"]]: ActionFileStore };
   readonly connections: Connections;
   readonly run: RunClient<Modules>;

@@ -161,3 +161,34 @@ it("refuses a staged uses edit after an author save, keeping config and generate
   expect(await readFile(join(root, "patchy.config.ts"), "utf8")).toBe("author's saved config");
   expect(await bytes(generated)).toEqual(before);
 });
+
+it("creates a missing shared-store fixture directory once and preserves authored directories", async () => {
+  const root = await project();
+  const fixture = { path: "fixtures/shared-assets/README.md", contents: "Invent files here.\n" };
+  const first = await ManagedProject.begin(root);
+  expect((await first.activate([fixture], "{}")).fixtures).toEqual([fixture.path]);
+  await first.finish(true);
+  const authored = Buffer.from([0, 255, 13, 10]);
+  await mkdir(join(root, "fixtures/shared-assets/nested"));
+  await writeFile(join(root, "fixtures/shared-assets/nested/photo.bin"), authored);
+  await rm(join(root, fixture.path));
+  const refresh = await ManagedProject.begin(root);
+  expect((await refresh.activate([fixture], "{}")).fixtures).toEqual([]);
+  await refresh.finish(true);
+  expect(await bytes(join(root, "fixtures/shared-assets"))).toEqual({
+    "nested/photo.bin": authored
+  });
+});
+
+it("removes a newly created fixture on rollback without deleting later authored bytes", async () => {
+  const root = await project();
+  const transaction = await ManagedProject.begin(root);
+  await transaction.activate(
+    [{ path: "fixtures/shared-assets/README.md", contents: "Invent files here.\n" }],
+    "{}"
+  );
+  const authored = Buffer.from([0, 255]);
+  await writeFile(join(root, "fixtures/shared-assets/authored.bin"), authored);
+  await transaction.finish(false);
+  expect(await bytes(join(root, "fixtures/shared-assets"))).toEqual({ "authored.bin": authored });
+});

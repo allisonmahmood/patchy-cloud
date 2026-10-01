@@ -25,12 +25,13 @@ it.effect("ignores explicit default flags but notices a newly unique index", () 
           indexes: { byTitle: { columns: ["title"] } }
         }
       },
-      files: {},
+      files: { documents: { description: "Documents by filename." } },
       uses: {}
     };
     yield* fs.writeFileString(path.join(generated, "manifest.json"), JSON.stringify(before));
     const explicit: typeof Manifest.Type = {
       ...before,
+      files: { documents: { description: "Documents by filename.", shared: false } },
       tables: {
         notes: {
           description: "Notes keyed by title.",

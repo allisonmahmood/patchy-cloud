@@ -21,8 +21,8 @@ does not exist, keeping that flag when drilling into a retired candidate.
 Deleted patches need their id and `--state all` at both detail levels. A
 `wrong_state` refusal is exit 2 with the needed state flag, not proof of absence.
 Null inventory means unavailable. Branch on `declarable` and `reason`, not
-`hint`: ask the named owner about `not_shared`, arrange restoration for
-`source_off`, and use an owned store for files marked `not_shareable`.
+`hint`: ask the named owner about `not_shared` and arrange restoration for
+`source_off`. For shared files, read `../patchy-shared-stores/SKILL.md`.
 
 In tier 1 application source, if the declaration's generated alias is `contacts`:
 

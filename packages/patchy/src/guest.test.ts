@@ -7,6 +7,7 @@ import { t, type Config, type FileStoreDefinition, type Json } from "./config.js
 import { createGuest } from "./guest.js";
 import { HandlerError } from "./handlerError.js";
 import { bindServer } from "./server.js";
+import type { ReadFileStore } from "./client.js";
 
 type Key = { readonly id: string };
 interface Relation {
@@ -31,14 +32,22 @@ interface Connections {
   };
 }
 const server = bindServer<Config, Record<never, never>, Record<never, never>, Connections>();
-const fileServer = bindServer<Config & { files: { documents: FileStoreDefinition } }>();
+const fileServer = bindServer<
+  Config & { files: { documents: FileStoreDefinition } },
+  Record<never, never>,
+  { assets: ReadFileStore }
+>();
 const viewer = {
   user: { id: "usr_test", name: "Reader", email: "reader@example.test" },
   company: { id: "com_test", name: "Example", handle: "example" },
   admin: false
 };
-const invoke = async (definition: unknown, call: (operation: unknown) => Promise<unknown>) => {
-  const guest = createGuest({ demo: { run: definition } });
+const invoke = async (
+  definition: unknown,
+  call: (operation: unknown) => Promise<unknown>,
+  sharedStores: readonly string[] = []
+) => {
+  const guest = createGuest({ demo: { run: definition } }, sharedStores);
   const response = await guest.fetch(
     new Request("https://guest/invoke", {
       method: "POST",
@@ -388,22 +397,31 @@ it.each([
   }
 );
 
-it("preserves a file callback refusal instead of reporting a malformed byte reply", async () => {
-  const definition = fileServer.action({
-    args: {},
-    result: t.integer(),
-    handler: async (ctx) => (await ctx.files.documents.get("report.bin")).byteLength
-  });
-  const reply = await invoke(definition, async () => ({
-    ok: false,
-    source: "patchy",
-    code: "access_denied",
-    error: "You no longer have access to this file store."
-  }));
-  assert.deepStrictEqual(reply, {
-    ok: false,
-    source: "patchy",
-    code: "access_denied",
-    error: "You no longer have access to this file store."
-  });
-});
+it.each(["owned", "shared"] as const)(
+  "preserves a %s file refusal instead of reporting malformed bytes",
+  async (kind) => {
+    const definition = fileServer.action({
+      args: {},
+      result: t.integer(),
+      handler: async (ctx) =>
+        (await (kind === "shared" ? ctx.shared.assets : ctx.files.documents).get("report.bin"))
+          .byteLength
+    });
+    const reply = await invoke(
+      definition,
+      async () => ({
+        ok: false,
+        source: "patchy",
+        code: "access_denied",
+        error: "You no longer have access to this file store."
+      }),
+      ["assets"]
+    );
+    assert.deepStrictEqual(reply, {
+      ok: false,
+      source: "patchy",
+      code: "access_denied",
+      error: "You no longer have access to this file store."
+    });
+  }
+);

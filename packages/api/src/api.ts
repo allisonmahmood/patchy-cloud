@@ -228,10 +228,13 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "otherwise `stale_generated` (run `patchy refresh`). Credential rotation and retargeting " +
           "preserve the connection id. Postgres runtime calls retain the version's recorded snapshot. " +
           'Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. ' +
-          "The resolved id is `<patchId>/<table>`, never a patch name; revision stamps the source inventory. " +
-          "Publish requires a live same-company source the publisher can open and an inventory table " +
-          "marked shared, otherwise `patch_not_openable`. A stamp behind the source revision warns, " +
-          "not refuses. Unsharing a defined table refuses with `has_dependants` and the distinct live declaring " +
+          'Shared-store uses carry `{ kind: "sharedStore", patchId, store, id, revision }`. ' +
+          "The resolved id is `<patchId>/<table>` or `<patchId>/<store>`, never a patch name; " +
+          "revision stamps the source inventory. `files(description, { shared: true })` publishes " +
+          "read access to every file in the store. Publish requires a live same-company source " +
+          "the publisher can open and an inventory resource marked shared, otherwise " +
+          "`patch_not_openable`. A stamp behind the source revision warns, not refuses. " +
+          "Unsharing a defined table or store refuses with `has_dependants` and the distinct live declaring " +
           "patches, including declarations in retained versions, unless `force` is true. Ask the person you " +
           "are working for before forcing. Omission and rollback never change sharing. " +
           "Ownership and lifecycle are checked before validating HTML and again at commit: another company's " +
@@ -304,9 +307,10 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "only openable sources expose a name. Source state does not imply permission to read it. " +
           "Sources absent from the company lookup are `gone` without a name; foreign metadata is never queried. " +
           "An unavailable company database means null inventory, never fabricated empty arrays. " +
-          "Live shared tables are declarable and carry " +
-          "`patchy add shared-table <patchId>/<table>`; unshared tables carry `not_shared` and an " +
-          "owner-name hint. Off tables carry `source_off`; stores carry `not_shareable`. " +
+          "Live shared tables and stores are declarable and carry " +
+          "`patchy add shared-table <patchId>/<table>` or `patchy add shared-store <patchId>/<store>`. " +
+          "Unshared resources carry `not_shared` and an owner-name hint; off sources carry `source_off`. " +
+          "Reads identify stores with `store`, never a `table` field. " +
           "No versions, dependants or business rows are returned. Machine tokens only. " +
           "Overlong references answer 414. Responses are private, no-store."
       )
@@ -323,7 +327,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "sharing, schema revision, columns and indexes, never rows or contents. Columns report " +
           "their name, kind, optional flag, an optional ref target and a default only when present; " +
           "an explicit null default stays present. Indexes report name, columns and uniqueness. " +
-          "Stores have `kind: store`, `shared: false` and empty columns and indexes. " +
+          "Stores have `kind: store`, live `shared` state and empty columns and indexes. " +
+          "Both kinds include `declarable`, a refusal `reason` when applicable and an add `hint`. " +
           "A missing table or store answers 404; an unavailable inventory answers 503 " +
           "`source_unavailable`, not a missing primitive. Machine tokens only. " +
           "Overlong patch references answer 414. Responses are private, no-store."
@@ -371,7 +376,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: [...ownerRouteErrors, HasDependants, PayloadTooLarge]
     }).annotateMerge(
       describe(
-        "Retire an owned live patch. It stops serving and its shared tables stop answering readers. " +
+        "Retire an owned live patch. It stops serving and its shared tables and stores stop answering readers. " +
           "Everything is retained indefinitely, including its names. Live dependants refuse with " +
           "`has_dependants` unless `force` is true. Ask the person you are working for before forcing. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
@@ -504,7 +509,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
           "Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. " +
             "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. " +
             "Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, " +
-            "typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots and shared-table definitions with recursive source ref targets and their shared declarations; it is never written to a generated file. Never returns manifest.json, credentials or business rows. " +
+            "typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
             "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. " +
             "Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap."
         )
@@ -675,9 +680,13 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "with a literal prefix and a keyset cursor bound to patch, store and prefix. Pages default " +
           "to 100, capped at 1,000 (`PATCHY_FILE_DEFAULT_PAGE`, `PATCHY_FILE_MAX_PAGE`), with an " +
           "8 MiB result cap (`runtime.result.bytes`), including the cursor. " +
+          "`shared.files.list { alias, prefix?, limit?, cursor? }` uses the same page contract. " +
+          "`shared.files.stat { alias, name }` returns metadata or null. Both recheck source access " +
+          "and sharing live. Tier 2 queries and actions may list and stat; only actions may get bytes. " +
           "`files.delete { store, name }` removes only the index row and returns null idempotently. " +
-          "File mutations log store/name as their resource. `files.put` and `files.get` require the " +
-          "raw bytes routes; they are refused on this JSON route, never serialized as JSON/base64."
+          "File mutations log store/name as their resource. `files.put`, `files.get` and " +
+          "`shared.files.get` require raw bytes routes; they are refused on this JSON route, " +
+          "never serialized as JSON/base64."
       )
     ),
     HttpApiEndpoint.put("putFile", "/runtime/files/:patchId/:versionId/:store/*", {
@@ -718,6 +727,33 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           runtimeFileContract +
           "The byte response carries the stored `Content-Type` and `no-store`, never a redirect " +
           "to uploaded content. HTML and SVG remain bytes, never a navigable page."
+      )
+    ),
+    HttpApiEndpoint.get("getSharedFile", "/runtime/shared-files/:patchId/:versionId/:alias/*", {
+      params: {
+        patchId: Schema.String,
+        versionId: Schema.String,
+        alias: Schema.String,
+        "*": Schema.String
+      },
+      headers: {
+        ...runtimeHeaders,
+        "sec-fetch-site": Schema.optionalKey(Schema.String)
+      },
+      success: RuntimeBytes,
+      error: runtimeErrors
+    }).annotateMerge(
+      describe(
+        runtimeAdmission +
+          "Read-only shared-store bytes. The alias resolves through the loaded consumer manifest's " +
+          "`sharedStore` declaration to a stable source patch id and store. The wildcard is the " +
+          "file name, encoded once; slash-separated names are supported. Every read, URL creation " +
+          "and download checks live source access and cumulative store sharing, otherwise " +
+          "`access_denied`. A tier 1 consumer may read a tier 2 source. A document below its own " +
+          "patch's served tier gets `server_required`. GET requires `Sec-Fetch-Site: same-origin`, " +
+          "the principal and wire headers, and no body. Responses are raw bytes under the same " +
+          "20 MiB limit as owned files, with the stored media type, `no-store`, attachment " +
+          "disposition and a sandbox CSP. There are no shared writes."
       )
     )
   )
@@ -810,7 +846,7 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "a version without a handler does not remove it from an already loaded document. " +
           "Optional `vector` and `revision` describe the snapshot the client actually received, " +
           "not the last frame the server sent. Tier 2 resume revision checks ignore keys outside " +
-          "the loaded version's owned tables/stores and declared shared-table resources. " +
+          "the loaded version's owned tables/stores and declared shared-table/shared-store resources. " +
           "`{type:'replace',sequence,subscriptions}` installs the full desired set and supersedes " +
           "buffered deltas through that sequence; older replacements are refused. All requests " +
           "also carry `patchId`, `versionId`, `documentId` and `generation`. A gap after 5 seconds " +

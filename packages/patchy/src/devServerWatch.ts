@@ -30,7 +30,8 @@ const isLocalError = Schema.is(LocalError);
 /** Consume builds serially; inspect and stage may run together, but installation awaits both. */
 export const watch = Effect.fn("Dev.watchServer")(function* (
   root: string,
-  toolchain: typeof ReleaseToolchain.Type
+  toolchain: typeof ReleaseToolchain.Type,
+  sharedStores: readonly string[]
 ) {
   const fs = yield* FileSystem.FileSystem;
   const output = yield* fs
@@ -126,7 +127,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       modules = discovered;
       builder = yield* Effect.tryPromise({
         try: () =>
-          watchServer(root, discovered, toolchain, output, (result) => {
+          watchServer(root, discovered, toolchain, output, sharedStores, (result) => {
             Queue.offerUnsafe(changes, { _tag: "Build", generation: current, result });
           }),
         catch: (cause) =>

@@ -2,13 +2,13 @@
 
 The product, written down where agents read it. The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) record the decisions (the portal's spec is [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247)); the glossaries in each `CONTEXT.md` carry the words, and this file carries the shape.
 
-**Built today:** tier 0 static HTML pages and tier 1 sandboxed browser tools at named company addresses. Static pages publish from an HTML file or a repo; tier 1 tools publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources, read-only shared tables and company Postgres connections through the shell broker as the viewer, with mutations and integration calls logged.
+**Built today:** tier 0 static HTML pages and tier 1 sandboxed browser tools at named company addresses. Static pages publish from an HTML file or a repo; tier 1 tools publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources, read-only shared tables and stores, and company Postgres connections through the shell broker as the viewer, with mutations and integration calls logged.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller supports separate local task processes for offline checks and ECS Fargate tasks for production, including spare claims, stopping and drain, crash metering and the patch breaker. Its starting cover holds calls until the company is ready. Production tier 2 admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller supports separate local task processes for offline checks and ECS Fargate tasks for production, including spare claims, stopping and drain, crash metering and the patch breaker. Its starting cover holds calls until the company is ready. Production tier 2 admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Shared file stores are readable on both tiers. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -16,11 +16,11 @@ A **patch** is the unit of what people build and deploy on Patchy Cloud — anyt
 
 ### What a patch is made of
 
-A patch is a **file tree**. A **patch repo** is its local working copy, initialized by `patchy init` at tier 0, 1 or 2. It contains application source and the single-file build, `patchy.config.ts`, `patchy.json`, managed package pins, generated client and context, project skills and fixtures. Tier 2 adds `server/` handlers beside the page. `patchy.config.ts` holds the name and explicit tier, **defines** the tables and file stores the patch owns, and **declares** the connections and shared tables it uses. The CLI executes that config locally into a **manifest**; the server validates the manifest, never executable config.
+A patch is a **file tree**. A **patch repo** is its local working copy, initialized by `patchy init` at tier 0, 1 or 2. It contains application source and the single-file build, `patchy.config.ts`, `patchy.json`, managed package pins, generated client and context, project skills and fixtures. Tier 2 adds `server/` handlers beside the page. `patchy.config.ts` holds the name and explicit tier, **defines** the tables and file stores the patch owns, and **declares** the connections, shared tables and shared stores it uses. The CLI executes that config locally into a **manifest**; the server validates the manifest, never executable config.
 
 `patchy.json` records the instance, description, last description-sync timestamp and optional patch id, never credentials. One repo is the working copy of exactly one patch. The first publish without an id creates the patch and writes its id back; later publishes update it. Cloning preserves that target, but only its owner may publish to it. A single HTML file is the simpler tier 0 route with no repo; its CLI cache remembers the published patch. A file-born patch can be adopted by putting its id in a repo's `patchy.json`.
 
-Each version has exactly one tier. The CLI checks the tree and bundle; the server checks the manifest and bundle. Tier is about code, not data: a tier 0 repo may define tables and stores or declare dependencies even though its static page cannot call them. Tables and stores are provisioned with the patch; a declared connection must already be connected and a shared table must already be available (see [Primitives](#primitives) and [Integrations](#integrations)).
+Each version has exactly one tier. The CLI checks the tree and bundle; the server checks the manifest and bundle. Tier is about code, not data: a tier 0 repo may define tables and stores or declare dependencies even though its static page cannot call them. Tables and stores are provisioned with the patch; a declared connection must already be connected and a shared table or store must already be available (see [Primitives](#primitives) and [Integrations](#integrations)).
 
 The **Patchy SDK** is the release-versioned code a patch imports: Core supplies
 the generated client, contract, Preact with compat semantics and shell operations;
@@ -42,7 +42,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables and resolved Postgres connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -62,8 +62,8 @@ not invalidate a deployed bundle's stable wire. Retiring a wire contract would
 be an explicit breaking decision behind the needs-rebuild door, not an automatic
 consequence of publishing a new package.
 
-`patchy/config` defines owned tables and file stores and declares shared tables
-and Postgres connections. Row, insert and update types are inferred from the
+`patchy/config` defines owned tables and file stores and declares shared tables,
+shared stores and Postgres connections. Row, insert and update types are inferred from the
 config; execution happens in a local child process, producing the existing
 manifest rather than sending executable config to the server. The browser client
 uses the broker's document-bound port and one `PatchyError`; lost replies never
@@ -192,8 +192,8 @@ The CLI tells agents to ask their user before forcing.
 definitions and connection snapshots. It runs anywhere under the saved login
 and never reads `patchy.json`; discovery grants no authority. See
 [Sharing and finding](#sharing-and-finding) for the discovery chain.
-`patchy add postgres/<handle>`
-or `patchy add shared-table <patchId>/<table>` adds one aliased declaration by
+`patchy add postgres/<handle>`, `patchy add shared-table <patchId>/<table>`
+or `patchy add shared-store <patchId>/<store> --as <alias>` adds one declaration by
 TypeScript AST and generates the client, context, missing fixture stub and skill.
 The insertion is a literal declaration, requiring no import changes. An uneditable
 expression fails with its exact source line and the exact declaration line to
@@ -201,7 +201,7 @@ add manually before refresh, rather than guessing at a rewrite.
 `patchy add postgres` selects a sole connected Postgres connection; with several
 it lists choices from `list connections` and stops. With none, it names
 `/company/connections`.
-Connection refusals point to `/company/connections`; an unavailable shared-table
+Connection refusals point to `/company/connections`; an unavailable shared table or store
 addition points to `/company`. Restore source access or correct the declaration.
 `patchy remove <alias>`
 reverses the declaration and generated surface, retaining its fixture.
@@ -229,17 +229,20 @@ The **global skill** is the door for sign-in, static pages and `init`; inside a 
 the **project skills** govern. Their sole source is `packages/sdk/skills/`:
 `patchy-loop`, `patchy-tables` and `patchy-files` are core;
 `patchy-preact` is added on tiers 1 and 2; `patchy-server` is added on tier 2.
-`patchy-postgres` and `patchy-shared-tables` follow declarations. Refresh
+`patchy-postgres`, `patchy-shared-tables` and `patchy-shared-stores` follow declarations. Refresh
 re-fetches every present skill and adds implied ones. Skill presence is sticky,
 except that dropping below tier 2 removes `patchy-server` alongside the
 `workerd` pin and generated `server.ts`. A different missing skill offer fails
 rather than preserving obsolete instructions. Explicit remove may retire a
 declaration skill when no declaration of its kind remains.
 
-A **fixture stub** contains metadata and guidance, not company rows. The builder
-fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql` with invented
-local inserts. Existing files are never overwritten. Only metadata and inventory
-come from the instance; development never copies production rows or bytes.
+A **fixture stub** contains metadata and guidance, not company rows or bytes.
+The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
+with invented local inserts, or `fixtures/shared-<alias>/` with invented files
+for the named source store. Refresh creates a missing directory and never
+overwrites an existing one. Dev loads shared fixtures at start; edit them and
+restart to change a local source. Authority changes are not simulated.
+Only metadata and inventory come from the instance.
 On tier 1, every readable row is available to every admitted viewer;
 UI filters do not create access control. Tier 2 enforces rules in handlers.
 A public runtime gets no company data. Project skills teach these boundaries
@@ -251,7 +254,7 @@ A published patch is shared with **everyone in the company** by default, or made
 
 A person finds a patch in the portal or through its shared address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is. See [Addresses](#addresses).
 
-**The portal is built.** Signed out, `/` shows the login door. Signed in, it shows an index grouped Yours and Company, with Retired and deleted behind a toggle, beside one patch's card at `/patches/<name>`. The first of Yours is selected, otherwise the first live patch. An empty company gets instructions for publishing its first patch; an off-only company keeps the toggle and an empty live index. The name leads, with the description's first clause in the index and a distinct document title at most a secondary line on the card. The card shows its address with Open, description and editor, owner and deactivation status, current version and publisher, who can open it, and the first three patches that read its shared tables. Owners and admins edit descriptions, sharing and served versions inline and restore off patches whose current sources are live. The full versions page is at `/patches/<name>/versions`. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign have confirmation pages under the card's URL. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches. The index has no search or paging.
+**The portal is built.** Signed out, `/` shows the login door. Signed in, it shows an index grouped Yours and Company, with Retired and deleted behind a toggle, beside one patch's card at `/patches/<name>`. The first of Yours is selected, otherwise the first live patch. An empty company gets instructions for publishing its first patch; an off-only company keeps the toggle and an empty live index. The name leads, with the description's first clause in the index and a distinct document title at most a secondary line on the card. The card shows its address with Open, description and editor, owner and deactivation status, current version and publisher, who can open it, and the first three patches that read its shared tables or stores. Owners and admins edit descriptions, sharing and served versions inline and restore off patches whose current sources are live. The full versions page is at `/patches/<name>/versions`. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign have confirmation pages under the card's URL. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches. The index has no search or paging.
 
 The portal, Company, Connections and Your machines share one app shell with section navigation, the viewer's name and company, and sign-out. First-party pages use one component set for buttons, fields, fact lists, selectable index rows, tables, notices, headings, pills and confirmation forms. Sign-in, create-or-join, device confirmation and error doors keep the card shell. Portal not-found pages keep the app shell.
 
@@ -259,7 +262,7 @@ The portal, Company, Connections and Your machines share one app shell with sect
 
 `--state live|retired|all` defaults to `live` and governs patches at all three levels. Names resolve only non-deleted patches; a pasted URL resolves by its final path segment. A deleted patch needs its id and `--state all` at both detail levels. A resolved patch outside the requested state receives the API's `wrong_state` refusal, exit 2, with guidance such as `retired; pass --state retired`. Only patches the credential can open appear; unknown, foreign, disabled, gone and unopenable references all answer 404. "No match" means "none you can use"; the skills teach checking `--state retired` before concluding a tool does not exist. `--mine` applies only to the top level, and `--all` only to `list connections`, not one connection's detail. Patch flags do not apply to connections; wrong-level flags are local errors.
 
-Patch detail returns cumulative inventory and reads across retained versions, not dependants or version history. Table detail returns column kinds, optionality, explicit defaults including `null`, ref targets, indexes with `unique`, sharing and schema revision, never rows. An unavailable company database yields `inventory: null` and text `Tables: unavailable`, not empty definitions. Shared live tables carry copy-ready `patchy add shared-table <patchId>/<table>` hints. Agents branch on `declarable` and `reason`, not the human `hint`; unshared tables name the owner, file stores are not shareable, and off sources need restoration.
+Patch detail returns cumulative inventory and reads across retained versions, not dependants or version history. Table detail returns column kinds, optionality, explicit defaults including `null`, ref targets, indexes with `unique`, sharing and schema revision, never rows. An unavailable company database yields `inventory: null` and text `Tables: unavailable`, not empty definitions. Shared live tables and stores carry copy-ready `patchy add shared-table <patchId>/<table>` or `patchy add shared-store <patchId>/<store>` hints. Agents branch on `declarable` and `reason`, not the human `hint`; unshared resources name the owner and off sources need restoration. Store reads and dependants use a `store` field, never a `table` field.
 
 `list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/company/connections` pointer. `list connections <handle>` returns the current immutable snapshot with its revision and `takenAt`. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
 
@@ -273,7 +276,7 @@ A patch is **live**, **retired** or **deleted**. Retire takes a live patch off i
 
 Recovery applies to deletions made after the lifecycle migration. Earlier deletes were irreversible and had already released their names and resources. The migration finalizes those old deletions and queues their version objects for cleanup; it does not make them restorable or take names back from replacement patches.
 
-A retired or deleted patch denies shared-table consumers on their next read. Restore brings consumers back without changing their declarations. Retire, delete from live and a publish that unshares a table list live dependants by name and owner and refuse unless the API request carries `force`. Restore similarly warns about retired, deleted or gone sources declared by its current version. **Rollback** moves the served-version pointer to any retained version, creates no version, and leaves data, provisioning, sharing, description and name unchanged. Every version is kept.
+A retired or deleted patch denies shared-table and shared-store consumers on their next read. Restore brings consumers back without changing their declarations. Retire, delete from live and a publish that unshares a table or store list live dependants by name and owner and refuse unless the API request carries `force`. Restore similarly warns about retired, deleted or gone sources declared by its current version. **Rollback** moves the served-version pointer to any retained version, creates no version, and leaves data, provisioning, sharing, description and name unchanged. Every version is kept.
 
 Owner machine tokens can call the lifecycle API through `retire`, `delete`, `restore`, `rollback` and `describe`. The service admits owner and same-company admin actors for management, but reassignment to an active company member is admin-only and publish stays owner-only. Every act records its actor, time and latest act label. Each portal form checks its own precondition in the mutation transaction. Stale fields answer 409 with a fresh card naming who did what and nothing changed; invalid descriptions and typed delete-name mismatches answer 422 with the submitted text; member POSTs answer 403 with the read-only card. CLI `--force` accepts reported breakage and `--yes` confirms deletion; both are required when deleting a live source with dependants. Portal confirmations ask for an acknowledgement before breaking dependants or restoring a patch with off sources, and for the patch's typed name on delete. Retire and delete confirmations carry the patch's id, so a form left open after its name passed to another patch refuses with nothing done. Delete states the reclaim date; deleting a retired patch starts the 30-day clock without repeating the dependant warning. Reassign offers a filtered list of active company members, rechecks the target and expected owner on submission, and changes nothing when the current owner is chosen. **Disable** remains the operator's separate take-down, never owner-restorable.
 
@@ -289,7 +292,7 @@ Primitive descriptions stay in `patchy.config.ts`. At refresh, dev start and pub
 
 ### Patches and other patches
 
-A patch may declare and read another patch's **shared table** in the same company. The declaration names the source patch's stable id and table, never its address or name; it grants no access of its own. The viewer must be able to open the source and the table must remain shared. Extending those rows means defining an owned table keyed by source ids and joining the two reads, not changing the source. Calling another patch's code and **extensions** that plug into another patch remain promised, not designed.
+A patch may declare and read another patch's shared table or shared file store in the same company. The declaration names the source patch's stable id and resource, never its address or name; it grants no access of its own. The viewer must be able to open the source and the resource must remain shared. Extending shared rows means defining an owned table keyed by source ids and joining the two reads, not changing the source. Calling another patch's code and extensions that plug into another patch remain promised, not designed.
 
 ### What a patch is not
 
@@ -376,8 +379,8 @@ shell refreshes once, bypassing its cache; a persistent mismatch stops visibly,
 while a retired wire shows the needs-rebuild door. See
 [ADR-0010](./adr/ADR-0010-sandboxed-frame-and-broker.md).
 
-The runtime operation path admits `me`, seven owned-table operations, three
-shared-table reads, four file operations and four Postgres operations. A company
+The runtime operation path admits `me`, owned-table operations, shared-table
+and shared-store reads, owned-file operations and Postgres operations. A company
 version returns its active viewer and company; a current public version returns
 null for `me` and refuses company data and integration access, even to a signed-in
 viewer. Browser sessions, never machine tokens, enter this path; wire and
@@ -726,10 +729,10 @@ patch checks for cumulative inventory even when its current version predates
 tables. An unavailable company database is not evidence of empty inventory:
 that update refuses rather than risking a file-mode overwrite.
 
-The inventory's **schema revision** advances only when its table definitions
-change structurally, sharing changes or a store is added, not on description edits, every version or file write. The inventory's `shared` flag changes only when
-a publish defines that table with a different flag; omission does not revoke
-sharing and rolling back a version will not restore it.
+The inventory's schema revision advances when table definitions change structurally,
+sharing changes or a store is added, not on description edits, every version or file
+write. The inventory's `shared` flag changes only when a publish defines that
+table or store with a different flag. Omission and rollback preserve sharing.
 
 ### Who reads and writes
 
@@ -805,6 +808,31 @@ metadata; PUT requires the exact Origin; both require wire and principal
 headers. HTML and SVG stay bytes, never a navigable page. File mutations log
 the store and name, not their body; reads are not logged. Frame-local blob URLs
 and ownership-transferring ArrayBuffers are available through the browser broker.
+
+### Shared file stores
+
+`files(description, { shared: true })` shares a store whole. This publishes read
+access to every file in the store, including later additions. There is no prefix
+sharing and no shared write operation.
+
+`patchy add shared-store <patchId>/<store> --as <alias>` declares the source.
+The manifest records `{ kind: "sharedStore", patchId, store, id, revision }`;
+the id is `<patchId>/<store>` and the revision stamps the source inventory.
+An older stamp warns at publish, as for shared tables.
+
+Tier 1 uses `patchy.shared.<alias>.list/get/url/download` by file name through
+the broker. Tier 2 uses `ctx.shared.<alias>.list/stat` in queries and actions,
+and `get` for bytes in actions. A tier 1 tool can read a tier 2 source's store.
+The served-tier gate applies to the consumer: an older tier 1 document of a
+patch now serving tier 2 gets `server_required`.
+
+Every read, URL request and download rechecks live that the viewer can open the
+source and the cumulative store remains shared, otherwise `access_denied`.
+Omitting a store and rolling back either patch never change sharing.
+Unshare, retire and delete list live dependants and require `force` to break
+them. Unsharing advances the store's resource revision and the source's lifecycle
+revision. Reshare or restore recovers consumers without changing declarations.
+A replacement patch under the old name never takes over the source identity.
 
 ## Integrations
 
@@ -996,4 +1024,4 @@ against real Postgres in CI, not promised by the local dev loop.
 
 ### The edges
 
-A tier 2 invocation acts as the patch for its own tables and files, and as the initiating viewer for shared tables, company connections and members. The latter require live viewer reauthorization; patch identity does not grant shared-connection access. Patch-owned shared tables already provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.
+A tier 2 invocation acts as the patch for its own tables and files, and as the initiating viewer for shared tables, shared stores, company connections and members. The latter require live viewer reauthorization; patch identity does not grant shared-connection access. Patch-owned shared tables and stores provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.

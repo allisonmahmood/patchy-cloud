@@ -37,3 +37,11 @@ export default patchy;
   const connections = factories(options.connections ?? {}, "connection");
   return `${imports.join("\n")}\n\nconst shared = { ${shared} };\nconst connections = { ${connections} };\nexport const patchy = createClient<typeof config, typeof shared, typeof connections>(manifest, { shared, connections });\nexport default patchy;\n`;
 }
+
+export function generateSharedStoreClient(): string {
+  return `import { createSharedStore } from "patchy/client";
+import type { Call, ReadFileStore } from "patchy/client";
+export type Client = ReadFileStore;
+export function createClient(alias: string, call: Call): Client { return createSharedStore(alias, call); }
+`;
+}

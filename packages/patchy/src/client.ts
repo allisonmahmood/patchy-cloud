@@ -94,24 +94,26 @@ export interface FileListOptions {
   readonly limit?: number;
   readonly cursor?: string;
 }
-export interface FileStore {
+export interface ReadFileStore {
+  get(name: string): Promise<Uint8Array>;
+  download(name: string): Promise<null>;
+  list(options?: FileListOptions): Promise<FilePage>;
+  url(name: string): Promise<string>;
+}
+export interface FileStore extends ReadFileStore {
   put(
     name: string,
     bytes: Uint8Array | ArrayBuffer | Blob,
     options: { readonly contentType: string }
   ): Promise<null>;
-  get(name: string): Promise<Uint8Array>;
-  download(name: string): Promise<null>;
-  list(options?: FileListOptions): Promise<FilePage>;
   delete(name: string): Promise<null>;
-  url(name: string): Promise<string>;
 }
 export type Factory<T = unknown> = (alias: string, call: Call, queries: QueryRegistry) => T;
 export type Factories = Readonly<Record<string, Factory>>;
 type FactoryResults<F extends Factories> = {
   readonly [K in keyof F]: F[K] extends Factory<infer T> ? T : never;
 };
-type Aliases<C extends Config, Kind extends "postgres" | "sharedTable"> = {
+type Aliases<C extends Config, Kind extends "postgres" | "sharedTable" | "sharedStore"> = {
   [N in keyof C["uses"]]: C["uses"][N]["kind"] extends Kind ? N : never;
 }[keyof C["uses"]];
 export interface Client<
@@ -166,6 +168,40 @@ export function createSharedTable<
   };
 }
 
+const closeSharedStore = Symbol("closeSharedStore");
+export function createSharedStore(alias: string, call: Call): ReadFileStore {
+  const urls = new Map<string, string>();
+  let closed = false;
+  const get = (name: string) =>
+    call("shared.files.get", { alias, name }) as Promise<{
+      readonly bytes: Uint8Array<ArrayBuffer>;
+      readonly contentType: string;
+    }>;
+  const store = {
+    get: async (name: string) => (await get(name)).bytes,
+    list: (options: FileListOptions = {}) =>
+      call("shared.files.list", { ...options, alias }) as Promise<FilePage>,
+    download: (name: string) => call("shared.download", { alias, name }) as Promise<null>,
+    url: async (name: string) => {
+      if (closed) throw new PatchyError("unknown_outcome", "The client is closed.", {});
+      // Each redemption reaches the source authority, even after a previous URL succeeded.
+      const { bytes, contentType } = await get(name);
+      if (closed) throw new PatchyError("unknown_outcome", "The client is closed.", {});
+      const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+      const previous = urls.get(name);
+      if (previous !== undefined) URL.revokeObjectURL(previous);
+      urls.set(name, url);
+      return url;
+    },
+    [closeSharedStore]() {
+      closed = true;
+      for (const url of urls.values()) URL.revokeObjectURL(url);
+      urls.clear();
+    }
+  };
+  return store;
+}
+
 /** Config is a type only; the locally executed manifest supplies the declared runtime names. */
 export function createClient<
   C extends Config,
@@ -175,7 +211,7 @@ export function createClient<
   manifest: ClientManifest,
   options: {
     readonly transport?: Transport;
-    readonly shared: S & Record<Aliases<C, "sharedTable">, Factory>;
+    readonly shared: S & Record<Aliases<C, "sharedTable" | "sharedStore">, Factory>;
     readonly connections: P & Record<Aliases<C, "postgres">, Factory>;
   }
 ): Client<C, S, P> {
@@ -185,6 +221,7 @@ export function createClient<
   let identity: Promise<Me | null> | undefined;
   const urls = new Map<string, Map<string, Promise<string>>>();
   let closed = false;
+  const sharedStoreClosers: Array<() => void> = [];
   const tables = Object.fromEntries(
     Object.keys(manifest.tables).map((table) => {
       type R = Row<C, keyof C["tables"] & string>;
@@ -269,10 +306,10 @@ export function createClient<
       return [store, file];
     })
   );
-  const instantiate = (factories: Factories, kind: string) =>
+  const instantiate = (factories: Factories, kinds: readonly string[]) =>
     Object.fromEntries(
       Object.entries(manifest.uses)
-        .filter(([, declaration]) => declaration.kind === kind)
+        .filter(([, declaration]) => kinds.includes(declaration.kind))
         .map(([alias]) => {
           if (!Object.hasOwn(factories, alias))
             throw new PatchyError(
@@ -280,14 +317,22 @@ export function createClient<
               `Missing generated declaration for ${alias}; run patchy refresh.`,
               {}
             );
-          return [alias, factories[alias]!(alias, call, queries)];
+          const value = factories[alias]!(alias, call, queries);
+          if (
+            typeof value === "object" &&
+            value !== null &&
+            closeSharedStore in value &&
+            typeof value[closeSharedStore] === "function"
+          )
+            sharedStoreClosers.push(value[closeSharedStore] as () => void);
+          return [alias, value];
         })
     );
   return {
     tables,
     files,
-    shared: instantiate(options.shared, "sharedTable"),
-    connections: instantiate(options.connections, "postgres"),
+    shared: instantiate(options.shared, ["sharedTable", "sharedStore"]),
+    connections: instantiate(options.connections, ["postgres"]),
     route: transport.route,
     me: () => (identity ??= call("me", {}) as Promise<Me | null>),
     close: () => {
@@ -295,6 +340,7 @@ export function createClient<
       closed = true;
       queries.close();
       transport.close();
+      for (const close of sharedStoreClosers) close();
       for (const cache of urls.values()) {
         for (const value of cache.values())
           void value.then(

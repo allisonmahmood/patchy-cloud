@@ -34,7 +34,7 @@ const canonical = (definition: Definition): Definition =>
           ])
         )
       }
-    : definition;
+    : { ...definition, shared: definition.shared ?? false };
 
 /** Compare executed definitions with the previous generation, before replacing it. */
 export const primitiveReminders = Effect.fn("primitiveReminders")(function* (

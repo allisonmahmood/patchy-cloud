@@ -175,6 +175,7 @@ it.layer(Layer.merge(NodeFileSystem.layer, Testing.resourceChangesLayer))(
                   });
                   yield* inventory.putStore({
                     description: "Documents identified by file name.",
+                    shared: true,
                     patchId: "persisted",
                     name: "attachments"
                   });
@@ -206,6 +207,7 @@ it.layer(Layer.merge(NodeFileSystem.layer, Testing.resourceChangesLayer))(
           assert.deepStrictEqual(reopened, first);
           assert.strictEqual(reopened?.schemaRevision, 1);
           assert.strictEqual(reopened?.stores[0]?.name, "attachments");
+          assert.isTrue(reopened?.stores[0]?.shared);
           assert.strictEqual(reopened?.columns[0]?.refTable, "notes");
 
           // Binding is on disk, not merely the company's configured name in memory.

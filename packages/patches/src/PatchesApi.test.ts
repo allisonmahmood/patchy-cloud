@@ -39,7 +39,8 @@ import {
   NotAdditive,
   CURRENT_RELEASE,
   WIRE_VERSION,
-  sharedTableId
+  sharedTableId,
+  sharedStoreId
 } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
@@ -887,7 +888,8 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
                     indexes: {},
                     shared: true
                   }
-                }
+                },
+                files: { receipts: { description: "Receipt documents.", shared: true } }
               }
             })
           })
@@ -895,15 +897,27 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
       }
       const [gone, retired, deleted] = sources;
       const uses = Object.fromEntries(
-        sources.map((source, index) => [
-          `source${index}`,
-          {
-            kind: "sharedTable" as const,
-            patchId: source.patchId,
-            table: "orders",
-            id: sharedTableId(source.patchId, "orders"),
-            revision: source.schemaRevision
-          }
+        sources.flatMap((source, index) => [
+          [
+            `source${index}`,
+            {
+              kind: "sharedTable" as const,
+              patchId: source.patchId,
+              table: "orders",
+              id: sharedTableId(source.patchId, "orders"),
+              revision: source.schemaRevision
+            }
+          ],
+          [
+            `receipts${index}`,
+            {
+              kind: "sharedStore" as const,
+              patchId: source.patchId,
+              store: "receipts",
+              id: sharedStoreId(source.patchId, "receipts"),
+              revision: source.schemaRevision
+            }
+          ]
         ])
       );
       const consumer = yield* consumerOwner.publish({
@@ -969,7 +983,10 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         sources: expect.arrayContaining([
           { patchId: gone!.patchId, table: "orders", state: "gone" },
           { patchId: retired!.patchId, name: retired!.name, table: "orders", state: "retired" },
-          { patchId: deleted!.patchId, name: deleted!.name, table: "orders", state: "deleted" }
+          { patchId: deleted!.patchId, name: deleted!.name, table: "orders", state: "deleted" },
+          { patchId: gone!.patchId, store: "receipts", state: "gone" },
+          { patchId: retired!.patchId, name: retired!.name, store: "receipts", state: "retired" },
+          { patchId: deleted!.patchId, name: deleted!.name, store: "receipts", state: "deleted" }
         ])
       });
       expect(
@@ -1148,7 +1165,10 @@ it.layer(
               },
               privateNotes: { description: "Private notes.", columns: {}, indexes: {} }
             },
-            files: { photos: { description: "Receipt photos." } }
+            files: {
+              photos: { description: "Receipt photos.", shared: true },
+              privateFiles: { description: "Private documents." }
+            }
           }
         })
       });
@@ -1164,6 +1184,13 @@ it.layer(
                 patchId: source.patchId,
                 table: "notes",
                 id: sharedTableId(source.patchId, "notes"),
+                revision: source.schemaRevision
+              },
+              sourcePhotos: {
+                kind: "sharedStore",
+                patchId: source.patchId,
+                store: "photos",
+                id: sharedStoreId(source.patchId, "photos"),
                 revision: source.schemaRevision
               }
             }
@@ -1213,9 +1240,17 @@ it.layer(
             {
               name: "photos",
               description: "Receipt photos.",
+              shared: true,
+              declarable: true,
+              hint: `patchy add shared-store ${source.patchId}/photos`
+            },
+            {
+              name: "privateFiles",
+              description: "Private documents.",
+              shared: false,
               declarable: false,
-              reason: "not_shareable",
-              hint: expect.any(String)
+              reason: "not_shared",
+              hint: expect.stringContaining(uploader.user.name)
             }
           ]
         }
@@ -1249,7 +1284,9 @@ it.layer(
       expect(store).toMatchObject({
         kind: "store",
         name: "photos",
-        shared: false,
+        shared: true,
+        declarable: true,
+        hint: `patchy add shared-store ${source.patchId}/photos`,
         columns: [],
         indexes: []
       });
@@ -1264,6 +1301,13 @@ it.layer(
           name: source.name,
           table: "notes",
           state: "live"
+        },
+        {
+          alias: "sourcePhotos",
+          patchId: source.patchId,
+          name: source.name,
+          store: "photos",
+          state: "live"
         }
       ]);
       const missing = yield* colleague.primitive({
@@ -1273,6 +1317,12 @@ it.layer(
       });
       assert.strictEqual(missing.status, 404);
       yield* owner.delete({ params: { patchId: source.patchId }, query: { force: true } });
+      expect(
+        yield* colleague.primitive({
+          params: { patchRef: source.patchId, name: "photos" },
+          query: { state: "all" }
+        })
+      ).toMatchObject({ kind: "store", shared: true, declarable: false, reason: "source_off" });
       yield* TestClock.adjust("30 days");
       yield* (yield* Patches.Patches).purgeDeleted(source.patchId);
       const afterPurge = yield* colleague.detail({
@@ -1280,7 +1330,8 @@ it.layer(
         query: {}
       });
       assert.deepStrictEqual(afterPurge.reads, [
-        { alias: "sourceNotes", patchId: source.patchId, table: "notes", state: "gone" }
+        { alias: "sourceNotes", patchId: source.patchId, table: "notes", state: "gone" },
+        { alias: "sourcePhotos", patchId: source.patchId, store: "photos", state: "gone" }
       ]);
     })
   );
@@ -1355,7 +1406,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const expected = {
           schemaRevision: first.schemaRevision,
           tables: { notes: { ...revised.tables.notes, shared: false } },
-          files: revised.files
+          files: { attachments: { ...revised.files.attachments, shared: false } }
         };
         expect(yield* owner.inventory({ params })).toEqual(expected);
         const omitted = yield* owner.publish({
@@ -1400,7 +1451,9 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const baseline = yield* owner.inventory({ params });
         assert.strictEqual(baseline.schemaRevision, 1);
         assert.deepStrictEqual(baseline.tables, {});
-        assert.deepStrictEqual(baseline.files, manifest.files);
+        assert.deepStrictEqual(baseline.files, {
+          attachments: { ...manifest.files.attachments, shared: false }
+        });
         assert.deepStrictEqual(yield* other.inventory({ params }), baseline);
         const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
         assert.strictEqual(yield* replayed.text, yield* response.text);
@@ -1613,7 +1666,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       assert.strictEqual(inventory.schemaRevision, 1);
       assert.strictEqual(inventory.tables.notes?.columns.title?.kind, "text");
       assert.deepStrictEqual(inventory.files, {
-        attachments: { description: "Attachments keyed by file name." }
+        attachments: { description: "Attachments keyed by file name.", shared: false }
       });
     })
   );

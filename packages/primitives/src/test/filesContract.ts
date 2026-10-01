@@ -9,13 +9,14 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { CURRENT_RELEASE, FilePage, Manifest, WIRE_VERSION } from "@patchy/api";
+import { CURRENT_RELEASE, FilePage, Manifest, sharedStoreId, WIRE_VERSION } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ContractLimits } from "@patchy/limits";
-import { Binding } from "@patchy/runtime";
+import { Binding, LoadedVersions } from "@patchy/runtime";
 import * as Files from "../Files.js";
 import * as Tables from "../Tables.js";
 
@@ -473,7 +474,127 @@ const blobIoContract = Effect.fn("test.filesContract.blobIo")(function* (company
   }
 }, Effect.scoped);
 
+const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function* (
+  companyId: string
+) {
+  const source = yield* setup(companyId, "sharedfilesource", {
+    ...manifest,
+    tier: 2,
+    files: { docs: { description: "Shared documents", shared: true } }
+  });
+  const bytes = new Uint8Array([0, 128, 255]);
+  yield* source.put("folder/a.bin", bytes);
+  yield* source.put("folder/b.bin", new Uint8Array([1]));
+  const declaration = {
+    kind: "sharedStore" as const,
+    patchId: source.binding.patchId,
+    store: "docs",
+    id: sharedStoreId(source.binding.patchId, "docs"),
+    revision: 1
+  };
+  const consumer = yield* setup(companyId, "sharedfilereader", {
+    ...manifest,
+    tier: 1,
+    files: {},
+    uses: { documents: declaration, alternate: declaration }
+  });
+  const identity = {
+    user: { id: "usr_reader", name: "Reader", email: "reader@example.test" },
+    company: { id: companyId, handle: "company", name: "Company" },
+    admin: false
+  };
+  let live = true;
+  let sourceCompany = companyId;
+  const handlers = yield* Files.make.pipe(
+    Effect.provideService(LoadedVersions.LoadedVersions, {
+      find: (patchId) =>
+        Effect.sync(() =>
+          live && patchId === source.binding.patchId
+            ? Option.some({ ...source.binding, companyId: sourceCompany, patchTier: 2 })
+            : Option.none()
+        )
+    })
+  );
+  let binding: Binding.Binding["Service"] = { ...consumer.binding, identity };
+  const call = (
+    op: "shared.files.list" | "shared.files.stat" | "shared.files.get",
+    args: unknown
+  ) => handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+  const first = yield* call("shared.files.list", {
+    alias: "documents",
+    prefix: "folder/",
+    limit: 1
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(
+    first.files.map((file) => file.name),
+    ["folder/a.bin"]
+  );
+  assert.isString(first.cursor);
+  const second = yield* call("shared.files.list", {
+    alias: "alternate",
+    prefix: "folder/",
+    limit: 1,
+    cursor: first.cursor
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(
+    second.files.map((file) => file.name),
+    ["folder/b.bin"]
+  );
+  assert.strictEqual(second.cursor, null);
+  assert.deepStrictEqual(
+    yield* call("shared.files.stat", { alias: "documents", name: "folder/a.bin" }),
+    first.files[0]
+  );
+  assert.deepStrictEqual(
+    yield* call("shared.files.get", { alias: "documents", name: "folder/a.bin" }),
+    { bytes, contentType: "application/octet-stream" }
+  );
+  const inventory = yield* Inventory.Inventory;
+  const sharing = (shared: boolean) =>
+    source.databases.withCompany(companyId)(
+      source.databases.withPatchLock(source.binding.patchId)(
+        inventory.putStore({
+          patchId: source.binding.patchId,
+          name: "docs",
+          description: "Documents",
+          shared
+        })
+      )
+    );
+  const denied = Effect.gen(function* () {
+    for (const [op, args] of [
+      ["shared.files.list", { alias: "documents", prefix: "folder/", cursor: first.cursor }],
+      ["shared.files.stat", { alias: "documents", name: "folder/a.bin" }],
+      ["shared.files.get", { alias: "documents", name: "folder/a.bin" }]
+    ] as const) {
+      assert.propertyVal(yield* call(op, args).pipe(Effect.flip), "code", "access_denied");
+    }
+  });
+  yield* sharing(false);
+  yield* denied;
+  yield* sharing(true);
+  assert.deepStrictEqual(
+    yield* call("shared.files.get", { alias: "documents", name: "folder/a.bin" }),
+    { bytes, contentType: "application/octet-stream" }
+  );
+  live = false;
+  yield* denied;
+  live = true;
+  sourceCompany = "another-company";
+  yield* denied;
+  sourceCompany = companyId;
+  binding = { ...binding, identity: null };
+  yield* denied;
+  binding = { ...binding, identity };
+  assert.deepStrictEqual(
+    yield* call("shared.files.stat", { alias: "documents", name: "folder/a.bin" }),
+    first.files[0]
+  );
+});
+
 export const contracts = {
+  "rechecks source sharing and liveness for metadata and bytes, and recovers unchanged consumers":
+    sharedStoreContract,
   "round-trips 20 MiB as binary and refuses one more byte without replacing it":
     binaryBoundaryContract,
   "refuses metadata pages above the runtime result byte cap": metadataCapContract,

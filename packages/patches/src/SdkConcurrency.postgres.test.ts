@@ -321,7 +321,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           assert.strictEqual(result.schemaRevision, 1);
           assert.deepStrictEqual(
             (yield* patches.inventory(result.patchId, uploader.user.id)).files,
-            { docs: { description: "Documents keyed by file name." } }
+            { docs: { description: "Documents keyed by file name.", shared: false } }
           );
           const binding = yield* bindingFor(result.patchId, result.versionId);
           const inserted = yield* handlers["tables.insert"]
@@ -445,8 +445,8 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           "title"
         ]);
         assert.deepStrictEqual(cumulative.files, {
-          docs: { description: "Documents keyed by file name." },
-          images: { description: "Images keyed by file name." }
+          docs: { description: "Documents keyed by file name.", shared: false },
+          images: { description: "Images keyed by file name.", shared: false }
         });
         const current = Option.getOrThrow(yield* patches.find(initial.patchId));
         assert.strictEqual(current.version.id, secondResult.versionId);
@@ -666,8 +666,8 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         const inventory = yield* patches.inventory(original.patchId, uploader.user.id);
         assert.strictEqual(inventory.schemaRevision, 2);
         assert.deepStrictEqual(inventory.files, {
-          docs: { description: "Documents keyed by file name." },
-          images: { description: "Images keyed by file name." }
+          docs: { description: "Documents keyed by file name.", shared: false },
+          images: { description: "Images keyed by file name.", shared: false }
         });
         assert.deepStrictEqual(Object.keys(inventory.tables.notes!.columns).sort(), [
           "label",

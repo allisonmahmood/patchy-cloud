@@ -47,7 +47,7 @@ const save = Effect.fnUntraced(function* (file: string, source: string) {
 });
 
 const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: string) {
-  const next = yield* watch(root, toolchain);
+  const next = yield* watch(root, toolchain, []);
   const observed = next.pipe(
     Effect.flatMap(({ inspect, ...build }) =>
       inspect.pipe(Effect.map((handlers) => ({ ...build, handlers })))
@@ -190,7 +190,7 @@ export const read = query({ args: {}, result: t.json(), handler: () => optionalM
 `
       );
       const build = Effect.tryPromise({
-        try: () => buildServer(root, ["leads"], toolchain),
+        try: () => buildServer(root, ["leads"], toolchain, []),
         catch: (cause) => cause
       });
       assert.deepInclude(yield* build.pipe(Effect.flip), { code: "invalid_manifest" });

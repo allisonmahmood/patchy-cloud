@@ -73,7 +73,7 @@ const renderConfirm = (input: {
       : warnings
           .map(
             (warning) =>
-              `<li>${patchName(warning.name)} will serve, but it will error when it reads these tables until their sources are restored too:<ul class="confirmation-list">${warning.sources.map((source) => `<li>${patchName(source.name ?? source.patchId)} / ${patchName(source.table)}: ${escapeHtml(source.state)}</li>`).join("")}</ul></li>`
+              `<li>${patchName(warning.name)} will serve, but it will error when it reads these tables or stores until their sources are restored too:<ul class="confirmation-list">${warning.sources.map((source) => `<li>${patchName(source.name ?? source.patchId)} / ${patchName(source.table ?? source.store)}: ${escapeHtml(source.state)}</li>`).join("")}</ul></li>`
           )
           .join("");
   const summary =
@@ -85,8 +85,8 @@ const renderConfirm = (input: {
   const acknowledgement = breaks
     ? confirmationAcknowledgement(
         action === "deactivate"
-          ? "I understand these patches will lose access to the retired patches' tables."
-          : "I understand these patches will error when they read these tables.",
+          ? "I understand these patches will lose access to the retired patches' shared tables and stores."
+          : "I understand these patches will error when they read these tables or stores.",
         false
       )
     : "";

@@ -12,10 +12,18 @@ import {
   PatchName,
   PostgresDeclaration,
   SharedTableDeclaration,
+  SharedStoreDeclaration,
+  sharedStoreId,
   sharedTableId
 } from "@patchy/api";
 import * as Schema from "effect/Schema";
-import type { ColumnKind, Declaration, IndexDefinition, Json } from "./config.js";
+import type {
+  ColumnKind,
+  Declaration,
+  FileStoreDefinition,
+  IndexDefinition,
+  Json
+} from "./config.js";
 import type { HandlerDescriptor } from "./server.js";
 import { LocalError } from "./CliError.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
@@ -55,7 +63,7 @@ export interface ExecutedManifest {
       }
     >
   >;
-  readonly files: Readonly<Record<string, { readonly description: string }>>;
+  readonly files: Readonly<Record<string, FileStoreDefinition>>;
   readonly uses: Readonly<
     Record<string, Declaration & { readonly id: string; readonly revision: number }>
   >;
@@ -79,6 +87,11 @@ const configSchema = Schema.Struct({
         handle: PostgresDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: SharedStoreDeclaration.fields.kind,
+        patchId: SharedStoreDeclaration.fields.patchId,
+        store: SharedStoreDeclaration.fields.store
+      }),
+      Schema.Struct({
         kind: SharedTableDeclaration.fields.kind,
         patchId: SharedTableDeclaration.fields.patchId,
         table: SharedTableDeclaration.fields.table
@@ -93,7 +106,11 @@ const generatedIndexSchema = Schema.Struct({
     Schema.Struct({
       alias: Schema.String,
       id: PostgresDeclaration.fields.id,
-      declaration: Schema.Union([PostgresDeclaration, SharedTableDeclaration]),
+      declaration: Schema.Union([
+        PostgresDeclaration,
+        SharedTableDeclaration,
+        SharedStoreDeclaration
+      ]),
       revision: PostgresDeclaration.fields.revision
     })
   )
@@ -259,6 +276,11 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
       declaration.kind !== generated.kind ||
       (declaration.kind === "postgres" &&
         (generated.kind !== "postgres" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "sharedStore" &&
+        (generated.kind !== "sharedStore" ||
+          declaration.patchId !== generated.patchId ||
+          declaration.store !== generated.store ||
+          stamp.id !== sharedStoreId(declaration.patchId, declaration.store))) ||
       (declaration.kind === "sharedTable" &&
         (generated.kind !== "sharedTable" ||
           declaration.patchId !== generated.patchId ||

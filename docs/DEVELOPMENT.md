@@ -617,6 +617,16 @@ Insert and list through the generated client; exercise
 declarations need invented inserts in `fixtures/postgres-<handle>.sql` and
 `fixtures/shared-<alias>.sql`. Missing files fail before declaration regeneration;
 dev generation leaves fixture files untouched.
+Shared stores use `fixtures/shared-<alias>/`, with a README naming the source
+store. Add invented files under their runtime names, including nested paths.
+Dev infers content types from extensions, ignoring case: `svg`, `png`, `jpg`,
+`jpeg`, `gif`, `webp`, `pdf`, `txt`, `csv`, `json` and `html`. Other extensions or
+no extension use `application/octet-stream`; bytes are not inspected or changed.
+Refresh creates only missing fixture directories. Dev reloads their bytes at
+each start, including removals; edit fixtures and restart to change a source.
+Removing the last file also changes the store's revision, so a reconnected query
+subscription replaces its old listing with the empty result.
+Local fixtures do not simulate source sharing or authority changes.
 Never seed these files by querying a company's live rows or bytes.
 Tier 2 handlers use those same fixtures through `ctx.shared` and `ctx.connections`.
 
@@ -895,7 +905,7 @@ Use `pnpm patchy delete --patch <id> --yes --json` to check the deleted notice
 and returned `purgeAt`. Restore before that deadline; retired patches have no
 deadline. These actions keep versions and resources until deletion reclamation.
 
-Use a source with a shared table and a published consumer to check refusal and
+Use a source with a shared table or store and a published consumer to check refusal and
 recovery. Retire or delete from live must list that consumer and exit 2 with
 `has_dependants`; ask before adding `--force`. Its shared reads then fail with
 `access_denied` until the source is restored. Restoring a consumer whose current

@@ -176,6 +176,7 @@ type NormalizeIndexes<I> = {
 export type NonEmptyString<S extends string> = S extends "" ? never : S;
 export interface FileStoreDefinition {
   readonly description: string;
+  readonly shared?: boolean;
 }
 
 const validateDescription = (description: string): void => {
@@ -208,10 +209,11 @@ export const table = <
 };
 
 export const files = <const Description extends string>(
-  description: NonEmptyString<Description>
+  description: NonEmptyString<Description>,
+  options: { readonly shared?: boolean } = {}
 ): FileStoreDefinition => {
   validateDescription(description);
-  return { description };
+  return { description, ...(options.shared === undefined ? {} : { shared: options.shared }) };
 };
 export const postgres = <const Handle extends string>(handle: Handle) => ({
   kind: "postgres" as const,
@@ -225,9 +227,18 @@ export const sharedTable = <const Patch extends string, const Table extends stri
   patchId,
   table
 });
+export const sharedStore = <const Patch extends string, const Store extends string>(
+  patchId: Patch,
+  store: Store
+) => ({
+  kind: "sharedStore" as const,
+  patchId,
+  store
+});
 export type Declaration =
   | { readonly kind: "postgres"; readonly handle: string }
-  | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string };
+  | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
+  | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string };
 export interface Config {
   readonly name: string;
   readonly tier: 0 | 1 | 2 | 3;

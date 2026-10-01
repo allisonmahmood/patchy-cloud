@@ -234,6 +234,15 @@ export class ManagedProject {
     for (const root of roots) await this.snapshot(root);
     for (const file of staged) {
       if (file.path.startsWith("fixtures/")) {
+        if (file.path.endsWith("/README.md")) {
+          const directory = path.posix.dirname(file.path);
+          const existingDirectory = await info(await safePath(this.root, directory));
+          if (existingDirectory) {
+            if (!existingDirectory.isDirectory())
+              throw new Error(`Fixture is not a directory: ${directory}`);
+            continue;
+          }
+        }
         const existing = await info(await safePath(this.root, file.path));
         if (existing) {
           if (!existing.isFile()) throw new Error(`Fixture is not a regular file: ${file.path}`);
@@ -265,8 +274,22 @@ export class ManagedProject {
       if (await info(source)) await fs.rename(source, target);
       // Identical contents are not reported as changes, even when their managed root is activated.
     }
+    const createdFixtures: string[] = [];
     for (const { path: fixture, contents } of fixtures) {
-      await this.parents(fixture);
+      if (fixture.endsWith("/README.md")) {
+        const directory = path.posix.dirname(fixture);
+        await this.parents(directory);
+        const target = await safePath(this.root, directory);
+        try {
+          await fs.mkdir(target);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          if (!(await info(target))?.isDirectory())
+            throw new Error(`Fixture is not a directory: ${directory}`, { cause: error });
+          continue;
+        }
+        this.createdDirs.add(directory);
+      } else await this.parents(fixture);
       // Exclusive creation: never overwrite a fixture authored while generation was running.
       await fs.copyFile(
         path.join(this.temporary, "stage", fixture),
@@ -274,6 +297,7 @@ export class ManagedProject {
         fs.constants.COPYFILE_EXCL
       );
       this.createdFixtures.set(fixture, contents);
+      createdFixtures.push(fixture);
     }
     // Source is the final activation. No failed generation ever needs to roll it back.
     if (configEdit && configPath) {
@@ -281,7 +305,7 @@ export class ManagedProject {
         throw new ProjectChanged({ file: "patchy.config.ts" });
       await fs.rename(path.join(this.temporary, "config.ts"), configPath);
     }
-    return { generated, skills: skills.sort(), fixtures: fixtures.map((file) => file.path) };
+    return { generated, skills: skills.sort(), fixtures: createdFixtures };
   }
 
   async finish(success: boolean): Promise<void> {

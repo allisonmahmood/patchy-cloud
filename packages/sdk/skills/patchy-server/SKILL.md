@@ -27,7 +27,8 @@ operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflic
 behavior. Production hosting requires the fleet executor.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
-rows for `ctx.shared` and `ctx.connections`; restart after fixture or config edits.
+rows for `ctx.shared` tables and `ctx.connections`. Put invented shared files
+in `fixtures/shared-<alias>/`; restart after fixture or config edits.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
 output and local-only failure message/stack. Starting with `--json` records full
 wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`.
@@ -81,15 +82,17 @@ belongs to the member-directory release, not this contract.
 
 ## Choose a kind
 
-- A query reads owned tables, file lists and metadata, and declared shared tables.
-  `ctx.tables` is read-only; `ctx.files.<store>` has `list` and `stat`, not byte
-  reads. `stat` returns metadata or null. File handles arrive separately.
+- A query reads owned tables, declared shared tables, and owned or shared file
+  metadata. `ctx.tables` is read-only; `ctx.files.<store>` and shared store
+  aliases under `ctx.shared` have `list` and `stat`, not byte reads.
+  `stat` returns metadata or null. File handles arrive separately.
   Read only what the screen needs, using filters and bounded pages.
 - An action reads and writes owned tables, reads shared tables, reaches declared
   connections and reads or writes file bytes. `ctx.files.<store>.put(name, bytes,
 options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `get(name)` returns
   bytes and `delete(name)` removes the object. Staged upload adoption is not
-  available yet.
+  available yet. Shared stores expose `list`, `stat` and `get`, with no writes;
+  read `../patchy-shared-stores/SKILL.md` for their access and fixture contract.
 - A mutation reads and writes owned tables in one atomic transaction. It cannot
   read file metadata. Use queries for file lists and metadata, and actions for
   file bytes, integrations and `ctx.run`.
@@ -100,10 +103,10 @@ background work.
 
 ### Query snapshots and live access
 
-A query with declared owned tables, file stores or shared tables uses one
-read-only `REPEATABLE READ` company transaction on one connection. All its table
-and file-metadata callbacks reuse that snapshot, including shared-table data
-reads. A concurrent write cannot make two reads within the run disagree.
+A query with declared owned tables, file stores, shared tables or shared stores
+uses one read-only `REPEATABLE READ` company transaction on one connection.
+All its table and file-metadata callbacks reuse that snapshot, including shared
+source data reads. A concurrent write cannot make two reads within the run disagree.
 Patchy captures the commit watermark before the read. A resource-free query
 uses the same fenced callback lifetime without leasing or provisioning a
 company database; its watermark is empty and database-held time is zero.
