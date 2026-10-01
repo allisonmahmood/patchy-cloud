@@ -1,0 +1,10 @@
+{
+  "company": { "name": "Acme Co", "handle": "acme" },
+  "people": [
+    { "key": "ada", "name": "Ada Park", "email": "ada@acme.example", "role": "admin" },
+    { "key": "ben", "name": "Ben Ortiz", "email": "ben@acme.example", "role": "member" },
+    { "key": "cleo", "name": "Cleo Shah", "email": "cleo@acme.example", "role": "member" }
+  ],
+  "publisher": "ada",
+  "patches": []
+}

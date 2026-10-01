@@ -28,10 +28,16 @@ import { migrations as integrationsMigrations } from "@patchy/integrations";
 import { migrations as limitsMigrations } from "@patchy/limits/migrations";
 import { migrations as executionMigrations } from "@patchy/execution/migrations";
 import { layerFromUrl, migrate } from "@patchy/sql";
-import { developerEnvFile, readCredentialKeys, readDeveloperEnv } from "./developerEnv.js";
+import {
+  developerEnvFile,
+  readCredentialKeys,
+  readDeveloperEnv,
+  readPersonasSecret
+} from "./developerEnv.js";
 import { DATABASE_NAME, Plan } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
+import { loadScenario, seedScenario } from "./scenario.js";
 import { layout, writeEnv, writePlan } from "./state.js";
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
@@ -171,13 +177,30 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     PATH: Config.String("PATH"),
     HOME: Config.String("HOME").pipe(Config.withDefault(plan.stateDir))
   });
+  // An environment signs people in as dev personas, so it needs no Clerk keys.
   const devEnvFile = yield* developerEnvFile(inherited.HOME);
-  const { PATCHY_DEV_CLERK_USER_ID, ...clerk } = yield* readDeveloperEnv(devEnvFile);
+  const { PATCHY_DEV_CLERK_USER_ID, ...clerk } =
+    plan.environment === undefined ? yield* readDeveloperEnv(devEnvFile) : {};
   const credentialKeys = yield* readCredentialKeys(path.join(plan.stateDir, "dev.env"));
   yield* Effect.tryPromise({
     try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
     catch: (cause) => new DatabaseSetupError({ cause })
   });
+  const signIn =
+    plan.environment === undefined
+      ? clerk
+      : {
+          PATCHY_DEV_PERSONAS_SECRET: Redacted.value(
+            yield* readPersonasSecret(path.join(plan.stateDir, "personas.env"))
+          )
+        };
+  if (plan.environment !== undefined) {
+    const { scenario } = yield* loadScenario(plan.worktree, plan.environment.scenario);
+    yield* seedScenario(plan.databaseUrl, scenario).pipe(
+      Effect.mapError((cause) => new DatabaseSetupError({ cause }))
+    );
+    yield* say(`scenario ${plan.environment.scenario} seeded`);
+  }
   yield* Patches.backfillNames().pipe(
     Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl)))
   );
@@ -206,10 +229,15 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server: plain node with the tsx loader so the pid we record is the
   // one signals reach. Its env is closed: the plan, what a process needs to
-  // run at all, and the Clerk settings from the developer's `dev.env`, so
+  // run at all, and the sign-in settings (Clerk's from the developer's
+  // `dev.env`, or an environment's personas secret), so
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
   // driver, an API token) leaks in.
-  yield* say(`clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`);
+  yield* say(
+    plan.environment === undefined
+      ? `clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`
+      : "sign-in: dev personas (no Clerk)"
+  );
   const server = yield* spawner.spawn(
     ChildProcess.make(
       process.execPath,
@@ -223,7 +251,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         cwd: plan.worktree,
         env: {
           ...inherited,
-          ...clerk,
+          ...signIn,
           NODE_ENV: "development",
           PATCHY_CREDENTIAL_KEYS: Redacted.value(credentialKeys),
           PORT: String(plan.ports.server),

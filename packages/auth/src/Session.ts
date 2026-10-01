@@ -85,9 +85,12 @@ const Origin = Schema.URLFromString.check(
 const SafeReason = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,127}$/));
 const isSafeReason = Schema.is(SafeReason);
 
+/** The origin readers use; shared with the dev personas Session. */
+export const publicUrlConfig = Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL");
+
 /** Auth owns these settings; the entrypoint checks them before acquiring Postgres. */
 export const config = Config.all({
-  publicUrl: Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL"),
+  publicUrl: publicUrlConfig,
   publishableKey: Config.schema(PublishableKey, "CLERK_PUBLISHABLE_KEY"),
   secretKey: Config.Redacted("CLERK_SECRET_KEY"),
   jwtKey: Config.option(Config.String("CLERK_JWT_KEY")),
@@ -103,8 +106,11 @@ export class Session extends Context.Service<
   Session,
   {
     readonly publicBaseUrl: string;
-    readonly publishableKey: string;
-    readonly frontendApiHost: string;
+    /** Clerk's browser client; absent when the dev runner's people sign in instead. */
+    readonly clerk:
+      { readonly publishableKey: string; readonly frontendApiHost: string } | undefined;
+    /** Where a signed-out reader goes to sign in and come back to `path`. */
+    readonly signInUrl: (path: string) => string;
     readonly authenticate: (request: Request) => Effect.Effect<SessionResult, SessionError>;
     readonly isActive: (identity: {
       readonly sid: string;
@@ -344,10 +350,23 @@ export const make = Effect.gen(function* () {
       catch: (cause) => new SessionError({ operation: "revoke", cause })
     });
   });
+  // Account Portal has a different hostname in development and on a custom Clerk domain.
+  const portalHost = frontendApiHost.endsWith(".clerk.accounts.dev")
+    ? frontendApiHost.replace(/\.clerk\.accounts\.dev$/, ".accounts.dev")
+    : frontendApiHost.replace(/^clerk\./, "accounts.");
+  const signInUrl = (path: string) => {
+    const url = new URL(`https://${portalHost}/sign-in`);
+    const target = new URL(path, publicUrl);
+    // A new sign-in must not replay the signed-out handshake that showed the door.
+    target.searchParams.delete("__clerk_handshake");
+    target.searchParams.delete("__clerk_handshake_nonce");
+    url.searchParams.set("redirect_url", target.href);
+    return url.href;
+  };
   return Session.of({
     publicBaseUrl: publicUrl.origin,
-    publishableKey,
-    frontendApiHost,
+    clerk: { publishableKey, frontendApiHost },
+    signInUrl,
     authenticate,
     isActive,
     revoke,

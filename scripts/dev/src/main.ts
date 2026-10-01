@@ -4,6 +4,9 @@
  *   pnpm dev                  start (idempotent) and print the plan
  *   pnpm dev --dry-run --json print the plan, touch nothing
  *   pnpm dev status | stop | logs | reset
+ *   pnpm dev up [scenario]    an environment: personas, a CLI, an agent workspace
+ *   pnpm dev open <person>    a browser window signed in as one of its people
+ *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
  * so a broken broker never blocks `stop`). `start` then writes
@@ -20,12 +23,30 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import {
+  Argument,
+  CliConfig,
+  CliError,
+  CliOutput,
+  Command,
+  Flag,
+  GlobalFlag
+} from "effect/unstable/cli";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { Plan, PlanJson, computePlan, findWorktree } from "./plan.js";
+import {
+  encodeManifest,
+  layoutFor,
+  openPerson,
+  printCard,
+  readManifest,
+  setUp,
+  tearDown
+} from "./environment.js";
+import { type Environment, Plan, PlanJson, computePlan, findWorktree } from "./plan.js";
 import { isPortFree } from "./ports.js";
 import { alive, signal } from "./process.js";
+import { loadScenario } from "./scenario.js";
 import { layout, readPlan, writePlan } from "./state.js";
 import { supervise } from "./supervisor.js";
 
@@ -74,6 +95,31 @@ class NoPlan extends Schema.TaggedError<NoPlan>()("NoPlan", { worktree: Schema.S
   }
 }
 
+class NotAnEnvironment extends Schema.TaggedError<NotAnEnvironment>()("NotAnEnvironment", {
+  worktree: Schema.String
+}) {
+  override get message() {
+    return `This worktree's instance signs in with Clerk. \`pnpm dev down\` deletes it (data included) so \`pnpm dev up\` can start an environment.`;
+  }
+}
+
+class OtherScenario extends Schema.TaggedError<OtherScenario>()("OtherScenario", {
+  current: Schema.String,
+  requested: Schema.String
+}) {
+  override get message() {
+    return `This worktree's environment is the ${this.current} scenario. \`pnpm dev down\` first to start ${this.requested}.`;
+  }
+}
+
+class NoEnvironment extends Schema.TaggedError<NoEnvironment>()("NoEnvironment", {
+  worktree: Schema.String
+}) {
+  override get message() {
+    return `No environment is up in ${this.worktree}; run \`pnpm dev up\`.`;
+  }
+}
+
 /**
  * Every failure an agent can act on becomes one stderr line and exit 1: each
  * handler ends in this, so `Command.run` formats it instead of `runMain`
@@ -113,7 +159,10 @@ const stateDirOf = (root: string) =>
  * state dir, so starting over it would race its writes: a start refuses, a
  * dry run just reports what is recorded.
  */
-const currentPlan = Effect.fn("currentPlan")(function* (dryRun: boolean) {
+const currentPlan = Effect.fn("currentPlan")(function* (
+  dryRun: boolean,
+  environment?: Environment
+) {
   const root = yield* worktree;
   const recorded = yield* readPlan(yield* stateDirOf(root));
   if (Option.isSome(recorded)) {
@@ -122,8 +171,10 @@ const currentPlan = Effect.fn("currentPlan")(function* (dryRun: boolean) {
     if (plan.pids && (yield* alive(plan.pids.supervisor))) {
       return dryRun ? plan : yield* new SupervisorBusy({ pid: plan.pids.supervisor });
     }
+    // A stopped environment restarts as one; plain `pnpm dev` never turns it into Clerk.
+    return yield* computePlan(root, isPortFree, environment ?? plan.environment);
   }
-  return yield* computePlan(root, isPortFree);
+  return yield* computePlan(root, isPortFree, environment);
 });
 
 const encodePlan = Schema.encodeSync(PlanJson);
@@ -335,10 +386,92 @@ const reset = Command.make(
     );
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value);
     yield* fs.remove(stateDir, { recursive: true, force: true });
-    const plan = yield* computePlan(root, isPortFree);
+    const environment = Option.isSome(recorded) ? recorded.value.environment : undefined;
+    const plan = yield* computePlan(root, isPortFree, environment);
     yield* printPlan(yield* start(plan), json);
   }, userFacing)
 ).pipe(Command.withDescription("Stop, wipe .local/dev, and start a fresh seeded instance"));
+
+const up = Command.make(
+  "up",
+  {
+    scenario: Argument.String("scenario").pipe(
+      Argument.withDescription("A folder under scenarios/; team when omitted"),
+      Argument.withDefault("team")
+    ),
+    json
+  },
+  Effect.fn(function* ({ scenario, json }) {
+    const root = yield* worktree;
+    const loaded = yield* loadScenario(root, scenario);
+    const recorded = yield* readPlan(yield* stateDirOf(root));
+    if (Option.isSome(recorded)) {
+      const current = recorded.value.environment;
+      if (current === undefined) return yield* new NotAnEnvironment({ worktree: root });
+      if (current.scenario !== scenario)
+        return yield* new OtherScenario({ current: current.scenario, requested: scenario });
+    }
+    let plan = yield* currentPlan(false, { scenario });
+    if (!(yield* isRunning(plan))) {
+      yield* buildBroker(plan.worktree);
+      plan = yield* start(plan);
+    }
+    const manifest = yield* setUp(plan, loaded);
+    if (json) return yield* Console.log(encodeManifest(manifest));
+    yield* printCard(manifest, yield* layoutFor(root));
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Bring up an environment: personas instead of Clerk, a logged-in CLI, an agent workspace and the scenario's patches"
+  )
+);
+
+const open = Command.make(
+  "open",
+  {
+    person: Argument.String("person").pipe(
+      Argument.withDescription("A person's key, email or first name")
+    ),
+    path: Flag.String("path").pipe(
+      Flag.withDescription("Where to land, such as /brightline/new-business"),
+      Flag.withDefault("/")
+    )
+  },
+  Effect.fn(function* ({ person, path }) {
+    const root = yield* worktree;
+    const manifest = yield* readManifest(yield* layoutFor(root));
+    if (Option.isNone(manifest)) return yield* new NoEnvironment({ worktree: root });
+    yield* openPerson(root, manifest.value, person, path);
+  }, userFacing)
+).pipe(
+  Command.withDescription("Open a browser window signed in as one of the environment's people")
+);
+
+const down = Command.make(
+  "down",
+  {},
+  Effect.fn(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* worktree;
+    const stateDir = yield* stateDirOf(root);
+    const environmentRemoved = yield* tearDown(root);
+    const recorded = yield* readPlan(stateDir).pipe(
+      Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
+    );
+    if (Option.isSome(recorded)) yield* stopInstance(recorded.value);
+    const instanceRemoved = yield* fs.exists(stateDir);
+    yield* fs.remove(stateDir, { recursive: true, force: true });
+    yield* Console.log(
+      environmentRemoved || instanceRemoved
+        ? `Removed ${[instanceRemoved ? stateDir : "", environmentRemoved ? (yield* layoutFor(root)).dir : ""].filter(Boolean).join(" and ")}. Close any agent sessions you started in the workspace.`
+        : "Nothing to take down."
+    );
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Stop everything this worktree's instance or environment started and delete what it made"
+  )
+);
 
 /** The detached process `start` spawns. Reads the plan `start` wrote. */
 const superviseCommand = Command.make("supervise", {}, () =>
@@ -356,7 +489,7 @@ const CliSurface = Layer.mergeAll(
 );
 
 dev.pipe(
-  Command.withSubcommands([status, stop, logs, reset, superviseCommand]),
+  Command.withSubcommands([status, stop, logs, reset, up, open, down, superviseCommand]),
   Command.run({ version: "0.0.0" }),
   Effect.scoped,
   Effect.provide([NodeServices.layer, FetchHttpClient.layer, CliSurface]),

@@ -231,7 +231,7 @@ for (const instance of ["test", "live"] as const) {
           signedIn(yield* session.authenticate(request(signedInCookies()))).claims.sub,
           "user_dev"
         );
-        assert.strictEqual(session.frontendApiHost, FRONTEND_API_HOST);
+        assert.strictEqual(session.clerk?.frontendApiHost, FRONTEND_API_HOST);
       }).pipe(
         Effect.provide(
           configured({

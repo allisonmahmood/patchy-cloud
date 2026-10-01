@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kickoff brief: Harbor &amp; Pine Coffee rebrand</title>
+    <style>
+      :root {
+        --bg: #0e0f12;
+        --s1: #14161b;
+        --s2: #1c1f26;
+        --s3: #262a33;
+        --line: #23262e;
+        --text: #f2f2f0;
+        --text-2: #c9cbd2;
+        --muted: #8b90a0;
+        --faint: #6b7080;
+        --lime: #d4ff3a;
+        --teal: #5eead4;
+        --violet: #a78bfa;
+        --orange: #fb923c;
+        --pink: #f472b6;
+        --display: "Cabinet Grotesk", "Space Grotesk", "Adwaita Sans", system-ui, sans-serif;
+        --ui: "Adwaita Sans", "Geist", "Inter", system-ui, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 15.5px/1.6 var(--ui);
+      }
+      .wrap {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 56px 40px 96px;
+      }
+      .eyebrow {
+        color: var(--lime);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      h1 {
+        font-family: var(--display);
+        font-weight: 800;
+        font-size: 68px;
+        line-height: 0.98;
+        letter-spacing: -0.03em;
+        margin: 14px 0 18px;
+        max-width: 900px;
+      }
+      h2 {
+        font-family: var(--display);
+        font-weight: 800;
+        font-size: 30px;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        margin-bottom: 18px;
+      }
+      h3 {
+        font-size: 15px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+      p {
+        color: var(--text-2);
+      }
+      .lede {
+        font-size: 19px;
+        line-height: 1.55;
+        color: var(--text-2);
+        max-width: 760px;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 28px;
+      }
+      .pill {
+        background: var(--s2);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 6px 13px;
+        font-size: 13px;
+        color: var(--text-2);
+      }
+      .pill b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      section {
+        margin-top: 64px;
+      }
+      .grid-4 {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-top: 40px;
+      }
+      .stat {
+        background: var(--s1);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px 20px;
+      }
+      .stat:first-child {
+        background: var(--lime);
+        border-color: var(--lime);
+        color: #0e0f12;
+      }
+      .stat:first-child .sl,
+      .stat:first-child .ss {
+        color: #3a4410;
+      }
+      .sl {
+        font-size: 12.5px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .sv {
+        font-family: var(--display);
+        font-weight: 800;
+        font-size: 40px;
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+        margin-top: 4px;
+      }
+      .ss {
+        font-size: 12.5px;
+        color: var(--faint);
+      }
+      .two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .card {
+        background: var(--s1);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 22px 24px;
+      }
+      .card p {
+        font-size: 14.5px;
+      }
+      .goal {
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        gap: 14px;
+        padding: 18px 0;
+        border-top: 1px solid var(--line);
+      }
+      .goal:first-of-type {
+        border-top: 0;
+        padding-top: 4px;
+      }
+      .num {
+        font-family: var(--display);
+        font-weight: 800;
+        font-size: 26px;
+        color: var(--lime);
+        line-height: 1.2;
+      }
+      ul.list {
+        list-style: none;
+        padding: 0;
+      }
+      ul.list li {
+        padding: 9px 0 9px 22px;
+        position: relative;
+        color: var(--text-2);
+        border-top: 1px solid var(--line);
+        font-size: 14.5px;
+      }
+      ul.list li:first-child {
+        border-top: 0;
+      }
+      ul.list li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 17px;
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        background: var(--teal);
+      }
+      ul.list.out li::before {
+        background: var(--faint);
+      }
+      .timeline {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+      .phase {
+        background: var(--s1);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px 20px 20px;
+        position: relative;
+        overflow: hidden;
+      }
+      .phase::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        height: 4px;
+        background: var(--c);
+      }
+      .weeks {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--c);
+      }
+      .phase h3 {
+        font-family: var(--display);
+        font-size: 21px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        margin: 8px 0 8px;
+      }
+      .phase p {
+        font-size: 13.5px;
+      }
+      .phase .out {
+        margin-top: 12px;
+        font-size: 12.5px;
+        color: var(--muted);
+      }
+      .team {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+      }
+      .person {
+        background: var(--s1);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+      }
+      .av {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        font-size: 14px;
+        color: #0e0f12;
+        background: var(--c);
+        margin-bottom: 12px;
+      }
+      .person .name {
+        font-weight: 700;
+        font-size: 14.5px;
+      }
+      .person .role {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-variant-numeric: tabular-nums;
+      }
+      th {
+        text-align: left;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 0 0 10px;
+      }
+      td {
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+        color: var(--text-2);
+        font-size: 14.5px;
+      }
+      td:last-child,
+      th:last-child {
+        text-align: right;
+      }
+      tr.total td {
+        color: var(--text);
+        font-weight: 700;
+        border-top: 1px solid #3a3e48;
+      }
+      .risk {
+        display: grid;
+        grid-template-columns: 110px 1fr;
+        gap: 14px;
+        padding: 14px 0;
+        border-top: 1px solid var(--line);
+      }
+      .risk:first-of-type {
+        border-top: 0;
+        padding-top: 2px;
+      }
+      .lvl {
+        font-size: 12px;
+        font-weight: 700;
+        border-radius: 6px;
+        padding: 3px 8px;
+        justify-self: start;
+        align-self: start;
+      }
+      .lvl.med {
+        color: var(--orange);
+        background: rgba(251, 146, 60, 0.12);
+      }
+      .lvl.low {
+        color: var(--teal);
+        background: rgba(94, 234, 212, 0.1);
+      }
+      .risk p {
+        font-size: 14px;
+      }
+      .risk b {
+        color: var(--text);
+      }
+      .next {
+        background: var(--s1);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 8px 24px;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 20px;
+        align-items: center;
+        padding: 14px 0;
+        border-top: 1px solid var(--line);
+      }
+      .step:first-child {
+        border-top: 0;
+      }
+      .step .what {
+        color: var(--text);
+        font-weight: 600;
+        font-size: 14.5px;
+      }
+      .step .who,
+      .step .when {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .step .when {
+        color: var(--lime);
+        font-weight: 600;
+        min-width: 64px;
+        text-align: right;
+      }
+      footer {
+        margin-top: 72px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        color: var(--faint);
+        font-size: 13px;
+      }
+      @media (max-width: 900px) {
+        h1 {
+          font-size: 46px;
+        }
+        .grid-4,
+        .timeline,
+        .team,
+        .two {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <div class="eyebrow">Brightline Studio · Kickoff brief</div>
+      <h1>Harbor &amp; Pine Coffee: a brand that tastes like the coast.</h1>
+      <p class="lede">
+        Harbor &amp; Pine has grown from one roastery café to 14 locations and a fast-growing online
+        subscription. The brand hasn't kept up. This brief aligns the studio and the client on what
+        we're making, why, and by when.
+      </p>
+      <div class="meta">
+        <span class="pill"><b>Client</b> Harbor &amp; Pine Coffee</span>
+        <span class="pill"><b>Engagement</b> Rebrand + packaging system</span>
+        <span class="pill"><b>Kickoff</b> Monday, October 6</span>
+        <span class="pill"><b>Lead</b> Marcus Chen</span>
+      </div>
+
+      <div class="grid-4">
+        <div class="stat">
+          <div class="sl">Signed fee</div>
+          <div class="sv">$92k</div>
+          <div class="ss">fixed, 3 milestones</div>
+        </div>
+        <div class="stat">
+          <div class="sl">Duration</div>
+          <div class="sv">12 wks</div>
+          <div class="ss">Oct 6 → Dec 22</div>
+        </div>
+        <div class="stat">
+          <div class="sl">SKUs to repackage</div>
+          <div class="sv">18</div>
+          <div class="ss">bags, tins, cold brew</div>
+        </div>
+        <div class="stat">
+          <div class="sl">Launch</div>
+          <div class="sv">Feb 2</div>
+          <div class="ss">new packs in stores</div>
+        </div>
+      </div>
+
+      <section>
+        <h2>What success looks like</h2>
+        <div class="card">
+          <div class="goal">
+            <div class="num">01</div>
+            <div>
+              <h3>Stand out on a crowded shelf</h3>
+              <p>
+                Grocery buyers in two regional chains asked for packaging that reads from two metres
+                away. We'll test shelf presence against the top five competitors before we lock the
+                system.
+              </p>
+            </div>
+          </div>
+          <div class="goal">
+            <div class="num">02</div>
+            <div>
+              <h3>One brand from café to inbox</h3>
+              <p>
+                Today the cafés, the bags and the subscription emails look like three companies. A
+                single identity, voice and photography direction ties them together.
+              </p>
+            </div>
+          </div>
+          <div class="goal">
+            <div class="num">03</div>
+            <div>
+              <h3>Grow subscriptions 30% by summer</h3>
+              <p>
+                The client's headline metric. The new unboxing and onboarding emails are designed
+                around it, and we'll track it with their team from launch.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Scope</h2>
+        <div class="two">
+          <div class="card">
+            <h3>In scope</h3>
+            <ul class="list">
+              <li>Brand strategy, positioning and naming architecture for the product range</li>
+              <li>Visual identity: wordmark, symbol, colour, type, illustration style</li>
+              <li>Packaging system for 18 SKUs with print-ready artwork</li>
+              <li>Café signage kit and menu templates</li>
+              <li>Brand guidelines and a handover workshop for their in-house team</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Out of scope (for now)</h3>
+            <ul class="list out">
+              <li>Website rebuild: proposed as a follow-on in January</li>
+              <li>Photography production: we art-direct, they commission</li>
+              <li>Interior fit-out of the cafés</li>
+              <li>Media buying for the launch campaign</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Timeline</h2>
+        <div class="timeline">
+          <div class="phase" style="--c: var(--teal)">
+            <div class="weeks">Weeks 1–3</div>
+            <h3>Discover</h3>
+            <p>
+              Stakeholder interviews, café visits in three cities, shelf audit, customer survey with
+              400 subscribers.
+            </p>
+            <div class="out">Out: insights deck + positioning options</div>
+          </div>
+          <div class="phase" style="--c: var(--violet)">
+            <div class="weeks">Weeks 4–6</div>
+            <h3>Define</h3>
+            <p>
+              Positioning locked. Three identity routes, presented in context: bags, cups, signage,
+              email.
+            </p>
+            <div class="out">Out: chosen route (milestone 1)</div>
+          </div>
+          <div class="phase" style="--c: var(--orange)">
+            <div class="weeks">Weeks 7–10</div>
+            <h3>Design</h3>
+            <p>
+              Identity refined, packaging system built across all SKUs, shelf testing with real
+              mock-ups.
+            </p>
+            <div class="out">Out: full system (milestone 2)</div>
+          </div>
+          <div class="phase" style="--c: var(--lime)">
+            <div class="weeks">Weeks 11–12</div>
+            <h3>Deliver</h3>
+            <p>
+              Print-ready artwork, guidelines, signage kit, team workshop and launch support plan.
+            </p>
+            <div class="out">Out: handover (milestone 3)</div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>The team</h2>
+        <div class="team">
+          <div class="person">
+            <div class="av" style="--c: var(--violet)">MC</div>
+            <div class="name">Marcus Chen</div>
+            <div class="role">Design Director · lead</div>
+          </div>
+          <div class="person">
+            <div class="av" style="--c: var(--orange)">PS</div>
+            <div class="name">Priya Shah</div>
+            <div class="role">Strategy Lead</div>
+          </div>
+          <div class="person">
+            <div class="av" style="--c: var(--pink)">SA</div>
+            <div class="name">Sofia Alvarez</div>
+            <div class="role">Producer</div>
+          </div>
+          <div class="person">
+            <div class="av" style="--c: var(--teal)">JL</div>
+            <div class="name">Jordan Lee</div>
+            <div class="role">Account Director</div>
+          </div>
+          <div class="person">
+            <div class="av" style="--c: var(--lime)">AM</div>
+            <div class="name">Allison Mahmood</div>
+            <div class="role">Executive sponsor</div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Budget</h2>
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Milestone</th>
+                <th>Due</th>
+                <th>Fee</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1 · Discovery and chosen identity route</td>
+                <td>Nov 14</td>
+                <td>$27,600</td>
+              </tr>
+              <tr>
+                <td>2 · Full identity and packaging system</td>
+                <td>Dec 12</td>
+                <td>$36,800</td>
+              </tr>
+              <tr>
+                <td>3 · Artwork, guidelines and handover</td>
+                <td>Dec 22</td>
+                <td>$27,600</td>
+              </tr>
+              <tr class="total">
+                <td>Total fixed fee</td>
+                <td></td>
+                <td>$92,000</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Risks we're watching</h2>
+        <div class="card">
+          <div class="risk">
+            <span class="lvl med">Medium</span>
+            <p>
+              <b>Founder sign-off.</b> Two co-founders with different tastes. We'll present routes
+              to both together, never separately.
+            </p>
+          </div>
+          <div class="risk">
+            <span class="lvl med">Medium</span>
+            <p>
+              <b>Print lead times.</b> Their packaging supplier needs artwork 8 weeks before launch.
+              Week 10 is a hard date for the first six SKUs.
+            </p>
+          </div>
+          <div class="risk">
+            <span class="lvl low">Low</span>
+            <p>
+              <b>Trademark.</b> "Harbor &amp; Pine" is registered; new product names need a
+              clearance check, budgeted in discovery.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Next steps</h2>
+        <div class="next">
+          <div class="step">
+            <span class="what">Send interview schedule to the client</span
+            ><span class="who">Sofia</span><span class="when">Oct 3</span>
+          </div>
+          <div class="step">
+            <span class="what">Book café visits: Portland, Seattle, Tacoma</span
+            ><span class="who">Sofia</span><span class="when">Oct 6</span>
+          </div>
+          <div class="step">
+            <span class="what">Confirm PO and milestone dates with their finance team</span
+            ><span class="who">Jordan</span><span class="when">Oct 6</span>
+          </div>
+          <div class="step">
+            <span class="what">Launch subscriber survey</span><span class="who">Priya</span
+            ><span class="when">Oct 8</span>
+          </div>
+          <div class="step">
+            <span class="what">Shelf audit at four grocery locations</span
+            ><span class="who">Marcus</span><span class="when">Oct 10</span>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        <span>Brightline Studio · internal</span
+        ><span>Prepared by Jordan Lee for the kickoff on October 6</span>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -209,7 +209,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
           ? contentSecurityPolicy(served.value.version.tier)
           : shellContentSecurityPolicy(
               served.value.version.tier,
-              !isPublic || publicDirectory ? session.frontendApiHost : undefined
+              !isPublic || publicDirectory ? session.clerk?.frontendApiHost : undefined
             ),
       ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
       "cache-control":

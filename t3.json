@@ -25,6 +25,21 @@
       "icon": "play"
     },
     {
+      "name": "Environment up",
+      "command": "pnpm dev up",
+      "icon": "play"
+    },
+    {
+      "name": "Demo up",
+      "command": "pnpm dev up brightline",
+      "icon": "play"
+    },
+    {
+      "name": "Environment down",
+      "command": "pnpm dev down",
+      "icon": "configure"
+    },
+    {
       "name": "Check",
       "command": "pnpm lint && pnpm typecheck && pnpm test",
       "icon": "test"

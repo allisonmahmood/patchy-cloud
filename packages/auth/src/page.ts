@@ -11,9 +11,9 @@ export interface Page {
   readonly app?: AppShell;
 }
 
+/** A page's session scripts come from Clerk when it signs people in; dev personas need none. */
 export interface SessionShell {
-  readonly frontendApiHost: string;
-  readonly publishableKey: string;
+  readonly clerk: { readonly frontendApiHost: string; readonly publishableKey: string } | undefined;
 }
 
 /** Only local absolute paths survive; reject authorities and slash/backslash escapes. */
@@ -52,15 +52,17 @@ export function withCookies(
 }
 
 /** The only scripts in a session shell: Clerk headless and Patchy's external initializer. */
-export function sessionScripts(shell: SessionShell): string {
-  return `<script defer crossorigin="anonymous" data-clerk-publishable-key="${escapeAttribute(shell.publishableKey)}" src="https://${escapeAttribute(shell.frontendApiHost)}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"></script><script defer src="/auth/session.js"></script>`;
+export function sessionScripts({ clerk }: SessionShell): string {
+  if (clerk === undefined) return "";
+  return `<script defer crossorigin="anonymous" data-clerk-publishable-key="${escapeAttribute(clerk.publishableKey)}" src="https://${escapeAttribute(clerk.frontendApiHost)}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"></script><script defer src="/auth/session.js"></script>`;
 }
 
 export function pageResponse(
   page: Page,
   shell?: SessionShell
 ): HttpServerResponse.HttpServerResponse {
-  const head = shell ? sessionScripts(shell) : undefined;
+  const clerk = shell?.clerk;
+  const head = shell && clerk ? sessionScripts(shell) : undefined;
   const heading = page.heading ?? `<h1 class="page-heading">${escapeHtml(page.title)}</h1>`;
   return HttpServerResponse.text(
     htmlPage({
@@ -87,10 +89,10 @@ export function pageResponse(
           "base-uri 'none'",
           "form-action 'self'",
           "frame-ancestors 'none'",
-          ...(shell
+          ...(clerk
             ? [
-                `script-src 'self' https://${shell.frontendApiHost}`,
-                `connect-src https://${shell.frontendApiHost}`,
+                `script-src 'self' https://${clerk.frontendApiHost}`,
+                `connect-src https://${clerk.frontendApiHost}`,
                 // Clerk's session poller runs on a blob worker; without it the 60s
                 // session cookie goes stale and the page's next form POST is signed out.
                 "worker-src blob:"

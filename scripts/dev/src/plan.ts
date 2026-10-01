@@ -24,6 +24,14 @@ export const Pids = Schema.Struct({
   postgres: Schema.optionalKey(Schema.Int)
 });
 
+/**
+ * An environment (`pnpm dev up`): people sign in as dev personas instead of
+ * through Clerk, the instance serves on its own `<worktree>.localhost` host,
+ * and the scenario names the seeded company, people and patches.
+ */
+export const Environment = Schema.Struct({ scenario: Schema.String });
+export type Environment = typeof Environment.Type;
+
 export const Plan = Schema.Struct({
   worktree: Schema.String,
   /** `<worktree>/.local/dev` — Postgres data, logs, `env`, `plan.json`. */
@@ -34,7 +42,9 @@ export const Plan = Schema.Struct({
   /** The seeded API token; `env` exports it as `PATCHY_API_TOKEN`. */
   token: Schema.String,
   /** Absent until `start` has spawned a supervisor. */
-  pids: Schema.optionalKey(Pids)
+  pids: Schema.optionalKey(Pids),
+  /** Present when this worktree's instance is an environment rather than plain `pnpm dev`. */
+  environment: Schema.optionalKey(Environment)
 });
 export type Plan = typeof Plan.Type;
 
@@ -68,6 +78,17 @@ export const DATABASE_NAME = "patchy";
 export const basePort = (worktree: string): number =>
   20000 + (Math.abs(Hash.string(worktree)) % 10000) * 2;
 
+/**
+ * The worktree's DNS label: an environment serves on `<label>.localhost`, so
+ * its cookies never reach another worktree's instance on the same machine.
+ */
+export const hostLabel = (worktree: string): string =>
+  (worktree.split(/[\\/]/).filter(Boolean).at(-1) ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .slice(0, 63)
+    .replace(/^-+|-+$/g, "") || "patchy";
+
 /** How many pairs `computePlan` tries above the hashed base before giving up. */
 const SCAN_PAIRS = 50;
 
@@ -90,7 +111,8 @@ export const findWorktree = Effect.fn("findWorktree")(function* (from: string) {
  */
 export const computePlan = Effect.fn("computePlan")(function* <E, R>(
   worktree: string,
-  isFree: (port: number) => Effect.Effect<boolean, E, R>
+  isFree: (port: number) => Effect.Effect<boolean, E, R>,
+  environment?: Environment
 ) {
   const path = yield* Path.Path;
   const from = basePort(worktree);
@@ -102,9 +124,10 @@ export const computePlan = Effect.fn("computePlan")(function* <E, R>(
         worktree,
         stateDir: path.join(worktree, ".local", "dev"),
         ports: { server, postgres },
-        apiUrl: `http://127.0.0.1:${server}`,
+        apiUrl: `http://${environment === undefined ? "127.0.0.1" : `${hostLabel(worktree)}.localhost`}:${server}`,
         databaseUrl: `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${postgres}/${DATABASE_NAME}`,
-        token: DEV_SEED.token
+        token: DEV_SEED.token,
+        ...(environment === undefined ? {} : { environment })
       };
       return plan;
     }
