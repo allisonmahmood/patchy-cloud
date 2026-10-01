@@ -80,7 +80,8 @@ const allowed = (kind: HandlerKind, op: string) =>
   Object.hasOwn(members, op) ||
   (kind !== "query" && Object.hasOwn(writeTable, op)) ||
   (kind !== "mutation" && (Object.hasOwn(shared, op) || Object.hasOwn(readFile, op))) ||
-  (kind === "action" && (Object.hasOwn(actionFile, op) || Object.hasOwn(connections, op)));
+  (kind === "action" &&
+    (op === "server.call" || Object.hasOwn(actionFile, op) || Object.hasOwn(connections, op)));
 const viewerAuthority = (op: string) =>
   Object.hasOwn(shared, op) || Object.hasOwn(members, op) || Object.hasOwn(connections, op);
 const refused = (
@@ -160,7 +161,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         403
       );
     const operation = Object.hasOwn(handlers, request.op) ? handlers[request.op] : undefined;
-    if (request.op !== "log" && operation === undefined)
+    if (request.op !== "log" && request.op !== "server.call" && operation === undefined)
       return remember(refused("invalid_request", "Unknown callback operation."), 400);
     if (capability.kind === "query" && operation?.transport !== undefined)
       return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
@@ -168,6 +169,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       GuestProtocol.CallbackReply,
       Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
     > {
+      if (request.op === "server.call") {
+        if (request.body !== undefined || capability.run === undefined)
+          return remember(refused("access_denied", "Nested handlers are unavailable."), 403);
+        return yield* capability.run(request.args);
+      }
       if (request.op === "log") {
         if (request.body !== undefined)
           return remember(refused("invalid_request", "Log callbacks require JSON."), 400);
@@ -353,7 +359,13 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         })
       );
     });
-    const result = yield* Effect.exit(capabilities.execute(capability, run));
+    const operationRun =
+      capability.kind === "query" && request.op !== "log"
+        ? capability.snapshot.value === undefined
+          ? Effect.fail(new Runtime.InvocationUnavailable())
+          : capability.snapshot.value.run(run)
+        : run;
+    const result = yield* Effect.exit(capabilities.execute(capability, operationRun));
     let reply: GuestProtocol.CallbackReply;
     let status = 200;
     if (Exit.isSuccess(result)) reply = result.value;

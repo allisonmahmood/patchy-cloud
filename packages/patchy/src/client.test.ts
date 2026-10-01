@@ -60,6 +60,7 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   const transport: Transport = {
     route: unusedRoute,
     serverTime: () => undefined,
+    handlerKind: () => undefined,
     queries: unusedQueries,
     call: async (op, _args, input) => {
       calls.push(op);
@@ -101,6 +102,7 @@ it.each(["put", "delete", "close"] as const)(
     const transport: Transport = {
       route: unusedRoute,
       serverTime: () => undefined,
+      handlerKind: () => undefined,
       queries: unusedQueries,
       call: async (op) => {
         if (op !== "files.get") return null;
@@ -159,6 +161,7 @@ it("shares the supplied transport with generated aliases and exposes shared read
       route: unusedRoute,
       queries: unusedQueries,
       serverTime: () => undefined,
+      handlerKind: () => undefined,
       close() {}
     },
     shared,

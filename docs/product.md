@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 invocation admission, patch identity for own-resource callbacks, viewer reauthorization and bounded settlement are implemented behind the isolated local execution path. Hosted tier 2 publication and fleet wiring, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 invocation admission, patch identity for own-resource callbacks, viewer reauthorization and bounded settlement are implemented in local execution tests and the existing `pnpm dev` instance's server composition. Hosted tier 2 publication and fleet wiring, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -79,8 +79,10 @@ retains its last value through errors. The pinned workerd engine, credential-fre
 SDK guest, isolated descriptor inspection, process supervisor, private management
 listener and supervised local executor are implemented. Runtime now admits and
 settles invocations through a private capability gateway in isolated execution
-tests. Hosted fleet wiring and the local tier 2 loop remain separate work;
-tier 2 publish remains refused.
+tests and the existing `pnpm dev` instance. An eligible `server.call` executes on
+the local executor. Tier 2 publication remains refused until #401; `patchy dev`
+on the production engine belongs to #404. The end-to-end browser path lands with
+those tickets, not through a separate development command or runner.
 
 ### Building a patch
 
@@ -365,8 +367,13 @@ executor and host invocation lifetime are built. The host validates handler
 arguments and results, authorises callbacks, records invocations and settles
 admitted work independently of the browser connection. The supervisor terminates
 runaway version processes and unfinished initialisation. The local executor
-refuses production construction. Query snapshots, mutation transactions and
-keys, nested handlers, company tasks and the publish path remain separate work.
+refuses production construction. Queries with declared company resources retain
+one read-only repeatable-read snapshot, with live shared-table access checks.
+Resource-free queries retain the same fenced callback lifetime without requiring
+a company database. Actions can transfer file bytes,
+call company integrations as the viewer and run sibling queries under their
+remaining deadline. Mutation transactions and keys, company tasks and the publish
+path remain separate work.
 
 The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the

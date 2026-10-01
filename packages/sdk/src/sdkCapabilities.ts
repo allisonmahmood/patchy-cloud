@@ -23,9 +23,9 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "Framework-free client, viewer identity and routing",
     entrypoints: ["patchy/_generated/client.ts"],
-    runs: "Tier 1 page through the hosted shell or patchy dev",
+    runs: "Tier 1 page through the hosted shell or patchy dev; tier 2 server calls through the source checkout's pnpm dev cloud server",
     limits:
-      "Import by relative path. The generated implementation uses patchy/client; app code does not import it directly. me() is null on public patches. Routing is shell-mediated; there is no outbound fetch or client storage."
+      "Import by relative path. The generated implementation uses patchy/client; app code does not import it directly. Tier 2 uses server handlers, not direct named resources. me() is null on public tier 1 patches. Routing is shell-mediated; there is no outbound fetch or client storage."
   },
   {
     id: "core.preact",
@@ -64,7 +64,16 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/server", "patchy/_generated/server.ts"],
     runs: "Build time, for server handler definitions and types",
     limits:
-      "Query, mutation and action builders are available. Hosted execution and tier 2 publishing are not admitted in this release. Runtime imports of server code do not belong in the page graph."
+      "Query, mutation and action builders are available. Mutation execution and tier 2 publishing are not admitted in this release. Runtime imports of server code do not belong in the page graph."
+  },
+  {
+    id: "core.server-calls",
+    group: "Core",
+    name: "Server queries and actions",
+    entrypoints: ["patchy/_generated/client.ts: patchy.server", "patchy/_generated/server.ts"],
+    runs: "Local executor in tests and the source checkout's existing pnpm dev cloud server for eligible server.call requests",
+    limits:
+      "Data-bearing queries share one read-only snapshot with a 3-second deadline; resource-free queries need no company database. Actions have 60 seconds, declared connections and nested queries. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB and results 8 MiB. Tier 2 patchy dev lifecycle, server watch, production hosting, mutations and handler subscriptions remain separate."
   },
   {
     id: "primitives.tables",

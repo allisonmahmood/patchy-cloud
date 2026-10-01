@@ -131,6 +131,164 @@ it("keeps lazy handler names and business errors distinct from similarly shaped 
   client.close();
 });
 
+it("retries a lost query reply once with the original argument snapshot and ignores its late reply", async () => {
+  vi.useFakeTimers();
+  const port = new FakePort();
+  const transport = createPortTransport(port, {
+    timeoutMs: 100,
+    handlerKinds: { "leads.find": "query" }
+  });
+  type Modules = {
+    leads: { find: Handler<"query", { filter: { name: string } }, string> };
+  };
+  const client = createServerClient<Modules>({ transport });
+  const args = { filter: { name: "Ada" } };
+  const result = client.server.leads.find(args);
+  args.filter.name = "Grace";
+  await vi.advanceTimersByTimeAsync(101);
+  expect(port.sent.map(({ op, args }) => ({ op, args }))).toEqual([
+    { op: "server.call", args: { handler: "leads.find", args: { filter: { name: "Ada" } } } },
+    { op: "server.call", args: { handler: "leads.find", args: { filter: { name: "Ada" } } } }
+  ]);
+  port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "late original" });
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: "retried result" });
+  await expect(result).resolves.toBe("retried result");
+  client.close();
+});
+
+it("surfaces the second lost query reply without a third attempt", async () => {
+  vi.useFakeTimers();
+  const port = new FakePort();
+  const client = createServerClient<{
+    leads: { find: Handler<"query", Record<string, never>, string> };
+  }>({
+    transport: createPortTransport(port, {
+      timeoutMs: 100,
+      handlerKinds: { "leads.find": "query" }
+    })
+  });
+  const lost = expect(client.server.leads.find({})).rejects.toMatchObject({
+    source: "patchy",
+    code: "unknown_outcome"
+  });
+  await vi.advanceTimersByTimeAsync(201);
+  await lost;
+  expect(port.sent).toHaveLength(2);
+  client.close();
+});
+
+it.each([
+  { name: "action", kinds: { "leads.find": "action" } },
+  { name: "mutation", kinds: { "leads.find": "mutation" } },
+  { name: "absent metadata", kinds: undefined },
+  { name: "missing handler", kinds: { "leads.other": "query" } },
+  { name: "invalid metadata", kinds: { "leads.find": "query", "leads.other": "invalid" } },
+  { name: "inherited metadata", kinds: Object.create({ "leads.find": "query" }) }
+])("never replays a lost call with $name, regardless of its TypeScript kind", async ({ kinds }) => {
+  vi.useFakeTimers();
+  const port = new FakePort();
+  const client = createServerClient<{
+    leads: { find: Handler<"query", Record<string, never>, string> };
+  }>({
+    transport: createPortTransport(port, { timeoutMs: 100, handlerKinds: kinds })
+  });
+  const lost = expect(client.server.leads.find({})).rejects.toMatchObject({
+    code: "unknown_outcome"
+  });
+  await vi.advanceTimersByTimeAsync(201);
+  await lost;
+  expect(port.sent).toHaveLength(1);
+  client.close();
+});
+
+it.each([
+  { source: "patchy", code: "handler_timeout" },
+  { source: "patchy", code: "busy" },
+  { source: "patchy", code: "rate_limited" },
+  { source: "patchy", code: "handler_failed" },
+  { source: "patchy", code: "access_denied" },
+  { source: "patchy", code: "unknown_outcome" },
+  { source: "handler", code: "unknown_outcome" }
+])("does not retry a delivered $source $code refusal", async (error) => {
+  const port = new FakePort();
+  const client = createServerClient<{
+    leads: { find: Handler<"query", Record<string, never>, string> };
+  }>({
+    transport: createPortTransport(port, { handlerKinds: { "leads.find": "query" } })
+  });
+  const rejected = expect(client.server.leads.find({})).rejects.toMatchObject(error);
+  port.reply({
+    v: 1,
+    kind: "error",
+    id: port.sent[0]!.id,
+    error: { ok: false, ...error, message: "Refused.", details: {} }
+  });
+  await rejected;
+  expect(port.sent).toHaveLength(1);
+  client.close();
+});
+
+it("keeps a server call pending through startup, the action deadline and settlement", async () => {
+  vi.useFakeTimers();
+  const port = new FakePort();
+  const transport = createPortTransport(port, { handlerKinds: { "leads.import": "action" } });
+  const result = transport.call("server.call", { handler: "leads.import", args: {} });
+  await vi.advanceTimersByTimeAsync(40_000 + 60_000 + 5_000);
+  port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "imported" });
+  await expect(result).resolves.toBe("imported");
+  expect(port.sent).toHaveLength(1);
+  transport.close();
+});
+
+it("learns query retry eligibility only from its nonce-bound parent bootstrap", async () => {
+  vi.useFakeTimers();
+  const parent = {};
+  const frame = Object.assign(new EventTarget(), {
+    parent,
+    location: { href: "https://instance/~content/p/v?n=document-one" }
+  });
+  const port = new FakePort();
+  const client = createServerClient<{
+    leads: { find: Handler<"query", Record<string, never>, string> };
+  }>({
+    transport: createPostMessageTransport({ window: frame as unknown as Window })
+  });
+  const result = client.server.leads.find({});
+  const bootstrap = (source: unknown, nonce: string, kind: string) => {
+    const event = new Event("message");
+    Object.assign(event, {
+      source,
+      data: {
+        v: 1,
+        kind: "bootstrap",
+        nonce,
+        route: "/",
+        handlerKinds: { "leads.find": kind }
+      },
+      ports: [port]
+    });
+    frame.dispatchEvent(event);
+  };
+  bootstrap({}, "document-one", "action");
+  bootstrap(parent, "other-document", "action");
+  expect(port.sent).toEqual([]);
+  bootstrap(parent, "document-one", "query");
+  await vi.advanceTimersByTimeAsync(0);
+  const first = port.sent.find((request) => request.op === "server.call")!;
+  port.reply({
+    v: 1,
+    kind: "error",
+    id: first.id,
+    replyLost: true,
+    error: { source: "patchy", code: "unknown_outcome", message: "Reply lost." }
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(port.sent.filter((request) => request.op === "server.call")).toHaveLength(2);
+  port.reply({ v: 1, kind: "result", id: port.sent.at(-1)!.id, value: "retried" });
+  await expect(result).resolves.toBe("retried");
+  client.close();
+});
+
 it("closed ports and lost insert replies are unknown outcomes, never replayed", async () => {
   vi.useFakeTimers();
   const port = new FakePort();

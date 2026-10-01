@@ -25,7 +25,7 @@ import { useQuery } from "./preact.js";
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 type Assert<T extends true> = T;
-const readLeads = (ctx: QueryContext) => ctx.tables.leads.list();
+const readLeads = (ctx: QueryContext) => ctx.tables.leads.list({ limit: 20 });
 const writeLead = (ctx: MutationContext) => ctx.tables.leads.insert({ name: "new" });
 const totalSales = (ctx: ActionContext) =>
   ctx.connections.sales.query("select count(*) as total from sales");
@@ -38,7 +38,7 @@ export const list = query({
     const viewer: string = ctx.viewer.user.id;
     const stage: "open" | "closed" | null = args.stage;
     const search: string | undefined = args.search;
-    await ctx.shared.directory.list();
+    await ctx.shared.directory.list({ limit: 20 });
     await ctx.files.documents.stat("invoice.pdf");
     await ctx.files.documents.list();
     // @ts-expect-error query tables cannot write
@@ -81,6 +81,8 @@ export const sync = action({
   handler: async (ctx, args) => {
     const records = await ctx.run.leads.list({ stage: null });
     const saved = await ctx.run.leads.save({ name: args.name });
+    // @ts-expect-error nested queries retain argument validation
+    void ctx.run.leads.list({ stage: 1 });
     const id: Id<"leads"> = saved.id;
     // @ts-expect-error nested calls reject an action target
     ctx.run.leads.sync({ upload: args.upload, name: args.name });
@@ -95,10 +97,12 @@ export const sync = action({
     // @ts-expect-error server shared reads cannot start browser subscriptions
     void ctx.shared.directory.get.subscribe;
     await ctx.files.documents.put(args.name, args.upload);
+    await ctx.files.documents.put("bytes.bin", new Uint8Array([1, 2, 3]));
     await ctx.files.documents.get(args.name);
     await ctx.files.documents.delete("obsolete.pdf");
     ctx.log(id);
-    return (await ctx.files.documents.stat(args.name))?.handle ?? null;
+    await ctx.files.documents.stat(args.name);
+    return null;
   }
 });
 

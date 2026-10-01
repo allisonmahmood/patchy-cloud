@@ -144,14 +144,11 @@ export interface HandlerDescriptor {
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
 }
-export interface ServerFileMetadata extends FileMetadata {
-  readonly handle: FileHandle;
-}
 export interface QueryFileStore {
   list(
     options?: FileListOptions
-  ): Promise<{ readonly files: readonly ServerFileMetadata[]; readonly cursor: string | null }>;
-  stat(name: string): Promise<ServerFileMetadata | null>;
+  ): Promise<{ readonly files: readonly FileMetadata[]; readonly cursor: string | null }>;
+  stat(name: string): Promise<FileMetadata | null>;
 }
 export interface ActionFileStore extends QueryFileStore {
   put(
@@ -163,9 +160,11 @@ export interface ActionFileStore extends QueryFileStore {
   delete(name: string): Promise<null>;
 }
 type ReadonlyOperations<T> = {
-  readonly [K in keyof T]: T[K] extends (...args: infer A) => Promise<infer R>
-    ? (...args: A) => Promise<DeepReadonly<R>>
-    : T[K];
+  readonly [K in keyof T]: T[K] extends QueryCallable<infer A, infer R>
+    ? (...args: undefined extends A ? [args?: A] : [args: A]) => Promise<DeepReadonly<R>>
+    : T[K] extends (...args: infer A) => Promise<infer R>
+      ? (...args: A) => Promise<DeepReadonly<R>>
+      : T[K];
 };
 type QueryShared<Shared> = {
   readonly [K in keyof Shared]: Shared[K] extends QueryFileStore

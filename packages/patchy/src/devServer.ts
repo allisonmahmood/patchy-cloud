@@ -137,6 +137,12 @@ export const serve = Effect.fn("Dev.serve")(function* (
           renderPatchWrapper({
             scope: "local",
             viewerId: prepared.identity.user.id,
+            handlerKinds: Object.fromEntries(
+              Object.entries(prepared.manifest.handlers ?? {}).map(([name, handler]) => [
+                name,
+                handler.kind
+              ])
+            ),
             patch: { id: version.patchId, title: prepared.manifest.name ?? "Local patch" },
             version: {
               id: version.versionId,

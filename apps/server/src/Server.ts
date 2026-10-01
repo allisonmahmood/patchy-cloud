@@ -79,6 +79,7 @@ import {
 import { Artifact, SdkApi } from "@patchy/sdk";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
+import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -128,7 +129,11 @@ const services = Layer.mergeAll(
       const tables = yield* TableOperations.make;
       const files = yield* Files.make;
       const postgres = yield* PostgresOperations.makeHandlers;
-      return RuntimeProduction.layer({ me, ...tables, ...files, ...postgres });
+      const handlers = { me, ...tables, ...files, ...postgres };
+      const runtime = RuntimeProduction.layer(handlers);
+      return (yield* DevelopmentInvocation.enabled)
+        ? runtime.pipe(Layer.provide(DevelopmentInvocation.layer(handlers)))
+        : runtime;
     })
   ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer]))
 ).pipe(

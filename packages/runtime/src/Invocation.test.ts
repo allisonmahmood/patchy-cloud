@@ -7,6 +7,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -20,6 +21,8 @@ import * as InvocationLog from "./InvocationLog.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as ServerBundles from "./ServerBundles.js";
+import * as QuerySnapshot from "./QuerySnapshot.js";
+import { snapshot } from "./test/callbacks.js";
 
 const viewer = {
   user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Dev" },
@@ -78,6 +81,7 @@ const services = Layer.mergeAll(
 ).pipe(Layer.provideMerge(Testing.layer()));
 const makeInvocation = (invoke: Executor.Executor["Service"]["invoke"]) =>
   Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" }).pipe(
+    Effect.provideService(QuerySnapshot.QuerySnapshot, { open: () => Effect.succeed(snapshot) }),
     Effect.provideService(Executor.Executor, { bind: () => Effect.succeed(bound), invoke }),
     Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
   );
@@ -381,6 +385,52 @@ it.layer(services)("Invocation", (it) => {
         );
         yield* Deferred.succeed(resourceSettled, undefined);
       })
+  );
+
+  it.effect("nested queries inherit the remaining action budget and keep their parent row", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+      const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const invocations = yield* makeInvocation((request) =>
+        Queue.offer(seen, request).pipe(Effect.andThen(Effect.never))
+      );
+      const parent = yield* invocations
+        .call(
+          { handler: "demo.action", args: {} },
+          { ...binding, correlationId: "nested-action" },
+          Effect.succeed(viewer)
+        )
+        .pipe(Effect.exit, Effect.forkChild);
+      const request = yield* Queue.take(seen);
+      const capability = yield* capabilities.resolve(request.callback.capability, request);
+      assert.isDefined(capability.run);
+      const forbidden = yield* capability.run!({ handler: "demo.action", args: {} }).pipe(
+        Effect.flip
+      );
+      assert.strictEqual(forbidden.code, "access_denied");
+      yield* TestClock.adjust("59 seconds");
+      const child = yield* capability.run!({ handler: "demo.query", args: { id: 1 } }).pipe(
+        Effect.exit,
+        Effect.forkChild
+      );
+      const nested = yield* Queue.take(seen);
+      assert.strictEqual(nested.deadline, request.deadline);
+      assert.notStrictEqual(nested.invocationId, request.invocationId);
+      const childCapability = yield* capabilities.resolve(nested.callback.capability, nested);
+      assert.strictEqual(childCapability.tree, capability.tree);
+      yield* TestClock.adjust("1 second");
+      for (const fiber of [child, parent]) {
+        const result = yield* Fiber.join(fiber);
+        assert.isTrue(Exit.isFailure(result));
+      }
+      const log = yield* InvocationLog.InvocationLog;
+      const row = yield* log.find({
+        companyId: binding.companyId,
+        invocationId: nested.invocationId
+      });
+      assert.strictEqual(row?.parentId, request.invocationId);
+      assert.strictEqual(row?.outcome, "handler_timeout");
+    })
   );
 
   it.effect("enforces viewer action slots and releases them after settlement", () =>

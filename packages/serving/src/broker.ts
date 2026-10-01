@@ -14,6 +14,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
+import { serverReplyTimeoutMs } from "@patchy/api/query-config";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 import { openDocumentStream, type DocumentStream } from "./stream.js";
@@ -60,6 +61,8 @@ class HandlerRefusal extends Error {
     super(failure.code);
   }
 }
+/** A broker transport failure, distinct from a delivered runtime refusal. */
+class LostReply extends Refusal {}
 const invalid = () => new Refusal("invalid_request", "The broker request is malformed.");
 const tooLarge = (maxBytes: number, limit?: LimitMetadata) =>
   new Refusal(
@@ -70,7 +73,7 @@ const tooLarge = (maxBytes: number, limit?: LimitMetadata) =>
     limit
   );
 const lost = () =>
-  new Refusal(
+  new LostReply(
     "unknown_outcome",
     "The runtime reply was lost; this operation has not been retried."
   );
@@ -234,6 +237,7 @@ function mount(frame: HTMLIFrameElement): void {
       v: wire,
       id,
       kind: "error",
+      ...(error instanceof LostReply ? { replyLost: true } : {}),
       error: {
         source: "patchy",
         code: error.code,
@@ -268,7 +272,7 @@ function mount(frame: HTMLIFrameElement): void {
   const readBody = async (
     response: Response,
     limit: number,
-    limitId: "runtime.file.bytes" | "runtime.result.bytes"
+    limitId: "runtime.file.bytes" | "runtime.result.bytes" | "tier2.query.resultBytes"
   ): Promise<Uint8Array<ArrayBuffer>> => {
     if (!response.body) return new Uint8Array(0);
     const reader = response.body.getReader();
@@ -307,7 +311,10 @@ function mount(frame: HTMLIFrameElement): void {
   const runtime = async (op: Operation, args: unknown, bytes?: ArrayBuffer): Promise<Reply> => {
     if (closed) throw lost();
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 35_000);
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      op === "server.call" ? serverReplyTimeoutMs : 35_000
+    );
     let responseBytes = 0;
     try {
       const headers = new Headers({
@@ -346,8 +353,16 @@ function mount(frame: HTMLIFrameElement): void {
       if (closed) throw lost();
       const data = await readBody(
         response,
-        op === "files.get" && response.ok ? MAX_FILE : runtimeByteLimits.resultBytes,
-        op === "files.get" && response.ok ? "runtime.file.bytes" : "runtime.result.bytes"
+        op === "files.get" && response.ok
+          ? MAX_FILE
+          : op === "server.call"
+            ? registry["tier2.query.resultBytes"].default + 32
+            : runtimeByteLimits.resultBytes,
+        op === "files.get" && response.ok
+          ? "runtime.file.bytes"
+          : op === "server.call"
+            ? "tier2.query.resultBytes"
+            : "runtime.result.bytes"
       );
       responseBytes = data.byteLength;
       if (op === "files.get" && response.ok) {
@@ -611,7 +626,13 @@ function mount(frame: HTMLIFrameElement): void {
     port.start();
     try {
       frame.contentWindow!.postMessage(
-        { v: wire, kind: "bootstrap", nonce, route: frame.dataset.route ?? route() },
+        {
+          v: wire,
+          kind: "bootstrap",
+          nonce,
+          route: frame.dataset.route ?? route(),
+          handlerKinds: JSON.parse(frame.dataset.handlerKinds ?? "{}")
+        },
         "*",
         [channel.port2]
       );

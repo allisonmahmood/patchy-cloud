@@ -28,8 +28,14 @@ For `packages/execution` changes, use DEVELOPMENT's **The execution engine**
 recipe. Exercise the isolated exec entrypoint and real workerd tests without
 starting the cloud or touching Clerk. Prove that a killed generation cannot
 forward callbacks and a fresh bind recovers without replay. Local execution
-proves engine compatibility, not Fargate containment. The local executor is
-available to tests; tier 2 `patchy dev` integration remains separate.
+proves engine compatibility, not Fargate containment.
+
+For tier 2 query/action changes, follow DEVELOPMENT's **The execution engine**
+guidance and exercise an eligible `server.call` through the existing `pnpm dev`
+server composition. The local executor, private callback gateway and snapshot
+adapter run there; this does not enable tier 2 publication or the patch-repo
+dev loop. The end-to-end browser path lands with publication in #401 and
+`patchy dev` on the production engine in #404.
 
 ## Patch repos and the local runtime
 

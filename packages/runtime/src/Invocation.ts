@@ -28,6 +28,7 @@ import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
 import * as Runtime from "./Runtime.js";
 import * as ServerBundles from "./ServerBundles.js";
+import * as QuerySnapshot from "./QuerySnapshot.js";
 
 export class HandlerFailed extends Schema.TaggedError<HandlerFailed>()("HandlerFailed", {
   correlationId: Schema.String,
@@ -141,9 +142,16 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const encoder = new TextEncoder();
 const isExecutionError = Schema.is(Executor.ExecutionError);
 const isHandlerFailed = Schema.is(HandlerFailed);
+const isCapabilityRefused = Schema.is(InvocationCapabilities.CapabilityRefused);
 interface CompiledHandler {
   readonly args: (input: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
   readonly result: (input: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+}
+
+interface Parent {
+  readonly capability: InvocationCapabilities.Capability;
+  readonly bundle: GuestProtocol.Bundle;
+  readonly bound: Executor.BoundVersion;
 }
 
 // These codecs are compiled once for each retained manifest/handler, not once per callback.
@@ -191,6 +199,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
   const bundles = yield* ServerBundles.ServerBundles;
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const log = yield* InvocationLog.InvocationLog;
+  const snapshots = yield* QuerySnapshot.QuerySnapshot;
   const operating = yield* OperatingLimits.OperatingLimits;
   const bounds = yield* Effect.all({
     query: ContractLimits.get("tier2.query.deadline"),
@@ -210,8 +219,9 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
   const call = Effect.fn("Invocation.call")(function* (
     args: unknown,
     binding: Binding.Binding["Service"],
-    reauthorize: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>
-  ) {
+    reauthorize: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>,
+    parent?: Parent
+  ): Effect.fn.Return<ServerCallReply, Runtime.RuntimeError> {
     if (binding.scope === "public") return yield* new Runtime.PublicUnavailable({});
     if (binding.identity === null || binding.manifest.tier !== 2)
       return yield* new Runtime.AccessDenied({});
@@ -222,6 +232,12 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
     const descriptor = binding.manifest.handlers?.[input.handler];
     if (descriptor === undefined || !Object.hasOwn(binding.manifest.handlers!, input.handler))
       return yield* new Runtime.InvalidRequest({});
+    if (parent !== undefined) {
+      yield* capabilities
+        .resolve(parent.capability.token, parent.capability.attempt)
+        .pipe(Effect.mapError((cause) => new Runtime.AccessDenied({ cause })));
+      if (descriptor.kind !== "query") return yield* new Runtime.AccessDenied({});
+    }
     let cached = codecs.get(binding.manifest);
     if (cached === undefined) {
       cached = new Map();
@@ -276,7 +292,10 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
           viewerActions.set(key, (viewerActions.get(key) ?? 0) + 1);
         }
         const startedAt = yield* Clock.currentTimeMillis;
-        const deadline = startedAt + bounds[descriptor.kind];
+        const deadline = Math.min(
+          startedAt + bounds[descriptor.kind],
+          parent?.capability.attempt.deadline ?? Infinity
+        );
         const settlementDeadline = deadline + bounds.cleanup;
         const id = newInternalId("inv");
         const attemptId = newInternalId("attempt");
@@ -297,7 +316,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
           handler: input.handler,
           kind: descriptor.kind,
           initiatingViewerId: viewer.user.id,
-          parentId: null,
+          parentId: parent?.capability.attempt.invocationId ?? null,
           correlationId: binding.correlationId,
           startedAt,
           deadline,
@@ -317,7 +336,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               settledAt,
               durationMs: settledAt - startedAt,
               guestMs,
-              dbMs: 0,
+              dbMs: capability?.snapshot.value?.dbMs ?? 0,
               callbacks: capability?.counters.callbacks ?? 0,
               resultBytes,
               attempts: 1,
@@ -336,7 +355,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
         });
         const run = Effect.gen(function* () {
           const dispatch = Effect.gen(function* () {
-            if (descriptor.kind !== "query") {
+            if (descriptor.kind !== "query" || parent !== undefined) {
               yield* log
                 .begin(begin)
                 .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
@@ -344,14 +363,14 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             }
             if ((yield* Clock.currentTimeMillis) >= deadline)
               return yield* new HandlerTimeout({ correlationId: binding.correlationId });
-            const bundle = yield* bundles.load(binding);
+            const bundle = parent?.bundle ?? (yield* bundles.load(binding));
             if (
               bundle.companyId !== binding.companyId ||
               bundle.patchId !== binding.patchId ||
               bundle.versionId !== binding.versionId
             )
               return yield* new HandlerFailed({ correlationId: binding.correlationId });
-            const bound = yield* executor.bind(bundle);
+            const bound = parent?.bound ?? (yield* executor.bind(bundle));
             if (
               bound.processGeneration === undefined ||
               canonicalArgs(bound.binding) !==
@@ -374,8 +393,29 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 deadline
               },
               kind: descriptor.kind,
-              reauthorize
+              reauthorize,
+              ...(parent === undefined ? {} : { tree: parent.capability.tree }),
+              ...(descriptor.kind !== "action"
+                ? {}
+                : {
+                    run: (args: unknown) =>
+                      call(
+                        args,
+                        { ...binding, correlationId: newInternalId("call") },
+                        reauthorize,
+                        { capability: capability!, bundle, bound }
+                      )
+                  })
             });
+            if (descriptor.kind === "query") {
+              capability.snapshot.value = yield* snapshots
+                .open(capability)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    isCapabilityRefused(cause) ? new Runtime.AccessDenied({ cause }) : cause
+                  )
+                );
+            }
             return yield* executor.invoke({
               wire: GuestProtocol.wireVersion,
               binding: bound.binding,
@@ -513,11 +553,12 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
           }
           if (
             descriptor.kind !== "query" ||
+            parent !== undefined ||
             Exit.isFailure(outcome) ||
             logs.length > 0 ||
             !outcome.value.ok
           ) {
-            if (descriptor.kind === "query") {
+            if (!logStarted && descriptor.kind === "query" && parent === undefined) {
               const admitted = yield* awaitUntil(log.begin(begin), settlementDeadline);
               if (Option.isNone(admitted))
                 return yield* new UnsettledInvocation({ correlationId: binding.correlationId });

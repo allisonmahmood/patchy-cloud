@@ -39,14 +39,29 @@ The engine, inspection, supervisor and local executor are available independentl
 `@patchy/execution/local` owns the production loader and watchdog without a fleet
 pool. A killed generation requires a fresh host bind, never an invocation replay.
 It refuses construction when `NODE_ENV` or its explicit environment is production.
-The tier 2 `patchy dev` integration is a separate ticket; the cloud dev runner and
-migrated test template do not start workerd. Runtime's host invocation path is
-exercised by `packages/runtime/src/InvocationLocal.test.ts`: a real own-table
-handler runs through the private callback listener and supervised local executor.
+The existing `pnpm dev` instance composes this executor into Runtime, so an
+eligible `server.call` executes through the private callback gateway rather than
+returning `InvocationUnavailable`. This is a server-composition boundary, not a
+new patch development command. Tier 2 publishing remains refused until #401;
+the `patchy dev` production-engine integration belongs to #404. Those tickets
+complete the end-to-end browser path. Runtime's `InvocationLocal.test.ts` also
+exercises the private callback listener and supervised local executor.
+Nested queries use the parent's exact binding and have separate invocation rows.
+Resource-free queries use a fenced invocation
+resource with an empty watermark and zero database-held time, without provisioning
+a company database. Data-bearing queries retain one read-only repeatable-read
+snapshot. The primitive snapshot tests use real Postgres for concurrent writes,
+live unsharing and deadline cancellation; PGlite does not prove production contention.
 `Invocation.test.ts` injects a non-returning executor to verify disconnected-client
-deadlines and unresolved-resource destruction. The fleet and tier 2 publish path
-remain separate work; tier 2 publish remains refused. These checks prove local
-execution and settlement, not Fargate containment.
+deadlines, inherited child budgets and unresolved-resource destruction. The fleet
+and tier 2 publish path remain separate work. These checks prove local execution
+and settlement, not Fargate containment.
+
+`pnpm exec vitest run apps/server/src/DevelopmentExecution.test.ts` exercises
+eligible query and action calls through the same `Server.layer` selected by
+`pnpm dev`, including nested callbacks, company isolation and production refusal.
+It supplies retained bundle fixtures through the existing data port, without
+enabling publishing or a patch-repo browser workflow.
 
 To run only the execution task from this checkout:
 
@@ -905,6 +920,15 @@ later migration cannot fill a lower-numbered gap. The three migrator spreads are
 `scripts/dev/src/supervisor.ts` and `test/postgres.ts`; server tests clone the
 template without passing migrations. Packed and live browser servers migrate
 through the server's existing spread rather than maintaining another one.
+
+The supervisor sets `NODE_ENV=development` and `PATCHY_DEV_EXECUTION=true` in
+the server's closed environment. This selects local invocation execution in the
+existing server composition; production construction still refuses it. The
+private callback listener binds loopback, and company-local executors close
+with the server scope. Retained server bytes enter through Runtime's existing
+`ServerBundles` port. Until #401 supplies published server bundles, ordinary
+published versions cannot use this path; the focused composition test supplies
+an eligible retained version and bundle at that boundary.
 
 Company databases are created lazily, not in the seed or template.
 `@patchy/company-database/testing` layers use the embedded cluster's provisioning

@@ -81,7 +81,7 @@ export default defineConfig({name:"contract-test",tier:2,tables:{leads:table("Le
           }
           const handlers = `import { query, mutation, action, t } from "../patchy/_generated/server.js";
 import type { QueryContext } from "../patchy/_generated/server.js";
-async function first(ctx: QueryContext) { return (await ctx.tables.leads.list()).rows[0]?.name ?? "none"; }
+async function first(ctx: QueryContext) { return (await ctx.tables.leads.list({limit:20})).rows[0]?.name ?? "none"; }
 export const find = query({args:{},result:t.text(),errors:["missing"],handler:async(ctx) => first(ctx)});
 export const create = mutation({args:{name:t.text()},result:t.row("leads"),handler:async(ctx,args)=>ctx.tables.leads.insert(args)});
 export const importRows = action({args:{name:t.text()},result:t.text(),handler:async(ctx,args)=>{await ctx.run.leads.create(args);return ctx.run.leads.find({});}});

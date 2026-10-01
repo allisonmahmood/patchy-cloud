@@ -3,6 +3,17 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Binding from "../Binding.js";
 import * as InvocationCapabilities from "../InvocationCapabilities.js";
+import type { Resource } from "../QuerySnapshot.js";
+
+/** Gateway-only fixtures have no SQL resources; snapshot semantics have their own suite. */
+export const snapshot: Resource = {
+  run: (effect) => effect,
+  watermark: {},
+  dbMs: 0,
+  cancel: Effect.void,
+  settled: Effect.void,
+  destroy: () => {}
+};
 
 export const identity = {
   user: { id: "usr_viewer", email: "viewer@example.com", name: "Viewer" },
@@ -32,7 +43,7 @@ export const issue = Effect.fnUntraced(function* (
   capabilities: InvocationCapabilities.InvocationCapabilities["Service"],
   options: Partial<InvocationCapabilities.Issue> = {}
 ) {
-  return yield* capabilities.issue({
+  const capability = yield* capabilities.issue({
     binding,
     kind: "query",
     attempt: {
@@ -44,4 +55,6 @@ export const issue = Effect.fnUntraced(function* (
     reauthorize: Effect.succeed(identity),
     ...options
   });
+  capability.snapshot.value = snapshot;
+  return capability;
 });

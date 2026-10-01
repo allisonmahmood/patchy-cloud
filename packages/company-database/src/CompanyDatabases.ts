@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as ResourceChanges from "./ResourceChanges.js";
@@ -84,6 +85,23 @@ export class PatchLock extends Context.Service<
   }
 >()("@patchy/company-database/CompanyDatabases/PatchLock") {}
 
+/** One reserved session. The caller closes its scope only after SQL has settled. */
+export interface Lease {
+  readonly sql: SqlClient.SqlClient;
+  readonly run: <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<A, E, Exclude<R, CompanyConnection | SqlClient.SqlClient>>;
+  /** Fresh production authority; local fixtures are fixed for the dev process. */
+  readonly authority: <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ) => Effect.Effect<
+    A,
+    E | CompanyDatabaseError | CompanyDatabaseNotReady | CompanyIdentityMismatch | Busy,
+    Exclude<R, CompanyConnection | SqlClient.SqlClient>
+  >;
+  readonly destroy: () => void;
+}
+
 export class FileLock extends Context.Service<
   FileLock,
   {
@@ -111,6 +129,15 @@ export class CompanyDatabases extends Context.Service<
       A,
       E | CompanyDatabaseError | CompanyDatabaseNotReady | CompanyIdentityMismatch | Busy,
       Exclude<R, CompanyConnection | SqlClient.SqlClient>
+    >;
+    /** Shared queries leave one configured slot free for live inventory authority. */
+    readonly lease: (
+      companyId: string,
+      reserveAuthority: boolean
+    ) => Effect.Effect<
+      Lease,
+      CompanyDatabaseError | CompanyDatabaseNotReady | CompanyIdentityMismatch | Busy,
+      Scope.Scope
     >;
     readonly withPatchLock: (
       patchId: string

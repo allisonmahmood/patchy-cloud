@@ -10,7 +10,10 @@ import {
   PostgresRows,
   WIRE_VERSION
 } from "@patchy/api";
-import { Binding } from "@patchy/runtime";
+import { Binding, CallbackGateway, InvocationCapabilities, RuntimeLog } from "@patchy/runtime";
+import * as Testing from "@patchy/sql/testing";
+import * as Clock from "effect/Clock";
+import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -739,4 +742,42 @@ it.effect(
         "access_denied"
       );
     }).pipe(Effect.scoped)
+);
+
+it.effect("an action rechecks a disconnected connection on its next callback", () =>
+  Effect.gen(function* () {
+    const { handlers, setConnection } = yield* setup();
+    const capabilities = yield* InvocationCapabilities.make;
+    const gateway = yield* CallbackGateway.make(handlers).pipe(
+      Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
+    );
+    const capability = yield* capabilities.issue({
+      binding: { ...binding, manifest: { ...binding.manifest, tier: 2 } },
+      kind: "action",
+      attempt: {
+        invocationId: "inv_connection_action",
+        attemptId: "attempt_connection_action",
+        processGeneration: 1,
+        deadline: (yield* Clock.currentTimeMillis) + 60_000
+      },
+      reauthorize: Effect.succeed(binding.identity!)
+    });
+    const request = {
+      op: "postgres.query",
+      args: {
+        connection: "sales",
+        sql: "SELECT 7::integer AS value",
+        params: [],
+        shape: { value: { kind: "integer" } }
+      }
+    };
+    assert.deepStrictEqual(yield* gateway.callback(capability.token, capability.attempt, request), {
+      ok: true,
+      value: { ok: true, rows: [{ value: 7 }] }
+    });
+    setConnection(new ConnectionStore.Connection({ ...connection, status: "disconnected" }));
+    const refusal = yield* gateway.callback(capability.token, capability.attempt, request);
+    assert.include(refusal, { ok: false, source: "patchy", code: "access_denied" });
+    assert.isTrue(yield* capabilities.settle(capability.token, "returned"));
+  }).pipe(Effect.scoped, Effect.provide(RuntimeLog.layer.pipe(Layer.provide(Testing.layer()))))
 );

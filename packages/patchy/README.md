@@ -106,6 +106,11 @@ handler code does not block generation. Nested modules, invalid names and
 symbolic links are refused locally.
 Declared business errors retain their `source: "handler"`, code and details across
 HTTP and broker transports; similarly shaped successful data remains data.
+The client retries a lost query reply once with its original arguments. The shell
+supplies the loaded version's inspected handler kinds at bootstrap, so the page
+never imports server implementations to decide whether retry is safe. Missing or
+invalid kind metadata disables retry. Actions and delivered refusals are never
+automatically retried.
 
 `t` adds objects, arrays, enums, nullable values, full rows, result-only file
 handles and action-argument uploads. Optional argument keys may be absent;
@@ -129,12 +134,26 @@ refusals and declared business errors retain their structured replies.
 SDK query-shape validation preserves its own `invalid_request` refusals without
 trusting arbitrary handler-created `PatchyError` objects.
 
-The pinned engine and isolated inspection run these guests directly. They are
-not yet connected to hosted or local tier 2 admission: the server still refuses
-tier 2 publish. Mutation-key execution and
-`unknown_outcome.retry()` behavior land with the mutations ticket. The
-`patchy-server` skill source documents the contract and embeds registry-generated
-limits; tier 2 init will install it.
+Queries and actions run through the pinned local executor in tests and the
+source checkout's existing `pnpm dev` cloud server for eligible `server.call`
+requests. See [the development guide](../../docs/DEVELOPMENT.md).
+A query with declared data resources shares one read-only `REPEATABLE READ`
+company snapshot across its callbacks, with a 3-second deadline. Resource-free
+queries need no company database lease and report an empty watermark and zero
+database-held time.
+Shared-table authority is still checked live on every callback. File reads in
+queries are `list` and `stat`, returning metadata without handles. Actions have
+60 seconds, plain-byte file operations, declared connections with a 15-second
+per-call limit, and typed nested queries under the parent's remaining deadline.
+Actions have no transaction of their own.
+
+The tier 2 `patchy dev` lifecycle and server watch, production hosting,
+tier 2 publishing, mutation-key execution and `unknown_outcome.retry()` behavior
+land separately.
+The `patchy-server` skill
+documents query and action behavior and embeds registry-generated limits;
+tier 2 init will install it. Authorised handles and staged upload adoption remain
+reserved contracts.
 
 ### Config
 

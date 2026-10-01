@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import { limitRefusal } from "@patchy/api";
 import type * as GuestProtocol from "@patchy/api/guest";
 import { PatchyError } from "./clientError.js";
-import { t, type Config, type Json } from "./config.js";
+import { t, type Config, type FileStoreDefinition, type Json } from "./config.js";
 import { createGuest } from "./guest.js";
 import { HandlerError } from "./handlerError.js";
 import { bindServer } from "./server.js";
@@ -31,6 +31,7 @@ interface Connections {
   };
 }
 const server = bindServer<Config, Record<never, never>, Record<never, never>, Connections>();
+const fileServer = bindServer<Config & { files: { documents: FileStoreDefinition } }>();
 const viewer = {
   user: { id: "usr_test", name: "Reader", email: "reader@example.test" },
   company: { id: "com_test", name: "Example", handle: "example" },
@@ -309,4 +310,100 @@ it("joins a pending log callback and returns its refusal instead of dropping it"
     error: "The callback service is unavailable."
   });
   assert.deepInclude(await reply, { ok: false, source: "patchy", code: "source_unavailable" });
+});
+
+it.each([
+  {
+    name: "a typed-array slice",
+    input: new Uint8Array([99, 1, 2, 3, 88]).subarray(1, 4),
+    contentType: "application/octet-stream"
+  },
+  {
+    name: "an ArrayBuffer",
+    input: new Uint8Array([1, 2, 3]).buffer,
+    contentType: "application/octet-stream"
+  },
+  {
+    name: "a Blob",
+    input: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    contentType: "image/png"
+  }
+])(
+  "stores and reads only the plain bytes of $name before deleting them",
+  async ({ input, contentType }) => {
+    const objects = new Map<string, { bytes: Uint8Array; contentType: string }>();
+    const definition = fileServer.action({
+      args: {},
+      result: t.object({
+        bytes: t.array(t.integer()),
+        contentType: t.text(),
+        size: t.integer(),
+        deleted: t.boolean()
+      }),
+      handler: async (ctx) => {
+        await ctx.files.documents.put("report.bin", input);
+        const bytes = await ctx.files.documents.get("report.bin");
+        const metadata = await ctx.files.documents.stat("report.bin");
+        await ctx.files.documents.delete("report.bin");
+        return {
+          bytes: [...bytes],
+          contentType: metadata!.contentType,
+          size: metadata!.size,
+          deleted: (await ctx.files.documents.stat("report.bin")) === null
+        };
+      }
+    });
+    const reply = await invoke(definition, async (operation) => {
+      const { op, args, body } = operation as GuestProtocol.Callback;
+      const name = args.name as string;
+      if (op === "files.put") {
+        objects.set(name, { bytes: body!.bytes.slice(), contentType: body!.contentType });
+        return { ok: true, value: null };
+      }
+      if (op === "files.delete") {
+        objects.delete(name);
+        return { ok: true, value: null };
+      }
+      const object = objects.get(name);
+      if (op === "files.stat")
+        return {
+          ok: true,
+          value: object
+            ? {
+                name,
+                size: object.bytes.byteLength,
+                contentType: object.contentType,
+                updatedAt: "2026-09-29T00:00:00.000Z"
+              }
+            : null
+        };
+      if (op === "files.get" && object) return { ok: true, body: object };
+      throw new Error(`Unexpected file callback: ${op}`);
+    });
+    assert.deepStrictEqual(reply, {
+      ok: true,
+      value: { bytes: [1, 2, 3], contentType, size: 3, deleted: true }
+    });
+    assert.strictEqual(objects.size, 0);
+  }
+);
+
+it("preserves a file callback refusal instead of reporting a malformed byte reply", async () => {
+  const definition = fileServer.action({
+    args: {},
+    result: t.integer(),
+    handler: async (ctx) => (await ctx.files.documents.get("report.bin")).byteLength
+  });
+  const reply = await invoke(definition, async () => ({
+    ok: false,
+    source: "patchy",
+    code: "access_denied",
+    error: "You no longer have access to this file store."
+  }));
+  assert.deepStrictEqual(reply, {
+    ok: false,
+    source: "patchy",
+    code: "access_denied",
+    error: "You no longer have access to this file store."
+  });
 });

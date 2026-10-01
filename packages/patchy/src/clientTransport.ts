@@ -5,6 +5,8 @@ import { PatchyError, decodeError } from "./clientError.js";
 import { HandlerError, decodeHandlerError } from "./handlerError.js";
 import { WIRE_VERSION } from "./release.js";
 import type { QueryDriver, QueryFrame } from "./queryRegistry.js";
+import { serverReplyTimeoutMs as serverReplyTimeout } from "@patchy/api/query-config";
+import type { HandlerKindName } from "./server.js";
 
 export type Operation =
   | "me"
@@ -15,7 +17,7 @@ export type Operation =
   | "subscriptions.unsubscribe"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
   | `shared.${"get" | "getMany" | "list"}`
-  | `files.${"get" | "put" | "list" | "delete"}`
+  | `files.${"get" | "put" | "list" | "stat" | "delete"}`
   | `postgres.${"get" | "getMany" | "list" | "query"}`;
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
@@ -29,6 +31,8 @@ export interface Transport {
   readonly queries: QueryDriver;
   /** Current server-clock estimate from hello, unavailable before the document stream opens. */
   serverTime(): number | undefined;
+  /** The loaded version's host-inspected kind, never inferred from the caller's types. */
+  handlerKind(name: string): HandlerKindName | undefined;
   close(): void;
 }
 export interface Me {
@@ -45,18 +49,30 @@ export interface Port {
   start(): void;
   close(): void;
 }
-const lost = () =>
-  new PatchyError(
-    "unknown_outcome",
-    "The runtime reply was lost; this operation has not been retried.",
-    {}
-  );
+/** Transport provenance is local to the adapter, never inferred from a runtime refusal code. */
+export class LostReply extends PatchyError<"unknown_outcome"> {}
+const lost = () => new LostReply("unknown_outcome", "The runtime reply was lost.", {});
+
+type HandlerKinds = Readonly<Record<string, HandlerKindName>>;
+const readHandlerKinds = (value: unknown): HandlerKinds | undefined => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const kinds: Record<string, HandlerKindName> = Object.create(null);
+  for (const [name, kind] of Object.entries(value)) {
+    if (kind !== "query" && kind !== "mutation" && kind !== "action") return undefined;
+    kinds[name] = kind;
+  }
+  return kinds;
+};
 
 export function createPortTransport(
   port: Port,
-  options: { readonly timeoutMs?: number; readonly route?: string } = {}
+  options: {
+    readonly timeoutMs?: number;
+    readonly route?: string;
+    readonly handlerKinds?: unknown;
+  } = {}
 ): Transport {
-  const timeoutMs = options.timeoutMs ?? 35_000;
+  const handlerKinds = readHandlerKinds(options.handlerKinds);
   let sequence = 0;
   let closed = false;
   let path = options.route ?? "/";
@@ -141,10 +157,14 @@ export function createPortTransport(
     clearTimeout(request.timer);
     pending.delete(value.id);
     if (value.kind === "error") {
-      request.reject(
+      const error =
         (request.op === "server.call" ? decodeHandlerError(value.error) : undefined) ??
-          decodeError(value.error) ??
-          new PatchyError("invalid_request", "The broker returned an invalid error.", {})
+        decodeError(value.error) ??
+        new PatchyError("invalid_request", "The broker returned an invalid error.", {});
+      request.reject(
+        value.replyLost === true && error instanceof PatchyError && error.code === "unknown_outcome"
+          ? lost()
+          : error
       );
     } else if (value.bytes instanceof ArrayBuffer || value.bytes instanceof Uint8Array) {
       request.resolve({
@@ -181,10 +201,13 @@ export function createPortTransport(
     if (closed) return Promise.reject(lost());
     const id = String(++sequence);
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(lost());
-    }, timeoutMs);
+    const timer = setTimeout(
+      () => {
+        pending.delete(id);
+        reject(lost());
+      },
+      options.timeoutMs ?? (op === "server.call" ? serverReplyTimeout : 35_000)
+    );
     pending.set(id, {
       op,
       resolve,
@@ -223,6 +246,7 @@ export function createPortTransport(
     return promise;
   };
   return {
+    handlerKind: (name) => (closed ? undefined : handlerKinds?.[name]),
     call,
     queries: {
       subscribe(request, onFrame) {
@@ -308,7 +332,11 @@ export function createPostMessageTransport(
       }
       removeBootstrap();
       const port = event.ports[0]!;
-      transport = createPortTransport(port, { ...options, route: data.route });
+      transport = createPortTransport(port, {
+        ...options,
+        route: data.route,
+        handlerKinds: data.handlerKinds
+      });
       try {
         port.postMessage({ kind: "ready", wire: WIRE_VERSION, nonce });
         resolve(transport);
@@ -340,6 +368,7 @@ export function createPostMessageTransport(
       return (await ready).call(op, args, bytes);
     },
     serverTime: () => (closed ? undefined : transport?.serverTime()),
+    handlerKind: (name) => (closed ? undefined : transport?.handlerKind(name)),
     queries: {
       subscribe(request, onFrame) {
         let active = !closed;
@@ -396,11 +425,14 @@ export interface HttpTransportOptions {
   readonly patchId: string;
   readonly versionId: string;
   readonly fetch?: typeof fetch;
+  /** Test adapters must supply the host-inspected kinds for this exact version. */
+  readonly handlerKinds?: HandlerKinds;
 }
 /** Test adapter only. Production bundles reach HTTP exclusively through the shell's broker. */
 export function createHttpTransport(options: HttpTransportOptions): Transport {
   const fetcher = options.fetch ?? globalThis.fetch;
   const origin = new URL(options.baseUrl).origin;
+  const handlerKinds = readHandlerKinds(options.handlerKinds);
   const controller = new AbortController();
   let identity: Promise<Me | null> | undefined;
   const browserOnly = () =>
@@ -480,6 +512,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
   };
   return {
     serverTime: () => undefined,
+    handlerKind: (name) => (controller.signal.aborted ? undefined : handlerKinds?.[name]),
     queries: {
       subscribe() {
         throw browserOnly();

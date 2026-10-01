@@ -380,6 +380,14 @@ export const runtimeOperations = {
     response: FilePage,
     kind: "read"
   },
+  "files.stat": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.stat"),
+      args: Schema.Struct({ store: DefinitionName, name: FileName })
+    }),
+    response: Schema.NullOr(FileMetadata),
+    kind: "read"
+  },
   "files.delete": {
     request: Schema.Struct({
       op: Schema.Literal("files.delete"),

@@ -1,6 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Node supplies opaque cryptographic capability tokens.
 import { randomBytes } from "node:crypto";
-import { limitRefusal, type HandlerKind, type RuntimeFailure, type RuntimeMe } from "@patchy/api";
+import {
+  limitRefusal,
+  type HandlerKind,
+  type RuntimeFailure,
+  type RuntimeMe,
+  type ServerCallReply
+} from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { ContractLimits, DeploymentConfig } from "@patchy/limits";
 import * as Cause from "effect/Cause";
@@ -16,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Binding from "./Binding.js";
 import type { RuntimeError } from "./Runtime.js";
+import type { Resource } from "./QuerySnapshot.js";
 
 export type EndReason = "returned" | "deadline" | "superseded" | "process_killed";
 export type AttemptIdentity = Pick<
@@ -40,12 +47,16 @@ export interface Capability {
   readonly counters: Counters;
   readonly logs: Array<Schema.Json>;
   readonly refusals: Array<{ readonly failure: RuntimeFailure; readonly status: number }>;
+  readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
+  readonly snapshot: { value?: Resource };
 }
 export interface Issue {
   readonly binding: Binding.Binding["Service"];
   readonly attempt: GuestProtocol.Attempt;
   readonly kind: HandlerKind;
   readonly reauthorize: Effect.Effect<NonNullable<RuntimeMe>, RuntimeError>;
+  readonly tree?: TreeBudget;
+  readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
 }
 
 /** Owners signal settled only after the commit or cancellation outcome is known. */
@@ -267,7 +278,9 @@ export const make = Effect.gen(function* () {
       attempt: Object.freeze({ ...input.attempt }),
       kind: input.kind,
       reauthorize: input.reauthorize,
-      tree: { bytes: 0 },
+      tree: input.tree ?? { bytes: 0 },
+      snapshot: {},
+      ...(input.run === undefined ? {} : { run: input.run }),
       counters,
       logs: counters.logs,
       refusals: []
