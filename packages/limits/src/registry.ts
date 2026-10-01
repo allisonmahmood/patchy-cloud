@@ -427,6 +427,15 @@ export const registry = {
     refusal: "limit_exceeded",
     overridable: true
   },
+  "execution.management.bodyBytes": {
+    kind: "operating",
+    default: 16777216,
+    unit: "bytes",
+    scope: "host",
+    measure: "Serialized private management request, including pushed bundle source",
+    refusal: "too_large",
+    overridable: false
+  },
   "execution.process.rss": {
     kind: "operating",
     default: 536870912,
@@ -504,7 +513,7 @@ export const registry = {
     default: 60000,
     unit: "milliseconds",
     scope: "company",
-    measure: "Process idle window before reap",
+    measure: "Process idle window before reap and maximum unfinished initialization lifetime",
     refusal: null,
     overridable: true
   },

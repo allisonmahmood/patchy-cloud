@@ -404,6 +404,18 @@ These are engine/inspection contracts, not public `HttpApi` routes or CLI operat
 
 See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Tier 2 publishing remains refused.
 
+## Private execution management protocol
+
+The schemas in [`packages/api/src/management.ts`](../packages/api/src/management.ts) are private host-to-supervisor operations, never public `HttpApi` routes or CLI commands. All four routes use POST and authenticate the current or previous deployment secret as a bearer before reading JSON. Invocation capabilities are refused. The listener binds loopback or an explicitly configured private interface; deployment security groups restrict access to hosts.
+
+- `/bind` takes `companyId`, `bindingEpoch` and an optional guest `Bundle`. The first call reserves the company. Retrying a bundle bind at the same epoch is idempotent while its resident process is alive; rebinding after reap creates a new generation. Adoption raises the epoch. A bundle bind returns `bindingEpoch`, `binding` and `processGeneration`. Another company or a stopped task cannot reuse it. Unfinished initialization expires at `execution.process.idle` (60 seconds by default), even while health probes succeed, with a `load_failed` refusal and process-report end cause.
+- `/invoke` takes `bindingEpoch` and the guest `Invoke` as `request`, including the generation returned by bind. Admission can evict idle siblings under residency pressure, never the target process; without enough capacity it refuses `busy`. Success is the guest `InvokeReply`; a killed process returns `process_killed`, not a transaction outcome. The caller must not replay automatically.
+- `/stop` takes `bindingEpoch` and optional `processGeneration`, returning 204. With a generation it kills only that process; without one it permanently stops the supervisor's admissions and reaps all processes. `/stats` remains available for reports.
+- `/stats` takes `bindingEpoch` and optional `acknowledgeReports` ids. It returns company, epoch, stopped state, aggregate RSS, live process statistics and unacknowledged process reports. The host must persist reports before acknowledging them. Retried stats replies retain the same report ids.
+- A process report includes its binding, epoch, generation, spawn/end times, end cause, CPU seconds, peak RSS, calls served, interrupted attempt identities and process wide event. Residency peaks cover that process's lifetime, not earlier residents. The supervisor samples meters before reap. An unexpected sampling failure kills only the affected resident with end cause `metering_failed`, leaving other residents supervised. Only the host classifies each interrupted attempt by its commit outcome.
+- Callback forwarding stamps `X-Patchy-Binding-Epoch`, `X-Patchy-Process-Generation`, `X-Patchy-Invocation-Id` and `X-Patchy-Attempt-Id`. The supervisor rejects ended attempts and killed generations before forwarding, independently of the host's capability checks.
+- Refusals are `{ ok: false, code }`, with `scope`, `limitId` and the enforced `value` for limit refusals (`retryAfter` only where safe). Authentication returns 401; stale epochs/generations, missing bundles, binding conflicts and stopped tasks return 409; residency pressure returns 503 `busy`; process loss returns 502 `process_killed`. Malformed requests and `load_failed` return 400. Private request bytes are bounded by `execution.management.bodyBytes`; oversized bodies return 413 `too_large` with the enforced limit.
+
 ## Shapes
 
 ### Identity

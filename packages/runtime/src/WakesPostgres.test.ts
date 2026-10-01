@@ -37,6 +37,7 @@ it.layer(Testing.layer())("cross-host wakes", (it) => {
     }).pipe(Effect.scoped)
   );
 
+  // A real socket can report its disconnect after a one-off test-clock advance.
   it.effect("requests durable reconciliation after a dropped listener reconnects", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -47,10 +48,9 @@ it.layer(Testing.layer())("cross-host wakes", (it) => {
       yield* sql`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
         WHERE datname = current_database() AND pid <> pg_backend_pid()
           AND query ILIKE 'LISTEN%patchy_runtime_wakes%'`;
-      yield* TestClock.adjust("1 second");
       assert.deepStrictEqual(yield* Queue.take(received), []);
       yield* host.publish(["store:source:files"]);
       assert.deepStrictEqual(yield* Queue.take(received), ["store:source:files"]);
-    }).pipe(Effect.scoped)
+    }).pipe(Effect.scoped, TestClock.withLive)
   );
 });

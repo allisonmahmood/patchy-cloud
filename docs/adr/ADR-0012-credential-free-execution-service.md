@@ -22,10 +22,9 @@ implements it, and Runtime never imports execution. `Executor` binds exact bundl
 bytes to a company/patch/version and invokes admitted work. It owns no pool,
 release, stop, admission or transaction settlement.
 
-The supervisor, supervised local executor, host invocation path and fleet are
-separate tickets. The decisions below constrain them; this engine does not claim
-their enforcement. Tier 2 publish remains refused. There is no execution-owned
-glossary: execution shares Runtime's terms.
+Issue #396 implements the supervisor, private management listener and supervised
+local executor. The host invocation path and fleet remain separate tickets.
+Tier 2 publish remains refused. Execution shares Runtime's glossary.
 
 ## Engine, guest wire and inspection
 
@@ -48,8 +47,9 @@ The loader has explicitly configured callback service bindings, not a general
 network binding. Each invocation selects its issuing host's trusted callback URL;
 several host replicas may share one loaded version. Configured addresses are a
 trusted caller's responsibility, not patch input. Inspection configures none.
-The eventual supervisor supplies the deployment's issuing-host addresses and
-owns changes to its processes and configuration.
+The supervisor supplies the deployment's issuing-host addresses. Each workerd
+process can reach only its supervisor callback proxy, which forwards to those
+addresses after checking the current epoch and live process generation.
 
 `@patchy/api/guest` contains the private schemas, never public `HttpApi` routes.
 JSON callbacks carry `{ op, args }`; both callbacks and handler replies preserve
@@ -96,20 +96,84 @@ process and removes its temporary files on success, failure or interruption.
 Descriptor discovery is bundle self-description and an exact-byte consistency
 check, not proof that arbitrary hostile code dispatches what it describes.
 
+## Supervisor and local execution
+
+`@patchy/execution/supervisor` owns one workerd process per loaded patch version.
+The `apps/server/src/exec.ts` entrypoint runs it without host services or
+persistence. The management listener exposes only private `POST /bind`,
+`/invoke`, `/stop` and `/stats`. It authenticates before reading the body, using
+the current or previous deployment secret. It binds loopback by default;
+an explicit private-interface setting permits an RFC1918 or ULA address,
+never a wildcard or public address. The deployment must restrict that listener
+to the host security group. Invocation capabilities cannot authenticate it.
+
+The first bind reserves the task for one company. Retrying a bundle bind at the
+same epoch is idempotent while its resident process is alive. Rebinding after
+reap creates a new process generation, even at the same epoch. Adoption raises
+the epoch. Every management operation checks it, including report
+acknowledgements. A stopped task cannot be rebound. Loading a bundle returns
+its process generation, and invocation names that generation.
+The callback proxy checks the immutable attempt, capability, deadline, epoch
+and generation before forwarding and again before delivering a reply. It stamps
+the epoch and generation on forwarded callbacks. A process kill removes its
+callback routes before reaping, so late calls cannot reach the host.
+
+The watchdog samples each process every 250 ms. It kills at the caller's
+absolute deadline plus one second, after six seconds without a successful
+health probe, or at 512 MiB RSS. Dispatch belongs to the supervisor's scope:
+losing the management HTTP caller does not remove the running deadline.
+Loading a bundle does not block the watchdog. An unfinished initializer is killed
+at `execution.process.idle`, 60 seconds by default, even if health probes succeed.
+Its bind fails with `load_failed`, and its process report has the same end cause.
+Ready processes are reaped after 60 seconds idle. Residency allows 12 processes
+and 1.5 GiB aggregate RSS, including the supervisor's retained bundles and reports.
+Under memory pressure the largest idle process goes first; otherwise eviction
+selects the oldest idle process. Both bind and invoke can evict idle residents;
+invocation admission does not evict its target. Without an idle process to evict,
+further work receives `busy` with the company scope, limiting residency id and
+configured value.
+
+Linux metering reads process CPU and RSS from `/proc`; macOS uses `ps`.
+Unsupported platforms refuse supervisor construction rather than return fake
+metering. An unexpected sampling failure kills only the affected resident and
+records `metering_failed`; the watchdog continues supervising other residents.
+When the supervisor has permission, it launches each child under a distinct
+unprivileged uid and gid. An unprivileged local runner cannot grant that
+separation. The company task remains the security boundary.
+
+On reap or kill the supervisor retains one report keyed by company, patch,
+version and generation, with sampled CPU seconds, peak RSS, calls served,
+the end cause and all interrupted attempts. The report includes the process
+wide event from spawn through end, with residency peaks over that lifetime
+rather than earlier residents. `/stats` delivers reports repeatedly until
+the host acknowledges their ids after durable storage. The supervisor owns no
+database. A killed invocation returns `process_killed`, not a claimed rollback
+or `handler_timeout`; the host must classify every attempt by its commit outcome.
+
+`@patchy/execution/local` implements Runtime's `Executor` without a pool.
+After a health kill, the host binds again to get a fresh process generation;
+the executor never replays the failed invocation. Construction refuses a
+production environment. The local supervisor runs in the host process, so
+aggregate RSS is the real `process.memoryUsage.rss()` plus sampled child RSS.
+This intentionally includes unrelated host allocations and is more conservative
+than a dedicated execution task. No fixed allowance replaces measured host RSS.
+Local execution proves engine compatibility and recovery, not Fargate containment
+or per-invocation CPU and memory guarantees.
+
 ## Seven hosting decisions
 
 1. **One company per task, then stop.** An ECS Fargate task in `us-east-1` serves
    one company and is stopped on release, never wiped and returned to the pool.
    No other company's code has run in that task's kernel. The starting task size
-   is 0.5 vCPU and 2 GB. A distinct unprivileged uid per workerd process is the
+   is 0.5 vCPU and 2 GiB. A distinct unprivileged uid per workerd process is the
    inexpensive hardening; the task remains the security boundary.
 2. **A global spare pool.** The target is the larger of two spares and the wake
    rate over 15 minutes multiplied by measured cold-start time, under a fleet
    budget. An empty pool waits at most 40 seconds behind the shell's starting
    state, then returns `busy`. Residency is separate: at most 12 loaded-version
-   processes and 1.5 GB aggregate, including supervisor, bundles and overlapping
+   processes and 1.5 GiB aggregate, including supervisor, bundles and overlapping
    versions. Evict idle processes first; refuse `busy` if none is idle. Reap at
-   60 seconds idle and kill a process at 512 MB RSS. Dormant patches spawn nothing.
+   60 seconds idle and kill a process at 512 MiB RSS. Dormant patches spawn nothing.
 3. **Idle release counts all work.** Release follows 30 minutes with no connected
    tier 2 documents and no work in flight. Retries, nested calls after document
    departure and transaction cleanup count. Fence new admissions before stopping;

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off globalTimersInEffect:off globalDate:off preferSchemaOverJson:off -- direct child ownership and wall-clock startup work under TestClock; JSON encodes validated callback config and pinned compatibility flags.
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
+import { chown, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 export class WorkerdError extends Schema.TaggedError<WorkerdError>()("WorkerdError", {
-  stage: Schema.Literals(["binary", "bundle", "config", "spawn", "startup"]),
+  stage: Schema.Literals(["binary", "bundle", "config", "spawn", "startup", "sample"]),
   reason: Schema.Literals([
     "unsupported_platform",
     "resolution_failed",
@@ -37,6 +38,15 @@ export class WorkerdError extends Schema.TaggedError<WorkerdError>()("WorkerdErr
   }
 }
 const isWorkerdError = Schema.is(WorkerdError);
+
+class WorkerdCleanupError extends Schema.TaggedError<WorkerdCleanupError>()("WorkerdCleanupError", {
+  directory: Schema.String,
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return `The reaped execution process's temporary directory ${this.directory} could not be removed.`;
+  }
+}
 
 const packages: Readonly<Record<string, string>> = {
   "linux x64": "@cloudflare/workerd-linux-64",
@@ -172,9 +182,80 @@ export interface WorkerdProcess {
   readonly directory: string;
 }
 
+let nextUid = 60_000;
+let clockTicks: Promise<number> | undefined;
+
+export interface ProcessSample {
+  readonly rssBytes: number;
+  readonly peakRssBytes: number;
+  readonly cpuSeconds: number;
+}
+
+/** Sample before killing; after exit only the supervisor's retained sample remains. */
+export const sampleProcess = (
+  pid: number
+): Effect.Effect<ProcessSample | undefined, WorkerdError> =>
+  Effect.tryPromise({
+    try: async () => {
+      if (process.platform === "darwin") {
+        const output = await new Promise<string>((resolve, reject) => {
+          execFile("ps", ["-o", "rss=", "-o", "time=", "-p", String(pid)], (error, stdout) => {
+            if (error !== null && error.code !== 1) reject(error);
+            else resolve(stdout);
+          });
+        });
+        const match = /^\s*(\d+)\s+(?:(\d+)-)?(?:(\d+):)?(\d+):([\d.]+)\s*$/.exec(output);
+        if (match === null) return undefined;
+        return {
+          rssBytes: Number(match[1]) * 1024,
+          peakRssBytes: Number(match[1]) * 1024,
+          cpuSeconds:
+            Number(match[2] ?? 0) * 86400 +
+            Number(match[3] ?? 0) * 3600 +
+            Number(match[4]) * 60 +
+            Number(match[5])
+        };
+      }
+      const ticks = await (clockTicks ??= new Promise<number>((resolve, reject) => {
+        execFile("getconf", ["CLK_TCK"], (error, stdout) => {
+          const value = Number(stdout.trim());
+          if (error !== null) reject(error);
+          else if (!Number.isSafeInteger(value) || value <= 0)
+            reject(new Error("Invalid process CPU clock frequency"));
+          else resolve(value);
+        });
+      }));
+      try {
+        const [stat, status] = await Promise.all([
+          readFile(`/proc/${pid}/stat`, "utf8"),
+          readFile(`/proc/${pid}/status`, "utf8")
+        ]);
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        return {
+          cpuSeconds: (Number(fields[11]) + Number(fields[12])) / ticks,
+          rssBytes: Number(/^VmRSS:\s+(\d+)/m.exec(status)?.[1] ?? 0) * 1024,
+          peakRssBytes: Number(/^VmHWM:\s+(\d+)/m.exec(status)?.[1] ?? 0) * 1024
+        };
+      } catch (cause) {
+        if (
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          (cause.code === "ENOENT" || cause.code === "ESRCH")
+        )
+          return undefined;
+        throw cause;
+      }
+    },
+    catch: (cause) => new WorkerdError({ stage: "sample", reason: "request_failed", cause })
+  });
+
 /** A direct process for tests and inspection. The owning scope kills and reaps it. */
 export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
-  options: { readonly callbackUrls?: readonly string[] } = {}
+  options: {
+    readonly callbackUrls?: readonly string[];
+    readonly separateUid?: boolean;
+  } = {}
 ) {
   const executable = yield* binary;
   const loader = yield* loaderSource;
@@ -194,20 +275,43 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
             writeFile(join(directory, "loader.js"), loader),
             writeFile(join(directory, "config.capnp"), configuration)
           ]);
+          const uid = options.separateUid && process.getuid?.() === 0 ? nextUid++ : undefined;
+          if (uid !== undefined) {
+            await Promise.all([
+              chown(directory, uid, uid),
+              chown(join(directory, "loader.js"), uid, uid),
+              chown(join(directory, "config.capnp"), uid, uid)
+            ]);
+          }
           const port = await reservePort();
-          const child = spawn(
-            executable,
-            [
-              "serve",
-              join(directory, "config.capnp"),
-              "--experimental",
-              `--socket-addr=http=127.0.0.1:${port}`
-            ],
-            {
-              stdio: ["ignore", "ignore", "pipe"],
-              env: {}
-            }
-          );
+          // An inherited descriptor lets a dropped UID execute the pinned binary even
+          // when the package manager keeps it below a root-only home directory.
+          const executableFd =
+            uid !== undefined && process.platform === "linux"
+              ? openSync(executable, "r")
+              : undefined;
+          let child: ChildProcess;
+          try {
+            child = spawn(
+              executableFd === undefined ? executable : "/proc/self/fd/3",
+              [
+                "serve",
+                join(directory, "config.capnp"),
+                "--experimental",
+                `--socket-addr=http=127.0.0.1:${port}`
+              ],
+              {
+                stdio:
+                  executableFd === undefined
+                    ? ["ignore", "ignore", "pipe"]
+                    : ["ignore", "ignore", "pipe", executableFd],
+                env: {},
+                ...(uid === undefined ? {} : { uid, gid: uid })
+              }
+            );
+          } finally {
+            if (executableFd !== undefined) closeSync(executableFd);
+          }
           let stderrBytes = 0;
           let spawnError: Error | undefined;
           child.stderr?.on("data", (chunk: Buffer) => {
@@ -222,7 +326,6 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
             (disposal ??= (async () => {
               if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
               await closed;
-              await rm(directory, { recursive: true, force: true });
             })());
           return {
             url: `http://127.0.0.1:${port}`,
@@ -249,7 +352,19 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
           ? cause
           : new WorkerdError({ stage: "spawn", reason: "acquisition_failed", cause })
     }),
-    (resource) => Effect.promise(resource.dispose)
+    (resource) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(resource.dispose);
+        yield* Effect.tryPromise({
+          try: () => rm(resource.directory, { recursive: true, force: true }),
+          catch: (cause) => new WorkerdCleanupError({ directory: resource.directory, cause })
+        }).pipe(
+          Effect.catchTags({
+            WorkerdCleanupError: (error) =>
+              Effect.logError(error.message, { directory: error.directory })
+          })
+        );
+      })
   );
   yield* Effect.tryPromise({
     try: async (signal) => {

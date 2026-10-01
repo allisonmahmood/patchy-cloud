@@ -63,6 +63,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
 | `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
 | `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `limit_exceeded` | Yes | deployment |
+| `execution.management.bodyBytes` | operating | 16777216 | bytes | host | Serialized private management request, including pushed bundle source | `too_large` | No | deployment |
 | `execution.process.rss` | operating | 536870912 | bytes | patch | Process RSS at termination; memory configured in MiB | None | Yes | deployment |
 | `execution.breaker.kills` | operating | 3 | kills | patch | Kills across all versions of one patch within the breaker window | `patch_paused` | Yes | deployment |
 | `execution.breaker.window` | operating | 600000 | milliseconds | patch | Window counting process kills; breaker is off in dev | None | Yes | deployment |
@@ -71,7 +72,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `execution.task.memory` | operating | 2147483648 | bytes | company | Fargate memory allocation, 2048 MiB | None | Yes | deployment |
 | `execution.residency.processes` | operating | 12 | processes | company | Loaded version processes; idle processes evicted first | `busy` | Yes | deployment |
 | `execution.residency.bytes` | operating | 1610612736 | bytes | company | Aggregate RSS including supervisor, bundles and overlapping versions | `busy` | Yes | deployment |
-| `execution.process.idle` | operating | 60000 | milliseconds | company | Process idle window before reap | None | Yes | deployment |
+| `execution.process.idle` | operating | 60000 | milliseconds | company | Process idle window before reap and maximum unfinished initialization lifetime | None | Yes | deployment |
 | `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
 | `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
 | `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed; held calls are never replayed | `busy` | Yes | deployment |
@@ -117,3 +118,11 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 All byte limits, including process RSS and Fargate memory, are recorded in bytes. Defaults use binary multiples where the decision names KiB, MiB or GiB; Fargate memory defaults are converted from MiB. Deadlines, idle windows and retention periods are milliseconds; retry delays on the wire are seconds. A scope of viewer may be further bound to a patch or document as the measure column states.
 
 At a caller deadline, effects are fenced and cancellation begins. It does not promise rollback by that instant. An unresolved mutation commit is `unknown_outcome`, not `handler_timeout`; settlement destroys an unresolved connection after its cleanup bound. Query and mutation cancellation use their caller deadlines. No per-invocation CPU or memory guarantee is claimed.
+
+## Runaway code and residency
+
+The execution supervisor probes and samples process CPU/RSS every 250 ms. It kills a process still running at its caller deadline plus 1000 ms, after 6000 ms without a successful probe, or at 536870912 bytes RSS. Every in-flight attempt is reported to the host for commit-outcome classification; a kill alone never establishes rollback.
+
+Residency permits 12 loaded version processes and 1610612736 bytes aggregate RSS, including the supervisor, bundles, reports and overlapping versions. Enforcement continues while processes are loaded. Memory pressure evicts the largest idle process first; otherwise the oldest idle process goes first. If none is idle, new work receives busy. Processes idle for 60000 ms are reaped.
+
+Process reports retain CPU seconds and peak RSS sampled before the operating system removes the process record. The host receives and acknowledges these reports over the private management channel. CPU is attributed to the patch version, not individual invocations. The company task is the security boundary; process separation provides availability isolation. Local execution uses the same watchdog but proves neither Fargate containment nor per-invocation CPU or memory isolation.

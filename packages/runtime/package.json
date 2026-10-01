@@ -16,6 +16,11 @@
       "types": "./dist/core.d.ts",
       "import": "./dist/core.js"
     },
+    "./executor": {
+      "development": "./src/Executor.ts",
+      "types": "./dist/Executor.d.ts",
+      "import": "./dist/Executor.js"
+    },
     "./dev": {
       "development": "./src/dev.ts",
       "types": "./dist/dev.d.ts",

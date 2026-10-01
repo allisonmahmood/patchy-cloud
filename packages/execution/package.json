@@ -4,12 +4,27 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The workerd execution engine and isolated handler inspection.",
+  "description": "The supervised workerd execution engine, local executor and isolated handler inspection.",
   "exports": {
     "./engine": {
       "development": "./src/engine.ts",
       "types": "./dist/engine.d.ts",
       "import": "./dist/engine.js"
+    },
+    "./supervisor": {
+      "development": "./src/supervisor.ts",
+      "types": "./dist/supervisor.d.ts",
+      "import": "./dist/supervisor.js"
+    },
+    "./management": {
+      "development": "./src/management.ts",
+      "types": "./dist/management.d.ts",
+      "import": "./dist/management.js"
+    },
+    "./local": {
+      "development": "./src/local.ts",
+      "types": "./dist/local.d.ts",
+      "import": "./dist/local.js"
     },
     "./inspection": {
       "development": "./src/inspection.ts",
@@ -26,7 +41,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@patchy/api": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "acorn": "8.15.0",
     "acorn-walk": "8.3.4",

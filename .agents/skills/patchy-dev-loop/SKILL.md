@@ -22,6 +22,15 @@ Clerk users and sends real invitation mail. It needs Chromium and its system
 dependencies. `pnpm test` and the packed CLI e2e remain offline; `pnpm test:all`
 does not include the live tiers.
 
+## Execution supervisor checks
+
+For `packages/execution` changes, use DEVELOPMENT's **The execution engine**
+recipe. Exercise the isolated exec entrypoint and real workerd tests without
+starting the cloud or touching Clerk. Prove that a killed generation cannot
+forward callbacks and a fresh bind recovers without replay. Local execution
+proves engine compatibility, not Fargate containment. The local executor is
+available to tests; tier 2 `patchy dev` integration remains separate.
+
 ## Patch repos and the local runtime
 
 For a patch repo against this checkout, follow DEVELOPMENT's **A patch repo

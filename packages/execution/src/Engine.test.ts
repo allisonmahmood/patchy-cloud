@@ -159,7 +159,7 @@ it.live(
       });
       const process = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: process.url });
-      const binding = yield* engine.bind(bundle(yield* sdkBundle));
+      const { binding } = yield* engine.bind(bundle(yield* sdkBundle));
       expect(
         returnedReply(
           yield* engine.invoke(
@@ -238,8 +238,8 @@ it.live(
       const process = yield* startWorkerd({ callbackUrls: [callbackUrl] });
       const engine = yield* Engine.make({ url: process.url });
       const first = bundle(statefulSource);
-      const binding = yield* engine.bind(first);
-      expect(yield* engine.bind(first)).toEqual(binding);
+      const { binding } = yield* engine.bind(first);
+      expect(yield* engine.bind(first)).toEqual({ binding });
       const wrongHash = yield* engine
         .bind({ ...first, sha256: "0".repeat(64) })
         .pipe(Effect.result);
@@ -259,7 +259,7 @@ it.live(
         { patchId: "another-patch" },
         { versionId: "another-version" }
       ]) {
-        const separate = yield* engine.bind(bundle(statefulSource, change));
+        const { binding: separate } = yield* engine.bind(bundle(statefulSource, change));
         expect(
           returnedReply(yield* engine.invoke(invocation(separate, callbackUrl, "demo.count")))
         ).toEqual({ ok: true, value: 1 });
@@ -302,7 +302,7 @@ it.live(
       });
       const process = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: process.url });
-      const binding = yield* engine.bind(bundle(statefulSource));
+      const { binding } = yield* engine.bind(bundle(statefulSource));
       expect(
         returnedReply(yield* engine.invoke(invocation(binding, host.url, "demo.capture")))
       ).toEqual({
@@ -335,7 +335,7 @@ it.live(
       });
       const process = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: process.url });
-      const binding = yield* engine.bind(bundle(statefulSource));
+      const { binding } = yield* engine.bind(bundle(statefulSource));
       const request = invocation(binding, host.url, "demo.hold");
       const first = yield* engine.invoke(request).pipe(Effect.forkChild);
       yield* Effect.promise(() => entered.promise);
@@ -367,7 +367,7 @@ it.live(
       });
       const process = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: process.url });
-      const binding = yield* engine.bind(bundle(yield* sdkBundle));
+      const { binding } = yield* engine.bind(bundle(yield* sdkBundle));
       expect(
         returnedReply(
           yield* engine.invoke(
@@ -393,7 +393,7 @@ it.live(
       });
       const process = yield* startWorkerd({ callbackUrls: [first.url, second.url] });
       const engine = yield* Engine.make({ url: process.url });
-      const binding = yield* engine.bind(bundle(statefulSource));
+      const { binding } = yield* engine.bind(bundle(statefulSource));
       const replies = yield* Effect.all(
         [
           engine.invoke(invocation(binding, first.url, "demo.hold", { attemptId: "first" })),
@@ -425,24 +425,24 @@ it.live(
       });
       const child = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: child.url });
-      const binding = yield* engine.bind(
+      const { binding } = yield* engine.bind(
         bundle(`
-      export default { async fetch(request, env, ctx) {
-        const input = await request.json();
-        if (input.type === "describe") return Response.json({ ok: true, handlers: {} });
-        if (input.args.late) {
-          while (Date.now() < input.args.until) {
-            await ctx.props.callbacks.call({ op: "clock", args: {} });
-            const tick = Promise.withResolvers();
-            setTimeout(tick.resolve, 10);
-            await tick.promise;
-          }
+            export default { async fetch(request, env, ctx) {
+      const input = await request.json();
+      if (input.type === "describe") return Response.json({ ok: true, handlers: {} });
+      if (input.args.late) {
+        while (Date.now() < input.args.until) {
+          await ctx.props.callbacks.call({ op: "clock", args: {} });
+          const tick = Promise.withResolvers();
+          setTimeout(tick.resolve, 10);
+          await tick.promise;
         }
-        if (input.args.mode === "throw") throw new Error("guest failure");
-        if (input.args.mode === "malformed") return new Response("not json");
-        return Response.json(input.args.reply);
-      }};
-    `)
+      }
+      if (input.args.mode === "throw") throw new Error("guest failure");
+      if (input.args.mode === "malformed") return new Response("not json");
+      return Response.json(input.args.reply);
+            }};
+          `)
       );
       const forged = {
         ok: false,
@@ -509,14 +509,14 @@ it.live(
       });
       const child = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: child.url });
-      const binding = yield* engine.bind(
+      const { binding } = yield* engine.bind(
         bundle(`
-      export default { async fetch(request, env, ctx) {
-        const input = await request.json();
-        if (input.type === "describe") return Response.json({ ok: true, handlers: {} });
-        return Response.json(await ctx.props.callbacks.call({ op: input.args.op, args: {} }));
-      }};
-    `)
+            export default { async fetch(request, env, ctx) {
+      const input = await request.json();
+      if (input.type === "describe") return Response.json({ ok: true, handlers: {} });
+      return Response.json(await ctx.props.callbacks.call({ op: input.args.op, args: {} }));
+            }};
+          `)
       );
       for (const op of ["reset", "html", "malformed", "slow"]) {
         expect(
@@ -564,7 +564,7 @@ it.live(
       });
       const child = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: child.url });
-      const binding = yield* engine.bind(bundle(yield* sdkBundle));
+      const { binding } = yield* engine.bind(bundle(yield* sdkBundle));
       for (const direction of ["upload", "download"]) {
         expect(
           yield* engine.invoke(

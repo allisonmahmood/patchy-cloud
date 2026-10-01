@@ -28,6 +28,18 @@ _Avoid_: background job, transaction
 The credential-free side of the deployment that runs handler code and reaches Patchy only through callbacks.
 _Avoid_: sandbox (the browser's), worker (an engine term), lambda
 
+**Supervisor**:
+The execution service's process owner. It loads patch versions, watches their processes and terminates or reaps them without deciding invocation commit outcomes.
+_Avoid_: fleet controller, handler, security boundary
+
+**Process generation**:
+The identity of one loaded version's process lifetime. A replacement process gets a new generation; a call from the previous generation has no authority.
+_Avoid_: version id, binding epoch, stream generation
+
+**Binding epoch**:
+The increasing authority number for a company's execution-task binding. Adoption advances it and fences management calls from the previous owner.
+_Avoid_: process generation, deployment revision, housekeeping lease
+
 **Invocation capability**:
 The opaque per-attempt reference the execution service presents on callbacks, never seen by handler code.
 _Avoid_: API key, session token

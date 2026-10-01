@@ -76,9 +76,10 @@ mutations and actions, config-bound helper contexts, business errors and
 serializable descriptors. Generation derives the server-only client's signatures
 from type-only server imports. `useQuery` shares local subscription state and
 retains its last value through errors. The pinned workerd engine, credential-free
-SDK guest and isolated descriptor inspection are implemented. Hosted admission,
-the supervisor and the local tier 2 loop are not connected; tier 2 publish remains
-refused.
+SDK guest, isolated descriptor inspection, process supervisor, private management
+listener and supervised local executor are implemented. Hosted admission still
+needs the host and fleet tickets, and the local tier 2 loop is not connected;
+tier 2 publish remains refused.
 
 ### Building a patch
 
@@ -358,9 +359,13 @@ Tier 1 runs only while the viewer has the patch open. It cannot run background w
 ### Tier 2 — hosted
 
 Tier 2 is decided in [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md),
-but is not admitted by today's hosted runtime. Its engine and inspection process
-are built; the host and fleet still have to supply admission, settlement and
-termination.
+but is not admitted by today's hosted runtime. Its engine, inspection, supervisor
+and local executor are built. The supervisor terminates runaway version processes
+and unfinished initialization, and fails closed for a resident whose metering
+fails. The in-process local adapter counts actual host and child RSS, so its
+memory limit conservatively includes unrelated host allocations. It refuses
+production construction. The host and fleet still have to supply admission,
+settlement and company tasks.
 
 The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
