@@ -101,12 +101,14 @@ export async function runTier2Flow({
     assert.equal(await readFile(saved, "utf8"), contents);
   };
 
-  console.log("[packed-tier2-e2e] init --tier 2 and typecheck the installed starter");
+  // The tier 1 init warms the store first: pnpm 11 then locks the tier 2 repo's patchy tarball
+  // without an integrity, which its second install (the workerd pin) must survive (#459).
+  console.log("[packed-tier2-e2e] init --tier 2 on a warm store and typecheck its starter");
+  const source = await init("tier2-shared-source", 1);
   const repo = await init("tier2-acceptance", 2);
   await run("pnpm", ["typecheck"], repo.options);
 
   console.log("[packed-tier2-e2e] publish a shared table and store through the packed CLI");
-  const source = await init("tier2-shared-source", 1);
   await write(
     source,
     "patchy.config.ts",

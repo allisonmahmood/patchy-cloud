@@ -4525,6 +4525,33 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     }
   );
 
+  it("relays pnpm's first error line when refresh cannot install the release", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const originalPin = `${instance.url}/sdk/patchy-${CURRENT_RELEASE}-${"0".repeat(64)}.tgz`;
+    const originalPackage = JSON.stringify({ devDependencies: { patchy: originalPin } }) + "\n";
+    writeFileSync(path.join(dir, "package.json"), originalPackage);
+    const result = await runCli(["refresh", "--json"], {
+      cwd: dir,
+      env: {
+        ...env,
+        pnpm_config_registry: instance.url,
+        pnpm_config_store_dir: path.join(tempDir(), "store"),
+        pnpm_config_cache_dir: path.join(tempDir(), "cache"),
+        pnpm_config_update_notifier: "false"
+      }
+    });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      ok: false,
+      kind: "local",
+      error: expect.stringMatching(
+        /^Dependency installation failed; the previous project set is preserved\.\npnpm: .*ERR_PNPM_FETCH_404/
+      )
+    });
+    expect(readFileSync(path.join(dir, "package.json"), "utf8")).toBe(originalPackage);
+  });
+
   it.each([
     {
       args: ["init", "new-project", "--purpose", "Synthetic notes"],
