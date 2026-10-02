@@ -74,6 +74,7 @@ import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 import * as FleetInvocation from "./FleetInvocation.js";
 import * as MemberDirectory from "./MemberDirectory.js";
 import { migrations } from "./migrations.js";
+import * as RequestEvents from "./RequestEvents.js";
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -274,18 +275,23 @@ const landing = HttpRouter.use((router) =>
   })
 );
 
-/** The routes and middleware as one router application. */
+/**
+ * The routes and middleware as one router application. Request events wrap
+ * every route from outside, so a route's own middleware runs inside its event.
+ */
 const app = Layer.mergeAll(
-  api,
-  SdkApi.tarballLayer,
-  Pages.layer,
-  PortalPages.layer,
-  landing,
-  AuthPages.layer,
-  Layer.unwrap(
-    Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
-  ),
-  ConnectionPages.layer,
+  Layer.mergeAll(
+    api,
+    SdkApi.tarballLayer,
+    Pages.layer,
+    PortalPages.layer,
+    landing,
+    AuthPages.layer,
+    Layer.unwrap(
+      Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
+    ),
+    ConnectionPages.layer
+  ).pipe(Layer.provide(RequestEvents.layer)),
   middleware
 );
 

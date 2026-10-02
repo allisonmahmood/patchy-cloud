@@ -12,6 +12,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   BadRequest,
   Conflict,
@@ -282,7 +283,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           patchRef
         })
         .pipe(Effect.catchTags(readFailures));
-      return HttpServerResponse.isHttpServerResponse(rows) ? rows : (rows[0] ?? notFound());
+      if (HttpServerResponse.isHttpServerResponse(rows)) return rows;
+      const row = rows[0];
+      if (row === undefined) return notFound();
+      yield* WideEvents.enrich({ patchId: row.patch.id });
+      return row;
     });
 
     return handlers
@@ -324,6 +329,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const previous = yield* replay();
           if (previous !== undefined) return previous;
           if (isPatchId(key.patchId)) {
+            yield* WideEvents.enrich({ patchId: key.patchId });
             const admission = yield* patches
               .authorizePublish({
                 intent: "update",
@@ -524,6 +530,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               })
             );
           if (HttpServerResponse.isHttpServerResponse(recorded)) return recorded;
+          yield* WideEvents.enrich({ patchId: recorded.patchId, versionId: recorded.versionId });
           yield* analytics.track({
             name: patchId === null ? "patch.created" : "patch.updated",
             principalId: identity.user.id,

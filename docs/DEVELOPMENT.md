@@ -105,7 +105,7 @@ server is not watched: after a code change, `pnpm dev stop && pnpm dev`.
 | `pnpm dev --dry-run --json`     | Print the plan this worktree would run with; touches nothing.                                     |
 | `pnpm dev status`               | Exit 0 only when the recorded processes are alive and `/healthz` answers.                         |
 | `pnpm dev stop`                 | Stop the instance; its data stays.                                                                |
-| `pnpm dev logs`                 | Print `dev.log`: every process's lines, runtime wide events and startup failures.                 |
+| `pnpm dev logs`                 | Print `dev.log`: every process's lines, wide events and startup failures.                         |
 | `pnpm dev reset`                | Stop, wipe `.local/dev/` and start fresh.                                                         |
 | `pnpm dev up [scenario]`        | An environment: a scenario's company, people and patches, a logged-in CLI and an agent workspace. |
 | `pnpm dev open <person>`        | A browser window with its own profile, signed in as one of the environment's people.              |

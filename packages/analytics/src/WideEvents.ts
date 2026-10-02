@@ -64,6 +64,12 @@ const invocationMetrics = {
     Schema.Literals(["committed", "rolled_back", "unknown_outcome"])
   )
 };
+/** A routed request's matched template, never its path, and the status the client received. */
+const routeFields = {
+  route: Schema.optionalKey(Schema.String),
+  method: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number)
+};
 const rerunFields = {
   streamId: Schema.optionalKey(Schema.String),
   causedByEventId: Schema.optionalKey(Schema.String)
@@ -91,6 +97,7 @@ export const EventFields = Schema.Struct({
   ...attribution,
   ...outcomeFields,
   ...invocationMetrics,
+  ...routeFields,
   ...rerunFields,
   ...streamMetrics,
   ...processMetrics,
@@ -116,6 +123,7 @@ export const RequestEvent = Schema.Struct({
   type: Schema.Literal("request"),
   ...attribution,
   ...invocationMetrics,
+  ...routeFields,
   ...operations
 });
 export type RequestEvent = typeof RequestEvent.Type;

@@ -31,9 +31,11 @@ import {
   refuse,
   RequestTargetTooLong
 } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
+import * as RequestEvents from "./RequestEvents.js";
 
 /** Protected-API attempts admitted per source address per minute, in memory. */
 export const protectedApiRateLimitPerMinute = Config.Int(
@@ -109,6 +111,9 @@ export function classify(method: string, requestTarget: string): Target {
   return { kind: "route" };
 }
 
+/** The API's catch-all route, and the route a request the guard answers itself is recorded under. */
+const apiFallback = "/api/*";
+
 const notFoundBody = refuse(NotFound, { ok: false, error: "Not found." });
 
 const refusal = (status: 400 | 404 | 414) =>
@@ -130,10 +135,15 @@ const authenticated = <E, R>(
     Option.isNone(identity) ? Effect.succeed(Authorization.unauthorized) : answer
   );
 
-/** The middleware. Reads the API limits once and captures their services. */
+/**
+ * The middleware. Reads the API limits once and captures their services.
+ * What the guard answers itself never reaches a route's request event, so it
+ * records its own under the API fallback's pattern.
+ */
 export const make = Effect.gen(function* () {
   const limits = yield* Limits.Limits;
   const tokens = yield* MachineTokens.MachineTokens;
+  const record = yield* RequestEvents.make;
   const limit = yield* protectedApiRateLimitPerMinute;
   const deviceLimit = yield* deviceLoginRateLimitPerMinute;
 
@@ -152,11 +162,23 @@ export const make = Effect.gen(function* () {
         limit: target.kind === "device-login" ? deviceLimit : limit,
         window: "1 minute"
       });
-      if (!attempt.allowed) return rateLimited(attempt);
+      if (!attempt.allowed) {
+        const limitId: keyof typeof registry =
+          target.kind === "device-login"
+            ? "rate.deviceLogin.perMinute"
+            : "rate.protectedApi.perMinute";
+        return yield* record(
+          apiFallback,
+          WideEvents.enrich({ limitId }).pipe(Effect.as(rateLimited(attempt)))
+        );
+      }
 
       if (target.kind === "route" || target.kind === "device-login") return yield* app;
-      return yield* authenticated(Effect.succeed(refusal(target.status))).pipe(
-        Effect.provideService(MachineTokens.MachineTokens, tokens)
+      return yield* record(
+        apiFallback,
+        authenticated(Effect.succeed(refusal(target.status))).pipe(
+          Effect.provideService(MachineTokens.MachineTokens, tokens)
+        )
       );
     })
   );
@@ -167,7 +189,11 @@ export const make = Effect.gen(function* () {
  * wrong method on a real route included: a token first, then `Not found.`
  * The router prefers any real route over this wildcard.
  */
-export const notFound = HttpRouter.add("*", "/api/*", authenticated(Effect.succeed(notFoundBody)));
+export const notFound = HttpRouter.add(
+  "*",
+  apiFallback,
+  authenticated(Effect.succeed(notFoundBody))
+);
 
 // --- request-target classification ----------------------------------------
 

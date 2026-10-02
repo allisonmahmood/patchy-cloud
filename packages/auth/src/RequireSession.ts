@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Companies, Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Session from "./Session.js";
@@ -168,6 +169,7 @@ export const withViewer = <E, R>(
           headers: { "cache-control": "private, no-store" }
         });
       }
+      yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
       return yield* Effect.provideService(app, Viewer, viewer);
     }),
     returnTo
@@ -180,6 +182,8 @@ export const forEnrollment = <E, R>(
     Effect.gen(function* () {
       const viewer = yield* resolveViewer;
       if (HttpServerResponse.isHttpServerResponse(viewer)) return viewer;
+      if (viewer)
+        yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
       return yield* Effect.provideService(app, Enrollment, viewer);
     })
   );
