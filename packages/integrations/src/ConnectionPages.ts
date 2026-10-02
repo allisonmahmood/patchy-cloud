@@ -1,11 +1,11 @@
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 import { type Companies, type Users } from "@patchy/companies";
 import type * as ConnectionStore from "./ConnectionStore.js";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";

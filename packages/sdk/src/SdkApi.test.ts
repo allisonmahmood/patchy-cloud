@@ -18,16 +18,16 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import { CURRENT_RELEASE, MANIFEST_VERSION, Release, SdkGroup, WIRE_VERSION } from "@patchy/api";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlError from "effect/unstable/sql/SqlError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 import { Generated, Manifest, isManagedOutputPath } from "@patchy/api";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
@@ -557,8 +557,7 @@ const sdkOver = <A, E, R>(dependencies: Layer.Layer<A, E, R>) =>
     Effect.provide(
       SdkApi.layer.pipe(Layer.provide(dependencies), Layer.provide(Fixtures.authorization))
     ),
-    // Each in-memory API needs its own mutable router, not the live suite's memoized router.
-    Effect.provideServiceEffect(Layer.CurrentMemoMap, Layer.makeMemoMap)
+    Fixtures.ownRouter
   );
 
 const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string) {

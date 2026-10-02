@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import type { SqlError } from "effect/sql/SqlError";
 import { contentHash, newInternalId, newPatchId, sha256 } from "@patchy/core";
 import { ContentStore } from "@patchy/content-store";
 import { HandlerDescriptors, WIRE_VERSION } from "@patchy/api";

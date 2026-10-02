@@ -2,7 +2,7 @@ import { CompanyDatabases } from "@patchy/company-database";
 import { Runtime } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 export const RevisionRow = Schema.Struct({ key: Schema.String, revision: Schema.String });
 const find = SqlSchema.findAll({

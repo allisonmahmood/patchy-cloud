@@ -2,13 +2,15 @@
  * Users and machines added to the seeded template. Production Patches never
  * imports Auth: handlers receive identities from the bearer middleware.
  */
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import {
   Authorization,
   CurrentIdentity,
@@ -163,3 +165,11 @@ export const as = (identity: Identity) =>
   HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
     next(HttpClientRequest.bearerToken(request, identity.machine.id))
   );
+
+/**
+ * Runs an in-memory `HttpApiTest` client on a router of its own. A suite that
+ * also serves on a socket sees the router `HttpRouter.serve` built, and the
+ * client would otherwise register its routes on the server's router.
+ */
+export const ownRouter = <A, E, R>(client: Effect.Effect<A, E, R>) =>
+  Effect.updateContext(client, Context.omit(HttpRouter.HttpRouter));

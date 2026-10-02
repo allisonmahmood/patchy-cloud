@@ -9,25 +9,20 @@ updates:
     versioning-strategy: increase
     open-pull-requests-limit: 20
     groups:
-      # Effect 4 release candidates ship in lockstep and are pinned through the
-      # pnpm catalog, so every new RC lands as one pull request. Dependabot only
-      # follows prereleases while the pinned version is itself a prerelease of
-      # the same release (4.0.0-rc.N -> 4.0.0-rc.M); once 4.0.0 ships it moves
-      # to stable and stops following 4.x prereleases, which is what we want.
-      # .github/workflows/pr-labels.yml tags these PRs `effect-rc-bump`; the
-      # runbook for finishing one lives in AGENTS.md -> Effect RC bumps.
+      # Effect and its @effect/* packages share one version and release
+      # together, and the pnpm-workspace.yaml overrides pin every transitive
+      # `effect` to the catalog, so a bump of one package alone fails. This
+      # group keeps a release in one pull request.
       #
       # The members are named one by one rather than as `@effect/*`. Dependabot
       # assigns a dependency to the group with the most specific pattern, and a
       # group with no patterns (patch-updates below) outranks a wildcard, so the
       # glob handed every `@effect/*` package to patch-updates; that group
-      # refuses an RC bump as not a patch release and lets the package fall
-      # through to a pull request of its own (#273, #344). An exact name beats
-      # any other group; the packages still sit in patch-updates as well, and
-      # stay out of its pull request only because this group runs first. Add
-      # an @effect package here when it joins the RC lockstep (the 4.0.0-rc
-      # entries in the pnpm-workspace.yaml catalog); @effect/language-service
-      # is left out on purpose because it has its own release line.
+      # refuses anything but a patch release and lets the package fall through
+      # to a pull request of its own (#273, #344). An exact name beats any
+      # other group. Add an @effect package here when it joins the catalog;
+      # @effect/language-service is left out on purpose because it has its own
+      # release line.
       effect:
         patterns:
           - effect

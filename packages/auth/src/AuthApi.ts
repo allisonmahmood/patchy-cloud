@@ -1,7 +1,7 @@
 /** Browser-confirmed device login, the bearer identity and self-revocation. */
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import {
   BadRequest,
   CurrentIdentity,

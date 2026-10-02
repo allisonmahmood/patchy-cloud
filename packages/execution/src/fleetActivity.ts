@@ -2,9 +2,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { Connection } from "effect/unstable/sql/SqlConnection";
-import * as SqlError from "effect/unstable/sql/SqlError";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { Connection } from "effect/sql/SqlConnection";
+import * as SqlError from "effect/sql/SqlError";
 
 /** One replaceable session holds this replica's live activity, with one lock per distinct key. */
 export const make = Effect.fn("FleetActivity.make")(function* (options: {

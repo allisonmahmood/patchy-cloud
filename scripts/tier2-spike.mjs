@@ -435,7 +435,7 @@ if (command === "status") {
     );
     const code = `
       import * as Effect from "effect/Effect";
-      import * as Fetch from "effect/unstable/http/FetchHttpClient";
+      import * as Fetch from "effect/http/FetchHttpClient";
       import * as Fleet from "@patchy/execution/fleet";
       import * as Ecs from "@patchy/execution/ecs";
       import * as Provider from "@patchy/execution/ecs-task-provider";

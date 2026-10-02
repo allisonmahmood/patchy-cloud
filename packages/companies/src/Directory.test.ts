@@ -2,12 +2,12 @@ import { assert, it } from "@effect/vitest";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { migrate } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
@@ -230,8 +230,8 @@ it.layer(services)("company directory", (it) => {
       const invalid = [
         "not+base64",
         "x",
-        Encoding.encodeBase64Url("{}"),
-        Encoding.encodeBase64Url(
+        Base64Url.encode("{}"),
+        Base64Url.encode(
           JSON.stringify({
             version: 2,
             companyId: company.id,

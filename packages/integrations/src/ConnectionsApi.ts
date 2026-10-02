@@ -9,8 +9,8 @@ import {
 } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as ConnectionStore from "./ConnectionStore.js";
 
 const encodeConnections = Schema.encodeSync(Connections);

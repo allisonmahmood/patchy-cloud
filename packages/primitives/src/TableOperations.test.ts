@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 import { TablePage } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { PgliteCompanyDatabases } from "@patchy/company-database/dev";

@@ -5,7 +5,7 @@
  * shapes get one section each at the end.
  */
 import * as Schema from "effect/Schema";
-import * as OpenApi from "effect/unstable/httpapi/OpenApi";
+import * as OpenApi from "effect/http-api/OpenApi";
 import { PatchyApi } from "./api.js";
 import { RuntimeStreamFrame } from "./runtime.js";
 import * as GuestProtocol from "./guest.js";

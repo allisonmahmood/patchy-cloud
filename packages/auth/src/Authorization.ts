@@ -14,7 +14,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Authorization, CurrentIdentity, type Identity, refuse, Unauthorized } from "@patchy/api";
 import * as Bearer from "./Bearer.js";
 import * as MachineTokens from "./MachineTokens.js";

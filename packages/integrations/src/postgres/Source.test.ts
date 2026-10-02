@@ -9,7 +9,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { inject } from "vitest";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
 import * as Source from "./Source.js";
 import * as SourceClient from "./SourceClient.js";

@@ -1,7 +1,7 @@
 // @effect-diagnostics effect/nodeBuiltinImport:off
 /**
- * The one place the runner touches a socket directly: Effect has no TCP
- * client in this RC, and binding is the only honest test of "free".
+ * The one place the runner touches a socket directly: binding is the only
+ * honest test of "free".
  */
 import { createServer } from "node:net";
 import * as Effect from "effect/Effect";

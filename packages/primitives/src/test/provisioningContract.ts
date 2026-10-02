@@ -3,7 +3,7 @@ import { assert } from "@effect/vitest";
 import { Manifest, TableDefinition } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Tables from "../Tables.js";
 
 const manifest = (tables: (typeof Manifest.Type)["tables"]): typeof Manifest.Type => ({

@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { migrate, type Migrations } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import { migrations as authMigrations } from "../../auth/src/migrations.js";

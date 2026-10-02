@@ -9,7 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
 import * as Testing from "../../company-database/src/testing.js";
 import * as Tables from "../../primitives/src/Tables.js";

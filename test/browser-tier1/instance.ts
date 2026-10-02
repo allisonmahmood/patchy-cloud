@@ -13,7 +13,7 @@ import { Client } from "pg";
 import type EmbeddedPostgres from "embedded-postgres";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as LocalTaskProvider from "../../packages/execution/src/localTaskProvider.js";
 import type { BrowserContext } from "@playwright/test";
 import type { Manifest } from "../../packages/api/src/index.js";

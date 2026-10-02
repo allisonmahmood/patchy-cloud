@@ -3,7 +3,7 @@ import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
 import { Limits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import { me } from "./me.js";

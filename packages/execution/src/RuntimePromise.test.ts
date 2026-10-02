@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Engine from "./engine.js";
 import * as Inspection from "./inspection.js";
 import { startWorkerd } from "./process.js";

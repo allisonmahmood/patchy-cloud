@@ -1,12 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import { CompanyNotFound } from "./Companies.js";
 
 export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()("DirectoryInvalidCursor", {
@@ -151,7 +151,7 @@ export const make = Effect.gen(function* () {
     let after: typeof Cursor.Type | null = null;
     if (cursor !== undefined) {
       if (!isCursorEncoding(cursor)) return yield* new InvalidCursor({ companyId });
-      const json = yield* Effect.fromResult(Encoding.decodeBase64UrlString(cursor)).pipe(
+      const json = yield* Effect.fromResult(Base64Url.decodeString(cursor)).pipe(
         Effect.mapError((cause) => new InvalidCursor({ companyId, cause }))
       );
       after = yield* decodeCursor(json).pipe(
@@ -171,7 +171,7 @@ export const make = Effect.gen(function* () {
       rows,
       cursor:
         found.length > limit && last !== undefined
-          ? Encoding.encodeBase64Url(
+          ? Base64Url.encode(
               encodeCursor({
                 version: 1,
                 companyId,
