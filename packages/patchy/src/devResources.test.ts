@@ -16,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
