@@ -138,143 +138,151 @@ test("broker keeps admission retry timing but strips it from unsafe outcomes", a
   expect(requests).toEqual(refusals.map(({ code }) => code));
 });
 
+test("route bridge, real client file URL, shell download, isolation and 2,000-row print layout", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish();
+  const frame = await open(page, patch, "/items/2?filter=active");
+  await expect(frame.locator("#identity")).toHaveText("usr_dev");
+  await expect(frame.locator("#route")).toHaveText("/items/2");
+  await expect(frame.locator("#copy-status")).toHaveText("Copy unavailable");
+  await frame.getByRole("button", { name: "Next route" }).click();
+  await expect(page).toHaveURL(`${patch.address}/items/3?filter=active`);
+  await page.goBack();
+  await expect(frame.locator("#route")).toHaveText("/items/2");
+  await page.goForward();
+  await expect(frame.locator("#route")).toHaveText("/items/3");
+  expect(
+    await frame.evaluate(async () => {
+      try {
+        await (window as unknown as FixtureWindow).harness.client.route.set("/~content/escape");
+        return "accepted";
+      } catch (error) {
+        return error && typeof error === "object" && "code" in error ? error.code : "unexpected";
+      }
+    })
+  ).toBe("invalid_request");
+  expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
+  const row = await frame.evaluate(() =>
+    (window as unknown as FixtureWindow).harness.client.tables.rows!.insert({
+      label: "written through the real runtime"
+    })
+  );
+  expect(
+    await frame.evaluate(
+      (id) => (window as unknown as FixtureWindow).harness.client.tables.rows!.get(id),
+      row.id
+    )
+  ).toMatchObject({
+    id: row.id,
+    label: row.label
+  });
+  const logged = await instance.platform.query(
+    "SELECT user_id, outcome FROM runtime_calls WHERE patch_id=$1 AND op='tables.insert'",
+    [patch.patchId]
+  );
+  expect(logged.rows).toEqual([{ user_id: "usr_dev", outcome: "success" }]);
+
+  const transferred = await frame.evaluate(async () => {
+    const files = (window as unknown as FixtureWindow).harness.client.files.assets!;
+    const bytes = new Uint8Array([0, 10, 20, 255]);
+    await files.put("transferred.bin", bytes, { contentType: "application/octet-stream" });
+    return {
+      remaining: bytes.byteLength,
+      stored: Array.from(await files.get("transferred.bin"))
+    };
+  });
+  expect(transferred).toEqual({ remaining: 0, stored: [0, 10, 20, 255] });
+
+  await frame.evaluate(() => (window as unknown as FixtureWindow).harness.image());
+  expect(
+    await frame.locator("#own-image").evaluate((image: HTMLImageElement) => ({
+      blob: image.src.startsWith("blob:"),
+      width: image.naturalWidth
+    }))
+  ).toEqual({ blob: true, width: 1 });
+  const download = page.waitForEvent("download");
+  await frame.getByRole("button", { name: "Download file" }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe("active.html");
+  expect(await readFile((await file.path())!, "utf8")).toContain("<p>download bytes</p>");
+
+  // Simulate a UA ignoring the download hint: active uploaded HTML must still download,
+  // never become a same-origin shell document.
+  await page.evaluate(() =>
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (event.target instanceof HTMLAnchorElement && event.target.href.startsWith("blob:"))
+          event.target.removeAttribute("download");
+      },
+      { capture: true, once: true }
+    )
+  );
+  const forcedDownload = page.waitForEvent("download");
+  await frame.getByRole("button", { name: "Download file" }).click();
+  expect(await readFile((await (await forcedDownload).path())!, "utf8")).toContain(
+    "<p>download bytes</p>"
+  );
+  expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
+
+  await frame.getByRole("button", { name: "Copy text" }).click();
+  await expect(frame.locator("#copy-status")).toHaveText("Copied");
+  await frame.locator("#pasted-copy").press("Control+V");
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Patchy clipboard acceptance");
+
+  const escaped = await frame.evaluate(async () => {
+    let storage = "allowed";
+    try {
+      localStorage.setItem("escape", "yes");
+    } catch (error) {
+      storage = (error as Error).name;
+    }
+    let network = "allowed";
+    try {
+      await fetch("/healthz", { credentials: "include" });
+    } catch (error) {
+      network = (error as Error).name;
+    }
+    let popup = false;
+    try {
+      popup = window.open("/healthz") !== null;
+    } catch {
+      /* sandbox refusal */
+    }
+    let cookies: string;
+    try {
+      cookies = document.cookie;
+    } catch (error) {
+      cookies = (error as Error).name;
+    }
+    return { storage, network, popup, cookies, origin: window.origin };
+  });
+  expect(escaped).toEqual({
+    storage: "SecurityError",
+    network: "TypeError",
+    popup: false,
+    cookies: "SecurityError",
+    origin: "null"
+  });
+  expect(page.context().pages()).toHaveLength(1);
+
+  await frame.evaluate(() => (window as unknown as FixtureWindow).harness.printRows());
+  await page.emulateMedia({ media: "print" });
+  await expect(frame.locator("#rows tr")).toHaveCount(2000);
+  await expect(frame.locator("#rows tr").first()).toHaveText("Print row 0001");
+  await expect(frame.locator("#rows tr").last()).toHaveText("Print row 2000");
+});
+
 // Native printing opens headed browsers and reads the PDF with pdftotext, so it needs a
 // display; `pnpm test:browser` and CI leave it out (`--grep @print` runs it).
 test(
-  "route bridge, real client file URL, shell download, isolation and 2,000-row print",
+  "the frame's own window.print() prints all 2,000 rows",
   { tag: "@print" },
   async ({ page, instance, browserName }, testInfo) => {
     const patch = await instance.publish();
-    const frame = await open(page, patch, "/items/2?filter=active");
-    await expect(frame.locator("#identity")).toHaveText("usr_dev");
-    await expect(frame.locator("#route")).toHaveText("/items/2");
-    await expect(frame.locator("#copy-status")).toHaveText("Copy unavailable");
-    await frame.getByRole("button", { name: "Next route" }).click();
-    await expect(page).toHaveURL(`${patch.address}/items/3?filter=active`);
-    await page.goBack();
-    await expect(frame.locator("#route")).toHaveText("/items/2");
-    await page.goForward();
-    await expect(frame.locator("#route")).toHaveText("/items/3");
-    expect(
-      await frame.evaluate(async () => {
-        try {
-          await (window as unknown as FixtureWindow).harness.client.route.set("/~content/escape");
-          return "accepted";
-        } catch (error) {
-          return error && typeof error === "object" && "code" in error ? error.code : "unexpected";
-        }
-      })
-    ).toBe("invalid_request");
-    expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
-    const row = await frame.evaluate(() =>
-      (window as unknown as FixtureWindow).harness.client.tables.rows!.insert({
-        label: "written through the real runtime"
-      })
-    );
-    expect(
-      await frame.evaluate(
-        (id) => (window as unknown as FixtureWindow).harness.client.tables.rows!.get(id),
-        row.id
-      )
-    ).toMatchObject({
-      id: row.id,
-      label: row.label
-    });
-    const logged = await instance.platform.query(
-      "SELECT user_id, outcome FROM runtime_calls WHERE patch_id=$1 AND op='tables.insert'",
-      [patch.patchId]
-    );
-    expect(logged.rows).toEqual([{ user_id: "usr_dev", outcome: "success" }]);
-
-    const transferred = await frame.evaluate(async () => {
-      const files = (window as unknown as FixtureWindow).harness.client.files.assets!;
-      const bytes = new Uint8Array([0, 10, 20, 255]);
-      await files.put("transferred.bin", bytes, { contentType: "application/octet-stream" });
-      return {
-        remaining: bytes.byteLength,
-        stored: Array.from(await files.get("transferred.bin"))
-      };
-    });
-    expect(transferred).toEqual({ remaining: 0, stored: [0, 10, 20, 255] });
-
-    await frame.evaluate(() => (window as unknown as FixtureWindow).harness.image());
-    expect(
-      await frame.locator("#own-image").evaluate((image: HTMLImageElement) => ({
-        blob: image.src.startsWith("blob:"),
-        width: image.naturalWidth
-      }))
-    ).toEqual({ blob: true, width: 1 });
-    const download = page.waitForEvent("download");
-    await frame.getByRole("button", { name: "Download file" }).click();
-    const file = await download;
-    expect(file.suggestedFilename()).toBe("active.html");
-    expect(await readFile((await file.path())!, "utf8")).toContain("<p>download bytes</p>");
-
-    // Simulate a UA ignoring the download hint: active uploaded HTML must still download,
-    // never become a same-origin shell document.
-    await page.evaluate(() =>
-      document.addEventListener(
-        "click",
-        (event) => {
-          if (event.target instanceof HTMLAnchorElement && event.target.href.startsWith("blob:"))
-            event.target.removeAttribute("download");
-        },
-        { capture: true, once: true }
-      )
-    );
-    const forcedDownload = page.waitForEvent("download");
-    await frame.getByRole("button", { name: "Download file" }).click();
-    expect(await readFile((await (await forcedDownload).path())!, "utf8")).toContain(
-      "<p>download bytes</p>"
-    );
-    expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
-
-    await frame.getByRole("button", { name: "Copy text" }).click();
-    await expect(frame.locator("#copy-status")).toHaveText("Copied");
-    await frame.locator("#pasted-copy").press("Control+V");
-    await expect(frame.locator("#pasted-copy")).toHaveValue("Patchy clipboard acceptance");
-
-    const escaped = await frame.evaluate(async () => {
-      let storage = "allowed";
-      try {
-        localStorage.setItem("escape", "yes");
-      } catch (error) {
-        storage = (error as Error).name;
-      }
-      let network = "allowed";
-      try {
-        await fetch("/healthz", { credentials: "include" });
-      } catch (error) {
-        network = (error as Error).name;
-      }
-      let popup = false;
-      try {
-        popup = window.open("/healthz") !== null;
-      } catch {
-        /* sandbox refusal */
-      }
-      let cookies: string;
-      try {
-        cookies = document.cookie;
-      } catch (error) {
-        cookies = (error as Error).name;
-      }
-      return { storage, network, popup, cookies, origin: window.origin };
-    });
-    expect(escaped).toEqual({
-      storage: "SecurityError",
-      network: "TypeError",
-      popup: false,
-      cookies: "SecurityError",
-      origin: "null"
-    });
-    expect(page.context().pages()).toHaveLength(1);
-
-    await frame.evaluate(() => (window as unknown as FixtureWindow).harness.printRows());
-    await page.emulateMedia({ media: "print" });
-    await expect(frame.locator("#rows tr")).toHaveCount(2000);
-    await expect(frame.locator("#rows tr").first()).toHaveText("Print row 0001");
-    await expect(frame.locator("#rows tr").last()).toHaveText("Print row 2000");
+    await open(page, patch);
     const pdf = testInfo.outputPath("two-thousand-rows.pdf");
     if (browserName === "chromium") {
       await printChromiumFrame(patch.address, await page.context().cookies(), pdf);
