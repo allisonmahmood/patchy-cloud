@@ -18,6 +18,7 @@ import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "
 import {
   ago,
   type ConfirmationAction,
+  type PatchAction,
   renderConfirmation,
   renderPortal,
   renderVersions,
@@ -63,7 +64,6 @@ const decodeReassign = Schema.decodeUnknownEffect(
   Schema.Struct({ expectedOwnerUserId: Schema.String, user: Schema.String })
 );
 
-type Action = "description" | "scope" | "rollback" | ConfirmationAction;
 const forbidden = "Only the owner or an admin can do that. Nothing was done.";
 const logForbidden = "Only the owner or an admin can read this patch's log.";
 const isOutcomeFilter = Schema.is(Schema.Literals(outcomeFilters.map(([value]) => value)));
@@ -338,7 +338,7 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
   );
 });
 
-const post = Effect.fn("PortalPages.post")(function* (name: string, action: Action) {
+const post = Effect.fn("PortalPages.post")(function* (name: string, action: PatchAction) {
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -348,18 +348,28 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
   const selected = rows.find((row) => row.patch.name === name);
   if (!selected)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  if (viewer.role !== "admin" && (action === "reassign" || selected.owner.id !== viewer.user.id))
-    return yield* render(name, {
-      status: 403,
-      notice: action === "reassign" ? adminRequired : forbidden
-    });
-  const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
     yield* request.urlParamsBody.pipe(
       Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
     )
   );
+  // Every form carries the id of the patch it was rendered for. A form without it, or
+  // whose name now belongs to another patch, stops on the card before any other check:
+  // a re-rendered form would post at whichever patch holds the name now.
+  if (form.expectedPatchId !== selected.patch.id)
+    return yield* render(name, {
+      status: 409,
+      notice: form.expectedPatchId
+        ? "This name now belongs to a different patch. Nothing was done."
+        : "This form is out of date. Nothing was done."
+    });
+  if (viewer.role !== "admin" && (action === "reassign" || selected.owner.id !== viewer.user.id))
+    return yield* render(name, {
+      status: 403,
+      notice: action === "reassign" ? adminRequired : forbidden
+    });
+  const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
   const confirmation =
     action === "retire" || action === "delete" || action === "restore" || action === "reassign"
       ? action
@@ -375,16 +385,6 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
           selectedOwnerId: form.user ?? "",
           acknowledged: form.ack === "1"
         });
-  // Every form carries the id of the patch it was rendered for. A form without it, or
-  // whose name now belongs to another patch, stops on the card: a re-rendered form
-  // would post at whichever patch holds the name now.
-  if (form.expectedPatchId !== selected.patch.id)
-    return yield* render(name, {
-      status: 409,
-      notice: form.expectedPatchId
-        ? "This name now belongs to a different patch. Nothing was done."
-        : "This form is out of date. Nothing was done."
-    });
   const run = Effect.gen(function* () {
     switch (action) {
       case "description": {

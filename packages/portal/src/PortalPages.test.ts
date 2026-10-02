@@ -897,12 +897,9 @@ it.layer(layer)("portal pages on a socket", (it) => {
           });
         if (action === "restore") yield* service.retire(original.patchId, actor(workspace.owner));
         const path = `${cardPath(original.name)}/${action}`;
-        const inline = action === "description" || action === "scope" || action === "rollback";
-        const page = yield* (yield* request(
-          inline || action === "restore" ? cardPath(original.name) : path,
-          person
-        )).text;
-        const typed: Record<typeof action, FormFields> = {
+        const onCard = action !== "retire" && action !== "delete" && action !== "reassign";
+        const page = yield* (yield* request(onCard ? cardPath(original.name) : path, person)).text;
+        const entered: Record<typeof action, FormFields> = {
           description: { description: "Overwritten" },
           scope: { scope: "public" },
           rollback: {},
@@ -911,7 +908,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           delete: { confirm: original.name },
           reassign: { user: workspace.member.id }
         };
-        const fields: FormFields = { ...formFields(page, path), ...typed[action] };
+        const fields: FormFields = { ...formFields(page, path), ...entered[action] };
         if (action === "restore") yield* service.restore(original.patchId, actor(workspace.owner));
         yield* publish(workspace.owner, `archived-${action}`, {
           intent: "update",
@@ -935,6 +932,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           const html = yield* response.text;
           assert.include(text(html), notice);
           assert.strictEqual(heading(html), original.name);
+          assert.notInclude(html, 'class="confirmation-form"');
           assert.notInclude(html, original.patchId);
           assert.deepStrictEqual(
             [
@@ -947,6 +945,29 @@ it.layer(layer)("portal pages on a socket", (it) => {
       })
     );
   }
+
+  it.effect("says the name moved on even when someone else's patch took it", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const original = yield* publish(workspace.owner, "reused-by-alex");
+      const path = `${cardPath(original.name)}/scope`;
+      const page = yield* (yield* request(cardPath(original.name), workspace.owner)).text;
+      const fields = { ...formFields(page, path), scope: "public" };
+      yield* publish(workspace.owner, "kept-by-priya", {
+        intent: "update",
+        patchId: original.patchId
+      });
+      const replacement = yield* publish(workspace.member, original.name);
+      const before = yield* readPatch(workspace.member, replacement.patchId);
+      const response = yield* post(path, workspace.owner, fields);
+      assert.strictEqual(response.status, 409);
+      assert.include(
+        text(yield* response.text),
+        "This name now belongs to a different patch. Nothing was done."
+      );
+      assert.deepStrictEqual(yield* readPatch(workspace.member, replacement.patchId), before);
+    })
+  );
 
   it.effect(
     "uses the current state to decide delete warnings across live and retired transitions",
@@ -1082,7 +1103,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
             const path = `${cardPath(patch.name)}/${action}`;
             for (const response of [
               yield* request(path, person),
-              yield* post(path, person, fields)
+              yield* post(path, person, { expectedPatchId: patch.patchId, ...fields })
             ]) {
               assert.strictEqual(response.status, 403);
               const html = yield* response.text;
@@ -1237,7 +1258,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         ["rollback", { versionNumber: "999", expectedCurrentVersionId: "stale" }]
       ] as const) {
         const before = yield* readPatch(workspace.owner, patch.patchId);
-        const response = yield* post(`${cardPath(patch.name)}/${action}`, workspace.member, fields);
+        const response = yield* post(`${cardPath(patch.name)}/${action}`, workspace.member, {
+          expectedPatchId: patch.patchId,
+          ...fields
+        });
         assert.strictEqual(response.status, 403);
         const html = yield* response.text;
         assert.strictEqual(heading(html), patch.name);
