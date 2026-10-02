@@ -635,9 +635,10 @@ Description sync separately updates `patchy.json`; the pulled text remains
 there if a later generation or build step fails, with its notice in the failure.
 
 Refresh fetches one release, reconciles the pins with the release and tier,
-installs as needed, re-execs that CLI before generation, then stages and
-activates the set. Failure leaves the old managed set intact. Skills are sticky:
-refresh re-fetches every present skill and adds any the config implies.
+installs as needed, re-execs that CLI for generation and the toolchain check,
+then stages and activates the set. Failure leaves the old managed set intact.
+Skills are sticky: refresh re-fetches every present skill and adds any the
+config implies.
 `patchy-server` is the sole tier-keyed exception, removed below tier 2.
 `patchy-members` follows the members declaration and is removed when it is absent.
 A different present skill no longer offered by the release fails refresh.
