@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { Transform } from "node:stream";
+import { Transform, pipeline } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
 import { Client } from "pg";
@@ -395,10 +395,12 @@ export async function startInstance(
                   callback();
                 }
               });
-              incoming.pipe(streamTransform).pipe(response);
+              // Like an ingress, a host that dies mid-stream resets the browser's stream;
+              // `pipe` would leave it open and silent forever.
+              pipeline(incoming, streamTransform, response, () => {});
               return;
             }
-            incoming.pipe(response);
+            pipeline(incoming, response, () => {});
           }
         );
         upstream.on("error", () => {
