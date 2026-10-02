@@ -1,5 +1,11 @@
 import { assert, it } from "@effect/vitest";
-import { HandlerDescriptors, Manifest, handlerArgsSchema, handlerValueSchema } from "@patchy/api";
+import {
+  HandlerDescriptors,
+  Manifest,
+  handlerArgsSchema,
+  handlerValueSchema,
+  type HandlerDescriptor
+} from "@patchy/api";
 import { build } from "esbuild";
 import * as Schema from "effect/Schema";
 import { defineConfig, files, t, table } from "./config.js";
@@ -24,7 +30,7 @@ const config = defineConfig({
 const server = bindServer<typeof config>();
 const decodeDescriptors = Schema.decodeUnknownSync(HandlerDescriptors);
 const decodeManifest = Schema.decodeUnknownSync(Manifest);
-const descriptor = {
+const descriptor: HandlerDescriptor = {
   kind: "query",
   args: {
     search: { kind: "text", optional: true },

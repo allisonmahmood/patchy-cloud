@@ -9,6 +9,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePath from "@effect/platform-node/NodePath";
+import * as PgClient from "@effect/sql-pg/PgClient";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -28,7 +29,8 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, Release, SdkGroup, WIRE_VERSION } fr
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
-import { Generated, Manifest, isManagedOutputPath } from "@patchy/api";
+import { Generated, Manifest, isManagedOutputPath, type GenerateRequest } from "@patchy/api";
+import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
@@ -545,7 +547,10 @@ void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
 const decodeGenerated = Schema.decodeUnknownEffect(Generated);
 const decodeManifest = Schema.decodeUnknownEffect(Manifest);
 const identity = Fixtures.identities.uploader;
-const generateRequest = (manifest = Fixtures.manifest, skills: string[] = []) => ({
+const generateRequest = (
+  manifest: (typeof GenerateRequest.Type)["manifest"] = Fixtures.manifest,
+  skills: string[] = []
+) => ({
   release: CURRENT_RELEASE,
   manifest,
   serverModules: [],
@@ -555,7 +560,7 @@ const sdkOver = <A, E, R>(dependencies: Layer.Layer<A, E, R>) =>
   HttpApiTest.groups(HttpApi.make("patchy").add(SdkGroup), ["sdk"]).pipe(
     Effect.provide(Fixtures.as(identity)),
     Effect.provide(
-      SdkApi.layer.pipe(Layer.provide(dependencies), Layer.provide(Fixtures.authorization))
+      SdkApi.layer.pipe(Layer.provide(dependencies), Layer.provideMerge(Fixtures.authorization))
     ),
     Fixtures.ownRouter
   );
@@ -781,8 +786,8 @@ it.layer(layer)("SDK company generation", (it) => {
     "generates the current connection snapshot without credential access and rejects disconnected connections",
     () =>
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const snapshot = {
+        const sql = yield* PgClient.PgClient;
+        const snapshot: typeof Snapshot.Type = {
           version: 1,
           relations: [
             {
@@ -981,7 +986,7 @@ it.layer(layer)("SDK company generation", (it) => {
           }
         });
         yield* Fixtures.record(source);
-        const platform = yield* SqlClient.SqlClient;
+        const platform = yield* PgClient.PgClient;
         // Consumers retain omitted tables; the active manifest is not their authority.
         yield* platform`UPDATE patch_versions SET manifest = ${platform.json(Fixtures.manifest)} WHERE id = 'sdk-shared-version'`;
         const client = yield* HttpClient.HttpClient;
@@ -1023,9 +1028,7 @@ it.layer(layer)("SDK company generation", (it) => {
         assert.deepStrictEqual(shared.tables.members, members);
         assert.deepStrictEqual(shared.tables.teams, teams);
         assert.deepStrictEqual(
-          Object.values(shared.uses).flatMap((declaration) =>
-            declaration.kind === "members" ? [] : [declaration.id]
-          ),
+          Object.values(shared.uses).map((declaration) => declaration.id),
           ["sdktarget001/people"]
         );
         // The generated fixture schema must provision without the source's omitted use.
