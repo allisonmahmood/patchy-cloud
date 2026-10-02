@@ -1,7 +1,7 @@
 # Patchy Cloud API
 
-Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`. Do not
-edit by hand: a test fails when this file and the schemas disagree.
+Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`.
+Edit the schemas or renderer, then regenerate this file. There is no automated API-document drift check.
 
 Every route lives under `/api`. Most speak JSON; runtime file routes carry raw bytes. `GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the runtime headers and loaded-version admission described below; machine tokens are refused. Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit responses also carry `retryAfterSeconds`.
 
@@ -282,7 +282,7 @@ Responses:
 
 ### `POST /api/sdk/generate`
 
-Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap.
+Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap.
 
 Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string, shared?: boolean } }, uses: { [key: string]: { kind: "members" } | { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } | { kind: "sharedStore", patchId: string, store: string, id?: string, revision?: integer } }, handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } }, sdkImports?: string[] }, serverModules: string[], patchId?: string, skills: string[] }
 
@@ -445,6 +445,10 @@ Responses:
 - `503` [RuntimeFailure_7](#runtimefailure_7)
 - `504` [RuntimeFailure_8](#runtimefailure_8)
 
+## Version eligibility
+
+The stream contract includes a reserved `revoked` frame, and the shell stops if it receives one. There is no version-revocation operation or persisted revocation state. Admission checks retained versions and the existing patch/session/access states. Who may revoke a version, how that appears and how it is undone remain open on [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425). The frame is not evidence that version revocation is built.
+
 ## Private guest protocol
 
 Wire 1 is pinned to workerd `1.20260924.1`, compatibility date `2026-09-24`.
@@ -472,7 +476,7 @@ These are engine/inspection contracts, not public `HttpApi` routes or CLI operat
 - `server.call` arguments are at most one MiB; mutation results at most 64 KiB and query/action results at most eight MiB. Result schema failures and oversized results are `handler_failed`. A lost query reply is retried once by the client, using handler kinds supplied by the loaded shell's nonce-bound bootstrap. In dev, trusted stream `handlers` frames replace those kinds after a server rebind and on reconnect, without reloading the document. Mutation `unknown_outcome` offers explicit `retry()` with the same key and captured arguments; new calls mint fresh keys from stream `hello.serverTime`. Actions and unknown kinds are never replayed.
 - `InspectRequest`: wire and source only. `InspectionReply` contains descriptors or a runtime refusal. Inspection has no company binding, capability or callback path and runs in a reaped, deadline-bounded process.
 
-See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Tier 2 publishing and execution are available in dev and test; production admission requires the fleet executor.
+See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Dev and test can use the local executor; production tier 2 admission requires the built ECS provider (`EXECUTION_PROVIDER=ecs`). Production infrastructure [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and first deploy [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416) remain unbuilt.
 
 ## Private execution management protocol
 

@@ -1,6 +1,6 @@
 # Serving
 
-How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content and visits belong to [Patches](../patches/CONTEXT.md), the session and viewer to [Auth](../auth/CONTEXT.md); hosted runtimes and personal-connection doors remain future work described in [the product](../../docs/product.md#runtime-tiers).
+How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content and visits belong to [Patches](../patches/CONTEXT.md), sessions and viewers to [Auth](../auth/CONTEXT.md), and document, stream, lifecycle and execution authority to [Runtime](../runtime/CONTEXT.md); only personal-connection doors remain future work here.
 
 ## Language
 
@@ -13,40 +13,20 @@ The internal, non-redirecting location of one version's bytes, protected by the 
 _Avoid_: address (the reader-facing location), download link, public URL
 
 **Serving guarantee**:
-The promise made about a patch at each tier: **the patch cannot watch you** at tier 0; at tier 1, **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** Pages are kept out of search results. Public shells load no analytics. The shell maintains a session for company documents and for authenticated directory access on public tier 1 documents.
+The promise made about a patch at each tier: the patch cannot watch you at tier 0; on tiers 1 and 2, its browser code acts through Patchy without holding a login or credential. Tier 2 adds credential-free server handlers that reach owned resources as the patch and company data as the initiating viewer, with no direct internet access and every write logged for company admins. Pages stay out of search results, public shells load no analytics, and the shell maintains a session for company documents and authenticated directory access on public tier 1 documents.
 _Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing controls access), anonymous as a promise about company pages (the host admits the viewer)
 
 **Page**:
-A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Tier 0 content is script-free; tier 1 content runs browser code without direct network or credential access.
+A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Tier 0 content is script-free; tier 1 and tier 2 content runs browser code without direct network or credential access.
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
 
 **Shell**:
-The trusted page surrounding one loaded patch version. It owns the reader's address and, at tier 1, the broker. It keeps the session fresh for company documents and authenticated public member-directory access. A historical page uses the selected version's tier.
+The trusted page surrounding one loaded patch version, owning the reader's address, broker, stream and first-party lifecycle notices on tiers 1 and 2. It keeps the session fresh for company documents and authenticated public member-directory access; a historical page uses the selected version's tier.
 _Avoid_: patch (the untrusted content it contains), viewer (the person opening it)
 
 **Broker**:
 The shell's gate between one patch document and Patchy. It binds requests to the loaded version and the initiating viewer, never gives patch code a credential, and never lends a replacement document the old document's authority.
 _Avoid_: proxy URL (patches request operations, not arbitrary destinations), SDK (the client speaks to the broker)
-
-**Stream**:
-An authenticated document's connection to Patchy, owned by the shell and relayed through its document-bound port. Public tier 1 documents use it only for declared member-directory subscriptions.
-_Avoid_: session, subscription
-
-**Document**:
-One shell bound to a loaded version. Reconnecting or returning from a hidden period does not select a new version.
-_Avoid_: viewer, tab, connection
-
-**Connected**:
-A document whose stream is open, as defined by [Runtime](../runtime/CONTEXT.md).
-_Avoid_: heartbeat, lease, online
-
-**Lifecycle frame**:
-A message about the document's version or authority. The shell renders its state or stops the document; patch code cannot suppress it.
-_Avoid_: wake (a resource changed), data snapshot
-
-**Superseded**:
-A loaded version that remains eligible after another version becomes served. Its reload offer does not interrupt editing.
-_Avoid_: revoked, stale, outdated
 
 **Envelope**:
 One correlated request or reply between a patch document and its broker, carrying the bundle's wire version and operation data. It is a message contract, not permission to choose a patch, version or initiating viewer.

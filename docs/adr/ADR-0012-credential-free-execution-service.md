@@ -15,31 +15,33 @@ proved bundle inspection and the guest callback path.
 
 ## Implementation boundary
 
-Issue #395 implements `packages/execution/engine`, `packages/execution/inspection`,
-the private guest protocol in `packages/api`, and the guest entry shipped by
-`patchy/server`. Runtime declares `Executor` beside `LoadedVersions`; execution
-implements it, and Runtime never imports execution. `Executor` binds exact bundle
-bytes to a company/patch/version and invokes admitted work. It owns no pool,
-release, stop, admission or transaction settlement.
+The execution service is built in `packages/execution`, with engine, inspection,
+supervisor, local executor and fleet entrypoints. Its guest protocol lives in
+`packages/api`, and `patchy/server` ships the guest entry. Runtime declares
+`Executor` beside `LoadedVersions`; execution implements it, and Runtime never
+imports execution. `Executor` binds exact bundle bytes to a company/patch/version
+and invokes admitted work. It owns no pool, release, stop, admission or
+transaction settlement.
 
-Issue #396 implements the supervisor, private management listener and supervised
-local executor. Issue #397 adds Runtime's invocation admission, host-owned
-lifetime, capability registry, private callback gateway and invocation records.
-Issue #398 adds query read snapshots, action file and integration callbacks, and
-nested query calls on the local executor, composed into the existing `pnpm dev`
-instance. Eligible calls use the same host invocation lifetime, private callback
-gateway and snapshot adapter. Issue #400 adds host-owned SERIALIZABLE mutation
-transactions, mutation keys, explicit client retries and nested mutations.
-Issue #401 publishes both artifacts, re-derives descriptors from stored server
-bytes and serves tier 2 on dev and test instances. Production admission requires
-the fleet executor. Issue #404 composes the same supervised engine and callback
-gateway into the patch-repo `patchy dev` loop over PGlite and fixtures, with
-atomic live server rebinding and a separate non-admin colleague listener.
-Issue #405 adds the host fleet controller over platform Postgres and a local task
-provider that launches separate supervisor processes. `EXECUTION_PROVIDER=local-fleet`
-selects that path on an isolated development or test host. Issue #406 adds
-`EXECUTION_PROVIDER=ecs`, selecting the same controller over Fargate. Only that
-provider admits production tier 2; local processes do not prove Fargate containment.
+Runtime owns invocation admission, lifetime, capabilities, the private callback
+gateway, query snapshots, mutation transactions and keys, nested calls, and
+attribution records. Publishing stores both artifacts and re-derives descriptors
+from stored server bytes. The cloud worktree's `pnpm dev` composes the supervised
+local executor with that host path. Patch-repo `patchy dev` uses the same engine
+and callback gateway over PGlite and fixtures, with atomic live server rebinding
+and a separate non-admin colleague listener.
+
+The fleet controller uses platform Postgres with either the local task provider
+or the ECS provider. `EXECUTION_PROVIDER=local-fleet` launches separate supervisor
+processes on an isolated development or test host. `EXECUTION_PROVIDER=ecs`
+selects Fargate and is the only provider that admits production tier 2.
+Local processes do not prove Fargate containment.
+
+The ECS provider is built and passed role-only Fargate acceptance on
+[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406); **Fargate deployment and
+measurements** below records the run. Production infrastructure
+[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and first deploy
+[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416) remain unbuilt.
 
 ## Engine, guest wire and inspection
 
@@ -483,7 +485,7 @@ snapshots. [Full measurements and teardown evidence are recorded on #406](https:
    are joined or cancelled before settlement. Readiness resolves on acquisition
    failure too. The absolute deadline covers acquisition, callbacks, retry and
    settlement; per-statement SQL timeouts alone are insufficient. A query with
-   owned tables, file stores or shared-table declarations owns one read-only
+   owned tables, file stores or shared-table/shared-store declarations owns one read-only
    REPEATABLE READ snapshot and connection, with its commit watermark captured
    before reading and cancellation at deadline. A resource-free query retains
    the same fenced, serialized callback lifetime, but needs no company database
@@ -584,17 +586,23 @@ documents say nothing about whether retained version artifacts may be deleted.
 
 ## Query snapshots and action callbacks
 
-A query uses one retained company connection and one read-only `REPEATABLE READ`
-transaction across its callbacks. Acquisition uses the bounded company wait and
+A query with declared company resources uses one retained company connection
+and one read-only `REPEATABLE READ` transaction across its callbacks. A
+resource-free query retains the same fenced callback lifetime without a company
+lease, with an empty watermark and zero database-held time.
+Acquisition uses the bounded company wait and
 consumes the query's three-second deadline. Before callback reads, the host captures
 the declared resources' revision vector as its commit watermark, including canonical
-shared-table owners. Callback jobs run serially on that snapshot; owned tables,
-shared-table rows and file metadata cannot drift between callbacks.
-`ctx.files` exposes list and stat metadata, without bytes or the future handle.
+shared-table and shared-store owners. Callback jobs run serially on that snapshot;
+owned tables, shared-table rows and file metadata cannot drift between callbacks.
+`ctx.files` exposes list and stat metadata with authorised file handles, but no
+file bytes in a query. Handlers choose which handles to return to the page.
+Declared member-directory reads use the platform database, not this company
+snapshot.
 
 Shared authority is not snapshot data. Each callback checks the viewer, the source
 patch's current liveness, and current inventory sharing before reading snapshot rows.
-Queries declaring shared tables leave headroom within the configured company pool
+Queries declaring shared tables or shared stores leave headroom within the configured company pool
 for a fresh, bounded authority checkout. No extra connection bypasses that pool's
 limit. With a one-connection pool, shared queries return `busy`; own-resource queries
 can still run. Local PGlite uses fixed fixture authority, not simulated unsharing.
@@ -609,8 +617,10 @@ pool. The retained resource measures database-held milliseconds for invocation r
 Actions have no surrounding transaction. Their deadline is sixty seconds, with
 termination one second later. Each declared integration call rechecks access as the
 viewer and gets at most fifteen seconds or the action's remaining budget, whichever
-is less. File put accepts plain bytes; get and delete retain the existing file
-operation semantics. Put followed by another call is not atomic.
+is less. File put accepts plain bytes or adopts a staged Upload; get and delete
+retain the existing file operation semantics. Adoption commits the file pointer
+and consumes the stage atomically, but a following mutation is a separate
+transaction. A failed follow-up mutation leaves the file intact.
 
 `ctx.run` admits sibling queries and mutations under the action's existing
 admission, exact bundle and process generation. Each child has its own invocation

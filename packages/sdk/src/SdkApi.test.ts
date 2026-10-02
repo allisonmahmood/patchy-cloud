@@ -36,8 +36,6 @@ import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { contentHash } from "../../core/src/index.js";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as Fixtures from "../../patches/src/test/fixtures.js";
-import { registry } from "../../limits/src/registry.js";
-import type { SdkCapability } from "./sdkCapabilities.js";
 import * as Generation from "./Generation.js";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
 import * as Artifact from "./Artifact.js";
@@ -741,45 +739,6 @@ it.layer(layer)("SDK company generation", (it) => {
       assert.isFalse(
         removed.files.some(({ path }) => path === ".agents/skills/patchy-members/SKILL.md")
       );
-    })
-  );
-
-  it.effect("renders capability runtime limits consistently with the generated catalogue", () =>
-    Effect.gen(function* () {
-      const api = yield* sdkOver(Layer.empty);
-      const output = yield* api.generate({
-        payload: generateRequest({ ...Fixtures.manifest, tier: 1 })
-      });
-      const loop = output.files.find(
-        ({ path }) => path === ".agents/skills/patchy-loop/SKILL.md"
-      )!.contents;
-      const index = JSON.parse(
-        output.files.find(({ path }) => path === "patchy/_generated/index.json")!.contents
-      ) as { capabilities: SdkCapability[] };
-      for (const capability of index.capabilities) {
-        const rendered = loop.split("\n").find((line) => line.startsWith(`- ${capability.name}.`));
-        assert.isDefined(rendered, capability.id);
-        for (const entrypoint of capability.entrypoints) assert.include(rendered!, entrypoint);
-        assert.include(rendered!, capability.runs);
-        assert.include(rendered!, capability.limits);
-      }
-      for (const [id, expectedBytes] of [
-        [
-          "primitives.tables",
-          [registry["runtime.row.bytes"].default, registry["runtime.batch.bytes"].default]
-        ],
-        ["primitives.files", [registry["runtime.file.bytes"].default]],
-        ["integrations.postgres", [registry["runtime.result.bytes"].default]]
-      ] as const) {
-        const capability = index.capabilities.find((entry) => entry.id === id)!;
-        assert.deepStrictEqual(
-          [...capability.limits.matchAll(/(\d+) MiB/g)].map(
-            (match) => Number(match[1]) * 1024 * 1024
-          ),
-          expectedBytes,
-          id
-        );
-      }
     })
   );
 

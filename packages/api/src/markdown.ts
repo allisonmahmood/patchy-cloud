@@ -47,8 +47,8 @@ export function renderApiMarkdown(): string {
   const lines: string[] = [
     `# ${spec.info.title}`,
     "",
-    "Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`. Do not",
-    "edit by hand: a test fails when this file and the schemas disagree.",
+    "Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`.",
+    "Edit the schemas or renderer, then regenerate this file. There is no automated API-document drift check.",
     "",
     spec.info.description ?? "",
     ""
@@ -86,6 +86,10 @@ export function renderApiMarkdown(): string {
   }
 
   lines.push(
+    "## Version eligibility",
+    "",
+    "The stream contract includes a reserved `revoked` frame, and the shell stops if it receives one. There is no version-revocation operation or persisted revocation state. Admission checks retained versions and the existing patch/session/access states. Who may revoke a version, how that appears and how it is undone remain open on [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425). The frame is not evidence that version revocation is built.",
+    "",
     "## Private guest protocol",
     "",
     `Wire ${GuestProtocol.wireVersion} is pinned to workerd \`${GuestProtocol.workerdVersion}\`, compatibility date \`${GuestProtocol.compatibilityDate}\`.`,
@@ -113,7 +117,7 @@ export function renderApiMarkdown(): string {
     "- `server.call` arguments are at most one MiB; mutation results at most 64 KiB and query/action results at most eight MiB. Result schema failures and oversized results are `handler_failed`. A lost query reply is retried once by the client, using handler kinds supplied by the loaded shell's nonce-bound bootstrap. In dev, trusted stream `handlers` frames replace those kinds after a server rebind and on reconnect, without reloading the document. Mutation `unknown_outcome` offers explicit `retry()` with the same key and captured arguments; new calls mint fresh keys from stream `hello.serverTime`. Actions and unknown kinds are never replayed.",
     "- `InspectRequest`: wire and source only. `InspectionReply` contains descriptors or a runtime refusal. Inspection has no company binding, capability or callback path and runs in a reaped, deadline-bounded process.",
     "",
-    "See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Tier 2 publishing and execution are available in dev and test; production admission requires the fleet executor.",
+    "See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Dev and test can use the local executor; production tier 2 admission requires the built ECS provider (`EXECUTION_PROVIDER=ecs`). Production infrastructure [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and first deploy [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416) remain unbuilt.",
     "",
     "## Private execution management protocol",
     "",

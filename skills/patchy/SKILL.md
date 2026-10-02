@@ -112,8 +112,9 @@ transactionally, removing stale generated context while preserving application s
 To move between tiers 1 and 2, edit `tier` in `patchy.config.ts`, then refresh.
 Follow the loop skill's "Moving tiers" steps to migrate calls and add or remove
 `server/`. Refresh adds or removes the `workerd` pin, generated `server.ts` and
-`patchy-server` skill with the tier; that skill is the exception to sticky skills.
-Its `addedCapabilities` JSON list names new SDK capabilities, where they run and
+`patchy-server` skill with the tier. The `patchy-members` skill follows its
+declaration; other installed skills stay sticky.
+Refresh's `addedCapabilities` JSON list names new SDK capabilities, where they run and
 their limits. Read the generated loop skill's catalogue before choosing imports.
 Never manually edit `patchy/_generated/` or managed project skills.
 
@@ -158,7 +159,7 @@ New modules are discovered live with a reminder to refresh types; failed builds
 leave the last good binding serving. `src/` edits still reload the shell.
 
 `patchy dev` runs the same handler engine and callback path as production.
-It does not reproduce production's scheduling, limits or containment. A handler
+It does not reproduce production scheduling, operating capacity or containment. A handler
 that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Contract limits still apply; production
 operating capacity does not. PGlite is not evidence for hosted `busy` or
@@ -370,9 +371,9 @@ browser sign-out is a separate control on **Your machines**.
   A `release_mismatch` names both releases: install the exact package reported
   by that endpoint using the integrity check above. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources. Repo mode admits
-  tiers 0, 1 and 2 with tables, stores, shared tables, shared stores and Postgres declarations.
-  Tier 2 publishes both HTML and server artifacts on dev and test instances;
-  production admission requires the fleet executor. Tier 2 is company-only.
+  tiers 0, 1 and 2 with tables, stores, shared tables, shared stores, members and Postgres declarations.
+  Tier 2 publishes both HTML and server artifacts. Hosted execution uses the
+  fleet in production and the local executor in dev and tests. Tier 2 is company-only.
   If the instance returns `has_primitives`, publish from the patch's repo, not a
   file: omitted definitions still count as inventory.
 - An interrupted file publish keeps the complete attempt under the state dir;

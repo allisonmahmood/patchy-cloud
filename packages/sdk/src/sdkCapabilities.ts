@@ -1,3 +1,5 @@
+import { runtimeByteLimits } from "@patchy/api";
+
 export interface SdkCapability {
   /** Stable across releases; refresh compares ids rather than display text. */
   readonly id: string;
@@ -23,7 +25,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "Framework-free client, viewer identity and routing",
     entrypoints: ["patchy/_generated/client.ts"],
-    runs: "Tier 1 and 2 pages through patchy dev; hosted tier 1 pages and published tier 2 pages on dev and test instances",
+    runs: "Tier 1 and 2 pages through the hosted shell and patchy dev",
     limits:
       "Import by relative path. The generated implementation uses patchy/client; app code does not import it directly. Tier 2 uses server handlers, not direct named resources. me() is null on public tier 1 patches. Routing is shell-mediated; there is no outbound fetch or client storage."
   },
@@ -50,7 +52,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "useQuery adapter",
     entrypoints: ["patchy/preact"],
-    runs: "Tier 1 and 2 company pages through patchy dev; hosted tier 1 and published tier 2 pages in dev and test instances",
+    runs: "Tier 1 and 2 company pages through the hosted shell and patchy dev",
     limits:
       "Accepts table list/get, member-directory callables or generated server queries. Returns status, data, error and loading. Retains data through errors; a permanent error ends the subscription without restarting for another consumer or reconnect."
   },
@@ -80,7 +82,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "Server handlers",
     entrypoints: ["patchy/_generated/client.ts: patchy.server", "patchy/_generated/server.ts"],
-    runs: "Tier 2 patchy dev and published versions on the local executor in dev and test instances; production admission requires fleet execution",
+    runs: "Tier 2 company pages through hosted execution and the local executor under patchy dev",
     limits:
       "Queries share a read-only snapshot with a 3-second deadline; resource-free queries need no company database. Mutations use one SERIALIZABLE transaction, up to three attempts in 5 seconds and a keyed retry() for unknown outcomes. Actions have 60 seconds, declared connections and nested queries or mutations. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB, mutation results 64 KiB and query/action results 8 MiB. Local dev uses the same engine and callback path with live server rebinding and a colleague mount, not production scheduling, operating capacity or containment."
   },
@@ -92,7 +94,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "patchy/_generated/client.ts: patchy.server.<module>.<query>.subscribe",
       "patchy/preact: useQuery"
     ],
-    runs: "Tier 2 company pages through patchy dev and published versions in dev and test instances, over the document stream",
+    runs: "Tier 2 company pages through the hosted shell and patchy dev, over the document stream",
     limits:
       "Queries only. Host-observed reads determine dependencies; read only what the screen needs. A source refusal can recover after reshare, even on the first run. Permanent errors retain the last data. Canonical arguments share one subscription, with remount grace, hidden suspension and reconciliation. At most 64 subscriptions per document, 256 per patch, 1,024 per company and 8 MiB per snapshot. Member reads are outside the company snapshot."
   },
@@ -100,19 +102,23 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     id: "primitives.tables",
     group: "Primitives",
     name: "Owned tables",
-    entrypoints: ["patchy/_generated/client.ts: patchy.tables"],
-    runs: "Tier 1 page through Patchy; local PGlite in patchy dev",
-    limits:
-      "Indexed reads and viewer-attributed writes. Rows are at most 1 MiB, batches at most 1,000 rows and 8 MiB, and list pages at most 1,000 rows. No cross-table transaction or row-level authorization."
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.tables",
+      "patchy/_generated/server.ts: ctx.tables"
+    ],
+    runs: "Tier 1 pages through the broker; tier 2 queries, mutations and actions; local PGlite in patchy dev",
+    limits: `Indexed reads. Tier 1 writes act as the viewer, with no cross-call transaction or row-level authorization. Tier 2 writes act as the patch; mutation handlers group owned-table operations into one transaction and enforce the patch's rules. Queries are read-only. Rows are at most ${runtimeByteLimits.rowBytes / 1024 ** 2} MiB, batches at most 1,000 rows and ${runtimeByteLimits.batchBytes / 1024 ** 2} MiB, and list pages at most 1,000 rows.`
   },
   {
     id: "primitives.files",
     group: "Primitives",
     name: "Owned file stores and downloads",
-    entrypoints: ["patchy/_generated/client.ts: patchy.files"],
-    runs: "Tier 1 page through Patchy; downloads through the shell",
-    limits:
-      "Objects are at most 20 MiB; names are at most 512 UTF-8 bytes. url(name) returns a frame-local blob URL, not a public link. A shared store publishes read access to every file."
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.files",
+      "patchy/_generated/server.ts: ctx.files"
+    ],
+    runs: "Tier 1 pages through the broker; tier 2 queries read metadata and actions read or write bytes; downloads through the shell; local files in patchy dev",
+    limits: `Objects are at most ${runtimeByteLimits.fileBytes / 1024 ** 2} MiB; names are at most 512 UTF-8 bytes. Tier 1 url(name) returns a frame-local blob URL, not a public link. Tier 2 pages use handles returned by handlers, not store names. File writes are not part of a mutation transaction. A shared store publishes read access to every file.`
   },
   {
     id: "core.file-handles",
@@ -142,8 +148,11 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     id: "primitives.shared-tables",
     group: "Primitives",
     name: "Shared-table reads",
-    entrypoints: ["patchy/_generated/client.ts: patchy.shared"],
-    runs: "Tier 1 page through Patchy; synthetic fixtures in patchy dev",
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.shared",
+      "patchy/_generated/server.ts: ctx.shared"
+    ],
+    runs: "Tier 1 pages through the broker; tier 2 queries and actions; synthetic fixtures in patchy dev",
     limits:
       "Declare a shared source first. Reads are bounded and indexed; writes are unavailable. Source sharing and access are checked live."
   },
@@ -170,16 +179,18 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     ],
     runs: "Tier 1 company viewers through the broker; tier 2 queries, mutations and actions; two mount identities in patchy dev",
     limits:
-      "Declare with patchy add members. Candidates are active company users; resolution includes deactivated users. Prefix search only, pages of 50, getMany at most 1,000 ids. All directory reads are subscribable; only queries track dependencies. Member columns check new assignments on arrival, outside the company transaction snapshot. Outsiders and direct tier 2 page operations are refused."
+      "Declare with patchy add members. Candidates are active company users; resolution includes deactivated users. Prefix search only, pages of 50, getMany at most 1,000 ids. Tier 1 directory reads are subscribable; tier 2 queries track directory dependencies. Member columns check new assignments on arrival, outside the company transaction snapshot. Outsiders and direct tier 2 page operations are refused."
   },
   {
     id: "integrations.postgres",
     group: "Integrations",
     name: "Company Postgres reads",
-    entrypoints: ["patchy/_generated/client.ts: patchy.connections"],
-    runs: "Tier 1 page through Patchy; synthetic fixtures in patchy dev",
-    limits:
-      "Declare a connected company source. Read-only queries return at most 1,000 rows and 8 MiB, with a 10-second statement timeout. Credentials stay with Patchy. Postgres reads are not live-query dependencies."
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.connections",
+      "patchy/_generated/server.ts: ctx.connections"
+    ],
+    runs: "Tier 1 pages through the broker; tier 2 actions; synthetic fixtures in patchy dev",
+    limits: `Declare a connected company source. Read-only queries return at most 1,000 rows and ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB, with a 10-second statement timeout and a 15-second service deadline bounded by the action's remaining time. Credentials stay with Patchy and access is checked on each call. Queries and mutations cannot use ctx.connections; Postgres reads are not live-query dependencies.`
   },
   {
     id: "helpers.csv",
@@ -194,7 +205,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
-  Core: "Production fleet hosting is not available in this release. window.print() works in the frame, including browser print-to-PDF.",
+  Core: "window.print() works in the frame, including browser print-to-PDF.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."

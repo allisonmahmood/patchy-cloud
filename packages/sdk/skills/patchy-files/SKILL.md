@@ -56,7 +56,9 @@ const bytes = await attachments.get("examples/note.txt");
 const page = await attachments.list({ prefix: "examples/", limit: 20 });
 ```
 
-Run this against the local dev runtime when available; this release's generated client does not by itself provide that runtime or its broker. Do not replace missing local support with direct cloud requests. For an image already saved in the local store, set an image element's `src` to `await attachments.url("examples/photo.png")`.
+Run this through the local shell from `pnpm patchy dev`. For an image already
+saved in the local store, set an image element's `src` to
+`await attachments.url("examples/photo.png")`.
 On tier 2, queries use `ctx.files.<store>.list` and `.stat` for metadata;
 actions use the store's byte operations. Every list entry and non-null stat
 result carries a host-minted `handle`. Return it with `t.fileHandle()` in the

@@ -16,19 +16,17 @@ We don't expect the users to need to know how to code. If they do, great! If not
 
 There are two life cycles a patch can be thought of. The development stage and the deployed stage. While being developed it will be the users agents creating it, building it, and finally deploying it. Once deployed it will be the user themselves directly interacting with it.
 
-## Long term vision
+## Runtime tiers
 
-Today Patchy serves tier 0 static pages and tier 1 sandboxed browser tools, with patch-owned tables and files, read-only shared tables, company Postgres connections, and a local SDK dev loop. `docs/product.md` separates what is built from the longer-term vision below.
-
-There will be four main tiers of runtimes.
+Patchy implements tier 0 static pages, tier 1 sandboxed browser tools and tier 2 request-scoped server handlers. `docs/product.md` records the built contracts and the pending acceptance and deployment work.
 
 - Tier 0 is a static page with no patch execution, browser or server. A tier 0 repo may provision resources, but its page cannot call them.
 - Tier 1 runs patch code in a sandboxed browser frame. It acts as the viewer through Patchy for tables, files and declared integrations; it has no outbound fetch or hosted patch code.
-- Tier 2 is where you get server side execution. this is where lot of modern saas apps live. you have all your integrations and other primitives. a tier 2 patch has a thing on the server side (probably some kind of lambda function or something, we haven't gotten to the point of deciding that yet) as well as client side.
-- Tier 3 runtime of a patch is then the final state where we can have things happen fully server side. could be some kind of automations that persist, etc.
-- And then eventually a tier 4 which is a sandbox for agents, but that's months out.
+- Tier 2 runs query, mutation and action handlers in credential-free workerd processes while a viewer has the patch open. Mutations are atomic; the page calls handlers instead of resources directly. The ECS fleet is built, but production infrastructure and deployment are not.
+- Tier 3 is next: execution without a viewer, including inbound routes, webhooks, schedules and unattended automation. It is not built.
+- Tier 4, a sandbox for agents, remains future work.
 
-Tables and files are patch-owned primitives today; company Postgres connections and read-only shared-table declarations let tools use company data through Patchy. More integrations, including Gmail and Salesforce, remain future work.
+Tables and files are patch-owned. Both scripted tiers support live queries, read-only shared tables and stores, the member directory, company Postgres connections and a two-viewer local dev loop. More integrations, including Gmail and Salesforce, remain future work.
 
 ## Final note from Patchy
 

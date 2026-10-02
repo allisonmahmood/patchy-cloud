@@ -5,11 +5,11 @@ Runtime binds a loaded patch's operations and handler invocations to its version
 ## Language
 
 **Operation**:
-One named request a patch makes through Patchy, with its own input and result contract. An operation is a read, a mutation, or an integration call.
+One named request a patch makes through Patchy, with its own input and result contract. Direct resource operations and handler calls are distinct operations; a handler can make several resource callbacks.
 _Avoid_: endpoint (the transport, not the operation), arbitrary request
 
 **Handler**:
-A named query, mutation or action in a patch's server code, with declared arguments, result and optional business error codes.
+A query, mutation or action exported by a patch's server code, named by its module and export. Its descriptor declares arguments, result and optional business error codes.
 _Avoid_: endpoint, function route
 
 **Invocation**:
@@ -45,7 +45,7 @@ The identity of one mutation call, bound to its handler, loaded version, initiat
 _Avoid_: correlation id, invocation id, action retry
 
 **Action**:
-A handler for work outside one transaction, including file bytes, company integrations and sibling queries or mutations.
+A handler for work outside one transaction, including file bytes, company integrations and sibling queries or mutations. It cannot call another action, and each nested mutation owns its own transaction.
 _Avoid_: background job, transaction
 
 **Execution service**:
@@ -96,6 +96,10 @@ _Avoid_: process generation, deployment revision, housekeeping lease
 The opaque per-attempt reference the execution service presents on callbacks, never seen by handler code.
 _Avoid_: API key, session token
 
+**Callback gateway**:
+The host's private entry for execution-service callbacks, admitted by invocation capability and checked under the effective principal for each operation. It grants no execution-management authority.
+_Avoid_: broker (the browser's), proxy, management listener
+
 **Inspection**:
 Loading a server bundle without invocation authority to derive its handler descriptors before admission.
 _Avoid_: handler execution, independent proof, build
@@ -109,7 +113,7 @@ A declared business refusal from patch code, distinct from a Patchy refusal or a
 _Avoid_: runtime failure, transport error
 
 **Generated client**:
-The page's typed view of its server handlers, derived from their exports so changes to names and signatures reach callers.
+The tier 2 page's typed view of its server handlers, derived from their exports so changes to names and signatures reach callers. It offers handler calls and query subscriptions alongside the shell capabilities, never direct name-based resource operations.
 _Avoid_: server bundle, handwritten API wrapper
 
 **Binding**:
@@ -117,7 +121,7 @@ The trusted context of one admitted operation: its company, owning patch, loaded
 _Avoid_: Client context, payload identity
 
 **Effective principal**:
-The identity whose authority a callback uses and whose effects it attributes: the patch for its own resources, the initiating viewer for company resources.
+The identity whose authority an operation uses and whose effects it attributes. Direct browser operations use the viewer; tier 2 callbacks use the patch for its owned resources and the initiating viewer for company resources.
 _Avoid_: acting identity, patch owner identity
 
 **Owning patch**:
@@ -157,7 +161,7 @@ The identifier joining an operation's failure to its runtime-log record. It is c
 _Avoid_: Publish key, patch id
 
 **Stream**:
-The connection carrying a company document's lifecycle and subscription frames from Patchy. A document has at most one connected stream; reconnecting replaces its generation without changing its loaded version.
+The connection carrying an authenticated document's lifecycle and subscription frames from Patchy. A document has at most one connected stream; reconnecting replaces its generation without changing its loaded version.
 _Avoid_: session, subscription (a query's desired live result)
 
 **Document**:
@@ -185,11 +189,11 @@ The identity of one admitted connection. A replacement fences requests naming th
 _Avoid_: document id, wire version
 
 **Subscription**:
-A document's desired live result for one read and canonical argument set, bound to its patch, loaded version and initiating viewer. Tier 1 subscribes to table reads; tier 2 subscribes to queries. A publish does not change a retained document's handlers.
+A document's desired live result for one read and canonical argument set, bound to its patch, loaded version and initiating viewer, with separate desired and admitted states. Tier 1 subscribes to owned or shared table reads and declared member-directory reads; tier 2 subscribes to queries on its loaded version.
 _Avoid_: stream, polling loop
 
 **Revision**:
-A durable monotonic counter committed with a resource write or patch lifecycle change. Resource keys are `table:<patchId>:<name>`, `store:<patchId>:<name>` and `patch:<patchId>`; vectors encode counters as decimal strings and absence as `"-1"`.
+A durable monotonic counter committed with a table, file store or member-directory change, or with a patch lifecycle change. Subscription vectors include the resources read and the lifecycle revisions of shared sources; a revision is evidence of change, not proof that a result is current.
 _Avoid_: version (a published bundle), timestamp
 
 **Wake**:

@@ -9,7 +9,7 @@ The specification of a resource a patch owns, including a required description o
 _Avoid_: declaration (a connection, shared table, shared file store or member directory the patch uses but does not own), inventory (the cumulative authority)
 
 **Table**:
-A patch-owned collection of rows with defined columns and indexes. An admitted company viewer reads and writes the owning patch's tables; a public version grants no table access.
+A patch-owned collection of rows with defined columns and indexes. Tier 1 admits company viewers' direct reads and writes; tier 2 handlers control the operations, and public versions grant no table access.
 _Avoid_: collection, relation (an integration's source object)
 
 **Additive change**:
@@ -33,7 +33,7 @@ A column identifying a row in a named table, without requiring that row to exist
 _Avoid_: foreign key, join, embedded row
 
 **Member directory**:
-The company's users as patch code reads them through a members declaration. Patchy owns the data. It offers candidates to assign and resolves stored user ids, including deactivated users.
+A declared company primitive exposing candidates to assign and resolving stored user ids, including deactivated users. Companies owns the users and directory revision; Primitives owns how patch code reads them and checks assignments.
 _Avoid_: members table, native resource, roster
 
 **Candidate**:
@@ -49,7 +49,7 @@ A source patch's table that another patch may declare and read, never write, whi
 _Avoid_: public table, copied table
 
 **File store**:
-A named, patch-owned home for files shared by admitted company viewers. Its files persist independently of published versions; omitting the store leaves them intact and older versions that define it retain access.
+A named, patch-owned collection of files available through the operations its loaded version admits. Its files persist independently of published versions; omitting the store leaves them intact and older versions that define it retain access.
 _Avoid_: bucket, content store (the infrastructure holding bytes)
 
 **Shared file store**:

@@ -69,8 +69,14 @@ Generation renders its Core, Primitives, Integrations and Helpers groups into
 entries to `index.json.capabilities`. A missing marker fails generation instead
 of serving a loop skill without its catalogue.
 Unavailable features are stated separately and do not produce announcements.
-The catalogue records shipped APIs and their actual runtime boundaries; a
-reserved import or a typed contract does not imply hosted execution.
+The catalogue describes built APIs and distinguishes ECS fleet execution from
+the local executor. Built fleet code is not a claim that production deployment
+is complete. Keep the catalogue's prose
+current alongside the skill templates; generation replaces the marker with
+that prose, not with a hand-edited project copy.
+The catalogue's owned-row, batch, file and Postgres-result byte figures use
+`runtimeByteLimits` from `@patchy/api`, which reads the Limits registry. These
+figures are generated from the enforced constants, not maintained as prose literals.
 
 Each capability has a stable `id`, `group`, `name`, `entrypoints`, `runs` and
 `limits`. Keep its id when wording changes. Refresh compares the old managed

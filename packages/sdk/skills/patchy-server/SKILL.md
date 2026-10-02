@@ -20,7 +20,7 @@ results and end permanently if a handler is removed or its arguments no longer f
 Failed builds retain the last good binding. `src/` saves still reload the shell.
 
 `patchy dev` runs the same handler engine and callback path as production.
-It does not reproduce production's scheduling, limits or containment. A handler
+It does not reproduce production scheduling, operating capacity or containment. A handler
 that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Contract limits still apply; production
 operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflict`
@@ -102,8 +102,9 @@ the assignment check. Only queries track directory dependencies. Directory
 reads use the platform database, outside the query's company-database snapshot.
 
 `ctx.viewer` is never null. Owned resources act as the patch, company data as
-the viewer. Handler memory is not durable state, and handlers cannot schedule
-background work.
+the viewer. Server code holds no credential and has no direct network path;
+reach outside systems through declared company integrations in actions.
+Handler memory is not durable state, and handlers cannot schedule background work.
 
 ### Query snapshots and live access
 
@@ -121,8 +122,7 @@ The data snapshot does not freeze authority. `ctx.shared.<alias>` rechecks the
 viewer's current access on every callback. An unshare or source access loss can
 refuse a later callback even if an earlier read succeeded in the same query.
 Handle that refusal rather than serving an earlier value as current data.
-Member-directory reads are outside the company snapshot; directory support
-lands separately.
+Member-directory reads are outside the company snapshot.
 
 Queries have no `ctx.connections`. Company Postgres reads belong in actions,
 not subscribed queries. The host enforces this kind rule, even if code bypasses
@@ -268,6 +268,11 @@ Company operating bounds may have overrides. Coalesce screen reads and use
 bounded action batches rather than launching one call per card. Respect
 `retryAfter`; the full registry below distinguishes contract and operating limits.
 
+The supervisor kills a process after a 6-second event-loop stall, even inside
+an action's 60-second deadline. Split synchronous work into bounded batches;
+an action deadline does not grant 60 seconds of uninterrupted CPU time. A
+watchdog kill is not proof of CPU abuse.
+
 ## Render from subscriptions
 
 Call `patchy.server.<module>.<handler>(args)` for a one-shot result. For a live
@@ -297,8 +302,8 @@ callback. Shared aliases refer to their owner's resource. Each successful run
 replaces the dependency set, even if its result is unchanged; failures retain
 previous and attempted dependencies until a successful run replaces them.
 Read only what the screen needs to avoid wakes from unrelated resources.
-Time and randomness are not dependencies. Member-directory reads, when
-available, are outside the query's company-database snapshot.
+Time and randomness are not dependencies. Member-directory reads are outside
+the query's company-database snapshot.
 
 After a mutation commits, Patchy announces its touched resources and returns
 their revisions on the wire. Render from the subscription rather than merging

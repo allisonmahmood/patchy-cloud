@@ -57,7 +57,9 @@ const page = await patchy.tables.notes.list({
 await patchy.tables.notes.update(note.id, { done: true });
 ```
 
-The client is present in this release; running these calls needs the separate local dev runtime and broker. If unavailable, finish config, source and typechecking and report the runtime boundary rather than substituting a production connection.
+Run these calls through the local shell from `pnpm patchy dev`, which supplies
+the runtime and broker. Use its `colleagueUrl` to exercise the same data as a
+second viewer.
 On tier 2, use these row operations on `ctx.tables` inside the handler kinds
 described in `../patchy-server/SKILL.md`, and call those handlers from the page.
 
@@ -131,10 +133,13 @@ There are at most 64 subscriptions per document, 256 per patch and 1,024 per
 company. The newest is refused without evicting another. Each snapshot is at
 most 8 MiB; an oversized result ends only that subscription. Public pages and
 company Postgres reads do not support subscriptions.
+By default, each host replica runs at most 2 subscription re-runs per company
+and 1 per patch at a time. Patchy coalesces wakes; these operating limits can
+have company overrides.
 
 ## Published schemas are additive
 
-Before first publish local schema changes are disposable. Once the repo has a patch id, the intended local runtime uses the published inventory as its baseline and applies the same diff as publishing; resetting local data does not reset that baseline.
+Before first publish local schema changes are disposable. Once the repo has a patch id, the local runtime uses the published inventory as its baseline and applies the same diff as publishing; resetting local data does not reset that baseline.
 
 Add new tables, stores, optional/defaulted columns or non-unique indexes. Existing rows receive a new constant default, or the publish time for a new `"now"` default. Unique indexes belong only on newly created tables. Ordinary index creation blocks writers while it runs.
 
