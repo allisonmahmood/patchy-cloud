@@ -148,8 +148,9 @@ const output = (running: Running, stream: "stdout" | "stderr", text: string) =>
       })
   ).pipe(Effect.timeout("20 seconds"));
 
+// Starting dev builds with Vite and boots workerd; on a loaded run that alone can pass 12s.
 const exited = (running: Running) =>
-  Effect.promise(() => running.exit).pipe(Effect.timeout("12 seconds"));
+  Effect.promise(() => running.exit).pipe(Effect.timeout("30 seconds"));
 const cli = (root: string, instance: string, args: ReadonlyArray<string>) =>
   subprocess(
     [path.join(root, "node_modules/patchy/dist/index.js"), "dev", ...args, "--api-url", instance],
