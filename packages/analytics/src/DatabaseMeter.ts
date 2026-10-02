@@ -14,7 +14,10 @@ export const current = Context.Reference<Collector | undefined>(
   { defaultValue: () => undefined }
 );
 
-/** A nested invocation contributes each reservation to its ancestors once. */
+/**
+ * A nested invocation contributes each reservation to its ancestors once. Each ancestor's
+ * interval contains its descendant's, so after release a child never meters more than its parent.
+ */
 export const make: Effect.Effect<Collector> = Effect.gen(function* () {
   const clock = yield* Clock.Clock;
   const parent = yield* current;
@@ -22,10 +25,11 @@ export const make: Effect.Effect<Collector> = Effect.gen(function* () {
   let releasedNanos = 0n;
   return {
     start: () => {
+      // Ancestors start before this reading and stop after this release's reading.
+      const parentRelease = parent?.start();
       const startedAt = clock.monotonicTimeNanosUnsafe();
       // Separate tokens preserve simultaneous reservations starting on the same tick.
       const token = { startedAt };
-      const parentRelease = parent?.start();
       let released = false;
       reservations.add(token);
       return () => {
