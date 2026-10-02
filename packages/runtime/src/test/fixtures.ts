@@ -1,14 +1,17 @@
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as SqlClient from "effect/sql/SqlClient";
-import { CURRENT_RELEASE, RuntimeGroup, WIRE_VERSION } from "@patchy/api";
+import { CURRENT_RELEASE, RuntimeGroup, WIRE_VERSION, type RuntimeFileParams } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL } from "@patchy/auth/testing";
@@ -133,6 +136,21 @@ const TestApi = HttpApi.make("patchy").add(
   )
 );
 export const client = HttpApiTest.groups(TestApi, ["runtime"], { baseUrl: PUBLIC_BASE_URL });
+/**
+ * The same routes on a real socket, whose `HttpClient` sends raw requests. `client` sends a
+ * wildcard segment as a literal `*`, so file routes go through here with `fileUrl`.
+ */
+export const socket = HttpRouter.serve(HttpApiBuilder.layer(TestApi), {
+  disableLogger: true,
+  disableListenLog: true
+}).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
+/** A file route's URL as the shell broker builds it: each segment encoded, the name per `/` part. */
+export const fileUrl = ({ patchId, versionId, store, name }: RuntimeFileParams) =>
+  RuntimeGroup.endpoints.getFile.path
+    .replace(":patchId", encodeURIComponent(patchId))
+    .replace(":versionId", encodeURIComponent(versionId))
+    .replace(":store", encodeURIComponent(store))
+    .replace("*", name.split("/").map(encodeURIComponent).join("/"));
 export const headers = (principal: { userId: string } | null = null) => ({
   "x-patchy-wire": String(WIRE_VERSION),
   "x-patchy-principal": JSON.stringify(principal)

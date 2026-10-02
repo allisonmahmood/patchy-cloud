@@ -6,6 +6,8 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { runtimeOperations, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -355,12 +357,14 @@ it.effect(
     Effect.gen(function* () {
       const events = yield* recordEvents;
       let stored: Uint8Array = new Uint8Array();
+      const received: unknown[] = [];
       const handlers: Readonly<Record<string, Runtime.Handler>> = {
         "files.put": {
           transport: "bytes-put",
           kind: "mutation",
-          run: (_, bytes) =>
+          run: (args, bytes) =>
             Effect.sync(() => {
+              received.push(args);
               assert.isDefined(bytes);
               stored = bytes!;
               return null;
@@ -369,23 +373,26 @@ it.effect(
         "files.get": {
           transport: "bytes-get",
           kind: "read",
-          run: () => Effect.succeed({ bytes: stored, contentType: "application/octet-stream" })
+          run: (args) =>
+            Effect.sync(() => {
+              received.push(args);
+              return { bytes: stored, contentType: "application/octet-stream" };
+            })
         }
       };
+      const refusals: WideEvents.RequestEvent[] = [];
       yield* Effect.gen(function* () {
-        const api = yield* Fixtures.client;
-        const params = {
+        const http = yield* HttpClient.HttpClient;
+        const url = Fixtures.fileUrl({
           patchId: Fixtures.patchId,
           versionId: Fixtures.tier1VersionId,
           store: "private-store",
-          "*": "private-filename"
-        };
+          name: "private-filename"
+        });
         const bytes = new Uint8Array([1, 2, 3]);
-        const put = yield* api.putFile({
-          params,
-          payload: bytes,
-          headers: authenticated(),
-          responseMode: "response-only"
+        const put = yield* http.put(url, {
+          body: HttpBody.uint8Array(bytes),
+          headers: authenticated()
         });
         assert.strictEqual(put.status, 200);
         assert.deepStrictEqual(yield* put.json, { ok: true, value: null });
@@ -396,11 +403,9 @@ it.effect(
         });
         assert.deepStrictEqual(putEvent.operations, ["files.put"]);
 
-        const oversized = yield* api.putFile({
-          params,
-          payload: new Uint8Array([1, 2, 3, 4, 5]),
-          headers: authenticated(),
-          responseMode: "response-only"
+        const oversized = yield* http.put(url, {
+          body: HttpBody.uint8Array(new Uint8Array([1, 2, 3, 4, 5])),
+          headers: authenticated()
         });
         assert.strictEqual(oversized.status, 413);
         assert.include(yield* oversized.json, { code: "too_large", limitId: "runtime.file.bytes" });
@@ -413,11 +418,7 @@ it.effect(
         });
         assert.deepStrictEqual(oversizedEvent.operations, ["files.put"]);
 
-        const get = yield* api.getFile({
-          params,
-          headers: authenticated(),
-          responseMode: "response-only"
-        });
+        const get = yield* http.get(url, { headers: authenticated() });
         assert.strictEqual(get.status, 200);
         assert.deepStrictEqual(new Uint8Array(yield* get.arrayBuffer), bytes);
         assert.strictEqual(get.headers["cache-control"], "no-store");
@@ -436,24 +437,25 @@ it.effect(
           configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
         });
         assert.strictEqual(getEvent.closestLimitId, "runtime.file.bytes");
+        // The handlers saw the real name, so its absence from every event below means something.
+        assert.deepStrictEqual(received, [
+          {
+            store: "private-store",
+            name: "private-filename",
+            contentType: "application/octet-stream"
+          },
+          { store: "private-store", name: "private-filename" }
+        ]);
 
-        for (const method of ["putFile", "getFile"] as const) {
-          const refused = yield* method === "putFile"
-            ? api.putFile({
-                params,
-                payload: bytes,
-                headers: { ...authenticated(), "x-patchy-wire": "invalid" },
-                responseMode: "response-only"
-              })
-            : api.getFile({
-                params,
-                headers: { ...authenticated(), "x-patchy-wire": "invalid" },
-                responseMode: "response-only"
-              });
+        for (const method of ["PUT", "GET"] as const) {
+          const headers = { ...authenticated(), "x-patchy-wire": "invalid" };
+          const refused = yield* method === "PUT"
+            ? http.put(url, { body: HttpBody.uint8Array(bytes), headers })
+            : http.get(url, { headers });
           assert.strictEqual(refused.status, 400);
           assert.include(yield* refused.json, { code: "invalid_request" });
           const event = yield* events.next;
-          const operation = method === "putFile" ? "files.put" : "files.get";
+          const operation = method === "PUT" ? "files.put" : "files.get";
           assert.include(event, {
             outcome: "refused",
             code: "invalid_request"
@@ -461,14 +463,16 @@ it.effect(
           assert.deepStrictEqual(event.operations, [operation]);
           for (const field of ["companyId", "patchId", "versionId", "viewerId", "tier"])
             assert.notProperty(event, field);
+          refusals.push(event);
         }
-        for (const event of [putEvent, oversizedEvent, getEvent]) {
+        for (const event of [putEvent, oversizedEvent, getEvent, ...refusals]) {
           assert.notInclude(JSON.stringify(event), "private-store");
           assert.notInclude(JSON.stringify(event), "private-filename");
           assert.notProperty(event, "bytes");
         }
         yield* events.count(5);
       }).pipe(
+        Effect.provide(Fixtures.socket),
         Effect.provide(
           Fixtures.layer(
             handlers,
