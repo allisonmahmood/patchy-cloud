@@ -32,6 +32,10 @@ packed tier 2 journey) and `browser` (tier 1 and 2 pages in Chromium). It keeps
 going after a failure and prints a summary. CI also runs `pnpm test` on Node
 22.22.0 and 24, and `clerk-live` on pushes to `main` and same-repository PRs.
 
+Format and lint cache their results, so a repeat run rechecks only the files
+that changed. ESLint's cache cannot tell when a changed type alters an unchanged
+file's result, so `pnpm verify` lints from scratch, as CI does.
+
 For a focused loop:
 
 - `pnpm exec vitest run <files or folders>`; `*.postgres.test.ts` files need
