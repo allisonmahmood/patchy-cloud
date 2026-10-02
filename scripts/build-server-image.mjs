@@ -96,28 +96,20 @@ async function stageRuntime(destination) {
     env: buildEnv
   });
   const app = path.join(destination, "app");
-  // pnpm 11's legacy deploy writes production-only settings into the source
-  // workspace's validation cache. Preserve it so later runs cannot prune dev deps.
-  const workspaceState = path.join(root, "node_modules/.pnpm-workspace-state-v1.json");
-  const previousState = await readFile(workspaceState);
-  try {
-    run(
-      "pnpm",
-      [
-        "--filter",
-        "@patchy/server",
-        "deploy",
-        "--prod",
-        "--legacy",
-        "--ignore-scripts",
-        "--config.package-import-method=copy",
-        app
-      ],
-      { env: buildEnv }
-    );
-  } finally {
-    await writeFile(workspaceState, previousState);
-  }
+  run(
+    "pnpm",
+    [
+      "--filter",
+      "@patchy/server",
+      "deploy",
+      "--prod",
+      "--legacy",
+      "--ignore-scripts",
+      "--config.package-import-method=copy",
+      app
+    ],
+    { env: buildEnv }
+  );
   await copyFile(path.join(root, "LICENSE"), path.join(app, "LICENSE"));
   await mkdir(path.join(destination, "data"));
   await writeFile(path.join(app, "image-build.json"), JSON.stringify(metadata, null, 2) + "\n");

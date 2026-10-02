@@ -322,7 +322,7 @@ through the Neon API, checking the project ID and `aws-us-east-1` region.
 It never uses the production Azure group. The initial stack must have no
 running tasks or services.
 
-Build on Linux x64 with Node 24.20.0, pnpm 11.5.2, GNU tar and crane v0.22.1:
+Build on Linux x64 with Node 24.20.0, pnpm 11.28.3, GNU tar and crane v0.22.1:
 
 ```sh
 pnpm install --frozen-lockfile
