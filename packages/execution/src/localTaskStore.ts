@@ -44,6 +44,9 @@ export const Final = Schema.Struct({
 
 export const missing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+/** A process can exit after procfs opens its stat file but before the read, or before a signal lands. */
+export const missingProcess = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && (cause.code === "ENOENT" || cause.code === "ESRCH");
 export const taskDirectory = (directory: string, taskId: string) =>
   join(directory, createHash("sha256").update(taskId).digest("hex"));
 
@@ -95,7 +98,7 @@ export async function processIdentity(pid: number): Promise<Process | null> {
     if (fields[0] === "Z" || fields[0] === "X") return null;
     return { pid, identity: `${boot.trim()}:${fields[19]}` };
   } catch (cause) {
-    if (missing(cause)) return null;
+    if (missingProcess(cause)) return null;
     throw cause;
   }
 }
@@ -123,7 +126,7 @@ export async function groupMembers(group: Process): Promise<readonly Process[]> 
       const identity = await processIdentity(Number(entry));
       if (identity !== null) members.push(identity);
     } catch (cause) {
-      if (!missing(cause)) throw cause;
+      if (!missingProcess(cause)) throw cause;
     }
   }
   return members;

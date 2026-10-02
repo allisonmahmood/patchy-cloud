@@ -13,6 +13,15 @@ const isReady = Schema.is(Store.Ready);
 const isFinal = Schema.is(Store.Final);
 const directory = process.argv[2]!;
 
+/** A process seen alive can exit before the signal lands; it is then already gone. */
+function kill(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (cause) {
+    if (!Store.missingProcess(cause)) throw cause;
+  }
+}
+
 async function main(): Promise<void> {
   const request = await Store.readRequest(directory);
   if (request === undefined) return;
@@ -23,7 +32,7 @@ async function main(): Promise<void> {
     if (previous.child === null)
       throw new Error("Unobserved local task startup; retaining its slot");
     if (await Store.alive(previous.child)) {
-      process.kill(-previous.child.pid, "SIGKILL");
+      kill(-previous.child.pid);
       const deadline = Date.now() + 5_000;
       while ((await Store.groupMembers(previous.child)).length !== 0) {
         if (Date.now() >= deadline) throw new Error("Local task group has not exited");
@@ -133,20 +142,14 @@ async function main(): Promise<void> {
     if (child.connected && record.url !== null) child.send("stop");
     const gracefulDeadline = Date.now() + (record.url === null ? 0 : request.cleanupTimeout);
     while (!exited && Date.now() < gracefulDeadline) await delay(20);
-    if (!exited && child.pid !== undefined) {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch (cause) {
-        if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) throw cause;
-      }
-    }
+    if (!exited && child.pid !== undefined) kill(-child.pid);
   }
   await exit;
   await update;
   if (record.child !== null && record.finalStats === undefined) {
     // This owner observed the exit itself. Reap descendants left by an abrupt supervisor exit.
     for (const member of await Store.groupMembers(record.child)) {
-      if (await Store.alive(member)) process.kill(member.pid, "SIGKILL");
+      if (await Store.alive(member)) kill(member.pid);
     }
     const deadline = Date.now() + 5_000;
     while ((await Store.groupMembers(record.child)).length !== 0) {
