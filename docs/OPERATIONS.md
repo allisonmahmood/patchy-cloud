@@ -1,6 +1,6 @@
 # Operating Patchy Cloud
 
-Running the server outside `pnpm dev`: its configuration, the stores, the
+Running the server outside `pnpm dev`: its configuration, Clerk, the stores, the
 execution service and fleet, and the tier 2 spike deploy. The local loop is in
 [Development](DEVELOPMENT.md). Production infrastructure and the first deploy,
 [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
@@ -165,6 +165,57 @@ The patch repo's local runtime uses the same record with compact stdout output.
 `@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and
 `layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs
 to the tier 2 dev-loop ticket; the existing CLI log response is unchanged.
+
+## Clerk
+
+Clerk holds the browser session
+([ADR-0006](adr/ADR-0006-clerk-holds-the-browser-session.md)). Every Clerk
+instance Patchy uses, development or production, needs two custom claims in its
+session token:
+
+```json
+{ "email": "{{user.primary_email_address}}", "name": "{{user.full_name}}" }
+```
+
+A token without `email`, or without a `name` key (its value may be null), counts
+as signed out with reason `session-claims-invalid`: the person signs in at Clerk
+and comes back still signed out. Set the claims in the dashboard's session
+settings or with `clerk config patch` (`session.claims`). A production instance
+cloned from development copies them.
+
+### The production instance
+
+Production is the **Patchy Cloud** application's production instance, on the
+registrable domain `patchyhq.com`
+([ADR-0005](adr/ADR-0005-one-registrable-domain.md)). Clerk serves its Frontend
+API at `clerk.patchyhq.com` and the Account Portal at `accounts.patchyhq.com`,
+and sends mail from `patchyhq.com`. The app runs at `https://cloud.patchyhq.com`,
+which is the instance's home URL as well as `PATCHY_PUBLIC_BASE_URL` and
+`CLERK_AUTHORIZED_PARTIES`. Sign-ups that carry no redirect, such as a waitlist
+approval, land on the home URL. Creating the instance for `patchyhq.com` makes
+the home URL `https://patchyhq.com`. `POST /v1/instance/change_domain` with
+`is_secondary: false` moves it to the app's host and keeps the Clerk domain and
+keys.
+
+- **Allowed subdomains** is on, listing `cloud.patchyhq.com` and
+  `accounts.patchyhq.com`. Without it, a page on any `patchyhq.com` subdomain can
+  call the Frontend API with a visitor's Clerk session, and other subdomains
+  serve pages people publish. A new host that signs people in, such as a
+  per-company host, has to be added (`PATCH /v1/instance`, `allowed_subdomains`).
+- **Sign-up** is in Waitlist mode during the private beta
+  ([#481](https://github.com/allisonmahmood/patchy-cloud/issues/481)). People join
+  at `accounts.patchyhq.com/waitlist`, and approving someone sends them an
+  invitation.
+- **Sign-in** is by email code. Clerk's shared OAuth credentials work only in
+  development, so cloning carries social providers over without credentials.
+  Production keeps them off until it has its own
+  ([#490](https://github.com/allisonmahmood/patchy-cloud/issues/490) for Google).
+- **Keys** come from
+  `clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --instance prod --file <file>`.
+  Keep them out of output, chat and git.
+
+Clerk's edge challenges headless browsers on the production Account Portal but
+not the development one, so automated checks of production sign-in fail there.
 
 ## Postgres
 
