@@ -12,7 +12,7 @@ catalog:
   "@effect/sql-pg": 4.0.0-rc.117
   "@effect/sql-pglite": 4.0.0-rc.117
   "@effect/vitest": 4.0.0-rc.117
-  "@effect/language-service": 0.87.2
+  "@effect/language-service": 0.87.3
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440
 # Excluded by name rather than by exact version so a Dependabot RC bump only
