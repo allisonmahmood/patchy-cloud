@@ -189,19 +189,22 @@ Production is the **Patchy Cloud** application's production instance, on the
 registrable domain `patchyhq.com`
 ([ADR-0005](adr/ADR-0005-one-registrable-domain.md)). Clerk serves its Frontend
 API at `clerk.patchyhq.com` and the Account Portal at `accounts.patchyhq.com`,
-and sends mail from `patchyhq.com`. The app runs at `https://cloud.patchyhq.com`,
-which is the instance's home URL as well as `PATCHY_PUBLIC_BASE_URL` and
-`CLERK_AUTHORIZED_PARTIES`. Sign-ups that carry no redirect, such as a waitlist
-approval, land on the home URL. Creating the instance for `patchyhq.com` makes
-the home URL `https://patchyhq.com`. `POST /v1/instance/change_domain` with
-`is_secondary: false` moves it to the app's host and keeps the Clerk domain and
-keys.
+and sends mail from `patchyhq.com`. The app's origin is
+`https://cloud.patchyhq.com`: the instance's home URL, and the deployment's
+`PATCHY_PUBLIC_BASE_URL` and `CLERK_AUTHORIZED_PARTIES`. Sign-ups that carry no
+redirect, such as a waitlist approval, land on the home URL. Creating the
+instance for `patchyhq.com` makes the home URL `https://patchyhq.com`.
+`POST /v1/instance/change_domain` with
+`{ "home_url": "https://cloud.patchyhq.com", "is_secondary": false }` moves it
+to the app's host and keeps the Clerk domain and keys.
 
 - **Allowed subdomains** is on, listing `cloud.patchyhq.com` and
   `accounts.patchyhq.com`. Without it, a page on any `patchyhq.com` subdomain can
-  call the Frontend API with a visitor's Clerk session, and other subdomains
-  serve pages people publish. A new host that signs people in, such as a
-  per-company host, has to be added (`PATCH /v1/instance`, `allowed_subdomains`).
+  call the Frontend API with a visitor's Clerk session. Other products on
+  `patchyhq.com` subdomains serve pages people publish. A future host that signs
+  people in, such as the per-company hosts ADR-0005 leaves open, needs adding
+  (`PATCH /v1/instance`, `allowed_subdomains`) on top of its routing and
+  authorized-party changes.
 - **Sign-up** is in Waitlist mode during the private beta
   ([#481](https://github.com/allisonmahmood/patchy-cloud/issues/481)). People join
   at `accounts.patchyhq.com/waitlist`, and approving someone sends them an
@@ -214,8 +217,9 @@ keys.
   `clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --instance prod --file <file>`.
   Keep them out of output, chat and git.
 
-Clerk's edge challenges headless browsers on the production Account Portal but
-not the development one, so automated checks of production sign-in fail there.
+When checked on 2026-10-02, the production Account Portal answered headless
+Chromium with a Cloudflare challenge page; the development portal loaded
+normally. A headless check of production sign-in stops at that page.
 
 ## Postgres
 
