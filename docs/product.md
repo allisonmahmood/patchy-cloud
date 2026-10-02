@@ -70,7 +70,7 @@ phone parsing, component libraries, rich text, charts or HTML sanitisation.
 
 ### Who makes one, and how it gets in
 
-A person, or an agent acting for them, publishes through the `patchy` CLI. The SDK and local build loop are what `init` puts in the repo today. A hosted AI builder remains a later route: an agent with the same skills and SDK, working on a sandboxed computer Patchy runs instead of the person's own machine, and producing the same unit.
+A person, or an agent acting for them, publishes through the `patchy` CLI. The way in is one line the person gives their agent: `Set up Patchy using <instance>/llms.txt`. That page installs the instance's CLI, links its global skill for the agent and starts the machine login; the skill takes it from there. The SDK and local build loop are what `init` puts in the repo today. A hosted AI builder remains a later route: an agent with the same skills and SDK, working on a sandboxed computer Patchy runs instead of the person's own machine, and producing the same unit.
 
 Ownership: a patch belongs to a **user** in a company. The user holds a machine token per device, every token acts for that user, and replacing a token never changes who owns their patches.
 
@@ -84,8 +84,9 @@ A **publish key** identifies one attempt for its owning user. Before sending, th
 
 `patchy` is one private npm package containing the CLI, config builders, browser
 client and local dev runtime. Its version is the **release**. The instance serves
-its immutable tarball and reports its SHA-512 integrity through `GET /api/release`;
-public npm distribution remains future work. A repo pins that tarball as one
+its immutable tarball and reports its SHA-512 integrity through `GET /api/release`,
+and its `/install.mjs` installs that release globally; rerunning it upgrades.
+Public npm distribution remains future work. A repo pins that tarball as one
 devDependency, and `pnpm patchy …` runs the pinned copy.
 
 New file publishes require the exact-current CLI; repo publishing and new dev

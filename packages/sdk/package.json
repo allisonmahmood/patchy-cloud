@@ -15,6 +15,7 @@
   "files": [
     "dist",
     "artifacts",
+    "front-door",
     "skills"
   ],
   "scripts": {

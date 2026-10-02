@@ -496,7 +496,11 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
           "retrievable after an upgrade or same-version rebuild. Discovery is no-store. Only " +
           "GET tarball-shaped paths are reserved; sdk remains a valid company handle. Unknown " +
           "or malformed archive names answer 404; storage failure or corrupt bytes answer 503, " +
-          "both no-store."
+          "both no-store. GET /llms.txt (text/plain) and GET /install.mjs (text/javascript) " +
+          "answer without authentication, no-store, with the instance's public base URL in " +
+          "their commands. /llms.txt tells an outside agent how to install the CLI and log in; " +
+          "/install.mjs fetches this release, verifies the tarball's SHA-512 integrity before " +
+          "installing it globally with npm, then runs patchy setup."
       )
     ),
     HttpApiEndpoint.post("generate", "/sdk/generate", {

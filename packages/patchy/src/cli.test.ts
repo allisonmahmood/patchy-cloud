@@ -1,18 +1,56 @@
-// The CLI contract from outside: the exit-code ladder, login, keys and status.
+// The CLI contract from outside: setup, the exit-code ladder, login, keys and status.
 import type { ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
   htmlFile,
   identity,
+  packageDir,
   readJson,
   requestBarrier,
   runCli,
   stubInstance,
   tempDir
 } from "./test/cli.js";
+
+describe("patchy setup", () => {
+  it("links the bundled skill, removes its links, and refuses a path it does not own", async () => {
+    const home = tempDir();
+    const env = { HOME: home };
+    const agents = path.join(home, ".agents/skills/patchy");
+    const claude = path.join(home, ".claude/skills/patchy");
+    const linked = await runCli(["setup", "--json"], { env });
+    expect(linked).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(linked.stdout)).toEqual({
+      ok: true,
+      linked: [agents, claude],
+      skill: path.join(realpathSync(packageDir), "skills/patchy/SKILL.md")
+    });
+    // The whole bundled directory, references included.
+    expect(existsSync(path.join(claude, "references/onboarding.md"))).toBe(true);
+
+    const removed = await runCli(["setup", "--remove", "--json"], { env });
+    expect(removed).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(removed.stdout)).toEqual({
+      ok: true,
+      removed: [agents, claude],
+      warnings: []
+    });
+
+    mkdirSync(claude, { recursive: true });
+    const refused = await runCli(["setup", "--json"], { env });
+    expect(refused).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(refused.stderr)).toMatchObject({
+      ok: false,
+      kind: "local",
+      code: "skill_conflict",
+      error: expect.stringContaining(claude)
+    });
+    expect(existsSync(agents)).toBe(false);
+  });
+});
 
 describe("the exit-code ladder", async () => {
   it.each(["SIGINT", "SIGTERM"] as const)(

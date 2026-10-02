@@ -67,7 +67,7 @@ import {
   WakesPostgres,
   me
 } from "@patchy/runtime";
-import { Artifact, SdkApi } from "@patchy/sdk";
+import { Artifact, FrontDoor, SdkApi } from "@patchy/sdk";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
@@ -285,6 +285,7 @@ const app = Layer.mergeAll(
   Layer.mergeAll(
     api,
     SdkApi.tarballLayer,
+    FrontDoor.layer,
     Pages.layer,
     PortalPages.layer,
     landing,

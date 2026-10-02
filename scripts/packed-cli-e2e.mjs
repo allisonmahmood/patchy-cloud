@@ -12,6 +12,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  readlink,
   realpath,
   rm,
   writeFile
@@ -643,6 +644,7 @@ try {
   assert.equal(removedAgain.code, 2, "deleting an already-deleted patch is the instance's refusal");
 
   await runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release: installedManifest.version });
+  await runFrontDoorFlow(publicBaseUrl);
 
   // Login uses its own state and a worktree dev env that names this instance, so it
   // cannot replace the seeded key that the publishing scenarios above need.
@@ -1210,7 +1212,8 @@ function assertDocumentKeys(document, keys) {
   assert.deepEqual(Object.keys(document).sort(), [...keys].sort());
 }
 
-function assertLoginHandoff(document, publicBaseUrl) {
+/** `explicitApiUrl` is the `--api-url` login was given, which stays in `next`. */
+function assertLoginHandoff(document, publicBaseUrl, explicitApiUrl) {
   assertDocumentKeys(document, [
     "ok",
     "status",
@@ -1230,7 +1233,10 @@ function assertLoginHandoff(document, publicBaseUrl) {
   assert.equal(document.verificationUrlBare, `${publicBaseUrl}/login/device`);
   assert.ok(Date.parse(document.expiresAt) > Date.now(), "handoff must have a live expiry");
   assert.equal(document.interval, 5);
-  assert.equal(document.next, `patchy login --complete ${document.userCode}`);
+  assert.equal(
+    document.next,
+    `patchy login --complete ${document.userCode}${explicitApiUrl === undefined ? "" : ` --api-url '${explicitApiUrl}'`}`
+  );
   assert.equal(typeof document.agentNextSteps, "string");
   assert.match(document.agentNextSteps, /do not open a browser/i);
   assert.match(document.agentNextSteps, /next command/i);
@@ -1270,6 +1276,47 @@ async function assertAgentLoginOnPty(cliPath, publicBaseUrl, options) {
   assert.ok(next, "a terminal agent must receive a resumable handoff without waiting");
   assert.ok(output.includes(`${publicBaseUrl}/login/device?code=${next[1]}`));
   assert.match(output, /CLAUDECODE is set/);
+}
+
+/**
+ * The front door as an outside agent meets it: read /llms.txt, run its POSIX
+ * line on a clean HOME and a fresh npm prefix, and reach the login handoff.
+ * A second run reinstalls, keeps the skill links and polls the same login.
+ */
+async function runFrontDoorFlow(publicBaseUrl) {
+  if (process.platform === "win32") return;
+  console.log("[packed-cli-e2e] running the /llms.txt install line on a clean HOME and npm prefix");
+  const response = await checkedCall(() => fetch(`${publicBaseUrl}/llms.txt`));
+  assert.equal(response.status, 200);
+  const line = (await response.text()).match(/```sh\n(.+)\n```/)?.[1];
+  assert.ok(line, "/llms.txt must carry one POSIX install line");
+  const machine = path.join(tempRoot, "front door machine");
+  const home = path.join(machine, "home");
+  const prefix = path.join(machine, "npm prefix");
+  await checkedCall(() =>
+    Promise.all([mkdir(home, { recursive: true }), mkdir(prefix, { recursive: true })])
+  );
+  const env = {
+    HOME: home,
+    npm_config_prefix: prefix,
+    npm_config_cache: path.join(machine, "npm cache"),
+    npm_config_update_notifier: "false",
+    PATH: [path.join(prefix, "bin"), path.dirname(process.execPath), "/usr/bin", "/bin"].join(
+      path.delimiter
+    )
+  };
+  const skill = path.join(prefix, "lib/node_modules/patchy/skills/patchy");
+  for (const attempt of ["fresh install", "rerun"]) {
+    const result = await run("sh", ["-c", line], { cwd: machine, env, timeoutMs: 180_000 });
+    const lines = result.stdout.trim().split("\n");
+    assert.ok(lines.includes(`Executable: ${path.join(prefix, "bin/patchy")}`), attempt);
+    for (const link of [".agents/skills/patchy", ".claude/skills/patchy"]) {
+      assert.equal(await checkedCall(() => readlink(path.join(home, link))), skill, attempt);
+    }
+    const login = JSON.parse(lines.at(-1));
+    if (attempt === "fresh install") assertLoginHandoff(login, publicBaseUrl, publicBaseUrl);
+    else assert.equal(login.status, "pending", "a rerun's login polls the live handoff");
+  }
 }
 
 async function runCli(cliPath, args, options) {

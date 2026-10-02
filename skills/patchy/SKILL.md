@@ -249,21 +249,22 @@ The `patchy` CLI publishes one safe static HTML document and returns its view UR
 New patches default to company scope; use `--share public` only when the user wants
 anyone with the link to read the page.
 
-Requires Node.js 22.22.0 or newer and the `patchy` CLI on `PATH`. If the CLI is
-missing or its release differs from the intended instance, install from that
-instance, not a registry. For a new install, use the instance URL the user
-supplied; ask where to publish only if no destination is known.
-Fetch its unauthenticated `GET /api/release`, download the exact
-`package.tarball` URL as `patchy.tgz`, and verify the downloaded bytes against
-the SHA-512 `package.integrity` before installing:
+Requires Node.js 22.22.0 or newer, with npm, and the `patchy` CLI on `PATH`.
+If the CLI is missing or its release differs from the intended instance, install
+from that instance, not a registry: its `/llms.txt` has the install line. For a
+new install, use the instance URL the user supplied; ask where to publish only
+if no destination is known. On macOS and Linux:
 
 ```bash
-npm install --global --ignore-scripts ./patchy.tgz
+work=$(mktemp -d) && curl -fsS https://<instance>/install.mjs -o "$work/install.mjs" && node "$work/install.mjs"
 ```
 
-The package bundles its dependencies; installation needs no lifecycle scripts.
-Check that `patchy --version` matches the reported release before continuing.
-The installed skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
+The installer verifies the release's SHA-512 integrity before installing it
+globally with npm, links this skill as `~/.agents/skills/patchy` and
+`~/.claude/skills/patchy` through `patchy setup`, and prints the executable and
+skill paths. When it fails, its message names the fix: relay it. Rerunning it
+upgrades. A real directory already at a skill path is `skill_conflict`: ask the
+person before moving it, then run `patchy setup` again.
 Contributors in a source checkout may instead run `pnpm --filter patchy build`
 and symlink `packages/patchy/dist/index.js` as `patchy` into a directory on `PATH`.
 
@@ -368,8 +369,8 @@ browser sign-out is a separate control on **Your machines**.
 - A rejected key is a hard error. Log in again as the same user to keep editing
   that user's pages; if an environment key overrides it, resolve that override.
 - A new publish checks the executing CLI against `GET /api/release`, then validates the file.
-  A `release_mismatch` names both releases: install the exact package reported
-  by that endpoint using the integrity check above. Inside a patch repo, use `pnpm patchy refresh`.
+  A `release_mismatch` names both releases and the instance's install line:
+  rerun it to upgrade the CLI. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources. Repo mode admits
   tiers 0, 1 and 2 with tables, stores, shared tables, shared stores, members and Postgres declarations.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the

@@ -52,6 +52,18 @@ _Avoid_: signup, registration, setup wizard
 The copy-paste request a person gives their agent to install the skill, complete onboarding and publish the welcome patch. It authorizes that first-time setup explicitly; installing the skill alone runs nothing.
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
+**Front door**:
+An instance's public `/llms.txt` and `/install.mjs`, served before anyone signs in. A person gives their agent `Set up Patchy using <instance>/llms.txt`; that page says what Patchy Cloud is, gives the install-and-login line and points at the installed global skill, which owns everything after login.
+_Avoid_: landing page, docs site
+
+**Installer**:
+The instance's `/install.mjs`: a dependency-free Node script with the instance's address baked in. It verifies the current release's integrity, installs it globally with npm, then runs setup. Rerunning it is how a global CLI upgrades; inside a patch repo, refresh does.
+_Avoid_: bootstrapper, npm package, self-update
+
+**Setup**:
+`patchy setup`, which links the package's global skill directory as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`. It owns only links to a `patchy` package's skill and refuses to replace anything else.
+_Avoid_: onboarding, install
+
 **Publishing key**:
 The user-facing name for the [machine token](../auth/CONTEXT.md), not a second kind of credential. Copy addressed to the person says publishing key; the domain and wire use machine token.
 _Avoid_: token (in user-facing copy), password, account

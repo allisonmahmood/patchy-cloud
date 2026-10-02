@@ -653,6 +653,9 @@ describe("patchy publish", async () => {
     });
     expect(result.stderr).toContain(CURRENT_RELEASE);
     expect(result.stderr).toContain("9.9.9");
+    // A global CLI upgrades from its instance's installer; refresh only reconciles a repo.
+    expect(JSON.parse(result.stderr).error).toContain(`curl -fsS ${instance.url}/install.mjs`);
+    expect(result.stderr).not.toContain("refresh");
     expect(instance.requests.map((r) => r.url)).toEqual(["/api/me", "/api/release"]);
     expect(existsSync(path.join(dir, "publish", sha256(instance.url), "attempt"))).toBe(false);
   });

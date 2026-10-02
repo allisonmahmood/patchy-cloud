@@ -48,6 +48,7 @@ import * as State from "./State.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
+import * as Setup from "./Setup.js";
 import { prepareRepoPublish } from "./repoBuild.js";
 import * as Dev from "./devLifecycle.js";
 
@@ -337,6 +338,40 @@ const status = Command.make("status", {}, () =>
 
 const fileArgument = Argument.String("file").pipe(Argument.withDescription("HTML file path"));
 
+const setup = Command.make(
+  "setup",
+  {
+    remove: Flag.Boolean("remove").pipe(
+      Flag.withDescription("Remove only the skill links setup made"),
+      Flag.withDefault(false)
+    )
+  },
+  ({ remove }) =>
+    Output.contract(
+      remove
+        ? Effect.gen(function* () {
+            const { removed, warnings } = yield* Setup.unlink();
+            for (const warning of warnings) yield* Output.warn(warning);
+            yield* Output.report({ ok: true, removed, warnings }, [
+              removed.length === 0 ? "No Patchy skill links to remove." : "Removed:",
+              ...removed.map((link) => `  ${link}`)
+            ]);
+          })
+        : Effect.gen(function* () {
+            const { linked, skill } = yield* Setup.link();
+            yield* Output.report({ ok: true, linked, skill }, [
+              "Linked the Patchy skill:",
+              ...linked.map((link) => `  ${link}`),
+              `Read it next: ${skill}`
+            ]);
+          })
+    )
+).pipe(
+  Command.withDescription(
+    "Link the bundled Patchy skill into ~/.agents/skills and ~/.claude/skills, or remove those links."
+  )
+);
+
 const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
   run(
     Effect.gen(function* () {
@@ -559,7 +594,7 @@ const publish = Command.make(
           .pipe(
             Effect.catch((error) => Api.classify(error, "Could not read the instance release."))
           );
-        yield* checkRelease(release.release, { cli: RELEASE });
+        yield* checkRelease(release.release, { cli: RELEASE }, { instanceUrl: instance.apiUrl });
         const path = yield* Path.Path;
         const { resolved, html } = yield* readHtml(Option.getOrThrow(options.file));
         yield* validated(html);
@@ -1114,6 +1149,7 @@ export const root = Command.make("patchy").pipe(
     auth,
     whoami,
     status,
+    setup,
     validate,
     publish,
     share,
