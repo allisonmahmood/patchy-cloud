@@ -3,13 +3,13 @@
 // The instance serves this file at /install.mjs with its own address below.
 // Rerunning it is the upgrade path: it always reinstalls the instance's release.
 // Dependency-free on purpose: it runs before anything Patchy is installed.
-// Default imports and no top-level await keep old Node parsing far enough to
-// reach the version check.
-import childProcess from "node:child_process";
-import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+// Bare default imports and no top-level await let old Node load this far
+// enough to reach the version check.
+import childProcess from "child_process";
+import crypto from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 const base = "__PATCHY_PUBLIC_BASE_URL__";
 const windows = process.platform === "win32";
@@ -18,14 +18,19 @@ const windows = process.platform === "win32";
 class Stop extends Error {}
 
 /**
- * npm with fixed arguments only: Windows runs `npm.cmd` through cmd, which
- * would expand `%` and other metacharacters in a path, so paths never appear
- * on this command line. The tarball is named relative to `cwd`.
+ * npm by name. Windows runs `npm.cmd` through cmd, which expands `%` and other
+ * metacharacters typed on its command line, so the one path npm needs, the
+ * tarball, arrives through a variable that cmd expands once without rescanning.
  */
-const npm = (/** @type {string[]} */ args, /** @type {string} */ cwd) =>
+const npm = (/** @type {string[]} */ args, /** @type {string | undefined} */ file = undefined) =>
   windows
-    ? childProcess.spawnSync(["npm", ...args].join(" "), { cwd, shell: true, encoding: "utf8" })
-    : childProcess.spawnSync("npm", args, { cwd, encoding: "utf8" });
+    ? childProcess.spawnSync(
+        ["npm", ...args, ...(file === undefined ? [] : ['"%PATCHY_INSTALL_FILE%"'])].join(" "),
+        { shell: true, encoding: "utf8", env: { ...process.env, PATCHY_INSTALL_FILE: file ?? "" } }
+      )
+    : childProcess.spawnSync("npm", file === undefined ? args : [...args, file], {
+        encoding: "utf8"
+      });
 
 const output = (/** @type {childProcess.SpawnSyncReturns<string>} */ result) =>
   `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
@@ -43,17 +48,25 @@ const fetched = async (/** @type {string} */ url) => {
   return response;
 };
 
-/** PATH as the calling shell sees it: Volta adds its Node image's directories for this process only. */
-const callerPath = () => {
-  const volta = process.env.VOLTA_HOME;
-  const image = volta === undefined ? undefined : path.join(volta, "tools", "image");
-  return (process.env.PATH ?? "")
-    .split(path.delimiter)
-    .filter((dir) => dir !== "" && (image === undefined || !path.resolve(dir).startsWith(image)));
+/** The repair for a global prefix npm cannot use: one the user owns, on PATH. */
+const ownPrefix = () => {
+  const own = path.join(os.homedir(), ".npm-global");
+  return `give npm a prefix you own:\n  npm config set prefix "${own}"\nthen add ${windows ? own : path.join(own, "bin")} to PATH, open a new terminal and run this again.`;
+};
+
+/** A command the shell would run: an executable file, not a directory or plain file. */
+const runnable = (/** @type {string} */ file) => {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    if (!windows) fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const install = async (/** @type {string} */ work) => {
-  const prefixResult = npm(["prefix", "--global"], work);
+  const prefixResult = npm(["prefix", "--global"]);
   if (prefixResult.error !== undefined || prefixResult.status !== 0) {
     throw new Stop(
       "npm is not on PATH. It ships with Node.js: reinstall Node.js 22.22.0 or newer from https://nodejs.org, open a new terminal, then run this again."
@@ -63,6 +76,14 @@ const install = async (/** @type {string} */ work) => {
   const bin = windows ? prefix : path.join(prefix, "bin");
   const executable = path.join(bin, windows ? "patchy.cmd" : "patchy");
   const entry = path.join(prefix, ...(windows ? [] : ["lib"]), "node_modules/patchy/dist/index.js");
+  // Volta's own Node image is npm's default prefix there, and no shell puts it on PATH.
+  const volta = process.env.VOLTA_HOME;
+  const inVolta = volta === undefined ? "" : path.relative(volta, prefix);
+  if (volta !== undefined && !inVolta.startsWith("..") && !path.isAbsolute(inVolta)) {
+    throw new Stop(
+      `Volta manages this Node, so npm's global prefix ${prefix} is inside Volta, where shells never find what npm installs there. ${ownPrefix()}`
+    );
+  }
 
   const release = await (await fetched(`${base}/api/release`)).json().catch(() => undefined);
   if (typeof release?.release !== "string" || typeof release.package?.tarball !== "string") {
@@ -76,27 +97,17 @@ const install = async (/** @type {string} */ work) => {
       `The download from ${tarball} does not match the release's integrity, so nothing was installed. Run this again; if it keeps failing, tell your Patchy admin.`
     );
   }
-  // Only [A-Za-z0-9.+-], so the name is safe on npm's command line.
-  const file = `patchy-${release.release.replace(/[^A-Za-z0-9.+-]/g, "")}.tgz`;
-  fs.writeFileSync(path.join(work, file), bytes);
+  const file = path.join(work, "patchy.tgz");
+  fs.writeFileSync(file, bytes);
 
   const installed = npm(
-    [
-      "install",
-      "--global",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      "--loglevel=error",
-      `./${file}`
-    ],
-    work
+    ["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"],
+    file
   );
   if (installed.status !== 0) {
     if (/\b(EACCES|EPERM)\b/.test(output(installed))) {
-      const own = path.join(os.homedir(), ".npm-global");
       throw new Stop(
-        `npm cannot write to its global prefix ${prefix}. Do not use sudo; give npm a prefix you own:\n  npm config set prefix "${own}"\nthen add ${windows ? own : path.join(own, "bin")} to PATH, open a new terminal and run this again.`
+        `npm cannot write to its global prefix ${prefix}. Do not use sudo; ${ownPrefix()}`
       );
     }
     throw new Stop(`npm could not install patchy:\n${output(installed)}`);
@@ -129,9 +140,11 @@ const install = async (/** @type {string} */ work) => {
     windows
       ? fs.realpathSync(a).toLowerCase() === fs.realpathSync(b).toLowerCase()
       : fs.realpathSync(a) === fs.realpathSync(b);
-  const first = callerPath()
+  const first = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
     .map((dir) => path.join(path.resolve(dir), path.basename(executable)))
-    .find((candidate) => fs.existsSync(candidate));
+    .find(runnable);
   if (first === undefined) {
     throw new Stop(
       `${bin} is not on PATH, so the shell cannot find patchy. Add it to PATH${windows ? " in your user environment variables" : ` in your shell profile (export PATH="${bin}:$PATH")`}, open a new terminal, or run ${executable} directly.`

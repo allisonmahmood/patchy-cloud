@@ -181,33 +181,38 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     expect(existsSync(path.join(home, ".agents/skills/patchy/SKILL.md"))).toBe(true);
   }, 180_000);
 
-  it("checks PATH as the calling shell sees it, without the Node image Volta adds for itself", async () => {
-    const { url } = await instance();
-    const { env, run } = machine(url);
-    // Volta's own npm installs into its Node image, whose bin only Volta's children see.
+  it("names a prefix to own when Volta's Node image is npm's prefix, before installing", async () => {
+    const stub = await instance();
+    const { env, run } = machine(stub.url);
+    // Volta's npm defaults to its Node image, whose bin only Volta's own children see.
     const volta = path.join(root, "volta home");
     const prefix = path.join(volta, "tools/image/node/22.22.0");
     mkdirSync(prefix, { recursive: true });
-    const bin = path.join(prefix, "bin");
     const result = await run({
       ...env,
       VOLTA_HOME: volta,
       npm_config_prefix: prefix,
-      PATH: [bin, ...system].join(path.delimiter)
+      PATH: [path.join(prefix, "bin"), ...system].join(path.delimiter)
     });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`${bin} is not on PATH, so the shell cannot find patchy.`);
-  }, 180_000);
+    expect(result.stderr).toContain(`Volta manages this Node, so npm's global prefix ${prefix}`);
+    expect(result.stderr).toContain("npm config set prefix");
+    expect(stub.requests).toEqual([]);
+    expect(existsSync(installed(prefix))).toBe(false);
+  });
 
-  it("refuses to finish while another patchy comes first on PATH", async () => {
+  it("passes over a patchy the shell cannot run, but refuses one that runs first", async () => {
     const { url } = await instance();
     const { bin, env, run } = machine(url);
     const other = path.join(root, "other patchy");
     mkdirSync(other, { recursive: true });
-    writeFileSync(path.join(other, "patchy"), "#!/bin/sh\n", { mode: 0o755 });
-    const result = await run({ ...env, PATH: [other, bin, ...system].join(path.delimiter) });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
+    writeFileSync(path.join(other, "patchy"), "#!/bin/sh\n", { mode: 0o644 });
+    const withOther = { ...env, PATH: [other, bin, ...system].join(path.delimiter) };
+    expect(await run(withOther)).toMatchObject({ status: 0, stderr: "" });
+    chmodSync(path.join(other, "patchy"), 0o755);
+    const shadowed = await run(withOther);
+    expect(shadowed.status).toBe(1);
+    expect(shadowed.stderr).toContain(
       `${path.join(other, "patchy")} comes before ${path.join(bin, "patchy")} on PATH`
     );
   }, 180_000);
