@@ -10,12 +10,12 @@ import noInlineSchemaCompile from "./rules/no-inline-schema-compile.js";
 import noManualEffectRuntimeInTests from "./rules/no-manual-effect-runtime-in-tests.js";
 
 // `pnpm lint --cache` keys on the plugin's name and version, not its code, so
-// the version fingerprints the rule sources: editing a rule relints every file.
-const rules = new URL("./rules/", import.meta.url);
-const sources = readdirSync(rules)
+// the version fingerprints this plugin and its rules: editing either relints every file.
+const here = new URL("./", import.meta.url);
+const sources = readdirSync(here, { recursive: true })
   .filter((file) => file.endsWith(".js"))
   .sort()
-  .map((file) => readFileSync(new URL(file, rules), "utf8"));
+  .map((file) => readFileSync(new URL(file, here), "utf8"));
 const version = createHash("sha256").update(sources.join("\n")).digest("hex").slice(0, 12);
 
 export default {
