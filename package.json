@@ -24,7 +24,8 @@
     "test:postgres-concurrency": "vitest run --config vitest.postgres.config.ts",
     "prepare": "node scripts/build-serving-broker.mjs && effect-language-service patch && simple-git-hooks",
     "lint": "eslint \"**/*.{ts,mts,cts,tsx}\"",
-    "typecheck": "node scripts/build-serving-broker.mjs && effect-language-service patch && turbo run typecheck && tsc -p tsconfig.test.json",
+    "typecheck": "node scripts/build-serving-broker.mjs && effect-language-service patch && turbo run typecheck typecheck:tests",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

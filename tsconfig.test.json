@@ -14,6 +14,11 @@
     // The ESLint rules under test are plain JS.
     "allowJs": true,
     "customConditions": ["development"],
+    // The browser fixture bundles the built package under these names; check it against source.
+    "paths": {
+      "patchy/client": ["./packages/patchy/src/client.ts"],
+      "patchy/preact": ["./packages/patchy/src/preact.ts"]
+    },
     "plugins": [
       {
         "name": "@effect/language-service",
