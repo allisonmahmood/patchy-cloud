@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { RequireSession, Session, pageResponse, returnPath } from "@patchy/auth";
 import type { Companies, Users } from "@patchy/companies";
 
@@ -25,6 +26,8 @@ const admission = Effect.gen(function* () {
   const viewer = yield* RequireSession.resolveViewer.pipe(
     Effect.provideService(RequireSession.SignedIn, result)
   );
+  if (viewer !== null && !HttpServerResponse.isHttpServerResponse(viewer))
+    yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
   return {
     ...decision,
     result:

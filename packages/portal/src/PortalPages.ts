@@ -7,6 +7,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { PatchName, PatchState, SharingScope } from "@patchy/api";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
@@ -170,6 +171,8 @@ const render = Effect.fn("PortalPages.render")(function* (
       : rows.find((row) => row.patch.name === name);
   if (name !== undefined && selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  if (name !== undefined && selected !== undefined)
+    yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = selected ? yield* patches.portalCard(selected.patch.id, access) : null;
   const now = yield* Clock.currentTimeMillis;
   const body =
@@ -221,6 +224,7 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
   const selected = rows.find((row) => row.patch.name === name);
   if (selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = yield* patches.portalCard(selected.patch.id, access);
   if (viewer.role !== "admin" && (action === "reassign" || card.owner.id !== viewer.user.id))
     return yield* render(name, {
@@ -281,6 +285,7 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
   );
   if (selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   // Ownership is read now, so reassignment moves who may read the log.
   if (viewer.role !== "admin" && selected.owner.id !== viewer.user.id)
     return yield* render(name, { status: 403, notice: logForbidden });
@@ -348,6 +353,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   const selected = rows.find((row) => row.patch.name === name);
   if (!selected)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
     yield* request.urlParamsBody.pipe(
@@ -404,12 +410,13 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       }
       case "rollback": {
         const fields = yield* decodeRollback(form);
-        yield* patches.rollback(
+        const rolledBack = yield* patches.rollback(
           selected.patch.id,
           actor,
           fields.versionNumber,
           fields.expectedCurrentVersionId || null
         );
+        yield* WideEvents.enrich(Patches.eventFields(rolledBack.patch));
         break;
       }
       case "restore": {

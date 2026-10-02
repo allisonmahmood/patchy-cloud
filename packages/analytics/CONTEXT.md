@@ -16,6 +16,10 @@ _Avoid_: machine (the credential is provenance, not the actor), distinct id (Pos
 One structured record of a single hop of work, emitted once at its end. It sits beside the analytics event, shares its reporting client, and carries attribution, outcome, timing and peak limit usage without sampling; it is not the billing record.
 _Avoid_: log line, metric, trace (the linkage, not the record)
 
+**Request event**:
+The wide event for one server request. Runtime requests record their own, as [Runtime](../runtime/CONTEXT.md) defines; every other request names its matched route template, never the URL, with the method and the status the client received. The outcome follows that status: a 4xx is refused with its body's code, a 5xx is a failure. Health probes emit none.
+_Avoid_: access log (it records URLs), request log
+
 **Limit peak**:
 The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.
 _Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)

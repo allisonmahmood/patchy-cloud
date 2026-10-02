@@ -20,6 +20,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",

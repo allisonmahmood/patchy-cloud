@@ -12,6 +12,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   BadRequest,
   Conflict,
@@ -195,6 +196,10 @@ const decodeRelease = decodeBody(
   Schema.Struct({ manifest: Schema.Struct({ release: Schema.String }) })
 );
 const decodeManifest = Schema.decodeUnknownEffect(Manifest, { onExcessProperty: "error" });
+/** A replayed publish names the patch and version it created, like the first answer. */
+const decodeReplayIds = Schema.decodeUnknownOption(
+  Schema.Struct({ patchId: Schema.String, versionId: Schema.String })
+);
 const decodeShare = decodeBody(ShareRequest);
 const decodeForce = decodeBody(ForceRequest);
 const decodeRollback = decodeBody(RollbackRequest);
@@ -282,7 +287,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           patchRef
         })
         .pipe(Effect.catchTags(readFailures));
-      return HttpServerResponse.isHttpServerResponse(rows) ? rows : (rows[0] ?? notFound());
+      if (HttpServerResponse.isHttpServerResponse(rows)) return rows;
+      const row = rows[0];
+      if (row === undefined) return notFound();
+      yield* WideEvents.enrich(Patches.eventFields(row.patch));
+      return row;
     });
 
     return handlers
@@ -314,16 +323,18 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               .replay(identity.user.id, key.publishKey)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
             if (Option.isNone(stored)) return undefined;
-            return stored.value.payloadDigest === digest
-              ? HttpServerResponse.text(stored.value.body, {
-                  status: stored.value.status,
-                  contentType: "application/json"
-                })
-              : keyConflict();
+            if (stored.value.payloadDigest !== digest) return keyConflict();
+            const published = decodeReplayIds(stored.value.response);
+            if (Option.isSome(published)) yield* WideEvents.enrich(published.value);
+            return HttpServerResponse.text(stored.value.body, {
+              status: stored.value.status,
+              contentType: "application/json"
+            });
           });
           const previous = yield* replay();
           if (previous !== undefined) return previous;
           if (isPatchId(key.patchId)) {
+            yield* WideEvents.enrich({ patchId: key.patchId });
             const admission = yield* patches
               .authorizePublish({
                 intent: "update",
@@ -524,6 +535,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               })
             );
           if (HttpServerResponse.isHttpServerResponse(recorded)) return recorded;
+          yield* WideEvents.enrich({ patchId: recorded.patchId, versionId: recorded.versionId });
           yield* analytics.track({
             name: patchId === null ? "patch.created" : "patch.updated",
             principalId: identity.user.id,
@@ -726,6 +738,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .setScope(params.patchId, { userId: identity.user.id, admin: false }, payload.scope)
             .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
+          yield* WideEvents.enrich(Patches.eventFields(shared));
           return new Shared({
             ok: true,
             patchId: params.patchId,
@@ -746,6 +759,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .retire(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           return new Retired({
             ok: true,
             patchId: patch.id,
@@ -766,6 +780,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .restore(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           return new Restored({ ok: true, patchId: patch.id, state: "live" });
         })
       )
@@ -785,6 +800,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             )
             .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
           if (HttpServerResponse.isHttpServerResponse(result)) return result;
+          yield* WideEvents.enrich(Patches.eventFields(result.patch));
           return new RolledBack({
             ok: true,
             patchId: result.patch.id,
@@ -809,6 +825,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             )
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           return new Described({
             ok: true,
             patchId: patch.id,
@@ -824,6 +841,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .delete(params.patchId, { userId: identity.user.id, admin: false }, query.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           yield* analytics.track({
             name: "patch.deleted",
             principalId: identity.user.id,

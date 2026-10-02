@@ -103,11 +103,28 @@ The seed is for development only.
 `pnpm seed:dev` publishes the accepted HTML fixture corpus. Both `PATCHY_API_URL`
 and `PATCHY_API_TOKEN` are required; neither has a default.
 
-### Runtime wide events
+### Wide events
 
-The server emits one JSON line for each runtime call or file-byte request,
-including refusals and failures. No key is needed for stdout. `pnpm dev` captures
-these lines with the other server output; `pnpm dev logs` displays them.
+The server writes one JSON line to stdout for every request, including refusals
+and failures: an event with `type: "request"`. Runtime calls and file-byte
+requests record their own, described below. Every other request names its
+matched route template in `route`, such as `/api/patches/:patchRef` or
+`/:company/:name/*`, never the URL or query string. An unmatched request carries
+its fallback's pattern, `/*` or `/api/*`. A request the API guard answers itself
+is recorded under `/api/*`; its 429 carries the refusing `limitId`.
+
+`method` and `status` are what the client sent and received. A 2xx or 3xx is
+`success`; a 4xx is `refused`, with the `code` from its body when it has one; a
+5xx or a defect is `failure`; a dropped connection is `interrupted`. `viewerId`
+and `companyId` name the signed-in user, or the user a machine token belongs to;
+the token itself is never recorded. Routes about one patch add `patchId` and a
+`versionId`: the version a page served, a publish created or a rollback made
+current, and otherwise the patch's current version.
+`requestBytes` is the declared length, and `responseBytes` is the body sent.
+Health probes (`/healthz`) emit nothing.
+
+No key is needed for stdout. `pnpm dev` captures these lines with the other
+server output; `pnpm dev logs` displays them.
 
 For PostHog delivery when running the server by hand, set
 `PATCHY_POSTHOG_API_KEY` securely. `PATCHY_POSTHOG_HOST` defaults to
@@ -121,11 +138,28 @@ startup and uses revision `development`. The event's top-level `deploymentRevisi
 identifies that build; `limits[].configRevision.deploymentRevision` is instead the
 automatically computed operating-limit fingerprint described in [Limits](limits.md).
 Each limit measurement also carries the company's `overrideRevision`.
-Request records include known operation names, outcome, refusal code and limit id
-when present, duration, trace linkage and trusted attribution. Tier 1 operations
-have no patch-authored handler, so `handler` and `kind` are omitted.
-Records omit request bodies, filenames, SQL and credentials.
+Runtime request records include known operation names, outcome, refusal code and
+limit id when present, duration, trace linkage and trusted attribution. Tier 1
+operations have no patch-authored handler, so `handler` and `kind` are omitted.
+Records omit tokens, cookies, session values, device and invite codes, request and
+response bodies, filenames, SQL, credentials, source addresses and URLs.
 Every event has `sampleProbability: 1`; delivery is best effort, not metering.
+
+#### Finding a request in CloudWatch
+
+In a deployment, these lines land in the host service's log group. CloudWatch Logs
+Insights discovers their JSON fields. Filter on `type`, `route`, `viewerId`,
+`outcome`, `code` and the time range; `deploymentRevision` names the build that
+served each request. When someone reports a failed publish:
+
+```
+fields @timestamp, status, outcome, code, patchId, versionId, durationMs, deploymentRevision, traceId
+| filter type = "request" and route = "/api/publish" and viewerId = "usr_…"
+| sort @timestamp desc
+| limit 20
+```
+
+Then filter on its `traceId` to see the events nested under that request.
 
 The patch repo's local runtime uses the same record with compact stdout output.
 `@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and

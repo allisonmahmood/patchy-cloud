@@ -54,6 +54,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Companies, Auth, Patches, Integrations → SQL**: persist their own domain data in the platform Postgres database
 - **Company database → SQL, Content store**: keeps placements in the platform database, inventories in each company database, and reclaims unreferenced file objects
 - **Auth, Patches → Analytics**: report business events
+- **Hosting → Analytics**: opens a request event for every request outside the runtime path; Auth, Patches, Serving and Portal name its viewer, patch and version where they resolve them
 - **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines
 - **Hosting, Auth, Patches → Limits**: rely on shared rate limiting for API access, device login and publishing
 - **Limits → SQL**: persists company overrides, their configuration revisions and change history.

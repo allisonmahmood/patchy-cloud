@@ -25,6 +25,7 @@
     "test": "node ../../scripts/build-serving-broker.mjs && vitest run"
   },
   "dependencies": {
+    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
@@ -36,7 +37,6 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@patchy/analytics": "workspace:*",
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/integrations": "workspace:*",

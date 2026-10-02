@@ -1,7 +1,8 @@
 /**
  * The server side of the `Authorization` middleware `packages/api` declares:
  * one token lookup per request, providing the current identity to the
- * handler, or the one 401 the wire knows. A missing credential and a bad one
+ * handler and naming its user and company on the request's wide event, or
+ * the one 401 the wire knows. A missing credential and a bad one
  * are indistinguishable from here on.
  *
  * The header is read through `Bearer.parse` rather than the credential the
@@ -15,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Authorization, CurrentIdentity, type Identity, refuse, Unauthorized } from "@patchy/api";
 import * as Bearer from "./Bearer.js";
 import * as MachineTokens from "./MachineTokens.js";
@@ -43,9 +45,16 @@ export const identify: Effect.Effect<
   const request = yield* HttpServerRequest.HttpServerRequest;
   const credential = Bearer.parse(request.headers.authorization);
   if (credential.kind !== "bearer") return Option.none();
-  return yield* tokens
+  const identity = yield* tokens
     .authenticate(credential.token)
     .pipe(Effect.map(Option.fromNullishOr), Effect.catchTags({ SqlError: Effect.die }));
+  // The request event's principal is the user; the machine token is provenance.
+  if (Option.isSome(identity))
+    yield* WideEvents.enrich({
+      viewerId: identity.value.user.id,
+      companyId: identity.value.company.id
+    });
+  return identity;
 });
 
 export const make = Effect.gen(function* () {

@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
@@ -86,6 +87,11 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
             kind === "content" ? params.versionId : undefined
           )
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
+  if (Option.isSome(served))
+    yield* WideEvents.enrich({
+      patchId: served.value.patch.id,
+      versionId: served.value.version.id
+    });
   // Gone and operator-disabled patches are absent even before sign-in.
   if (Option.isNone(served) || served.value.patch.disabledAt !== null) {
     return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);

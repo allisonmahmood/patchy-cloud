@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   DescriptionText,
   FileStoreDefinition,
@@ -76,6 +77,12 @@ export const deriveName = (source: string, ordinal = 1): string => {
 /** An absolute address is independent of the patch's current sharing scope. */
 export const address = (publicBaseUrl: string, companyHandle: string, name: string) =>
   `${publicBaseUrl.replace(/\/+$/, "")}/${companyHandle}/${name}`;
+
+/** A request event's patch fields: the patch and, once it has one, its current version. */
+export const eventFields = (patch: Pick<Patch, "id" | "currentVersionId">) => ({
+  patchId: patch.id,
+  ...(patch.currentVersionId === null ? {} : { versionId: patch.currentVersionId })
+});
 
 /** Unknown, disabled or outside the actor's company. */
 export class PatchUnavailable extends Schema.TaggedError<PatchUnavailable>()("PatchUnavailable", {
@@ -733,7 +740,7 @@ export class Patches extends Context.Service<
       scope: Patch["scope"],
       expectedScope?: Patch["scope"]
     ) => Effect.Effect<
-      { scope: Patch["scope"]; name: string; companyHandle: string },
+      Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId">,
       LifecycleError | Tier2NotPublic | SqlError
     >;
     /** A retained name or redirect, including off and operator-disabled patches. */
@@ -1705,6 +1712,8 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const locked = yield* lockOpenable({ patchId, userId: actorUserId });
         if (Option.isNone(locked)) return yield* new PatchUnavailable({ patchId });
+        // The inventory answer carries no version, so the request event takes it from the row.
+        yield* WideEvents.enrich(eventFields(locked.value));
         const snapshot = yield* readInventory(locked.value.companyId, patchId);
         return new PatchInventory(
           snapshot === null
@@ -2032,7 +2041,13 @@ export const make = Effect.gen(function* () {
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'sharing changed' WHERE id = ${patchId}`;
     yield* announce(patchId);
-    return { scope, name: row.name, companyHandle: row.companyHandle };
+    return {
+      id: row.id,
+      scope,
+      name: row.name,
+      companyHandle: row.companyHandle,
+      currentVersionId: row.currentVersionId
+    };
   }, withLifecycleTransaction);
 
   const retire = Effect.fn("Patches.retire")(function* (

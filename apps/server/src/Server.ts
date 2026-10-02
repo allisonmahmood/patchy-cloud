@@ -74,6 +74,7 @@ import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 import * as FleetInvocation from "./FleetInvocation.js";
 import * as MemberDirectory from "./MemberDirectory.js";
 import { migrations } from "./migrations.js";
+import * as RequestEvents from "./RequestEvents.js";
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -234,17 +235,19 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
 );
 
 /**
- * What every request passes through, outermost first: the trusted-proxy walk,
+ * What every request passes through, outermost first: the request events'
+ * edge, so an event names the method the client sent; the trusted-proxy walk,
  * so everything after it keys on the client's address rather than the proxy's;
  * the serving headers, so a refusal is covered as well as a page; the API
- * guard, ahead of the router. One global middleware rather than three, so
+ * guard, ahead of the router. One global middleware rather than four, so
  * the order is written down instead of left to how layers build.
  */
 const middleware = HttpRouter.middleware(
   Effect.gen(function* () {
+    const events = yield* RequestEvents.edge;
     const trustedProxies = yield* TrustedProxies.make;
     const guard = yield* ApiGuard.make;
-    return (app) => trustedProxies(servingHeaders(guard(app)));
+    return (app) => events(trustedProxies(servingHeaders(guard(app))));
   }),
   { global: true }
 );
@@ -274,18 +277,23 @@ const landing = HttpRouter.use((router) =>
   })
 );
 
-/** The routes and middleware as one router application. */
+/**
+ * The routes and middleware as one router application. Request events wrap
+ * every route from outside, so a route's own middleware runs inside its event.
+ */
 const app = Layer.mergeAll(
-  api,
-  SdkApi.tarballLayer,
-  Pages.layer,
-  PortalPages.layer,
-  landing,
-  AuthPages.layer,
-  Layer.unwrap(
-    Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
-  ),
-  ConnectionPages.layer,
+  Layer.mergeAll(
+    api,
+    SdkApi.tarballLayer,
+    Pages.layer,
+    PortalPages.layer,
+    landing,
+    AuthPages.layer,
+    Layer.unwrap(
+      Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
+    ),
+    ConnectionPages.layer
+  ).pipe(Layer.provide(RequestEvents.layer)),
   middleware
 );
 
