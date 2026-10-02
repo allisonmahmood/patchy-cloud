@@ -535,16 +535,20 @@ export const localPackageRegistry = async () => {
   const seen = new Set<string>();
   const resolvePackage = (name: string, from: string): string => {
     const resolver = createRequire(from);
+    // pnpm links a skipped optional platform package to the workspace root, so a
+    // resolution only counts when it lands on the package that was asked for.
+    const named = (file: string) => decodePackageFixture(readJson(file)).name === name;
     try {
-      return resolver.resolve(`${name}/package.json`);
+      const file = resolver.resolve(`${name}/package.json`);
+      if (named(file)) return file;
     } catch {
       // ESM-only tooling may export neither package.json nor a require entry.
       for (const directory of resolver.resolve.paths(name) ?? []) {
         const candidate = path.join(directory, name, "package.json");
-        if (existsSync(candidate)) return candidate;
+        if (existsSync(candidate) && named(candidate)) return candidate;
       }
-      throw new Error(`The offline CLI fixture needs the real installed package ${name}.`);
     }
+    throw new Error(`The offline CLI fixture needs the real installed package ${name}.`);
   };
   const pack = async (file: string): Promise<void> => {
     file = realpathSync(file);
