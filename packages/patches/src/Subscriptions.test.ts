@@ -420,6 +420,7 @@ it.layer(layer)("shared source subscription lifecycle", (it) => {
           });
           expect(yield* subscription.refused).toMatchObject(refusal);
           yield* post("restore", {
+            expectedPatchId: fixture.source.patchId,
             expectedState: action === "retire" ? "retired" : "deleted",
             ack: "1"
           });
