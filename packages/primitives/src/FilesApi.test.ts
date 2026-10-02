@@ -221,22 +221,35 @@ it.layer(socket)("Files HTTP / real operations", (it) => {
           headers: { ...headers(), "sec-fetch-site": "same-origin" }
         });
         assert.deepStrictEqual(new Uint8Array(yield* old.arrayBuffer), bytes);
-        for (const op of ["files.get", "files.put"] as const) {
-          const response = yield* api.call({
+        const envelope = {
+          patchId,
+          versionId,
+          wire: WIRE_VERSION,
+          principal: { userId: "usr_dev" }
+        };
+        const request = {
+          headers: { ...headers(), origin: PUBLIC_BASE_URL },
+          responseMode: "response-only"
+        } as const;
+        for (const call of [
+          api.call({
+            ...request,
             payload: {
-              patchId,
-              versionId,
-              wire: WIRE_VERSION,
-              principal: { userId: "usr_dev" },
-              op,
-              args:
-                op === "files.put"
-                  ? { store: "docs", name: "folder/active.svg", contentType: "image/svg+xml" }
-                  : { store: "docs", name: "folder/active.svg" }
-            },
-            headers: { ...headers(), origin: PUBLIC_BASE_URL },
-            responseMode: "response-only"
-          });
+              ...envelope,
+              op: "files.get",
+              args: { store: "docs", name: "folder/active.svg" }
+            }
+          }),
+          api.call({
+            ...request,
+            payload: {
+              ...envelope,
+              op: "files.put",
+              args: { store: "docs", name: "folder/active.svg", contentType: "image/svg+xml" }
+            }
+          })
+        ]) {
+          const response = yield* call;
           assert.strictEqual(response.status, 400);
           assert.include(yield* response.json, { code: "invalid_request" });
         }
@@ -261,7 +274,7 @@ it.layer(socket)("Files HTTP / authorised handles", (it) => {
         const binding = {
           ...fixture.binding,
           versionId: tier2VersionId,
-          manifest: { ...manifest, tier: 2 },
+          manifest: { ...manifest, tier: 2 as const },
           identity,
           principal: { userId: identity.user.id }
         };
@@ -494,7 +507,13 @@ it.layer(socket)("Files HTTP / streamed bytes", (it) => {
           return {
             status: result.status,
             cache: result.headers.get("cache-control"),
-            body: (await result.json()) as { code: string; correlationId: string }
+            body: (await result.json()) as {
+              code: string;
+              correlationId: string;
+              scope: string;
+              limitId: string;
+              value: number;
+            }
           };
         });
         assert.strictEqual(response.status, 413);

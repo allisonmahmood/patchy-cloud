@@ -292,6 +292,7 @@ it.layer(services)("company page and actions", (it) => {
       );
       const [invite] = yield* companies.listInvites(owner.company.id);
       assert.isDefined(invite);
+      assert.isNotNull(invite.clerkInvitationId);
       assert.strictEqual(invite!.email, "colleague@example.com");
       assert.strictEqual(invite!.role, "admin");
       assert.deepStrictEqual((yield* recording.events).slice(start), [
@@ -301,11 +302,10 @@ it.layer(services)("company page and actions", (it) => {
           id: invite!.clerkInvitationId
         }
       ]);
-      assert.isString(invite!.clerkInvitationId);
       redirected(yield* send(`/company/invites/${invite!.id}/resend`, post(owner.user)));
       const [resent] = yield* companies.listInvites(owner.company.id);
       assert.strictEqual(resent!.id, invite!.id);
-      assert.isString(resent!.clerkInvitationId);
+      assert.isNotNull(resent!.clerkInvitationId);
       assert.notStrictEqual(resent!.clerkInvitationId, invite!.clerkInvitationId);
       assert.deepStrictEqual(
         (yield* recording.events).slice(start).filter((event) => event.operation === "create"),
@@ -461,11 +461,12 @@ it.layer(services)("company page and actions", (it) => {
         [`/company/invites/${invite.id}/resend`, {}],
         [`/company/users/${member.id}/role`, { role: "admin" }]
       ];
+      const refusedHeaders: ReadonlyArray<Record<string, string>> = [
+        { origin: "https://foreign.invalid", "sec-fetch-site": "same-origin" },
+        { "sec-fetch-site": "cross-site" }
+      ];
       for (const [path, body] of actions) {
-        for (const headers of [
-          { origin: "https://foreign.invalid", "sec-fetch-site": "same-origin" },
-          { "sec-fetch-site": "cross-site" }
-        ]) {
+        for (const headers of refusedHeaders) {
           const response = yield* send(path, {
             method: "POST",
             headers: { cookie: cookie(owner.user), ...headers },

@@ -150,6 +150,26 @@ jobs:
       - name: Exercise the packed tier 2 journey against an isolated real server
         run: pnpm test:packed-tier2-e2e
 
+  # Tier 1 and 2 pages in Chromium against an isolated server; `pnpm test:browser`.
+  # Native printing needs a display, so its @print test runs by hand.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chromium and system dependencies
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Exercise tier 1 and 2 pages in Chromium
+        run: pnpm test:browser
+
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

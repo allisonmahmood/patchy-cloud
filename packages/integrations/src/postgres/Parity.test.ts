@@ -75,7 +75,7 @@ const fixtureSql = "INSERT INTO public.items VALUES (1, ARRAY[1, 2]), (2, ARRAY[
 const expected = [
   { id: 1, values: [1, 2] },
   { id: 2, values: [3] }
-];
+] as const;
 const decodePage = Schema.decodeUnknownEffect(PostgresPage);
 const decodeKeys = Schema.decodeUnknownEffect(PostgresKeyRows);
 const decodeRows = Schema.decodeUnknownEffect(PostgresRows);

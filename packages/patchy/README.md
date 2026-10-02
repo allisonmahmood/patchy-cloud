@@ -233,8 +233,8 @@ trusting arbitrary handler-created `PatchyError` objects.
 
 Queries, mutations and actions run through the same handler engine and callback
 gateway with the ECS fleet in production and the pinned local executor in dev
-and tests. See [the development guide](../../docs/DEVELOPMENT.md) for setup and
-the remaining fleet acceptance gate.
+and tests. [Operations](../../docs/OPERATIONS.md#the-execution-service) covers
+the execution service and fleet.
 A query with declared data resources shares one read-only `REPEATABLE READ`
 company snapshot across its callbacks, with a 3-second deadline. Resource-free
 queries need no company database lease and report an empty watermark and zero

@@ -49,6 +49,7 @@ export default tseslint.config(
     // CLI imports stay wire-only except for isolated server-artifact inspection.
     ignores: [
       "**/*.test.ts",
+      "packages/patchy/src/test/**",
       "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members}.ts"
     ],
     rules: {
@@ -99,7 +100,8 @@ export default tseslint.config(
       "apps/server/src/start.ts",
       "test/postgres.ts",
       "test/clerk.ts",
-      "scripts/test-clerk.ts"
+      "scripts/test-clerk.ts",
+      "scripts/verify.ts"
     ],
     rules: {
       "no-console": "off"
@@ -109,7 +111,8 @@ export default tseslint.config(
     files: [
       // Test entrypoints configure the environment for workers and child processes.
       "packages/serving/src/render.test.ts",
-      "packages/patchy/src/cli.test.ts",
+      "packages/patchy/src/cli*.test.ts",
+      "packages/patchy/src/test/cli.ts",
       "vitest.clerk.config.ts",
       "test/clerk.ts",
       "scripts/test-clerk.ts",

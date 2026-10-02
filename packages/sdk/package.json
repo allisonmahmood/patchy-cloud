@@ -19,8 +19,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/copy-sdk-artifact.mjs",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "vitest run"
   },
   "dependencies": {
     "@patchy/api": "workspace:*",

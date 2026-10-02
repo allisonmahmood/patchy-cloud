@@ -109,7 +109,7 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
                 if (id === patchId && versionId === undefined && blocked) {
                   reads++;
                   if (shuttingDown) {
-                    yield* Deferred.succeed(stopping, undefined).pipe(
+                    return yield* Deferred.succeed(stopping, undefined).pipe(
                       Effect.andThen(Effect.never),
                       Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))
                     );

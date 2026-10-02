@@ -26,18 +26,16 @@ import {
   Authorization,
   DevPersonas,
   DeviceLogins,
-  migrations as authMigrations,
   MachineTokens,
   RequireSession,
   Session
 } from "@patchy/auth";
-import { Companies, InviteMail, Users, migrations as companiesMigrations } from "@patchy/companies";
+import { Companies, InviteMail, Users } from "@patchy/companies";
 import {
   Inventory,
   PgCompanyDatabases,
   OrphanSweep,
-  ResourceChanges,
-  migrations as companyDatabaseMigrations
+  ResourceChanges
 } from "@patchy/company-database";
 import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import {
@@ -47,20 +45,10 @@ import {
   CredentialKeys,
   PostgresSource,
   PostgresExecution,
-  PostgresOperations,
-  migrations as integrationsMigrations
+  PostgresOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { migrations as limitsMigrations } from "@patchy/limits/migrations";
-import { migrations as executionMigrations } from "@patchy/execution/migrations";
-import {
-  Content,
-  LoadedVersions,
-  DeletionSweep,
-  migrations as patchesMigrations,
-  Patches,
-  PatchesApi
-} from "@patchy/patches";
+import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
 import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
@@ -77,8 +65,7 @@ import {
   Subscriptions,
   Wakes,
   WakesPostgres,
-  me,
-  migrations as runtimeMigrations
+  me
 } from "@patchy/runtime";
 import { Artifact, SdkApi } from "@patchy/sdk";
 import { migrate } from "@patchy/sql";
@@ -86,6 +73,7 @@ import * as ApiGuard from "./ApiGuard.js";
 import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 import * as FleetInvocation from "./FleetInvocation.js";
 import * as MemberDirectory from "./MemberDirectory.js";
+import { migrations } from "./migrations.js";
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -101,19 +89,8 @@ const contentStore = Layer.unwrap(
   )
 );
 
-/** Every capability's migrations as one record, applied before anything reads the database. */
-const migrated = Layer.effectDiscard(
-  migrate({
-    ...companiesMigrations,
-    ...authMigrations,
-    ...companyDatabaseMigrations,
-    ...runtimeMigrations,
-    ...integrationsMigrations,
-    ...patchesMigrations,
-    ...limitsMigrations,
-    ...executionMigrations
-  })
-);
+/** Every capability's migrations, applied before anything reads the database. */
+const migrated = Layer.effectDiscard(migrate(migrations));
 
 /** Persona environments record invitations instead of mailing them through Clerk. */
 const recordedInvites = Layer.effect(

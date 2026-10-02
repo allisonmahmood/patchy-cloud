@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
@@ -100,7 +101,7 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
         identity: {
           user: prepared.identity.user,
           company: prepared.identity.company,
-          role: prepared.identity.role
+          admin: prepared.identity.role === "admin"
         },
         principal: { userId: prepared.identity.user.id },
         correlationId: "shared-fixture-refs"
@@ -123,16 +124,20 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
           eq: { member: "missing-member" }
         })
         .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodePage));
-      assert.deepStrictEqual(page.rows, [row]);
+      assert.deepStrictEqual<unknown>(page.rows, [row]);
       const undeclared = yield* resources.handlers["shared.get"]
         .run({
           alias: "members",
           id: "missing-member"
         })
         .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
-      assert.strictEqual(undeclared._tag, "TableNotDeclared");
+      assert.propertyVal(undeclared, "_tag", "TableNotDeclared");
       assert.strictEqual(yield* fs.readFileString(fixturePath), fixture);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
   { timeout: 30_000 }
 );
 
@@ -198,7 +203,7 @@ it.live(
           identity: {
             user: prepared.identity.user,
             company: prepared.identity.company,
-            role: prepared.identity.role
+            admin: prepared.identity.role === "admin"
           },
           principal: { userId: prepared.identity.user.id },
           correlationId: "shared-store-fixture"
@@ -271,7 +276,11 @@ it.live(
         yield* fs.readFileString(path.join(fixture, "README.md")),
         "Fixture instructions"
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
   { timeout: 30_000 }
 );
 
@@ -346,7 +355,7 @@ it.live(
           identity: {
             user: current.identity.user,
             company: current.identity.company,
-            role: current.identity.role
+            admin: current.identity.role === "admin"
           },
           principal: { userId: current.identity.user.id },
           correlationId: "fixture-owned-data"
@@ -394,7 +403,11 @@ it.live(
         notes: [],
         contacts: ["Updated contact"]
       });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
   { timeout: 60_000 }
 );
 
@@ -466,7 +479,7 @@ it.live(
           identity: {
             user: prepared.identity.user,
             company: prepared.identity.company,
-            role: prepared.identity.role
+            admin: prepared.identity.role === "admin"
           },
           principal: { userId: prepared.identity.user.id },
           correlationId: "fixture-retry"
@@ -492,11 +505,15 @@ it.live(
       assert.deepStrictEqual(yield* session("Keep my local work").pipe(Effect.scoped), expected);
       yield* fixture("titel");
       const failure = yield* session().pipe(Effect.scoped, Effect.flip);
-      assert.strictEqual(failure._tag, "SharedFixtureInvalid");
+      assert.propertyVal(failure, "_tag", "SharedFixtureInvalid");
       yield* fixture("title");
       assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
       assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
   { timeout: 60_000 }
 );
 
@@ -566,7 +583,7 @@ it.live(
           identity: {
             user: current.identity.user,
             company: current.identity.company,
-            role: current.identity.role
+            admin: current.identity.role === "admin"
           },
           principal: { userId: current.identity.user.id },
           correlationId: "published-inventory"
@@ -580,9 +597,9 @@ it.live(
         const inserted = yield* call("tables.insert", { table: "contacts", row: { email } });
         assert.include(inserted, { email });
         assert.notProperty(inserted, "legacy");
-        assert.strictEqual(
-          (yield* call("tables.insert", { table: "contacts", row: { email } }).pipe(Effect.flip))
-            ._tag,
+        assert.propertyVal(
+          yield* call("tables.insert", { table: "contacts", row: { email } }).pipe(Effect.flip),
+          "_tag",
           "UniqueViolation"
         );
         const retained = yield* Effect.gen(function* () {
@@ -671,7 +688,11 @@ it.live(
         [],
         "recreated@example.test"
       ).pipe(Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
   { timeout: 60_000 }
 );
 
@@ -737,7 +758,7 @@ CREATE TEMP TABLE session_marker AS SELECT * FROM fixture_marker;`
           identity: {
             user: prepared.identity.user,
             company: prepared.identity.company,
-            role: prepared.identity.role
+            admin: prepared.identity.role === "admin"
           },
           principal: { userId: prepared.identity.user.id },
           correlationId: "postgres-dispatch"
@@ -766,6 +787,10 @@ CREATE TEMP TABLE session_marker AS SELECT * FROM fixture_marker;`
           ]);
         }
       }).pipe(Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
   { timeout: 60_000 }
 );

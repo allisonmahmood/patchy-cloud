@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { RuntimeFailure, runtimeOperations } from "@patchy/api";
+import { RuntimeFailure, runtimeOperations, type GuestProtocol } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as Deferred from "effect/Deferred";
@@ -152,11 +152,12 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
             correlationId: inspectionCorrelation
           })
         );
-        for (const args of [
+        const refusedPuts: ReadonlyArray<GuestProtocol.Callback["args"]> = [
           { store: "docs", name: "photo.png", contentType: "image/png" },
           { store: "docs", name: "photo.png", upload, contentType: "text/plain" },
           { store: "docs", name: "photo.png", upload: upload.token }
-        ] as const) {
+        ];
+        for (const args of refusedPuts) {
           assert.include(
             yield* gateway.callback(capability.token, capability.attempt, {
               op: "files.put",
@@ -646,10 +647,9 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
             Effect.gen(function* () {
               const binding = yield* Binding.Binding;
               writeCorrelation = binding.correlationId;
-              const pending = yield* log.find({
-                companyId: binding.companyId,
-                correlationId: writeCorrelation
-              });
+              const pending = yield* log
+                .find({ companyId: binding.companyId, correlationId: writeCorrelation })
+                .pipe(Effect.orDie);
               assert.include(pending, {
                 outcome: "pending",
                 userId: null,
@@ -667,10 +667,9 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
       const capability = yield* Fixtures.issue(capabilities, {
         kind: "action",
         reauthorize: Effect.gen(function* () {
-          const [pending] = yield* log.recent({
-            companyId: Fixtures.identity.company.id,
-            connectionId: "integration-order"
-          });
+          const [pending] = yield* log
+            .recent({ companyId: Fixtures.identity.company.id, connectionId: "integration-order" })
+            .pipe(Effect.orDie);
           assert.strictEqual(pending?.outcome, "pending");
           return yield* new Runtime.SessionExpired({});
         })

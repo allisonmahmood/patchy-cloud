@@ -41,7 +41,7 @@
     },
     {
       "name": "Check",
-      "command": "pnpm lint && pnpm typecheck && pnpm test",
+      "command": "pnpm check",
       "icon": "test"
     }
   ]

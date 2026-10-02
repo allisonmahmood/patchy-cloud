@@ -30,7 +30,10 @@
       "cache": false
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build", "build"]
+    },
+    "//#typecheck:tests": {
+      "cache": false
     }
   }
 }

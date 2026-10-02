@@ -18,15 +18,9 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { migrations as authMigrations } from "@patchy/auth";
 import { applyDevSeed } from "@patchy/auth/seed";
-import { migrations as companiesMigrations } from "@patchy/companies";
-import { migrations as companyDatabaseMigrations } from "@patchy/company-database";
-import { migrations as patchesMigrations, Patches } from "@patchy/patches";
-import { migrations as runtimeMigrations } from "@patchy/runtime";
-import { migrations as integrationsMigrations } from "@patchy/integrations";
-import { migrations as limitsMigrations } from "@patchy/limits/migrations";
-import { migrations as executionMigrations } from "@patchy/execution/migrations";
+import { Patches } from "@patchy/patches";
+import { migrations } from "@patchy/server/migrations";
 import { layerFromUrl, migrate } from "@patchy/sql";
 import {
   developerEnvFile,
@@ -34,7 +28,7 @@ import {
   readDeveloperEnv,
   readPersonasSecret
 } from "./developerEnv.js";
-import { DATABASE_NAME, Plan } from "./plan.js";
+import { DATABASE_NAME, Plan, signInOf } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
 import { loadScenario, seedScenario } from "./scenario.js";
@@ -163,37 +157,29 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server migrates on its own way up too; running it here first means
   // the seed below always lands on the current schema.
-  yield* migrate({
-    ...companiesMigrations,
-    ...authMigrations,
-    ...companyDatabaseMigrations,
-    ...runtimeMigrations,
-    ...integrationsMigrations,
-    ...patchesMigrations,
-    ...limitsMigrations,
-    ...executionMigrations
-  }).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
+  yield* migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
   const inherited = yield* Config.all({
     PATH: Config.String("PATH"),
     HOME: Config.String("HOME").pipe(Config.withDefault(plan.stateDir))
   });
-  // An environment signs people in as dev personas, so it needs no Clerk keys.
+  // Dev personas need no Clerk keys; only a `--clerk` instance reads them.
+  const personas = signInOf(plan) === "personas";
   const devEnvFile = yield* developerEnvFile(inherited.HOME);
-  const { PATCHY_DEV_CLERK_USER_ID, ...clerk } =
-    plan.environment === undefined ? yield* readDeveloperEnv(devEnvFile) : {};
+  const { PATCHY_DEV_CLERK_USER_ID, ...clerk } = personas
+    ? {}
+    : yield* readDeveloperEnv(devEnvFile);
   const credentialKeys = yield* readCredentialKeys(path.join(plan.stateDir, "dev.env"));
   yield* Effect.tryPromise({
     try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
     catch: (cause) => new DatabaseSetupError({ cause })
   });
-  const signIn =
-    plan.environment === undefined
-      ? clerk
-      : {
-          PATCHY_DEV_PERSONAS_SECRET: Redacted.value(
-            yield* readPersonasSecret(path.join(plan.stateDir, "personas.env"))
-          )
-        };
+  const signIn = personas
+    ? {
+        PATCHY_DEV_PERSONAS_SECRET: Redacted.value(
+          yield* readPersonasSecret(path.join(plan.stateDir, "personas.env"))
+        )
+      }
+    : clerk;
   if (plan.environment !== undefined) {
     const { scenario } = yield* loadScenario(plan.worktree, plan.environment.scenario);
     yield* seedScenario(plan.databaseUrl, scenario).pipe(
@@ -229,14 +215,14 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server: plain node with the tsx loader so the pid we record is the
   // one signals reach. Its env is closed: the plan, what a process needs to
-  // run at all, and the sign-in settings (Clerk's from the developer's
-  // `dev.env`, or an environment's personas secret), so
+  // run at all, and the sign-in settings (the personas secret, or Clerk's
+  // from the developer's `dev.env`), so
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
   // driver, an API token) leaks in.
   yield* say(
-    plan.environment === undefined
-      ? `clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`
-      : "sign-in: dev personas (no Clerk)"
+    personas
+      ? "sign-in: dev personas (no Clerk)"
+      : `clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`
   );
   const server = yield* spawner.spawn(
     ChildProcess.make(

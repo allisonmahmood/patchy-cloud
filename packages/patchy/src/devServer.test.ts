@@ -142,16 +142,14 @@ it.live(
       const colleagueClaims = yield* colleague.json;
       assert.nestedPropertyVal(colleagueClaims, "value.user.id", "usr_dev_colleague");
       assert.nestedPropertyVal(colleagueClaims, "value.admin", false);
-      const candidates = [
-        {
-          id: "usr_dev_colleague",
-          name: "Dev Colleague",
-          email: "colleague@patchy.local",
-          admin: false,
-          active: true
-        },
-        { ...identity.user, admin: true, active: true }
-      ];
+      const colleagueMember = {
+        id: "usr_dev_colleague",
+        name: "Dev Colleague",
+        email: "colleague@patchy.local",
+        admin: false,
+        active: true
+      };
+      const localMember = { ...identity.user, admin: true, active: true };
       for (const [target, viewerId] of [
         [origin, identity.user.id],
         [colleagueOrigin, "usr_dev_colleague"]
@@ -160,7 +158,7 @@ it.live(
         assert.strictEqual(listed.status, 200);
         assert.deepInclude(yield* listed.json, {
           ok: true,
-          value: { rows: candidates, cursor: null }
+          value: { rows: [colleagueMember, localMember], cursor: null }
         });
         const search = yield* call(
           "members.search",
@@ -171,7 +169,7 @@ it.live(
         );
         assert.deepInclude(yield* search.json, {
           ok: true,
-          value: { rows: [candidates[0]], cursor: null }
+          value: { rows: [colleagueMember], cursor: null }
         });
         const suffix = yield* call("members.search", { text: "league" }, target, viewerId, target);
         assert.deepInclude(yield* suffix.json, { ok: true, value: { rows: [], cursor: null } });
@@ -184,7 +182,7 @@ it.live(
         );
         assert.deepInclude(yield* resolved.json, {
           ok: true,
-          value: [candidates[1], null, candidates[0], candidates[1]]
+          value: [localMember, null, colleagueMember, localMember]
         });
       }
       const impersonation = yield* call(

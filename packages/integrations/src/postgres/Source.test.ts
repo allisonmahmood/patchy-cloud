@@ -350,7 +350,7 @@ it.layer(Testing.emptyLayer({}))("real Postgres discovery", (it) => {
             ?.target,
           { schema: "partial_columns", relation: "parents", columns: ["id"] }
         );
-        assert.includeDeepMembers(snapshot.exclusions, [
+        assert.includeDeepMembers(snapshot.exclusions.slice(), [
           { schema: "partial_columns", relation: "parents", column: "id", reason: "access_denied" }
         ]);
       }).pipe(
@@ -377,7 +377,7 @@ it.layer(Testing.emptyLayer({}))("real Postgres discovery", (it) => {
         EXECUTE format('CREATE TABLE bounds.%I (id int PRIMARY KEY)', 'r' || lpad(i::text, 3, '0'));
       END LOOP; END $body$`);
         const snapshot = yield* sql.withTransaction(withSource(Source.discover));
-        assert.includeDeepMembers(snapshot.exclusions, [
+        assert.includeDeepMembers(snapshot.exclusions.slice(), [
           { schema: "bounds", relation: "a_wide", reason: "column_limit" },
           { schema: "bounds", relation: "r501", reason: "relation_limit" }
         ]);
@@ -393,7 +393,7 @@ it.layer(Testing.emptyLayer({}))("real Postgres discovery", (it) => {
       yield* sql.unsafe("CREATE TABLE collisions.query (id int)");
       yield* sql.unsafe("CREATE TABLE public.collisions (id int)");
       const snapshot = yield* sql.withTransaction(withSource(Source.discover));
-      assert.includeDeepMembers(snapshot.exclusions, [
+      assert.includeDeepMembers(snapshot.exclusions.slice(), [
         { schema: "collisions", relation: "query", reason: "reserved_name" },
         { schema: "public", relation: "collisions", reason: "reserved_name" }
       ]);

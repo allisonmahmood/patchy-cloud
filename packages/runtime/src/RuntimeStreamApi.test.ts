@@ -104,7 +104,7 @@ it.layer(layer)("stream HTTP admission", (it) => {
           ),
           Effect.flip
         );
-      assert.strictEqual(error._tag, "SessionRefreshRequired");
+      assert.include(error, { _tag: "SessionRefreshRequired" });
     }).pipe(Effect.scoped)
   );
 

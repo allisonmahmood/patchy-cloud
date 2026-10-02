@@ -42,43 +42,47 @@ const local = Layer.merge(
   ).pipe(Layer.provide(NodeFileSystem.layer))
 );
 
-for (const { name, layer, companyId } of [
-  { name: "Postgres", layer: postgres, companyId: "cmp_dev" },
-  { name: "PGlite", layer: local, companyId: "local-company" }
-]) {
-  it.layer(
-    layer.pipe(
-      Layer.provideMerge(TestWakes.layer),
-      Layer.provideMerge(
-        Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
-      )
-    ),
-    { timeout: "60 seconds" }
-  )(`Files / ${name} and filesystem`, (it) => {
+/** A backend with test wakes and a version lookup that finds nothing. */
+const withRuntime = <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
+  layer.pipe(
+    Layer.provideMerge(TestWakes.layer),
+    Layer.provideMerge(
+      Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+    )
+  );
+
+it.layer(withRuntime(postgres), { timeout: "60 seconds" })(
+  "Files / Postgres and filesystem",
+  (it) => {
+    const companyId = "cmp_dev";
     for (const [description, contract] of Object.entries(contracts)) {
       it.effect(description, () => contract(companyId), 60_000);
     }
-    if (name === "Postgres") {
-      it.effect(
-        "enforces current company stage overrides across patches and fails closed on limit lookup errors",
-        () => companyStageBoundsContract(companyId),
-        60_000
-      );
-      it.effect(
-        "reclaims late staged bytes and preserves cleanup retries across delayed sweep acknowledgements",
-        () => lateStageSweepContract(companyId),
-        60_000
-      );
-      it.effect(
-        "keeps file writes and adoption progressing while sweep blob deletion is paused",
-        () => slowSweepDeleteContract(companyId),
-        60_000
-      );
-      it.effect(
-        "keeps unrelated names and list progressing while a same-name writer waits on another session",
-        () => independentNamesContract(companyId),
-        60_000
-      );
-    }
-  });
-}
+    it.effect(
+      "enforces current company stage overrides across patches and fails closed on limit lookup errors",
+      () => companyStageBoundsContract(companyId),
+      60_000
+    );
+    it.effect(
+      "reclaims late staged bytes and preserves cleanup retries across delayed sweep acknowledgements",
+      () => lateStageSweepContract(companyId),
+      60_000
+    );
+    it.effect(
+      "keeps file writes and adoption progressing while sweep blob deletion is paused",
+      () => slowSweepDeleteContract(companyId),
+      60_000
+    );
+    it.effect(
+      "keeps unrelated names and list progressing while a same-name writer waits on another session",
+      () => independentNamesContract(companyId),
+      60_000
+    );
+  }
+);
+
+it.layer(withRuntime(local), { timeout: "60 seconds" })("Files / PGlite and filesystem", (it) => {
+  for (const [description, contract] of Object.entries(contracts)) {
+    it.effect(description, () => contract("local-company"), 60_000);
+  }
+});

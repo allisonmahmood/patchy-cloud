@@ -52,7 +52,7 @@ const viewer = {
 const definition = {
   manifestVersion: 1,
   release: CURRENT_RELEASE,
-  tier: 2,
+  tier: 2 as const,
   files: {},
   uses: {},
   tables: {
@@ -198,13 +198,13 @@ const increment = Effect.fnUntraced(function* (
 ) {
   const read = yield* gateway.callback(request.callback.capability, request, {
     op: "tables.get",
-    args: { table: "counter", id: request.args.id }
+    args: { table: "counter", id: request.args.id! }
   });
   if (!read.ok) return { outcome: "returned" as const, reply: read, guestMs: 1 };
   const row = Schema.decodeUnknownSync(TableRow)("value" in read ? read.value : null);
   const updated = yield* gateway.callback(request.callback.capability, request, {
     op: "tables.update",
-    args: { table: "counter", id: request.args.id, patch: { value: Number(row.value) + 1 } }
+    args: { table: "counter", id: request.args.id!, patch: { value: Number(row.value) + 1 } }
   });
   return {
     outcome: "returned" as const,
@@ -663,7 +663,8 @@ it.layer(services)("Mutation SERIALIZABLE acceptance", (it) => {
               }
             }
           },
-          (request, gateway) =>
+          // Annotated: the body reads `runtime`, which this call is still defining.
+          (request, gateway): Effect.Effect<GuestProtocol.InvokeReply> =>
             Effect.gen(function* () {
               yield* gateway
                 .callback(request.callback.capability, request, {
@@ -680,8 +681,9 @@ it.layer(services)("Mutation SERIALIZABLE acceptance", (it) => {
                 .pipe(Effect.forkDetach);
               yield* Deferred.succeed(queued, second);
               while (
-                (yield* runtime.capabilities.resolve(request.callback.capability, request)).counters
-                  .outstanding < 2
+                (yield* runtime.capabilities
+                  .resolve(request.callback.capability, request)
+                  .pipe(Effect.orDie)).counters.outstanding < 2
               )
                 yield* Effect.yieldNow;
               yield* Deferred.succeed(returned, undefined);

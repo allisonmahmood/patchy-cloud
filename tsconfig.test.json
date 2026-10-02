@@ -1,0 +1,72 @@
+{
+  // Tests and the code that only runs them: suites, harnesses, live tiers,
+  // doc renderers and tool configs. Package tsconfigs check `src` for release;
+  // this one program checks everything they exclude, resolving workspace
+  // packages to source like vitest does.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    // The cache keys on code, not on the Effect rules below: delete it after editing them.
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.test.tsbuildinfo",
+    "lib": ["ES2024", "DOM"],
+    // The ESLint rules under test are plain JS.
+    "allowJs": true,
+    "customConditions": ["development"],
+    // The browser fixture bundles the built package under these names; check it against source.
+    "paths": {
+      "patchy/client": ["./packages/patchy/src/client.ts"],
+      "patchy/preact": ["./packages/patchy/src/preact.ts"]
+    },
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // A tsconfig's plugins replace the base's, so its correctness rules are
+        // restated here. Style rules that steer production code toward Effect
+        // services are off: tests drive Node, clocks and browsers directly.
+        "diagnosticSeverity": {
+          "importFromBarrel": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "leakingRequirements": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "anyUnknownInErrorContext": "off",
+          "unknownInEffectCatch": "off",
+          "multipleEffectProvide": "off",
+          "preferSchemaOverJson": "off",
+          "instanceOfSchema": "off",
+          "deterministicKeys": "off",
+          "nodeBuiltinImport": "off",
+          "globalConsole": "off",
+          "globalConsoleInEffect": "off",
+          "globalDate": "off",
+          "globalDateInEffect": "off",
+          "globalRandom": "off",
+          "globalRandomInEffect": "off",
+          "globalTimers": "off",
+          "globalTimersInEffect": "off",
+          "globalFetch": "off",
+          "globalFetchInEffect": "off",
+          "cryptoRandomUUID": "off",
+          "cryptoRandomUUIDInEffect": "off"
+        }
+      }
+    ]
+  },
+  "include": [
+    "**/src/**/*.test.ts",
+    "**/src/test/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "packages/*/live/**/*.ts",
+    "packages/*/scripts/**/*.ts",
+    "test/**/*.ts",
+    "scripts/*.ts",
+    "eslint/**/*.ts",
+    "*.config.ts",
+    "packages/*/vitest.config.ts",
+    "apps/*/vitest.config.ts"
+  ],
+  "exclude": ["**/node_modules/**", "**/dist/**", "scenarios/**", ".local/**", ".claude/**"]
+}

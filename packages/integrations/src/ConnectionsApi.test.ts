@@ -69,11 +69,11 @@ const seed = Effect.gen(function* () {
       (id, company_id, integration, handle, description, mode, status, display, credentials,
         key_id, credential_revision, metadata_revision, created_by, last_discovered_at)
       VALUES (${id}, ${companyId}, 'postgres', ${handle}, ${`${handle} description`}, 'company', ${status},
-        ${sql.json({ host: "private-host.example", port: 5432, database: "private-db", role: "secret-role" })}, 'private-ciphertext',
+        ${JSON.stringify({ host: "private-host.example", port: 5432, database: "private-db", role: "secret-role" })}, 'private-ciphertext',
         'missing-key', 1, 4, ${DEV_SEED.userId}, '2026-02-01T00:00:00Z')`;
     // An older snapshot must never masquerade as the missing current revision.
     yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, revision, snapshot, created_at)
-      VALUES (${id}, ${companyId}, ${handle === "pending" ? 3 : 4}, ${sql.json(snapshot)}, ${takenAt})`;
+      VALUES (${id}, ${companyId}, ${handle === "pending" ? 3 : 4}, ${JSON.stringify(snapshot)}, ${takenAt})`;
   }
 });
 const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pipe(

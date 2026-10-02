@@ -171,5 +171,10 @@ export const as = (identity: Identity) =>
  * also serves on a socket sees the router `HttpRouter.serve` built, and the
  * client would otherwise register its routes on the server's router.
  */
-export const ownRouter = <A, E, R>(client: Effect.Effect<A, E, R>) =>
-  Effect.updateContext(client, Context.omit(HttpRouter.HttpRouter));
+export const ownRouter = <A, E, R>(client: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.updateContext(
+    client,
+    // The client builds its own router when none is present, so removing it keeps R.
+    (context: Context.Context<R>) =>
+      Context.omit(HttpRouter.HttpRouter)(context) as Context.Context<R>
+  );

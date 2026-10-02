@@ -1266,7 +1266,7 @@ export const companyStageBoundsContract = Effect.fn("test.filesContract.companyS
         upload: yield* events.withEvent({ type: "request" }, stage(fixture, new Uint8Array(4))),
         discard: fixture.discard
       });
-      assert.deepInclude((yield* Queue.take(records)).limits, {
+      assert.deepInclude((yield* Queue.take(records)).limits ?? [], {
         limitId: limit.limitId,
         value: 8,
         peak: 4,
@@ -1280,6 +1280,7 @@ export const companyStageBoundsContract = Effect.fn("test.filesContract.companyS
         .withEvent({ type: "request" }, stage(fixture, new Uint8Array(1)))
         .pipe(Effect.flip);
       const refusedEvent = yield* Queue.take(records);
+      assert.isDefined(refusedEvent.limits);
       assert.deepInclude(refusedEvent.limits, {
         limitId: limit.limitId,
         value: 8,
@@ -1307,7 +1308,7 @@ export const companyStageBoundsContract = Effect.fn("test.filesContract.companyS
       const changed = yield* events
         .withEvent({ type: "request" }, stage(otherPatch, new Uint8Array(1)))
         .pipe(Effect.flip);
-      assert.deepInclude((yield* Queue.take(records)).limits, {
+      assert.deepInclude((yield* Queue.take(records)).limits ?? [], {
         limitId: limit.limitId,
         value: 16,
         peak: 17,
@@ -1332,7 +1333,7 @@ export const companyStageBoundsContract = Effect.fn("test.filesContract.companyS
       Effect.ensuring(
         Effect.suspend(() =>
           Effect.forEach(uploads, ({ upload, discard }) => discard(upload), { discard: true })
-        ).pipe(Effect.ensuring(operating.removeOverride(limit)), Effect.orDie)
+        ).pipe(Effect.ensuring(operating.removeOverride(limit).pipe(Effect.orDie)), Effect.orDie)
       )
     );
   }

@@ -233,16 +233,18 @@ document.getElementById("ready").textContent = "CSV ready";`,
   for (const graph of ["page", "server"] as const) {
     for (const scenario of cases) {
       await test.step(`${graph}: ${scenario.name}`, async () => {
-        const result = await frame.evaluate(
-          ({ graph, input }) => {
-            // The fixture above installs this page-local probe before signaling readiness.
-            const csvWindow = window as unknown as {
-              csvProbe(graph: "page" | "server", input: Json): Promise<Json> | Json;
-            };
-            return csvWindow.csvProbe(graph, input);
-          },
-          { graph, input: scenario.input }
-        );
+        // Playwright's argument typing recurses without bound through `Json`; the probe takes any input.
+        const request: { graph: "page" | "server"; input: unknown } = {
+          graph,
+          input: scenario.input
+        };
+        const result = await frame.evaluate(({ graph, input }) => {
+          // The fixture above installs this page-local probe before signaling readiness.
+          const csvWindow = window as unknown as {
+            csvProbe(graph: "page" | "server", input: unknown): Promise<Json> | Json;
+          };
+          return csvWindow.csvProbe(graph, input);
+        }, request);
         expect(result).toEqual(scenario.expected);
       });
     }

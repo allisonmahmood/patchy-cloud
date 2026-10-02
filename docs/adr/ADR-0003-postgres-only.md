@@ -30,26 +30,11 @@ S3-compatible API; development and offline tests use the filesystem. A bucket
 belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. The current ledger has fifteen
-   records across eight owners:
-
-   | id   | owner            | record                          |
-   | ---- | ---------------- | ------------------------------- |
-   | 0001 | Companies        | `companies_baseline`            |
-   | 0002 | Auth             | `auth_baseline`                 |
-   | 0003 | Patches          | `patches_baseline`              |
-   | 0004 | Companies        | `invites_expiry`                |
-   | 0005 | Company database | `company_database_baseline`     |
-   | 0006 | Runtime          | `runtime_baseline`              |
-   | 0007 | Integrations     | `integrations_baseline`         |
-   | 0008 | Patches          | `patches_lifecycle`             |
-   | 0009 | Limits           | `limits_overrides`              |
-   | 0010 | Patches          | `patches_lifecycle_revision`    |
-   | 0011 | Runtime          | `runtime_invocations`           |
-   | 0012 | Runtime          | `runtime_mutation_commit_proof` |
-   | 0013 | Patches          | `patches_server_artifact`       |
-   | 0014 | Execution        | `execution_fleet`               |
-   | 0015 | Companies        | `companies_directory`           |
+   baselines were rewritten before deployment. Each capability keeps its records
+   in its `src/migrations.ts`; `apps/server/src/migrations.ts` composes them into
+   the one ledger that the server, the dev runner and the test template apply.
+   Ids are allocated in landing order, and that record's test fails on a
+   duplicate or skipped id.
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.

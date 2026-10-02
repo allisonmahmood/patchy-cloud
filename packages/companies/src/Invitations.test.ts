@@ -90,6 +90,8 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
         const resent = yield* Invitations.resend(reference);
         assert.isFalse(created.mailFailed);
         assert.isFalse(resent.mailFailed);
+        assert.isNotNull(created.invite.clerkInvitationId);
+        assert.isNotNull(resent.invite.clerkInvitationId);
         assert.strictEqual(resent.invite.id, created.invite.id);
         assert.notStrictEqual(resent.invite.clerkInvitationId, created.invite.clerkInvitationId);
         assert.deepStrictEqual(yield* companies.listInvites(company.id), [resent.invite]);
@@ -183,6 +185,7 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
           invitedBy: user.id,
           email: "replace-failure@example.com"
         });
+        assert.isNotNull(created.invite.clerkInvitationId);
         const reference = { companyId: company.id, inviteId: created.invite.id };
         yield* TestClock.adjust("30 days");
         const failed = yield* Invitations.resend(reference).pipe(Effect.provide(createFails));
@@ -195,6 +198,7 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
         assert.deepStrictEqual(yield* companies.findInvitesByEmail(created.invite.email), []);
         const recovered = yield* Invitations.resend(reference);
         assert.isFalse(recovered.mailFailed);
+        assert.isNotNull(recovered.invite.clerkInvitationId);
         assert.strictEqual(recovered.invite.id, created.invite.id);
         assert.deepStrictEqual(yield* companies.findInvitesByEmail(created.invite.email), [
           recovered.invite
@@ -320,6 +324,7 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
           email: "shared-mail@example.com"
         };
         const created = yield* Invitations.create(input);
+        assert.isNotNull(created.invite.clerkInvitationId);
         assert.strictEqual(
           (yield* Invitations.create({ ...input, email: "SHARED-MAIL@EXAMPLE.COM" }).pipe(
             Effect.flip
@@ -345,6 +350,7 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
           companyId: second.company.id,
           invitedBy: second.user.id
         });
+        assert.isNotNull(other.invite.clerkInvitationId);
         assert.deepStrictEqual(
           (yield* companies.findInvitesByEmail(input.email)).map((invite) => invite.id).sort(),
           [created.invite.id, other.invite.id].sort()
@@ -377,6 +383,7 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
         { concurrency: "unbounded" }
       );
       const finalId = resent?.invite.clerkInvitationId ?? created.invite.clerkInvitationId;
+      assert.isNotNull(finalId);
       assert.strictEqual(revoked.invite.clerkInvitationId, finalId);
       const events = yield* recording.events;
       assert.deepStrictEqual(events.at(-1), { operation: "revoke", id: finalId });

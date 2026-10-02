@@ -9,15 +9,8 @@ import type { TestProject } from "vitest/node";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { applyDevSeed } from "@patchy/auth/seed";
-import { migrations as companiesMigrations } from "../packages/companies/src/migrations.js";
-import { migrations as authMigrations } from "../packages/auth/src/migrations.js";
-import { migrations as patchesMigrations } from "../packages/patches/src/migrations.js";
-import { migrations as companyDatabaseMigrations } from "../packages/company-database/src/migrations.js";
-import { migrations as runtimeMigrations } from "../packages/runtime/src/migrations.js";
-import { migrations as integrationsMigrations } from "../packages/integrations/src/migrations.js";
-import { migrations as limitsMigrations } from "../packages/limits/src/migrations.js";
-import { migrations as executionMigrations } from "../packages/execution/src/migrations.js";
 import * as Patches from "../packages/patches/src/Patches.js";
+import { migrations } from "../apps/server/src/migrations.js";
 import { layerFromUrl, migrate } from "../packages/sql/src/index.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../scripts/dev/src/postgres.js";
 
@@ -76,16 +69,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
     // vitest's globalSetup is not Effect code, so the Migrator runs from a
     // Promise here: one migrated template, cloned per test database.
     await Effect.runPromise(
-      migrate({
-        ...companiesMigrations,
-        ...authMigrations,
-        ...companyDatabaseMigrations,
-        ...runtimeMigrations,
-        ...integrationsMigrations,
-        ...patchesMigrations,
-        ...limitsMigrations,
-        ...executionMigrations
-      }).pipe(Effect.provide(layerFromUrl(Redacted.make(templateUrl))))
+      migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(templateUrl))))
     );
     // The same rows `pnpm dev` seeds, so a test and the dev instance agree
     // on which token works.

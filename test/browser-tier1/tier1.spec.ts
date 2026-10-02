@@ -43,8 +43,8 @@ test("broker admits server arguments up to 1 MiB and stamps local and runtime re
       )
     )
     .toEqual([
-      ["server-above-tier1", "invalid_request"],
-      ["server-boundary", "invalid_request"],
+      ["server-above-tier1", "access_denied"],
+      ["server-boundary", "access_denied"],
       ["server-overflow", "too_large"]
     ]);
   const replies = await frame.evaluate(() =>
@@ -57,7 +57,7 @@ test("broker admits server arguments up to 1 MiB and stamps local and runtime re
     limitId: "tier2.args.bytes",
     value: 1024 * 1024
   });
-  // No server handler is installed: the admitted bodies reach Runtime, not execution.
+  // A tier 1 version has no handlers: Runtime refuses the admitted bodies before execution.
   const calls = instance.runtimeRequests
     .slice(before)
     .filter((request) => request.body.includes('"op":"server.call"'));
@@ -138,11 +138,10 @@ test("broker keeps admission retry timing but strips it from unsafe outcomes", a
   expect(requests).toEqual(refusals.map(({ code }) => code));
 });
 
-test("route bridge, real client file URL, shell download, isolation and 2,000-row print", async ({
+test("route bridge, real client file URL, shell download, isolation and 2,000-row print layout", async ({
   page,
-  instance,
-  browserName
-}, testInfo) => {
+  instance
+}) => {
   const patch = await instance.publish();
   const frame = await open(page, patch, "/items/2?filter=active");
   await expect(frame.locator("#identity")).toHaveText("usr_dev");
@@ -189,7 +188,10 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
     const files = (window as unknown as FixtureWindow).harness.client.files.assets!;
     const bytes = new Uint8Array([0, 10, 20, 255]);
     await files.put("transferred.bin", bytes, { contentType: "application/octet-stream" });
-    return { remaining: bytes.byteLength, stored: Array.from(await files.get("transferred.bin")) };
+    return {
+      remaining: bytes.byteLength,
+      stored: Array.from(await files.get("transferred.bin"))
+    };
   });
   expect(transferred).toEqual({ remaining: 0, stored: [0, 10, 20, 255] });
 
@@ -271,16 +273,27 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
   await expect(frame.locator("#rows tr")).toHaveCount(2000);
   await expect(frame.locator("#rows tr").first()).toHaveText("Print row 0001");
   await expect(frame.locator("#rows tr").last()).toHaveText("Print row 2000");
-  const pdf = testInfo.outputPath("two-thousand-rows.pdf");
-  if (browserName === "chromium") {
-    await printChromiumFrame(patch.address, await page.context().cookies(), pdf);
-  } else {
-    await printFirefoxFrame(patch.address, await page.context().cookies(), pdf);
-  }
-  const text = execFileSync("pdftotext", [pdf, "-"], { encoding: "utf8" });
-  expect(text).toContain("Print row 0001");
-  expect(text).toContain("Print row 2000");
 });
+
+// Native printing opens headed browsers and reads the PDF with pdftotext, so it needs a
+// display; `pnpm test:browser` and CI leave it out (`--grep @print` runs it).
+test(
+  "the frame's own window.print() prints all 2,000 rows",
+  { tag: "@print" },
+  async ({ page, instance, browserName }, testInfo) => {
+    const patch = await instance.publish();
+    await open(page, patch);
+    const pdf = testInfo.outputPath("two-thousand-rows.pdf");
+    if (browserName === "chromium") {
+      await printChromiumFrame(patch.address, await page.context().cookies(), pdf);
+    } else {
+      await printFirefoxFrame(patch.address, await page.context().cookies(), pdf);
+    }
+    const text = execFileSync("pdftotext", [pdf, "-"], { encoding: "utf8" });
+    expect(text).toContain("Print row 0001");
+    expect(text).toContain("Print row 2000");
+  }
+);
 
 test("route bridge reports one decoded Unicode route after set, Back and reload", async ({
   page,

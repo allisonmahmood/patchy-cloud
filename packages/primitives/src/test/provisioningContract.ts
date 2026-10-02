@@ -655,7 +655,7 @@ export const emptyAndRollback = Effect.fn("ProvisioningContract.emptyAndRollback
           manifest({
             constructor: {
               description: "Notes identified by their row id.",
-              columns: { body: { kind: "text" } },
+              columns: { body: { kind: "text" as const } },
               indexes: { byBody: { columns: ["body"] } }
             }
           })

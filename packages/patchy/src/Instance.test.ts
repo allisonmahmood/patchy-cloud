@@ -137,7 +137,8 @@ it.layer(services)("Instance", (it) => {
           });
 
           const mismatch = yield* fromTarget("https://other.test/").pipe(Effect.flip);
-          assert.strictEqual(mismatch._tag, "InstanceMismatch");
+          if (mismatch._tag !== "InstanceMismatch")
+            return assert.fail(`Unexpected ${mismatch._tag}`);
           assert.strictEqual(mismatch.kind, "local");
           assert.strictEqual(mismatch.code, "instance_mismatch");
           assert.include(mismatch.message, "https://repo.test");

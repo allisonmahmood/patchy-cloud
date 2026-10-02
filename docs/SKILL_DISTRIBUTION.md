@@ -6,7 +6,7 @@ How the global `patchy` skill and release-bound project skills reach agents.
 
 The package build (`scripts/build-patchy-package.mjs`) copies `skills/` wholesale to `packages/patchy/skills/`. The package's `files` list includes that directory; the packed `patchy` package therefore carries the publishing skill and its onboarding, welcome-page and style references beside the executable. Both `build` and `prepack` regenerate this copy.
 
-The checked-in root `skills-lock.json` uses the `skills` CLI's lockfile format for the repo's own wiring. Its `patchy` entry names `skills/patchy/SKILL.md`; `computedHash` is the SHA-256 of that file's bytes alone (`sha256sum skills/patchy/SKILL.md`), not a hash of the references or the generated copy. Refresh it by hand after the final `SKILL.md` edit. Neither the build nor CI verifies that hash.
+The checked-in root `skills-lock.json` uses the `skills` CLI's lockfile format for the repo's own wiring. Its `patchy` entry names `skills/patchy/SKILL.md`; `computedHash` is the SHA-256 of that file's bytes alone (`sha256sum skills/patchy/SKILL.md`), not a hash of the references or the generated copy. Refresh it by hand after the final `SKILL.md` edit; `packages/patchy/src/skillLock.test.ts` fails while it is stale.
 
 Internal skills stay under `.agents/skills/`, outside the copied `skills/` tree, and carry `metadata.internal`: the local-instance loop `patchy-dev-loop`, and the `/code-review` review specs `effect-service-conventions` and `ui-consistency`.
 

@@ -1,11 +1,13 @@
 /**
  * `pnpm dev`: the local Patchy Cloud instance for this worktree.
  *
- *   pnpm dev                  start (idempotent) and print the plan
+ *   pnpm dev                  start (idempotent) and print the plan; people sign in as dev personas
+ *   pnpm dev --clerk          the same, signing people in through the developer's Clerk application
  *   pnpm dev --dry-run --json print the plan, touch nothing
  *   pnpm dev status | stop | logs | reset
  *   pnpm dev up [scenario]    an environment: personas, a CLI, an agent workspace
  *   pnpm dev open <person>    a browser window signed in as one of its people
+ *   pnpm dev shot <person> [path]  a full-page PNG as that person, with the page's errors
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -28,14 +30,17 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   encodeManifest,
+  findPerson,
   layoutFor,
   openPerson,
   printCard,
   readManifest,
+  screenshot,
   setUp,
+  Shot,
   tearDown
 } from "./environment.js";
-import { type Environment, Plan, PlanJson, computePlan, findWorktree } from "./plan.js";
+import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
 import { alive, signal } from "./process.js";
 import { loadScenario } from "./scenario.js";
@@ -92,6 +97,22 @@ class NotAnEnvironment extends Schema.TaggedError<NotAnEnvironment>()("NotAnEnvi
 }) {
   override get message() {
     return `This worktree's instance signs in with Clerk. \`pnpm dev down\` deletes it (data included) so \`pnpm dev up\` can start an environment.`;
+  }
+}
+
+class NotClerk extends Schema.TaggedError<NotClerk>()("NotClerk", {
+  worktree: Schema.String
+}) {
+  override get message() {
+    return `This worktree's instance signs in as dev personas. \`pnpm dev down\` deletes it (data included) so \`pnpm dev --clerk\` can start one that signs in with Clerk.`;
+  }
+}
+
+class NeedsPersonas extends Schema.TaggedError<NeedsPersonas>()("NeedsPersonas", {
+  worktree: Schema.String
+}) {
+  override get message() {
+    return `This worktree's instance signs in with Clerk, which a script cannot pass. \`pnpm dev down\`, then \`pnpm dev\` starts one with dev personas.`;
   }
 }
 
@@ -162,12 +183,15 @@ const stateDirOf = (root: string) =>
  */
 const currentPlan = Effect.fn("currentPlan")(function* (
   dryRun: boolean,
-  environment?: Environment
+  environment?: Environment,
+  clerk = false
 ) {
   const root = yield* worktree;
   const recorded = yield* readPlan(yield* stateDirOf(root));
   if (Option.isSome(recorded)) {
     const plan = recorded.value;
+    // An instance keeps how it signs people in; `--clerk` never converts a personas one.
+    if (clerk && signInOf(plan) === "personas") return yield* new NotClerk({ worktree: root });
     if (yield* isRunning(plan)) return plan;
     if (plan.pids && (yield* alive(plan.pids.supervisor))) {
       return dryRun ? plan : yield* new SupervisorBusy({ pid: plan.pids.supervisor });
@@ -184,12 +208,13 @@ const currentPlan = Effect.fn("currentPlan")(function* (
         apiUrl: plan.apiUrl,
         databaseUrl: plan.databaseUrl,
         token: plan.token,
-        environment: plan.environment
+        environment: plan.environment,
+        signIn: "personas"
       } satisfies Plan;
     }
-    return yield* computePlan(root, isPortFree, environment);
+    return yield* computePlan(root, isPortFree, environment, signInOf(plan));
   }
-  return yield* computePlan(root, isPortFree, environment);
+  return yield* computePlan(root, isPortFree, environment, clerk ? "clerk" : "personas");
 });
 
 const encodePlan = Schema.encodeSync(PlanJson);
@@ -203,6 +228,9 @@ const printPlan = (plan: Plan, json: boolean) => {
     [
       `Patchy Cloud dev instance for ${plan.worktree}`,
       `  API       ${plan.apiUrl}  (PATCHY_API_TOKEN=${plan.token})`,
+      signInOf(plan) === "personas"
+        ? `  Sign in   ${plan.apiUrl}/dev/sign-in  (dev personas, any email)`
+        : `  Sign in   ${plan.apiUrl}/join  (Clerk)`,
       `  Postgres  ${plan.databaseUrl}`,
       `  State     ${plan.stateDir}  (env, plan.json, dev.log)`,
       `  Pids      ${pids}`
@@ -222,11 +250,18 @@ const dryRun = Flag.Boolean("dry-run").pipe(
   Flag.withDefault(false)
 );
 
+const clerk = Flag.Boolean("clerk").pipe(
+  Flag.withDescription(
+    "Sign people in through your Clerk development application instead of as dev personas"
+  ),
+  Flag.withDefault(false)
+);
+
 const dev = Command.make(
   "dev",
-  { json, dryRun },
-  Effect.fn(function* ({ json, dryRun }) {
-    const plan = yield* currentPlan(dryRun);
+  { json, dryRun, clerk },
+  Effect.fn(function* ({ json, dryRun, clerk }) {
+    const plan = yield* currentPlan(dryRun, undefined, clerk);
     if (dryRun || (yield* isRunning(plan))) return yield* printPlan(plan, json);
     yield* buildBroker(plan.worktree);
     yield* printPlan(yield* start(plan), json);
@@ -406,11 +441,12 @@ const reset = Command.make(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
     );
     const environment = Option.isSome(recorded) ? recorded.value.environment : undefined;
+    const signIn = Option.isSome(recorded) ? signInOf(recorded.value) : "personas";
     // An environment's workspace describes the data about to be wiped, so it goes too.
     if (environment !== undefined) yield* tearDown(root);
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value, Console.error);
     yield* fs.remove(stateDir, { recursive: true, force: true });
-    const plan = yield* start(yield* computePlan(root, isPortFree, environment));
+    const plan = yield* start(yield* computePlan(root, isPortFree, environment, signIn));
     if (environment === undefined) return yield* printPlan(plan, json);
     const manifest = yield* setUp(plan, yield* loadScenario(root, environment.scenario));
     if (json) return yield* Console.log(encodeManifest(manifest));
@@ -435,8 +471,11 @@ const up = Command.make(
     const recorded = yield* readPlan(yield* stateDirOf(root));
     if (Option.isSome(recorded)) {
       const current = recorded.value.environment;
-      if (current === undefined) return yield* new NotAnEnvironment({ worktree: root });
-      if (current.scenario !== scenario)
+      if (signInOf(recorded.value) === "clerk")
+        return yield* new NotAnEnvironment({ worktree: root });
+      // A plain personas instance becomes the environment, keeping its data.
+      if (current === undefined) yield* stopInstance(recorded.value, Console.error);
+      else if (current.scenario !== scenario)
         return yield* new OtherScenario({ current: current.scenario, requested: scenario });
     }
     let plan = yield* currentPlan(false, { scenario });
@@ -473,6 +512,61 @@ const open = Command.make(
   }, userFacing)
 ).pipe(
   Command.withDescription("Open a browser window signed in as one of the environment's people")
+);
+
+const encodeShot = Schema.encodeSync(Schema.fromJsonString(Shot, { space: 2 }));
+
+const shot = Command.make(
+  "shot",
+  {
+    person: Argument.String("person").pipe(
+      Argument.withDescription("Any email, or an environment person's key, email or first name")
+    ),
+    target: Argument.String("path").pipe(
+      Argument.withDescription("The page to capture, such as /company or /acme/new-business"),
+      Argument.withDefault("/")
+    ),
+    out: Flag.String("out").pipe(
+      Flag.withDescription("Where to write the PNG; .local/shots/ when omitted"),
+      Flag.optional
+    ),
+    json
+  },
+  Effect.fn(function* ({ person, target, out, json }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const plan = yield* recordedPlan;
+    if (signInOf(plan) === "clerk") return yield* new NeedsPersonas({ worktree: plan.worktree });
+    if (!(yield* healthy(plan))) return yield* new NotHealthy({ apiUrl: plan.apiUrl });
+    let email = person;
+    if (!person.includes("@")) {
+      const manifest = yield* readManifest(yield* layoutFor(plan.worktree));
+      if (Option.isNone(manifest)) return yield* new NoEnvironment({ worktree: plan.worktree });
+      email = (yield* findPerson(manifest.value, person)).email;
+    }
+    const slug = `${email.split("@")[0]}${target}`
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/-+$/, "");
+    const file = path.resolve(
+      Option.getOrElse(out, () => path.join(plan.worktree, ".local", "shots", `${slug}.png`))
+    );
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+    const result = yield* screenshot(plan.apiUrl, email, target, file);
+    if (json) return yield* Console.log(encodeShot(result));
+    yield* Console.log(
+      [
+        `${result.status ?? "no response"}  ${result.url}`,
+        `  PNG     ${result.file}`,
+        ...(result.errors.length === 0
+          ? ["  Errors  none"]
+          : ["  Errors", ...result.errors.map((error) => `    ${error}`)])
+      ].join("\n")
+    );
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Capture a page as one person: a full-page PNG, its HTTP status and the browser's errors"
+  )
 );
 
 const down = Command.make(
@@ -517,7 +611,7 @@ const CliSurface = Layer.mergeAll(
 );
 
 dev.pipe(
-  Command.withSubcommands([status, stop, logs, reset, up, open, down, superviseCommand]),
+  Command.withSubcommands([status, stop, logs, reset, up, open, shot, down, superviseCommand]),
   Command.run({ version: "0.0.0" }),
   Effect.scoped,
   Effect.provide([NodeServices.layer, FetchHttpClient.layer, CliSurface]),

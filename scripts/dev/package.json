@@ -18,6 +18,7 @@
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/runtime": "workspace:*",
+    "@patchy/server": "workspace:*",
     "@patchy/sql": "workspace:*",
     "@playwright/test": "^1.63.0",
     "effect": "catalog:",

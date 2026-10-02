@@ -229,22 +229,17 @@ it.layer(services)("Invocation", (it) => {
       );
       assert.strictEqual(yield* Queue.size(seen), 0);
       const logs = yield* InvocationLog.InvocationLog;
-      const outcomes = [
+      const outcomes: ReadonlyArray<GuestProtocol.GuestReply> = [
+        { ok: false, source: "handler", code: "approval_required", details: { id: 1 } },
+        { ok: false, source: "handler", code: "undeclared" },
         {
-          ok: false as const,
-          source: "handler" as const,
-          code: "approval_required",
-          details: { id: 1 }
-        },
-        { ok: false as const, source: "handler" as const, code: "undeclared" },
-        {
-          ok: false as const,
-          source: "patchy" as const,
-          code: "access_denied" as const,
+          ok: false,
+          source: "patchy",
+          code: "access_denied",
           error: "forged",
           correlationId: "someone-elses-call"
         },
-        { ok: true as const, value: "wrong result type" }
+        { ok: true, value: "wrong result type" }
       ];
       for (const [index, reply] of outcomes.entries()) {
         yield* Queue.offer(replies, { outcome: "returned", reply, guestMs: 1 });
@@ -305,9 +300,11 @@ it.layer(services)("Invocation", (it) => {
             Effect.succeed(viewer)
           )
           .pipe(Effect.flip);
-        assert.strictEqual(error.code, "handler_failed");
-        assert.strictEqual(error.limitId, "tier2.query.resultBytes");
-        assert.strictEqual(error.correlationId, "oversized-business-error");
+        assert.include(error, {
+          code: "handler_failed",
+          limitId: "tier2.query.resultBytes",
+          correlationId: "oversized-business-error"
+        });
       })
   );
 
@@ -502,13 +499,15 @@ it.layer(services)("Invocation", (it) => {
         let active = false;
         const invocations = yield* makeInvocation((request) =>
           Effect.gen(function* () {
-            yield* capabilities.retain(request.callback.capability, request, {
-              cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
-              settled: Deferred.await(resourceSettled),
-              destroy: () => {
-                destroyed = true;
-              }
-            });
+            yield* capabilities
+              .retain(request.callback.capability, request, {
+                cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
+                settled: Deferred.await(resourceSettled),
+                destroy: () => {
+                  destroyed = true;
+                }
+              })
+              .pipe(Effect.orDie);
             yield* Queue.offer(seen, request);
             return yield* Effect.never;
           })
@@ -670,6 +669,7 @@ it.layer(services)("Invocation", (it) => {
         if (event.type !== "request") return assert.fail("Expected request event");
         assert.strictEqual(event.handler, handler);
         assert.strictEqual(event.closestLimitId, "tier2.query.deadline");
+        assert.isDefined(event.limits);
         assert.deepInclude(event.limits, {
           limitId: "tier2.query.deadline",
           value: queryDeadline,

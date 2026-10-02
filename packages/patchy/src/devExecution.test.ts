@@ -159,7 +159,7 @@ it.live(
             })
         }
       );
-      const invocation = Context.get(resources.context, Invocation.Invocation);
+      const invocation = Context.getUnsafe(resources.context, Invocation.Invocation);
       const call = (
         handler: string,
         current = viewer,
@@ -291,10 +291,14 @@ it.live(
       const resources = yield* DevResources.prepare(prepared, root, `${root}/.patchy/dev`, {
         server: initial
       });
+      // `resources` is typed for every tier; `yield*` keeps both tiers' staging failures.
+      const stage = Effect.fn("test.stageServer")(function* (bytes: Uint8Array) {
+        return yield* resources.stage(bytes);
+      });
       const replace = (input: ServerBinding) =>
-        resources.stage(input.bytes).pipe(Effect.flatMap((install) => install(input.handlers)));
+        stage(input.bytes).pipe(Effect.flatMap((install) => install(input.handlers)));
       const versionId = resources.version.versionId;
-      const invocation = Context.get(resources.context, Invocation.Invocation);
+      const invocation = Context.getUnsafe(resources.context, Invocation.Invocation);
       const binding = () =>
         Binding.Binding.of({
           ...resources.version,
@@ -331,9 +335,9 @@ it.live(
       assert.deepStrictEqual(yield* call("demo.value"), { ok: true, value: "new" });
       yield* Deferred.succeed(releaseAction, undefined);
       assert.deepStrictEqual(yield* Fiber.join(admitted), { ok: true, value: "old" });
-      const badBuild = yield* resources
-        .stage(new TextEncoder().encode("throw new Error('bad rebuild')"))
-        .pipe(Effect.flip);
+      const badBuild = yield* stage(
+        new TextEncoder().encode("throw new Error('bad rebuild')")
+      ).pipe(Effect.flip);
       assert.strictEqual(badBuild._tag, "ExecutionError");
       assert.deepStrictEqual(yield* call("demo.value"), { ok: true, value: "new" });
 

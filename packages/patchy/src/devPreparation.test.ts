@@ -142,13 +142,9 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         const { prepare } = yield* harness({
           index: { ...currentIndex, release: `${RELEASE}-stale` }
         });
-        const exit = yield* Effect.exit(prepare);
-        assert.isTrue(Exit.isFailure(exit));
-        if (Exit.isFailure(exit))
-          assert.strictEqual(
-            Option.getOrUndefined(Exit.findErrorOption(exit))?.code,
-            "stale_generated"
-          );
+        const error = yield* Effect.flip(prepare);
+        if (error._tag !== "LocalError") return assert.fail(`Unexpected ${error._tag}`);
+        assert.strictEqual(error.code, "stale_generated");
       }),
     { timeout: 30_000 }
   );

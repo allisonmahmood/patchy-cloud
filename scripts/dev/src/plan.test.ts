@@ -5,8 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { describe, expect } from "vitest";
-import { PlanJson, basePort, computePlan, findWorktree, hostLabel } from "./plan.js";
+import { PlanJson, basePort, computePlan, findWorktree, hostLabel, signInOf } from "./plan.js";
 
 const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
@@ -60,6 +61,31 @@ it.layer(Platform)("computePlan", (it) => {
       expect(plan.stateDir).toBe("/w/a/.local/dev");
       expect(plan.worktree).toBe("/w/a");
       expect(plan.pids).toBeUndefined();
+    })
+  );
+
+  it.effect(
+    "signs a plain instance in as personas unless asked for Clerk, on loopback either way",
+    () =>
+      Effect.gen(function* () {
+        const personas = yield* computePlan("/w/a", free);
+        const clerk = yield* computePlan("/w/a", free, undefined, "clerk");
+        expect(signInOf(personas)).toBe("personas");
+        expect(signInOf(clerk)).toBe("clerk");
+        expect(clerk.apiUrl).toBe(personas.apiUrl);
+        const environment = yield* computePlan("/w/a", free, { scenario: "team" }, "clerk");
+        expect(signInOf(environment)).toBe("personas");
+      })
+  );
+
+  it.effect("keeps plans recorded before personas became the default on Clerk", () =>
+    Effect.gen(function* () {
+      const legacy = Struct.omit(yield* computePlan("/w/a", free), ["signIn"]);
+      const environment = Struct.omit(yield* computePlan("/w/a", free, { scenario: "team" }), [
+        "signIn"
+      ]);
+      expect(signInOf(legacy)).toBe("clerk");
+      expect(signInOf(environment)).toBe("personas");
     })
   );
 

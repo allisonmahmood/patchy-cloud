@@ -112,7 +112,9 @@ it("preserves supported columns and usable keys beside named column exclusions",
     foreignKeys: []
   };
   const selected = surface({ version: 1, relations: [relation], enums: [], exclusions: [] });
-  assert.deepStrictEqual(selected.relations, [{ ...relation, columns: [relation.columns[0]] }]);
+  assert.deepStrictEqual(selected.relations, [
+    { ...relation, columns: relation.columns.slice(0, 1) }
+  ]);
   assert.deepStrictEqual(selected.exclusions, [
     { schema: "public", relation: "places", column: "location", reason: "unsupported_type" }
   ]);

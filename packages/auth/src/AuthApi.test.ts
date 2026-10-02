@@ -101,7 +101,7 @@ it.layer(layer)("auth group: machine identity and logout", (it) => {
         deactivated.token
       ]) {
         const api = yield* client.pipe(Effect.provide(bearer(token)));
-        const expected = { ok: false, error: "Missing or invalid API token." };
+        const expected = { ok: false, error: "Missing or invalid API token." } as const;
         assert.deepStrictEqual(yield* api.me().pipe(Effect.flip), expected);
         assert.deepStrictEqual(yield* api.logout().pipe(Effect.flip), expected);
       }
@@ -110,7 +110,7 @@ it.layer(layer)("auth group: machine identity and logout", (it) => {
 
   it.effect("refuses missing and malformed authorization", () =>
     Effect.gen(function* () {
-      const expected = { ok: false, error: "Missing or invalid API token." };
+      const expected = { ok: false, error: "Missing or invalid API token." } as const;
       const withoutHeader = HttpApiMiddleware.layerClient(AuthorizationTag, ({ next, request }) =>
         next(request)
       );
@@ -244,7 +244,7 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
         const gone = yield* api.pollDeviceLogin({ payload, responseMode: "response-only" });
         assert.strictEqual(gone.status, 410);
         const typed = yield* api.pollDeviceLogin({ payload }).pipe(Effect.flip);
-        assert.deepStrictEqual(yield* gone.json, typed);
+        assert.deepStrictEqual<unknown>(yield* gone.json, typed);
         assert.strictEqual("code" in typed && typed.code, "unknown");
       }).pipe(Effect.provide(anonymous))
   );

@@ -114,6 +114,10 @@ const prepare = Effect.gen(function* () {
   return placement;
 });
 
+/** Table and server callbacks never answer with file bytes, so their reply is guest data. */
+const guestReply = (reply: GuestProtocol.CallbackReply): GuestProtocol.GuestReply =>
+  "body" in reply ? assert.fail("Unexpected file body in a callback reply") : reply;
+
 const host = Effect.gen(function* () {
   const handlers = yield* TableOperations.make;
   const gateway = yield* CallbackGateway.make(handlers);
@@ -128,7 +132,7 @@ const host = Effect.gen(function* () {
             args: {}
           }
         });
-        return { outcome: "returned" as const, reply, guestMs: 0 };
+        return { outcome: "returned" as const, reply: guestReply(reply), guestMs: 0 };
       }
       const reply = yield* gateway.callback(request.callback.capability, request, {
         op: "tables.list",
@@ -136,7 +140,7 @@ const host = Effect.gen(function* () {
       });
       assert.isTrue(reply.ok, JSON.stringify(reply));
       if (request.handler === "drop.probe")
-        return { outcome: "returned" as const, reply, guestMs: 0 };
+        return { outcome: "returned" as const, reply: guestReply(reply), guestMs: 0 };
       if (request.handler === "drop.commit") {
         // A measurable held interval, not queue wait, belongs to both child and parent.
         yield* Effect.sleep(80);
@@ -144,7 +148,7 @@ const host = Effect.gen(function* () {
           op: "tables.insert",
           args: { table: "notes", row: { title: "Nested mutation" } }
         });
-        return { outcome: "returned" as const, reply: written, guestMs: 0 };
+        return { outcome: "returned" as const, reply: guestReply(written), guestMs: 0 };
       }
       yield* Queue.offer(opened, request);
       return yield* Effect.never;

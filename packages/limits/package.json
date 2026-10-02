@@ -38,8 +38,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "render-docs": "node --import tsx --conditions=development scripts/render-limits-md.ts",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "vitest run"
   },
   "dependencies": {
     "@patchy/sql": "workspace:*",

@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -45,15 +46,16 @@ const pglite = Layer.unwrap(
   })
 ).pipe(Layer.provide(NodeFileSystem.layer), Layer.provideMerge(SqlTesting.layer()));
 
-for (const [name, database] of [
-  ["Postgres", Testing.layer()],
-  ["PGlite", pglite]
-] as const) {
-  const services = OrphanSweep.layer.pipe(
+const sweepOver = <ROut, E, RIn>(database: Layer.Layer<ROut, E, RIn>) =>
+  OrphanSweep.layer.pipe(
     Layer.provideMerge(Layer.merge(database, filesystem)),
     Layer.provideMerge(Testing.resourceChangesLayer)
   );
 
+for (const [name, services] of [
+  ["Postgres", sweepOver(Testing.layer())],
+  ["PGlite", sweepOver(pglite)]
+] as const) {
   it.layer(services)(`OrphanSweep (${name})`, (it) => {
     it.effect(
       "expires stages at one hour while preserving live reservations and adopted files",
@@ -548,7 +550,7 @@ it.layer(
                 })
               ),
               Effect.tapError((error) =>
-                error._tag === "Busy" ? Queue.offer(busy, undefined) : Effect.void
+                Predicate.isTagged(error, "Busy") ? Queue.offer(busy, undefined) : Effect.void
               )
             )
       });

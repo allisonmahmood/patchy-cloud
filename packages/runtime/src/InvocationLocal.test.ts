@@ -296,7 +296,7 @@ it.live(
         callbacks: 1,
         commitOutcome: "committed"
       });
-      assert.includeMembers(event.operations!, ["server.call", "tables.insert"]);
+      assert.includeMembers([...event.operations!], ["server.call", "tables.insert"]);
       assert.isAbove(event.dbMs!, 0);
       assert.isDefined(event.closestLimitId);
       assert.isTrue(
@@ -321,9 +321,9 @@ it.live(
           ?.outcome,
         "success"
       );
-      const failure = yield* call("demo.fail").pipe(Effect.flip);
+      const failure = Runtime.toFailure(yield* call("demo.fail").pipe(Effect.flip));
       assert.strictEqual(failure.code, "handler_failed");
-      assert.notInclude(JSON.stringify(Runtime.toFailure(failure)), "private diagnostic 397");
+      assert.notInclude(JSON.stringify(failure), "private diagnostic 397");
       const diagnostics = yield* platform<{
         log_lines: unknown;
       }>`SELECT log_lines FROM runtime_invocations WHERE correlation_id = ${failure.correlationId!}`;
@@ -332,7 +332,7 @@ it.live(
       const queryTimeout = yield* call("demo.queryTimeout").pipe(Effect.flip);
       assert.strictEqual(queryTimeout.code, "handler_timeout");
       assert.include(JSON.stringify(yield* call("demo.read")), "Attributed write");
-      const uncertain = yield* call("demo.writeThenTimeout").pipe(Effect.flip);
+      const uncertain = Runtime.toFailure(yield* call("demo.writeThenTimeout").pipe(Effect.flip));
       assert.strictEqual(uncertain.code, "unknown_outcome");
       const page = yield* handlers["tables.list"]
         .run({ table: "notes" })

@@ -1,12 +1,17 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createServer, request as httpRequest, type Server } from "node:http";
-import { createSecureServer, type Http2SecureServer, type ServerHttp2Session } from "node:http2";
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
+import {
+  createSecureServer,
+  type Http2SecureServer,
+  type Http2ServerRequest,
+  type ServerHttp2Session
+} from "node:http2";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { Transform } from "node:stream";
+import { Transform, pipeline } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
 import { Client } from "pg";
@@ -37,7 +42,7 @@ export const manifest = {
   },
   files: { assets: { description: "Browser fixture assets keyed by file name." } },
   uses: {}
-};
+} as const;
 export interface Published {
   patchId: string;
   versionId: string;
@@ -61,7 +66,9 @@ export interface Instance {
     scope?: "company" | "public",
     html?: string,
     patchId?: string,
-    declarations?: Partial<Pick<Manifest, "tier" | "tables" | "files" | "uses" | "handlers">>,
+    declarations?: Partial<
+      Pick<typeof Manifest.Type, "tier" | "tables" | "files" | "uses" | "handlers">
+    >,
     options?: { readonly server?: string; readonly force?: boolean }
   ): Promise<Published>;
   lifecycle(
@@ -97,6 +104,15 @@ async function listen(server: Server | Http2SecureServer): Promise<number> {
   if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
   return address.port;
 }
+/** A port free right now; the caller must bind it before something else does. */
+async function freePort(): Promise<number> {
+  const reservation = createServer();
+  const port = await listen(reservation);
+  await stopServer(reservation);
+  return port;
+}
+/** A reserved port another process bound before the server did. */
+class PortTaken extends Error {}
 async function stopServer(server: Server) {
   const closed = Promise.withResolvers<void>();
   server.close(() => closed.resolve());
@@ -188,7 +204,8 @@ export async function startInstance(
     await postgres.createDatabase("patchy");
     const databaseUrl = `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${databasePort}/patchy`;
     const serverReservation = createServer();
-    const port = await listen(serverReservation);
+    // The proxy follows the backend if a launch has to move to another port.
+    let port = await listen(serverReservation);
     const runtimeRequests: Instance["runtimeRequests"] = [];
     const streamConnections = new Set<string>();
     const streamClosers = new Set<() => void>();
@@ -253,7 +270,7 @@ export async function startInstance(
     } else {
       proxy = createServer();
     }
-    proxy.on("request", (request, response) => {
+    proxy.on("request", (request: IncomingMessage | Http2ServerRequest, response) => {
       if (streamsPaused && request.url?.startsWith("/api/runtime/stream")) {
         response.writeHead(502).end();
         return;
@@ -378,10 +395,12 @@ export async function startInstance(
                   callback();
                 }
               });
-              incoming.pipe(streamTransform).pipe(response);
+              // Like an ingress, a host that dies mid-stream resets the browser's stream;
+              // `pipe` would leave it open and silent forever.
+              pipeline(incoming, streamTransform, response, () => {});
               return;
             }
-            incoming.pipe(response);
+            pipeline(incoming, response, () => {});
           }
         );
         upstream.on("error", () => {
@@ -395,7 +414,7 @@ export async function startInstance(
       });
     });
     const origin = `${options.tls ? "https" : "http"}://127.0.0.1:${await listen(proxy)}`;
-    const backendOrigin = `http://127.0.0.1:${port}`;
+    const backendOrigin = () => `http://127.0.0.1:${port}`;
     await stopServer(serverReservation);
     const launch = async (serverPort: number, replica = false) => {
       const fleet = environment.EXECUTION_PROVIDER === "local-fleet";
@@ -446,14 +465,28 @@ export async function startInstance(
       });
       const deadline = Date.now() + 30_000;
       while (!log.includes("Patchy Cloud server listening on")) {
+        if (server.exitCode !== null && log.includes("EADDRINUSE")) {
+          children.delete(server);
+          throw new PortTaken(`Port ${serverPort} was taken before the server bound it`);
+        }
         if (server.exitCode !== null || Date.now() > deadline)
           throw new Error(`Tier 1 server failed to start: ${log}`);
         await delay(50);
       }
       return server;
     };
-    child = await launch(port);
-    const health = await fetch(`${backendOrigin}/healthz`);
+    // Between reservation and bind, any outbound connection can take an ephemeral port.
+    const launchOnFreePort = async (first: number, replica = false) => {
+      for (let attempt = 1, serverPort = first; ; attempt++, serverPort = await freePort()) {
+        try {
+          return { server: await launch(serverPort, replica), port: serverPort };
+        } catch (error) {
+          if (!(error instanceof PortTaken) || attempt === 3) throw error;
+        }
+      }
+    };
+    ({ server: child, port } = await launchOnFreePort(port));
+    const health = await fetch(`${backendOrigin()}/healthz`);
     if (!health.ok) throw new Error(`Tier 1 health returned ${health.status}`);
     const { applyDevSeed } = await import(
       pathToFileURL(path.join(root, "packages/auth/dist/seed.js")).href
@@ -465,7 +498,7 @@ export async function startInstance(
       "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_colleague', 'user_colleague', $1, 'colleague@patchy.local', 'Colleague', 'member')",
       [seed.companyId]
     );
-    const release = (await (await fetch(`${backendOrigin}/api/release`)).json()) as {
+    const release = (await (await fetch(`${backendOrigin()}/api/release`)).json()) as {
       release: string;
       manifestVersion: number;
     };
@@ -518,13 +551,13 @@ export async function startInstance(
         if (nextEnvironment) environment = { ...environment, ...nextEnvironment };
         await stopChild(child!);
         children.delete(child!);
-        child = await launch(port);
+        ({ server: child, port } = await launchOnFreePort(port));
       },
       async startReplica() {
-        const reservation = createServer();
-        const replicaPort = await listen(reservation);
-        await stopServer(reservation);
-        const replica = await launch(replicaPort, true);
+        const { server: replica, port: replicaPort } = await launchOnFreePort(
+          await freePort(),
+          true
+        );
         return {
           origin: `http://127.0.0.1:${replicaPort}`,
           async stop(signal) {
@@ -534,7 +567,7 @@ export async function startInstance(
         };
       },
       async lifecycle(patchId, action, versionNumber, force) {
-        const response = await fetch(`${backendOrigin}/api/patches/${patchId}/${action}`, {
+        const response = await fetch(`${backendOrigin()}/api/patches/${patchId}/${action}`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
           body: JSON.stringify(action === "rollback" ? { versionNumber } : { force })
@@ -542,7 +575,7 @@ export async function startInstance(
         if (!response.ok) throw new Error(`${action}: ${response.status} ${await response.text()}`);
       },
       async share(patchId, scope) {
-        const response = await fetch(`${backendOrigin}/api/patches/${patchId}/share`, {
+        const response = await fetch(`${backendOrigin()}/api/patches/${patchId}/share`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
           body: JSON.stringify({ scope })
@@ -584,7 +617,7 @@ export async function startInstance(
         return token;
       },
       async publish(scope = "company", content = html, patchId, declarations, options) {
-        const response = await fetch(`${backendOrigin}/api/publish`, {
+        const response = await fetch(`${backendOrigin()}/api/publish`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
           body: JSON.stringify({
