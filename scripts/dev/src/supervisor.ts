@@ -18,15 +18,9 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { migrations as authMigrations } from "@patchy/auth";
 import { applyDevSeed } from "@patchy/auth/seed";
-import { migrations as companiesMigrations } from "@patchy/companies";
-import { migrations as companyDatabaseMigrations } from "@patchy/company-database";
-import { migrations as patchesMigrations, Patches } from "@patchy/patches";
-import { migrations as runtimeMigrations } from "@patchy/runtime";
-import { migrations as integrationsMigrations } from "@patchy/integrations";
-import { migrations as limitsMigrations } from "@patchy/limits/migrations";
-import { migrations as executionMigrations } from "@patchy/execution/migrations";
+import { Patches } from "@patchy/patches";
+import { migrations } from "@patchy/server/migrations";
 import { layerFromUrl, migrate } from "@patchy/sql";
 import {
   developerEnvFile,
@@ -163,16 +157,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server migrates on its own way up too; running it here first means
   // the seed below always lands on the current schema.
-  yield* migrate({
-    ...companiesMigrations,
-    ...authMigrations,
-    ...companyDatabaseMigrations,
-    ...runtimeMigrations,
-    ...integrationsMigrations,
-    ...patchesMigrations,
-    ...limitsMigrations,
-    ...executionMigrations
-  }).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
+  yield* migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
   const inherited = yield* Config.all({
     PATH: Config.String("PATH"),
     HOME: Config.String("HOME").pipe(Config.withDefault(plan.stateDir))

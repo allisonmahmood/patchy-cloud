@@ -846,6 +846,9 @@ importers:
       '@patchy/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@patchy/server':
+        specifier: workspace:*
+        version: link:../../apps/server
       '@patchy/sql':
         specifier: workspace:*
         version: link:../../packages/sql

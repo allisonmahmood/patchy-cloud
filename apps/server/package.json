@@ -7,6 +7,13 @@
   "files": [
     "dist"
   ],
+  "exports": {
+    "./migrations": {
+      "development": "./src/migrations.ts",
+      "types": "./dist/migrations.d.ts",
+      "import": "./dist/migrations.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx --conditions=development watch src/start.ts",
