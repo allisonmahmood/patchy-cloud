@@ -34,7 +34,7 @@
     "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:",
-    "pg": "^8.23.0"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
@@ -43,6 +43,6 @@
     "@patchy/sql": "workspace:*",
     "@types/pg": "^8.23.1",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.3"
   }
 }

@@ -31,7 +31,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@clerk/backend": "3.18.1",
+    "@clerk/backend": "3.21.1",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/companies": "workspace:*",
@@ -44,6 +44,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "tough-cookie": "^6.0.2",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.3"
   }
 }

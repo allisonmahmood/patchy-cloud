@@ -42,7 +42,7 @@ Package exports are not all page entry points.
 ### Bundled UI runtime
 
 `patchy/preact` supplies Preact with compat semantics, hooks and signals. It
-bundles exact Preact 10.29.8, `@preact/signals` 2.11.2 and
+bundles exact Preact 10.29.8, `@preact/signals` 2.11.3 and
 `@preact/signals-core` 1.14.4. Do not add direct Preact dependencies or
 `pnpm.overrides`. Compat initializes before rendering through any of the three
 entries. In DEV the SDK initializes debugging against that same instance;

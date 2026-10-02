@@ -21,12 +21,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1141.0",
+    "@aws-sdk/client-s3": "^3.1144.0",
     "@effect/platform-node": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.3"
   }
 }

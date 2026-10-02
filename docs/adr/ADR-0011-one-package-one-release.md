@@ -69,7 +69,7 @@ builder-owned toolchain dependencies are installed with lifecycle scripts disabl
 `jsxImportSource: "patchy/preact"`. Every entry initializes the same compat
 instance before rendering. In DEV, the SDK also initializes `preact/debug`
 against that instance; patch code does not import debugging support.
-Preact 10.29.8, `@preact/signals` 2.11.2 and `@preact/signals-core` 1.14.4 are
+Preact 10.29.8, `@preact/signals` 2.11.3 and `@preact/signals-core` 1.14.4 are
 exact bundled dependencies, not patch dependencies or overrides. They remain
 real packages inside the tarball so the optimizer, JSX runtimes, hooks and
 signals resolve one shared instance, including its types and licenses.

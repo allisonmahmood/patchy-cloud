@@ -71,14 +71,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-ecs": "^3.1141.0",
+    "@aws-sdk/client-ecs": "^3.1144.0",
     "@effect/platform-node": "catalog:",
     "@patchy/analytics": "workspace:*",
-    "@patchy/core": "workspace:*",
-    "@patchy/sql": "workspace:*",
     "@patchy/api": "workspace:*",
+    "@patchy/core": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/runtime": "workspace:*",
+    "@patchy/sql": "workspace:*",
     "effect": "catalog:",
     "es-module-lexer": "2.3.2",
     "esbuild": "0.28.2",
@@ -86,6 +86,6 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.3"
   }
 }
