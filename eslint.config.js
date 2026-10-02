@@ -100,7 +100,8 @@ export default tseslint.config(
       "apps/server/src/start.ts",
       "test/postgres.ts",
       "test/clerk.ts",
-      "scripts/test-clerk.ts"
+      "scripts/test-clerk.ts",
+      "scripts/verify.ts"
     ],
     rules: {
       "no-console": "off"
