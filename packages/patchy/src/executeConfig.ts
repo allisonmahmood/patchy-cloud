@@ -173,7 +173,8 @@ const runConfig = (path: string): Promise<unknown> => {
   const child = fork(runner, [path], {
     cwd: dirname(path),
     // Every supported Node strips types by default, so configs must stay erasable-only. An
-    // explicit empty list keeps the child from inheriting the parent's flags (--input-type).
+    // explicit empty list stops the child inheriting its parent's flags, such as the
+    // --input-type of a `node --input-type=module -e` parent, which Node 26 rejects here.
     execArgv: [],
     stdio: ["ignore", "ignore", "pipe", "ipc"]
   });

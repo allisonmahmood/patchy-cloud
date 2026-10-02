@@ -1,4 +1,6 @@
 /** Code-first definitions. Builders do not load the Node-only config executor. */
+// Source-mode tests load this file in the config child, which only strips types: keep it
+// erasable (declared fields instead of constructor parameter properties, no enum or namespace).
 declare const idBrand: unique symbol;
 export type Id<Table extends string> = string & { readonly [idBrand]: Table };
 export type ColumnKind =
@@ -53,11 +55,7 @@ export type Fields = Readonly<Record<string, SchemaInput>>;
 export type DescriptorOf<S extends SchemaInput> = ReturnType<S["toJSON"]>;
 type FieldDescriptors<F extends Fields> = { readonly [K in keyof F]: DescriptorOf<F[K]> };
 
-/**
- * Composite schemas have field optionality, but no table default or reference modifier.
- * The config child loads this module through Node's type stripping, so fields are declared
- * rather than written as constructor parameter properties.
- */
+/** Composite schemas have field optionality, but no table default or reference modifier. */
 export class ValueSchema<D extends object, Optional extends boolean = false> {
   readonly descriptor: D;
   readonly isOptional: Optional;

@@ -573,7 +573,9 @@ index, and describes the `src/` page and `server/` handler split for either tier
 It points to the release-bound `patchy-loop` skill for how to exercise the
 configured tier, so refresh can update that workflow without rewriting `AGENTS.md`.
 The repo typechecks without added setup, and `pnpm patchy --help` runs its pinned
-copy. `pnpm patchy dev` supports tiers 0, 1 and 2. Tiers 1 and 2 provide both
+copy. Commands run `patchy.config.ts` with Node's built-in type stripping, so the
+config uses erasable TypeScript only: no `enum`, `namespace` or constructor
+parameter properties. `pnpm patchy dev` supports tiers 0, 1 and 2. Tiers 1 and 2 provide both
 viewer mounts; tier 2 runs handlers against invented local data.
 
 To move between tiers, edit `tier` in `patchy.config.ts`, then run `pnpm patchy refresh`.
