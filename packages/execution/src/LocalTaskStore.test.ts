@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import * as Store from "./localTaskStore.js";
 
 // A process reaped after procfs opens its stat file fails the read with ESRCH, not ENOENT.
+// The store has no layer to swap, so this mock only times a real reap; the kernel raises the error.
 const reapMidRead = vi.hoisted(() => new Map<string, ChildProcess>());
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof Fs>();
@@ -13,10 +14,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...fs,
     readFile: async (...args: Parameters<typeof fs.readFile>) => {
       const [path, options] = args;
-      const child = typeof path === "string" ? reapMidRead.get(path) : undefined;
+      if (typeof path !== "string") return fs.readFile(...args);
+      const child = reapMidRead.get(path);
       if (child === undefined) return fs.readFile(...args);
-      reapMidRead.delete(path as string);
-      const handle = await fs.open(path as string);
+      reapMidRead.delete(path);
+      const handle = await fs.open(path);
       try {
         child.kill("SIGKILL");
         await once(child, "exit");

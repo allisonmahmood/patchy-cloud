@@ -13,7 +13,7 @@ const isReady = Schema.is(Store.Ready);
 const isFinal = Schema.is(Store.Final);
 const directory = process.argv[2]!;
 
-/** A process seen alive can exit before the signal lands; it is then already gone. */
+/** SIGKILLs a process, or a group when pid is negative. One seen alive can exit before the signal lands; it is then already gone. */
 function kill(pid: number): void {
   try {
     process.kill(pid, "SIGKILL");
