@@ -68,6 +68,14 @@ const account = Effect.fn(function* (label: string) {
   };
 });
 const pathFor = (code: string) => `/login/device?code=${encodeURIComponent(code)}`;
+// What a rendered confirmation form would submit besides the person's own choices.
+const hiddenFields = (html: string): Record<string, string> =>
+  Object.fromEntries(
+    Array.from(
+      html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g),
+      ([, name, value]) => [name, value]
+    )
+  );
 
 it.layer(services)("device login pages in memory with keypair sessions", (it) => {
   it.effect(
@@ -95,6 +103,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         const confirmed = yield* send(
           "/login/device",
           post(owner.cookie, {
+            userId: owner.user.id,
             action: "confirm",
             code: login.userCode,
             machineName: "Publishing laptop"
@@ -120,6 +129,68 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           404
         );
       })
+  );
+
+  it.effect(
+    "refuses an answer from a page rendered for another account and asks the current one",
+    () =>
+      Effect.gen(function* () {
+        const alice = yield* account("switch-alice");
+        const bob = yield* account("switch-bob");
+        const logins = yield* DeviceLogins.DeviceLogins;
+        const tokens = yield* MachineTokens.MachineTokens;
+        const login = yield* logins.start({ machineNameHint: "Shared laptop" });
+        const page = yield* send(pathFor(login.userCode), { headers: { cookie: alice.cookie } });
+        const stale = hiddenFields(yield* Effect.promise(() => page.text()));
+        let fresh = "";
+        for (const action of ["confirm", "deny"]) {
+          const response = yield* send(
+            "/login/device",
+            post(bob.cookie, { ...stale, action, machineName: "Named for Alice" })
+          );
+          assert.strictEqual(response.status, 409);
+          assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+          fresh = yield* Effect.promise(() => response.text());
+          assert.include(fresh, "The signed-in account changed");
+          assert.include(fresh, "Company &lt;switch-bob&gt;");
+          assert.include(fresh, bob.user.email);
+          assert.notInclude(fresh, alice.user.email);
+          assert.notInclude(fresh, "Named for Alice");
+          assert.include(fresh, 'value="Shared laptop"');
+        }
+        assert.deepStrictEqual(yield* logins.poll(login.deviceCode), { status: "pending" });
+        assert.deepStrictEqual(yield* tokens.list(alice.user.id), []);
+        assert.deepStrictEqual(yield* tokens.list(bob.user.id), []);
+        const confirmed = yield* send(
+          "/login/device",
+          post(bob.cookie, { ...hiddenFields(fresh), action: "confirm", machineName: "Bob's" })
+        );
+        assert.strictEqual(confirmed.status, 200);
+        yield* TestClock.adjust("5 seconds");
+        const complete = yield* logins.poll(login.deviceCode);
+        assert.strictEqual(complete.status, "complete");
+        if (complete.status !== "complete") return;
+        assert.strictEqual(complete.user.email, bob.user.email);
+        assert.strictEqual(complete.company.handle, bob.company.handle);
+        assert.strictEqual(complete.machine.name, "Bob's");
+      })
+  );
+
+  it.effect("refuses a form that does not name the account it was rendered for", () =>
+    Effect.gen(function* () {
+      const owner = yield* account("unnamed");
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const login = yield* logins.start({ machineNameHint: "Laptop" });
+      for (const action of ["confirm", "deny"]) {
+        const response = yield* send(
+          "/login/device",
+          post(owner.cookie, { action, code: login.userCode, machineName: "Laptop" })
+        );
+        assert.strictEqual(response.status, 400);
+        assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
+      }
+      assert.deepStrictEqual(yield* logins.poll(login.deviceCode), { status: "pending" });
+    })
   );
 
   it.effect("inherits the old key name and explains when it stops working", () =>
@@ -148,7 +219,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       const login = yield* logins.start({ machineNameHint: "Laptop" });
       const response = yield* send(
         "/login/device",
-        post(owner.cookie, { action: "deny", code: login.userCode })
+        post(owner.cookie, { userId: owner.user.id, action: "deny", code: login.userCode })
       );
       assert.strictEqual(response.status, 200);
       assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
@@ -186,6 +257,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
             index === 0
               ? { headers: { cookie: owner.cookie } }
               : post(owner.cookie, {
+                  userId: owner.user.id,
                   action: "confirm",
                   code: login.userCode,
                   machineName: "Late"
@@ -216,7 +288,12 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
             action === "get" ? pathFor("UNKNOWN") : "/login/device",
             action === "get"
               ? { headers: { cookie: owner.cookie } }
-              : post(owner.cookie, { action, code: "UNKNOWN", machineName: "Another" })
+              : post(owner.cookie, {
+                  userId: owner.user.id,
+                  action,
+                  code: "UNKNOWN",
+                  machineName: "Another"
+                })
           );
           assert.strictEqual(response.status, 404);
           assert.include(
@@ -227,7 +304,12 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         for (const action of ["confirm", "deny"]) {
           const response = yield* send(
             "/login/device",
-            post(owner.cookie, { action, code: answered.userCode, machineName: "Another" })
+            post(owner.cookie, {
+              userId: owner.user.id,
+              action,
+              code: answered.userCode,
+              machineName: "Another"
+            })
           );
           assert.strictEqual(response.status, 410);
           assert.include(
@@ -248,19 +330,34 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.strictEqual(page.status, 200);
         const invalid = yield* send(
           "/login/device",
-          post(owner.cookie, { action: "confirm", code: login.userCode, machineName: "" })
+          post(owner.cookie, {
+            userId: owner.user.id,
+            action: "confirm",
+            code: login.userCode,
+            machineName: ""
+          })
         );
         assert.strictEqual(invalid.status, 422);
       }
       const limited = yield* send(
         "/login/device",
-        post(owner.cookie, { action: "confirm", code: login.userCode, machineName: "Valid" })
+        post(owner.cookie, {
+          userId: owner.user.id,
+          action: "confirm",
+          code: login.userCode,
+          machineName: "Valid"
+        })
       );
       assert.strictEqual(limited.status, 429);
       yield* TestClock.adjust("1 minute");
       const accepted = yield* send(
         "/login/device",
-        post(owner.cookie, { action: "confirm", code: login.userCode, machineName: "Valid" })
+        post(owner.cookie, {
+          userId: owner.user.id,
+          action: "confirm",
+          code: login.userCode,
+          machineName: "Valid"
+        })
       );
       assert.strictEqual(accepted.status, 200);
     })
@@ -277,6 +374,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           const response = yield* send(
             "/login/device",
             post(owner.cookie, {
+              userId: owner.user.id,
               action: "confirm",
               code: login.userCode,
               machineName
@@ -295,6 +393,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         const accepted = yield* send(
           "/login/device",
           post(owner.cookie, {
+            userId: owner.user.id,
             action: "confirm",
             code: login.userCode,
             machineName: "x".repeat(64)
@@ -339,6 +438,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           const response = yield* send(
             "/login/device?code=WRONG-CODE",
             post(sessionCookie, {
+              userId: owner.user.id,
               action: "confirm",
               code: login.userCode,
               machineName: "Never replay me"
@@ -392,7 +492,12 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       );
       const deferred = yield* send(
         "/login/device",
-        post(cookie, { action: "confirm", code: login.userCode, machineName: "Must not replay" })
+        post(cookie, {
+          userId: "user_rendered_before_enrollment",
+          action: "confirm",
+          code: login.userCode,
+          machineName: "Must not replay"
+        })
       );
       assert.strictEqual(deferred.status, 303);
       const join = deferred.headers.get("location")!;
@@ -419,12 +524,17 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         const owner = yield* account("limited");
         let response = yield* send(
           "/login/device",
-          post(owner.cookie, { code: "UNKNOWN", action: "deny" })
+          post(owner.cookie, { userId: owner.user.id, code: "UNKNOWN", action: "deny" })
         );
         for (let attempts = 1; attempts < 20 && response.status !== 429; attempts++)
           response = yield* send(
             "/login/device",
-            post(owner.cookie, { code: "UNKNOWN", action: "confirm", machineName: "Guess" })
+            post(owner.cookie, {
+              userId: owner.user.id,
+              code: "UNKNOWN",
+              action: "confirm",
+              machineName: "Guess"
+            })
           );
         assert.strictEqual(response.status, 429);
         assert.isAbove(Number(response.headers.get("retry-after")), 0);
@@ -543,7 +653,12 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       }
       const confirmation = yield* send(
         "/login/device",
-        post(cookie, { code: login.userCode, action: "confirm", machineName: "Refused" })
+        post(cookie, {
+          userId: user.id,
+          code: login.userCode,
+          action: "confirm",
+          machineName: "Refused"
+        })
       );
       assert.strictEqual(confirmation.status, 403);
       assert.deepStrictEqual(yield* logins.poll(login.deviceCode), { status: "pending" });

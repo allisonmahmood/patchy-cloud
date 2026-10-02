@@ -26,13 +26,22 @@ const MAX_FORM_BYTES = 4_096;
 
 const refreshNotice =
   "Your sign-in was refreshed before that went through. Check the code and press Confirm again.";
+const accountChangedNotice =
+  "The signed-in account changed since this page loaded. Check the account and the code, then press again.";
+// userId is the account the page was rendered for; an answer only counts as that account.
 const decodeForm = Schema.decodeUnknownEffect(
   Schema.Struct({
     code: Schema.String,
+    userId: Schema.String,
     action: Schema.Literals(["confirm", "deny"]),
     machineName: Schema.optional(Schema.String)
   })
 );
+
+/** Why a POST came back to the confirmation page instead of answering. */
+type Refusal =
+  | { readonly reason: "invalid-name"; readonly machineName: string }
+  | { readonly reason: "account-changed" };
 
 const message = (title: string, body: string, status = 200): Page => ({
   title,
@@ -40,9 +49,10 @@ const message = (title: string, body: string, status = 200): Page => ({
   status
 });
 
+/** Renders the confirmation for the current viewer, who is the only account it can answer as. */
 const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
   login: DeviceLogins.PendingLogin,
-  fields?: { readonly machineName: string; readonly invalid: boolean }
+  refusal?: Refusal
 ) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
@@ -52,16 +62,23 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
     1,
     Math.ceil((DateTime.toEpochMillis(DateTime.makeUnsafe(login.expiresAt)) - now) / 60_000)
   );
-  const machineName = fields?.machineName ?? login.oldMachineName ?? login.machineNameHint;
-  const refreshed =
-    new URL(request.url, session.publicBaseUrl).searchParams.get("refreshed") === "1";
+  const invalid = refusal?.reason === "invalid-name";
+  const machineName = invalid
+    ? refusal.machineName
+    : (login.oldMachineName ?? login.machineNameHint);
+  const notice =
+    refusal?.reason === "account-changed"
+      ? accountChangedNotice
+      : new URL(request.url, session.publicBaseUrl).searchParams.get("refreshed") === "1"
+        ? refreshNotice
+        : null;
   return pageResponse(
     {
       title: "Device login",
       heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
       styles,
-      status: fields?.invalid ? 422 : 200,
-      body: `${refreshed ? `<div class="note" role="status">${refreshNotice}</div>` : ""}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${fields?.invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${fields?.invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
+      status: refusal === undefined ? 200 : invalid ? 422 : 409,
+      body: `${notice === null ? "" : `<div class="note" role="status">${notice}</div>`}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(viewer.user.id)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
     },
     session
   );
@@ -103,6 +120,11 @@ const postDevice = Effect.gen(function* () {
       const viewer = yield* RequireSession.Viewer;
       const session = yield* Session.Session;
       const logins = yield* DeviceLogins.DeviceLogins;
+      // A page left open across an account switch must not answer as the new account.
+      if (form.userId !== viewer.user.id) {
+        const login = yield* logins.lookup(form.code, viewer.user.id);
+        return yield* renderConfirm(login, { reason: "account-changed" });
+      }
       const machineName = form.machineName ?? "";
       if (form.action === "confirm") {
         const valid = yield* MachineTokens.validateMachineName(machineName).pipe(
@@ -111,7 +133,7 @@ const postDevice = Effect.gen(function* () {
         );
         if (!valid) {
           const login = yield* logins.lookup(form.code, viewer.user.id);
-          return yield* renderConfirm(login, { machineName, invalid: true });
+          return yield* renderConfirm(login, { reason: "invalid-name", machineName });
         }
       }
       if (form.action === "deny") yield* logins.deny(form.code, viewer.user.id);
