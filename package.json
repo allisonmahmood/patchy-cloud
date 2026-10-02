@@ -6,9 +6,9 @@
   "type": "module",
   "engines": {
     "node": ">=22.22.0",
-    "pnpm": "11.5.2"
+    "pnpm": "11.28.3"
   },
-  "packageManager": "pnpm@11.5.2",
+  "packageManager": "pnpm@11.28.3",
   "scripts": {
     "build": "turbo run build",
     "dev": "node --import tsx --conditions=development scripts/dev/src/main.ts",
