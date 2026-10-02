@@ -22,24 +22,23 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 
-/** The running package's bundled global skill, beside `dist/` in the installed package. */
-export const bundledSkill = fileURLToPath(new URL("../skills/patchy", import.meta.url));
+/** The running package's bundled global skill directory, beside `dist/` in the installed package. */
+const bundledSkillDir = fileURLToPath(new URL("../skills/patchy", import.meta.url));
 
 /** Where setup links the skill: the shared agents path, then Claude Code's. */
-export const skillLinks = (home: string): ReadonlyArray<string> => [
-  path.join(home, ".agents", "skills", "patchy"),
-  path.join(home, ".claude", "skills", "patchy")
-];
+export const skillLinks = (home: string) =>
+  [
+    path.join(home, ".agents", "skills", "patchy"),
+    path.join(home, ".claude", "skills", "patchy")
+  ] as const;
 
 type Entry = "missing" | "current" | "owned" | "foreign";
 
-const packageName = Schema.decodeUnknownOption(
+const decodeManifest = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ name: Schema.String }))
 );
-
-const errorCode = (error: unknown) =>
-  typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-const missing = (error: unknown) => errorCode(error) === "ENOENT";
+const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
+const errno = Schema.decodeUnknownOption(Schema.Struct({ code: Schema.String }));
 
 /** A `patchy/skills/patchy` directory whose package is `patchy`, or that is gone with its prefix. */
 const packageSkill = async (target: string) => {
@@ -52,7 +51,7 @@ const packageSkill = async (target: string) => {
   )
     return false;
   try {
-    const manifest = packageName(await readFile(path.join(pkg, "package.json"), "utf8"));
+    const manifest = decodeManifest(await readFile(path.join(pkg, "package.json"), "utf8"));
     return Option.exists(manifest, ({ name }) => name === "patchy");
   } catch (error) {
     if (!missing(error)) return false;
@@ -63,38 +62,45 @@ const packageSkill = async (target: string) => {
   }
 };
 
-const inspect = async (link: string, skill: string): Promise<Entry> => {
+const inspect = async (link: string, skillDir: string): Promise<Entry> => {
   const stats = await lstat(link).catch((error: unknown) =>
     missing(error) ? undefined : Promise.reject(error)
   );
   if (stats === undefined) return "missing";
   if (!stats.isSymbolicLink()) return "foreign";
   const resolved = await realpath(link).catch(() => undefined);
-  if (resolved !== undefined && resolved === (await realpath(skill))) return "current";
+  if (resolved !== undefined && resolved === (await realpath(skillDir))) return "current";
   const target = path.resolve(path.dirname(link), await readlink(link));
   return (await packageSkill(target)) ? "owned" : "foreign";
 };
 
-const failure = (link: string) => (cause: unknown) =>
+/** Names the step, the path and the system error code; the error itself rides as `cause`. */
+const failure = (step: "inspect" | "link" | "remove", link: string) => (cause: unknown) =>
   new LocalError({
-    message: `Could not set up the Patchy skill at ${link}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    message: `Could not ${step} the Patchy skill link at ${link}${Option.match(errno(cause), {
+      onNone: () => "",
+      onSome: ({ code }) => ` (${code})`
+    })}.`,
     cause
   });
 
-const inspectAll = (home: string, skill: string) =>
+const inspectAll = (home: string, skillDir: string) =>
   Effect.forEach(skillLinks(home), (link) =>
-    Effect.tryPromise({ try: () => inspect(link, skill), catch: failure(link) }).pipe(
+    Effect.tryPromise({ try: () => inspect(link, skillDir), catch: failure("inspect", link) }).pipe(
       Effect.map((entry) => ({ link, entry }))
     )
   );
 
 /**
- * Link every agent skill path to `skill`. Checks every path before changing
+ * Link every agent skill path to `skillDir`. Checks every path before changing
  * any, so a conflict leaves the machine as it was. Already-correct links are
- * left untouched.
+ * left untouched. Returns the link paths and the skill's `SKILL.md`.
  */
-export const link = Effect.fn("Setup.link")(function* (home = homedir(), skill = bundledSkill) {
-  const manifest = path.join(skill, "SKILL.md");
+export const link = Effect.fn("Setup.link")(function* (
+  home = homedir(),
+  skillDir = bundledSkillDir
+) {
+  const manifest = path.join(skillDir, "SKILL.md");
   yield* Effect.tryPromise({
     try: () => lstat(manifest),
     catch: (cause) =>
@@ -103,7 +109,7 @@ export const link = Effect.fn("Setup.link")(function* (home = homedir(), skill =
         cause
       })
   });
-  const entries = yield* inspectAll(home, skill);
+  const entries = yield* inspectAll(home, skillDir);
   const conflicts = entries.filter(({ entry }) => entry === "foreign");
   if (conflicts.length > 0) {
     return yield* new LocalError({
@@ -118,23 +124,26 @@ export const link = Effect.fn("Setup.link")(function* (home = homedir(), skill =
         if (entry === "owned") await remove(link);
         await mkdir(path.dirname(link), { recursive: true });
         // Junctions need no Windows developer mode; POSIX ignores the type.
-        await symlink(skill, link, "junction");
+        await symlink(skillDir, link, "junction");
       },
-      catch: failure(link)
+      catch: failure("link", link)
     });
   }
   return { linked: entries.map(({ link }) => link), skill: manifest };
 });
 
 /** Remove the links setup owns; anything else at those paths stays, with a warning. */
-export const unlink = Effect.fn("Setup.unlink")(function* (home = homedir(), skill = bundledSkill) {
+export const unlink = Effect.fn("Setup.unlink")(function* (
+  home = homedir(),
+  skillDir = bundledSkillDir
+) {
   const removed: string[] = [];
   const warnings: string[] = [];
-  for (const { link, entry } of yield* inspectAll(home, skill)) {
+  for (const { link, entry } of yield* inspectAll(home, skillDir)) {
     if (entry === "foreign") {
       warnings.push(`Left ${link} in place: patchy setup did not make it.`);
     } else if (entry !== "missing") {
-      yield* Effect.tryPromise({ try: () => remove(link), catch: failure(link) });
+      yield* Effect.tryPromise({ try: () => remove(link), catch: failure("remove", link) });
       removed.push(link);
     }
   }

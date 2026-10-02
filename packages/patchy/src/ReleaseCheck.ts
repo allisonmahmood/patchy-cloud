@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { installCommand } from "@patchy/api";
 import { ReleaseMismatch } from "./CliError.js";
 
 /**
@@ -13,7 +14,19 @@ export const checkRelease = Effect.fn("checkRelease")(function* (
   for (const component of ["pin", "cli", "runtime"] as const) {
     const release = loaded[component];
     if (release !== undefined && release !== current) {
-      return yield* new ReleaseMismatch({ component, loaded: release, current, ...outsideRepo });
+      return yield* new ReleaseMismatch({
+        component,
+        loaded: release,
+        current,
+        ...(outsideRepo === undefined
+          ? {}
+          : {
+              installer: installCommand(
+                outsideRepo.instanceUrl,
+                process.platform === "win32" ? "powershell" : "posix"
+              )
+            })
+      });
     }
   }
 });

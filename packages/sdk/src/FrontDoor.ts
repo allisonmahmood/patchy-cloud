@@ -14,28 +14,20 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { installCommand } from "@patchy/api";
 
-export class FrontDoorUnavailable extends Schema.TaggedError<FrontDoorUnavailable>()(
-  "FrontDoorUnavailable",
-  {
-    path: Schema.String,
-    reason: Schema.Literals(["read", "placeholder"]),
-    cause: Schema.optionalKey(Schema.Defect())
-  }
+export class InstallerUnavailable extends Schema.TaggedError<InstallerUnavailable>()(
+  "InstallerUnavailable",
+  { path: Schema.String, cause: Schema.Defect() }
 ) {
   override get message() {
-    return this.reason === "read"
-      ? `Cannot read the installer at ${this.path}; build the SDK package before starting the server.`
-      : `The installer at ${this.path} must contain its base URL placeholder exactly once.`;
+    return `Cannot read the installer at ${this.path}; build the SDK package before starting the server.`;
   }
 }
 
 /** A JavaScript string literal, as the installer source writes its base URL. */
 const literal = Schema.encodeSync(Schema.fromJsonString(Schema.String));
-/** The installer's stand-in for the instance's address. */
-const placeholder = literal("__PATCHY_PUBLIC_BASE_URL__");
 
 /** The agent-facing introduction; the installed global skill owns everything after login. */
-export const llms = (base: string) => `# Patchy Cloud
+const llms = (base: string) => `# Patchy Cloud
 
 > A private cloud for a company's internal tools. People at a company, and their agents, build patches, anything from a static page to a full CRM, and publish them to their company's cloud. Patchy Cloud is in private beta: signing in at ${base} needs an invitation from the person's company or an approved spot on the waitlist.
 
@@ -64,7 +56,7 @@ The installer downloads this instance's \`patchy\` release, checks it against th
 
 ## Browser handoff
 
-Login prints JSON with \`verificationUrl\`, \`userCode\` and \`next\`. Give the person both the URL and the code, and let them open it: never open a browser for them. They sign in, check the code and confirm this machine. Then run \`next\` with \`--json\` added. \`pending\` means they have not confirmed yet: say it is still waiting, and run the same command again when they are ready. Continue once the status is \`logged_in\`.
+Login prints JSON with \`verificationUrl\`, \`userCode\` and \`next\`. Give the person both the URL and the code, and let them open it: never open a browser for them. They sign in, check the code and confirm this machine. Then run \`next\` with \`--json\` added; in PowerShell, call every \`patchy\` command as \`patchy.cmd\`. \`pending\` means they have not confirmed yet: say it is still waiting, and run the same command again when they are ready. Continue once the status is \`logged_in\`.
 
 ## Next
 
@@ -82,14 +74,8 @@ export const layer = HttpRouter.use((router) =>
     const file = yield* path.fromFileUrl(new URL("../front-door/install.mjs", import.meta.url));
     const source = yield* fs
       .readFileString(file)
-      .pipe(
-        Effect.mapError((cause) => new FrontDoorUnavailable({ path: file, reason: "read", cause }))
-      );
-    const parts = source.split(placeholder);
-    if (parts.length !== 2) {
-      return yield* new FrontDoorUnavailable({ path: file, reason: "placeholder" });
-    }
-    const installer = parts.join(literal(base));
+      .pipe(Effect.mapError((cause) => new InstallerUnavailable({ path: file, cause })));
+    const installer = source.replace(literal("__PATCHY_PUBLIC_BASE_URL__"), () => literal(base));
     const intro = llms(base);
     yield* router.add(
       "GET",

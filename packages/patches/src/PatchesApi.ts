@@ -380,7 +380,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             return yield* replayOrRespond(
               rejected(
                 "release_mismatch",
-                `Release ${release.manifest.release} does not match instance release ${currentRelease}; run patchy refresh.`
+                // The instance cannot tell a repo publish from a global CLI's file publish.
+                `Release ${release.manifest.release} does not match instance release ${currentRelease}. In a patch repo, run pnpm patchy refresh; otherwise upgrade the CLI with the installer at ${publicBaseUrl.replace(/\/+$/, "")}/llms.txt.`
               )
             );
           }

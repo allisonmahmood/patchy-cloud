@@ -444,7 +444,7 @@ export const generate = Effect.fn("Project.generate")(function* (
 ) {
   if (release !== RELEASE)
     return yield* new LocalError({
-      message: `Installed CLI release ${RELEASE} does not match ${release}. Run: patchy refresh`,
+      message: `Installed CLI release ${RELEASE} does not match ${release}. Run: pnpm patchy refresh`,
       code: "release_mismatch"
     });
   const fs = yield* FileSystem.FileSystem;

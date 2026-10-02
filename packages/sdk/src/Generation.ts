@@ -25,7 +25,7 @@ export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("SdkR
 }) {
   readonly code = "release_mismatch" as const;
   override get message() {
-    return `Release ${this.release} does not match ${CURRENT_RELEASE}. Run: patchy refresh`;
+    return `Release ${this.release} does not match ${CURRENT_RELEASE}. Run: pnpm patchy refresh`;
   }
 }
 export class UnsupportedManifestVersion extends Schema.TaggedError<UnsupportedManifestVersion>()(

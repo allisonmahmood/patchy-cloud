@@ -29,7 +29,7 @@ const fixture = Effect.gen(function* () {
     return skill;
   };
   const [agents, claude] = Setup.skillLinks(home);
-  return { root, home, skill: installed("current"), installed, agents: agents!, claude: claude! };
+  return { root, home, skill: installed("current"), installed, agents, claude };
 });
 
 it.layer(NodeFileSystem.layer)("patchy setup", (it) => {

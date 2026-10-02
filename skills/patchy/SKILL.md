@@ -264,7 +264,9 @@ globally with npm, links this skill as `~/.agents/skills/patchy` and
 `~/.claude/skills/patchy` through `patchy setup`, and prints the executable and
 skill paths. When it fails, its message names the fix: relay it. Rerunning it
 upgrades. A real directory already at a skill path is `skill_conflict`: ask the
-person before moving it, then run `patchy setup` again.
+person before moving it, then run `patchy setup` again. In Windows PowerShell,
+use the PowerShell line from `/llms.txt` and call every `patchy` command as
+`patchy.cmd`.
 Contributors in a source checkout may instead run `pnpm --filter patchy build`
 and symlink `packages/patchy/dist/index.js` as `patchy` into a directory on `PATH`.
 

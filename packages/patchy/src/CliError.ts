@@ -9,7 +9,6 @@
  */
 import * as Schema from "effect/Schema";
 import {
-  installCommand,
   HasDependants,
   NotOwner,
   PatchDeleted,
@@ -117,14 +116,14 @@ export class UnreachableError extends Schema.TaggedError<UnreachableError>()("Un
 /**
  * Exact-current tooling is required before starting a new publish or dev session.
  * Inside a patch repo the repair is `pnpm patchy refresh`. Outside one, only the
- * global CLI is involved, so `instanceUrl` names the instance whose installer
- * upgrades it; refresh reconciles a repo and cannot.
+ * global CLI is involved, so `installer` carries the instance's install line,
+ * which upgrades it; refresh reconciles a repo and cannot.
  */
 export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("ReleaseMismatch", {
   component: Schema.Literals(["pin", "cli", "runtime"]),
   loaded: Schema.String,
   current: Schema.String,
-  instanceUrl: Schema.optionalKey(Schema.String)
+  installer: Schema.optionalKey(Schema.String)
 }) {
   readonly kind = "local";
   readonly code = "release_mismatch";
@@ -132,9 +131,9 @@ export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("Rele
     const label =
       this.component === "cli" ? "CLI" : this.component === "pin" ? "Pinned" : "Runtime";
     const mismatch = `${label} release ${this.loaded} does not match instance release ${this.current}.`;
-    return this.instanceUrl === undefined
+    return this.installer === undefined
       ? `${mismatch} Run: pnpm patchy refresh`
-      : `${mismatch} Upgrade the global CLI by rerunning the instance's installer:\n${installCommand(this.instanceUrl, process.platform === "win32" ? "powershell" : "posix")}`;
+      : `${mismatch} Upgrade the global CLI by rerunning the instance's installer:\n${this.installer}`;
   }
 }
 
