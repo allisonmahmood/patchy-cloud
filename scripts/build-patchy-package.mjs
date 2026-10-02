@@ -13,6 +13,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   writeFile
 } from "node:fs/promises";
 import path from "node:path";
@@ -68,6 +69,90 @@ if (
   throw new Error("Patchy package version and API/runtime release constants disagree.");
 }
 
+// Every test run and dev start stages this package, and a full build takes
+// ~15s. A packing build records what it read; the next one skips straight to
+// staging when none of those files changed and the outputs are still there.
+// Dependencies count through the lockfile. PATCHY_PACKAGE_REBUILD=1 forces it.
+const packing = !process.argv.includes("--bundle-only");
+const artifactsDir = path.join(packageDir, "artifacts");
+const stampFile = path.join(artifactsDir, "build-inputs.json");
+const relative = (file) => path.relative(repoRoot, path.resolve(file)).split(path.sep).join("/");
+const filesUnder = async (dir) =>
+  (await readdir(path.join(repoRoot, dir), { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(path.join(entry.parentPath, entry.name)));
+const fixedInputs = async () => [
+  "scripts/build-patchy-package.mjs",
+  "scripts/copy-sdk-artifact.mjs",
+  "pnpm-lock.yaml",
+  "tsconfig.base.json",
+  "LICENSE",
+  "packages/patchy/package.json",
+  "packages/patchy/README.md",
+  "packages/patchy/tsconfig.json",
+  "packages/patchy/tsconfig.build.json",
+  "packages/patchy/src/toolchain.json",
+  "packages/api/src/schemas.ts",
+  ...(await filesUnder("skills"))
+];
+const hashInputs = async (files) => {
+  const hashes = {};
+  for (const file of [...new Set(files)].sort()) {
+    const bytes = await readFile(path.join(repoRoot, file)).catch(() => undefined);
+    hashes[file] = bytes ? createHash("sha256").update(bytes).digest("hex") : null;
+  }
+  return hashes;
+};
+const unchanged = async () => {
+  if (!packing || process.env.PATCHY_PACKAGE_REBUILD === "1") return false;
+  const stamp = await readFile(stampFile, "utf8").then(JSON.parse, () => undefined);
+  if (!stamp) return false;
+  const current = await hashInputs([...Object.keys(stamp.inputs), ...(await fixedInputs())]);
+  if (JSON.stringify(current) !== JSON.stringify(stamp.inputs)) return false;
+  const release = await readFile(path.join(artifactsDir, "release.json"), "utf8").then(
+    JSON.parse,
+    () => undefined
+  );
+  if (!release) return false;
+  const outputs = [
+    path.join(distDir, "index.js"),
+    path.join(packageSkillsDir, "patchy/SKILL.md"),
+    path.join(packageDir, "LICENSE"),
+    path.join(artifactsDir, `patchy-${packageJson.version}-${release.digest}.tgz`)
+  ];
+  return (
+    await Promise.all(
+      outputs.map((file) =>
+        access(file).then(
+          () => true,
+          () => false
+        )
+      )
+    )
+  ).every(Boolean);
+};
+
+if (await unchanged()) {
+  process.stdout.write("patchy: inputs unchanged since the last build; reusing its artifacts.\n");
+  if (process.argv.includes("--stage-for-server")) await import("./copy-sdk-artifact.mjs");
+  process.exit(0);
+}
+
+// The module graph the bundles and declarations actually read, outside node_modules.
+const graph = new Set();
+const record = (files) => {
+  for (const file of files) {
+    const name = relative(file);
+    if (!name.startsWith("..") && !name.split("/").includes("node_modules")) graph.add(name);
+  }
+};
+const bundle = async (options) => {
+  const result = await esbuild.build({ ...options, metafile: true });
+  record(Object.keys(result.metafile.inputs));
+};
+
+const startedAt = Date.now();
+await rm(stampFile, { force: true });
 await rm(distDir, { recursive: true, force: true });
 const common = {
   bundle: true,
@@ -83,7 +168,7 @@ const common = {
 };
 const requireBanner =
   "import { createRequire as __createRequire } from 'node:module'; import { fileURLToPath as __fileURLToPath } from 'node:url'; import { dirname as __dirnameOf } from 'node:path'; const require = __createRequire(import.meta.url); const __filename = __fileURLToPath(import.meta.url); const __dirname = __dirnameOf(__filename);";
-await esbuild.build({
+await bundle({
   ...common,
   entryPoints: [path.join(packageDir, "src/index.ts")],
   outfile: path.join(distDir, "index.js"),
@@ -91,7 +176,7 @@ await esbuild.build({
   target: "node22",
   banner: { js: `#!/usr/bin/env node\n${requireBanner}` }
 });
-await esbuild.build({
+await bundle({
   ...common,
   entryPoints: ["config", "server", "csv"].map((name) => path.join(packageDir, `src/${name}.ts`)),
   outdir: distDir,
@@ -100,7 +185,7 @@ await esbuild.build({
   // Config builders stay lightweight; executeConfig loads the separate Node bundle on demand.
   external: ["./executeConfig.js"]
 });
-await esbuild.build({
+await bundle({
   entryPoints: ["client", ...uiEntries].map((name) => path.join(packageDir, `src/${name}.ts`)),
   outdir: distDir,
   outbase: path.join(packageDir, "src"),
@@ -114,7 +199,7 @@ await esbuild.build({
   // Client and hooks share the document port; all UI entries share one physical Preact stack.
   external: ["preact", "preact/*", "@preact/signals", "@preact/signals-core"]
 });
-await esbuild.build({
+await bundle({
   ...common,
   external: [...common.external, "./dev.js"],
   entryPoints: ["dev", "devChild", "executeConfig", "executeConfigChild", "toolchainChild"].map(
@@ -125,7 +210,7 @@ await esbuild.build({
   target: "node22",
   banner: { js: requireBanner }
 });
-await esbuild.build({
+await bundle({
   entryPoints: [path.join(repoRoot, "packages/execution/src/loader.ts")],
   outfile: path.join(distDir, "loader.js"),
   bundle: true,
@@ -148,6 +233,7 @@ const declarations = await rollup({
     })
   ]
 });
+record(declarations.watchFiles);
 try {
   await declarations.write({
     dir: distDir,
@@ -170,7 +256,6 @@ await cp(rootSkillsDir, packageSkillsDir, { recursive: true });
 await copyFile(path.join(repoRoot, "LICENSE"), path.join(packageDir, "LICENSE"));
 
 if (!process.argv.includes("--bundle-only")) {
-  const artifactsDir = path.join(packageDir, "artifacts");
   await mkdir(artifactsDir, { recursive: true });
   // npm's bundled-dependency traversal cannot pack pnpm's Preact peer links.
   // Materialize the exact installed packages into one node_modules before packing.
@@ -230,6 +315,20 @@ if (!process.argv.includes("--bundle-only")) {
     ) {
       await rm(path.join(artifactsDir, entry.name));
     }
+  }
+  // An input edited mid-build may not be what the artifact holds: leave no stamp.
+  const files = [...graph, ...(await fixedInputs())];
+  const mtimes = await Promise.all(
+    files.map((file) =>
+      stat(path.join(repoRoot, file)).then(
+        (info) => info.mtimeMs,
+        () => 0
+      )
+    )
+  );
+  if (mtimes.every((mtime) => mtime < startedAt)) {
+    const inputs = await hashInputs(files);
+    await writeFile(stampFile, JSON.stringify({ inputs }, null, 2) + "\n");
   }
 }
 if (process.argv.includes("--stage-for-server")) {
