@@ -32,6 +32,13 @@ export const Pids = Schema.Struct({
 export const Environment = Schema.Struct({ scenario: Schema.String });
 export type Environment = typeof Environment.Type;
 
+/**
+ * How people sign in: as dev personas (`/dev/sign-in`, no accounts) or through
+ * the developer's Clerk application (`pnpm dev --clerk`).
+ */
+export const SignIn = Schema.Literals(["personas", "clerk"]);
+export type SignIn = typeof SignIn.Type;
+
 export const Plan = Schema.Struct({
   worktree: Schema.String,
   /** `<worktree>/.local/dev` — Postgres data, logs, `env`, `plan.json`. */
@@ -44,9 +51,15 @@ export const Plan = Schema.Struct({
   /** Absent until `start` has spawned a supervisor. */
   pids: Schema.optionalKey(Pids),
   /** Present when this worktree's instance is an environment rather than plain `pnpm dev`. */
-  environment: Schema.optionalKey(Environment)
+  environment: Schema.optionalKey(Environment),
+  /** Absent from plans recorded before personas became the default; see `signInOf`. */
+  signIn: Schema.optionalKey(SignIn)
 });
 export type Plan = typeof Plan.Type;
+
+/** A recorded instance keeps how it signed people in; older plain plans used Clerk. */
+export const signInOf = (plan: Plan): SignIn =>
+  plan.signIn ?? (plan.environment === undefined ? "clerk" : "personas");
 
 /** `plan.json` is exactly a `Plan`. */
 export const PlanJson = Schema.fromJsonString(Plan, { space: 2 });
@@ -112,12 +125,14 @@ export const findWorktree = Effect.fn("findWorktree")(function* (from: string) {
 
 /**
  * The plan for a worktree, with the first free port pair at or above the
- * hashed base. `isFree` is the only side effect; tests pass a stub.
+ * hashed base. `isFree` is the only side effect; tests pass a stub. An
+ * environment always signs in with personas.
  */
 export const computePlan = Effect.fn("computePlan")(function* <E, R>(
   worktree: string,
   isFree: (port: number) => Effect.Effect<boolean, E, R>,
-  environment?: Environment
+  environment?: Environment,
+  signIn: SignIn = "personas"
 ) {
   const path = yield* Path.Path;
   const from = basePort(worktree);
@@ -132,7 +147,8 @@ export const computePlan = Effect.fn("computePlan")(function* <E, R>(
         apiUrl: `http://${environment === undefined ? "127.0.0.1" : `${hostLabel(worktree)}.localhost`}:${server}`,
         databaseUrl: `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${postgres}/${DATABASE_NAME}`,
         token: DEV_SEED.token,
-        ...(environment === undefined ? {} : { environment })
+        ...(environment === undefined ? {} : { environment }),
+        signIn: environment === undefined ? signIn : "personas"
       };
       return plan;
     }
