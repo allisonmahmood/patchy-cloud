@@ -86,22 +86,27 @@ const liveChildren = Effect.fn("FleetTest.liveChildren")(function* (directory: s
 
 // A SQL commit alone is not a clock barrier: its fiber may not have armed its next
 // sleep yet. Observe the real renewal query, then acknowledge its armed TestClock timer.
+// The renewal loop runs that one query between 5s sleeps. The replenish loop also
+// renews last before its own 5s sleep, but after other queries; counting it as
+// armed let the clock outrun the renewal loop until the lease expired.
 const renewalClock = Effect.gen(function* () {
   const clock = yield* TestClock.testClockWith(Effect.succeed);
   const armed = yield* Queue.unbounded<void>();
-  const renewed = new WeakSet<Fiber.Fiber<unknown, unknown>>();
+  const sinceSleep = new WeakMap<Fiber.Fiber<unknown, unknown>, Array<boolean>>();
   const transform: Statement.Transformer = (statement, _sql, fiber) =>
     Effect.sync(() => {
-      if (/^\s*UPDATE execution_housekeeping\b/.test(statement.compile()[0])) renewed.add(fiber);
-      else renewed.delete(fiber);
+      const renewal = /^\s*UPDATE execution_housekeeping\b/.test(statement.compile()[0]);
+      sinceSleep.set(fiber, [...(sinceSleep.get(fiber) ?? []), renewal]);
       return statement;
     });
   const observed: Clock.Clock = {
     ...clock,
     sleep: (duration) =>
       Effect.withFiber((fiber) => {
-        if (Duration.toMillis(duration) !== 5_000 || !renewed.has(fiber))
-          return clock.sleep(duration);
+        const statements = sinceSleep.get(fiber) ?? [];
+        sinceSleep.delete(fiber);
+        const renewed = statements.length === 1 && statements[0] === true;
+        if (Duration.toMillis(duration) !== 5_000 || !renewed) return clock.sleep(duration);
         return Effect.gen(function* () {
           const sleeping = yield* clock
             .sleep(duration)
@@ -235,9 +240,9 @@ it.layer(services)("host fleet controller", (it) => {
         }).pipe(Effect.provideService(TaskProvider.TaskProvider, pausedProvider));
         const opening = yield* claimant.ensureBinding(companyId).pipe(Effect.forkChild);
         yield* Deferred.await(claimed);
-        const claimedTask =
-          (yield* sql`SELECT task_id FROM execution_bindings WHERE company_id = ${companyId}`)[0]!
-            .task_id;
+        const claimedTask = (yield* sql<{
+          task_id: string;
+        }>`SELECT task_id FROM execution_bindings WHERE company_id = ${companyId}`)[0]!.task_id;
         assert.isTrue(yield* right.releaseCompany(companyId));
         yield* Fiber.interrupt(opening);
         const stopped = (yield* provider.list).find((task) => task.taskId === claimedTask)!;
@@ -655,7 +660,9 @@ it.layer(services)("host fleet controller", (it) => {
             assert.isTrue(final.stopped);
             assert.deepStrictEqual(final.reports, []);
             assert.deepStrictEqual(
-              yield* sql`SELECT binding_epoch, calls_served FROM execution_processes WHERE task_id = ${taskId}`,
+              yield* sql`SELECT binding_epoch, calls_served FROM execution_processes WHERE task_id = ${taskId}`.pipe(
+                Effect.orDie
+              ),
               [{ binding_epoch: admitted.binding.bindingEpoch, calls_served: 1 }]
             );
             return yield* provider.stop(taskId);
@@ -856,8 +863,11 @@ it.layer(services)("host fleet controller", (it) => {
         assert.strictEqual(row.releasedAt, stopped.stoppedAt);
         assert.strictEqual(row.boundSeconds, Math.max(0, stopped.stoppedAt! - row.boundAt) / 1000);
         assert.strictEqual(row.releaseCause, "task_lost");
-        const reports =
-          yield* sql`SELECT calls_served, cpu_seconds, peak_rss_bytes FROM execution_processes
+        const reports = yield* sql<{
+          calls_served: number;
+          cpu_seconds: number;
+          peak_rss_bytes: number;
+        }>`SELECT calls_served, cpu_seconds, peak_rss_bytes FROM execution_processes
         WHERE task_id = ${admitted.binding.taskId}`;
         assert.strictEqual(reports.length, 1);
         assert.strictEqual(reports[0]!.calls_served, 1);
@@ -955,9 +965,10 @@ it.layer(services)("host fleet controller", (it) => {
         const fresh = yield* right.lifecycle.acquire(companyId, bundle.patchId);
         yield* fresh.release;
         yield* killThree(2);
-        const paused =
-          (yield* sql`SELECT paused_until FROM execution_breakers WHERE company_id = ${companyId} AND patch_id = ${bundle.patchId}`)[0]!
-            .paused_until;
+        const paused = (yield* sql<{
+          paused_until: number;
+        }>`SELECT paused_until FROM execution_breakers WHERE company_id = ${companyId} AND patch_id = ${bundle.patchId}`)[0]!
+          .paused_until;
         yield* TestClock.setTime(paused - 1);
         assert.strictEqual(
           (yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.flip)).code,
@@ -1130,8 +1141,9 @@ it.layer(services)("host fleet controller", (it) => {
             const rows =
               yield* sql`SELECT state FROM execution_bindings WHERE task_id = ${failing.taskId}`;
             assert.strictEqual(rows[0]!.state, "claiming");
-            const spares =
-              yield* sql`SELECT count(*)::integer AS total FROM execution_tasks WHERE state = 'spare'`;
+            const spares = yield* sql<{
+              total: number;
+            }>`SELECT count(*)::integer AS total FROM execution_tasks WHERE state = 'spare'`;
             assert.isAtLeast(spares[0]!.total, 1);
             assert.strictEqual((yield* owner.ensureBinding(thirdCompany)).taskId, healthy.taskId);
             assert.strictEqual(
