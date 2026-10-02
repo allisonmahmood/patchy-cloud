@@ -68,17 +68,17 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
     : (login.oldMachineName ?? login.machineNameHint);
   const notice =
     refusal?.reason === "account-changed"
-      ? accountChangedNotice
+      ? `<div class="note note-warn" role="alert">${accountChangedNotice}</div>`
       : new URL(request.url, session.publicBaseUrl).searchParams.get("refreshed") === "1"
-        ? refreshNotice
-        : null;
+        ? `<div class="note" role="status">${refreshNotice}</div>`
+        : "";
   return pageResponse(
     {
       title: "Device login",
       heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
       styles,
       status: refusal === undefined ? 200 : invalid ? 422 : 409,
-      body: `${notice === null ? "" : `<div class="note" role="status">${notice}</div>`}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(viewer.user.id)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
+      body: `${notice}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(viewer.user.id)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
     },
     session
   );

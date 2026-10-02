@@ -151,7 +151,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           assert.strictEqual(response.status, 409);
           assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
           fresh = yield* Effect.promise(() => response.text());
-          assert.include(fresh, "The signed-in account changed");
+          assert.include(fresh, 'role="alert">The signed-in account changed');
           assert.include(fresh, "Company &lt;switch-bob&gt;");
           assert.include(fresh, bob.user.email);
           assert.notInclude(fresh, alice.user.email);
