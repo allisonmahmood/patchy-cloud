@@ -3,7 +3,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Management from "./management.js";
 import * as Supervisor from "./supervisor.js";
 

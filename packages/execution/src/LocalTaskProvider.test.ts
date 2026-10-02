@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 
 const listener = (headers: IncomingMessage["headers"][]) =>

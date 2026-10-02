@@ -1,8 +1,8 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type { SqlError } from "effect/sql/SqlError";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";

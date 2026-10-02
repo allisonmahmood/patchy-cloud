@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import * as SqlClient from "effect/sql/SqlClient";
 import { inject } from "vitest";
 import { layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";

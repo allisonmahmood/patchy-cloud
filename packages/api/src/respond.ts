@@ -14,8 +14,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RateLimited } from "./schemas.js";
 
 const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");

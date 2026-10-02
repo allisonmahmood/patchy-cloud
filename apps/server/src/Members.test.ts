@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { answer, publish, send, server } from "./test/server.js";
 
 const decodePublished = Schema.decodeUnknownSync(PublishCreated);

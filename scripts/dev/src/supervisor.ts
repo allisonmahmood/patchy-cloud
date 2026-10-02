@@ -17,7 +17,7 @@ import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { migrations as authMigrations } from "@patchy/auth";
 import { applyDevSeed } from "@patchy/auth/seed";
 import { migrations as companiesMigrations } from "@patchy/companies";

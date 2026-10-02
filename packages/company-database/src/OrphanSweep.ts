@@ -7,8 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Reclamation from "./Reclamation.js";
 

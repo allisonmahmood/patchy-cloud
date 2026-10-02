@@ -1,5 +1,5 @@
-import * as Cookies from "effect/unstable/http/Cookies";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as Cookies from "effect/http/Cookies";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { type AppShell, escapeAttribute, escapeHtml, htmlPage } from "@patchy/core";
 
 export interface Page {

@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { inject } from "vitest";
 import { FilePage, Manifest, TablePage, TableRow } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";

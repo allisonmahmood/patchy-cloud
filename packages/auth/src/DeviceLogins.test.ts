@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { Users } from "@patchy/companies";
 import { sha256 } from "@patchy/core";

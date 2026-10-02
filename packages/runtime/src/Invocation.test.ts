@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Binding from "./Binding.js";
 import * as CallbackGateway from "./CallbackGateway.js";
 import * as Executor from "./Executor.js";

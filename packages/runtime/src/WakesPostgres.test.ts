@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
 import * as WakesPostgres from "./WakesPostgres.js";
 

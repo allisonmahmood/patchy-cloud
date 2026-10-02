@@ -23,17 +23,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import {
-  Argument,
-  CliConfig,
-  CliError,
-  CliOutput,
-  Command,
-  Flag,
-  GlobalFlag
-} from "effect/unstable/cli";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Argument, CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
+import { FetchHttpClient, HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   encodeManifest,
   layoutFor,

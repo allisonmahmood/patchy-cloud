@@ -15,15 +15,15 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
+import * as HttpApiTest from "effect/http-api/HttpApiTest";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
@@ -92,7 +92,7 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
   });
 });
 
-const client = HttpApiTest.groups(PatchyApi, ["patches"]);
+const client = Fixtures.ownRouter(HttpApiTest.groups(PatchyApi, ["patches"]));
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
 const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
 

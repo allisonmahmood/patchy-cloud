@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Binding from "./Binding.js";
 import * as Executor from "./Executor.js";
 import * as Invocation from "./Invocation.js";

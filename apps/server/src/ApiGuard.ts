@@ -19,10 +19,10 @@
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import type * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import {
   BadRequest,
   NotFound,

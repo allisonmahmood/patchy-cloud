@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { inject } from "vitest";
 import { layerFromUrl, migrate, type Migrations } from "./index.js";
 

@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { TestClock } from "effect/testing";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { classify } from "./ApiGuard.js";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";

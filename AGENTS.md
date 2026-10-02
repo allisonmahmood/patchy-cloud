@@ -88,7 +88,7 @@ When reading PR feedback, inspect review bodies and inline review comments as we
 
 ## Effect
 
-The server, packages and CLI run on Effect 4 (one RC, pinned through the pnpm `catalog:` in `pnpm-workspace.yaml`; HTTP, HttpApi, SQL and CLI come from `effect/unstable/*`). Everything below binds all of them; the port that got them here is recorded on the port map (#54).
+The server, packages and CLI run on Effect 4, pinned through the pnpm `catalog:` in `pnpm-workspace.yaml`. HTTP, HttpApi, SQL and CLI come from `effect/http`, `effect/http-api`, `effect/sql` and `effect/cli`; Effect marks those `@stability unstable`, so a minor release can break them. Everything below binds all of them; the port that got them here is recorded on the port map (#54).
 
 Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect wants to be written (`Effect.gen`, `Effect.fn`, services, layers), with worked examples under `node_modules/effect/ai-docs/`. Effect's `MIGRATION.md` is not shipped in the package; it lives upstream at <https://github.com/Effect-TS/effect/blob/main/MIGRATION.md>.
 
@@ -115,16 +115,6 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 ### Guardrails
 
 `@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`, every rule an error; `effect-language-service patch` runs from `prepare`). A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. `pnpm lint` runs the repo's own rules from `eslint/`: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
-
-### Effect RC bumps
-
-Dependabot's `effect` group opens one PR per RC and `.github/workflows/pr-labels.yml` labels it `effect-rc-bump`. To finish one:
-
-1. Check out the branch, run `pnpm install`, then read the upstream `MIGRATION.md` and the Effect changelog between the two RCs.
-2. Fix what the RC broke and commit onto the Dependabot branch until `pnpm lint`, `pnpm typecheck` and `pnpm test` pass.
-3. Keep `main` green: merge only on green CI. If the RC is unusable, close the PR and say why on the port map (#54).
-
-Drop the group, the label and this section once `effect@4.0.0` is stable.
 
 ## Pull requests
 

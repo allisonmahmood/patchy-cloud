@@ -5,8 +5,8 @@
  */
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export const metadata = Effect.fn("Git.metadata")(function* (cwd: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

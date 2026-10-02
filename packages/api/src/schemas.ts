@@ -7,7 +7,7 @@
  */
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
 import {
@@ -439,7 +439,7 @@ export const handlerValueSchema = (
       return Schema.NullOr(handlerValueSchema(descriptor.value, tables));
     case "fileHandle":
       return Schema.String.check(
-        Schema.isLengthBetween(
+        Schema.isBetweenLength(
           registry["files.handle.length"].default,
           registry["files.handle.length"].default
         )

@@ -24,8 +24,8 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import EmbeddedPostgres from "embedded-postgres";
 import { build } from "esbuild";
 import * as Testing from "../../../company-database/src/testing.js";

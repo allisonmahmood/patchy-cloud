@@ -3,11 +3,11 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
+import * as HttpApiTest from "effect/http-api/HttpApiTest";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization as AuthorizationTag,

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Limits, OperatingLimits, TokenBucket } from "@patchy/limits";

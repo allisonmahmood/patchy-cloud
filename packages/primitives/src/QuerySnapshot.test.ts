@@ -15,7 +15,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Files from "./Files.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";

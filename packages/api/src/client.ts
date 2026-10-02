@@ -5,10 +5,10 @@
  */
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as Api from "./api.js";
 
 /** Puts the bearer token on every request that `Authorization` protects. */

@@ -3,7 +3,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { CURRENT_RELEASE, Manifest, WIRE_VERSION } from "@patchy/api";
 import { CompanyDatabases } from "@patchy/company-database";
 import * as Testing from "@patchy/company-database/testing";

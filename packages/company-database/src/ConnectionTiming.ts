@@ -2,10 +2,10 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type * as SqlConnection from "effect/unstable/sql/SqlConnection";
-import type * as SqlError from "effect/unstable/sql/SqlError";
-import type * as Statement from "effect/unstable/sql/Statement";
+import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlConnection from "effect/sql/SqlConnection";
+import type * as SqlError from "effect/sql/SqlError";
+import type * as Statement from "effect/sql/Statement";
 import * as DatabaseMeter from "@patchy/analytics/database-meter";
 import * as WideEvents from "@patchy/analytics/wide-events";
 

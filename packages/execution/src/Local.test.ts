@@ -5,7 +5,7 @@ import * as GuestProtocol from "@patchy/api/guest";
 import * as Executor from "@patchy/runtime/executor";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Local from "./local.js";
 import * as Supervisor from "./supervisor.js";
 

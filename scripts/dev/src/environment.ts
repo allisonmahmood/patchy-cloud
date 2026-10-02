@@ -17,8 +17,8 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { hostLabel, type Plan } from "./plan.js";
 import { Person, publisherToken, type Scenario } from "./scenario.js";
 

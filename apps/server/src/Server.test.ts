@@ -12,10 +12,10 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import { PublishCreated, PublishUpdated, RuntimeStreamFrame, WIRE_VERSION } from "@patchy/api";
 import { RuntimeStream } from "@patchy/runtime";
-import * as Cookies from "effect/unstable/http/Cookies";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Cookies from "effect/http/Cookies";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as SqlClient from "effect/sql/SqlClient";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
   FRONTEND_API_HOST,

@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as ConnectionStoreDev from "./ConnectionStoreDev.js";

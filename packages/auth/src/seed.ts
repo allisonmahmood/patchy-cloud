@@ -1,7 +1,7 @@
 /** The runner, test template and packed CLI all publish as this one development user. */
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { sha256 } from "@patchy/core";
 import * as Sql from "@patchy/sql";
 

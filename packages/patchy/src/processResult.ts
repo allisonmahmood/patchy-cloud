@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { LocalError } from "./CliError.js";
 
 export const processResult = Effect.fn("processResult")(function* (

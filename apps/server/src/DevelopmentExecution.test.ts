@@ -15,9 +15,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as SqlClient from "effect/sql/SqlClient";
 import { answer, publish, send, server } from "./test/server.js";
 
 const origin = "https://patchy.example";

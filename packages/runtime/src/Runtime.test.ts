@@ -3,8 +3,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import {
