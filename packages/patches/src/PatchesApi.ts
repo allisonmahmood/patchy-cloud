@@ -758,6 +758,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .retire(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           return new Retired({
             ok: true,
             patchId: patch.id,
@@ -778,6 +779,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .restore(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           return new Restored({ ok: true, patchId: patch.id, state: "live" });
         })
       )
@@ -822,6 +824,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             )
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           return new Described({
             ok: true,
             patchId: patch.id,
@@ -837,6 +840,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .delete(params.patchId, { userId: identity.user.id, admin: false }, query.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* WideEvents.enrich(Patches.eventFields(patch));
           yield* analytics.track({
             name: "patch.deleted",
             principalId: identity.user.id,

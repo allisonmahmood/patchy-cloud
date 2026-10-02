@@ -279,6 +279,19 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             HttpClientRequest.get("/api/patches?state=bogus").pipe(bearer),
             { route: "/api/patches", status: 400, outcome: "refused" }
           ],
+          [
+            HttpClientRequest.put(`/api/patches/${created.patchId}/description`).pipe(
+              bearer,
+              HttpClientRequest.bodyJsonUnsafe({ description: "Watched by request events." })
+            ),
+            {
+              route: "/api/patches/:patchId/description",
+              status: 200,
+              patchId: created.patchId,
+              versionId: created.versionId,
+              ...attributed
+            }
+          ],
           [signedIn(HttpClientRequest.get("/")), { route: "/", status: 200, ...attributed }],
           // Serving answers HEAD as GET; the event keeps what the client sent and received.
           [
