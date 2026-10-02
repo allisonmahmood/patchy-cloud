@@ -131,7 +131,8 @@ export const stubInstance = async (
         response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(body));
       };
-      if (recorded.url === tarballPath && tarball) {
+      // Every digest serves the same archive, so a repo can start from an older release's pin.
+      if (tarball && /^\/sdk\/patchy-[^/]+\.tgz$/.test(recorded.url)) {
         response.writeHead(200, { "content-type": "application/octet-stream" });
         response.end(tarball);
         return;
@@ -212,11 +213,14 @@ export const runCli = (
     terminalInput?: string;
     cwd?: string;
     onSpawn?: (child: ChildProcess) => void;
+    /** Another CLI entrypoint, such as a repo's installed release; defaults to the checkout's. */
+    cli?: string;
   } = {}
 ) =>
   new Promise<CliResult>((resolve, reject) => {
     const stateDir = options.stateDir ?? tempDir();
-    const command = [process.execPath, cliPath, ...args];
+    const cli = options.cli ?? cliPath;
+    const command = [process.execPath, cli, ...args];
     const terminal = options.terminalInput !== undefined;
     const child = spawn(
       terminal ? "script" : process.execPath,
@@ -228,7 +232,7 @@ export const runCli = (
             command.map((value) => `'${value.replaceAll("'", "'\\''")}'`).join(" "),
             "/dev/null"
           ]
-        : [cliPath, ...args],
+        : [cli, ...args],
       {
         cwd: options.cwd ?? stateDir,
         env: {

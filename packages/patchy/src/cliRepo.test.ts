@@ -1,5 +1,5 @@
 // Patch-repo declarations, refresh and init through the bundled CLI.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE } from "@patchy/api";
@@ -18,12 +18,14 @@ import {
   readJson,
   releaseArtifact,
   requestBarrier,
+  require,
   runCli,
   stubInstance,
   tarballPath,
   tempDir,
   treeBytes
 } from "./test/cli.js";
+import toolchain from "./toolchain.json" with { type: "json" };
 
 describe("patch-repo commands", () => {
   const env = { PATCHY_API_TOKEN: "pp_project" };
@@ -580,6 +582,68 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     });
     expect(readFileSync(path.join(dir, "package.json"), "utf8")).toBe(originalPackage);
   });
+
+  it("checks the toolchain with the newly installed release, whichever CLI refreshes across a digest change", async () => {
+    const required = { ...toolchain, vite: { testedAgainst: "99.0.0", accepted: "^99.0.0" } };
+    const instance = await stubInstance(
+      projectHandler,
+      () => CURRENT_RELEASE,
+      readFileSync(
+        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
+      ),
+      required
+    );
+    const previousPin = `${instance.url}/sdk/patchy-${CURRENT_RELEASE}-${"1".repeat(64)}.tgz`;
+    const vite = path.dirname(require.resolve("vite/package.json", { paths: [packageDir] }));
+    const store = tempDir();
+    const pnpm = {
+      pnpm_config_registry: instance.url,
+      pnpm_config_store_dir: path.join(store, "store"),
+      pnpm_config_cache_dir: path.join(store, "cache"),
+      pnpm_config_update_notifier: "false"
+    };
+    const refreshed = async (cli: "installed" | "workspace") => {
+      const dir = projectTree(instance.url);
+      rmSync(path.join(dir, "node_modules"), { recursive: true });
+      writeFileSync(
+        path.join(dir, "package.json"),
+        JSON.stringify({
+          name: "cli-project",
+          private: true,
+          type: "module",
+          devDependencies: { patchy: previousPin, vite: `link:${vite}` }
+        }) + "\n"
+      );
+      await exec(
+        "pnpm",
+        ["install", "--ignore-workspace", "--ignore-scripts", "--loglevel=error"],
+        {
+          cwd: dir,
+          env: { PATH: process.env.PATH, HOME: store, ...pnpm }
+        }
+      );
+      // pnpm names the installed CLI's real folder after the previous pin; refresh replaces it.
+      const result = await runCli(["refresh", "--json"], {
+        cwd: dir,
+        env: { ...env, ...pnpm },
+        ...(cli === "installed" ? { cli: path.join(dir, "node_modules/patchy/dist/index.js") } : {})
+      });
+      expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+      expect(readJson(path.join(dir, "package.json"))).toMatchObject({
+        devDependencies: { patchy: `${instance.url}${tarballPath}` }
+      });
+      return JSON.parse(result.stdout);
+    };
+    const installed = await refreshed("installed");
+    expect(installed).toMatchObject({
+      ok: true,
+      changed: { pin: true },
+      warnings: expect.arrayContaining([
+        expect.stringContaining(`Loaded vite ${toolchain.vite.testedAgainst} is unsupported`)
+      ])
+    });
+    expect(await refreshed("workspace")).toEqual(installed);
+  }, 60_000); // Four isolated pnpm installs of the real release archive.
 
   it.each([
     {

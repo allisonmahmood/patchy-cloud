@@ -25,7 +25,16 @@ const decodeResult = Schema.decodeUnknownSync(
 );
 const encodeToolchain = Schema.encodeSync(Schema.fromJsonString(ReleaseToolchain));
 const encodeModules = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+// The bundled child in a release; its source when this CLI runs from the workspace.
+const ownChild = fileURLToPath(
+  new URL(`./toolchainChild.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`, import.meta.url)
+);
 
+/**
+ * Run the builder toolchain in its own process, by default the child beside this CLI.
+ * A caller may pass another release's `toolchainChild.js`, such as one it just installed.
+ * The argv and the stdout reply are a private protocol across releases.
+ */
 export const runToolchain = Effect.fn("runToolchain")(function* (
   cwd: string,
   operation:
@@ -37,14 +46,14 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
           readonly modules: readonly string[];
           readonly sharedStores: readonly string[];
         };
-      }
+      },
+  child = ownChild
 ) {
-  const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
   const result = yield* processResult(cwd, process.execPath, [
-    ...(extension === "ts"
+    ...(child.endsWith(".ts")
       ? ["--import", createRequire(import.meta.url).resolve("tsx"), "--conditions=development"]
       : []),
-    fileURLToPath(new URL(`./toolchainChild.${extension}`, import.meta.url)),
+    child,
     ...("inspect" in operation
       ? ["inspect", encodeToolchain(operation.inspect)]
       : [
