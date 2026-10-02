@@ -243,7 +243,7 @@ for (const [resource, source] of [
           id: "query",
           revision: "1",
           result: "current",
-          vector: { [resource]: f.state.revisions[resource], [source]: f.state.revisions[source] }
+          vector: { [resource]: f.state.revisions[resource]!, [source]: f.state.revisions[source]! }
         });
         assert.strictEqual(f.state.calls, 2);
         for (const keys of f.revisionReads) {
@@ -286,7 +286,7 @@ it.effect(
         args: { handler: "demo.read", args: {} },
         reauthorize: Effect.succeed(viewer)
       };
-      assert.strictEqual((yield* readers.read(input).pipe(Effect.flip)).code, "source_unavailable");
+      assert.include(yield* readers.read(input).pipe(Effect.flip), { code: "source_unavailable" });
       changeDuringQuery = false;
       assert.deepStrictEqual(yield* readers.read(input), {
         result: "members",

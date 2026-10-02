@@ -782,7 +782,7 @@ it.effect("raw uploads read bytes only after admission and a pending mutation lo
         }
       ]);
       return new Uint8Array([0, 255]);
-    });
+    }).pipe(Effect.orDie);
     const input = envelope("files.put", {
       store: "docs",
       name: "data.bin",

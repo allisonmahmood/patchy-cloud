@@ -191,7 +191,7 @@ it.effect(
   "public principal bootstrap requires a declared tier 1 directory and respects tier 2 cutover",
   () =>
     Effect.gen(function* () {
-      let loaded: LoadedVersions.LoadedVersion = {
+      let loaded: LoadedVersions.LoadedVersion & { readonly patchTier: number } = {
         ...version,
         scope: "public",
         patchTier: 1,

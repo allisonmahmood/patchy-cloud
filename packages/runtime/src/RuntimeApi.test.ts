@@ -3,9 +3,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as SqlClient from "effect/sql/SqlClient";
-import { RuntimeGroup, runtimeOperations, WIRE_VERSION } from "@patchy/api";
+import { RuntimeBytes, RuntimeGroup, runtimeOperations, WIRE_VERSION } from "@patchy/api";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { Limits } from "@patchy/limits";
@@ -13,6 +14,23 @@ import { client, headers, patchId, versionId, publicVersionId } from "./test/fix
 import * as Fixtures from "./test/fixtures.js";
 import { me } from "./me.js";
 import * as Runtime from "./Runtime.js";
+
+// putFile's declared headers drop Sec-Fetch-Site; this client sends every header it is given.
+const UndeclaredHeadersApi = HttpApi.make("patchy").add(
+  RuntimeGroup.add(
+    HttpApiEndpoint.put("putFile", "/api/runtime/files/:patchId/:versionId/:store/*", {
+      params: {
+        patchId: Schema.String,
+        versionId: Schema.String,
+        store: Schema.String,
+        "*": Schema.String
+      },
+      headers: Schema.Record(Schema.String, Schema.String),
+      payload: RuntimeBytes,
+      success: Schema.Unknown
+    })
+  )
+);
 
 it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
   it.effect(
@@ -202,7 +220,9 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
 
   it.effect("PUT requires the exact shell Origin, never a fetch-metadata fallback", () =>
     Effect.gen(function* () {
-      const api = yield* client;
+      const api = yield* HttpApiTest.groups(UndeclaredHeadersApi, ["runtime"], {
+        baseUrl: PUBLIC_BASE_URL
+      });
       for (const origin of [undefined, "null", "https://evil.example", PUBLIC_BASE_URL]) {
         const response = yield* api.putFile({
           params: { patchId, versionId: publicVersionId, store: "images", "*": "a.png" },
@@ -549,14 +569,33 @@ const row = {
   rows: [{ label: "ordinary nested value" }],
   title: "Snapshot label"
 };
-const rowOperations = [
-  { op: "tables.insert", args: { table: "notes", row: { title: row.title } } },
-  { op: "tables.get", args: { table: "notes", id: row.id } },
-  { op: "tables.update", args: { table: "notes", id: row.id, patch: { title: row.title } } }
+const rowEnvelope = {
+  patchId,
+  versionId,
+  principal: { userId: DEV_SEED.userId },
+  wire: WIRE_VERSION
+};
+// Whole requests: the client types each operation as its own request, so a payload union fails.
+const rowRequests = [
+  {
+    payload: {
+      ...rowEnvelope,
+      op: "tables.insert",
+      args: { table: "notes", row: { title: row.title } }
+    }
+  },
+  { payload: { ...rowEnvelope, op: "tables.get", args: { table: "notes", id: row.id } } },
+  {
+    payload: {
+      ...rowEnvelope,
+      op: "tables.update",
+      args: { table: "notes", id: row.id, patch: { title: row.title } }
+    }
+  }
 ] as const;
 // Real per-operation codecs whose result collides with the Postgres `{ ok, rows }` shape.
 const rowHandlers = Object.fromEntries(
-  rowOperations.map(({ op }) => [
+  rowRequests.map(({ payload: { op } }) => [
     op,
     Runtime.handler(
       {
@@ -577,23 +616,16 @@ it.effect("the API client decodes a row shaped like a Postgres result with every
     const api = yield* HttpApiTest.groups(RuntimeClientApi, ["runtime"], {
       baseUrl: PUBLIC_BASE_URL
     });
-    for (const { op, args } of rowOperations) {
+    for (const request of rowRequests) {
       const result = yield* api.call({
-        payload: {
-          patchId,
-          versionId,
-          principal: { userId: DEV_SEED.userId },
-          wire: WIRE_VERSION,
-          op,
-          args
-        },
+        ...request,
         headers: {
           ...headers({ userId: DEV_SEED.userId }),
           cookie: signedInCookies(),
           origin: PUBLIC_BASE_URL
         }
       });
-      assert.deepStrictEqual(result, { ok: true, value: row }, op);
+      assert.deepStrictEqual(result, { ok: true, value: row }, request.payload.op);
     }
   }).pipe(Effect.provide(Fixtures.layer({ me, ...rowHandlers })))
 );

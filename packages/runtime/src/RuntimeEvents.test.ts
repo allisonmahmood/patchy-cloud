@@ -39,7 +39,8 @@ const recordEvents = Effect.gen(function* () {
           )
         )
       )
-    )
+    ),
+    Layer.orDie
   );
   const next = Queue.take(queue).pipe(
     Effect.map((event) => {
@@ -78,7 +79,7 @@ const attribution = {
   versionId: Fixtures.tier1VersionId,
   viewerId: DEV_SEED.userId,
   tier: 1
-};
+} as const;
 
 it.effect(
   "records one tier-1 request with loaded version and authenticated viewer attribution",
@@ -427,6 +428,7 @@ it.effect(
           outcome: "success"
         });
         assert.deepStrictEqual(getEvent.operations, ["files.get"]);
+        assert.isDefined(getEvent.limits);
         assert.deepInclude(getEvent.limits, {
           limitId: "runtime.file.bytes",
           value: 4,
@@ -560,6 +562,7 @@ it.effect("records staged-byte peaks for advertised and streamed overflow", () =
         assert.strictEqual(response.status, 413);
         const event = yield* events.next;
         assert.include(event, { outcome: "refused", limitId: "files.stage.bytes" });
+        assert.isDefined(event.limits);
         assert.deepInclude(event.limits, {
           limitId: "files.stage.bytes",
           value: 4,

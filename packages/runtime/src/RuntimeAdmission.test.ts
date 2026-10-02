@@ -81,7 +81,8 @@ it.effect("admission burst peaks exclude refused calls and fall after refill", (
           write: (event) => Queue.offer(events, event).pipe(Effect.asVoid)
         })
       ),
-      Layer.provide(WideEvents.layerMetadata)
+      Layer.provide(WideEvents.layerMetadata),
+      Layer.orDie
     );
     yield* Effect.gen(function* () {
       const limits = yield* OperatingLimits.OperatingLimits;

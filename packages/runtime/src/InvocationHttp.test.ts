@@ -84,7 +84,7 @@ const layer = Layer.unwrap(
     return RuntimeApi.layer.pipe(Layer.provide(Layer.succeed(Runtime.Runtime, runtime)));
   })
 ).pipe(
-  Layer.provide(HttpServer.layerServices),
+  Layer.provideMerge(HttpServer.layerServices),
   Layer.provide(WideEvents.layerNoop),
   Layer.provide(
     Layer.succeed(Executor.Executor, {
@@ -117,7 +117,7 @@ const layer = Layer.unwrap(
     ).pipe(Layer.provideMerge(Testing.layer()))
   )
 );
-const api = HttpApi.make("invocation-http").add(RuntimeGroup);
+const api = HttpApi.make("patchy").add(RuntimeGroup);
 
 it.effect(
   "admits UTF-8 server arguments through one MiB and separately bounds the HTTP envelope",

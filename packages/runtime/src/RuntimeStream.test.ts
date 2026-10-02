@@ -405,7 +405,7 @@ it.layer(layer)("document streams", (it) => {
                   })
               );
               yield* Deferred.succeed(entered, undefined);
-              yield* Effect.never;
+              return yield* Effect.never;
             }),
           acquire: () => Effect.die("A stream cannot admit an invocation.")
         })
