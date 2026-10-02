@@ -23,11 +23,15 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        // Correctness rules (missing context, missing errors, floating
-        // effects...) keep their defaults. Style rules that steer
-        // production code toward Effect services are off: tests drive Node,
-        // clocks and browsers directly.
+        // A tsconfig's plugins replace the base's, so its correctness rules are
+        // restated here. Style rules that steer production code toward Effect
+        // services are off: tests drive Node, clocks and browsers directly.
         "diagnosticSeverity": {
+          "importFromBarrel": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "leakingRequirements": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
           "anyUnknownInErrorContext": "off",
           "unknownInEffectCatch": "off",
           "multipleEffectProvide": "off",
