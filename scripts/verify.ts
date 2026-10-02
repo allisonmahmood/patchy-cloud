@@ -42,11 +42,14 @@ const acceptance: ReadonlyArray<Suite> = [
   { name: "browser", commands: [pnpm("test:browser")] }
 ];
 
-/** Changes no acceptance suite can observe: prose, agent wiring and the dev runner. */
+/**
+ * Changes no acceptance suite can observe: prose, agent wiring and the dev
+ * runner, except the Postgres settings the test harnesses share with it.
+ */
 const outsideProduct = [
   /^docs\//,
   /^scenarios\//,
-  /^scripts\/dev\//,
+  /^scripts\/dev\/(?!src\/postgres\.ts$)/,
   /^\.agents\//,
   /^\.claude\//,
   /^\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$)/,
