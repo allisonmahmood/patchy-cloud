@@ -68,8 +68,8 @@ importers:
         specifier: ^17.5.1
         version: 17.5.1
       npm:
-        specifier: 12.0.2
-        version: 12.0.2
+        specifier: 12.1.0
+        version: 12.1.0
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -2289,8 +2289,8 @@ packages:
     resolution: {integrity: sha512-kQK9LGGFiHtrWiNhZtA7Qbw17AQz+dmsEKODRIVTXA9+e5MS/2gZEBhYJt13GrAz5/IOZKddH/0Z3TP/Zgo+yw==}
     engines: {node: '>=18'}
 
-  npm@12.0.2:
-    resolution: {integrity: sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==}
+  npm@12.1.0:
+    resolution: {integrity: sha512-Fyhu62pNx70YCs/5+dEmJQTFVmSKwvo5CA0qvBkGDRpob42MJ6G2RQ2tdxeKM4nYnIZDqkYAxEgqtoejn9QGtQ==}
     engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0}
     hasBin: true
     bundledDependencies:
@@ -4111,7 +4111,7 @@ snapshots:
 
   node-releases@2.0.57: {}
 
-  npm@12.0.2: {}
+  npm@12.1.0: {}
 
   obug@2.1.4: {}
 
