@@ -117,8 +117,9 @@ is recorded under `/api/*`; its 429 carries the refusing `limitId`.
 `success`; a 4xx is `refused`, with the `code` from its body when it has one; a
 5xx or a defect is `failure`; a dropped connection is `interrupted`. `viewerId`
 and `companyId` name the signed-in user, or the user a machine token belongs to;
-the token itself is never recorded. Routes about one patch add `patchId`, and
-`versionId` where one exists; a publish adds the version it created.
+the token itself is never recorded. Routes about one patch add `patchId` and a
+`versionId`: the version a page served, a publish created or a rollback made
+current, and otherwise the patch's current version.
 `requestBytes` is the declared length, and `responseBytes` is the body sent.
 Health probes (`/healthz`) emit nothing.
 

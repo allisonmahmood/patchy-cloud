@@ -738,6 +738,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .setScope(params.patchId, { userId: identity.user.id, admin: false }, payload.scope)
             .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
+          yield* WideEvents.enrich(Patches.eventFields(shared));
           return new Shared({
             ok: true,
             patchId: params.patchId,

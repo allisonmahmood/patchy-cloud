@@ -292,6 +292,29 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
               ...attributed
             }
           ],
+          [
+            HttpClientRequest.post(`/api/patches/${created.patchId}/share`).pipe(
+              bearer,
+              HttpClientRequest.bodyJsonUnsafe({ scope: "company" })
+            ),
+            {
+              route: "/api/patches/:patchId/share",
+              status: 200,
+              patchId: created.patchId,
+              versionId: created.versionId,
+              ...attributed
+            }
+          ],
+          [
+            HttpClientRequest.get(`/api/patches/${created.patchId}/inventory`).pipe(bearer),
+            {
+              route: "/api/patches/:patchId/inventory",
+              status: 200,
+              patchId: created.patchId,
+              versionId: created.versionId,
+              ...attributed
+            }
+          ],
           [signedIn(HttpClientRequest.get("/")), { route: "/", status: 200, ...attributed }],
           // Serving answers HEAD as GET; the event keeps what the client sent and received.
           [
