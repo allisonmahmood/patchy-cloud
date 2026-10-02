@@ -11,7 +11,7 @@ The CLI talks to whichever instance you point it at — Patchy Cloud, or the `pn
 Requires Node.js 22.22.0 or newer, with npm. The package is private and not published to a registry: each instance serves its own release and an installer for it. An agent given `Set up Patchy using https://pages.example.com/llms.txt` reads the install line there. On macOS and Linux:
 
 ```sh
-work=$(mktemp -d) && curl -fsS https://pages.example.com/install.mjs -o "$work/install.mjs" && node "$work/install.mjs"
+work=$(mktemp -d) && curl -fsS 'https://pages.example.com/install.mjs' -o "$work/install.mjs" && node "$work/install.mjs"
 patchy login --api-url https://pages.example.com
 ```
 

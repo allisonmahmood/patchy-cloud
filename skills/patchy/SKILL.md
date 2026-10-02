@@ -256,7 +256,7 @@ new install, use the instance URL the user supplied; ask where to publish only
 if no destination is known. On macOS and Linux:
 
 ```bash
-work=$(mktemp -d) && curl -fsS https://<instance>/install.mjs -o "$work/install.mjs" && node "$work/install.mjs"
+work=$(mktemp -d) && curl -fsS 'https://<instance>/install.mjs' -o "$work/install.mjs" && node "$work/install.mjs"
 ```
 
 The installer verifies the release's SHA-512 integrity before installing it

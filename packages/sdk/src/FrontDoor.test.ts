@@ -32,9 +32,9 @@ it.layer(layer)("the front door", (it) => {
       const text = yield* response.text;
       assert.include(
         text,
-        `${installCommand("https://patchy.example", "posix")} && patchy login --api-url https://patchy.example --json`
+        `${installCommand("https://patchy.example", "posix")} && patchy login --api-url 'https://patchy.example' --json`
       );
-      assert.include(text, "patchy.cmd login --api-url https://patchy.example --json");
+      assert.include(text, "patchy.cmd login --api-url 'https://patchy.example' --json");
       assert.include(text, "Node.js 22.22.0");
       assert.include(text, "~/.agents/skills/patchy/SKILL.md");
     })
