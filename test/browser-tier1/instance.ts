@@ -206,6 +206,9 @@ export async function startInstance(
     const serverReservation = createServer();
     // The proxy follows the backend if a launch has to move to another port.
     let port = await listen(serverReservation);
+    // Like an ingress that routes only to healthy targets. A starting host binds its
+    // port before it attaches its handler, and a request in that gap hangs forever.
+    let backendReady = true;
     const runtimeRequests: Instance["runtimeRequests"] = [];
     const streamConnections = new Set<string>();
     const streamClosers = new Set<() => void>();
@@ -310,6 +313,10 @@ export async function startInstance(
             path: request.url,
             body: body.toString()
           });
+        if (!backendReady) {
+          response.writeHead(502).end();
+          return;
+        }
         let retainUpstream = false;
         const upstream = httpRequest(
           {
@@ -549,9 +556,11 @@ export async function startInstance(
       },
       async restart(nextEnvironment) {
         if (nextEnvironment) environment = { ...environment, ...nextEnvironment };
+        backendReady = false;
         await stopChild(child!);
         children.delete(child!);
         ({ server: child, port } = await launchOnFreePort(port));
+        backendReady = true;
       },
       async startReplica() {
         const { server: replica, port: replicaPort } = await launchOnFreePort(
