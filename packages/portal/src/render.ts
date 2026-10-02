@@ -66,6 +66,18 @@ export const refusal = (notice: string | undefined) =>
     ? ""
     : `<div class="note note-refused" role="alert">${escapeHtml(notice)}</div>`;
 
+export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
+export type PatchAction = "description" | "scope" | "rollback" | ConfirmationAction;
+
+/** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
+const actionForm = (
+  patch: Patches.Patch,
+  all: boolean,
+  action: PatchAction,
+  className?: string
+): string =>
+  `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(cardPath(patch, all, action))}">${hidden("expectedPatchId", patch.id)}`;
+
 const indexGroup = (
   title: string,
   rows: readonly Patches.ReadPatch[],
@@ -184,12 +196,12 @@ const descriptionForm = (
   error?: string
 ): string =>
   // Native maxlength counts UTF-16 units, not the server's Unicode code-point bound.
-  `<section class="section"><form method="post" action="${escapeAttribute(cardPath(card.patch, all, "description"))}">${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
+  `<section class="section">${actionForm(card.patch, all, "description")}${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
 
 const scopeForm = (card: Patches.PortalCard, all: boolean): string => {
   const radio = (scope: Patches.Patch["scope"], label: string) =>
     `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${escapeAttribute(scope)}"${card.patch.scope === scope ? " checked" : ""}>${escapeHtml(label)}</label>`;
-  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3><form method="post" action="${escapeAttribute(cardPath(card.patch, all, "scope"))}">${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables and stores other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
+  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3>${actionForm(card.patch, all, "scope")}${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables and stores other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
 };
 
 const versionsTable = (
@@ -205,7 +217,7 @@ const versionsTable = (
     const action = current
       ? '<span class="pill pill-done">current</span>'
       : manage
-        ? `<form method="post" action="${escapeAttribute(cardPath(card.patch, all, "rollback"))}">${hidden("expectedCurrentVersionId", card.patch.currentVersionId)}${hidden("versionNumber", version.versionNumber)}<button class="btn" type="submit">Show this version at the address</button></form>`
+        ? `${actionForm(card.patch, all, "rollback")}${hidden("expectedCurrentVersionId", card.patch.currentVersionId)}${hidden("versionNumber", version.versionNumber)}<button class="btn" type="submit">Show this version at the address</button></form>`
         : "";
     return `<tr><th scope="row">v${escapeHtml(version.versionNumber)}</th><td><time datetime="${escapeAttribute(version.createdAt)}">${escapeHtml(dateLabel(version.createdAt))}</time><br><span class="supporting-text">${escapeHtml(ago(version.createdAt, now))}</span></td><td>${escapeHtml(version.publisherName)}</td><td>${action}</td></tr>`;
   });
@@ -267,6 +279,7 @@ const renderCard = (input: {
           restore: manage
             ? {
                 href: cardPath(patch, all, "restore"),
+                patchId: patch.id,
                 sourcesOff: card.offSources.length > 0,
                 currentVersion: card.currentVersion
               }
@@ -337,8 +350,6 @@ export const renderVersions = (input: {
 }): string =>
   `<article class="portal-subpage"><p><a href="${escapeAttribute(cardPath(input.card.patch, input.all))}">Back to ${escapeHtml(input.card.patch.name)}</a></p><h1 class="page-heading">Versions of ${escapeHtml(input.card.patch.name)}</h1>${versionsTable(input.card, input.card.versions, input.viewer, input.all, input.now)}${canManage(input.card, input.viewer) && input.card.patch.state === "live" ? '<p class="supporting-text">The address changes for everyone now. Tables, files, sharing and the description do not move.</p>' : ""}</article>`;
 
-export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
-
 const confirmationDependants = (groups: readonly DependantGroup[]): string =>
   groups.length === 0
     ? '<p class="supporting-text">Nothing else reads this patch.</p>'
@@ -368,7 +379,6 @@ export const renderConfirmation = (input: {
 }): string => {
   const { card, viewer, all, action } = input;
   const { patch } = card;
-  const postPath = cardPath(patch, all, action);
   const cancelPath = cardPath(patch, all);
   const acknowledged = input.acknowledged === true;
   let verb: string;
@@ -382,7 +392,7 @@ export const renderConfirmation = (input: {
       verb = "Retire";
       consequence = `Nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored. Its page, versions, tables, files and name are kept indefinitely. The owner or an admin can restore it.`;
       const groups = dependantGroups(card);
-      fields = `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its shared tables and stores.", acknowledged)}`;
+      fields = `${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its shared tables and stores.", acknowledged)}`;
       break;
     }
     case "delete": {
@@ -400,7 +410,7 @@ export const renderConfirmation = (input: {
         input.nameError === undefined
           ? ""
           : `<p class="field-error" id="confirm-error" role="alert">${escapeHtml(input.nameError)}</p>`;
-      fields = `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", "not-deleted")}${dependants}<label class="field-label" for="confirm">Type ${escapeHtml(patch.name)} to confirm</label><input class="field" id="confirm" name="confirm" value="${escapeAttribute(input.submittedName ?? "")}" required autocomplete="off" spellcheck="false" aria-describedby="confirm-hint${input.nameError === undefined ? "" : " confirm-error"}"${input.nameError === undefined ? "" : ' aria-invalid="true"'}><p class="field-hint" id="confirm-hint">Enter the patch name exactly.</p>${nameError}`;
+      fields = `${hidden("expectedState", "not-deleted")}${dependants}<label class="field-label" for="confirm">Type ${escapeHtml(patch.name)} to confirm</label><input class="field" id="confirm" name="confirm" value="${escapeAttribute(input.submittedName ?? "")}" required autocomplete="off" spellcheck="false" aria-describedby="confirm-hint${input.nameError === undefined ? "" : " confirm-error"}"${input.nameError === undefined ? "" : ' aria-invalid="true"'}><p class="field-hint" id="confirm-hint">Enter the patch name exactly.</p>${nameError}`;
       break;
     }
     case "restore": {
@@ -445,5 +455,5 @@ export const renderConfirmation = (input: {
     }
   }
 
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">${verb} ${escapeHtml(patch.name)}?</h1>${refusal(input.notice)}${filter}<form class="confirmation-form" method="post" action="${escapeAttribute(postPath)}"><p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${escapeHtml(patch.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
+  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">${verb} ${escapeHtml(patch.name)}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, all, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${escapeHtml(patch.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };
