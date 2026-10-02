@@ -196,6 +196,10 @@ const decodeRelease = decodeBody(
   Schema.Struct({ manifest: Schema.Struct({ release: Schema.String }) })
 );
 const decodeManifest = Schema.decodeUnknownEffect(Manifest, { onExcessProperty: "error" });
+/** A replayed publish names the patch and version it created, like the first answer. */
+const decodeReplayIds = Schema.decodeUnknownOption(
+  Schema.Struct({ patchId: Schema.String, versionId: Schema.String })
+);
 const decodeShare = decodeBody(ShareRequest);
 const decodeForce = decodeBody(ForceRequest);
 const decodeRollback = decodeBody(RollbackRequest);
@@ -319,12 +323,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               .replay(identity.user.id, key.publishKey)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
             if (Option.isNone(stored)) return undefined;
-            return stored.value.payloadDigest === digest
-              ? HttpServerResponse.text(stored.value.body, {
-                  status: stored.value.status,
-                  contentType: "application/json"
-                })
-              : keyConflict();
+            if (stored.value.payloadDigest !== digest) return keyConflict();
+            const published = decodeReplayIds(stored.value.response);
+            if (Option.isSome(published)) yield* WideEvents.enrich(published.value);
+            return HttpServerResponse.text(stored.value.body, {
+              status: stored.value.status,
+              contentType: "application/json"
+            });
           });
           const previous = yield* replay();
           if (previous !== undefined) return previous;

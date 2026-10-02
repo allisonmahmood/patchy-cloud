@@ -8,10 +8,13 @@
  * `make`, under the API fallback's pattern.
  *
  * The outcome is what the client received, not the exit: handlers answer
- * typed refusals as responses. A 4xx is `refused` with its body's `code`, a
- * 5xx or a defect is `failure`, and an interruption stays `interrupted`.
- * Events name the template, never the URL, and read no request body.
+ * typed refusals as responses, and the server answers a failed exit, such as
+ * a request that does not decode, with a response of its own. A 2xx or 3xx is
+ * `success`, a 4xx is `refused` with its body's `code`, a 5xx is `failure`,
+ * and an interruption stays `interrupted`. Events name the template, never
+ * the URL, and read no request body.
  */
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -23,8 +26,8 @@ import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { PatchId } from "@patchy/api";
 
-/** Probes poll these from several places; their traffic would swamp the stream and say nothing. */
-const healthProbes = new Set(["/healthz"]);
+/** Probes poll this from several places; their traffic would swamp the stream and say nothing. */
+const healthProbe = "/healthz";
 
 /** A refusal body's code: snake_case, so nothing a client sent can ride along. */
 const decodeCode = Schema.decodeUnknownOption(
@@ -52,33 +55,43 @@ const answered = (response: HttpServerResponse.HttpServerResponse): WideEvents.E
   };
 };
 
-/** Wraps a response in its request event, under `route`. Built once with the middleware. */
+/** The response the server sends for an exit: the route's own, or the one it derives from a cause. */
+const received = (exit: Exit.Exit<HttpServerResponse.HttpServerResponse, unknown>) =>
+  Exit.isSuccess(exit)
+    ? WideEvents.enrich(answered(exit.value))
+    : Effect.flatMap(HttpServerError.causeResponse(exit.cause), ([response]) =>
+        WideEvents.enrich(
+          Cause.hasInterrupts(exit.cause)
+            ? { status: response.status, outcome: "interrupted" }
+            : answered(response)
+        )
+      );
+
+/**
+ * Wraps a response in its request event, under `route`. Built once with the
+ * middleware. The event closes over the exit, so its outcome follows the
+ * response; a failure is raised again outside it, for the server to answer
+ * and report as before.
+ */
 export const make = Effect.map(
   WideEvents.WideEvents,
   (events) =>
     <E, R>(route: string, app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
       Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
         const declared = request.headers["content-length"];
-        return events.withEvent(
-          {
-            type: "request",
-            route,
-            method: request.method,
-            ...(declared !== undefined && /^\d+$/.test(declared)
-              ? { requestBytes: Number(declared) }
-              : {})
-          },
-          app.pipe(
-            Effect.onExit((exit) =>
-              Exit.isSuccess(exit)
-                ? WideEvents.enrich(answered(exit.value))
-                : // The server answers an unhandled cause with this response, a 500 for a defect.
-                  Effect.flatMap(HttpServerError.causeResponse(exit.cause), ([response]) =>
-                    WideEvents.enrich({ status: response.status })
-                  )
-            )
+        return events
+          .withEvent(
+            {
+              type: "request",
+              route,
+              method: request.method,
+              ...(declared !== undefined && /^\d+$/.test(declared)
+                ? { requestBytes: Number(declared) }
+                : {})
+            },
+            Effect.exit(app).pipe(Effect.tap(received))
           )
-        );
+          .pipe(Effect.flatten);
       })
 );
 
@@ -91,7 +104,7 @@ export const layer = HttpRouter.middleware(
     make,
     (record) => (app) =>
       Effect.flatMap(HttpRouter.RouteContext, ({ route, params }) =>
-        route.path.startsWith("/api/runtime/") || healthProbes.has(route.path)
+        route.path.startsWith("/api/runtime/") || route.path === healthProbe
           ? app
           : record(
               route.path,

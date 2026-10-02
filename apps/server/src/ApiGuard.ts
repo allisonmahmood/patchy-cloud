@@ -34,7 +34,7 @@ import {
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { Limits } from "@patchy/limits";
-import { registry } from "@patchy/limits/registry";
+import { type LimitId, registry } from "@patchy/limits/registry";
 import * as RequestEvents from "./RequestEvents.js";
 
 /** Protected-API attempts admitted per source address per minute, in memory. */
@@ -155,23 +155,22 @@ export const make = Effect.gen(function* () {
         return yield* app;
       if (target.kind === "device-login" && target.action === "poll") return yield* app;
 
+      const bucket: { readonly name: string; readonly limit: number; readonly limitId: LimitId } =
+        target.kind === "device-login"
+          ? { name: "device-login", limit: deviceLimit, limitId: "rate.deviceLogin.perMinute" }
+          : { name: "protected-api", limit, limitId: "rate.protectedApi.perMinute" };
       // Keyed by source address — after the trusted-proxy walk, so a proxy in
       // front of the instance does not share one bucket with everyone behind it.
       const attempt = yield* limits.consume({
-        key: `${target.kind === "device-login" ? "device-login" : "protected-api"}:${Option.getOrElse(request.remoteAddress, () => "")}`,
-        limit: target.kind === "device-login" ? deviceLimit : limit,
+        key: `${bucket.name}:${Option.getOrElse(request.remoteAddress, () => "")}`,
+        limit: bucket.limit,
         window: "1 minute"
       });
-      if (!attempt.allowed) {
-        const limitId: keyof typeof registry =
-          target.kind === "device-login"
-            ? "rate.deviceLogin.perMinute"
-            : "rate.protectedApi.perMinute";
+      if (!attempt.allowed)
         return yield* record(
           apiFallback,
-          WideEvents.enrich({ limitId }).pipe(Effect.as(rateLimited(attempt)))
+          WideEvents.enrich({ limitId: bucket.limitId }).pipe(Effect.as(rateLimited(attempt)))
         );
-      }
 
       if (target.kind === "route" || target.kind === "device-login") return yield* app;
       return yield* record(

@@ -1,9 +1,9 @@
 /**
  * Request events, read as the lines stdout carries to CloudWatch. First the
- * rules over a small router: what the client received decides the outcome,
- * the matched template names the route, and runtime and health routes are
- * left alone. Then the server booted whole: one event for each kind of route,
- * attributed where identity resolves, and nothing secret on any of them.
+ * outcome rules over a small router, where a 5xx and a defect are easy to
+ * provoke. Then the server booted whole: one event for each kind of route,
+ * attributed where identity resolves, none for runtime calls beyond their
+ * own or for health probes, and nothing secret on any of them.
  */
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -15,7 +15,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -85,14 +85,6 @@ const routes = HttpRouter.use((router) =>
       )
     );
     yield* router.add("GET", "/defect", Effect.die(new Error("boom")));
-    yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
-    yield* router.add(
-      "POST",
-      "/api/runtime/call",
-      Effect.flatMap(WideEvents.WideEvents, (events) =>
-        events.withEvent({ type: "request" }, Effect.succeed(HttpServerResponse.empty()))
-      )
-    );
     yield* router.add("*", "/*", HttpServerResponse.text("missing", { status: 404 }));
   })
 );
@@ -119,7 +111,7 @@ const router = HttpRouter.serve(routes.pipe(Layer.provide(RequestEvents.layer)),
   Layer.provideMerge(Layer.effect(Lines, Queue.unbounded<string>()))
 );
 
-it.layer(router)("the request event's rules", (it) => {
+it.layer(router)("the request event's outcome rules", (it) => {
   it.effect("names the matched template, method, status and sizes, never the path", () =>
     Effect.gen(function* () {
       const { response, event } = yield* eventOf(
@@ -171,25 +163,6 @@ it.layer(router)("the request event's rules", (it) => {
       assert.include(defect.event, { route: "/defect", status: 500, outcome: "failure" });
     })
   );
-
-  it.effect("names an unmatched request by the fallback's pattern", () =>
-    Effect.gen(function* () {
-      const { event } = yield* eventOf(HttpClientRequest.get("/no-such-page"));
-      assert.include(event, { route: "/*", status: 404, outcome: "refused" });
-      assert.notProperty(event, "code");
-      assert.notInclude(WideEvents.formatJson(event), "no-such-page");
-    })
-  );
-
-  it.effect("leaves health probes and the runtime's own event alone", () =>
-    Effect.gen(function* () {
-      assert.deepStrictEqual((yield* eventsOf(HttpClientRequest.get("/healthz"))).events, []);
-
-      const { event } = yield* eventOf(HttpClientRequest.post("/api/runtime/call"));
-      assert.notProperty(event, "route");
-      assert.notProperty(event, "parentId");
-    })
-  );
 });
 
 /** Stdout as the server writes it, so the test reads what CloudWatch would. */
@@ -219,8 +192,21 @@ const signedIn = (request: HttpClientRequest.HttpClientRequest) =>
   request.pipe(HttpClientRequest.setHeaders({ cookie, origin: publicBaseUrl }));
 const bearer = HttpClientRequest.bearerToken(DEV_SEED.token);
 const attributed = { viewerId: DEV_SEED.userId, companyId: DEV_SEED.companyId };
-const json = (response: HttpClientResponse.HttpClientResponse) =>
-  Effect.map(response.json, (body) => body as Record<string, string>);
+
+const readPublished = HttpIncomingMessage.schemaBodyJson(
+  Schema.Struct({
+    patchId: Schema.String,
+    versionId: Schema.String,
+    name: Schema.String,
+    address: Schema.String
+  })
+);
+const readStarted = HttpIncomingMessage.schemaBodyJson(
+  Schema.Struct({ deviceCode: Schema.String, userCode: Schema.String })
+);
+const readCompleted = HttpIncomingMessage.schemaBodyJson(
+  Schema.Struct({ status: Schema.Literal("complete"), token: Schema.String })
+);
 
 it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMerge(stdout)))(
   "request events, the server booted whole",
@@ -234,7 +220,7 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
           )
         );
         assert.strictEqual(published.response.status, 201);
-        const created = yield* json(published.response);
+        const created = yield* readPublished(published.response);
         assert.include(published.event, {
           route: "/api/publish",
           method: "POST",
@@ -244,7 +230,6 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
           versionId: created.versionId,
           ...attributed
         });
-        const address = new URL(created.address!).pathname;
 
         const expected: ReadonlyArray<
           readonly [HttpClientRequest.HttpClientRequest, Partial<WideEvents.RequestEvent>]
@@ -253,6 +238,11 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
           [
             HttpClientRequest.get(`/api/patches/${created.patchId}`).pipe(bearer),
             { route: "/api/patches/:patchRef", patchId: created.patchId, ...attributed }
+          ],
+          // A query that does not decode is answered by the server, not the handler.
+          [
+            HttpClientRequest.get("/api/patches?state=bogus").pipe(bearer),
+            { route: "/api/patches", status: 400, outcome: "refused" }
           ],
           [signedIn(HttpClientRequest.get("/")), { route: "/", status: 200, ...attributed }],
           [
@@ -269,7 +259,7 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             { route: "/company/connections", status: 200, ...attributed }
           ],
           [
-            signedIn(HttpClientRequest.get(address)),
+            signedIn(HttpClientRequest.get(new URL(created.address).pathname)),
             {
               route: "/:company/:name/*",
               status: 200,
@@ -304,7 +294,7 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
       })
     );
 
-    it.effect("refuses with the code the client received", () =>
+    it.effect("refuses with the code the client received, and replays name the version", () =>
       Effect.gen(function* () {
         const stale = publishBody({ html: html("Stale") });
         const { response, event } = yield* eventOf(
@@ -323,6 +313,21 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
           outcome: "refused",
           code: "release_mismatch",
           ...attributed
+        });
+
+        const publish = HttpClientRequest.post("/api/publish").pipe(
+          bearer,
+          HttpClientRequest.bodyJsonUnsafe(publishBody({ html: html("Replayed") }))
+        );
+        const first = yield* eventOf(publish);
+        const created = yield* readPublished(first.response);
+        const replayed = yield* eventOf(publish);
+        assert.strictEqual(replayed.response.status, 201);
+        assert.include(replayed.event, {
+          route: "/api/publish",
+          status: 201,
+          patchId: created.patchId,
+          versionId: created.versionId
         });
       })
     );
@@ -344,7 +349,8 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
 
     it.effect("never writes a token, cookie, code, body, filename or raw path", () =>
       Effect.gen(function* () {
-        const document = html("Quarterly numbers nobody should log");
+        const title = "Quarterly numbers nobody should log";
+        const document = html(title);
         const filename = "board-meeting-secrets.html";
         const publishPath = "/api/publish?attempt=private-query";
         const published = yield* eventsOf(
@@ -356,8 +362,9 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
           )
         );
         assert.strictEqual(published.response.status, 201);
-        const created = yield* json(published.response);
-        const pagePath = `${new URL(created.address!).pathname}?view=private-query`;
+        const created = yield* readPublished(published.response);
+        const address = new URL(created.address).pathname;
+        const pagePath = `${address}?view=private-query`;
         const page = yield* eventsOf(signedIn(HttpClientRequest.get(pagePath)));
         assert.strictEqual(page.response.status, 200);
 
@@ -366,13 +373,14 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             HttpClientRequest.bodyJsonUnsafe({ machineNameHint: "Events laptop" })
           )
         );
-        const { deviceCode, userCode } = yield* json(started.response);
-        const confirmPath = `/login/device?code=${encodeURIComponent(userCode!)}`;
+        const { deviceCode, userCode } = yield* readStarted(started.response);
+        const confirmPath = `/login/device?code=${encodeURIComponent(userCode)}`;
         const confirmPage = yield* eventsOf(signedIn(HttpClientRequest.get(confirmPath)));
         const confirmed = yield* eventsOf(
           signedIn(HttpClientRequest.post("/login/device")).pipe(
             HttpClientRequest.bodyUrlParams({
-              code: userCode!,
+              code: userCode,
+              userId: DEV_SEED.userId,
               action: "confirm",
               machineName: "Events laptop"
             })
@@ -384,8 +392,7 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             HttpClientRequest.bodyJsonUnsafe({ deviceCode })
           )
         );
-        const { status, token } = yield* json(polled.response);
-        assert.strictEqual(status, "complete");
+        const { token } = yield* readCompleted(polled.response);
 
         const lines = [published, page, started, confirmPage, confirmed, polled].flatMap(
           (exchange) => exchange.lines
@@ -394,13 +401,13 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
         for (const secret of [
           DEV_SEED.token,
           sessionJwt,
-          deviceCode!,
-          userCode!,
-          token!,
-          document,
+          deviceCode,
+          userCode,
+          token,
+          title,
           filename,
           publishPath,
-          pagePath,
+          address,
           confirmPath,
           "private-query"
         ])
