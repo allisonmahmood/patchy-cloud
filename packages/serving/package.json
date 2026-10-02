@@ -43,6 +43,6 @@
     "@patchy/integrations": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.3"
   }
 }

@@ -33,10 +33,10 @@
   "dependencies": {
     "@effect/sql-pg": "catalog:",
     "@effect/sql-pglite": "catalog:",
-    "@patchy/analytics": "workspace:*",
-    "@patchy/core": "workspace:*",
     "@electric-sql/pglite": "0.5.8",
+    "@patchy/analytics": "workspace:*",
     "@patchy/content-store": "workspace:*",
+    "@patchy/core": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"
@@ -44,6 +44,6 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.3"
   }
 }
