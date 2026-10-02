@@ -75,6 +75,15 @@ export class PersonNotFound extends Schema.TaggedError<PersonNotFound>()("Person
   }
 }
 
+export class ScreenshotFailed extends Schema.TaggedError<ScreenshotFailed>()("ScreenshotFailed", {
+  target: Schema.String,
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return `Capturing ${this.target} failed: ${String(this.cause)}. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`.`;
+  }
+}
+
 const PublishedPatch = Schema.Struct({
   /** The scenario's repo or file-patch name. */
   key: Schema.String,
@@ -596,6 +605,17 @@ const browserBinary = Effect.fn("browserBinary")(function* () {
   return yield* new NoBrowser();
 });
 
+/** One of the environment's people, by key, email or the start of their name. */
+export const findPerson = (manifest: Manifest, query: string) => {
+  const needle = query.toLowerCase();
+  const person =
+    manifest.people.find((p) => p.key === needle || p.email.toLowerCase() === needle) ??
+    manifest.people.find((p) => p.name.toLowerCase().startsWith(needle));
+  return person === undefined
+    ? Effect.fail(new PersonNotFound({ query, people: manifest.people.map((p) => p.key) }))
+    : Effect.succeed(person);
+};
+
 /** A browser window with its own profile, signed in as the person and opened at `target`. */
 export const openPerson = Effect.fn("Environment.openPerson")(function* (
   worktree: string,
@@ -606,12 +626,7 @@ export const openPerson = Effect.fn("Environment.openPerson")(function* (
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const layout = layoutOf(yield* environmentDir(worktree), path);
-  const needle = query.toLowerCase();
-  const person =
-    manifest.people.find((p) => p.key === needle || p.email.toLowerCase() === needle) ??
-    manifest.people.find((p) => p.name.toLowerCase().startsWith(needle));
-  if (person === undefined)
-    return yield* new PersonNotFound({ query, people: manifest.people.map((p) => p.key) });
+  const person = yield* findPerson(manifest, query);
   const url = `${manifest.apiUrl}/dev/sign-in?as=${encodeURIComponent(person.email)}&return=${encodeURIComponent(target)}`;
   const browser = yield* Effect.scoped(
     spawner
@@ -631,6 +646,52 @@ export const openPerson = Effect.fn("Environment.openPerson")(function* (
       .pipe(Effect.tap((handle) => handle.unref))
   );
   yield* Console.log(`Opened ${person.name} (pid ${browser.pid}) at ${url}`);
+});
+
+/** What `pnpm dev shot` saw: where the page landed, its HTTP status and the browser's errors. */
+export const Shot = Schema.Struct({
+  url: Schema.String,
+  status: Schema.NullOr(Schema.Int),
+  file: Schema.String,
+  errors: Schema.Array(Schema.String)
+});
+export type Shot = typeof Shot.Type;
+
+/**
+ * A full-page PNG of `target` as `email`, signed in through the personas door,
+ * with every console error and uncaught exception from the page and its patch
+ * frames. A page holding a live stream never goes network-idle, so settling
+ * waits at most five seconds.
+ */
+export const screenshot = Effect.fn("Environment.screenshot")(function* (
+  apiUrl: string,
+  email: string,
+  target: string,
+  file: string
+) {
+  return yield* Effect.tryPromise({
+    try: async (): Promise<Shot> => {
+      const { chromium } = await import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+        const errors: Array<string> = [];
+        page.on("console", (message) => {
+          if (message.type() === "error") errors.push(message.text());
+        });
+        page.on("pageerror", (error) => errors.push(error.message));
+        const response = await page.goto(
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent(target)}`
+        );
+        await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+        await page.screenshot({ path: file, fullPage: true });
+        return { url: page.url(), status: response?.status() ?? null, file, errors };
+      } finally {
+        await browser.close();
+      }
+    },
+    catch: (cause) => new ScreenshotFailed({ target, cause })
+  });
 });
 
 /**
