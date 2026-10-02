@@ -77,6 +77,12 @@ export const deriveName = (source: string, ordinal = 1): string => {
 export const address = (publicBaseUrl: string, companyHandle: string, name: string) =>
   `${publicBaseUrl.replace(/\/+$/, "")}/${companyHandle}/${name}`;
 
+/** A request event's patch fields: the patch and, once it has one, its current version. */
+export const eventFields = (patch: Pick<Patch, "id" | "currentVersionId">) => ({
+  patchId: patch.id,
+  ...(patch.currentVersionId === null ? {} : { versionId: patch.currentVersionId })
+});
+
 /** Unknown, disabled or outside the actor's company. */
 export class PatchUnavailable extends Schema.TaggedError<PatchUnavailable>()("PatchUnavailable", {
   patchId: Schema.String

@@ -290,7 +290,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
       if (HttpServerResponse.isHttpServerResponse(rows)) return rows;
       const row = rows[0];
       if (row === undefined) return notFound();
-      yield* WideEvents.enrich({ patchId: row.patch.id });
+      yield* WideEvents.enrich(Patches.eventFields(row.patch));
       return row;
     });
 
@@ -797,6 +797,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             )
             .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
           if (HttpServerResponse.isHttpServerResponse(result)) return result;
+          yield* WideEvents.enrich(Patches.eventFields(result.patch));
           return new RolledBack({
             ok: true,
             patchId: result.patch.id,

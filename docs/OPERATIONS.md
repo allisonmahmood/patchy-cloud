@@ -108,7 +108,7 @@ and `PATCHY_API_TOKEN` are required; neither has a default.
 The server writes one JSON line to stdout for every request, including refusals
 and failures: an event with `type: "request"`. Runtime calls and file-byte
 requests record their own, described below. Every other request names its
-matched route template in `route`, such as `/api/patches/:patchId` or
+matched route template in `route`, such as `/api/patches/:patchRef` or
 `/:company/:name/*`, never the URL or query string. An unmatched request carries
 its fallback's pattern, `/*` or `/api/*`. A request the API guard answers itself
 is recorded under `/api/*`; its 429 carries the refusing `limitId`.

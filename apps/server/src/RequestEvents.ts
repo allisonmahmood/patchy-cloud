@@ -5,7 +5,9 @@
  * opens in route middleware (`layer`), where the matched template is known.
  * Runtime routes open their own events and health probes open none. The API
  * guard answers some requests before the router; it records those through
- * `make`, under the API fallback's pattern.
+ * `make`, under the API fallback's pattern. `edge`, outside every other
+ * middleware, keeps the method the client sent and records a target the
+ * router cannot look up at all.
  *
  * The outcome is what the client received, not the exit: handlers answer
  * typed refusals as responses, and the server answers a failed exit, such as
@@ -15,10 +17,12 @@
  * the URL, and read no request body.
  */
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerError from "effect/http/HttpServerError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -38,10 +42,20 @@ const decodeCode = Schema.decodeUnknownOption(
 const isPatchId = Schema.is(PatchId);
 const text = new TextDecoder();
 
+/** The method the client sent, set by `edge`: Serving answers HEAD as GET before routing. */
+const sentMethod = Context.Reference<string | undefined>(
+  "@patchy/server/RequestEvents/sentMethod",
+  { defaultValue: () => undefined }
+);
+
 /** The status, body size and outcome of the response the client received. */
-const answered = (response: HttpServerResponse.HttpServerResponse): WideEvents.EventFields => {
+const answered = (
+  response: HttpServerResponse.HttpServerResponse,
+  method: string
+): WideEvents.EventFields => {
   const { body, status } = response;
-  const responseBytes = body._tag === "Empty" ? 0 : body.contentLength;
+  // A HEAD response carries the GET response's headers and no body.
+  const responseBytes = method === "HEAD" || body._tag === "Empty" ? 0 : body.contentLength;
   const fields = { status, ...(responseBytes === undefined ? {} : { responseBytes }) };
   if (status < 400) return fields;
   const code =
@@ -56,14 +70,17 @@ const answered = (response: HttpServerResponse.HttpServerResponse): WideEvents.E
 };
 
 /** The response the server sends for an exit: the route's own, or the one it derives from a cause. */
-const received = (exit: Exit.Exit<HttpServerResponse.HttpServerResponse, unknown>) =>
+const received = (
+  exit: Exit.Exit<HttpServerResponse.HttpServerResponse, unknown>,
+  method: string
+) =>
   Exit.isSuccess(exit)
-    ? WideEvents.enrich(answered(exit.value))
+    ? WideEvents.enrich(answered(exit.value, method))
     : Effect.flatMap(HttpServerError.causeResponse(exit.cause), ([response]) =>
         WideEvents.enrich(
           Cause.hasInterrupts(exit.cause)
             ? { status: response.status, outcome: "interrupted" }
-            : answered(response)
+            : answered(response, method)
         )
       );
 
@@ -77,22 +94,45 @@ export const make = Effect.map(
   WideEvents.WideEvents,
   (events) =>
     <E, R>(route: string, app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
-      Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const method = (yield* sentMethod) ?? request.method;
         const declared = request.headers["content-length"];
-        return events
-          .withEvent(
-            {
-              type: "request",
-              route,
-              method: request.method,
-              ...(declared !== undefined && /^\d+$/.test(declared)
-                ? { requestBytes: Number(declared) }
-                : {})
-            },
-            Effect.exit(app).pipe(Effect.tap(received))
+        const exit = yield* events.withEvent(
+          {
+            type: "request",
+            route,
+            method,
+            ...(declared !== undefined && /^\d+$/.test(declared)
+              ? { requestBytes: Number(declared) }
+              : {})
+          },
+          // Interrupting the handler must not also skip recording what it answered.
+          Effect.uninterruptibleMask((restore) =>
+            Effect.exit(restore(app)).pipe(Effect.tap((exit) => received(exit, method)))
           )
-          .pipe(Effect.flatten);
+        );
+        return yield* exit;
       })
+);
+
+const isRouteNotFound = (error: unknown): error is HttpServerError.HttpServerError =>
+  HttpServerError.isHttpServerError(error) && error.reason._tag === "RouteNotFound";
+
+/**
+ * The server's outermost middleware. It keeps the method the client sent, and
+ * records a target the router cannot look up at all, such as one that does not
+ * decode, under the page fallback it never reached.
+ */
+export const edge = Effect.map(make, (record) =>
+  HttpMiddleware.make((app) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      app.pipe(
+        Effect.catchIf(isRouteNotFound, (error) => record("/*", Effect.fail(error))),
+        Effect.provideService(sentMethod, request.method)
+      )
+    )
+  )
 );
 
 /**

@@ -172,7 +172,7 @@ const render = Effect.fn("PortalPages.render")(function* (
   if (name !== undefined && selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   if (name !== undefined && selected !== undefined)
-    yield* WideEvents.enrich({ patchId: selected.patch.id });
+    yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = selected ? yield* patches.portalCard(selected.patch.id, access) : null;
   const now = yield* Clock.currentTimeMillis;
   const body =
@@ -224,7 +224,7 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
   const selected = rows.find((row) => row.patch.name === name);
   if (selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  yield* WideEvents.enrich({ patchId: selected.patch.id });
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = yield* patches.portalCard(selected.patch.id, access);
   if (viewer.role !== "admin" && (action === "reassign" || card.owner.id !== viewer.user.id))
     return yield* render(name, {
@@ -285,7 +285,7 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
   );
   if (selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  yield* WideEvents.enrich({ patchId: selected.patch.id });
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   // Ownership is read now, so reassignment moves who may read the log.
   if (viewer.role !== "admin" && selected.owner.id !== viewer.user.id)
     return yield* render(name, { status: 403, notice: logForbidden });
@@ -353,7 +353,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   const selected = rows.find((row) => row.patch.name === name);
   if (!selected)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  yield* WideEvents.enrich({ patchId: selected.patch.id });
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
     yield* request.urlParamsBody.pipe(
@@ -410,12 +410,13 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       }
       case "rollback": {
         const fields = yield* decodeRollback(form);
-        yield* patches.rollback(
+        const rolledBack = yield* patches.rollback(
           selected.patch.id,
           actor,
           fields.versionNumber,
           fields.expectedCurrentVersionId || null
         );
+        yield* WideEvents.enrich(Patches.eventFields(rolledBack.patch));
         break;
       }
       case "restore": {

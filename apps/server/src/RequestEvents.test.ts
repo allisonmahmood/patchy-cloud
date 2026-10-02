@@ -10,6 +10,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -17,9 +18,9 @@ import * as Schema from "effect/Schema";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { CURRENT_RELEASE } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { html, publishBody, send, server } from "./test/server.js";
@@ -94,7 +95,7 @@ const router = HttpRouter.serve(routes.pipe(Layer.provide(RequestEvents.layer)),
   disableListenLog: true
 }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provide(
+  Layer.provideMerge(
     WideEvents.layerWithSink.pipe(
       Layer.provide(
         Layer.effect(
@@ -163,6 +164,29 @@ it.layer(router)("the request event's outcome rules", (it) => {
       assert.include(defect.event, { route: "/defect", status: 500, outcome: "failure" });
     })
   );
+
+  it.effect("records the status an interrupted request is answered with", () =>
+    Effect.gen(function* () {
+      const record = yield* RequestEvents.make;
+      const handler = yield* record("/slow", Effect.never).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request("http://localhost/slow"))
+        ),
+        Effect.forkChild
+      );
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(handler);
+      const event = decodeEvent(yield* Queue.take(yield* Lines));
+      assert.isTrue(Option.isSome(event));
+      assert.include(Option.getOrThrow(event), {
+        route: "/slow",
+        method: "GET",
+        status: 503,
+        outcome: "interrupted"
+      });
+    })
+  );
 });
 
 /** Stdout as the server writes it, so the test reads what CloudWatch would. */
@@ -201,6 +225,9 @@ const readPublished = HttpIncomingMessage.schemaBodyJson(
     address: Schema.String
   })
 );
+const readRelease = HttpIncomingMessage.schemaBodyJson(
+  Schema.Struct({ package: Schema.Struct({ tarball: Schema.String }) })
+);
 const readStarted = HttpIncomingMessage.schemaBodyJson(
   Schema.Struct({ deviceCode: Schema.String, userCode: Schema.String })
 );
@@ -231,13 +258,21 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
           ...attributed
         });
 
+        const releaseRead = yield* eventOf(HttpClientRequest.get("/api/release"));
+        assert.include(releaseRead.event, { route: "/api/release", status: 200 });
+        const release = yield* readRelease(releaseRead.response);
         const expected: ReadonlyArray<
           readonly [HttpClientRequest.HttpClientRequest, Partial<WideEvents.RequestEvent>]
         > = [
           [HttpClientRequest.get("/api/me").pipe(bearer), { route: "/api/me", ...attributed }],
           [
             HttpClientRequest.get(`/api/patches/${created.patchId}`).pipe(bearer),
-            { route: "/api/patches/:patchRef", patchId: created.patchId, ...attributed }
+            {
+              route: "/api/patches/:patchRef",
+              patchId: created.patchId,
+              versionId: created.versionId,
+              ...attributed
+            }
           ],
           // A query that does not decode is answered by the server, not the handler.
           [
@@ -245,9 +280,20 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             { route: "/api/patches", status: 400, outcome: "refused" }
           ],
           [signedIn(HttpClientRequest.get("/")), { route: "/", status: 200, ...attributed }],
+          // Serving answers HEAD as GET; the event keeps what the client sent and received.
+          [
+            signedIn(HttpClientRequest.head("/")),
+            { route: "/", status: 200, responseBytes: 0, ...attributed }
+          ],
           [
             signedIn(HttpClientRequest.get(`/patches/${created.name}`)),
-            { route: "/patches/:name", status: 200, patchId: created.patchId, ...attributed }
+            {
+              route: "/patches/:name",
+              status: 200,
+              patchId: created.patchId,
+              versionId: created.versionId,
+              ...attributed
+            }
           ],
           [HttpClientRequest.get("/login"), { route: "/login", status: 200 }],
           [
@@ -269,10 +315,12 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
             }
           ],
           [
-            HttpClientRequest.get(`/sdk/patchy-${CURRENT_RELEASE}.tgz`),
-            { route: "/sdk/patchy-:archive.tgz" }
+            HttpClientRequest.get(new URL(release.package.tarball).pathname),
+            { route: "/sdk/patchy-:archive.tgz", status: 200, outcome: "success" }
           ],
           [HttpClientRequest.get("/no-such-page"), { route: "/*", status: 404 }],
+          // A target that does not decode fails the router before even `/*` matches.
+          [HttpClientRequest.get("/public/%"), { route: "/*", status: 404, outcome: "refused" }],
           [
             HttpClientRequest.get("/api/no-such-route").pipe(bearer),
             { route: "/api/*", status: 404, outcome: "refused", ...attributed }
