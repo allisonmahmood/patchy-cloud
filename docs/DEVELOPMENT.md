@@ -195,7 +195,7 @@ storage settings in your shell do not reach it. Its keys,
 `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, come from one file per
 developer, shared by every worktree and never in the repo:
 `${XDG_CONFIG_HOME:-~/.config}/patchy-cloud/dev.env`. With the Clerk CLI signed
-in to the **patchy-cloud** development application:
+in to the **Patchy Cloud** development application:
 
 ```sh
 clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-$HOME/.config}/patchy-cloud/dev.env"
@@ -203,6 +203,8 @@ clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-
 
 Or copy both keys from the dashboard as `KEY=value` lines. Use development
 keys, not the CI application's, and keep values out of output, chat and git.
+A Clerk application of your own needs the session claims in
+[Operations: Clerk](OPERATIONS.md#clerk).
 The same file may set `CLERK_JWT_KEY` (a quoted PEM, which skips the JWKS fetch)
 and `PATCHY_DEV_CLERK_USER_ID=user_...`, which binds the seeded admin to your
 Clerk user before your first sign-in (restart after changing it; a healthy
