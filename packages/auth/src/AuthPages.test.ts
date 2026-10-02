@@ -250,11 +250,12 @@ it.layer(services)("first-party pages in memory", (it) => {
     "refuses missing provenance and never lets Fetch Metadata override a foreign Origin",
     () =>
       Effect.gen(function* () {
+        const refusedHeaders: ReadonlyArray<Record<string, string>> = [
+          { origin: "https://foreign.invalid", "sec-fetch-site": "same-origin" },
+          {}
+        ];
         for (const route of ["/join", "/logout"]) {
-          for (const headers of [
-            { origin: "https://foreign.invalid", "sec-fetch-site": "same-origin" },
-            {}
-          ]) {
+          for (const headers of refusedHeaders) {
             const response = yield* send(route, { method: "POST", headers });
             assert.strictEqual(response.status, 403);
             assert.strictEqual(response.headers.get("location"), null);

@@ -92,7 +92,10 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       service: Patches.Patches["Service"],
       patchId: string,
       actor: Patches.Actor
-    ) => Effect.Effect<unknown, Patches.LifecycleError | Patches.AdminRequired | SqlError>;
+    ) => Effect.Effect<
+      unknown,
+      Patches.LifecycleError | Patches.AdminRequired | Patches.Tier2NotPublic | SqlError
+    >;
   }> = [
     { name: "retire", allowed: ["live"], run: (service, id, actor) => service.retire(id, actor) },
     {
@@ -1296,18 +1299,20 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
         patchRef: consumer.patchId,
         canOpen: (patch) => patch.id !== sources.hidden!.patchId
       });
-      const expected = Object.entries(sources).map(([alias, source]) => ({
-        alias,
-        patchId: source.patchId,
-        table: "notes",
-        ...(["live", "retired", "deleted"].includes(alias)
-          ? { name: source.name, state: alias }
-          : alias === "disabled"
-            ? { state: "live" }
-            : alias === "hidden"
-              ? { state: "retired" }
-              : { state: "gone" })
-      }));
+      const expected = Object.entries(sources).map(
+        ([alias, source]): Patches.ReadPatch["reads"][number] => ({
+          alias,
+          patchId: source.patchId,
+          table: "notes",
+          ...(alias === "live" || alias === "retired" || alias === "deleted"
+            ? { name: source.name, state: alias }
+            : alias === "disabled"
+              ? { state: "live" }
+              : alias === "hidden"
+                ? { state: "retired" }
+                : { state: "gone" })
+        })
+      );
       assert.deepStrictEqual(
         detail!.reads,
         expected.sort((a, b) => a.alias.localeCompare(b.alias))

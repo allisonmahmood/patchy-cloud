@@ -285,6 +285,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       ];
       for (const write of writes) {
         // Deliberately bypass the type boundary to cover callers without a lock.
+        // @effect-diagnostics-next-line missingEffectContext:off
         // @ts-expect-error The company lease alone cannot authorize an inventory write.
         const unlocked: Effect.Effect<unknown, SqlError> = write;
         const missing = yield* unlocked.pipe(Effect.exit);

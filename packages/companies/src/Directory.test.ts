@@ -185,7 +185,7 @@ it.layer(services)("company directory", (it) => {
           cursor: null
         });
         assert.deepStrictEqual(yield* directory.search(company.id, "PERSON100@", 50), {
-          rows: [expected[100]],
+          rows: [expected[100]!],
           cursor: null
         });
         assert.deepStrictEqual(yield* directory.search(company.id, "Team", 50), {

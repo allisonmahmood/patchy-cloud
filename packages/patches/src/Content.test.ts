@@ -364,10 +364,12 @@ it.layer(
           }
         }
       };
+      // afterPut takes a context-free effect, so these hooks bring their own Content.
+      const provideContent = Effect.provideService(Content.Content, yield* content);
       store.control.afterPut = Effect.gen(function* () {
         store.control.afterPut = Effect.void;
         yield* publish("<p>new source revision</p>", source.patchId, { manifest: evolvedManifest });
-      }).pipe(Effect.orDie);
+      }).pipe(provideContent, Effect.orDie);
       const updated = yield* publish(
         "<p>consumer records the new revision warning</p>",
         consumer.patchId,
@@ -395,7 +397,7 @@ it.layer(
             tables: { contacts: { ...evolvedManifest.tables.contacts, shared: false } }
           }
         });
-      }).pipe(Effect.orDie);
+      }).pipe(provideContent, Effect.orDie);
       const failed = yield* publish(
         "<p>consumer loses access during storage</p>",
         consumer.patchId,
@@ -1001,11 +1003,10 @@ it.layer(
       const created = yield* publish("<p>original</p>");
       const before = yield* store.keys;
       // The patch is taken down between the preflight and the row insert.
-      store.control.afterPut = Effect.flatMap(patches, (service) =>
-        service
-          .delete(created.patchId, { userId: uploader.user.id, admin: false })
-          .pipe(Effect.orDie, Effect.asVoid)
-      );
+      const service = yield* patches;
+      store.control.afterPut = service
+        .delete(created.patchId, { userId: uploader.user.id, admin: false })
+        .pipe(Effect.orDie, Effect.asVoid);
       const refused = yield* publish("<p>rejected</p>", created.patchId).pipe(
         Effect.flip,
         Effect.ensuring(

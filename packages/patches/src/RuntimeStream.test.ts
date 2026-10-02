@@ -214,7 +214,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       );
       yield* Deferred.await(held.committed);
       const latest = yield* publish(patchId, "update");
-      const current = { type: "served", versionId: latest.versionId, tier: 0 };
+      const current = { type: "served", versionId: latest.versionId, tier: 0 } as const;
       assert.deepStrictEqual(decode(yield* pull), current);
       yield* Deferred.succeed(held.resume, undefined);
       yield* Fiber.join(older);

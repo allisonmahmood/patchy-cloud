@@ -101,7 +101,7 @@ export const memberAssignmentsContract = Effect.fn("test.memberAssignmentsContra
     getMany: () => Effect.die("Assignment checks must not resolve members"),
     revision: () => Effect.die("Assignments must not acquire directory dependencies")
   });
-  for (const tier of [1, 2]) {
+  for (const tier of [1, 2] as const) {
     active.add("owner");
     const definition: typeof Manifest.Type = {
       ...manifest,
@@ -525,7 +525,7 @@ export const revisionsContract = Effect.fn("test.revisionsContract")(function* (
       Wakes.Wakes.of({
         publish: (keys) =>
           Effect.gen(function* () {
-            committed.push({ keys, revision: yield* revision });
+            committed.push({ keys, revision: yield* revision.pipe(Effect.orDie) });
           }),
         subscribe: () => Effect.void
       })
@@ -737,7 +737,7 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
     eq: { title: "shared" },
     limit: 1
   }).pipe(Effect.flatMap(decodePage));
-  assert.deepStrictEqual(first.rows, [rows[0]]);
+  assert.deepStrictEqual(first.rows, [rows[0]!]);
   assert.isString(first.cursor);
   const second = yield* call("shared.list", {
     alias: "alternate",
@@ -746,14 +746,14 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
     cursor: first.cursor,
     limit: 1
   }).pipe(Effect.flatMap(decodePage));
-  assert.deepStrictEqual(second.rows, [rows[1]]);
+  assert.deepStrictEqual(second.rows, [rows[1]!]);
   const last = yield* call("shared.list", {
     alias: "contacts",
     index: "byTitleRank",
     eq: { title: "shared" },
     cursor: second.cursor
   }).pipe(Effect.flatMap(decodePage));
-  assert.deepStrictEqual(last.rows, [rows[2]]);
+  assert.deepStrictEqual(last.rows, [rows[2]!]);
   assert.isNull(last.cursor);
   assert.strictEqual(
     (yield* call("shared.list", {
@@ -813,7 +813,7 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
     index: "byRank",
     range: { column: "rank", gte: 2 }
   }).pipe(Effect.flatMap(decodePage));
-  assert.deepStrictEqual(ranged.rows, [cumulative[1]]);
+  assert.deepStrictEqual(ranged.rows, [cumulative[1]!]);
 
   const deniedReads = [
     ["shared.list", { alias: "contacts", cursor: first.cursor }],
@@ -1084,7 +1084,7 @@ export const expandedResultsContract = Effect.fn("test.expandedResultsContract")
   const first = yield* call("tables.list", { table: "notes", index: "bySlug", limit: 1 }).pipe(
     Effect.flatMap(decodePage)
   );
-  assert.deepStrictEqual(first.rows, [rows[0]]);
+  assert.deepStrictEqual(first.rows, [rows[0]!]);
   assert.isString(first.cursor);
   const second = yield* call("tables.list", {
     table: "notes",
@@ -1092,7 +1092,7 @@ export const expandedResultsContract = Effect.fn("test.expandedResultsContract")
     limit: 1,
     cursor: first.cursor
   }).pipe(Effect.flatMap(decodePage));
-  assert.deepStrictEqual(second.rows, [rows[1]]);
+  assert.deepStrictEqual(second.rows, [rows[1]!]);
   assert.isNull(second.cursor);
   assert.strictEqual(first.rows[0]!.at, "2026-09-10T12:00:00.123456Z");
 

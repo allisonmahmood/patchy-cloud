@@ -149,7 +149,7 @@ const saveResources = Effect.fn("SdkConcurrency.saveResources")(function* (
       new Uint8Array([0, 255, 19])
     )
     .pipe(Effect.provideService(Binding.Binding, binding));
-  return row.id;
+  return String(row.id);
 });
 
 const assertResources = Effect.fn("SdkConcurrency.assertResources")(function* (

@@ -171,7 +171,7 @@ it.layer(Testing.layer().pipe(Layer.provideMerge(Testing.resourceChangesLayer)))
         const owner = yield* Effect.gen(function* () {
           yield* databases.lease(companyId, false);
           yield* Deferred.succeed(entered, undefined);
-          yield* Effect.never;
+          return yield* Effect.never;
         }).pipe(
           Effect.scoped,
           Effect.provideService(DatabaseMeter.current, meter),

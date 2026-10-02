@@ -248,6 +248,8 @@ const readPatch = Effect.fn("PortalPagesTest.readPatch")(function* (
   return rows[0]!;
 });
 type FormFields = Record<string, string | readonly string[]>;
+/** A confirmation posted without, then with, the acknowledgement box ticked. */
+const acknowledgements: ReadonlyArray<FormFields> = [{}, { ack: "on" }];
 const request = Effect.fn("PortalPagesTest.request")(function* (
   path: string,
   person: Person | null,
@@ -794,7 +796,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
               expectedState: action === "retire" ? "live" : "not-deleted",
               ...(action === "delete" ? { confirm: source.name } : {})
             };
-            for (const acknowledgement of [{}, { ack: "on" }]) {
+            for (const acknowledgement of acknowledgements) {
               const refused = yield* post(path, workspace.owner, { ...fields, ...acknowledgement });
               assert.strictEqual(refused.status, 409);
               const fresh = yield* refused.text;
@@ -859,7 +861,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const original = yield* publish(workspace.owner, `reused-${action}`);
         const path = `${cardPath(original.name)}/${action}`;
         const page = yield* (yield* request(path, workspace.owner)).text;
-        const fields = {
+        const fields: FormFields = {
           ...Object.fromEntries(
             [...page.matchAll(/<input type="hidden" name="([^"]*)" value="([^"]*)">/g)].map(
               (match) => [match[1]!, match[2]!]
@@ -2255,7 +2257,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           "outside-later-reader",
           source.patchId
         );
-        for (const acknowledgement of [{}, { ack: "on" }]) {
+        for (const acknowledgement of acknowledgements) {
           const refused = yield* post(path, workspace.admin, {
             choice: "confirm",
             patch: [source.patchId],
@@ -2662,6 +2664,7 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       const first = yield* publish(workspace.owner, "atomic-first");
       const second = yield* publish(workspace.owner, "atomic-second");
       const users = yield* Users.Users;
+      const patches = yield* Patches.Patches;
       const beforeUser = yield* readUser(workspace.owner);
       const beforeFirst = yield* readPatch(workspace.admin, first.patchId);
       const beforeSecond = yield* readPatch(workspace.admin, second.patchId);
@@ -2674,21 +2677,25 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       let reachedDeactivation = false;
       const failDeactivation = Layer.succeed(Users.Users, {
         ...users,
-        deactivate: Effect.fn("PortalPagesTest.failDeactivation")(function* (ref: Users.UserRef) {
-          yield* users.deactivate(ref);
-          assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
-          assert.strictEqual(
-            (yield* readPatch(workspace.admin, first.patchId)).patch.state,
-            "retired"
-          );
-          assert.strictEqual(
-            (yield* readPatch(workspace.admin, second.patchId)).patch.state,
-            "retired"
-          );
-          assert.deepStrictEqual(announced, []);
-          reachedDeactivation = true;
-          return yield* new Users.UserNotFound(ref);
-        })
+        deactivate: Effect.fn("PortalPagesTest.failDeactivation")(
+          function* (ref: Users.UserRef) {
+            yield* users.deactivate(ref);
+            assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+            assert.strictEqual(
+              (yield* readPatch(workspace.admin, first.patchId).pipe(Effect.orDie)).patch.state,
+              "retired"
+            );
+            assert.strictEqual(
+              (yield* readPatch(workspace.admin, second.patchId).pipe(Effect.orDie)).patch.state,
+              "retired"
+            );
+            assert.deepStrictEqual(announced, []);
+            reachedDeactivation = true;
+            return yield* new Users.UserNotFound(ref);
+          },
+          Effect.provideService(Users.Users, users),
+          Effect.provideService(Patches.Patches, patches)
+        )
       });
       const failingServer = HttpRouter.serve(routes, {
         disableLogger: true,
