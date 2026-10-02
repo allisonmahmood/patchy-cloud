@@ -67,8 +67,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-ecs": "^3.1144.0",

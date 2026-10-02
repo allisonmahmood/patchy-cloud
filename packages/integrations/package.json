@@ -22,8 +22,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.definition.json"
+    "test": "vitest run"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8",

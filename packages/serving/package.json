@@ -22,8 +22,7 @@
   ],
   "scripts": {
     "build": "node ../../scripts/build-serving-broker.mjs && tsc -p tsconfig.json",
-    "test": "node ../../scripts/build-serving-broker.mjs && vitest run",
-    "typecheck": "node ../../scripts/build-serving-broker.mjs && tsc -p tsconfig.json --noEmit"
+    "test": "node ../../scripts/build-serving-broker.mjs && vitest run"
   },
   "dependencies": {
     "@patchy/api": "workspace:*",
