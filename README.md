@@ -38,33 +38,23 @@ This repository is a full-history copy of [PatchPage](https://github.com/allison
 
 ## Try it
 
-Use Node 22.22.0+ and the pnpm version in `package.json`. Before starting, load your **Clerk development keys** into the developer-owned `dev.env` as described in [Development: Clerk keys](docs/DEVELOPMENT.md#clerk-keys); shell exports alone do not configure the dev server.
+Use Node 22.22.0+ and the pnpm version in `package.json`. Nothing needs an account:
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-The runner starts embedded Postgres, applies all capability migrations, seeds **Patchy Dev** and its admin's development machine token, and prints this worktree's API URL. In your browser, open that URL's `/join` page and click **Sign in**. Create or join a company when prompted. To use **Patchy Dev** as its admin instead, set the optional [`PATCHY_DEV_CLERK_USER_ID`](docs/DEVELOPMENT.md#seed) before starting.
-
-Keep `PATCHY_API_TOKEN` unset so a saved login outranks the development seed, then log in the CLI:
-
-```sh
-pnpm patchy login
-```
-
-Open the printed verification URL in your signed-in browser, check the code, company and email, name the machine, and confirm. At a human terminal the command waits and saves the key. An agent runs `pnpm patchy login --json`, relays `verificationUrl` and `userCode` to the person, and after confirmation runs the returned `next` command through `pnpm patchy login --complete <userCode>`. The CLI never opens the browser or prints the key.
-
-Once login reports success:
+`pnpm dev` starts embedded Postgres, applies the migrations, seeds the **Patchy Dev** company and prints this worktree's URL. People sign in as dev personas: open `/dev/sign-in` and pick or type any email. The CLI runs from source and publishes as the seeded admin straight away:
 
 ```sh
 pnpm patchy whoami
 pnpm patchy publish examples/plan.html
 ```
 
-Open the returned URL in the same signed-in browser. **Company scope is the default:** colleagues in that company can read the page, but a publishing key cannot open it. An agent reads company patches through its user's browser; only the current public tier 0 page can be read directly by URL. Tier 1 needs a browser to read its rendered frame. Choose `--share public` only when the page is intended for anyone holding the link. Don't publish secrets.
+Open the returned URL signed in as `dev@patchy.local`. **Company scope is the default:** colleagues in that company can read the page, but a publishing key cannot open it. Choose `--share public` only when the page is meant for anyone holding the link. Don't publish secrets.
 
-`pnpm patchy` runs from source and discovers this worktree's instance automatically. `pnpm dev stop` shuts it down. The complete runner and login recipes are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and the CLI's commands and contract are in [packages/patchy/README.md](packages/patchy/README.md).
+For several people at once, `pnpm dev up` builds an environment from a scenario in `scenarios/`, with a logged-in CLI and an agent workspace; `pnpm dev up brightline` is the demo. `pnpm dev shot <person> <path>` captures a page as one person, and `pnpm dev down` removes everything. Work on Clerk sign-in uses `pnpm dev --clerk` with your Clerk development keys. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) has the full loop, and [packages/patchy/README.md](packages/patchy/README.md) the CLI's commands and contract.
 
 To start a patch repo against this worktree, run `pnpm patchy init .local/team-tool --purpose "Track our team's work"`.
 Initialization installs the pinned package and generates the client, context and project skills.
@@ -102,7 +92,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `examples/plan.html` — a Patchy-styled starter patch.
 - `scenarios/` — companies, people and patches that `pnpm dev up` builds local environments from (`scripts/dev`).
 
-`pnpm test`, `pnpm typecheck` and `pnpm lint` are the checks. `pnpm test:all` runs package tests, the real-Postgres concurrency suites and the packed CLI e2e; it does not run the live Clerk tiers. Install Chromium and its system dependencies first with `pnpm exec playwright install --with-deps chromium`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-clerk-pnpm-testclerk) runs the live Backend-API and Playwright tiers with development keys.
+`pnpm check` runs format, lint, typecheck and the offline tests. `pnpm verify` adds every acceptance suite CI runs except live Clerk; install Chromium first with `pnpm exec playwright install --with-deps chromium`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-tiers) runs the live Clerk tiers with development keys.
 
 ## Security
 

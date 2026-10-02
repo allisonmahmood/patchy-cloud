@@ -74,7 +74,7 @@ require the public origin or same-origin fetch metadata, including sign-out.
 keys and `PATCHY_PUBLIC_BASE_URL` are required alongside the platform database,
 company-database URLs and credential keyring. The optional public JWT key is
 validated at startup too; there is no partially configured server mode.
-[Development](../DEVELOPMENT.md) owns the complete configuration reference.
+[Operations](../OPERATIONS.md) owns the complete configuration reference.
 
 ## Alternatives considered
 
