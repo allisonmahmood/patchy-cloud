@@ -16,9 +16,8 @@ Tier 2 is company-only. Its page calls generated server handlers rather than
 name-based resources; a served tier 2 version closes older tier 1 tabs' direct
 operations until reload or rollback.
 
-The ECS fleet provider is built; production admission requires it. The role-only
-Fargate acceptance on [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)
-is pending an IAM grant for [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439).
+The ECS fleet provider is built and passed role-only Fargate acceptance on
+[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406); production admission requires it.
 The reference CRM journey and tier-picking check on
 [#413](https://github.com/allisonmahmood/patchy-cloud/issues/413) run by hand after
 the stack merges. Production infrastructure and deployment,

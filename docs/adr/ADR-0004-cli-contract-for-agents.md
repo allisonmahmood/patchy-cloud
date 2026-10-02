@@ -93,10 +93,7 @@ the stored server bytes in a throwaway process. A descriptor disagreement,
 top-level throw, unresolved module or unfinished initializer is HTTP 422
 `invalid_manifest`, `kind: "rejected"`, exit 2. A tier 2 repo with no handlers
 publishes with a warning. Production admits tier 2 only with
-`EXECUTION_PROVIDER=ecs`; the built provider's role-only Fargate acceptance
-remains pending the IAM grant on [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)
-and [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439).
-Production infrastructure and first deploy remain unbuilt on
+`EXECUTION_PROVIDER=ecs`. Production infrastructure and first deploy remain unbuilt on
 [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
 [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
 

@@ -37,11 +37,9 @@ processes on an isolated development or test host. `EXECUTION_PROVIDER=ecs`
 selects Fargate and is the only provider that admits production tier 2.
 Local processes do not prove Fargate containment.
 
-The ECS provider is built, but role-only Fargate acceptance remains pending the
-IAM grant on [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)
-and [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439).
-The measurements below came from the earlier IAM-user-credential run, not the
-role-only path. Production infrastructure
+The ECS provider is built and passed role-only Fargate acceptance on
+[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406); **Fargate deployment and
+measurements** below records the run. Production infrastructure
 [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and first deploy
 [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416) remain unbuilt.
 

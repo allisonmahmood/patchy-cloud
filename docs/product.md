@@ -14,7 +14,6 @@ Tier 2 repos publish an HTML artifact and an inspected server artifact. The loca
 
 The build in PRs #417 through #453 implements the tier 2 map's handler, sync, execution, SDK and portal contracts. This documentation reconciliation records those capabilities as built, not as proposals. It does not mean the platform is deployed or every acceptance check has passed:
 
-- [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)'s role-only Fargate acceptance is pending an IAM grant for [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439).
 - [#413](https://github.com/allisonmahmood/patchy-cloud/issues/413)'s reference CRM journey and tier-picking check run by hand after the stack merges. The automated acceptance work is built; those two checks have not run.
 - Version revocation remains an open question on [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425). The `revoked` frame exists, but there is no way to revoke a version.
 - Production infrastructure and the first deploy, [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), are not built.

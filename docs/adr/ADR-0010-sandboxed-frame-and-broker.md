@@ -215,9 +215,7 @@ patch open. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.** ADR-0012 defines the
 credential-free execution boundary and its resource-principal rules. Dev and
 test instances admit published tier 2 versions on the local executor.
-Production admits tier 2 only with the built ECS provider. Role-only Fargate
-acceptance remains pending the IAM grant on [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406)
-and [PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439);
+Production admits tier 2 only with the built ECS provider;
 production infrastructure and first deploy remain unbuilt on
 [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
 [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).

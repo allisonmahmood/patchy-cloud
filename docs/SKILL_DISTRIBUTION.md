@@ -70,8 +70,8 @@ entries to `index.json.capabilities`. A missing marker fails generation instead
 of serving a loop skill without its catalogue.
 Unavailable features are stated separately and do not produce announcements.
 The catalogue describes built APIs and distinguishes ECS fleet execution from
-the local executor. Built fleet code is not a claim that role-only Fargate
-acceptance or production deployment is complete. Keep the catalogue's prose
+the local executor. Built fleet code is not a claim that production deployment
+is complete. Keep the catalogue's prose
 current alongside the skill templates; generation replaces the marker with
 that prose, not with a hand-edited project copy.
 The catalogue's owned-row, batch, file and Postgres-result byte figures use

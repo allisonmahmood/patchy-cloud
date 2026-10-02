@@ -48,11 +48,9 @@ refusal without replay on failure. Stop the disposable task resource explicitly;
 host shutdown leaves shared tasks running. Keep the ordinary no-pool patch-repo
 dev loop unchanged.
 
-For ECS acceptance, follow DEVELOPMENT's spike-deploy recipe. The ECS provider
-is built, but #406 / PR #439 still requires the host task role's IAM grant and
-a role-only Fargate acceptance run. The earlier static-key run does not prove
-that credential path. Production infrastructure and first deploy remain
-#415 and #416, separate from local or spike verification.
+For ECS acceptance, follow DEVELOPMENT's spike-deploy recipe. Hosts run on the
+spike host task role, never static AWS keys. Production infrastructure and
+first deploy remain #415 and #416, separate from local or spike verification.
 
 For tier 2 handler changes, follow DEVELOPMENT's **The execution engine**
 guidance and exercise an eligible `server.call` through the existing `pnpm dev`

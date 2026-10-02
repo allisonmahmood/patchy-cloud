@@ -294,10 +294,8 @@ and committed mutation-key replay. The ECS provider uses the same controller.
 ### Deploying only the tier 2 spike
 
 The ECS provider, reproducible host/exec image and guarded spike deploy script
-are built. Role-only Fargate acceptance is still pending the IAM grant on
-[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406) and
-[PR #439](https://github.com/allisonmahmood/patchy-cloud/pull/439). The earlier
-IAM-user-credential run does not prove that path. This spike is not production
+are built, and role-only Fargate acceptance passed on
+[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406). This spike is not production
 infrastructure [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)
 or the first deploy [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416);
 both remain unbuilt.
@@ -1110,7 +1108,7 @@ defaults, references, indexes and schema revisions. These checks use the saved
 login and invented definitions, never a developer's instance or company data.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
-and `uses`. The API admits tier 0, 1 and 2 manifests with tables, stores, shared tables and stores, members and resolved Postgres declarations in dev and test instances. Scripted HTML is stored raw and served in the sandbox. Tier 2 additionally stores one closed server module; descriptor disagreement, load failure or load timeout is `invalid_manifest`. Production tier 2 admission requires `EXECUTION_PROVIDER=ecs`; its role-only acceptance and production deployment remain pending as described above. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tiers 1 and 2 use `PATCHY_MAX_BUNDLE_BYTES` (10 MiB) per artifact.
+and `uses`. The API admits tier 0, 1 and 2 manifests with tables, stores, shared tables and stores, members and resolved Postgres declarations in dev and test instances. Scripted HTML is stored raw and served in the sandbox. Tier 2 additionally stores one closed server module; descriptor disagreement, load failure or load timeout is `invalid_manifest`. Production tier 2 admission requires `EXECUTION_PROVIDER=ecs`; production deployment remains pending as described above. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tiers 1 and 2 use `PATCHY_MAX_BUNDLE_BYTES` (10 MiB) per artifact.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
 against that release. File attempts live in the isolated `PATCHY_STATE_DIR`;
