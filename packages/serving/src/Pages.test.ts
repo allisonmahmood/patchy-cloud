@@ -245,7 +245,10 @@ it.layer(layer)("pages", (it) => {
                 html.includes('action="/patches/notice-patch/restore"'),
                 person.manage
               );
-              if (person.manage) assert.include(html, `name="expectedState" value="${state}"`);
+              if (person.manage) {
+                assert.include(html, `name="expectedPatchId" value="${patch.patchId}"`);
+                assert.include(html, `name="expectedState" value="${state}"`);
+              }
               if (state === "deleted") assert.include(html, "Gone for good in 18 days");
             }
             const door = yield* get(path, {});

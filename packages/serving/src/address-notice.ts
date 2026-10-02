@@ -21,7 +21,7 @@ export const renderAddressNotice = (input: {
     stateAt: patch.state === "retired" ? patch.retiredAt : patch.deletedAt,
     purgeAt: patch.purgeAt,
     now,
-    restore: canManage ? { href: `${card}/restore`, sourcesOff } : null
+    restore: canManage ? { href: `${card}/restore`, patchId: patch.id, sourcesOff } : null
   });
   const address = `<p class="supporting-text">${escapeHtml(patch.companyHandle)} / ${escapeHtml(patch.name)}</p>`;
   const facts = `<dl class="facts">${off.stateFact}</dl>`;

@@ -14,7 +14,10 @@ export const daysLeft = (deadline: number, now: number): number =>
 const recoveryEnded =
   '<p class="supporting-text">The recovery window has ended. This patch can no longer be restored.</p>';
 
-/** Callers decide who may restore and supply their own action URL and page composition. */
+/**
+ * Callers decide who may restore and supply their own action URL and page composition. The
+ * restore form carries the patch id, which the portal checks before acting on the name.
+ */
 export const renderOffPatch = (input: {
   readonly name: string;
   readonly state: "retired" | "deleted";
@@ -24,6 +27,7 @@ export const renderOffPatch = (input: {
   readonly now: number;
   readonly restore: {
     readonly href: string;
+    readonly patchId: string;
     readonly sourcesOff: boolean;
     readonly currentVersion?: number;
   } | null;
@@ -44,14 +48,14 @@ export const renderOffPatch = (input: {
   let restoreControl = "";
   let restoreHint = "";
   if (input.restore !== null && !expired) {
-    const { href, sourcesOff, currentVersion } = input.restore;
+    const { href, patchId, sourcesOff, currentVersion } = input.restore;
     const action = escapeAttribute(href);
     if (sourcesOff) {
       restoreControl = `<a class="btn btn-primary" href="${action}">Restore…</a>`;
       restoreHint =
         "It reads tables from patches that are off. Review those sources before restoring it.";
     } else {
-      restoreControl = `<form method="post" action="${action}"><input type="hidden" name="expectedState" value="${escapeAttribute(state)}"><button class="btn btn-primary" type="submit">Restore</button></form>`;
+      restoreControl = `<form method="post" action="${action}"><input type="hidden" name="expectedPatchId" value="${escapeAttribute(patchId)}"><input type="hidden" name="expectedState" value="${escapeAttribute(state)}"><button class="btn btn-primary" type="submit">Restore</button></form>`;
       if (currentVersion !== undefined) {
         restoreHint = `Restore brings it back live at v${escapeHtml(currentVersion)} with the same address.`;
       }

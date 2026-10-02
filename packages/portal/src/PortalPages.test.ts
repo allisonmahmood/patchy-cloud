@@ -301,6 +301,19 @@ const hidden = (html: string, name: string) =>
   html.match(
     new RegExp(`<input\\b(?=[^>]*\\bname="${name}")(?=[^>]*\\bvalue="([^"]*)")[^>]*>`)
   )?.[1];
+/** The hidden fields of the first POST form on the page that submits to `action`. */
+const formFields = (html: string, action: string): FormFields =>
+  Object.fromEntries(
+    [
+      ...(
+        html.match(
+          new RegExp(
+            `<form\\b(?=[^>]*method="post")[^>]*action="${action}"[^>]*>([\\s\\S]*?)</form>`
+          )
+        )?.[1] ?? ""
+      ).matchAll(/<input type="hidden" name="([^"]*)" value="([^"]*)">/g)
+    ].map((match) => [match[1]!, match[2]!])
+  );
 const inputs = (html: string, name: string, type: string) =>
   [...html.matchAll(/<input\b[^>]*>/g)]
     .map((match) => match[0])
@@ -602,6 +615,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       yield* TestClock.adjust(1_000);
       yield* (yield* Patches.Patches).rollback(patch.patchId, actor(workspace.admin), 1);
       const response = yield* post(`${cardPath(patch.name)}/description?all=1`, workspace.owner, {
+        expectedPatchId: patch.patchId,
         description: "  Find\n a desk <quickly>  ",
         expectedDescriptionUpdatedAt: before.patch.descriptionUpdatedAt ?? ""
       });
@@ -614,6 +628,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const html = yield* (yield* request(response.headers.location!, workspace.owner)).text;
       assert.include(html, "Find a desk &lt;quickly&gt;");
       const noop = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
+        expectedPatchId: patch.patchId,
         description: "Find a desk <quickly>",
         expectedDescriptionUpdatedAt: saved.patch.descriptionUpdatedAt ?? ""
       });
@@ -628,6 +643,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const patch = yield* publish(workspace.owner, "scope-save");
       const before = yield* readPatch(workspace.owner, patch.patchId);
       const response = yield* post(`${cardPath(patch.name)}/scope?all=1`, workspace.admin, {
+        expectedPatchId: patch.patchId,
         scope: "public",
         expectedScope: "company"
       });
@@ -662,6 +678,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       });
       const before = yield* readPatch(workspace.owner, patch.patchId);
       const refused = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
+        expectedPatchId: patch.patchId,
         scope: "public",
         expectedScope: "company"
       });
@@ -670,6 +687,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       yield* (yield* Patches.Patches).rollback(patch.patchId, actor(workspace.owner), 1);
       const shared = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
+        expectedPatchId: patch.patchId,
         scope: "public",
         expectedScope: "company"
       });
@@ -693,6 +711,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const service = yield* Patches.Patches;
         const inventory = yield* service.inventory(patch.patchId, workspace.owner.id);
         const response = yield* post(`${cardPath(patch.name)}/rollback?all=1`, workspace.owner, {
+          expectedPatchId: patch.patchId,
           versionNumber: "1",
           expectedCurrentVersionId: before.patch.currentVersionId ?? ""
         });
@@ -854,26 +873,53 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       })
     );
+  }
 
-    it.effect(`refuses an old ${action} confirmation once its name belongs to another patch`, () =>
+  for (const action of [
+    "description",
+    "scope",
+    "rollback",
+    "restore",
+    "retire",
+    "delete",
+    "reassign"
+  ] as const) {
+    it.effect(`refuses an old ${action} form once its name belongs to another patch`, () =>
       Effect.gen(function* () {
         const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const person = action === "reassign" ? workspace.admin : workspace.owner;
         const original = yield* publish(workspace.owner, `reused-${action}`);
+        if (action === "rollback")
+          yield* publish(workspace.owner, original.name, {
+            intent: "update",
+            patchId: original.patchId
+          });
+        if (action === "restore") yield* service.retire(original.patchId, actor(workspace.owner));
         const path = `${cardPath(original.name)}/${action}`;
-        const page = yield* (yield* request(path, workspace.owner)).text;
-        const fields: FormFields = {
-          ...Object.fromEntries(
-            [...page.matchAll(/<input type="hidden" name="([^"]*)" value="([^"]*)">/g)].map(
-              (match) => [match[1]!, match[2]!]
-            )
-          ),
-          ...(action === "delete" ? { confirm: original.name } : {})
+        const inline = action === "description" || action === "scope" || action === "rollback";
+        const page = yield* (yield* request(
+          inline || action === "restore" ? cardPath(original.name) : path,
+          person
+        )).text;
+        const typed: Record<typeof action, FormFields> = {
+          description: { description: "Overwritten" },
+          scope: { scope: "public" },
+          rollback: {},
+          restore: {},
+          retire: {},
+          delete: { confirm: original.name },
+          reassign: { user: workspace.member.id }
         };
+        const fields: FormFields = { ...formFields(page, path), ...typed[action] };
+        if (action === "restore") yield* service.restore(original.patchId, actor(workspace.owner));
         yield* publish(workspace.owner, `archived-${action}`, {
           intent: "update",
           patchId: original.patchId
         });
         const replacement = yield* publish(workspace.owner, original.name);
+        if (action === "restore")
+          yield* service.retire(replacement.patchId, actor(workspace.owner));
         const before = [
           yield* readPatch(workspace.owner, original.patchId),
           yield* readPatch(workspace.owner, replacement.patchId)
@@ -882,14 +928,14 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.strictEqual(expectedPatchId, original.patchId);
         for (const [submitted, notice] of [
           [fields, "This name now belongs to a different patch. Nothing was done."],
-          [withoutId, "This confirmation is out of date. Nothing was done."]
+          [withoutId, "This form is out of date. Nothing was done."]
         ] as const) {
-          const response = yield* post(path, workspace.owner, submitted);
+          const response = yield* post(path, person, submitted);
           assert.strictEqual(response.status, 409);
           const html = yield* response.text;
           assert.include(text(html), notice);
           assert.strictEqual(heading(html), original.name);
-          assert.notInclude(forms(html), path);
+          assert.notInclude(html, original.patchId);
           assert.deepStrictEqual(
             [
               yield* readPatch(workspace.owner, original.patchId),
@@ -1074,6 +1120,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
             assert.strictEqual(page.headers.location, `${cardPath(patch.name)}?all=1`);
           }
           const response = yield* post(`${cardPath(patch.name)}/restore?all=1`, person, {
+            expectedPatchId: patch.patchId,
             expectedState: state
           });
           assert.strictEqual(response.status, 303);
@@ -1130,11 +1177,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         }
         const before = yield* readPatch(workspace.owner, patch.patchId);
         yield* TestClock.adjust(2 * 60 * 1_000);
-        const response = yield* post(
-          `${cardPath(patch.name)}/${action}?all=1`,
-          workspace.owner,
-          fields
-        );
+        const response = yield* post(`${cardPath(patch.name)}/${action}?all=1`, workspace.owner, {
+          expectedPatchId: patch.patchId,
+          ...fields
+        });
         assert.strictEqual(response.status, 409);
         const html = yield* response.text;
         assert.strictEqual(heading(html), patch.name);
@@ -1170,9 +1216,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const redirect = yield* request(`${cardPath(patch.name)}/restore?all=1`, workspace.owner);
       assert.strictEqual(redirect.status, 303);
       assert.strictEqual(redirect.headers.location, `${cardPath(patch.name)}?all=1`);
-      const response = yield* post(`${cardPath(patch.name)}/restore`, workspace.owner, {
-        expectedState: hidden(form, "expectedState")!
-      });
+      const response = yield* post(
+        `${cardPath(patch.name)}/restore`,
+        workspace.owner,
+        formFields(form, `${cardPath(patch.name)}/restore`)
+      );
       assert.strictEqual(response.status, 409);
       assertStale(yield* response.text, "restored");
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
@@ -1209,6 +1257,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const before = yield* readPatch(workspace.owner, patch.patchId);
         const invalid = `<script>${"x".repeat(501)}</script>`;
         const response = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
+          expectedPatchId: patch.patchId,
           description: invalid,
           expectedDescriptionUpdatedAt: patch.descriptionUpdatedAt ?? ""
         });
@@ -1229,6 +1278,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const valid = "\u{10400}".repeat(500);
         assert.strictEqual(
           (yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
+            expectedPatchId: patch.patchId,
             description: valid,
             expectedDescriptionUpdatedAt: patch.descriptionUpdatedAt ?? ""
           })).status,
@@ -1247,6 +1297,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const patch = yield* publish(workspace.owner, "rollback-invalid");
       const before = yield* readPatch(workspace.owner, patch.patchId);
       const response = yield* post(`${cardPath(patch.name)}/rollback`, workspace.owner, {
+        expectedPatchId: patch.patchId,
         versionNumber: "2147483648",
         expectedCurrentVersionId: patch.versionId
       });
@@ -1273,7 +1324,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         ["scope", { scope: "public", expectedScope: "company" }],
         ["rollback", { versionNumber: "1", expectedCurrentVersionId: patch.versionId }]
       ] as const) {
-        const response = yield* post(`${cardPath(patch.name)}/${action}`, workspace.owner, fields);
+        const response = yield* post(`${cardPath(patch.name)}/${action}`, workspace.owner, {
+          expectedPatchId: patch.patchId,
+          ...fields
+        });
         assert.strictEqual(response.status, 409);
         const html = yield* response.text;
         assert.strictEqual(heading(html), patch.name);
@@ -1329,7 +1383,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
           if (state === "deleted") yield* service.delete(consumer.patchId, actor(workspace.owner));
           const path = `${cardPath(consumer.name)}/restore?all=1`;
           const before = yield* readPatch(workspace.owner, consumer.patchId);
-          const refused = yield* post(path, person, { expectedState: state });
+          const refused = yield* post(path, person, {
+            expectedPatchId: consumer.patchId,
+            expectedState: state
+          });
           assert.strictEqual(refused.status, 409);
           const refusedHtml = yield* refused.text;
           for (const viewer of [workspace.owner, workspace.admin]) {
@@ -1344,6 +1401,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
               assert.include(text(html), "notes");
               assert.notInclude(html, older!.name);
               assert.include(forms(html), path);
+              assert.strictEqual(hidden(html, "expectedPatchId"), consumer.patchId);
               assert.strictEqual(hidden(html, "expectedState"), state);
               assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
               assert.include(
@@ -1360,7 +1418,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
             links(fresh).map((link) => link.href),
             path
           );
-          const restored = yield* post(path, person, { expectedState: state, ack: "1" });
+          const restored = yield* post(path, person, {
+            expectedPatchId: consumer.patchId,
+            expectedState: state,
+            ack: "1"
+          });
           assert.strictEqual(restored.status, 303);
           assert.strictEqual(restored.headers.location, `${cardPath(consumer.name)}?all=1`);
           const saved = yield* readPatch(workspace.owner, consumer.patchId);
@@ -1412,6 +1474,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const before = yield* readPatch(workspace.owner, patch.patchId);
         for (const target of [workspace.member.id, foreign.owner.id, "usr_missing"]) {
           const refused = yield* post(`${path}?q=Alex&all=1`, workspace.admin, {
+            expectedPatchId: patch.patchId,
             expectedOwnerUserId: workspace.owner.id,
             user: target
           });
@@ -1434,6 +1497,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           workspace.admin.id
         ]);
         const recovered = yield* post(`${path}?all=1`, workspace.admin, {
+          expectedPatchId: patch.patchId,
           expectedOwnerUserId: workspace.owner.id,
           user: workspace.admin.id
         });
@@ -1472,6 +1536,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
             assert.include(radioValues(html), next.id);
             yield* TestClock.adjust(1_000);
             const response = yield* post(path, workspace.admin, {
+              expectedPatchId: patch.patchId,
               expectedOwnerUserId: currentOwner,
               user: next.id
             });
@@ -1492,6 +1557,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           const beforeNoop = yield* readPatch(workspace.owner, patch.patchId);
           yield* TestClock.adjust(DAY);
           const noop = yield* post(path, workspace.admin, {
+            expectedPatchId: patch.patchId,
             expectedOwnerUserId: currentOwner,
             user: currentOwner
           });
@@ -1514,6 +1580,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       yield* TestClock.adjust(2 * 60 * 1_000);
       const before = yield* readPatch(workspace.owner, patch.patchId);
       const response = yield* post(path, workspace.admin, {
+        expectedPatchId: patch.patchId,
         expectedOwnerUserId: expectedOwner,
         user: workspace.admin.id
       });
@@ -1546,6 +1613,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       }
       const before = yield* readPatch(workspace.owner, patch.patchId);
       const fields = {
+        expectedPatchId: patch.patchId,
         description: "Not allowed",
         expectedDescriptionUpdatedAt: patch.descriptionUpdatedAt ?? ""
       };
