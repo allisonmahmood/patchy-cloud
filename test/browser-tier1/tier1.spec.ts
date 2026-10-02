@@ -43,8 +43,8 @@ test("broker admits server arguments up to 1 MiB and stamps local and runtime re
       )
     )
     .toEqual([
-      ["server-above-tier1", "invalid_request"],
-      ["server-boundary", "invalid_request"],
+      ["server-above-tier1", "access_denied"],
+      ["server-boundary", "access_denied"],
       ["server-overflow", "too_large"]
     ]);
   const replies = await frame.evaluate(() =>
@@ -57,7 +57,7 @@ test("broker admits server arguments up to 1 MiB and stamps local and runtime re
     limitId: "tier2.args.bytes",
     value: 1024 * 1024
   });
-  // No server handler is installed: the admitted bodies reach Runtime, not execution.
+  // A tier 1 version has no handlers: Runtime refuses the admitted bodies before execution.
   const calls = instance.runtimeRequests
     .slice(before)
     .filter((request) => request.body.includes('"op":"server.call"'));
