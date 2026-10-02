@@ -18,7 +18,7 @@ const query = {
 } as const;
 
 async function artifacts(shared: boolean, removed = false) {
-  const handlers: NonNullable<Manifest["handlers"]> = {
+  const handlers: NonNullable<(typeof Manifest.Type)["handlers"]> = {
     "rows.list": query,
     "rows.size": { kind: "query", args: { payload: { kind: "text" } }, result: { kind: "number" } },
     ...(!removed ? { "rows.obsolete": query } : {}),

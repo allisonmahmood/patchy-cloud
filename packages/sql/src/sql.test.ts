@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Redacted from "effect/Redacted";
@@ -80,7 +81,7 @@ it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("migrator", (it) => {
         ...gadgets,
         "2_gadgets_again": gadgets["2_gadgets"]!
       }).pipe(Effect.flip);
-      assert.strictEqual(error._tag, "MigrationError");
+      assert.instanceOf(error, Migrator.MigrationError);
       assert.strictEqual(error.kind, "Duplicates");
       assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "widgets"]);
     })

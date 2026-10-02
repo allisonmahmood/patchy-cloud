@@ -226,7 +226,7 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
   });
   assert.isTrue(Object.hasOwn(client, malicious));
   assert.strictEqual(Object.getPrototypeOf(client), Object.prototype);
-  assert.deepStrictEqual(await client[malicious].get({ id: "7" }), { id: "7", name: "Kept" });
+  assert.deepStrictEqual(await client[malicious]!.get({ id: "7" }), { id: "7", name: "Kept" });
   assert.deepStrictEqual(seen, [
     [
       "postgres.get",
@@ -263,7 +263,7 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
     details: { sqlstate: "42703", message: "column missing", position: "8" }
   }));
   try {
-    await failing[malicious].list();
+    await failing[malicious]!.list();
     assert.fail("expected refusal");
   } catch (error) {
     assert.isTrue(PatchyClient.isPatchyError(error, "invalid_query"));

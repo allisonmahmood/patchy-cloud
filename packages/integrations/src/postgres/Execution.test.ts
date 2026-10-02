@@ -144,15 +144,13 @@ const setup = Effect.fn("test.executionSetup")(function* (limits: Partial<Execut
         poolCredentials: (_companyId, _declaration, revision) =>
           beforeCredentials.pipe(
             Effect.andThen(
-              Effect.suspend(() => {
+              Effect.gen(function* () {
                 if (current.status !== "connected")
-                  return Effect.fail(new ConnectionStore.ConnectionNotConnected({}));
+                  return yield* new ConnectionStore.ConnectionNotConnected({});
                 if (revision !== current.credentialRevision)
-                  return Effect.fail(new ConnectionStore.ConnectionChanged({}));
-                return Effect.succeed(
-                  Redacted.make(
-                    `postgres://${rolePrefix}_${revision}:secret@warehouse.example/warehouse`
-                  )
+                  return yield* new ConnectionStore.ConnectionChanged({});
+                return Redacted.make(
+                  `postgres://${rolePrefix}_${revision}:secret@warehouse.example/warehouse`
                 );
               })
             )

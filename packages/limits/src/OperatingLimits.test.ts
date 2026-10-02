@@ -372,13 +372,14 @@ it.layer(services)("operating limits", (it) => {
         for (const [limitId, definition] of Object.entries(registry)) {
           if (!("configuration" in definition)) continue;
           const input = { ...company, limitId, value: 8, actor: "operator" };
-          for (const operation of [
+          const operations: ReadonlyArray<Effect.Effect<unknown, unknown>> = [
             limits.get(input),
             limits.getMany({ companyId: company.companyId, limits: { legacy: limitId } }),
             limits.history(input),
             limits.setOverride(input),
             limits.removeOverride(input)
-          ]) {
+          ];
+          for (const operation of operations) {
             const failure = yield* operation.pipe(Effect.flip);
             assert.instanceOf(failure, DeploymentConfig.InvalidLimit);
             assert.strictEqual((failure as DeploymentConfig.InvalidLimit).limitId, limitId);

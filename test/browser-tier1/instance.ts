@@ -1,6 +1,11 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createServer, request as httpRequest, type Server } from "node:http";
-import { createSecureServer, type Http2SecureServer, type ServerHttp2Session } from "node:http2";
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
+import {
+  createSecureServer,
+  type Http2SecureServer,
+  type Http2ServerRequest,
+  type ServerHttp2Session
+} from "node:http2";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -37,7 +42,7 @@ export const manifest = {
   },
   files: { assets: { description: "Browser fixture assets keyed by file name." } },
   uses: {}
-};
+} as const;
 export interface Published {
   patchId: string;
   versionId: string;
@@ -61,7 +66,9 @@ export interface Instance {
     scope?: "company" | "public",
     html?: string,
     patchId?: string,
-    declarations?: Partial<Pick<Manifest, "tier" | "tables" | "files" | "uses" | "handlers">>,
+    declarations?: Partial<
+      Pick<typeof Manifest.Type, "tier" | "tables" | "files" | "uses" | "handlers">
+    >,
     options?: { readonly server?: string; readonly force?: boolean }
   ): Promise<Published>;
   lifecycle(
@@ -253,7 +260,7 @@ export async function startInstance(
     } else {
       proxy = createServer();
     }
-    proxy.on("request", (request, response) => {
+    proxy.on("request", (request: IncomingMessage | Http2ServerRequest, response) => {
       if (streamsPaused && request.url?.startsWith("/api/runtime/stream")) {
         response.writeHead(502).end();
         return;
@@ -476,10 +483,20 @@ export async function startInstance(
       format: "iife",
       write: false,
       define: { "import.meta.env.DEV": "false" },
-      alias: {
-        "patchy/client": path.join(root, "packages/patchy/dist/client.js"),
-        "patchy/preact": path.join(root, "packages/patchy/dist/preact.js")
-      }
+      // The fixture imports the package source so it typechecks; the page runs the built package.
+      plugins: [
+        {
+          name: "patchy-dist",
+          setup(build) {
+            build.onResolve(
+              { filter: /\/packages\/patchy\/src\/(client|preact)\.js$/ },
+              (args) => ({
+                path: path.join(root, "packages/patchy/dist", path.basename(args.path))
+              })
+            );
+          }
+        }
+      ]
     });
     const html = `<!doctype html><html><head><title>Tier one acceptance</title><style>body{margin:0}td{height:20px}table{border-collapse:collapse}@media print{button{display:none}}</style></head><body><h1>Tier one acceptance</h1><p id="identity">waiting</p><p id="route"></p><button id="route-next">Next route</button><button id="download">Download file</button><img id="own-image" alt="Own file"><table><tbody id="rows"></tbody></table><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
     return {

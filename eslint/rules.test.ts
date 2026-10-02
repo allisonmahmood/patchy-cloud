@@ -4,7 +4,7 @@
  * ESTree, so TypeScript syntax adds nothing here.
  */
 import { RuleTester } from "eslint";
-import { afterAll, describe, it } from "vitest";
+import { describe, it } from "vitest";
 import namespaceServiceImports from "./rules/namespace-service-imports.js";
 import noInlineSchemaCompile from "./rules/no-inline-schema-compile.js";
 import noManualEffectRuntimeInTests from "./rules/no-manual-effect-runtime-in-tests.js";
@@ -12,7 +12,6 @@ import noManualEffectRuntimeInTests from "./rules/no-manual-effect-runtime-in-te
 RuleTester.describe = describe;
 RuleTester.it = it;
 RuleTester.itOnly = it.only;
-RuleTester.afterAll = afterAll;
 
 const tester = new RuleTester({
   languageOptions: { ecmaVersion: 2022, sourceType: "module" }

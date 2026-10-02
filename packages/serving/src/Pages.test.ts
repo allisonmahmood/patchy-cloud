@@ -690,14 +690,15 @@ it.layer(services)("pages in memory", (it) => {
         email: "storage@example.com",
         userName: "Outsider"
       });
-      for (const headers of [
+      const viewers: ReadonlyArray<Record<string, string>> = [
         {},
         {
           cookie: signedInCookies(
             signSession({ sub: "user_storage_outsider", email: "storage@example.com" })
           )
         }
-      ]) {
+      ];
+      for (const headers of viewers) {
         const response = yield* send(path, { headers });
         assert.strictEqual(response.status, "cookie" in headers ? 404 : 401);
         assert.strictEqual(response.headers.get("cache-control"), "private, no-store");

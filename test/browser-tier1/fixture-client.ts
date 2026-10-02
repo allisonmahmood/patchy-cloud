@@ -5,8 +5,8 @@ import {
   isPatchyError,
   type Call,
   type QueryRegistry
-} from "patchy/client";
-import { createElement, render, useQuery } from "patchy/preact";
+} from "../../packages/patchy/src/client.js";
+import { createElement, render, useQuery } from "../../packages/patchy/src/preact.js";
 import type { RuntimeStreamFrame } from "../../packages/api/src/index.js";
 
 export interface FixtureWindow extends Window {

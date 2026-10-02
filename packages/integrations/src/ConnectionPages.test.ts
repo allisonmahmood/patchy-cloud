@@ -629,13 +629,14 @@ it.layer(services)("company connection pages", (it) => {
         const owner = yield* createCompany("connections-admission");
         const secondAdmin = yield* addUser(owner, "other-admin", "admin");
         const { connection, path } = yield* connect(owner.user, "warehouse");
-        for (const headers of [
+        const forgedHeaders: ReadonlyArray<Record<string, string>> = [
           { origin: "https://attacker.invalid" },
           { origin: "null" },
           { origin: `${origin}/` },
           { "sec-fetch-site": "cross-site" },
           {}
-        ]) {
+        ];
+        for (const headers of forgedHeaders) {
           const response = yield* send(`${path}/disconnect`, {
             method: "POST",
             headers: { cookie: cookie(owner.user), ...headers },

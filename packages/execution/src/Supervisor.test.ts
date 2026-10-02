@@ -238,7 +238,7 @@ it.live(
       const report = yield* reportFor(supervisor, loaded.processGeneration!);
       expect(report.cause).toBe("stopped");
       expect(
-        report.event.limits.find((entry) => entry.limitId === "execution.residency.bytes")!.peak
+        report.event.limits?.find((entry) => entry.limitId === "execution.residency.bytes")?.peak
       ).toBeGreaterThanOrEqual(ceiling);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).aggregateRssBytes).toBe(0);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
@@ -603,8 +603,8 @@ it.live(
         expect.objectContaining({ limitId: "execution.residency.processes", peak: 1 })
       );
       expect(
-        freshReport.event.limits.find((entry) => entry.limitId === "execution.residency.bytes")!
-          .peak
+        freshReport.event.limits?.find((entry) => entry.limitId === "execution.residency.bytes")
+          ?.peak
       ).toBeLessThan(ceiling);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   30_000

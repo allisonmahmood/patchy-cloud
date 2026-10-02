@@ -496,7 +496,7 @@ test("seven company documents stay connected simultaneously over HTTP/2 TLS ingr
 }) => {
   const patch = await instance.publish();
   const pages = await Promise.all(Array.from({ length: 7 }, () => context.newPage()));
-  const streamResponses: Array<{ protocol: string; status: number }> = [];
+  const streamResponses: Array<{ protocol: string | undefined; status: number }> = [];
   for (const page of pages) {
     const cdp = await context.newCDPSession(page);
     await cdp.send("Network.enable");
