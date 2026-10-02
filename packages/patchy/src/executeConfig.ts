@@ -172,7 +172,9 @@ const runConfig = (path: string): Promise<unknown> => {
   const runner = fileURLToPath(new URL(`./executeConfigChild.${extension}`, import.meta.url));
   const child = fork(runner, [path], {
     cwd: dirname(path),
-    execArgv: ["--experimental-transform-types"],
+    // Every supported Node strips types by default, so configs must stay erasable-only. An
+    // explicit empty list keeps the child from inheriting the parent's flags (--input-type).
+    execArgv: [],
     stdio: ["ignore", "ignore", "pipe", "ipc"]
   });
   let response: unknown;
