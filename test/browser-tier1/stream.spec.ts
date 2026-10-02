@@ -317,8 +317,18 @@ test("failed token refresh is bounded and an online retry keeps the same documen
   await expect(page.locator("[data-notice]")).toHaveCount(0);
   available = true;
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await page.clock.fastForward(30_000);
-  await expect.poll(() => generations(frame)).toHaveLength(2);
+  // Online lets the next attempt refresh but keeps the pending backoff, and the attempt
+  // that refreshes backs off again before reconnecting: up to 30 seconds each. Step the
+  // page clock until the reconnect lands rather than betting on one jump and real time.
+  await expect
+    .poll(
+      async () => {
+        await page.clock.fastForward(5_000);
+        return generations(frame);
+      },
+      { intervals: [250], timeout: 30_000 }
+    )
+    .toHaveLength(2);
   expect(attempts).toBe(4);
   await expect(frame.locator("#pasted-copy")).toHaveValue("Draft during a longer outage");
 });
