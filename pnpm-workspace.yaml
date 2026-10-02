@@ -3,7 +3,7 @@ packages:
   - "packages/*"
   - "scripts/dev"
 catalog:
-  parse5: ^7.3.0
+  parse5: ^8.0.1
   # Effect 4 release candidates ship in lockstep; Dependabot bumps these
   # together (see .github/dependabot.yml). Only the language service has
   # its own release line.
