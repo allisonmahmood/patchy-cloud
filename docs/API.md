@@ -499,97 +499,202 @@ substituting the host's limit configuration.
 
 ## Shapes
 
-### Identity
+### RuntimeFailure_8
 
 ```
 {
-  user: {
-    id: string,
-    email: string,
-    name: string
-  },
-  company: {
-    id: string,
-    handle: string,
-    name: string
-  },
-  role: "member" | "admin",
-  machine: {
-    id: string,
-    name: string
-  }
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
 }
 ```
 
-### LoggedOut
+### RuntimeCode
+
+```
+"connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "table_not_declared" | "row_not_found" | "not_found" | "invalid_row" | "unique_violation" | "invalid_cursor" | "not_additive" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "session_refresh_required" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "handler_failed" | "handler_timeout" | "write_conflict" | "patch_paused" | "server_required" | "tier2_not_public" | "limit_exceeded" | "offset_exhausted"
+```
+
+### RuntimeFailure_7
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_6
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_5
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_4
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_3
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_2
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_1
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeSuccess
 
 ```
 {
   ok: true,
-  alreadyRevoked: boolean
+  value: unknown,
+  revisions?: { [key: string]: string }
 }
 ```
 
-### StartDeviceLoginRequest
+### ServerCallReply
+
+```
+RuntimeSuccess | HandlerFailure
+```
+
+### HandlerFailure
 
 ```
 {
-  machineNameHint: string,
-  previousMachineTokenId?: string
+  ok: false,
+  source: "handler",
+  code: string,
+  details?: unknown
 }
 ```
 
-### DeviceLoginStarted
+### RuntimeCall
 
 ```
-{
-  ok: true,
-  deviceCode: string,
-  userCode: string,
-  verificationUrl: string,
-  verificationUrlBare: string,
-  interval: 5,
-  expiresAt: string
-}
+{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.list", args: { connection: string, relation: { schema: string, name: string }, eq?: { [key: string]: string | number | boolean | null }, range?: { column: string, gt?: string | number | boolean | null, gte?: string | number | boolean | null, lt?: string | number | boolean | null, lte?: string | number | boolean | null }, orderBy?: { column: string, direction: "asc" | "desc" }, select?: string[], limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.get", args: { connection: string, relation: { schema: string, name: string }, key: { [key: string]: string | number | boolean | null } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.getMany", args: { connection: string, relation: { schema: string, name: string }, keys: { [key: string]: string | number | boolean | null }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.query", args: { connection: string, sql: string, params: ((string | number | boolean | null) | (string | number | boolean | null)[])[], shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "server.call", args: { handler: string, args: { [key: string]: unknown }, mutationKey?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.list", args: { cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.search", args: { text: string, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.get", args: { id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.getMany", args: { ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.get", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.getMany", args: { table: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.list", args: { table: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.get", args: { alias: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.getMany", args: { alias: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.list", args: { alias: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insert", args: { table: string, row: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insertMany", args: { table: string, rows: { [key: string]: unknown }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.update", args: { table: string, id: string, patch: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.delete", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.put", args: { store: string, name: string, contentType: string } | { store: string, name: string, upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stage", args: { contentType: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.discard", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.inspectUpload", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.get", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.redeem", args: { handle: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.list", args: { store: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stat", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.get", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.list", args: { alias: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.stat", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.delete", args: { store: string, name: string } }
 ```
 
-### PollDeviceLoginRequest
+### RuntimePrincipal
 
 ```
-{
-  deviceCode: string
-}
-```
-
-### DeviceLoginWaiting
-
-```
-{
-  ok: true,
-  status: "pending" | "slow_down"
-}
-```
-
-### DeviceLoginComplete
-
-```
-{
-  ok: true,
-  status: "complete",
-  token: string,
-  machine: {
-    id: string,
-    name: string
-  },
-  company: {
-    handle: string,
-    name: string
-  },
-  user: {
-    email: string
-  },
-  expiresAt: string
-}
+{ userId: string } | null
 ```
 
 ### HandlerSchema
@@ -598,88 +703,214 @@ substituting the host's limit configuration.
 { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: true } | { kind: "object", fields: { [key: string]: HandlerSchema }, optional?: true } | { kind: "array", element: HandlerSchema, optional?: true } | { kind: "enum", values: string[], optional?: true } | { kind: "nullable", value: HandlerSchema, optional?: true } | { kind: "row", table: string, optional?: true } | { kind: "fileHandle" | "upload", optional?: true }
 ```
 
-### PublishMetadata
+### Release
 
 ```
 {
-  filename?: string | null,
-  repoOrg?: string | null,
-  repoName?: string | null,
-  gitBranch?: string | null,
-  gitCommitSha?: string | null,
-  cliVersion?: string | null,
-  fileSha256?: string | null,
-  description?: string
-}
-```
-
-### PublishRequest
-
-```
-{
-  manifest: {
-    manifestVersion: integer,
-    release: string,
-    name?: string,
-    description?: string,
-    tier: 0 | 1 | 2 | 3,
-    tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
-    files: { [key: string]: { description: string, shared?: boolean } },
-    uses: { [key: string]: { kind: "postgres", handle: string, id: string, revision: integer } | { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } | { kind: "sharedStore", patchId: string, store: string, id: string, revision: integer } | { kind: "members" } },
-    handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: HandlerSchema }, result: HandlerSchema, errors?: string[] } },
-    sdkImports?: string[]
+  release: string,
+  package: {
+    tarball: string,
+    integrity: string
   },
-  html: string,
-  server?: string,
-  patchId?: string,
-  scope?: "company" | "public",
-  force?: boolean,
-  publishKey: string,
-  metadata: PublishMetadata
+  manifestVersion: integer,
+  wireVersion: integer,
+  toolchain: {
+    vite: {
+      testedAgainst: string,
+      accepted: string
+    },
+    vite-plugin-singlefile: {
+      testedAgainst: string,
+      accepted: string
+    },
+    typescript: {
+      testedAgainst: string,
+      accepted: string
+    },
+    @types/node: {
+      testedAgainst: string,
+      accepted: string
+    }
+  }
 }
 ```
 
-### PublishCreated
+### Described
 
 ```
 {
   ok: true,
   patchId: string,
-  versionId: string,
-  versionNumber: integer,
-  title: string,
-  name: string,
-  address: string,
-  publicUrl: string,
-  scope: "company" | "public",
-  tier: integer,
-  schemaRevision: integer,
-  provisioned: {
-    tables: string[],
-    columns: string[],
-    indexes: string[],
-    stores: string[]
-  },
-  unused: {
-    tables: string[],
-    columns: string[],
-    indexes: string[],
-    stores: string[]
-  },
-  artifacts: {
-    html: {
-      sha256: string,
-      bytes: integer
-    },
-    server?: {
-      sha256: string,
-      bytes: integer
-    }
-  },
-  handlers?: { name: string, kind: "query" | "mutation" | "action" }[],
-  warnings: string[],
   description: string,
   descriptionUpdatedAt: string | null
+}
+```
+
+### DescriptionRequest
+
+```
+{
+  description: string
+}
+```
+
+### RolledBack
+
+```
+{
+  ok: true,
+  patchId: string,
+  currentVersion: integer,
+  address: string
+}
+```
+
+### RollbackRequest
+
+```
+{
+  versionNumber: integer
+}
+```
+
+### Restored
+
+```
+{
+  ok: true,
+  patchId: string,
+  state: "live"
+}
+```
+
+### ForceRequest
+
+```
+{
+  force?: boolean
+}
+```
+
+### Deleted
+
+```
+{
+  ok: true,
+  patchId: string,
+  state: "deleted",
+  deletedAt: string,
+  purgeAt: string
+}
+```
+
+### Retired
+
+```
+{
+  ok: true,
+  patchId: string,
+  state: "retired",
+  retiredAt: string
+}
+```
+
+### Shared
+
+```
+{
+  ok: true,
+  patchId: string,
+  scope: "company" | "public",
+  publicUrl: string
+}
+```
+
+### ShareRequest
+
+```
+{
+  scope: "company" | "public"
+}
+```
+
+### PatchInventory
+
+```
+{
+  schemaRevision: integer,
+  tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
+  files: { [key: string]: { description: string, shared?: boolean } }
+}
+```
+
+### PrimitiveDetail
+
+```
+{
+  kind: "table" | "store",
+  name: string,
+  description: string,
+  shared: boolean,
+  declarable: boolean,
+  reason?: "not_shared" | "source_off",
+  hint?: string,
+  schemaRevision: integer,
+  columns: { name: string, kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json" | "ref" | "member", optional: boolean, default?: unknown, ref?: string }[],
+  indexes: { name: string, columns: string[], unique: boolean }[]
+}
+```
+
+### PatchDetail
+
+```
+{
+  id: string,
+  name: string,
+  address: string,
+  owner: {
+    id: string,
+    name: string,
+    deactivated: boolean
+  },
+  mine: boolean,
+  tier: integer,
+  scope: "company" | "public",
+  description: string,
+  state: "live" | "retired" | "deleted",
+  retiredAt: string | null,
+  deletedAt: string | null,
+  purgeAt: string | null,
+  currentVersion: integer,
+  publishedAt: string,
+  title: string,
+  descriptionUpdatedAt: string | null,
+  inventory: { tables: { name: string, description: string, shared: boolean, declarable: boolean, reason?: "not_shared" | "source_off", hint?: string }[], stores: { name: string, description: string, shared: boolean, declarable: boolean, reason?: "not_shared" | "source_off", hint?: string }[] } | null,
+  reads: ({ alias: string, patchId: string, name?: string, table: string, state: "live" | "retired" | "deleted" | "gone" } | { alias: string, patchId: string, name?: string, store: string, state: "live" | "retired" | "deleted" | "gone" })[]
+}
+```
+
+### PatchSummary
+
+```
+{
+  id: string,
+  name: string,
+  address: string,
+  owner: {
+    id: string,
+    name: string,
+    deactivated: boolean
+  },
+  mine: boolean,
+  tier: integer,
+  scope: "company" | "public",
+  description: string,
+  state: "live" | "retired" | "deleted",
+  retiredAt: string | null,
+  deletedAt: string | null,
+  purgeAt: string | null,
+  currentVersion: integer,
+  publishedAt: string
 }
 ```
 
@@ -727,412 +958,181 @@ substituting the host's limit configuration.
 }
 ```
 
-### PatchSummary
+### PublishCreated
 
 ```
 {
-  id: string,
-  name: string,
-  address: string,
-  owner: {
-    id: string,
-    name: string,
-    deactivated: boolean
-  },
-  mine: boolean,
-  tier: integer,
-  scope: "company" | "public",
-  description: string,
-  state: "live" | "retired" | "deleted",
-  retiredAt: string | null,
-  deletedAt: string | null,
-  purgeAt: string | null,
-  currentVersion: integer,
-  publishedAt: string
-}
-```
-
-### PatchDetail
-
-```
-{
-  id: string,
-  name: string,
-  address: string,
-  owner: {
-    id: string,
-    name: string,
-    deactivated: boolean
-  },
-  mine: boolean,
-  tier: integer,
-  scope: "company" | "public",
-  description: string,
-  state: "live" | "retired" | "deleted",
-  retiredAt: string | null,
-  deletedAt: string | null,
-  purgeAt: string | null,
-  currentVersion: integer,
-  publishedAt: string,
+  ok: true,
+  patchId: string,
+  versionId: string,
+  versionNumber: integer,
   title: string,
-  descriptionUpdatedAt: string | null,
-  inventory: { tables: { name: string, description: string, shared: boolean, declarable: boolean, reason?: "not_shared" | "source_off", hint?: string }[], stores: { name: string, description: string, shared: boolean, declarable: boolean, reason?: "not_shared" | "source_off", hint?: string }[] } | null,
-  reads: ({ alias: string, patchId: string, name?: string, table: string, state: "live" | "retired" | "deleted" | "gone" } | { alias: string, patchId: string, name?: string, store: string, state: "live" | "retired" | "deleted" | "gone" })[]
-}
-```
-
-### PrimitiveDetail
-
-```
-{
-  kind: "table" | "store",
   name: string,
-  description: string,
-  shared: boolean,
-  declarable: boolean,
-  reason?: "not_shared" | "source_off",
-  hint?: string,
-  schemaRevision: integer,
-  columns: { name: string, kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json" | "ref" | "member", optional: boolean, default?: unknown, ref?: string }[],
-  indexes: { name: string, columns: string[], unique: boolean }[]
-}
-```
-
-### PatchInventory
-
-```
-{
-  schemaRevision: integer,
-  tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
-  files: { [key: string]: { description: string, shared?: boolean } }
-}
-```
-
-### ShareRequest
-
-```
-{
-  scope: "company" | "public"
-}
-```
-
-### Shared
-
-```
-{
-  ok: true,
-  patchId: string,
+  address: string,
+  publicUrl: string,
   scope: "company" | "public",
-  publicUrl: string
-}
-```
-
-### ForceRequest
-
-```
-{
-  force?: boolean
-}
-```
-
-### Retired
-
-```
-{
-  ok: true,
-  patchId: string,
-  state: "retired",
-  retiredAt: string
-}
-```
-
-### Deleted
-
-```
-{
-  ok: true,
-  patchId: string,
-  state: "deleted",
-  deletedAt: string,
-  purgeAt: string
-}
-```
-
-### Restored
-
-```
-{
-  ok: true,
-  patchId: string,
-  state: "live"
-}
-```
-
-### RollbackRequest
-
-```
-{
-  versionNumber: integer
-}
-```
-
-### RolledBack
-
-```
-{
-  ok: true,
-  patchId: string,
-  currentVersion: integer,
-  address: string
-}
-```
-
-### DescriptionRequest
-
-```
-{
-  description: string
-}
-```
-
-### Described
-
-```
-{
-  ok: true,
-  patchId: string,
+  tier: integer,
+  schemaRevision: integer,
+  provisioned: {
+    tables: string[],
+    columns: string[],
+    indexes: string[],
+    stores: string[]
+  },
+  unused: {
+    tables: string[],
+    columns: string[],
+    indexes: string[],
+    stores: string[]
+  },
+  artifacts: {
+    html: {
+      sha256: string,
+      bytes: integer
+    },
+    server?: {
+      sha256: string,
+      bytes: integer
+    }
+  },
+  handlers?: { name: string, kind: "query" | "mutation" | "action" }[],
+  warnings: string[],
   description: string,
   descriptionUpdatedAt: string | null
 }
 ```
 
-### Release
+### PublishRequest
 
 ```
 {
-  release: string,
-  package: {
-    tarball: string,
-    integrity: string
+  manifest: {
+    manifestVersion: integer,
+    release: string,
+    name?: string,
+    description?: string,
+    tier: 0 | 1 | 2 | 3,
+    tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
+    files: { [key: string]: { description: string, shared?: boolean } },
+    uses: { [key: string]: { kind: "postgres", handle: string, id: string, revision: integer } | { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } | { kind: "sharedStore", patchId: string, store: string, id: string, revision: integer } | { kind: "members" } },
+    handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: HandlerSchema }, result: HandlerSchema, errors?: string[] } },
+    sdkImports?: string[]
   },
-  manifestVersion: integer,
-  wireVersion: integer,
-  toolchain: {
-    vite: {
-      testedAgainst: string,
-      accepted: string
-    },
-    vite-plugin-singlefile: {
-      testedAgainst: string,
-      accepted: string
-    },
-    typescript: {
-      testedAgainst: string,
-      accepted: string
-    },
-    @types/node: {
-      testedAgainst: string,
-      accepted: string
-    }
-  }
+  html: string,
+  server?: string,
+  patchId?: string,
+  scope?: "company" | "public",
+  force?: boolean,
+  publishKey: string,
+  metadata: PublishMetadata
 }
 ```
 
-### RuntimePrincipal
+### PublishMetadata
 
 ```
-{ userId: string } | null
+{
+  filename?: string | null,
+  repoOrg?: string | null,
+  repoName?: string | null,
+  gitBranch?: string | null,
+  gitCommitSha?: string | null,
+  cliVersion?: string | null,
+  fileSha256?: string | null,
+  description?: string
+}
 ```
 
-### RuntimeCall
-
-```
-{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.list", args: { connection: string, relation: { schema: string, name: string }, eq?: { [key: string]: string | number | boolean | null }, range?: { column: string, gt?: string | number | boolean | null, gte?: string | number | boolean | null, lt?: string | number | boolean | null, lte?: string | number | boolean | null }, orderBy?: { column: string, direction: "asc" | "desc" }, select?: string[], limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.get", args: { connection: string, relation: { schema: string, name: string }, key: { [key: string]: string | number | boolean | null } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.getMany", args: { connection: string, relation: { schema: string, name: string }, keys: { [key: string]: string | number | boolean | null }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.query", args: { connection: string, sql: string, params: ((string | number | boolean | null) | (string | number | boolean | null)[])[], shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "server.call", args: { handler: string, args: { [key: string]: unknown }, mutationKey?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.list", args: { cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.search", args: { text: string, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.get", args: { id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.getMany", args: { ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.get", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.getMany", args: { table: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.list", args: { table: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.get", args: { alias: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.getMany", args: { alias: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.list", args: { alias: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insert", args: { table: string, row: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insertMany", args: { table: string, rows: { [key: string]: unknown }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.update", args: { table: string, id: string, patch: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.delete", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.put", args: { store: string, name: string, contentType: string } | { store: string, name: string, upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stage", args: { contentType: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.discard", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.inspectUpload", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.get", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.redeem", args: { handle: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.list", args: { store: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stat", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.get", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.list", args: { alias: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.stat", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.delete", args: { store: string, name: string } }
-```
-
-### RuntimeSuccess
+### DeviceLoginComplete
 
 ```
 {
   ok: true,
-  value: unknown,
-  revisions?: { [key: string]: string }
+  status: "complete",
+  token: string,
+  machine: {
+    id: string,
+    name: string
+  },
+  company: {
+    handle: string,
+    name: string
+  },
+  user: {
+    email: string
+  },
+  expiresAt: string
 }
 ```
 
-### HandlerFailure
+### DeviceLoginWaiting
 
 ```
 {
-  ok: false,
-  source: "handler",
-  code: string,
-  details?: unknown
+  ok: true,
+  status: "pending" | "slow_down"
 }
 ```
 
-### ServerCallReply
-
-```
-RuntimeSuccess | HandlerFailure
-```
-
-### RuntimeCode
-
-```
-"connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "table_not_declared" | "row_not_found" | "not_found" | "invalid_row" | "unique_violation" | "invalid_cursor" | "not_additive" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "session_refresh_required" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "handler_failed" | "handler_timeout" | "write_conflict" | "patch_paused" | "server_required" | "tier2_not_public" | "limit_exceeded" | "offset_exhausted"
-```
-
-### RuntimeFailure
+### PollDeviceLoginRequest
 
 ```
 {
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
+  deviceCode: string
 }
 ```
 
-### RuntimeFailure_1
+### DeviceLoginStarted
 
 ```
 {
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
+  ok: true,
+  deviceCode: string,
+  userCode: string,
+  verificationUrl: string,
+  verificationUrlBare: string,
+  interval: 5,
+  expiresAt: string
 }
 ```
 
-### RuntimeFailure_2
+### StartDeviceLoginRequest
 
 ```
 {
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
+  machineNameHint: string,
+  previousMachineTokenId?: string
 }
 ```
 
-### RuntimeFailure_3
+### LoggedOut
 
 ```
 {
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
+  ok: true,
+  alreadyRevoked: boolean
 }
 ```
 
-### RuntimeFailure_4
+### Identity
 
 ```
 {
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
-}
-```
-
-### RuntimeFailure_5
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
-}
-```
-
-### RuntimeFailure_6
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
-}
-```
-
-### RuntimeFailure_7
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
-}
-```
-
-### RuntimeFailure_8
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
+  user: {
+    id: string,
+    email: string,
+    name: string
+  },
+  company: {
+    id: string,
+    handle: string,
+    name: string
+  },
+  role: "member" | "admin",
+  machine: {
+    id: string,
+    name: string
+  }
 }
 ```
 
