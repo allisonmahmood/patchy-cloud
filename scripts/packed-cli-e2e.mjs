@@ -907,13 +907,24 @@ try {
 
   console.log("[packed-cli-e2e] confirming through the real offline-signed browser session");
   const machineName = "Packed login machine";
+  const cookie = authTesting.signedInCookies(authTesting.signSession({ azp: publicBaseUrl }));
+  // Submit what the rendered page carries, as a browser would: the code and the account it shows.
+  const page = await fetch(handoff.verificationUrl, {
+    headers: { cookie },
+    redirect: "manual",
+    signal: AbortSignal.timeout(5_000)
+  });
+  assert.equal(page.status, 200, "the real confirmation page must render for the signed-in user");
+  const rendered = Object.fromEntries(
+    Array.from(
+      (await page.text()).matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g),
+      ([, name, value]) => [name, value]
+    )
+  );
   const confirm = await fetch(handoff.verificationUrlBare, {
     method: "POST",
-    headers: {
-      cookie: authTesting.signedInCookies(authTesting.signSession({ azp: publicBaseUrl })),
-      origin: publicBaseUrl
-    },
-    body: new URLSearchParams({ action: "confirm", code: handoff.userCode, machineName }),
+    headers: { cookie, origin: publicBaseUrl },
+    body: new URLSearchParams({ ...rendered, action: "confirm", machineName }),
     redirect: "manual",
     signal: AbortSignal.timeout(5_000)
   });
