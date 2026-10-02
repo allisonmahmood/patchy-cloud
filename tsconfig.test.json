@@ -8,6 +8,7 @@
     "noEmit": true,
     "declaration": false,
     "declarationMap": false,
+    // The cache keys on code, not on the Effect rules below: delete it after editing them.
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.test.tsbuildinfo",
     "lib": ["ES2024", "DOM"],
@@ -28,6 +29,8 @@
         // clocks and browsers directly.
         "diagnosticSeverity": {
           "anyUnknownInErrorContext": "off",
+          "unknownInEffectCatch": "off",
+          "multipleEffectProvide": "off",
           "preferSchemaOverJson": "off",
           "instanceOfSchema": "off",
           "deterministicKeys": "off",
