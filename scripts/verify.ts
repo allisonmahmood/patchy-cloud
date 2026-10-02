@@ -19,9 +19,17 @@ interface Suite {
 
 const pnpm = (...args: Array<string>) => ["pnpm", ...args];
 
+const [mode, ...flags] = process.argv.slice(2);
+if ((mode !== "check" && mode !== "verify") || flags.some((flag) => flag !== "--changed")) {
+  console.error("Usage: pnpm check | pnpm verify [--changed]");
+  process.exit(2);
+}
+
 const check: ReadonlyArray<Suite> = [
   { name: "format", commands: [pnpm("format:check")] },
-  { name: "lint", commands: [pnpm("lint")] },
+  // ESLint's cache is per file, so a changed type can leave an unchanged caller's
+  // stale pass (no-floating-promises). verify lints from scratch, as CI does.
+  { name: "lint", commands: [mode === "verify" ? pnpm("lint", "--no-cache") : pnpm("lint")] },
   { name: "typecheck", commands: [pnpm("typecheck")] },
   { name: "test", commands: [pnpm("test")] }
 ];
@@ -69,12 +77,6 @@ const changedFiles = () => {
     ...git("ls-files", "--others", "--exclude-standard")
   ];
 };
-
-const [mode, ...flags] = process.argv.slice(2);
-if ((mode !== "check" && mode !== "verify") || flags.some((flag) => flag !== "--changed")) {
-  console.error("Usage: pnpm check | pnpm verify [--changed]");
-  process.exit(2);
-}
 
 const suites: Array<Suite> = [...check];
 const skipped: Array<string> = [];
