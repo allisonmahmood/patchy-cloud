@@ -174,8 +174,8 @@ importers:
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117
       posthog-node:
-        specifier: ^5.52.5
-        version: 5.52.5
+        specifier: ^5.54.1
+        version: 5.54.1
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-rc.117
@@ -1413,8 +1413,8 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  '@posthog/core@1.55.1':
-    resolution: {integrity: sha512-S76bSbCHGVC8oQa1zyue6A6WzkNf1Ue4oRvfvBNLRnFM3UoWnpWnQ4T/4IzrIEtVCQYv1OI7gk8uL8/U6Tuu7w==}
+  '@posthog/core@1.55.2':
+    resolution: {integrity: sha512-2mYxGbDmTLUs096VbcZqSWo0lrI48/BrX65r54NynxxFq409BOx9w73HxOAtOKZ1vblkdV6/GxQTe7KDcIQidg==}
 
   '@posthog/types@1.412.4':
     resolution: {integrity: sha512-Q7lV9O9TbLngjOYw1ucm3bS3tn48xb1B4ZQdDy8gv7yfKe99hCTeWYG4xZ36nJM80VxpTF9TriiJt5hngDOkBg==}
@@ -2468,8 +2468,8 @@ packages:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
 
-  posthog-node@5.52.5:
-    resolution: {integrity: sha512-r4KRXh2MvcHYh1s3NUca022GqujkJjpmD4qbRzWOLVTu8BfN3fqZj+MyKIxvHPXsS8sKsNVX+MlKk2qzW0Y4GQ==}
+  posthog-node@5.54.1:
+    resolution: {integrity: sha512-3+tg86gLKRaR+MjQOdALGUJQDAXHWVyDUJI2h3EJa0c4GWTQu3+R62C3t49dz1T3QWyJq1msq5Qa+B55/ZEHxg==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -3360,7 +3360,7 @@ snapshots:
     dependencies:
       playwright: 1.63.0
 
-  '@posthog/core@1.55.1':
+  '@posthog/core@1.55.2':
     dependencies:
       '@posthog/types': 1.412.4
 
@@ -4205,9 +4205,9 @@ snapshots:
     dependencies:
       xtend: 4.0.2
 
-  posthog-node@5.52.5:
+  posthog-node@5.54.1:
     dependencies:
-      '@posthog/core': 1.55.1
+      '@posthog/core': 1.55.2
 
   preact@10.29.8: {}
 
