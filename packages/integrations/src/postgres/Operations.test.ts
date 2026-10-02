@@ -3,6 +3,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { citext } from "@electric-sql/pglite/contrib/citext";
 import { NodeFileSystem } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
+import { vi } from "vitest";
 import {
   CURRENT_RELEASE,
   PostgresKeyRows,
@@ -288,6 +289,9 @@ const setup = Effect.fn("test.postgresOperations.setup")(function* () {
   };
 }, Effect.provide(NodeFileSystem.layer));
 const decodePage = Schema.decodeUnknownEffect(PostgresPage);
+
+// Every case boots its own PGlite, a cold start that can pass five seconds on a loaded run.
+vi.setConfig({ testTimeout: 30_000 });
 const decodeRows = Schema.decodeUnknownEffect(PostgresRows);
 const decodeKeys = Schema.decodeUnknownEffect(PostgresKeyRows);
 
@@ -376,7 +380,7 @@ it.effect(
         let cursor: string | null = null;
         const labels: unknown[] = [];
         do {
-          const page = yield* call("postgres.list", {
+          const page: typeof PostgresPage.Type = yield* call("postgres.list", {
             ...args,
             ...(cursor === null ? {} : { cursor })
           }).pipe(Effect.flatMap(decodePage));
@@ -446,7 +450,7 @@ it.effect("unkeyed pages stop at 10000 and a maximal page never fetches a 1001st
     };
     let cursor: string | null = null;
     for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
-      const page = yield* call("postgres.list", {
+      const page: typeof PostgresPage.Type = yield* call("postgres.list", {
         ...args,
         ...(cursor === null ? {} : { cursor })
       }).pipe(Effect.flatMap(decodePage));
