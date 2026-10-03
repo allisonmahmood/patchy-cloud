@@ -407,7 +407,6 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     }).annotateMerge(
       describe(
         "Restore an owned retired or deleted patch to live, preserving its address and description. " +
-          "Recovery applies only to deletions after the lifecycle migration; legacy deleted patch IDs remain 404. " +
           "Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. " +
           "The current version's off sources refuse with `sources_off`, listing each source's table and " +
           "state, including gone, unless `force` is true. Ask the person you are working for before forcing. " +
