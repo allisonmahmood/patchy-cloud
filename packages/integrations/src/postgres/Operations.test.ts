@@ -14,6 +14,7 @@ import {
 import { Binding, CallbackGateway, InvocationCapabilities, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -178,7 +179,8 @@ const refreshed: typeof Snapshot.Type = {
         }
   )
 };
-const setup = Effect.fn("test.postgresOperations.setup")(function* () {
+/** Opens a seeded PGlite cluster; a destroyed transport reopens it from the same directory. */
+const database = Effect.fn("test.postgresOperations.database")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "postgres-operations-" });
   let db: PGlite | undefined;
@@ -222,7 +224,6 @@ const setup = Effect.fn("test.postgresOperations.setup")(function* () {
       CASE WHEN n > 2 THEN NULL ELSE 1 END, 'not-a-prototype', 'new-contract'
       FROM generate_series(1, 4) n;
     CREATE VIEW public.unkeyed AS SELECT n::integer AS id FROM generate_series(1, 10001) n;`);
-  const queries: string[] = [];
   // This trusted in-process adapter carries rows only; production owns all execution policy.
   const transport: Execution.StatementTransport = {
     execute: (text, parameters, onRow) =>
@@ -240,6 +241,14 @@ const setup = Effect.fn("test.postgresOperations.setup")(function* () {
       }),
     destroy: close
   };
+  return { sql, transport };
+}, Effect.provide(NodeFileSystem.layer));
+
+/** Fresh handlers, query log and connection state over a database transport. */
+const operations = Effect.fn("test.postgresOperations.operations")(function* (
+  transport: Execution.StatementTransport
+) {
+  const queries: string[] = [];
   const execution = Execution.Execution.of({
     query: Effect.fn("test.postgresOperations.query")(function* ({
       text,
@@ -278,260 +287,446 @@ const setup = Effect.fn("test.postgresOperations.setup")(function* () {
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, requestBinding));
   return {
     call,
-    sql,
     queries,
     handlers,
-    execution,
-    liveStore,
     setConnection: (next: ConnectionStore.Connection) => {
       current = next;
     }
   };
-}, Effect.provide(NodeFileSystem.layer));
+});
+// Read-only cases share one cluster; the drift cases alter its schema and open their own.
+class SharedDatabase extends Context.Service<SharedDatabase, Execution.StatementTransport>()(
+  "@patchy/integrations/Operations.test/SharedDatabase"
+) {}
+const shared = Layer.effect(
+  SharedDatabase,
+  database().pipe(Effect.map(({ transport }) => transport))
+);
+const sharedOperations = Effect.gen(function* () {
+  return yield* operations(yield* SharedDatabase);
+});
+const isolated = Effect.fn("test.postgresOperations.isolated")(function* () {
+  const { sql, transport } = yield* database();
+  return { sql, ...(yield* operations(transport)) };
+});
 const decodePage = Schema.decodeUnknownEffect(PostgresPage);
 
-// Every case boots its own PGlite, a cold start that can pass five seconds on a loaded run.
+// A PGlite cold start can pass five seconds on a loaded run.
 vi.setConfig({ testTimeout: 30_000 });
 const decodeRows = Schema.decodeUnknownEffect(PostgresRows);
 const decodeKeys = Schema.decodeUnknownEffect(PostgresKeyRows);
 
-it.effect(
-  "projects every mapping category through the pinned snapshot and quotes hostile identifiers",
-  () =>
-    Effect.gen(function* () {
-      const { call } = yield* setup();
-      const page = yield* call("postgres.list", {
-        connection: "sales",
-        relation,
-        eq: { enabled: true },
-        range: { column: 'id";--', gte: 1, lt: 3 },
-        orderBy: { column: 'id";--', direction: "desc" }
-      }).pipe(Effect.flatMap(decodePage));
-      assert.deepStrictEqual(
-        page.rows.map((row) => row['id";--']),
-        [2, 1]
-      );
-      assert.deepStrictEqual(page.rows[0], {
-        'id";--': 2,
-        small: 7,
-        wide: "9007199254740993",
-        decimal: "12345678901234567890.123456",
-        single: 1.5,
-        double: 2.25,
-        label: "row-2",
-        uuid: "00000000-0000-4000-8000-000000000002",
-        insensitive: "MiXeD-2",
-        enabled: true,
-        at: "2026-01-02T01:04:05.123456Z",
-        local: "2026-01-02T03:04:05.654321",
-        day: "2026-01-02",
-        document: { nested: [1, true] },
-        tags: ["a", "b"],
-        mood: "happy",
-        domain: 1,
-        rank: 1,
-        ["__proto__"]: "not-a-prototype"
-      });
-      assert.isFalse(Object.hasOwn(page.rows[0]!, "after_refresh"));
-      const nativeText = yield* call("postgres.list", {
-        connection: "sales",
-        relation,
-        select: ["uuid", "insensitive"],
-        eq: {
-          uuid: "00000000-0000-4000-8000-000000000002",
-          insensitive: "mixed-2"
-        }
-      }).pipe(Effect.flatMap(decodePage));
-      assert.deepStrictEqual(nativeText.rows, [
-        { uuid: "00000000-0000-4000-8000-000000000002", insensitive: "MiXeD-2" }
-      ]);
-      for (const args of [
-        { eq: { document: "wrong-kind" } },
-        { eq: { wide: 9007199254740992 } },
-        { range: { column: "rank", gt: null } },
-        { range: { column: "rank", gt: 0, gte: 0 } },
-        { range: { column: "rank" } },
-        { orderBy: { column: "tags", direction: "asc" } },
-        { select: ["after_refresh"] },
-        { select: ["label", "label"] }
-      ])
-        assert.strictEqual(
-          (yield* call("postgres.list", { connection: "sales", relation, ...args }).pipe(
-            Effect.flip
-          )).code,
-          "invalid_request"
-        );
-    }).pipe(Effect.scoped)
-);
-
-it.effect(
-  "keysets preserve nullable ordering in both directions even when selected columns omit the keys",
-  () =>
-    Effect.gen(function* () {
-      const { call } = yield* setup();
-      for (const direction of ["asc", "desc"] as const) {
-        const args = {
+it.layer(shared, { timeout: 30_000 })("read-only operations over one cluster", (it) => {
+  it.effect(
+    "projects every mapping category through the pinned snapshot and quotes hostile identifiers",
+    () =>
+      Effect.gen(function* () {
+        const { call } = yield* sharedOperations;
+        const page = yield* call("postgres.list", {
           connection: "sales",
           relation,
-          orderBy: { column: "rank", direction },
-          select: ["label"],
-          limit: 1
-        };
-        let cursor: string | null = null;
-        const labels: unknown[] = [];
-        do {
-          const page: typeof PostgresPage.Type = yield* call("postgres.list", {
-            ...args,
-            ...(cursor === null ? {} : { cursor })
-          }).pipe(Effect.flatMap(decodePage));
-          for (const row of page.rows) {
-            assert.deepStrictEqual(Object.keys(row), ["label"]);
-            labels.push(row.label);
-          }
-          cursor = page.cursor;
-        } while (cursor !== null);
+          eq: { enabled: true },
+          range: { column: 'id";--', gte: 1, lt: 3 },
+          orderBy: { column: 'id";--', direction: "desc" }
+        }).pipe(Effect.flatMap(decodePage));
         assert.deepStrictEqual(
-          labels,
-          direction === "asc"
-            ? ["row-1", "row-2", "row-3", "row-4"]
-            : ["row-2", "row-1", "row-4", "row-3"]
+          page.rows.map((row) => row['id";--']),
+          [2, 1]
         );
-      }
-      const first = yield* call("postgres.list", { connection: "sales", relation, limit: 1 }).pipe(
-        Effect.flatMap(decodePage)
-      );
-      for (const changes of [
-        { eq: { enabled: false } },
-        { orderBy: { column: "rank", direction: "asc" } },
-        { relation: { schema: "public", name: "unkeyed" } }
-      ])
+        assert.deepStrictEqual(page.rows[0], {
+          'id";--': 2,
+          small: 7,
+          wide: "9007199254740993",
+          decimal: "12345678901234567890.123456",
+          single: 1.5,
+          double: 2.25,
+          label: "row-2",
+          uuid: "00000000-0000-4000-8000-000000000002",
+          insensitive: "MiXeD-2",
+          enabled: true,
+          at: "2026-01-02T01:04:05.123456Z",
+          local: "2026-01-02T03:04:05.654321",
+          day: "2026-01-02",
+          document: { nested: [1, true] },
+          tags: ["a", "b"],
+          mood: "happy",
+          domain: 1,
+          rank: 1,
+          ["__proto__"]: "not-a-prototype"
+        });
+        assert.isFalse(Object.hasOwn(page.rows[0]!, "after_refresh"));
+        const nativeText = yield* call("postgres.list", {
+          connection: "sales",
+          relation,
+          select: ["uuid", "insensitive"],
+          eq: {
+            uuid: "00000000-0000-4000-8000-000000000002",
+            insensitive: "mixed-2"
+          }
+        }).pipe(Effect.flatMap(decodePage));
+        assert.deepStrictEqual(nativeText.rows, [
+          { uuid: "00000000-0000-4000-8000-000000000002", insensitive: "MiXeD-2" }
+        ]);
+        for (const args of [
+          { eq: { document: "wrong-kind" } },
+          { eq: { wide: 9007199254740992 } },
+          { range: { column: "rank", gt: null } },
+          { range: { column: "rank", gt: 0, gte: 0 } },
+          { range: { column: "rank" } },
+          { orderBy: { column: "tags", direction: "asc" } },
+          { select: ["after_refresh"] },
+          { select: ["label", "label"] }
+        ])
+          assert.strictEqual(
+            (yield* call("postgres.list", { connection: "sales", relation, ...args }).pipe(
+              Effect.flip
+            )).code,
+            "invalid_request"
+          );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "keysets preserve nullable ordering in both directions even when selected columns omit the keys",
+    () =>
+      Effect.gen(function* () {
+        const { call } = yield* sharedOperations;
+        for (const direction of ["asc", "desc"] as const) {
+          const args = {
+            connection: "sales",
+            relation,
+            orderBy: { column: "rank", direction },
+            select: ["label"],
+            limit: 1
+          };
+          let cursor: string | null = null;
+          const labels: unknown[] = [];
+          do {
+            const page: typeof PostgresPage.Type = yield* call("postgres.list", {
+              ...args,
+              ...(cursor === null ? {} : { cursor })
+            }).pipe(Effect.flatMap(decodePage));
+            for (const row of page.rows) {
+              assert.deepStrictEqual(Object.keys(row), ["label"]);
+              labels.push(row.label);
+            }
+            cursor = page.cursor;
+          } while (cursor !== null);
+          assert.deepStrictEqual(
+            labels,
+            direction === "asc"
+              ? ["row-1", "row-2", "row-3", "row-4"]
+              : ["row-2", "row-1", "row-4", "row-3"]
+          );
+        }
+        const first = yield* call("postgres.list", {
+          connection: "sales",
+          relation,
+          limit: 1
+        }).pipe(Effect.flatMap(decodePage));
+        for (const changes of [
+          { eq: { enabled: false } },
+          { orderBy: { column: "rank", direction: "asc" } },
+          { relation: { schema: "public", name: "unkeyed" } }
+        ])
+          assert.strictEqual(
+            (yield* call("postgres.list", {
+              connection: "sales",
+              relation,
+              cursor: first.cursor,
+              ...changes
+            }).pipe(Effect.flip)).code,
+            "invalid_cursor"
+          );
+        const altered = JSON.parse(Buffer.from(first.cursor!, "base64url").toString("utf8"));
+        altered.values = ["not-an-integer"];
         assert.strictEqual(
           (yield* call("postgres.list", {
             connection: "sales",
             relation,
-            cursor: first.cursor,
-            ...changes
+            cursor: Buffer.from(JSON.stringify(altered)).toString("base64url")
           }).pipe(Effect.flip)).code,
           "invalid_cursor"
         );
-      const altered = JSON.parse(Buffer.from(first.cursor!, "base64url").toString("utf8"));
-      altered.values = ["not-an-integer"];
-      assert.strictEqual(
-        (yield* call("postgres.list", {
-          connection: "sales",
-          relation,
-          cursor: Buffer.from(JSON.stringify(altered)).toString("base64url")
-        }).pipe(Effect.flip)).code,
-        "invalid_cursor"
-      );
-      const changedRevision = {
-        ...binding,
-        manifest: { ...binding.manifest, uses: { sales: { ...declaration, revision: 2 } } }
-      };
-      assert.strictEqual(
-        (yield* call(
-          "postgres.list",
-          { connection: "sales", relation, cursor: first.cursor },
-          changedRevision
-        ).pipe(Effect.flip)).code,
-        "invalid_cursor"
-      );
-    }).pipe(Effect.scoped)
-);
+        const changedRevision = {
+          ...binding,
+          manifest: { ...binding.manifest, uses: { sales: { ...declaration, revision: 2 } } }
+        };
+        assert.strictEqual(
+          (yield* call(
+            "postgres.list",
+            { connection: "sales", relation, cursor: first.cursor },
+            changedRevision
+          ).pipe(Effect.flip)).code,
+          "invalid_cursor"
+        );
+      }).pipe(Effect.scoped)
+  );
 
-it.effect("unkeyed pages stop at 10000 and a maximal page never fetches a 1001st row", () =>
-  Effect.gen(function* () {
-    const { call } = yield* setup();
-    const args = {
-      connection: "sales",
-      relation: { schema: "public", name: "unkeyed" },
-      limit: 1000,
-      orderBy: { column: "id", direction: "asc" }
-    };
-    let cursor: string | null = null;
-    for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
-      const page: typeof PostgresPage.Type = yield* call("postgres.list", {
-        ...args,
-        ...(cursor === null ? {} : { cursor })
-      }).pipe(Effect.flatMap(decodePage));
-      assert.strictEqual(page.rows.length, 1000);
-      assert.strictEqual(page.rows[0]!.id, pageNumber * 1000 + 1);
-      assert.strictEqual(page.rows[999]!.id, (pageNumber + 1) * 1000);
-      cursor = page.cursor;
-    }
-    assert.strictEqual(
-      (yield* call("postgres.list", { ...args, cursor }).pipe(Effect.flip)).code,
-      "offset_exhausted"
-    );
-    const altered = JSON.parse(Buffer.from(cursor!, "base64url").toString("utf8"));
-    for (const offset of [-1, 0.5, 10001]) {
-      altered.offset = offset;
-      assert.strictEqual(
-        (yield* call("postgres.list", {
-          ...args,
-          cursor: Buffer.from(JSON.stringify(altered)).toString("base64url")
-        }).pipe(Effect.flip)).code,
-        "invalid_cursor"
-      );
-    }
-    assert.strictEqual(
-      (yield* call("postgres.get", {
-        connection: "sales",
-        relation: args.relation,
-        key: { id: 1 }
-      }).pipe(Effect.flip)).code,
-      "relation_unknown"
-    );
-    assert.strictEqual(
-      (yield* call("postgres.list", { ...args, limit: 1001 }).pipe(Effect.flip)).code,
-      "too_large"
-    );
-  }).pipe(Effect.scoped)
-);
-
-it.effect(
-  "getMany is one bounded read preserving input order, missing keys and duplicate positions",
-  () =>
+  it.effect("unkeyed pages stop at 10000 and a maximal page never fetches a 1001st row", () =>
     Effect.gen(function* () {
-      const { call, queries } = yield* setup();
-      const result = yield* call("postgres.getMany", {
+      const { call } = yield* sharedOperations;
+      const args = {
         connection: "sales",
-        relation,
-        keys: [{ 'id";--': 3 }, { 'id";--': 99 }, { 'id";--': 1 }, { 'id";--': 3 }]
-      }).pipe(Effect.flatMap(decodeKeys));
-      assert.deepStrictEqual(
-        result.rows.map((row) => row?.label ?? null),
-        ["row-3", null, "row-1", "row-3"]
+        relation: { schema: "public", name: "unkeyed" },
+        limit: 1000,
+        orderBy: { column: "id", direction: "asc" }
+      };
+      let cursor: string | null = null;
+      for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+        const page: typeof PostgresPage.Type = yield* call("postgres.list", {
+          ...args,
+          ...(cursor === null ? {} : { cursor })
+        }).pipe(Effect.flatMap(decodePage));
+        assert.strictEqual(page.rows.length, 1000);
+        assert.strictEqual(page.rows[0]!.id, pageNumber * 1000 + 1);
+        assert.strictEqual(page.rows[999]!.id, (pageNumber + 1) * 1000);
+        cursor = page.cursor;
+      }
+      assert.strictEqual(
+        (yield* call("postgres.list", { ...args, cursor }).pipe(Effect.flip)).code,
+        "offset_exhausted"
       );
-      assert.strictEqual(queries.length, 1);
-      assert.deepStrictEqual(
-        yield* call("postgres.get", { connection: "sales", relation, key: { 'id";--': 99 } }).pipe(
-          Effect.flatMap(decodeKeys)
-        ),
-        { ok: true, rows: [null] }
+      const altered = JSON.parse(Buffer.from(cursor!, "base64url").toString("utf8"));
+      for (const offset of [-1, 0.5, 10001]) {
+        altered.offset = offset;
+        assert.strictEqual(
+          (yield* call("postgres.list", {
+            ...args,
+            cursor: Buffer.from(JSON.stringify(altered)).toString("base64url")
+          }).pipe(Effect.flip)).code,
+          "invalid_cursor"
+        );
+      }
+      assert.strictEqual(
+        (yield* call("postgres.get", {
+          connection: "sales",
+          relation: args.relation,
+          key: { id: 1 }
+        }).pipe(Effect.flip)).code,
+        "relation_unknown"
       );
       assert.strictEqual(
-        (yield* call("postgres.getMany", {
-          connection: "sales",
-          relation,
-          keys: [{ 'id";--': 1, label: "unexpected" }]
-        }).pipe(Effect.flip)).code,
-        "invalid_request"
-      );
-      assert.strictEqual(
-        (yield* call("postgres.getMany", {
-          connection: "sales",
-          relation,
-          keys: Array.from({ length: 1001 }, () => ({ 'id";--': 1 }))
-        }).pipe(Effect.flip)).code,
+        (yield* call("postgres.list", { ...args, limit: 1001 }).pipe(Effect.flip)).code,
         "too_large"
       );
     }).pipe(Effect.scoped)
-);
+  );
+
+  it.effect(
+    "getMany is one bounded read preserving input order, missing keys and duplicate positions",
+    () =>
+      Effect.gen(function* () {
+        const { call, queries } = yield* sharedOperations;
+        const result = yield* call("postgres.getMany", {
+          connection: "sales",
+          relation,
+          keys: [{ 'id";--': 3 }, { 'id";--': 99 }, { 'id";--': 1 }, { 'id";--': 3 }]
+        }).pipe(Effect.flatMap(decodeKeys));
+        assert.deepStrictEqual(
+          result.rows.map((row) => row?.label ?? null),
+          ["row-3", null, "row-1", "row-3"]
+        );
+        assert.strictEqual(queries.length, 1);
+        assert.deepStrictEqual(
+          yield* call("postgres.get", {
+            connection: "sales",
+            relation,
+            key: { 'id";--': 99 }
+          }).pipe(Effect.flatMap(decodeKeys)),
+          { ok: true, rows: [null] }
+        );
+        assert.strictEqual(
+          (yield* call("postgres.getMany", {
+            connection: "sales",
+            relation,
+            keys: [{ 'id";--': 1, label: "unexpected" }]
+          }).pipe(Effect.flip)).code,
+          "invalid_request"
+        );
+        assert.strictEqual(
+          (yield* call("postgres.getMany", {
+            connection: "sales",
+            relation,
+            keys: Array.from({ length: 1001 }, () => ({ 'id";--': 1 }))
+          }).pipe(Effect.flip)).code,
+          "too_large"
+        );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "strict query checks names and native types on empty results and refuses lossy or invalid values",
+    () =>
+      Effect.gen(function* () {
+        const { call } = yield* sharedOperations;
+        for (const [sql, shape] of [
+          ["SELECT 1 AS extra WHERE false", { wanted: { kind: "integer" } }],
+          ["SELECT 1 AS duplicate, 2 AS duplicate WHERE false", { duplicate: { kind: "integer" } }],
+          ["SELECT 1::bigint AS value WHERE false", { value: { kind: "integer" } }],
+          ["SELECT 1::numeric AS value WHERE false", { value: { kind: "number" } }],
+          ["SELECT NULL::text AS value", { value: { kind: "text" } }],
+          ["SELECT 'NaN'::float8 AS value", { value: { kind: "number" } }],
+          ["SELECT 'Infinity'::float8 AS value", { value: { kind: "number" } }],
+          ["SELECT 9007199254740993::bigint AS value", { value: { kind: "integer" } }]
+        ] as const)
+          assert.strictEqual(
+            (yield* call("postgres.query", { connection: "sales", sql, params: [], shape }).pipe(
+              Effect.flip
+            )).code,
+            "shape_mismatch"
+          );
+        const result = yield* call("postgres.query", {
+          connection: "sales",
+          sql: "SELECT $1::text AS secret, 7::integer AS count, true AS enabled, 1.5::float8 AS ratio, NULL::text AS absent, '{\"ok\":true}'::jsonb AS data, '2026-01-02 03:04:05.123456+02'::timestamptz AS at, 9007199254740993::bigint AS wide, 'dropped' AS extra",
+          params: ["private-parameter"],
+          shape: {
+            secret: { kind: "text" },
+            count: { kind: "integer" },
+            enabled: { kind: "boolean" },
+            ratio: { kind: "number" },
+            absent: { kind: "text", optional: true },
+            data: { kind: "json" },
+            at: { kind: "timestamp" },
+            wide: { kind: "text" }
+          }
+        }).pipe(Effect.flatMap(decodeRows));
+        assert.deepStrictEqual(result.rows, [
+          {
+            secret: "private-parameter",
+            count: 7,
+            enabled: true,
+            ratio: 1.5,
+            absent: null,
+            data: { ok: true },
+            at: "2026-01-02T01:04:05.123456Z",
+            wide: "9007199254740993"
+          }
+        ]);
+        for (const shape of [
+          { value: { kind: "ref", table: "notes" } },
+          { value: { kind: "text", default: "unsafe" } }
+        ])
+          assert.strictEqual(
+            (yield* call("postgres.query", {
+              connection: "sales",
+              sql: "SELECT 'x' AS value",
+              params: [],
+              shape
+            }).pipe(Effect.flip)).code,
+            "invalid_request"
+          );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "requires a live declared company binding and emits trusted query-only log metadata without params",
+    () =>
+      Effect.gen(function* () {
+        const { call, handlers, setConnection } = yield* sharedOperations;
+        const args = { connection: "sales", relation };
+        assert.strictEqual(
+          (yield* call("postgres.list", { ...args, connection: "notDeclared" }).pipe(Effect.flip))
+            .code,
+          "connection_not_declared"
+        );
+        for (const requestBinding of [
+          { ...binding, companyId: "cmp_other" },
+          { ...binding, identity: null },
+          { ...binding, scope: "public" as const }
+        ])
+          assert.strictEqual(
+            (yield* call("postgres.list", args, requestBinding).pipe(Effect.flip)).code,
+            "access_denied"
+          );
+        const queryArgs = {
+          connection: "sales",
+          sql: "SELECT $1::integer AS value",
+          params: ["private-parameter"],
+          shape: { value: { kind: "text" } }
+        };
+        assert.strictEqual(
+          handlers["postgres.query"].connectionId!(queryArgs, binding),
+          declaration.id
+        );
+        assert.strictEqual(handlers["postgres.query"].sql!(queryArgs), queryArgs.sql);
+        assert.isUndefined(handlers["postgres.list"].sql);
+        assert.strictEqual(handlers["postgres.list"].resource!(args), '"sales"";--"."order"";--"');
+        assert.strictEqual(
+          handlers["postgres.getMany"].rowCount!({ ok: true, rows: [{}, null, {}] }),
+          2
+        );
+        assert.isNull(
+          handlers["postgres.query"].connectionId!(
+            { ...queryArgs, connection: "notDeclared", connectionId: declaration.id },
+            binding
+          )
+        );
+        const failure = yield* call("postgres.query", {
+          ...queryArgs,
+          sql: "SELECT $1::text AS value",
+          shape: { value: { kind: "integer" } }
+        }).pipe(Effect.flip);
+        assert.strictEqual(failure.code, "shape_mismatch");
+        assert.notInclude(JSON.stringify(failure), "private-parameter");
+        setConnection(new ConnectionStore.Connection({ ...connection, status: "disconnected" }));
+        assert.strictEqual(
+          (yield* call("postgres.list", args).pipe(Effect.flip)).code,
+          "access_denied"
+        );
+        setConnection(new ConnectionStore.Connection({ ...connection, handle: "retargeted" }));
+        assert.strictEqual(
+          (yield* call("postgres.list", args).pipe(Effect.flip)).code,
+          "access_denied"
+        );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("an action rechecks a disconnected connection on its next callback", () =>
+    Effect.gen(function* () {
+      const { handlers, setConnection } = yield* sharedOperations;
+      const capabilities = yield* InvocationCapabilities.make;
+      const gateway = yield* CallbackGateway.make(handlers).pipe(
+        Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
+      );
+      const capability = yield* capabilities.issue({
+        binding: { ...binding, manifest: { ...binding.manifest, tier: 2 } },
+        kind: "action",
+        attempt: {
+          invocationId: "inv_connection_action",
+          attemptId: "attempt_connection_action",
+          processGeneration: 1,
+          deadline: (yield* Clock.currentTimeMillis) + 60_000
+        },
+        reauthorize: Effect.succeed(binding.identity!)
+      });
+      const request = {
+        op: "postgres.query",
+        args: {
+          connection: "sales",
+          sql: "SELECT 7::integer AS value",
+          params: [],
+          shape: { value: { kind: "integer" } }
+        }
+      };
+      assert.deepStrictEqual(
+        yield* gateway.callback(capability.token, capability.attempt, request),
+        {
+          ok: true,
+          value: { ok: true, rows: [{ value: 7 }] }
+        }
+      );
+      setConnection(new ConnectionStore.Connection({ ...connection, status: "disconnected" }));
+      const refusal = yield* gateway.callback(capability.token, capability.attempt, request);
+      assert.include(refusal, { ok: false, source: "patchy", code: "access_denied" });
+      assert.isTrue(yield* capabilities.settle(capability.token, "returned"));
+    }).pipe(Effect.scoped, Effect.provide(RuntimeLog.layer.pipe(Layer.provide(Testing.layer()))))
+  );
+});
 
 it.effect("refresh never rewrites the pinned contract and source drift fails explicitly", () =>
   Effect.gen(function* () {
-    const { call, sql } = yield* setup();
+    const { call, sql } = yield* isolated();
     yield* sql('ALTER TABLE "sales"";--"."order"";--" ALTER COLUMN small TYPE text');
     assert.strictEqual(
       (yield* call("postgres.list", { connection: "sales", relation }).pipe(Effect.flip)).code,
@@ -552,7 +747,7 @@ it.effect(
   "refuses native numeric drift hidden by text projection, including empty and unselected results",
   () =>
     Effect.gen(function* () {
-      const { call, sql } = yield* setup();
+      const { call, sql } = yield* isolated();
       const missing = { connection: "sales", relation, select: ["label"], eq: { 'id";--': 99 } };
       assert.deepStrictEqual(
         (yield* call("postgres.list", missing).pipe(Effect.flatMap(decodePage))).rows,
@@ -610,178 +805,4 @@ it.effect(
         [1]
       );
     }).pipe(Effect.scoped)
-);
-
-it.effect(
-  "strict query checks names and native types on empty results and refuses lossy or invalid values",
-  () =>
-    Effect.gen(function* () {
-      const { call } = yield* setup();
-      for (const [sql, shape] of [
-        ["SELECT 1 AS extra WHERE false", { wanted: { kind: "integer" } }],
-        ["SELECT 1 AS duplicate, 2 AS duplicate WHERE false", { duplicate: { kind: "integer" } }],
-        ["SELECT 1::bigint AS value WHERE false", { value: { kind: "integer" } }],
-        ["SELECT 1::numeric AS value WHERE false", { value: { kind: "number" } }],
-        ["SELECT NULL::text AS value", { value: { kind: "text" } }],
-        ["SELECT 'NaN'::float8 AS value", { value: { kind: "number" } }],
-        ["SELECT 'Infinity'::float8 AS value", { value: { kind: "number" } }],
-        ["SELECT 9007199254740993::bigint AS value", { value: { kind: "integer" } }]
-      ] as const)
-        assert.strictEqual(
-          (yield* call("postgres.query", { connection: "sales", sql, params: [], shape }).pipe(
-            Effect.flip
-          )).code,
-          "shape_mismatch"
-        );
-      const result = yield* call("postgres.query", {
-        connection: "sales",
-        sql: "SELECT $1::text AS secret, 7::integer AS count, true AS enabled, 1.5::float8 AS ratio, NULL::text AS absent, '{\"ok\":true}'::jsonb AS data, '2026-01-02 03:04:05.123456+02'::timestamptz AS at, 9007199254740993::bigint AS wide, 'dropped' AS extra",
-        params: ["private-parameter"],
-        shape: {
-          secret: { kind: "text" },
-          count: { kind: "integer" },
-          enabled: { kind: "boolean" },
-          ratio: { kind: "number" },
-          absent: { kind: "text", optional: true },
-          data: { kind: "json" },
-          at: { kind: "timestamp" },
-          wide: { kind: "text" }
-        }
-      }).pipe(Effect.flatMap(decodeRows));
-      assert.deepStrictEqual(result.rows, [
-        {
-          secret: "private-parameter",
-          count: 7,
-          enabled: true,
-          ratio: 1.5,
-          absent: null,
-          data: { ok: true },
-          at: "2026-01-02T01:04:05.123456Z",
-          wide: "9007199254740993"
-        }
-      ]);
-      for (const shape of [
-        { value: { kind: "ref", table: "notes" } },
-        { value: { kind: "text", default: "unsafe" } }
-      ])
-        assert.strictEqual(
-          (yield* call("postgres.query", {
-            connection: "sales",
-            sql: "SELECT 'x' AS value",
-            params: [],
-            shape
-          }).pipe(Effect.flip)).code,
-          "invalid_request"
-        );
-      assert.strictEqual(
-        (yield* call("postgres.query", {
-          connection: "sales",
-          sql: 'INSERT INTO "sales"";--"."order"";--" ("id"";--") VALUES (99)',
-          params: [],
-          shape: { value: { kind: "text" } }
-        }).pipe(Effect.flip)).code,
-        "invalid_query"
-      );
-    }).pipe(Effect.scoped)
-);
-
-it.effect(
-  "requires a live declared company binding and emits trusted query-only log metadata without params",
-  () =>
-    Effect.gen(function* () {
-      const { call, handlers, setConnection } = yield* setup();
-      const args = { connection: "sales", relation };
-      assert.strictEqual(
-        (yield* call("postgres.list", { ...args, connection: "notDeclared" }).pipe(Effect.flip))
-          .code,
-        "connection_not_declared"
-      );
-      for (const requestBinding of [
-        { ...binding, companyId: "cmp_other" },
-        { ...binding, identity: null },
-        { ...binding, scope: "public" as const }
-      ])
-        assert.strictEqual(
-          (yield* call("postgres.list", args, requestBinding).pipe(Effect.flip)).code,
-          "access_denied"
-        );
-      const queryArgs = {
-        connection: "sales",
-        sql: "SELECT $1::integer AS value",
-        params: ["private-parameter"],
-        shape: { value: { kind: "text" } }
-      };
-      assert.strictEqual(
-        handlers["postgres.query"].connectionId!(queryArgs, binding),
-        declaration.id
-      );
-      assert.strictEqual(handlers["postgres.query"].sql!(queryArgs), queryArgs.sql);
-      assert.isUndefined(handlers["postgres.list"].sql);
-      assert.strictEqual(handlers["postgres.list"].resource!(args), '"sales"";--"."order"";--"');
-      assert.strictEqual(
-        handlers["postgres.getMany"].rowCount!({ ok: true, rows: [{}, null, {}] }),
-        2
-      );
-      assert.isNull(
-        handlers["postgres.query"].connectionId!(
-          { ...queryArgs, connection: "notDeclared", connectionId: declaration.id },
-          binding
-        )
-      );
-      const failure = yield* call("postgres.query", {
-        ...queryArgs,
-        sql: "SELECT $1::text AS value",
-        shape: { value: { kind: "integer" } }
-      }).pipe(Effect.flip);
-      assert.strictEqual(failure.code, "shape_mismatch");
-      assert.notInclude(JSON.stringify(failure), "private-parameter");
-      setConnection(new ConnectionStore.Connection({ ...connection, status: "disconnected" }));
-      assert.strictEqual(
-        (yield* call("postgres.list", args).pipe(Effect.flip)).code,
-        "access_denied"
-      );
-      setConnection(new ConnectionStore.Connection({ ...connection, handle: "retargeted" }));
-      assert.strictEqual(
-        (yield* call("postgres.list", args).pipe(Effect.flip)).code,
-        "access_denied"
-      );
-    }).pipe(Effect.scoped)
-);
-
-it.effect("an action rechecks a disconnected connection on its next callback", () =>
-  Effect.gen(function* () {
-    const { handlers, setConnection } = yield* setup();
-    const capabilities = yield* InvocationCapabilities.make;
-    const gateway = yield* CallbackGateway.make(handlers).pipe(
-      Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
-    );
-    const capability = yield* capabilities.issue({
-      binding: { ...binding, manifest: { ...binding.manifest, tier: 2 } },
-      kind: "action",
-      attempt: {
-        invocationId: "inv_connection_action",
-        attemptId: "attempt_connection_action",
-        processGeneration: 1,
-        deadline: (yield* Clock.currentTimeMillis) + 60_000
-      },
-      reauthorize: Effect.succeed(binding.identity!)
-    });
-    const request = {
-      op: "postgres.query",
-      args: {
-        connection: "sales",
-        sql: "SELECT 7::integer AS value",
-        params: [],
-        shape: { value: { kind: "integer" } }
-      }
-    };
-    assert.deepStrictEqual(yield* gateway.callback(capability.token, capability.attempt, request), {
-      ok: true,
-      value: { ok: true, rows: [{ value: 7 }] }
-    });
-    setConnection(new ConnectionStore.Connection({ ...connection, status: "disconnected" }));
-    const refusal = yield* gateway.callback(capability.token, capability.attempt, request);
-    assert.include(refusal, { ok: false, source: "patchy", code: "access_denied" });
-    assert.isTrue(yield* capabilities.settle(capability.token, "returned"));
-  }).pipe(Effect.scoped, Effect.provide(RuntimeLog.layer.pipe(Layer.provide(Testing.layer()))))
 );
