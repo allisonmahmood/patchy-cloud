@@ -2,13 +2,16 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { CURRENT_RELEASE } from "@patchy/api";
 import { validateHtml } from "@patchy/core";
 import {
   decodePublishRequest,
+  localPackageRegistry,
+  packageDir,
   projectHandler,
   projectTree,
   publish,
-  publishTree,
+  releaseArtifact,
   runCli,
   stubInstance,
   tempDir,
@@ -53,20 +56,36 @@ describe("repo publish checks", () => {
   });
 
   // repoBuild.test.ts owns what the inspector refuses; this proves Vite's output reaches both
-  // checks, and that the tier 0 starter `patchy init` writes builds into a page the policy accepts.
+  // checks, and that `patchy init --tier 0` produces a repo whose page the policy accepts.
   it("refuses unbundled resources and oversized tier 0 bundles before sending, then publishes the tier 0 starter", async () => {
-    const instance = await stubInstance((request, respond, disconnect) => {
-      if (request.url === "/api/publish")
-        return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 0 });
-      projectHandler(request, respond, disconnect);
+    const registry = await localPackageRegistry();
+    const instance = await stubInstance(
+      (request, respond, disconnect) => {
+        if (request.url === "/api/publish")
+          return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 0 });
+        projectHandler(request, respond, disconnect);
+      },
+      () => CURRENT_RELEASE,
+      readFileSync(
+        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
+      )
+    );
+    const parent = tempDir();
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    const initialized = await runCli(
+      ["init", "static-page", "--tier", "0", "--purpose", "A static page", "--json"],
+      // Publishing runs Vite, whose native binding is an optional dependency of this platform.
+      { cwd: parent, env: { ...env, ...registry, pnpm_config_optional: "true" } }
+    );
+    expect(initialized, initialized.stderr).toMatchObject({ status: 0, stderr: "" });
+    const dir = path.join(parent, "static-page");
+    expect(JSON.parse(initialized.stdout)).toMatchObject({
+      ok: true,
+      dir,
+      tier: 0,
+      installed: true
     });
-    const dir = publishTree(instance.url, 0);
-    const options = {
-      cwd: dir,
-      stateDir: tempDir(),
-      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-    };
-    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const options = { cwd: dir, stateDir: tempDir(), env };
     const entry = path.join(dir, "index.html");
     const starter = readFileSync(entry, "utf8");
     writeFileSync(
@@ -102,5 +121,5 @@ describe("repo publish checks", () => {
     expect(sent.manifest.tier).toBe(0);
     expect(sent.html).toContain("<h1>My patch</h1>");
     expect(validateHtml(sent.html).ok).toBe(true);
-  });
+  }, 120_000); // An offline install of the real release archive can exceed 30 seconds.
 });

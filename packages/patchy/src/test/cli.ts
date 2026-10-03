@@ -484,14 +484,14 @@ export const projectTree = (instance: string, source = projectConfig) => {
   return dir;
 };
 
-/** The starter `patchy init` writes, with real repo tools linked from the checkout instead of reinstalled. */
-export const publishTree = (instance: string, tier: 0 | 1 = 1) => {
+/** Real repo tools, linked from the checkout instead of reinstalling them for each scenario. */
+export const publishTree = (instance: string) => {
   const dir = projectTree(instance);
   for (const [file, source] of Object.entries(
     starterFiles({
       instance,
       name: "cli-project",
-      tier,
+      tier: 1,
       purpose: "Synthetic notes",
       tarball: `${instance}${tarballPath}`
     })
