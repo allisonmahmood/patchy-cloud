@@ -248,6 +248,8 @@ const readPatch = Effect.fn("PortalPagesTest.readPatch")(function* (
   return rows[0]!;
 });
 type FormFields = Record<string, string | readonly string[]>;
+const sessionCookie = (person: Person) =>
+  signedInCookies(signSession({ sub: person.clerkUserId, email: person.email, name: person.name }));
 /** A confirmation posted without, then with, the acknowledgement box ticked. */
 const acknowledgements: ReadonlyArray<FormFields> = [{}, { ack: "on" }];
 const request = Effect.fn("PortalPagesTest.request")(function* (
@@ -257,16 +259,7 @@ const request = Effect.fn("PortalPagesTest.request")(function* (
   headers: Record<string, string> = {}
 ) {
   const client = yield* HttpClient.HttpClient;
-  const cookie =
-    person === null
-      ? ""
-      : signedInCookies(
-          signSession({
-            sub: person.clerkUserId,
-            email: person.email,
-            name: person.name
-          })
-        );
+  const cookie = person === null ? "" : sessionCookie(person);
   const input =
     fields === undefined
       ? HttpClientRequest.get(path)
@@ -1674,6 +1667,56 @@ it.layer(layer)("portal pages on a socket", (it) => {
               .status,
             404
           );
+        }
+        assert.strictEqual((yield* request(cardPath("a".repeat(32)), workspace.owner)).status, 404);
+
+        // Past the router's 100-character parameter bound only the GET fallback answers:
+        // a 414 page for a viewer, the door when signed out, and no form route at all.
+        const long = "x".repeat(101);
+        for (const suffix of ["", "/versions", "/retire", "/delete", "/restore", "/reassign"]) {
+          const response = yield* request(`${cardPath(long)}${suffix}`, workspace.owner);
+          assert.strictEqual(response.status, 414, suffix);
+          assert.strictEqual(response.headers["cache-control"], "private, no-store");
+          assert.include(
+            links(yield* response.text).map((link) => link.href),
+            "/company"
+          );
+        }
+        assert.strictEqual((yield* request(cardPath(long), null)).status, 401);
+        for (const action of [
+          "description",
+          "scope",
+          "rollback",
+          "retire",
+          "delete",
+          "restore",
+          "reassign"
+        ]) {
+          assert.strictEqual(
+            (yield* post(`${cardPath(long)}/${action}`, workspace.admin, {})).status,
+            404,
+            action
+          );
+        }
+        // An encoded slash stays in a name the router matched, but splits the fallback's path.
+        const sixteen = "x".repeat(16);
+        for (const [path, status] of [
+          [`/patches/${sixteen}%2F${sixteen}`, 414],
+          [`/%70atches/${"%78".repeat(33)}/versions`, 414],
+          [`/patches/x%2F${long}/versions`, 404]
+        ] as const) {
+          assert.strictEqual((yield* request(path, workspace.owner)).status, status, path);
+        }
+        const client = yield* HttpClient.HttpClient;
+        for (const name of ["x".repeat(33), long]) {
+          const head = yield* client.execute(
+            HttpClientRequest.head(`${cardPath(name)}/versions`).pipe(
+              HttpClientRequest.setHeader("cookie", sessionCookie(workspace.owner))
+            )
+          );
+          assert.strictEqual(head.status, 414);
+          assert.strictEqual(head.headers["cache-control"], "private, no-store");
+          assert.strictEqual(yield* head.text, "");
         }
       })
   );
