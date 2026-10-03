@@ -22,10 +22,9 @@ patchy_data`, issue `DROP DATABASE` outside a transaction, then `RESET ROLE` bef
 returning the connection. A `CREATEDB` admin without inherited ownership cannot
 drop the data role's database merely because it created it.
 
-The platform migration is `0005_company_database_baseline`.
-[ADR-0003](./ADR-0003-postgres-only.md) records the complete fifteen-entry
-platform ledger and its eight owners. Company inventory upgrades use no
-platform migration id.
+The platform migration is the `0004_company_database` baseline, one of the eight
+per-capability baselines described in [ADR-0003](./ADR-0003-postgres-only.md).
+Company inventory uses no platform migration id.
 
 ## Pools and locks
 
@@ -89,28 +88,29 @@ Inventory reads acquire the same patch lock as provisioning, so their revision
 and component queries cannot straddle a writer's commit. These metadata reads
 may wait for provisioning; they do not return a partly old, partly new inventory.
 
-`Inventory.initialize` runs the shared idempotent `Inventory.upgrade` steps after
-creating missing tables. `ensureReady` also upgrades already-ready placements.
-Changes to existing structures belong in those upgrades, such as `ADD COLUMN IF
-NOT EXISTS`, not only in fresh-database DDL. The portable inventory contract runs
-initialization twice against an already-initialized database with a missing column,
-on PostgreSQL and PGlite, and checks that existing rows and definitions survive.
-A versioned per-company migration ledger remains deferred.
+`Inventory.initialize` creates the whole inventory and is idempotent: a
+provisioning interrupted after it ran runs it again. `ensureReady` leaves
+already-ready placements alone. The inventory was squashed with the platform
+baselines before launch, and the upgrade steps for retained inventory went with
+them. Once a company database worth keeping exists, a change to an existing
+structure needs an upgrade path again: steps `ensureReady` runs on ready
+placements, tested on PostgreSQL and PGlite for keeping rows and definitions.
+The portable inventory contract runs initialization again on an initialized
+database and checks that the inventory, rows and file handle key survive. A
+versioned per-company migration ledger remains deferred.
 
 Authorised file handles use a company-local signing key in
-`patchy.file_handle_key`. Initialization creates it once; idempotent upgrades
-preserve it, so replicas and restarts mint the same handles. Metadata queries
-only read it, including inside read-only query snapshots. The file index has a
-company-wide unique object-id index for redemption. Object ids are immutable
-and never reused or moved between stores; replacement writes a new object.
+`patchy.file_handle_key`. Initialization creates it once and a repeated
+initialization preserves it, so replicas and restarts mint the same handles.
+Metadata queries only read it, including inside read-only query snapshots. The
+file index has a company-wide unique object-id index for redemption. Object ids
+are immutable and never reused or moved between stores; replacement writes a new
+object.
 Redemption checks the live pointer before source authority and releases the
 company lease before fetching bytes.
 
 `patchy.file_uploads` records writing, staged and discarded uploads.
-Initialization adds it idempotently. Retained inventories with the former
-`adopted` state remove only consumed upload metadata and replace the state
-constraint and expiry index in one transaction. Live stages, file pointers,
-blob bytes and object keys remain unchanged. Staging may initialize company storage without creating a patch
+Initialization adds it idempotently. Staging may initialize company storage without creating a patch
 namespace or requiring a store. Quota reservations commit before blob I/O and
 count across replicas under the company object lock. Company byte quotas resolve
 the current operating override before leasing the company database.

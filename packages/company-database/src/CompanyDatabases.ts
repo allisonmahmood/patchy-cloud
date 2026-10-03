@@ -59,7 +59,6 @@ export class CompanyDatabaseError extends Schema.TaggedError<CompanyDatabaseErro
       "create",
       "configure",
       "initialize",
-      "upgrade",
       "ready",
       "connect",
       "list"

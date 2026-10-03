@@ -8,12 +8,10 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import { migrate } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
 import * as Directory from "./Directory.js";
 import * as Users from "./Users.js";
-import { migrations } from "./migrations.js";
 
 const createCompany = Effect.fn("createDirectoryCompany")(function* (handle: string) {
   const companies = yield* Companies.Companies;
@@ -460,34 +458,6 @@ it.layer(services)("company directory", (it) => {
       yield* sql`DELETE FROM users WHERE id = ${member.id}`;
       assert.strictEqual(yield* directory.revision(target.company.id), "3");
       assert.isNull(yield* directory.get(target.company.id, member.id));
-    })
-  );
-});
-
-const priorMigrations = Object.fromEntries(
-  Object.entries(migrations).filter(([name]) => name !== "0015_companies_directory")
-);
-it.layer(Testing.emptyLayer(priorMigrations))("existing company directory migration", (it) => {
-  it.effect("adds revisions to existing companies without changing their users", () =>
-    Effect.gen(function* () {
-      const companies = yield* Companies.make;
-      const created = yield* createCompany("directory-upgrade").pipe(
-        Effect.provideService(Companies.Companies, companies)
-      );
-      yield* migrate(migrations);
-      const directory = yield* Directory.make;
-      const users = yield* Users.make;
-      assert.strictEqual(yield* directory.revision(created.company.id), "0");
-      assert.deepStrictEqual(
-        yield* directory.get(created.company.id, created.user.id),
-        memberValue(created.user)
-      );
-      yield* users.refreshClaims({
-        clerkUserId: created.user.clerkUserId,
-        email: created.user.email,
-        name: "Updated after migration"
-      });
-      assert.strictEqual(yield* directory.revision(created.company.id), "1");
     })
   );
 });

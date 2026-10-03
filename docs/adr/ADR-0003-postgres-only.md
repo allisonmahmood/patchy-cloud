@@ -12,8 +12,9 @@ rule and migration to be maintained twice. Local development and tests can
 instead run embedded Postgres, so a second storage model buys no capability the
 project needs.
 
-The baseline rewrite was chosen before production deployment; it is not a
-recipe for discarding a deployed database's migration history.
+The baseline rewrite was chosen before production deployment, and so was the
+later squash to one baseline per capability; neither is a recipe for discarding
+a deployed database's migration history.
 
 ## Decision
 
@@ -30,11 +31,14 @@ S3-compatible API; development and offline tests use the filesystem. A bucket
 belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. Each capability keeps its records
-   in its `src/migrations.ts`; `apps/server/src/migrations.ts` composes them into
-   the one ledger that the server, the dev runner and the test template apply.
-   Ids are allocated in landing order, and that record's test fails on a
-   duplicate or skipped id.
+   baselines were rewritten before deployment, and the record was squashed before
+   launch into one baseline per capability, ids 1 to 8 in foreign-key order.
+   Each capability keeps its records in its `src/migrations.ts`;
+   `apps/server/src/migrations.ts` composes them into the one ledger that the
+   server, the dev runner and the test template apply. Ids are allocated in
+   landing order, and that record's test fails on a duplicate or skipped id.
+   Migrating refuses a ledger whose steps differ from the record's up to the
+   lower of their highest ids, such as a database from before the squash.
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.
@@ -43,19 +47,19 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    removes the row, leaving permanent absence as the final deletion evidence.
    Enumerated platform columns use text with check constraints, not Postgres enums.
    Runtime invocation attribution keeps the initiating viewer separate from the
-   effective principal. The migration backfills existing call principals from
-   `user_id`, then permits patch callbacks with a null `user_id` and an
-   `invocation_id`. Both operation and invocation rows accept `handler_error`.
+   effective principal. Every call row has an effective principal; patch
+   callbacks have a null `user_id` and an `invocation_id`. Both operation and
+   invocation rows accept `handler_error`.
    Invocation rows retain deadlines, settlement, log lines, reply delivery and
    metering fields including database-held milliseconds. Settlement can reconcile
    `unknown_outcome`, but cannot replace a final outcome.
-   The same migration creates minute-keyed query rollups and applied-run ids.
+   The runtime baseline also holds minute-keyed query rollups and applied-run ids.
    Rollup increments, deduplication transactions and pruning belong to metering.
    Mutation keys live in the company database, committed with the mutation's
    writes, result and originating invocation id. That link lets later replay
    reconcile an unresolved platform invocation without losing its metering.
-   Their idempotent inventory upgrade does not allocate a platform migration id.
-   Platform migration `0012` records mutation commit proof separately from host
+   Company inventory initialization creates their store, with no platform
+   migration id. Invocation rows record mutation commit proof separately from host
    settlement. A replay can establish success before the original finalizer
    writes its timing and metering, without fabricating those measurements or
    allowing a late unknown outcome to overwrite committed success.

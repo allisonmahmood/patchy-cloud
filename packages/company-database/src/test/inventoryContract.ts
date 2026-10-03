@@ -115,77 +115,22 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       assert.deepStrictEqual(initial.indexes[0]?.columns, ["body"]);
       assert.isTrue(initial.createdAt instanceof Date);
 
-      // Reinitializing retained databases must apply upgrades without losing inventory or rows.
-      yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
-      yield* sql.unsafe('ALTER TABLE "patchy"."stores" DROP COLUMN "shared"');
-      yield* sql.unsafe("DROP TABLE patchy.mutation_keys");
-      yield* sql.unsafe("DROP TABLE patchy.file_handle_key");
-      yield* sql.unsafe("DROP INDEX patchy.files_object_id");
-      yield* sql.unsafe("DROP TABLE patchy.file_uploads");
-      yield* Inventory.initialize;
+      // A provisioning interrupted after initialization runs it again: that keeps the
+      // file handle key, the inventory and the rows.
       const keys = yield* sql`SELECT secret FROM patchy.file_handle_key`;
-      yield* Inventory.initialize;
-      yield* sql`INSERT INTO patchy.mutation_keys
-        (key, issued_at, patch_id, version_id, handler, viewer_id, fingerprint, invocation_id, reply)
-        VALUES ('retained', now(), ${patchId}, 'version', 'demo.mutation', 'viewer', 'fingerprint', 'inv_retained', '{"ok":true,"value":42}'::jsonb)`;
+      assert.lengthOf(keys, 1);
       yield* databases.withPatchLock(patchId)(
         sql`INSERT INTO "patchy"."files"
       ("patch_id", "store", "name", "object_id", "size", "content_type", "sha256")
       VALUES (${patchId}, 'documents', 'folder/report.txt', 'object-one', 42, 'text/plain', 'digest')`
       );
-      // Retain the previous upload schema, including consumed metadata and its partial index.
-      yield* sql.unsafe(`ALTER TABLE patchy.file_uploads
-        DROP CONSTRAINT file_uploads_state_check,
-        ADD CONSTRAINT file_uploads_state_check
-          CHECK (state IN ('writing', 'staged', 'adopted', 'discarded'))`);
-      yield* sql.unsafe("DROP INDEX patchy.file_uploads_expiry");
-      yield* sql.unsafe(`CREATE INDEX file_uploads_expiry ON patchy.file_uploads (expires_at)
-        WHERE state <> 'adopted'`);
-      yield* sql`INSERT INTO patchy.file_uploads
-        (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)
-        VALUES ('retained-stage', ${patchId}, 'retained-token', 'viewer', 'version', 42,
-          'text/plain', 'digest', '2035-01-03T01:00:00Z', 'staged'),
-          ('object-one', ${patchId}, 'consumed-token', 'viewer', 'version', 42,
-          'text/plain', 'digest', '2035-01-02T01:00:00Z', 'adopted')`;
-      yield* Inventory.initialize;
       yield* Inventory.initialize;
       assert.deepStrictEqual(yield* sql`SELECT secret FROM patchy.file_handle_key`, keys);
-      assert.deepStrictEqual(
-        yield* sql`SELECT invocation_id, reply FROM patchy.mutation_keys WHERE key = 'retained'`,
-        [{ invocation_id: "inv_retained", reply: { ok: true, value: 42 } }]
-      );
-      assert.deepStrictEqual(
-        yield* sql`SELECT object_id, state, token, size::integer AS size
-        FROM patchy.file_uploads ORDER BY object_id`,
-        [{ object_id: "retained-stage", state: "staged", token: "retained-token", size: 42 }]
-      );
       assert.deepStrictEqual(yield* inventory.read(patchId), initial);
-      assert.deepStrictEqual(
-        yield* sql`SELECT column_name FROM information_schema.columns
-          WHERE table_schema = 'patchy' AND table_name = 'columns' AND column_name = 'ref_table'`,
-        [{ column_name: "ref_table" }]
-      );
       assert.deepStrictEqual(yield* sql.unsafe(`SELECT "body" FROM ${qualified}`), [
         { body: "kept" }
       ]);
-      // Retained inventory predating resource counters keeps its definitions and rows.
-      yield* sql.unsafe('ALTER TABLE "patchy"."tables" DROP COLUMN "resource_revision"');
-      yield* sql.unsafe('ALTER TABLE "patchy"."stores" DROP COLUMN "resource_revision"');
-      yield* Inventory.initialize;
-      yield* Inventory.initialize;
-      const upgraded = yield* inventory.read(patchId);
-      assert.deepStrictEqual(
-        upgraded,
-        new Inventory.Snapshot({
-          ...initial,
-          tables: initial.tables.map(
-            (row) => new Inventory.Table({ ...row, resourceRevision: "0" })
-          ),
-          stores: initial.stores.map(
-            (row) => new Inventory.Store({ ...row, resourceRevision: "0" })
-          )
-        })
-      );
+      // Resource revisions are int8, read back exactly beyond 2^53.
       yield* sql`UPDATE patchy.tables SET resource_revision = 9007199254740993
         WHERE patch_id = ${patchId} AND name = ${table}`;
       assert.strictEqual(

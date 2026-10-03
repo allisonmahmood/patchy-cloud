@@ -15,6 +15,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 /** A capability's migrations: `<id>_<name>` keys over one global integer id sequence. */
 export type Migrations = Parameters<typeof Migrator.fromRecord>[0];
@@ -123,12 +124,72 @@ export const ddl = (...statements: ReadonlyArray<string>) =>
     Effect.forEach(statements, (statement) => sql.unsafe(statement), { discard: true })
   );
 
+/** A ledger row as the Migrator writes it. */
+class LedgerRow extends Schema.Class<LedgerRow>("LedgerRow")({
+  id: Schema.Int,
+  name: Schema.String
+}) {}
+
+const ledgerRows = SqlSchema.findAll({
+  Request: Schema.Void,
+  Result: LedgerRow,
+  execute: () =>
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`SELECT migration_id AS id, name FROM ${sql(LEDGER_TABLE)}`
+    )
+});
+
+/**
+ * The record as the Migrator's loader, refusing a ledger whose history it does
+ * not share. The Migrator only runs ids above the ledger's highest, so a step
+ * the ledger lacks below that mark, or holds under another name, would be
+ * skipped silently: a database migrated before the pre-launch squash, or by a
+ * branch's own steps. Up to the lower of the two highest ids, both must list
+ * the same steps. Ids above the record's highest are a newer build's steps and
+ * pass, so an earlier build can still start. The Migrator runs its loader in
+ * its transaction, after it locks the ledger.
+ */
+const checkedLoader = Effect.fn("Sql.checkedLoader")(function* (migrations: Migrations) {
+  const record = yield* Migrator.fromRecord(migrations);
+  const ledger = yield* ledgerRows(undefined).pipe(
+    Effect.mapError(
+      (cause) =>
+        new Migrator.MigrationError({
+          kind: "BadState",
+          cause,
+          message: `Could not read the migration ledger ${LEDGER_TABLE}`
+        })
+    )
+  );
+  const recorded = new Map(record.map(([id, name]) => [id, name]));
+  // The Migrator refuses a duplicate id itself, before anything runs.
+  if (recorded.size !== record.length) return record;
+  const applied = new Map(ledger.map((row) => [row.id, row.name]));
+  const shared = Math.min(Math.max(0, ...recorded.keys()), Math.max(0, ...applied.keys()));
+  const diverged = [...recorded.keys(), ...applied.keys()]
+    .filter((id) => id <= shared && recorded.get(id) !== applied.get(id))
+    .sort((a, b) => a - b)[0];
+  if (diverged === undefined) return record;
+  const name = (value: string | undefined) => (value === undefined ? "nothing" : `"${value}"`);
+  return yield* new Migrator.MigrationError({
+    kind: "BadState",
+    message:
+      `The migration ledger disagrees with this build at id ${diverged}: the ledger has ` +
+      `${name(applied.get(diverged))}, this build has ${name(recorded.get(diverged))}. ` +
+      "Nothing was applied: the database was migrated by another history, such as one " +
+      "from before the platform baselines were squashed for launch. A local dev instance " +
+      "recovers with `pnpm dev reset`, which wipes its data."
+  });
+});
+
 /**
  * Applies every pending migration in one transaction under an `ACCESS
  * EXCLUSIVE` lock on the ledger, and answers with what it applied. Callers
  * spread the capability records into one: `migrate({ ...auth, ...patches })`.
  * Ids are sorted numerically and a duplicate fails with `MigrationError`
- * (`kind: "Duplicates"`) before anything runs.
+ * (`kind: "Duplicates"`) before anything runs; a ledger with another history
+ * fails with `kind: "BadState"` (see `checkedLoader`).
  */
 export const migrate = (migrations: Migrations) =>
-  Migrator.make({})({ loader: Migrator.fromRecord(migrations), table: LEDGER_TABLE });
+  Migrator.make({})({ loader: checkedLoader(migrations), table: LEDGER_TABLE });

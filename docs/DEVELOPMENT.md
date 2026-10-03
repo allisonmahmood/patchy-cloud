@@ -119,6 +119,11 @@ the database and published content: use it when a baseline migration was
 rewritten under an existing instance or the data is suspect, never to repair a
 live database.
 
+The platform migrations were squashed before launch into one baseline per
+capability, ids 1 to 8. An instance created before the squash refuses to start:
+its ledger disagrees with the record, and the migration error says to run
+`pnpm dev reset`, which wipes its data. Its `dev.log` shows the error.
+
 ### Signing in and the CLI
 
 People sign in as **dev personas**: `/dev/sign-in` lists everyone, and
@@ -298,10 +303,15 @@ can quote it.
   `packages/company-database` and `packages/primitives`; a primitive-free page
   publish never touches a company database.
 - **Migrations.** Add the migration to its capability's `src/migrations.ts`
-  with the next id in landing order; `apps/server/src/migrations.ts` composes
-  them for the server, the dev runner and the test template, and its test fails
-  on a duplicate or skipped id. Existing dev instances need `pnpm dev reset` when
-  a baseline was rewritten.
+  with the next id in landing order, and never edit a landed one: a database
+  that applied it would not see the edit. `apps/server/src/migrations.ts`
+  composes them for the server, the dev runner and the test template, and its
+  test fails on a duplicate or skipped id. Existing dev instances need
+  `pnpm dev reset` when a baseline was rewritten; startup refuses a ledger with
+  another history and says so. The baselines were squashed before launch, so no
+  upgrade tests exist: write one with the first migration that changes state a
+  database must keep, after launch or earlier if something real must be kept.
+  The same holds for company inventory, which `Inventory.initialize` creates.
 - **The dev runner.** `pnpm exec vitest run scripts/dev`, then the real loop:
   `pnpm dev`, `up`, `shot` and `down` in this worktree.
 

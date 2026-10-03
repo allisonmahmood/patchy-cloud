@@ -1,7 +1,12 @@
+/**
+ * The runtime's operation log, invocation journal and query rollups, id 5 in
+ * the global migration sequence (`packages/sql/CONTEXT.md`). Squashed into one
+ * baseline before launch.
+ */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0006_runtime_baseline": ddl(
+  "0005_runtime": ddl(
     `CREATE TABLE runtime_calls (
       id TEXT PRIMARY KEY,
       at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -10,35 +15,27 @@ export const migrations: Migrations = {
       company_id TEXT NOT NULL,
       patch_id TEXT,
       version_id TEXT,
-      user_id TEXT NOT NULL,
+      -- Null for a patch's own callbacks, which carry invocation_id instead.
+      user_id TEXT,
       credential_kind TEXT NOT NULL CHECK (credential_kind IN ('session', 'admin')),
       op TEXT NOT NULL,
       resource TEXT,
       connection_id TEXT,
-      outcome TEXT NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending', 'success', 'failure')),
+      outcome TEXT NOT NULL DEFAULT 'pending'
+        CHECK (outcome IN ('pending', 'unknown', 'success', 'handler_error', 'failure')),
       outcome_code TEXT,
       duration_ms INTEGER CHECK (duration_ms >= 0),
       row_count INTEGER CHECK (row_count >= 0),
       sql TEXT CHECK (sql IS NULL OR (op = 'postgres.query' AND octet_length(sql) <= 8192)),
       correlation_id TEXT NOT NULL UNIQUE,
       deadline_ms INTEGER NOT NULL DEFAULT 30000 CHECK (deadline_ms > 0),
+      effective_principal TEXT NOT NULL,
+      invocation_id TEXT,
       CHECK ((outcome = 'pending' AND duration_ms IS NULL AND row_count IS NULL)
         OR (outcome <> 'pending' AND duration_ms IS NOT NULL))
     )`,
     `CREATE INDEX runtime_calls_connection_recent
-      ON runtime_calls (company_id, connection_id, at DESC, id DESC)`
-  ),
-  "0011_runtime_invocations": ddl(
-    `ALTER TABLE runtime_calls
-      ALTER COLUMN user_id DROP NOT NULL,
-      ADD COLUMN effective_principal TEXT,
-      ADD COLUMN invocation_id TEXT`,
-    `UPDATE runtime_calls SET effective_principal = user_id`,
-    `ALTER TABLE runtime_calls
-      ALTER COLUMN effective_principal SET NOT NULL,
-      DROP CONSTRAINT runtime_calls_outcome_check,
-      ADD CONSTRAINT runtime_calls_outcome_check
-        CHECK (outcome IN ('pending', 'unknown', 'success', 'handler_error', 'failure'))`,
+      ON runtime_calls (company_id, connection_id, at DESC, id DESC)`,
     `CREATE INDEX runtime_calls_invocation
       ON runtime_calls (company_id, invocation_id, at, id)
       WHERE invocation_id IS NOT NULL`,
@@ -70,6 +67,8 @@ export const migrations: Migrations = {
       attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
       log_lines JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(log_lines) = 'array'),
       reply_delivered BOOLEAN NOT NULL DEFAULT false,
+      -- Commit proof for a mutation, separate from host settlement.
+      mutation_committed BOOLEAN NOT NULL DEFAULT false,
       CHECK ((outcome = 'pending' AND settled_at IS NULL AND duration_ms IS NULL)
         OR (outcome <> 'pending' AND settled_at IS NOT NULL AND duration_ms IS NOT NULL))
     )`,
@@ -101,8 +100,5 @@ export const migrations: Migrations = {
     )`,
     `CREATE INDEX runtime_query_rollup_runs_applied
       ON runtime_query_rollup_runs (applied_at)`
-  ),
-  "0012_runtime_mutation_commit_proof": ddl(
-    `ALTER TABLE runtime_invocations ADD COLUMN mutation_committed BOOLEAN NOT NULL DEFAULT false`
   )
 };

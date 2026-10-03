@@ -1,7 +1,12 @@
+/**
+ * Company database placements on the platform, id 4 in the global migration
+ * sequence. The company databases themselves are initialized by `Inventory`.
+ * Squashed into one baseline before launch.
+ */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0005_company_database_baseline": ddl(
+  "0004_company_database": ddl(
     `CREATE TABLE company_databases (
       company_id TEXT PRIMARY KEY REFERENCES companies(id),
       server_id TEXT NOT NULL DEFAULT 'primary',

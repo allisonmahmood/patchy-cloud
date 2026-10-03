@@ -1,7 +1,11 @@
+/**
+ * Company connections and their immutable schema snapshots, id 6 in the global
+ * migration sequence. Squashed into one baseline before launch.
+ */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0007_integrations_baseline": ddl(
+  "0006_integrations": ddl(
     `CREATE TABLE connections (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id),

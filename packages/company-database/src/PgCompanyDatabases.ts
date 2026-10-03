@@ -209,36 +209,15 @@ export const make = Effect.gen(function* () {
       )
   );
 
-  const upgradeReady = Effect.fn("CompanyDatabases.upgradeReady")(
-    function* (placement: CompanyDatabases.Placement) {
-      const { sql: data } = yield* timedPool(placement.databaseName, 1);
-      yield* Inventory.upgrade.pipe(Effect.provideService(SqlClient.SqlClient, data));
-      return placement;
-    },
-    Effect.scoped,
-    (effect, placement) =>
-      effect.pipe(
-        Effect.provideService(Reactivity.Reactivity, reactivity),
-        Effect.mapError(
-          (cause) =>
-            new CompanyDatabases.CompanyDatabaseError({
-              companyId: placement.companyId,
-              operation: "upgrade",
-              cause
-            })
-        )
-      )
-  );
-
   const ensureReady = Effect.fn("CompanyDatabases.ensureReady")(function* (companyId: string) {
     const placement = yield* claim(companyId);
-    if (placement.status === "ready") return yield* upgradeReady(placement);
+    if (placement.status === "ready") return placement;
     return yield* platform
       .withTransaction(
         Effect.gen(function* () {
           const rows = yield* lockedPlacement(companyId).pipe(Effect.catchTags(dieOnSchemaError));
           const claimed = rows[0]!;
-          if (claimed.status === "ready") return yield* upgradeReady(claimed);
+          if (claimed.status === "ready") return claimed;
           const name = Inventory.quoteIdentifier(claimed.databaseName);
           const roleUrl = new URL(Redacted.value(settings.dataUrl));
           const dataRole = Inventory.quoteIdentifier(username(roleUrl));

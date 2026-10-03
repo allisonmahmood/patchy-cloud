@@ -1,7 +1,12 @@
+/**
+ * The companies capability's schema, id 1 in the global migration sequence
+ * (`packages/sql/CONTEXT.md`): companies, users, invites and the member
+ * directory's revision counter. Squashed into one baseline before launch.
+ */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0001_companies_baseline": ddl(
+  "0001_companies": ddl(
     `CREATE TABLE companies (
     id TEXT PRIMARY KEY,
     handle TEXT NOT NULL UNIQUE,
@@ -28,23 +33,15 @@ export const migrations: Migrations = {
     clerk_invitation_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at TIMESTAMPTZ,
-    consumed_at TIMESTAMPTZ
+    consumed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ NOT NULL
     )`,
     `CREATE UNIQUE INDEX invites_company_email_live_idx ON invites(company_id, email)
-    WHERE revoked_at IS NULL AND consumed_at IS NULL`
-  ),
-  // Freeze the historical 30-day backfill; elapsed hours avoid daylight-saving shifts.
-  "0004_invites_expiry": ddl(
-    `ALTER TABLE invites ADD COLUMN expires_at TIMESTAMPTZ`,
-    `UPDATE invites SET expires_at = created_at + interval '720 hours'`,
-    `ALTER TABLE invites ALTER COLUMN expires_at SET NOT NULL`
-  ),
-  "0015_companies_directory": ddl(
+    WHERE revoked_at IS NULL AND consumed_at IS NULL`,
     `CREATE TABLE companies_directory (
       company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
       revision BIGINT NOT NULL DEFAULT 0
     )`,
-    `INSERT INTO companies_directory (company_id) SELECT id FROM companies`,
     `CREATE INDEX users_directory_candidates_idx
       ON users (company_id, lower(name) COLLATE "C", lower(email) COLLATE "C", id COLLATE "C")
       WHERE deactivated_at IS NULL`,

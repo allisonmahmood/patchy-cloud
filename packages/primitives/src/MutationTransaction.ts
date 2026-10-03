@@ -40,11 +40,6 @@ const rejectedStatement = Schema.is(
   )
 );
 const command = Schema.is(Schema.Struct({ command: Schema.String }));
-const missingInventory = Schema.is(
-  Schema.Struct({
-    reason: Schema.Struct({ cause: Schema.Struct({ code: Schema.Literal("42P01") }) })
-  })
-);
 const translate = (cause: SqlError.SqlError): MutationTransaction.Failure => {
   if (MutationTransaction.isSerializationCause(cause))
     return new MutationTransaction.SerializationConflict({ cause });
@@ -123,11 +118,7 @@ export const make: Effect.Effect<
       return read.pipe(
         Effect.catchTags({
           CompanyDatabaseNotReady: () =>
-            databases.ensureReady(binding.companyId).pipe(Effect.andThen(read)),
-          SourceUnavailable: (cause) =>
-            missingInventory(cause.cause)
-              ? databases.ensureReady(binding.companyId).pipe(Effect.andThen(read))
-              : Effect.fail(cause)
+            databases.ensureReady(binding.companyId).pipe(Effect.andThen(read))
         }),
         Effect.catchTags(databaseFailures)
       );

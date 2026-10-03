@@ -291,119 +291,13 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(Inventory, make);
 
 /**
- * Idempotent upgrades for retained PostgreSQL and PGlite inventory. Add changes
- * here, not only to CREATE TABLE below; test reinitialization in inventoryContract.
- * Check the catalog first to avoid DDL locks when the current schema needs no work.
+ * Creates a company's inventory: the shared bootstrap for PostgreSQL and PGlite.
+ * One statement per call. Idempotent, because a provisioning interrupted after
+ * this ran runs it again; the file handle key is created once and never replaced.
+ * The schema was squashed before launch and there is no upgrade path for retained
+ * inventory yet: a change to an existing structure adds one, with its tests,
+ * once a company database worth keeping exists.
  */
-export const upgrade = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  const legacyColumnKinds = yield* sql`SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'patchy.columns'::regclass
-      AND conname = 'columns_kind_check'
-      AND pg_get_constraintdef(oid) NOT LIKE '%member%'`;
-  if (legacyColumnKinds.length !== 0)
-    yield* sql.unsafe(`ALTER TABLE patchy.columns
-      DROP CONSTRAINT columns_kind_check,
-      ADD CONSTRAINT columns_kind_check
-        CHECK (kind IN ('text', 'integer', 'number', 'boolean', 'timestamp', 'json', 'ref', 'member'))`);
-  const uploads = yield* sql`SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'patchy' AND table_name = 'file_uploads'`;
-  if (uploads.length === 0) {
-    yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS patchy.file_uploads (
-      object_id text PRIMARY KEY,
-      patch_id text NOT NULL,
-      token text UNIQUE,
-      viewer_id text,
-      version_id text,
-      size bigint NOT NULL CHECK (size >= 0),
-      content_type text NOT NULL,
-      sha256 text NOT NULL,
-      expires_at timestamptz NOT NULL,
-      state text NOT NULL CHECK (state IN ('writing', 'staged', 'discarded')),
-      CHECK (token IS NULL OR (viewer_id IS NOT NULL AND version_id IS NOT NULL))
-    )`);
-  }
-  const legacyUploadState = yield* sql`SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'patchy.file_uploads'::regclass
-      AND conname = 'file_uploads_state_check'
-      AND pg_get_constraintdef(oid) LIKE '%adopted%'`;
-  if (legacyUploadState.length !== 0)
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
-        // Consumed uploads duplicate the file index; removing them never deletes bytes.
-        yield* sql`DELETE FROM patchy.file_uploads WHERE state = 'adopted'`;
-        yield* sql.unsafe(`ALTER TABLE patchy.file_uploads
-          DROP CONSTRAINT IF EXISTS file_uploads_state_check,
-          ADD CONSTRAINT file_uploads_state_check
-            CHECK (state IN ('writing', 'staged', 'discarded'))`);
-        yield* sql.unsafe("DROP INDEX IF EXISTS patchy.file_uploads_expiry");
-        yield* sql.unsafe(`CREATE INDEX file_uploads_expiry
-          ON patchy.file_uploads (expires_at)`);
-      })
-    );
-  const uploadExpiry = yield* sql`SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'patchy' AND indexname = 'file_uploads_expiry'`;
-  if (uploadExpiry.length === 0)
-    yield* sql.unsafe(`CREATE INDEX IF NOT EXISTS file_uploads_expiry
-      ON patchy.file_uploads (expires_at)`);
-  const handleKeys = yield* sql`SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'patchy' AND table_name = 'file_handle_key'`;
-  if (handleKeys.length === 0) {
-    yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS patchy.file_handle_key (
-      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-      secret text NOT NULL
-    )`);
-  }
-  const handleKey = yield* sql`SELECT 1 FROM patchy.file_handle_key WHERE singleton = true`;
-  if (handleKey.length === 0)
-    yield* sql`INSERT INTO patchy.file_handle_key (secret)
-      VALUES (${randomBytes(32).toString("hex")}) ON CONFLICT (singleton) DO NOTHING`;
-  const objectLookup = yield* sql`SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'patchy' AND indexname = 'files_object_id'`;
-  if (objectLookup.length === 0)
-    yield* sql.unsafe(
-      "CREATE UNIQUE INDEX IF NOT EXISTS files_object_id ON patchy.files (object_id)"
-    );
-  const mutationKeys = yield* sql`SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'patchy' AND table_name = 'mutation_keys'`;
-  if (mutationKeys.length === 0) {
-    yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."mutation_keys" (
-    "key" text CONSTRAINT mutation_keys_key PRIMARY KEY,
-    "issued_at" timestamptz NOT NULL,
-    "patch_id" text NOT NULL,
-    "version_id" text NOT NULL,
-    "handler" text NOT NULL,
-    "viewer_id" text NOT NULL,
-    "fingerprint" text NOT NULL,
-    "invocation_id" text NOT NULL,
-    "reply" jsonb NOT NULL
-  )`);
-    yield* sql.unsafe(
-      "CREATE INDEX IF NOT EXISTS mutation_keys_issued_at ON patchy.mutation_keys (issued_at)"
-    );
-  }
-  const present = yield* sql`SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'patchy' AND table_name = 'columns' AND column_name = 'ref_table'`;
-  if (present.length === 0) {
-    yield* sql.unsafe('ALTER TABLE "patchy"."columns" ADD COLUMN IF NOT EXISTS "ref_table" text');
-  }
-  const storeSharing = yield* sql`SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'patchy' AND table_name = 'stores' AND column_name = 'shared'`;
-  if (storeSharing.length === 0)
-    yield* sql.unsafe(
-      'ALTER TABLE "patchy"."stores" ADD COLUMN IF NOT EXISTS "shared" boolean NOT NULL DEFAULT false'
-    );
-  for (const table of ["tables", "stores"]) {
-    const revision = yield* sql`SELECT 1 FROM information_schema.columns
-      WHERE table_schema = 'patchy' AND table_name = ${table} AND column_name = 'resource_revision'`;
-    if (revision.length === 0)
-      yield* sql.unsafe(
-        `ALTER TABLE "patchy".${quoteIdentifier(table)} ADD COLUMN IF NOT EXISTS "resource_revision" bigint NOT NULL DEFAULT 0`
-      );
-  }
-});
-
-/** Shared bootstrap for PostgreSQL and PGlite; never submit multiple statements in one call. */
 export const initialize = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql.unsafe('CREATE SCHEMA IF NOT EXISTS "patchy"');
@@ -462,9 +356,46 @@ export const initialize = Effect.gen(function* () {
     PRIMARY KEY ("patch_id", "store", "name"),
     FOREIGN KEY ("patch_id", "store") REFERENCES "patchy"."stores" ("patch_id", "name") ON DELETE CASCADE
   )`);
+  yield* sql.unsafe(
+    "CREATE UNIQUE INDEX IF NOT EXISTS files_object_id ON patchy.files (object_id)"
+  );
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."orphan_namespaces" (
     "namespace" text PRIMARY KEY,
     "first_seen_at" timestamptz NOT NULL DEFAULT now()
   )`);
-  yield* upgrade;
+  yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS patchy.file_uploads (
+      object_id text PRIMARY KEY,
+      patch_id text NOT NULL,
+      token text UNIQUE,
+      viewer_id text,
+      version_id text,
+      size bigint NOT NULL CHECK (size >= 0),
+      content_type text NOT NULL,
+      sha256 text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      state text NOT NULL CHECK (state IN ('writing', 'staged', 'discarded')),
+      CHECK (token IS NULL OR (viewer_id IS NOT NULL AND version_id IS NOT NULL))
+    )`);
+  yield* sql.unsafe(`CREATE INDEX IF NOT EXISTS file_uploads_expiry
+      ON patchy.file_uploads (expires_at)`);
+  yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS patchy.file_handle_key (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      secret text NOT NULL
+    )`);
+  yield* sql`INSERT INTO patchy.file_handle_key (secret)
+    VALUES (${randomBytes(32).toString("hex")}) ON CONFLICT (singleton) DO NOTHING`;
+  yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."mutation_keys" (
+    "key" text CONSTRAINT mutation_keys_key PRIMARY KEY,
+    "issued_at" timestamptz NOT NULL,
+    "patch_id" text NOT NULL,
+    "version_id" text NOT NULL,
+    "handler" text NOT NULL,
+    "viewer_id" text NOT NULL,
+    "fingerprint" text NOT NULL,
+    "invocation_id" text NOT NULL,
+    "reply" jsonb NOT NULL
+  )`);
+  yield* sql.unsafe(
+    "CREATE INDEX IF NOT EXISTS mutation_keys_issued_at ON patchy.mutation_keys (issued_at)"
+  );
 });

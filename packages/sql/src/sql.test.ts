@@ -119,3 +119,45 @@ it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("migrator", (it) => {
     })
   );
 });
+
+it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("ledger history", (it) => {
+  it.effect("refuses a database migrated before a squash, and applies nothing", () =>
+    Effect.gen(function* () {
+      const error = yield* migrate({
+        "1_parts": ddl("CREATE TABLE parts (id integer PRIMARY KEY)")
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, Migrator.MigrationError);
+      assert.strictEqual(error.kind, "BadState");
+      assert.include(error.message, 'at id 1: the ledger has "widgets", this build has "parts"');
+      assert.include(error.message, "pnpm dev reset");
+      assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "widgets"]);
+      assert.strictEqual((yield* ledger).length, 2);
+    })
+  );
+
+  it.effect("refuses a step the ledger skipped below its highest id", () =>
+    Effect.gen(function* () {
+      const cogs: Migrations = { "4_cogs": ddl("CREATE TABLE cogs (id integer PRIMARY KEY)") };
+      assert.deepStrictEqual(yield* migrate({ ...widgets, ...gadgets, ...cogs }), [[4, "cogs"]]);
+      const error = yield* migrate({
+        ...widgets,
+        ...gadgets,
+        "3_sprockets": ddl("CREATE TABLE sprockets (id integer PRIMARY KEY)"),
+        ...cogs
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, Migrator.MigrationError);
+      assert.strictEqual(error.kind, "BadState");
+      assert.include(error.message, 'at id 3: the ledger has nothing, this build has "sprockets"');
+      assert.deepStrictEqual(yield* tables, ["cogs", "gadgets", LEDGER_TABLE, "widgets"]);
+      yield* ddl("DROP TABLE cogs");
+      yield* ddl(`DELETE FROM ${LEDGER_TABLE} WHERE migration_id = 4`);
+    })
+  );
+
+  it.effect("starts an earlier build on a ledger a newer build advanced", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* migrate(widgets), []);
+      assert.strictEqual((yield* ledger).length, 2);
+    })
+  );
+});
