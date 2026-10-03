@@ -47,7 +47,7 @@ export const ago = (iso: string, now: number): string => {
 
 // The index line: text up to the first sentence-ending period or ellipsis, semicolon or spaced
 // en dash, bounded to 80 code points. A period inside a token (".NET", "1.2") is not a boundary.
-const firstClause = (description: string): string => {
+export const firstClause = (description: string): string => {
   const text = description.trim();
   const boundary = text.search(/\.+(?=\s|$)|;| – /u);
   const clause = boundary === -1 ? text : text.slice(0, boundary).trimEnd();

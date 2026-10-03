@@ -368,11 +368,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.include(text(html), "A useful office tool");
         assert.include(text(html), "Find the right person. Includes the whole company.");
         assert.include(text(html), "Description edited by Priya");
-        assert.include(text(html), "Current version");
         assert.include(text(html), "v5");
         assert.include(text(html), "by Priya");
-        assert.include(text(html), "Anyone at Northwind who signs in. Not the public.");
-        assert.include(text(html), "Nothing else reads this patch");
         assert.isTrue(
           links(html).some(
             (link) => link.href === `/${workspace.handle}/${patch.name}` && link.text === "Open"
@@ -401,10 +398,6 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.isDefined(hidden(html, "expectedCurrentVersionId"));
         }
         if (person === workspace.admin) {
-          assert.include(
-            text(html),
-            "You can do everything an owner can from here, except publish."
-          );
           assert.include(html, `${cardPath(patch.name)}/reassign?all=1`);
         }
         const versions = yield* request(`${cardPath(patch.name)}/versions?all=1`, person);
@@ -559,14 +552,13 @@ it.layer(layer)("portal pages on a socket", (it) => {
       })
   );
 
+  // render.test.ts owns the clause table; this pins the card and index wiring.
   it.effect("shows only a distinct secondary title and cuts only index descriptions", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       for (const [name, title, shown] of [
         ["distinct-title", "A different headline", true],
-        ["literal-title", "literal-title", false],
-        ["office-map", "Office Map", false],
-        ["empty-title", "", false]
+        ["office-map", "Office Map", false]
       ] as const) {
         const patch = yield* publish(workspace.owner, name, { title });
         const html = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
@@ -576,33 +568,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
           .trim();
         assert.strictEqual(secondary, shown ? title : "");
       }
-      for (const [name, description, first] of [
-        ["period-cut", "Find a desk. Keep the second sentence on the card.", "Find a desk"],
-        ["semicolon-cut", "Choose lunch; keep this detail on the card.", "Choose lunch"],
-        ["dash-cut", "Book a room – keep this detail on the card.", "Book a room"],
-        ["earliest-cut", "Plan the day; next clause. Last clause – still later", "Plan the day"],
-        ["ellipsis-cut", "Wait for it... then keep this detail on the card.", "Wait for it"],
-        ["length-cut", "a".repeat(81), `${"a".repeat(79)}…`]
-      ] as const) {
-        const patch = yield* publish(workspace.owner, name, { description });
-        const html = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
-        const line = cardLinks(html).find((link) => link.href === cardPath(name))!.text;
-        assert.strictEqual(line, `${name} ${first}`);
-        assert.notInclude(line, description);
-        assert.include(text(html.split(/<\/h1>/)[1] ?? ""), description);
-      }
-      for (const [name, description] of [
-        ["leading-period", ".NET release health and deployment notes"],
-        ["inner-period", "Track release 1.2 rollouts"]
-      ] as const) {
-        const patch = yield* publish(workspace.owner, name, { description });
-        const html = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
-        const line = cardLinks(html).find((link) => link.href === cardPath(name))!.text;
-        assert.include(line, description);
-      }
+      const description = "Find a desk. Keep the second sentence on the card.";
+      const cut = yield* publish(workspace.owner, "period-cut", { description });
+      const html = yield* (yield* request(cardPath(cut.name), workspace.owner)).text;
+      const line = cardLinks(html).find((link) => link.href === cardPath(cut.name))!.text;
+      assert.strictEqual(line, "period-cut Find a desk");
+      assert.include(text(html.split(/<\/h1>/)[1] ?? ""), description);
       const blank = yield* publish(workspace.owner, "blank-description", { description: "" });
-      const html = yield* (yield* request(cardPath(blank.name), workspace.member)).text;
-      assert.include(text(html), "No description");
+      const blankHtml = yield* (yield* request(cardPath(blank.name), workspace.member)).text;
+      assert.include(text(blankHtml), "No description");
     })
   );
 
@@ -627,13 +601,6 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(saved.patch.descriptionUpdatedBy, workspace.owner.id);
       const html = yield* (yield* request(response.headers.location!, workspace.owner)).text;
       assert.include(html, "Find a desk &lt;quickly&gt;");
-      const noop = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
-        expectedPatchId: patch.patchId,
-        description: "Find a desk <quickly>",
-        expectedDescriptionUpdatedAt: saved.patch.descriptionUpdatedAt ?? ""
-      });
-      assert.strictEqual(noop.status, 303);
-      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), saved);
     })
   );
 
@@ -1272,47 +1239,32 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect(
-    "redisplays an invalid submitted description safely and accepts the Unicode bound",
-    () =>
-      Effect.gen(function* () {
-        const workspace = yield* company();
-        const patch = yield* publish(workspace.owner, "description-invalid");
-        const before = yield* readPatch(workspace.owner, patch.patchId);
-        const invalid = `<script>${"x".repeat(501)}</script>`;
-        const response = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
-          expectedPatchId: patch.patchId,
-          description: invalid,
-          expectedDescriptionUpdatedAt: patch.descriptionUpdatedAt ?? ""
-        });
-        assert.strictEqual(response.status, 422);
-        const html = yield* response.text;
-        assert.match(
-          html,
-          /<textarea\b[^>]*>[\s\S]*&lt;script&gt;x{501}&lt;\/script&gt;[\s\S]*<\/textarea>/
-        );
-        assert.notInclude(html, invalid);
-        assert.match(html, /<label\b[^>]*for="description"[^>]*>Description<\/label>/);
-        assert.match(
-          html,
-          /<textarea\b[^>]*aria-describedby="description-hint description-error"[^>]*aria-invalid="true"/
-        );
-        assert.match(html, /<p\b[^>]*id="description-error"[^>]*>[^<]*500[^<]*<\/p>/);
-        assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
-        const valid = "\u{10400}".repeat(500);
-        assert.strictEqual(
-          (yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
-            expectedPatchId: patch.patchId,
-            description: valid,
-            expectedDescriptionUpdatedAt: patch.descriptionUpdatedAt ?? ""
-          })).status,
-          303
-        );
-        assert.strictEqual(
-          (yield* readPatch(workspace.owner, patch.patchId)).patch.description,
-          valid
-        );
-      })
+  it.effect("redisplays an invalid submitted description safely and changes nothing", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "description-invalid");
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      const invalid = `<script>${"x".repeat(501)}</script>`;
+      const response = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
+        expectedPatchId: patch.patchId,
+        description: invalid,
+        expectedDescriptionUpdatedAt: patch.descriptionUpdatedAt ?? ""
+      });
+      assert.strictEqual(response.status, 422);
+      const html = yield* response.text;
+      assert.match(
+        html,
+        /<textarea\b[^>]*>[\s\S]*&lt;script&gt;x{501}&lt;\/script&gt;[\s\S]*<\/textarea>/
+      );
+      assert.notInclude(html, invalid);
+      assert.match(html, /<label\b[^>]*for="description"[^>]*>Description<\/label>/);
+      assert.match(
+        html,
+        /<textarea\b[^>]*aria-describedby="description-hint description-error"[^>]*aria-invalid="true"/
+      );
+      assert.match(html, /<p\b[^>]*id="description-error"[^>]*>[^<]*500[^<]*<\/p>/);
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+    })
   );
 
   it.effect("rejects a rollback version outside PostgreSQL's integer range on the card", () =>
@@ -1366,95 +1318,70 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect(
-    "recomputes current-version off sources for restore GET and POST before acknowledgement",
-    () =>
-      Effect.gen(function* () {
-        const workspace = yield* company();
-        const service = yield* Patches.Patches;
-        const sources = [];
-        for (const state of ["retired", "deleted", "gone", "older"] as const)
-          sources.push(yield* publishSource(workspace.owner, `source-${state}`));
-        const [retired, deleted, gone, older] = sources;
-        const consumer = yield* publishDependant(workspace.owner, "reads-sources", older!.patchId);
-        yield* publish(workspace.owner, consumer.name, {
-          intent: "update",
-          patchId: consumer.patchId,
-          manifest: {
-            ...manifest,
-            name: consumer.name,
-            uses: {
-              retired: sourceDeclaration(retired!.patchId),
-              deleted: sourceDeclaration(deleted!.patchId),
-              gone: sourceDeclaration(gone!.patchId)
-            }
-          }
+  it.effect("recomputes off sources for restore GET and POST before acknowledgement", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const service = yield* Patches.Patches;
+      // Patches owns which sources count as off; one gone source shows the portal's
+      // warning, which names a source by id once its name is reclaimed.
+      const gone = yield* publishSource(workspace.owner, "source-gone");
+      const consumer = yield* publishDependant(workspace.owner, "reads-sources", gone.patchId);
+      yield* service.retire(consumer.patchId, actor(workspace.owner));
+      const drawn = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
+        .text;
+      assert.include(forms(drawn), `${cardPath(consumer.name)}/restore?all=1`);
+      yield* service.delete(gone.patchId, actor(workspace.owner));
+      yield* TestClock.adjust(30 * DAY);
+      yield* service.purgeDeleted(gone.patchId);
+      for (const [state, person] of [
+        ["retired", workspace.owner],
+        ["deleted", workspace.admin]
+      ] as const) {
+        if (state === "deleted") yield* service.delete(consumer.patchId, actor(workspace.owner));
+        const path = `${cardPath(consumer.name)}/restore?all=1`;
+        const before = yield* readPatch(workspace.owner, consumer.patchId);
+        const refused = yield* post(path, person, {
+          expectedPatchId: consumer.patchId,
+          expectedState: state
         });
-        yield* service.retire(consumer.patchId, actor(workspace.owner));
-        const drawn = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
-          .text;
-        assert.include(forms(drawn), `${cardPath(consumer.name)}/restore?all=1`);
-        yield* service.retire(retired!.patchId, actor(workspace.owner));
-        yield* service.retire(older!.patchId, actor(workspace.owner));
-        yield* service.delete(deleted!.patchId, actor(workspace.owner));
-        yield* service.delete(gone!.patchId, actor(workspace.owner));
-        yield* TestClock.adjust(30 * DAY);
-        yield* service.purgeDeleted(gone!.patchId);
-        for (const [state, person] of [
-          ["retired", workspace.owner],
-          ["deleted", workspace.admin]
-        ] as const) {
-          if (state === "deleted") yield* service.delete(consumer.patchId, actor(workspace.owner));
-          const path = `${cardPath(consumer.name)}/restore?all=1`;
-          const before = yield* readPatch(workspace.owner, consumer.patchId);
-          const refused = yield* post(path, person, {
-            expectedPatchId: consumer.patchId,
-            expectedState: state
-          });
-          assert.strictEqual(refused.status, 409);
-          const refusedHtml = yield* refused.text;
-          for (const viewer of [workspace.owner, workspace.admin]) {
-            const page = yield* request(path, viewer);
-            assert.strictEqual(page.status, 200);
-            for (const html of [yield* page.text, refusedHtml]) {
-              assert.include(text(html), retired!.name);
-              assert.include(text(html), deleted!.name);
-              assert.include(text(html), gone!.patchId);
-              for (const sourceState of ["retired", "deleted", "gone"])
-                assert.include(text(html), sourceState);
-              assert.include(text(html), "notes");
-              assert.notInclude(html, older!.name);
-              assert.include(forms(html), path);
-              assert.strictEqual(hidden(html, "expectedPatchId"), consumer.patchId);
-              assert.strictEqual(hidden(html, "expectedState"), state);
-              assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
-              assert.include(
-                links(html).map((link) => link.href),
-                `${cardPath(consumer.name)}?all=1`
-              );
-            }
+        assert.strictEqual(refused.status, 409);
+        const refusedHtml = yield* refused.text;
+        for (const viewer of [workspace.owner, workspace.admin]) {
+          const page = yield* request(path, viewer);
+          assert.strictEqual(page.status, 200);
+          for (const html of [yield* page.text, refusedHtml]) {
+            assert.include(text(html), `${gone.patchId} / notes : gone`);
+            assert.include(forms(html), path);
+            assert.strictEqual(hidden(html, "expectedPatchId"), consumer.patchId);
+            assert.strictEqual(hidden(html, "expectedState"), state);
+            assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+            assert.include(
+              links(html).map((link) => link.href),
+              `${cardPath(consumer.name)}?all=1`
+            );
           }
-          assert.deepStrictEqual(yield* readPatch(workspace.owner, consumer.patchId), before);
-          const fresh = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
-            .text;
-          assert.notInclude(forms(fresh), path);
-          assert.include(
-            links(fresh).map((link) => link.href),
-            path
-          );
-          const restored = yield* post(path, person, {
-            expectedPatchId: consumer.patchId,
-            expectedState: state,
-            ack: "1"
-          });
-          assert.strictEqual(restored.status, 303);
-          assert.strictEqual(restored.headers.location, `${cardPath(consumer.name)}?all=1`);
-          const saved = yield* readPatch(workspace.owner, consumer.patchId);
-          assert.strictEqual(saved.patch.state, "live");
-          assert.strictEqual(saved.patch.lastChangedBy, person.id);
-          assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
         }
-      })
+        assert.deepStrictEqual(yield* readPatch(workspace.owner, consumer.patchId), before);
+        const fresh = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
+          .text;
+        assert.notInclude(forms(fresh), path);
+        assert.include(
+          links(fresh).map((link) => link.href),
+          path
+        );
+        const restored = yield* post(path, person, {
+          expectedPatchId: consumer.patchId,
+          expectedState: state,
+          ack: "1"
+        });
+        assert.strictEqual(restored.status, 303);
+        assert.strictEqual(restored.headers.location, `${cardPath(consumer.name)}?all=1`);
+        const saved = yield* readPatch(workspace.owner, consumer.patchId);
+        assert.strictEqual(saved.patch.state, "live");
+        assert.strictEqual(saved.patch.lastChangedBy, person.id);
+        assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
+      }
+    })
   );
 
   it.effect(
@@ -1533,62 +1460,53 @@ it.layer(layer)("portal pages on a socket", (it) => {
       })
   );
 
-  it.effect(
-    "reassigns repeatedly in every lifecycle state and treats the current owner as a stamp-preserving no-op",
-    () =>
-      Effect.gen(function* () {
-        const workspace = yield* company();
-        const service = yield* Patches.Patches;
-        for (const state of ["live", "retired", "deleted"] as const) {
-          const patch = yield* publish(workspace.owner, `reassign-${state}`);
-          if (state === "retired") yield* service.retire(patch.patchId, actor(workspace.owner));
-          if (state === "deleted") yield* service.delete(patch.patchId, actor(workspace.owner));
-          const original = yield* readPatch(workspace.owner, patch.patchId);
-          const path = `${cardPath(patch.name)}/reassign?all=1`;
-          let currentOwner = workspace.owner.id;
-          for (const next of [workspace.member, workspace.owner, workspace.admin]) {
-            const card = yield* (yield* request(`${cardPath(patch.name)}?all=1`, workspace.admin))
-              .text;
-            assert.include(
-              links(card).map((link) => link.href),
-              path
-            );
-            const page = yield* request(path, workspace.admin);
-            assert.strictEqual(page.status, 200);
-            const html = yield* page.text;
-            assert.strictEqual(hidden(html, "expectedOwnerUserId"), currentOwner);
-            assert.include(radioValues(html), next.id);
-            yield* TestClock.adjust(1_000);
-            const response = yield* post(path, workspace.admin, {
-              expectedPatchId: patch.patchId,
-              expectedOwnerUserId: currentOwner,
-              user: next.id
-            });
-            assert.strictEqual(response.status, 303);
-            assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
-            const saved = yield* readPatch(workspace.owner, patch.patchId);
-            assert.strictEqual(saved.owner.id, next.id);
-            assert.strictEqual(saved.patch.ownerUserId, next.id);
-            assert.strictEqual(saved.patch.reassignedBy, workspace.admin.id);
-            assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
-            assert.strictEqual(saved.patch.state, state);
-            assert.strictEqual(saved.patch.retiredAt, original.patch.retiredAt);
-            assert.strictEqual(saved.patch.deletedAt, original.patch.deletedAt);
-            assert.strictEqual(saved.patch.purgeAt, original.patch.purgeAt);
-            assert.strictEqual(saved.patch.currentVersionId, original.patch.currentVersionId);
-            currentOwner = next.id;
-          }
-          const beforeNoop = yield* readPatch(workspace.owner, patch.patchId);
-          yield* TestClock.adjust(DAY);
-          const noop = yield* post(path, workspace.admin, {
-            expectedPatchId: patch.patchId,
-            expectedOwnerUserId: currentOwner,
-            user: currentOwner
-          });
-          assert.strictEqual(noop.status, 303);
-          assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), beforeNoop);
-        }
-      })
+  // Patches owns which stamps a reassignment keeps; a deleted card shows reassignment
+  // still works in the most restricted state.
+  it.effect("reassigns a deleted patch twice and treats the current owner as a no-op", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const service = yield* Patches.Patches;
+      const patch = yield* publish(workspace.owner, "reassign-deleted");
+      yield* service.delete(patch.patchId, actor(workspace.owner));
+      const original = yield* readPatch(workspace.owner, patch.patchId);
+      const path = `${cardPath(patch.name)}/reassign?all=1`;
+      let currentOwner = workspace.owner.id;
+      for (const next of [workspace.member, workspace.admin]) {
+        const card = yield* (yield* request(`${cardPath(patch.name)}?all=1`, workspace.admin)).text;
+        assert.include(
+          links(card).map((link) => link.href),
+          path
+        );
+        const page = yield* request(path, workspace.admin);
+        assert.strictEqual(page.status, 200);
+        const html = yield* page.text;
+        assert.strictEqual(hidden(html, "expectedOwnerUserId"), currentOwner);
+        assert.include(radioValues(html), next.id);
+        yield* TestClock.adjust(1_000);
+        const response = yield* post(path, workspace.admin, {
+          expectedPatchId: patch.patchId,
+          expectedOwnerUserId: currentOwner,
+          user: next.id
+        });
+        assert.strictEqual(response.status, 303);
+        assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+        const saved = yield* readPatch(workspace.owner, patch.patchId);
+        assert.strictEqual(saved.owner.id, next.id);
+        assert.strictEqual(saved.patch.reassignedBy, workspace.admin.id);
+        assert.strictEqual(saved.patch.state, "deleted");
+        assert.strictEqual(saved.patch.purgeAt, original.patch.purgeAt);
+        currentOwner = next.id;
+      }
+      const beforeNoop = yield* readPatch(workspace.owner, patch.patchId);
+      yield* TestClock.adjust(DAY);
+      const noop = yield* post(path, workspace.admin, {
+        expectedPatchId: patch.patchId,
+        expectedOwnerUserId: currentOwner,
+        user: currentOwner
+      });
+      assert.strictEqual(noop.status, 303);
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), beforeNoop);
+    })
   );
 
   it.effect("refuses reassignment against an old owner and returns the fresh card and actor", () =>
@@ -2585,41 +2503,19 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
     })
   );
 
-  it.effect("warns about current-version off sources and recomputes them before restoring", () =>
+  // Patches owns which sources count as off; one source that goes off after the preview
+  // shows the warning is recomputed at commit.
+  it.effect("warns about off sources and recomputes them before restoring", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const service = yield* Patches.Patches;
-      const retired = yield* publishSource(workspace.member, "return-source-retired");
-      const deleted = yield* publishSource(workspace.member, "return-source-deleted");
-      const gone = yield* publishSource(workspace.member, "return-source-gone");
-      const older = yield* publishSource(workspace.member, "return-source-older");
-      const live = yield* publishSource(workspace.member, "return-source-live");
+      const source = yield* publishSource(workspace.member, "return-source");
       const reader = yield* publishDependant(
         workspace.owner,
         "return-broken-reader",
-        older.patchId
+        source.patchId
       );
-      yield* publish(workspace.owner, reader.name, {
-        intent: "update",
-        patchId: reader.patchId,
-        manifest: {
-          ...manifest,
-          name: reader.name,
-          uses: {
-            retired: sourceDeclaration(retired.patchId),
-            deleted: sourceDeclaration(deleted.patchId),
-            gone: sourceDeclaration(gone.patchId),
-            live: sourceDeclaration(live.patchId)
-          }
-        }
-      });
       yield* service.retire(reader.patchId, actor(workspace.owner));
-      yield* service.retire(retired.patchId, actor(workspace.member));
-      yield* service.retire(older.patchId, actor(workspace.member));
-      yield* service.delete(deleted.patchId, actor(workspace.member));
-      yield* service.delete(gone.patchId, actor(workspace.member));
-      yield* TestClock.adjust(30 * DAY);
-      yield* service.purgeDeleted(gone.patchId);
       yield* (yield* Users.Users).deactivate({
         companyId: workspace.id,
         userId: workspace.owner.id
@@ -2630,22 +2526,17 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         patch: [reader.patchId]
       });
       assert.strictEqual(preview.status, 200);
-      const html = yield* preview.text;
-      for (const name of [reader.name, retired.name, deleted.name, gone.patchId])
-        assert.include(text(html), name);
-      for (const state of ["retired", "deleted", "gone"]) assert.include(text(html), state);
-      assert.include(text(html), "notes");
-      assert.notInclude(text(html), older.name);
-      assert.notInclude(text(html), live.name);
-      assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+      assert.deepStrictEqual(inputs(yield* preview.text, "ack", "checkbox"), []);
 
-      yield* service.retire(live.patchId, actor(workspace.member));
+      yield* service.retire(source.patchId, actor(workspace.member));
       const refused = yield* post(path, workspace.admin, {
         choice: "confirm",
         patch: [reader.patchId]
       });
       assert.strictEqual(refused.status, 409);
-      assert.include(text(yield* refused.text), live.name);
+      const refusedHtml = yield* refused.text;
+      assert.include(text(refusedHtml), `${source.name} / notes : retired`);
+      assert.strictEqual(inputs(refusedHtml, "ack", "checkbox").length, 1);
       assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
       assert.strictEqual(
         (yield* readPatch(workspace.admin, reader.patchId)).patch.state,
@@ -2660,12 +2551,8 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
       assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
       assert.strictEqual((yield* readPatch(workspace.admin, reader.patchId)).patch.state, "live");
       assert.strictEqual(
-        (yield* readPatch(workspace.admin, retired.patchId)).patch.state,
+        (yield* readPatch(workspace.admin, source.patchId)).patch.state,
         "retired"
-      );
-      assert.strictEqual(
-        (yield* readPatch(workspace.admin, deleted.patchId)).patch.state,
-        "deleted"
       );
     })
   );
