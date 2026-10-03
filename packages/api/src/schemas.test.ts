@@ -129,6 +129,9 @@ describe("wire schemas", () => {
     const decode = Schema.decodeUnknownExit(Manifest, { onExcessProperty: "error" });
     expect(decode({ ...manifest, release: "0.0.0", manifestVersion: 7 })._tag).toBe("Success");
     for (const tables of [
+      [],
+      { notes: { columns: {}, indexes: {} } },
+      { notes: { description: "", columns: {}, indexes: {} } },
       { "not-valid": { description: "Records keyed by id.", columns: {}, indexes: {} } },
       { ["a".repeat(64)]: { description: "Records keyed by id.", columns: {}, indexes: {} } },
       {
@@ -211,12 +214,13 @@ describe("wire schemas", () => {
     ]) {
       expect(decode({ ...manifest, tables })._tag).toBe("Failure");
     }
-    expect(
-      decode({
-        ...manifest,
-        files: { images: { description: "Images keyed by file name.", unexpected: true } }
-      })._tag
-    ).toBe("Failure");
+    for (const files of [
+      { docs: {} },
+      { docs: { description: " \t\n" } },
+      { images: { description: "Images keyed by file name.", unexpected: true } }
+    ]) {
+      expect(decode({ ...manifest, files })._tag).toBe("Failure");
+    }
     expect(
       decode({
         ...manifest,
