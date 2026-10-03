@@ -532,8 +532,11 @@ it.layer(
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_socket_foreign', 'socket-foreign', 'Foreign')`;
       yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-        VALUES ('usr_socket_foreign', 'user_socket_foreign', 'cmp_socket_foreign', 'foreign@example.com', 'Foreign', 'member')`;
+        VALUES ('usr_socket_foreign', 'user_socket_foreign', 'cmp_socket_foreign', 'foreign@example.com', 'Foreign', 'member'),
+          ('usr_socket_inactive', 'user_socket_inactive', ${DEV_SEED.companyId}, 'inactive@example.com', 'Inactive', 'member')`;
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_socket_inactive'`;
       const foreignCookie = sessionCookie("user_socket_foreign", "foreign@example.com");
+      const inactiveCookie = sessionCookie("user_socket_inactive", "inactive@example.com");
       const unenrolledCookie = sessionCookie("user_socket_unenrolled", "unenrolled@example.com");
       const [before] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
       for (const path of [addressPath, `${addressPath}/~v/1`]) {
@@ -546,6 +549,7 @@ it.layer(
         assert.strictEqual(yield* head.text, "");
         assert.strictEqual((yield* send(HttpClientRequest.get(path))).status, 401);
         assert.strictEqual((yield* send(signedRequest(path, unenrolledCookie))).status, 303);
+        assert.strictEqual((yield* send(signedRequest(path, inactiveCookie))).status, 403);
       }
       const [after] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
       assert.deepStrictEqual(after, before, "refused requests must not count as visits");
