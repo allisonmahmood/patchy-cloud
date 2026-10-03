@@ -54,7 +54,10 @@ export const publishRecord = () => ({
 /** Direct persistence tests still honour the durable object-intent contract. */
 export const record = (input: Patches.RecordInput) =>
   Effect.flatMap(Patches.Patches, (patches) =>
-    patches.prepareObject(input.objectKey).pipe(Effect.andThen(patches.record(input)))
+    Effect.forEach(
+      [input.objectKey, ...(input.server === undefined ? [] : [input.server.objectKey])],
+      patches.prepareObject
+    ).pipe(Effect.andThen(patches.record(input)))
   );
 
 /** The provenance a fixture publish leaves empty. */
