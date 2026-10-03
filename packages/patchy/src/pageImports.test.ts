@@ -1,8 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Exercise Vite's filesystem graph and build watcher.
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+// @effect-diagnostics nodeBuiltinImport:off -- Exercise Vite's filesystem graph and build watcher, and deep-compare its repeated results.
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { runInNewContext } from "node:vm";
 import { afterEach, expect, it, vi } from "vitest";
 import { build } from "vite";
@@ -27,6 +28,12 @@ const page = (source: string) => {
   );
   writeFileSync(path.join(root, "main.ts"), source);
   return root;
+};
+
+// Rename complete saves into place, rather than testing a truncate followed by a write.
+const save = (file: string, source: string) => {
+  writeFileSync(`${file}.tmp`, source);
+  renameSync(`${file}.tmp`, file);
 };
 
 it("keeps type-only module forms outside the runtime page graph", async () => {
@@ -181,12 +188,19 @@ it("rechecks nested CSS edits, refuses the actual importer, and recovers through
   let builtCss = "";
   type Result = { css: string } | { error: Error };
   const completed: Result[] = [];
+  let previous: Result | undefined;
+  // A save can cause several Vite rebuilds. Return each distinct result, not one
+  // queue entry per save; a new error or unexpected CSS still fails the test.
+  // Deep equality compares two LocalError refusals by their code and message.
   const next = () =>
     vi.waitFor(
       () => {
-        const result = completed.shift();
-        if (!result) throw new Error("Waiting for a completed Vite build.");
-        return result;
+        for (let result = completed.shift(); result; result = completed.shift()) {
+          if (isDeepStrictEqual(result, previous)) continue;
+          previous = result;
+          return result;
+        }
+        throw new Error("Waiting for a new Vite build result.");
       },
       { timeout: 5_000 }
     );
@@ -217,14 +231,14 @@ it("rechecks nested CSS edits, refuses the actual importer, and recovers through
   });
   try {
     expect(await next()).toEqual({ css: expect.stringMatching(/color:\s*red/) });
-    writeFileSync(nested, '@import "lodash/style.css";');
+    save(nested, '@import "lodash/style.css";');
     const refused = await next();
     expect(refused).toMatchObject({
       error: { code: "import_refused", message: expect.stringContaining("nested.css") }
     });
     if (!("error" in refused)) throw new Error("Expected the nested stylesheet to be refused.");
     expect(refused.error.message).toContain('"lodash/style.css"');
-    writeFileSync(nested, '@import "./style.css"; body { color: blue; }');
+    save(nested, '@import "./style.css"; body { color: blue; }');
     expect(await next()).toEqual({ css: expect.stringMatching(/color:\s*blue/) });
     expect(refusal).toBeUndefined();
   } finally {
