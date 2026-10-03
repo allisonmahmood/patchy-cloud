@@ -1,7 +1,11 @@
+/**
+ * Company limit overrides and their history, id 7 in the global migration
+ * sequence. Squashed into one baseline before launch.
+ */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0009_limits_overrides": ddl(
+  "0007_limits": ddl(
     `CREATE TABLE limits_revisions (
       company_id TEXT PRIMARY KEY REFERENCES companies(id),
       revision BIGINT NOT NULL CHECK (revision > 0)

@@ -22,10 +22,9 @@ patchy_data`, issue `DROP DATABASE` outside a transaction, then `RESET ROLE` bef
 returning the connection. A `CREATEDB` admin without inherited ownership cannot
 drop the data role's database merely because it created it.
 
-The platform migration is `0005_company_database_baseline`.
-[ADR-0003](./ADR-0003-postgres-only.md) records the complete fifteen-entry
-platform ledger and its eight owners. Company inventory upgrades use no
-platform migration id.
+The platform migration is the `0004_company_database` baseline, one of the eight
+per-capability baselines described in [ADR-0003](./ADR-0003-postgres-only.md).
+Company inventory uses no platform migration id.
 
 ## Pools and locks
 

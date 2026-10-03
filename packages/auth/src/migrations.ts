@@ -1,8 +1,12 @@
-/** Machine credentials and device-login state; Companies owns their user foreign keys. */
+/**
+ * Machine credentials and device-login state, id 2 in the global migration
+ * sequence; Companies owns their user foreign keys. Squashed into one baseline
+ * before launch.
+ */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0002_auth_baseline": ddl(
+  "0002_auth": ddl(
     `CREATE TABLE machine_tokens (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),

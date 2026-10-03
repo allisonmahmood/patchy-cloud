@@ -1,13 +1,13 @@
 /**
- * The patches capability's schema: baseline 3, lifecycle 8 and lifecycle revisions 10
- * in the global migration sequence (`packages/sql/CONTEXT.md`).
+ * The patches capability's schema, id 3 in the global migration sequence
+ * (`packages/sql/CONTEXT.md`). Squashed into one baseline before launch.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  // A patch owns its address and served-version pointer. Versions retain
-  // immutable bundles, manifests, contract versions and publish replay records.
-  "0003_patches_baseline": ddl(
+  // A patch owns its address, served-version pointer, lifecycle and actor stamps.
+  // Versions retain immutable bundles, manifests, contract versions and publish replay records.
+  "0003_patches": ddl(
     `CREATE TABLE patches (
     id TEXT PRIMARY KEY,
     company_id TEXT NOT NULL REFERENCES companies(id),
@@ -20,10 +20,22 @@ export const migrations: Migrations = {
     repo_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL,
     deleted_at TIMESTAMPTZ,
     disabled_at TIMESTAMPTZ,
-    disabled_reason TEXT
+    disabled_reason TEXT,
+    retired_at TIMESTAMPTZ,
+    retired_by TEXT REFERENCES users(id),
+    deleted_by TEXT REFERENCES users(id),
+    reassigned_at TIMESTAMPTZ,
+    reassigned_by TEXT REFERENCES users(id),
+    description TEXT NOT NULL DEFAULT '',
+    description_updated_at TIMESTAMPTZ,
+    description_updated_by TEXT REFERENCES users(id),
+    last_changed_at TIMESTAMPTZ,
+    last_changed_by TEXT REFERENCES users(id),
+    last_changed_action TEXT,
+    visit_count BIGINT NOT NULL DEFAULT 0,
+    lifecycle_revision BIGINT NOT NULL DEFAULT 0 CHECK (lifecycle_revision >= 0)
     )`,
     `CREATE TABLE patch_names (
     company_id TEXT NOT NULL REFERENCES companies(id),
@@ -59,7 +71,15 @@ export const migrations: Migrations = {
     publish_response JSONB NOT NULL,
     publish_status INTEGER NOT NULL CHECK (publish_status IN (200, 201)),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (patch_id, version_number)
+    server_object_key TEXT,
+    server_content_hash TEXT,
+    server_file_size INTEGER,
+    UNIQUE (patch_id, version_number),
+    CONSTRAINT patch_versions_server_artifact CHECK (
+      (server_object_key IS NULL AND server_content_hash IS NULL AND server_file_size IS NULL)
+      OR (server_object_key IS NOT NULL AND server_content_hash IS NOT NULL
+        AND server_file_size IS NOT NULL AND server_file_size >= 0)
+    )
     )`,
     `CREATE TABLE pending_patch_objects (
     object_key TEXT PRIMARY KEY,
@@ -71,52 +91,9 @@ export const migrations: Migrations = {
     `CREATE INDEX patches_company_id_idx ON patches(company_id)`,
     `CREATE INDEX patches_owner_user_id_idx ON patches(owner_user_id)`,
     `CREATE INDEX patch_versions_patch_id_idx ON patch_versions(patch_id)`,
-    `CREATE UNIQUE INDEX patch_versions_owner_publish_key_idx ON patch_versions(owner_user_id, publish_key)`
-  ),
-  "0008_patches_lifecycle": ddl(
-    // Deletes before this migration were irreversible and released their names.
-    // Finalize those tombstones rather than offer restore at a reused address
-    // or revive a namespace the old orphan sweep may already have removed.
-    `INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
-    SELECT versions.object_key, CURRENT_TIMESTAMP, false
-    FROM patch_versions versions JOIN patches ON patches.id = versions.patch_id
-    WHERE patches.deleted_at IS NOT NULL
-    ON CONFLICT (object_key) DO UPDATE
-      SET expires_at = EXCLUDED.expires_at, claimed = false`,
-    `DELETE FROM patch_versions
-    WHERE patch_id IN (SELECT id FROM patches WHERE deleted_at IS NOT NULL)`,
-    `DELETE FROM patches WHERE deleted_at IS NOT NULL`,
-    `ALTER TABLE patches
-    DROP COLUMN expires_at,
-    ADD COLUMN retired_at TIMESTAMPTZ,
-    ADD COLUMN retired_by TEXT REFERENCES users(id),
-    ADD COLUMN deleted_by TEXT REFERENCES users(id),
-    ADD COLUMN reassigned_at TIMESTAMPTZ,
-    ADD COLUMN reassigned_by TEXT REFERENCES users(id),
-    ADD COLUMN description TEXT NOT NULL DEFAULT '',
-    ADD COLUMN description_updated_at TIMESTAMPTZ,
-    ADD COLUMN description_updated_by TEXT REFERENCES users(id),
-    ADD COLUMN last_changed_at TIMESTAMPTZ,
-    ADD COLUMN last_changed_by TEXT REFERENCES users(id),
-    ADD COLUMN last_changed_action TEXT,
-    ADD COLUMN visit_count BIGINT NOT NULL DEFAULT 0`,
+    `CREATE UNIQUE INDEX patch_versions_owner_publish_key_idx ON patch_versions(owner_user_id, publish_key)`,
     `CREATE INDEX patches_deleted_at_idx ON patches(deleted_at)
-    WHERE deleted_at IS NOT NULL`
-  ),
-  "0010_patches_lifecycle_revision": ddl(
-    `ALTER TABLE patches
-    ADD COLUMN lifecycle_revision BIGINT NOT NULL DEFAULT 0 CHECK (lifecycle_revision >= 0)`
-  ),
-  "0013_patches_server_artifact": ddl(
-    `ALTER TABLE patch_versions
-    ADD COLUMN server_object_key TEXT,
-    ADD COLUMN server_content_hash TEXT,
-    ADD COLUMN server_file_size INTEGER,
-    ADD CONSTRAINT patch_versions_server_artifact CHECK (
-      (server_object_key IS NULL AND server_content_hash IS NULL AND server_file_size IS NULL)
-      OR (server_object_key IS NOT NULL AND server_content_hash IS NOT NULL
-        AND server_file_size IS NOT NULL AND server_file_size >= 0)
-    )`,
+    WHERE deleted_at IS NOT NULL`,
     `CREATE UNIQUE INDEX patch_versions_server_object_key_idx
     ON patch_versions(server_object_key) WHERE server_object_key IS NOT NULL`
   )

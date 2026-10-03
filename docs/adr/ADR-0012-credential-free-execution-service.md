@@ -192,7 +192,7 @@ or per-invocation CPU and memory guarantees.
 
 `@patchy/execution/fleet` is host code, not another deployed service. Its task
 provider owns task launch, management transport, discovery and observed stop times.
-Migration `0014_execution_fleet` owns task identity and deployment revision, company
+The execution baseline, `0008_execution`, owns task identity and deployment revision, company
 bindings and their epochs, binding history, process reports, breaker state and the
 housekeeping lease. A partial unique index permits one admission-serving binding
 per company. A binding in stopping is no longer admission-serving and can never

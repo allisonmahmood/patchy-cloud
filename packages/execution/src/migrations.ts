@@ -1,7 +1,12 @@
+/**
+ * The execution fleet: deployments, tasks, bindings, process reports, breakers
+ * and the housekeeping lease, id 8 in the global migration sequence. Squashed
+ * into one baseline before launch.
+ */
 import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0014_execution_fleet": ddl(
+  "0008_execution": ddl(
     `CREATE TABLE execution_deployments (
       revision TEXT PRIMARY KEY,
       retired BOOLEAN NOT NULL DEFAULT false
