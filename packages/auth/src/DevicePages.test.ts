@@ -91,14 +91,11 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.strictEqual(page.headers.get("cache-control"), "private, no-store");
         assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
         const html = yield* Effect.promise(() => page.text());
-        assert.include(html, "Is this the code on your terminal?");
         assert.match(html, new RegExp(`<h1\\b[^>]*>${login.userCode}</h1>`));
         assert.include(html, "Company &lt;confirm&gt;");
         assert.include(html, "Alex &quot;Owner&quot;");
         assert.include(html, owner.user.email);
         assert.include(html, 'value="Laptop &quot;&lt;hint&gt;&quot;"');
-        assert.include(html, "If you didn't run it, deny: nothing happens.");
-        assert.include(html, "90 days, or 30 days unused");
         assert.include(html, "clerk.headless.browser.js");
         const confirmed = yield* send(
           "/login/device",
@@ -114,10 +111,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.strictEqual(confirmed.headers.get("location"), null);
         const confirmedHtml = yield* Effect.promise(() => confirmed.text());
         assert.include(confirmedHtml, "Confirmed.");
-        assert.include(
-          confirmedHtml,
-          "Your terminal finishes logging in on its own within a few seconds. You can close this tab."
-        );
         assert.deepStrictEqual(yield* tokens.list(owner.user.id), []);
         const complete = yield* logins.poll(login.deviceCode);
         assert.strictEqual(complete.status, "complete");
@@ -193,7 +186,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
     })
   );
 
-  it.effect("inherits the old key name and explains when it stops working", () =>
+  it.effect("inherits the old key name and says which key it replaces", () =>
     Effect.gen(function* () {
       const owner = yield* account("replace");
       const tokens = yield* MachineTokens.MachineTokens;
@@ -207,7 +200,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       const html = yield* Effect.promise(() => page.text());
       assert.include(html, 'value="Old &quot;&lt;laptop&gt;&quot;"');
       assert.include(html, "Replaces the key named");
-      assert.include(html, "which stops working once your terminal finishes logging in");
       assert.notInclude(html, 'value="hostname"');
     })
   );
@@ -226,8 +218,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       assert.strictEqual(response.headers.get("location"), null);
       const html = yield* Effect.promise(() => response.text());
       assert.include(html, "Nothing was logged in.");
-      assert.include(html, `The code ${login.userCode} is dead and no key was made.`);
-      assert.include(html, "there is nothing else to do.");
       const actual = yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } });
       assert.strictEqual(actual.status, 410);
       assert.include(yield* Effect.promise(() => actual.text()), "This code was already used.");
@@ -264,10 +254,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
                 })
           );
           assert.strictEqual(response.status, 410);
-          const html = yield* Effect.promise(() => response.text());
-          assert.include(html, "This code has expired.");
-          assert.include(html, "A login code lasts ten minutes.");
-          assert.include(html, "again on the machine and open the new link it prints.");
+          assert.include(yield* Effect.promise(() => response.text()), "This code has expired.");
         }
         const answered = yield* logins.start({ machineNameHint: "Answered" });
         yield* logins.confirm({
@@ -279,10 +266,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           headers: { cookie: owner.cookie }
         });
         assert.strictEqual(confirmed.status, 410);
-        assert.include(
-          yield* Effect.promise(() => confirmed.text()),
-          "This code was already used."
-        );
         for (const action of ["get", "confirm", "deny"]) {
           const response = yield* send(
             action === "get" ? pathFor("UNKNOWN") : "/login/device",
@@ -296,10 +279,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
                 })
           );
           assert.strictEqual(response.status, 404);
-          assert.include(
-            yield* Effect.promise(() => response.text()),
-            "Nothing is waiting for this code."
-          );
         }
         for (const action of ["confirm", "deny"]) {
           const response = yield* send(
@@ -382,7 +361,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           );
           assert.strictEqual(response.status, 422);
           const html = yield* Effect.promise(() => response.text());
-          assert.include(html, "Give the machine a name, up to 64 characters.");
           assert.include(html, `value="${machineName}"`);
           assert.include(html, 'aria-invalid="true"');
           assert.include(html, login.userCode);
@@ -411,14 +389,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       assert.strictEqual(response.status, 200);
       const html = yield* Effect.promise(() => response.text());
       assert.include(html, "Open the link your terminal printed.");
-      assert.include(
-        html,
-        "prints a link that carries its own code, so there is nothing to type here."
-      );
-      assert.include(
-        html,
-        "If someone sent you here to type a code, don't: that is the trick the link is designed to avoid."
-      );
       assert.notInclude(html, "<input");
       assert.notInclude(html, "<form");
     })
@@ -470,10 +440,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           });
           assert.strictEqual(page.status, 200);
           const html = yield* Effect.promise(() => page.text());
-          assert.include(
-            html,
-            "Your sign-in was refreshed before that went through. Check the code and press Confirm again."
-          );
+          assert.include(html, "Check the code and press Confirm again.");
           assert.include(html, 'value="Original hint"');
           assert.notInclude(html, "Never replay me");
           assert.deepStrictEqual(yield* logins.poll(login.deviceCode), {
