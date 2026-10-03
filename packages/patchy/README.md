@@ -8,12 +8,14 @@ The CLI talks to whichever instance you point it at — Patchy Cloud, or the `pn
 
 ## Run it
 
-Requires Node.js 22.22.0 or newer. The package is private and not published to a registry. Fetch your intended instance's unauthenticated `GET /api/release`, download its exact `package.tarball` URL as `patchy.tgz`, and verify the downloaded bytes against the SHA-512 `package.integrity` before installing:
+Requires Node.js 22.22.0 or newer, with npm. The package is private and not published to a registry: each instance serves its own release and an installer for it. An agent given `Set up Patchy using https://pages.example.com/llms.txt` reads the install line there. On macOS and Linux:
 
 ```sh
-npm install --global --ignore-scripts ./patchy.tgz
+work=$(mktemp -d) && curl -fsS 'https://pages.example.com/install.mjs' -o "$work/install.mjs" && node "$work/install.mjs"
 patchy login --api-url https://pages.example.com
 ```
+
+The installer reads the instance's unauthenticated `GET /api/release`, downloads the exact `package.tarball` and checks its bytes against the SHA-512 `package.integrity` before running `npm install --global --ignore-scripts --no-audit --no-fund` on them. That catches a damaged or mismatched download, not a compromised instance. It then runs the new CLI's [`patchy setup`](#patchy-setup---remove) by absolute path and prints the executable and skill paths. It refuses Node older than 22.22.0 or a missing npm, and names the fix when npm cannot write its global prefix, when that prefix is inside Volta's Node image, or when that prefix's `bin` is not first on `PATH` for `patchy`. Rerunning it is the upgrade path: it always reinstalls the instance's current release. Windows PowerShell runs the same installer; `/llms.txt` has its line, which calls `patchy.cmd`.
 
 Contributors working in this checkout can instead run `pnpm --filter patchy build`. It puts an executable at `packages/patchy/dist/index.js` and packs the release tarball. Symlink that executable as `patchy` into a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/patchy/dist/index.js`.
 
@@ -942,6 +944,30 @@ This is a picture of local availability, not proof that the instance will accept
 a key. Use `whoami` for that. A false result also does not prove no key exists:
 one may be in a file the probe could not read.
 
+### `patchy setup [--remove]`
+
+Register the package's bundled global skill with agents. Setup links the whole
+`skills/patchy` directory, references included, as `~/.agents/skills/patchy` and
+`~/.claude/skills/patchy`: symlinks on macOS and Linux, junctions on Windows.
+The installer runs it; run it yourself after installing some other way.
+
+Setup owns a link whose target is a `patchy` package's `skills/patchy`
+directory, including a dangling one left by an npm prefix that is gone, such as
+after switching Node versions. It creates missing links, replaces owned links to
+another package and leaves correct ones untouched, so a rerun changes nothing.
+It checks both paths before changing either: a real directory, a file or a link
+to anything else is exit 1 with `code: "skill_conflict"` naming the path, and
+nothing changes. `--remove` deletes only owned links and warns about anything
+else it leaves in place.
+
+```sh
+patchy setup --json
+# { "ok": true, "linked": ["/home/you/.agents/skills/patchy", "/home/you/.claude/skills/patchy"],
+#   "skill": "/usr/local/lib/node_modules/patchy/skills/patchy/SKILL.md" }
+```
+
+`--remove --json` returns `{ ok, removed, warnings }`.
+
 ### `patchy validate <file>`
 
 Validate an HTML file locally without publishing. Exits non-zero if validation fails; prints warnings otherwise.
@@ -952,7 +978,7 @@ patchy validate ./plan.html
 
 ### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--api-url <url>]`
 
-First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`, validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
+First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
 Without a file, run from the patch repo root. The config supplies its name and
 tier; `patchy.json` supplies its instance, description and optional patch id.
@@ -1046,7 +1072,7 @@ If the selected attempt settles before a competing invocation can read it, that
 invocation exits locally asking to run publish again rather than sending its own
 unselected payload.
 
-The executing CLI must match the instance release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance mismatch exits 2 with `kind: "rejected"`. Install the package from `GET /api/release`, or run `patchy refresh` inside a repo. Repo publishing admits tier 0, 1 and 2 with declared resources; tier 2 production admission requires fleet execution. New local dev starts check the same release; a running session survives upgrades.
+The executing CLI must match the instance release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance mismatch exits 2 with `kind: "rejected"`. Outside a repo, rerun the instance's installer, whose line the message names; inside a repo, run `pnpm patchy refresh`. Repo publishing admits tier 0, 1 and 2 with declared resources; tier 2 production admission requires fleet execution. New local dev starts check the same release; a running session survives upgrades.
 
 File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits

@@ -16,7 +16,7 @@ recoverable publish add commands, not alternative output or identity conventions
 
 One npm package, `patchy`, owns the binary and its explicit config, client, server,
 dev and Preact entry points at one exact release. It remains private and is distributed by
-the instance until launch. Inside a patch repo, `pnpm patchy` runs the pinned
+the instance until launch, through the installer its `/llms.txt` names. Inside a patch repo, `pnpm patchy` runs the pinned
 copy. [ADR-0011](./ADR-0011-one-package-one-release.md) owns release distribution
 and the stable runtime wire; this ADR owns the CLI's observable contract.
 
@@ -72,7 +72,7 @@ instance is `rejected` (exit 2). Not every local failure has a structured code
 | `code`                  | Meaning and remedy                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `instance_mismatch`     | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal. |
-| `release_mismatch`      | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                             |
+| `release_mismatch`      | The repo pin, executing CLI or installed runtime differs from the instance release. Inside a repo the message names `pnpm patchy refresh`. File mode involves only the global CLI, so its message names the instance's install line with the instance URL; rerunning the installer upgrades it.                                                      |
 | `toolchain_unsupported` | Dev or publish loaded Vite or `vite-plugin-singlefile` outside the release's accepted range. The diagnostic names the loaded version, accepted range and tested version, with the exact `pnpm add --save-dev` command. Change the builder-owned dependencies and any shared config's dependency resolution; refresh never writes those keys.         |
 | `import_refused`        | The page or server graph imports outside its SDK entry points. The message names the package, importer and allowed entries, then the company-code rule. Page imports of server implementations are refused; type-only imports are allowed. This is a build contract, not a security boundary or dependency-list check.                               |
 | `stale_generated`       | Generated release metadata, declaration stamps or the server module list no longer match the repo. Run `pnpm patchy refresh`.                                                                                                                                                                                                                        |
@@ -154,7 +154,17 @@ renamed to `patches.json` or removed.
 | `patchy auth set [--token-stdin] [--api-url <url>]` | Save an existing key for the instance; save an explicit URL too. Default is a terminal-only non-echoing prompt. `--token-stdin` explicitly accepts one nonempty redirected token and refuses a terminal. Never accepts a token argument. | `{ ok, instanceUrl }`                                                                                                    |
 | `patchy whoami`                                     | Verify the selected key and print its user, company, role and machine.                                                                                                                                                                   | `Identity`: `{ user: { id, email, name }, company: { id, handle, name }, role, machine: { id, name } }`, no `ok` wrapper |
 | `patchy status`                                     | Local availability report, no network; an absent key is not a failure. Unreadable credentials report unavailable without modifying them.                                                                                                 | `{ instanceUrl, instanceSource, hasToken, tokenSource, stateDir, hasDefaultStyle, cliVersion }`                          |
+| `patchy setup [--remove]`                           | Link the package's bundled global skill directory as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`; `--remove` deletes only links setup owns.                                                                                  | `{ ok, linked, skill }`; with `--remove`, `{ ok, removed, warnings }`                                                    |
 | `patchy validate <file>`                            | Check the static-HTML policy without publishing or authenticating.                                                                                                                                                                       | `{ ok, warnings }`                                                                                                       |
+
+Setup owns a link whose target is a `patchy` package's `skills/patchy`
+directory, including a dangling one whose npm prefix is gone; it uses symlinks
+on POSIX and junctions on Windows. Correct links are left untouched and owned
+links to another package are replaced. Both paths are checked before either
+changes: a directory, a file or a foreign link is exit 1 with `skill_conflict`
+naming the path. `skill` is the bundled `SKILL.md`. Remove leaves anything it
+does not own and reports it in `warnings`. The instance's `/install.mjs` runs
+`setup --json` by absolute path after installing.
 
 `status` walks the same key chain; `tokenSource` is `login`/`auth-set` only for a
 selected saved key with that provenance, otherwise null. It is not proof a key
@@ -548,7 +558,7 @@ even if the deletion sweep has not run. None of these refusals suggests a new pa
 
 Fresh file publishes require the exact executing CLI release; repo publishes
 and new dev starts also check the pin and installed runtime. A local mismatch
-is exit 1 with `release_mismatch`, naming both releases and `patchy refresh`;
+is exit 1 with `release_mismatch`, naming both releases and the repair: `pnpm patchy refresh` in a repo, the instance's install line for file publishing;
 an instance refusal is exit 2 with the same code. Running dev and deployed
 bundles survive tooling upgrades. Repo publish executes config only after the
 release check and checks the generated release, manifest version, declaration

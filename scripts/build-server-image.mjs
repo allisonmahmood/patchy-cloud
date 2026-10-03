@@ -151,6 +151,7 @@ async function stageRuntime(destination) {
     path.join(sdkRoot, "artifacts", `patchy-${release.release}-${release.digest}.tgz`)
   );
   if (digest(sdkArchive) !== release.digest) throw new Error("Packed SDK content digest mismatch.");
+  await access(path.join(sdkRoot, "front-door/install.mjs"));
 }
 
 try {

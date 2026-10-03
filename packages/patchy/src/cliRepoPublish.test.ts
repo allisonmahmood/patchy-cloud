@@ -55,6 +55,22 @@ describe("repo publish checks", () => {
     expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
   });
 
+  it("names pnpm patchy refresh when the instance moved past a repo's current pin", async () => {
+    const instance = await stubInstance(projectHandler, () => "9.9.9");
+    const dir = projectTree(instance.url);
+    const result = await runCli(["publish", "--json"], {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_TOKEN: "pp_owner" }
+    });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    const failure = JSON.parse(result.stderr);
+    expect(failure).toMatchObject({ ok: false, kind: "local", code: "release_mismatch" });
+    expect(failure.error).toContain("9.9.9");
+    expect(failure.error).toContain("Run: pnpm patchy refresh");
+    expect(failure.error).not.toContain("install.mjs");
+  });
+
   // repoBuild.test.ts owns what the inspector refuses; this proves Vite's output reaches both
   // checks, and that `patchy init --tier 0` produces a repo whose page the policy accepts.
   it("refuses unbundled resources and oversized tier 0 bundles before sending, then publishes the tier 0 starter", async () => {

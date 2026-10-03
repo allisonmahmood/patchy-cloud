@@ -70,7 +70,7 @@ phone parsing, component libraries, rich text, charts or HTML sanitisation.
 
 ### Who makes one, and how it gets in
 
-A person, or an agent acting for them, publishes through the `patchy` CLI. The SDK and local build loop are what `init` puts in the repo today. A hosted AI builder remains a later route: an agent with the same skills and SDK, working on a sandboxed computer Patchy runs instead of the person's own machine, and producing the same unit.
+A person, or an agent acting for them, publishes through the `patchy` CLI. The way in is one line the person gives their agent: `Set up Patchy using <instance>/llms.txt`. That page installs the instance's CLI, links its global skill for the agent and starts the machine login; the skill takes it from there. The SDK and local build loop are what `init` puts in the repo today. A hosted AI builder remains a later route: an agent with the same skills and SDK, working on a sandboxed computer Patchy runs instead of the person's own machine, and producing the same unit.
 
 Ownership: a patch belongs to a **user** in a company. The user holds a machine token per device, every token acts for that user, and replacing a token never changes who owns their patches.
 
@@ -84,8 +84,9 @@ A **publish key** identifies one attempt for its owning user. Before sending, th
 
 `patchy` is one private npm package containing the CLI, config builders, browser
 client and local dev runtime. Its version is the **release**. The instance serves
-its immutable tarball and reports its SHA-512 integrity through `GET /api/release`;
-public npm distribution remains future work. A repo pins that tarball as one
+its immutable tarball and reports its SHA-512 integrity through `GET /api/release`,
+and its `/install.mjs` installs that release globally; rerunning it upgrades.
+Public npm distribution remains future work. A repo pins that tarball as one
 devDependency, and `pnpm patchy …` runs the pinned copy.
 
 New file publishes require the exact-current CLI; repo publishing and new dev
@@ -287,7 +288,7 @@ A published patch is shared with everyone in the company by default. Tiers 0 and
 
 A person finds a patch in the portal or through its shared address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is. See [Addresses](#addresses).
 
-**The portal is built.** Signed out, `/` shows the login door. Signed in, it shows an index grouped Yours and Company, with Retired and deleted behind a toggle, beside one patch's card at `/patches/<name>`. The first of Yours is selected, otherwise the first live patch. An empty company gets instructions for publishing its first patch; an off-only company keeps the toggle and an empty live index. The name leads, with the description's first clause in the index and a distinct document title at most a secondary line on the card. The card shows its address with Open, description and editor, owner and deactivation status, current version and publisher, who can open it, and the first three patches that read its shared tables or stores. Owners and admins edit descriptions, sharing and served versions inline and restore off patches whose current sources are live. The full versions page is at `/patches/<name>/versions`. The patch's log is at `/patches/<name>/log`, and its card shows the owner and admins the last three entries under Recent activity. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign have confirmation pages under the card's URL. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches. The index has no search or paging.
+**The portal is built.** Signed out, `/` shows the login door. Signed in, it shows an index grouped Yours and Company, with Retired and deleted behind a toggle, beside one patch's card at `/patches/<name>`. The first of Yours is selected, otherwise the first live patch. An empty company gets three steps to set up an agent, starting with the selectable line `Set up Patchy using <instance>/llms.txt`; an off-only company keeps the toggle and an empty live index. The name leads, with the description's first clause in the index and a distinct document title at most a secondary line on the card. The card shows its address with Open, description and editor, owner and deactivation status, current version and publisher, who can open it, and the first three patches that read its shared tables or stores. Owners and admins edit descriptions, sharing and served versions inline and restore off patches whose current sources are live. The full versions page is at `/patches/<name>/versions`. The patch's log is at `/patches/<name>/log`, and its card shows the owner and admins the last three entries under Recent activity. Retired and deleted cards remain at their names until reclamation. Retire, Delete, off-source Restore and admin-only Reassign have confirmation pages under the card's URL. An inline restore that discovers off sources answers 409 with the restore confirmation and does nothing until acknowledged. `/<company>/<patch>` stays the patch itself. The portal uses Patches' discovery query, limited to the viewer's company, including its public patches. The index has no search or paging.
 
 The portal, Company, Connections and Your machines share one app shell with section navigation, the viewer's name and company, and sign-out. First-party pages use one component set for buttons, fields, fact lists, selectable index rows, tables, notices, headings, pills and confirmation forms. Sign-in, create-or-join, device confirmation and error doors keep the card shell. Portal not-found pages keep the app shell.
 

@@ -22,6 +22,10 @@ archive, its SHA-512 integrity, and its tested and accepted toolchain versions.
 unauthenticated tarball route is immutable. A same-version rebuild with different
 bytes gets a different URL, which `refresh` writes into the managed `patchy` pin.
 After installation, the global skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
+`patchy setup` links that whole directory, references included, as
+`~/.agents/skills/patchy` and `~/.claude/skills/patchy`; the instance's
+`/install.mjs` runs it after installing the release, so an agent can read the
+skill straight away and later sessions discover it.
 
 Before serving discovery, the server validates the current archive's SHA-256 and
 SHA-512 against the metadata and writes those verified bytes under `sdk/` in its
@@ -37,8 +41,10 @@ retain `PATCHY_STORAGE_DIR` across restarts and upgrades. Back up and migrate it
 to them. Losing that store loses the retention guarantee. Local build outputs and
 caches contain only the current release and do not replace durable storage.
 
-Bundling a skill and wiring it into this checkout do not publish it to a skill
-directory or start onboarding; onboarding runs only when the user asks.
+Bundling a skill and wiring it into this checkout do not start onboarding;
+onboarding runs only when the user asks. Only `patchy setup` links the global
+skill into a machine's agent skill directories, and it replaces only links it
+owns: see the package README.
 
 ## Project skills
 
