@@ -1536,6 +1536,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         "/",
         cardPath(patch.name),
         `${cardPath(patch.name)}/versions`,
+        `${cardPath(patch.name)}/log`,
         ...["retire", "delete", "restore", "reassign"].map(
           (action) => `${cardPath(patch.name)}/${action}`
         )
@@ -1619,7 +1620,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
         yield* TestClock.adjust(30 * DAY);
         yield* service.purgeDeleted(deleted.patchId);
         for (const name of ["unknown-address", other.name, "old-address", deleted.name]) {
-          for (const suffix of ["", "/versions", "/retire", "/delete", "/restore", "/reassign"]) {
+          for (const suffix of [
+            "",
+            "/versions",
+            "/log",
+            "/retire",
+            "/delete",
+            "/restore",
+            "/reassign"
+          ]) {
             const response = yield* request(`${cardPath(name)}${suffix}`, workspace.member);
             assert.strictEqual(response.status, 404);
             const html = yield* response.text;
@@ -1639,7 +1648,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
           );
         }
         assert.strictEqual((yield* request("/patches/new-address", workspace.member)).status, 200);
-        for (const suffix of ["", "/versions", "/retire", "/delete", "/restore", "/reassign"]) {
+        for (const suffix of [
+          "",
+          "/versions",
+          "/log",
+          "/retire",
+          "/delete",
+          "/restore",
+          "/reassign"
+        ]) {
           assert.strictEqual(
             (yield* request(`${cardPath("a".repeat(33))}${suffix}`, workspace.owner)).status,
             414
@@ -1673,7 +1690,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
         // Past the router's 100-character parameter bound only the GET fallback answers:
         // a 414 page for a viewer, the door when signed out, and no form route at all.
         const long = "x".repeat(101);
-        for (const suffix of ["", "/versions", "/retire", "/delete", "/restore", "/reassign"]) {
+        for (const suffix of [
+          "",
+          "/versions",
+          "/log",
+          "/retire",
+          "/delete",
+          "/restore",
+          "/reassign"
+        ]) {
           const response = yield* request(`${cardPath(long)}${suffix}`, workspace.owner);
           assert.strictEqual(response.status, 414, suffix);
           assert.strictEqual(response.headers["cache-control"], "private, no-store");
