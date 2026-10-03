@@ -97,14 +97,27 @@ it.layer(services)("pending publish state", (it) => {
 
 // ADR-0004: credentials and pending device logins are owner-only.
 it.layer(services)("secret state files", (it) => {
-  it.effect("writes credentials and a pending login owner-only, in an owner-only directory", () =>
+  it.effect("writes credentials and a pending login owner-only from the first byte", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-secret-state-" });
       const dir = path.join(root, "state");
+      const mode = (file: string) => Effect.map(fs.stat(file), (info) => info.mode & 0o777);
+      // Each file's mode as it was first written, before any later chmod could narrow it.
+      const written = new Map<string, number>();
       const state = yield* State.make.pipe(
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: dir })))
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: dir }))),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (file, data, options) =>
+            fs.writeFileString(file, data, options).pipe(
+              Effect.flatMap(() => mode(file)),
+              Effect.map((created) => {
+                written.set(path.basename(file), created);
+              })
+            )
+        })
       );
       yield* state.saveCredential(apiUrl, Redacted.make("pp_secret"), { source: "auth-set" });
       yield* state.savePendingLogin(
@@ -118,7 +131,11 @@ it.layer(services)("secret state files", (it) => {
           expiresAt: "2099-01-01T00:00:00.000Z"
         })
       );
-      const mode = (file: string) => Effect.map(fs.stat(file), (info) => info.mode & 0o777);
+      assert.sameMembers(
+        [...written.keys()].map((name) => name.replace(/\.[^.]+\.tmp$/, "")),
+        [".credentials.json", ".device-login.json"]
+      );
+      for (const created of written.values()) assert.strictEqual(created, 0o600);
       assert.strictEqual(yield* mode(dir), 0o700);
       assert.strictEqual(yield* mode(state.credentialsPath), 0o600);
       assert.strictEqual(yield* mode(path.join(dir, "device-login.json")), 0o600);
