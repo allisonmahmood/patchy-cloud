@@ -747,17 +747,22 @@ it.effect("float keysets advance with exact values when the source rounds floats
   Effect.gen(function* () {
     const { sql, transport } = yield* database();
     yield* sql('UPDATE "sales"";--"."order"";--" SET double = 0.1::float8 + 0.2::float8');
-    // PGlite ignores role and database defaults; a session SET stands in for one.
-    const { call } = yield* operations({
+    // PGlite ignores role and database defaults, and DISCARD ALL resets session settings,
+    // so a session SET before every transaction stands in for the source's default.
+    let rounded = 0;
+    const { call, queries } = yield* operations({
       ...transport,
-      execute: (text, parameters, onRow) =>
-        (text === "BEGIN READ ONLY"
-          ? transport.execute<never>("SET extra_float_digits = 0", [], () => undefined)
-          : Effect.void
-        ).pipe(Effect.andThen(transport.execute(text, parameters, onRow)))
+      execute: (text, parameters, onRow) => {
+        if (text !== "BEGIN READ ONLY") return transport.execute(text, parameters, onRow);
+        rounded++;
+        return transport
+          .execute<never>("SET extra_float_digits = 0", [], () => undefined)
+          .pipe(Effect.andThen(transport.execute(text, parameters, onRow)));
+      }
     });
-    const rows: Array<[unknown, unknown]> = [];
+    const rows: unknown[] = [];
     let cursor: string | null = null;
+    // Capped: a cursor that never advances fails here instead of hanging.
     for (let calls = 0; calls < 8; calls++) {
       const page: typeof PostgresPage.Type = yield* call("postgres.list", {
         connection: "sales",
@@ -767,14 +772,15 @@ it.effect("float keysets advance with exact values when the source rounds floats
         limit: 1,
         ...(cursor === null ? {} : { cursor })
       }).pipe(Effect.flatMap(decodePage));
-      rows.push(...page.rows.map((row): [unknown, unknown] => [row['id";--'], row.double]));
+      rows.push(...page.rows);
       cursor = page.cursor;
       if (cursor === null) break;
     }
     assert.isNull(cursor);
+    assert.strictEqual(rounded, queries.length);
     assert.deepStrictEqual(
       rows,
-      [1, 2, 3, 4].map((id) => [id, 0.30000000000000004])
+      [1, 2, 3, 4].map((id) => ({ 'id";--': id, double: 0.30000000000000004 }))
     );
   }).pipe(Effect.scoped)
 );
