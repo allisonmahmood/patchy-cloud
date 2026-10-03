@@ -457,7 +457,17 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(empty.status, 200);
       const emptyHtml = yield* empty.text;
       assert.include(text(emptyHtml), "No patches yet");
-      assert.match(text(emptyHtml), /publish/i);
+      // The setup line selects as a whole, so a person can copy it into their agent.
+      assert.include(
+        emptyHtml,
+        `<code class="copy-address" aria-label="Setup line, select to copy">Set up Patchy using ${PUBLIC_BASE_URL}/llms.txt</code>`
+      );
+      for (const step of [
+        "Paste this to your agent.",
+        "Confirm the code it shows you.",
+        "Ask for a page or a tool."
+      ])
+        assert.include(text(emptyHtml), step);
       const patch = yield* publish(workspace.owner, "shelved-tool");
       yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.owner));
       const offOnly = yield* (yield* request("/", workspace.owner)).text;

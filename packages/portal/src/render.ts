@@ -333,7 +333,10 @@ export const renderPortal = (input: {
   readonly descriptionError?: string;
 }): string => {
   if (input.rows.length === 0 && input.card === null) {
-    return `${refusal(input.notice)}<article><h1 class="page-heading">No patches yet</h1><p>The first one published lists here for everyone at ${escapeHtml(input.viewer.company.name)}.</p><div class="note"><span class="note-title">Publish the first one</span>Ask your agent to publish a page with Patchy, or run <code>patchy publish page.html</code> from a terminal that has done <code>patchy login</code>.</div></article>`;
+    // Many first publishers have never signed in a CLI, so the way in is three plain steps.
+    const company = escapeHtml(input.viewer.company.name);
+    const setup = `Set up Patchy using ${input.publicBaseUrl.replace(/\/+$/u, "")}/llms.txt`;
+    return `${refusal(input.notice)}<article><h1 class="page-heading">No patches yet</h1><p>Anything published lists here for everyone at ${company}. Getting your agent ready takes three steps.</p><ol class="list"><li class="list-row"><p><strong>Paste this to your agent.</strong></p><code class="copy-address" aria-label="Setup line, select to copy">${escapeHtml(setup)}</code></li><li class="list-row"><p><strong>Confirm the code it shows you.</strong></p><p class="supporting-text">Your agent opens nothing. It gives you a link and a code; sign in and confirm that this machine can publish as you.</p></li><li class="list-row"><p><strong>Ask for a page or a tool.</strong></p><p class="supporting-text">"Publish this plan with Patchy" or "Build us a tool for tracking leads with Patchy".</p></li></ol></article>`;
   }
   const card =
     input.card === null
