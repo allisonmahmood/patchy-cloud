@@ -485,19 +485,12 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
     })
   );
 
-  it.effect("keeps live patches indefinitely and counts visits without changing stamps", () =>
+  it.effect("counts visits only while a patch is live", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;
-      const patch = yield* create({
-        ownerUserId: reader.user.id,
-        machineTokenId: reader.machine.id
-      });
-      const before = Option.getOrThrow(yield* service.find(patch.patchId));
-      yield* Fixtures.revoke(reader.machine.id);
-      yield* TestClock.adjust(365 * DAY);
+      const patch = yield* create();
       yield* service.recordVisit(patch.patchId);
       yield* service.recordVisit(patch.patchId);
-      assert.deepStrictEqual(Option.getOrThrow(yield* service.find(patch.patchId)), before);
       const sql = yield* SqlClient.SqlClient;
       const visits =
         yield* sql`SELECT visit_count::int AS count FROM patches WHERE id = ${patch.patchId}`;

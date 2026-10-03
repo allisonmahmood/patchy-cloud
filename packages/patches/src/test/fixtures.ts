@@ -133,13 +133,6 @@ export const database = Layer.mergeAll(Layer.effectDiscard(seed), Tables.layer, 
   Layer.provideMerge(resourceChanges)
 );
 
-/** Revokes a fixture machine, as Auth's MachineTokens service would. */
-export const revoke = (machineTokenId: string) =>
-  Effect.flatMap(
-    SqlClient.SqlClient,
-    (sql) => sql`UPDATE machine_tokens SET revoked_at = now() WHERE id = ${machineTokenId}`
-  );
-
 /** The server side of the bearer middleware: the credential is the machine's id. */
 export const authorization = Layer.succeed(
   Authorization,
