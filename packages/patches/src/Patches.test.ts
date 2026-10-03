@@ -1275,6 +1275,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
       );
       assert.include(listed, sources.live!.patchId);
       assert.notInclude(listed, sources.disabled!.patchId);
+      assert.notInclude(listed, sources.foreign!.patchId);
       for (const unavailable of [sources.disabled!, sources.foreign!]) {
         assert.instanceOf(
           yield* service.companyInventory(unavailable.patchId, access).pipe(Effect.flip),
