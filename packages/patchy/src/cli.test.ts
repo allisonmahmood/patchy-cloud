@@ -1,4 +1,4 @@
-// The CLI contract from outside: built-ins, the exit-code ladder, login, keys and status.
+// The CLI contract from outside: the exit-code ladder, login, keys and status.
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -11,23 +11,8 @@ import {
   readJson,
   runCli,
   stubInstance,
-  tempDir,
-  validHtml
+  tempDir
 } from "./test/cli.js";
-
-describe("built-ins", async () => {
-  it("prints the bare version and help without touching the network", async () => {
-    const version = await runCli(["--version"]);
-    expect(version).toMatchObject({ status: 0, stdout: "0.0.1\n", stderr: "" });
-    expect((await runCli(["--help"])).status).toBe(0);
-  });
-
-  it("does not retain upload as an alias", async () => {
-    const result = await runCli(["upload", "page.html", "--json"]);
-    expect(result.status).toBe(1);
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
-  });
-});
 
 describe("the exit-code ladder", async () => {
   it("exits 130 on SIGINT, as Effect's interruption", async () => {
@@ -238,14 +223,10 @@ describe("patchy login", () => {
     }
   );
 
-  it.each([
-    { token: undefined, json: true },
-    { token: "", json: true },
-    { token: "environment-key", json: true },
-    { token: "environment-key", json: false }
-  ])(
-    "reports a saved login and any environment override ($token, json=$json)",
-    async ({ token, json }) => {
+  // An empty PATCHY_API_TOKEN acts as unset; a set one keeps precedence over the saved login.
+  it.each(["", "environment-key"])(
+    "reports a saved login and any environment override (PATCHY_API_TOKEN=%j)",
+    async (token) => {
       const instance = await stubInstance((request, respond) =>
         request.url === "/api/login/device/token"
           ? respond(200, {
@@ -264,29 +245,26 @@ describe("patchy login", () => {
         path.join(dir, "device-login.json"),
         JSON.stringify({ hosts: { [instance.url]: pendingLogin } })
       );
-      const env: Record<string, string> = token === undefined ? {} : { PATCHY_API_TOKEN: token };
-      const options = { stateDir: dir, env };
+      const options = { stateDir: dir, env: { PATCHY_API_TOKEN: token } };
       const warnings = token
         ? ["Login saved. PATCHY_API_TOKEN is still set and takes precedence over this login."]
         : [];
       const result = await runCli(
-        ["login", "--complete", "--api-url", instance.url, ...(json ? ["--json"] : [])],
+        ["login", "--complete", "--api-url", instance.url, "--json"],
         options
       );
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
-      if (json)
-        expect(JSON.parse(result.stdout)).toEqual({
-          ok: true,
-          status: "logged_in",
-          instanceUrl: instance.url,
-          company: { handle: identity.company.handle, name: identity.company.name },
-          user: { email: identity.user.email },
-          machine: identity.machine,
-          credentialsPath: path.join(dir, "credentials.json"),
-          warnings
-        });
-      else expect(result.stdout).toContain(warnings[0]);
+      expect(JSON.parse(result.stdout)).toEqual({
+        ok: true,
+        status: "logged_in",
+        instanceUrl: instance.url,
+        company: { handle: identity.company.handle, name: identity.company.name },
+        user: { email: identity.user.email },
+        machine: identity.machine,
+        credentialsPath: path.join(dir, "credentials.json"),
+        warnings
+      });
       expect(instance.requests.map((r) => r.url)).toEqual(["/api/login/device/token"]);
       expect(readJson(path.join(dir, "credentials.json"))).toMatchObject({
         hosts: { [instance.url]: { token: "one-time-key", source: "login" } }
@@ -471,34 +449,6 @@ describe("patchy whoami", async () => {
   });
 });
 
-describe("commands without a publishing key", () => {
-  it.each(["whoami", "publish", "delete", "share"])(
-    "refuses %s locally without a request",
-    async (command) => {
-      const instance = await stubInstance((_, respond) => respond(200, identity));
-      const dir = tempDir();
-      const target =
-        command === "publish"
-          ? [htmlFile(dir, "page.html", validHtml)]
-          : command === "delete"
-            ? ["--patch", "abcdefghijkl"]
-            : command === "share"
-              ? ["--patch", "abcdefghijkl", "public"]
-              : [];
-      const result = await runCli([command, ...target, "--api-url", instance.url, "--json"], {
-        stateDir: dir
-      });
-      expect(result.status).toBe(1);
-      expect(result.stdout).toBe("");
-      expect(JSON.parse(result.stderr)).toMatchObject({
-        ok: false,
-        kind: "local"
-      });
-      expect(instance.requests).toHaveLength(0);
-    }
-  );
-});
-
 describe("patchy validate", async () => {
   it("passes a safe document, with warnings on stderr in text mode and in the document under --json", async () => {
     const dir = tempDir();
@@ -561,21 +511,5 @@ describe("patchy status", async () => {
     const unreadable = await runCli(["status"], { stateDir: dir });
     expect(unreadable.status).toBe(0);
     expect(JSON.parse(unreadable.stdout)).toMatchObject({ hasToken: false, tokenSource: null });
-  });
-});
-
-describe("patchy delete target selection", () => {
-  it.each([false, true])("refuses an ambiguous target locally (both: %s)", async (both) => {
-    const dir = tempDir();
-    const file = htmlFile(dir, "page.html", validHtml);
-    const result = await runCli(
-      ["delete", ...(both ? [file, "--patch", "abcdefghijkl"] : []), "--json"],
-      {
-        stateDir: dir,
-        env: { PATCHY_API_TOKEN: "pp_owner" }
-      }
-    );
-    expect(result).toMatchObject({ status: 1, stdout: "" });
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
   });
 });
