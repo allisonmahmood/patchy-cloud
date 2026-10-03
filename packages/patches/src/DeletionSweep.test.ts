@@ -30,6 +30,20 @@ const publish = (name: string) =>
     )
   );
 const sweep = Effect.flatMap(DeletionSweep.DeletionSweep, (service) => service.sweep);
+/** The same store, refusing to delete the keys `refuses` picks. */
+const refusing = (
+  objects: ContentStore.ContentStore["Service"],
+  refuses: (key: string) => boolean
+) =>
+  Layer.succeed(ContentStore.ContentStore, {
+    ...objects,
+    delete: (key) =>
+      refuses(key)
+        ? Effect.fail(
+            new ContentStore.StoreUnavailable({ operation: "delete", key, cause: new Error() })
+          )
+        : objects.delete(key)
+  });
 const services = Layer.mergeAll(DeletionSweep.layer, Content.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(Patches.layer, filesystem, Analytics.layerNoop)),
   Layer.provideMerge(Fixtures.database),
@@ -89,18 +103,7 @@ it.layer(services)("DeletionSweep", (it) => {
       const key = Content.objectKey(orphaned.patchId, orphaned.versionId);
       yield* patches.delete(orphaned.patchId, actor);
       yield* TestClock.adjust(30 * DAY);
-      const failing = Layer.succeed(ContentStore.ContentStore, {
-        ...objects,
-        delete: (objectKey) =>
-          Effect.fail(
-            new ContentStore.StoreUnavailable({
-              operation: "delete",
-              key: objectKey,
-              cause: new Error()
-            })
-          )
-      });
-      const broken = yield* DeletionSweep.make.pipe(Effect.provide(failing));
+      const broken = yield* DeletionSweep.make.pipe(Effect.provide(refusing(objects, () => true)));
       assert.deepStrictEqual(yield* broken.sweep, {
         deleted: 1,
         skipped: 0,
