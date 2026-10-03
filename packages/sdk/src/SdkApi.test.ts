@@ -872,6 +872,54 @@ it.layer(layer)("SDK company generation", (it) => {
       })
   );
 
+  it.effect("refuses another company's shared sources and target patch", () =>
+    Effect.gen(function* () {
+      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(identity.company.id);
+      const patchId = "sdkforeign01";
+      yield* Fixtures.record(
+        Fixtures.recordInput(identity, {
+          patchId,
+          manifest: {
+            ...Fixtures.manifest,
+            name: "sdk-foreign-source",
+            tables: {
+              contacts: {
+                description: "Contacts identified by id.",
+                columns: {},
+                indexes: {},
+                shared: true
+              }
+            },
+            files: { logos: { description: "Company logos keyed by filename.", shared: true } }
+          }
+        })
+      );
+      const requests = [
+        generateRequest({
+          ...Fixtures.manifest,
+          uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+        }),
+        generateRequest({
+          ...Fixtures.manifest,
+          uses: { logos: { kind: "sharedStore", patchId, store: "logos" } }
+        }),
+        { ...generateRequest(), patchId }
+      ];
+      const api = yield* sdkOver(Layer.empty);
+      for (const payload of requests) yield* api.generate({ payload });
+      // Generation must ask with the caller's company, never the source's.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES ('cmp_sdk_foreign', 'sdk-foreign', 'Foreign company')`;
+      yield* sql`UPDATE patches SET company_id = 'cmp_sdk_foreign' WHERE id = ${patchId}`;
+      for (const payload of requests) {
+        const response = yield* api.generate({ payload, responseMode: "response-only" });
+        assert.strictEqual(response.status, 422);
+        assert.include(yield* response.json, { code: "patch_not_openable" });
+      }
+    })
+  );
+
   it.effect("answers each unavailable generation source with a bounded 503 that names it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
