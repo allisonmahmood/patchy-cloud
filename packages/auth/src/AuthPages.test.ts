@@ -352,12 +352,14 @@ it.layer(services)("first-party pages in memory", (it) => {
   );
 });
 
-// Only the external revocation capability is replaced; authentication uses the real verifier.
+// Only the external revocation capability is replaced, recording which Clerk session it
+// was asked to end; authentication uses the real verifier.
+const revokedSessions: Array<string> = [];
 const localRevocation = Layer.effect(
   Session.Session,
   Effect.map(Session.make, (session) => ({
     ...session,
-    revoke: () => Effect.void
+    revoke: (sid: string) => Effect.sync(() => void revokedSessions.push(sid))
   }))
 );
 it.layer(
@@ -370,6 +372,18 @@ it.layer(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
   )
 )("logout without a company", (it) => {
+  it.effect("revokes the signed-in Clerk session and no other", () =>
+    Effect.gen(function* () {
+      const before = revokedSessions.length;
+      const sessionCookie = signedInCookies(
+        signSession({ sub: "user_revoked_session", sid: "sess_signed_in" })
+      );
+      const response = yield* send("/logout", post({}, sessionCookie));
+      assert.strictEqual(response.status, 303);
+      assert.deepStrictEqual(revokedSessions.slice(before), ["sess_signed_in"]);
+    })
+  );
+
   it.effect("applies logout response deletions to every Clerk setter scope in a browser jar", () =>
     Effect.gen(function* () {
       const publicUrl = "https://app.example.co.uk";
