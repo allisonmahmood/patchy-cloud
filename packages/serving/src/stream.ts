@@ -207,6 +207,7 @@ export function openDocumentStream(options: {
     const current = new AbortController();
     controller = current;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let refreshed = false;
     try {
       const headers = new Headers({
         Accept: "text/event-stream",
@@ -228,6 +229,7 @@ export function openDocumentStream(options: {
         if (failure.code === "session_refresh_required" && refreshAttempts < 3) {
           refreshAttempts++;
           const result = await window.patchySession?.refresh();
+          refreshed = result === "refreshed";
           if (!closed && !current.signal.aborted && result === "signed-out")
             options.notice("session_expired");
         } else if (
@@ -363,15 +365,18 @@ export function openDocumentStream(options: {
         for (const entry of desired.values()) entry.answered = false;
         if (!closed && !suspended) {
           status.connecting();
-          const ceiling = Math.min(30_000, 500 * 2 ** Math.min(failures++, 6));
-          const delay = Math.max(
-            ceiling * (0.5 + Math.random() * 0.5),
-            bindingRetryAt - Date.now()
-          );
-          retryTimer = window.setTimeout(() => {
-            retryTimer = undefined;
-            void connect();
-          }, delay);
+          // A successful refresh is not a failure: it reconnects at once unless a bind
+          // deadline is pending. The refresh budget bounds a server that keeps refusing.
+          const backoff = refreshed
+            ? 0
+            : Math.min(30_000, 500 * 2 ** Math.min(failures++, 6)) * (0.5 + Math.random() * 0.5);
+          const delay = Math.max(backoff, bindingRetryAt - Date.now());
+          if (delay > 0)
+            retryTimer = window.setTimeout(() => {
+              retryTimer = undefined;
+              void connect();
+            }, delay);
+          else void connect();
         }
       }
     }

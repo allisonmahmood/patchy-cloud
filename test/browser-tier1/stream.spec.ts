@@ -269,11 +269,25 @@ test("hidden resume refreshes a stale cookie through the session script without 
     document.dispatchEvent(new Event("visibilitychange"));
   });
   expect(await (await refused).json()).toMatchObject({ code: "session_refresh_required" });
-  await expect.poll(() => attempts).toBe(2);
+  // The failed first refresh backs off before the second attempt; step the page clock
+  // until it lands rather than betting on real time.
+  await expect
+    .poll(
+      async () => {
+        await page.clock.fastForward(5_000);
+        return attempts;
+      },
+      { intervals: [250], timeout: 30_000 }
+    )
+    .toBe(2);
   await expect(frame.locator("#pasted-copy")).toHaveValue("Draft through delayed session refresh");
   await expect(page.locator("[data-notice]")).toHaveCount(0);
   expect(await generations(frame)).toHaveLength(1);
   await expect(pill).toBeVisible();
+  // A successful refresh reconnects at once: no page timer may fire from here on. The
+  // clock still runs in real time and cannot pause in the past, so pause a few seconds
+  // ahead to survive a stalled runner; no retry is scheduled while the refresh is held.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 5_000);
   release.resolve();
   await expect.poll(() => generations(frame)).toHaveLength(2);
   await expect(pill).toBeHidden();
@@ -317,9 +331,9 @@ test("failed token refresh is bounded and an online retry keeps the same documen
   await expect(page.locator("[data-notice]")).toHaveCount(0);
   available = true;
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  // Online lets the next attempt refresh but keeps the pending backoff, and the attempt
-  // that refreshes backs off again before reconnecting: up to 30 seconds each. Step the
-  // page clock until the reconnect lands rather than betting on one jump and real time.
+  // Online lets the next attempt refresh but keeps the pending backoff, up to 30 seconds;
+  // the attempt that refreshes then reconnects at once. Step the page clock until the
+  // reconnect lands rather than betting on one jump and real time.
   await expect
     .poll(
       async () => {
