@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as State from "./State.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
 
@@ -90,6 +91,38 @@ it.layer(services)("pending publish state", (it) => {
       );
       yield* state.forgetPendingPublish(apiUrl, "local", root);
       assert.strictEqual(yield* fs.readFileString(unavailable), "leave me alone");
+    }).pipe(Effect.scoped)
+  );
+});
+
+// ADR-0004: credentials and pending device logins are owner-only.
+it.layer(services)("secret state files", (it) => {
+  it.effect("writes credentials and a pending login owner-only, in an owner-only directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-secret-state-" });
+      const dir = path.join(root, "state");
+      const state = yield* State.make.pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: dir })))
+      );
+      yield* state.saveCredential(apiUrl, Redacted.make("pp_secret"), { source: "auth-set" });
+      yield* state.savePendingLogin(
+        apiUrl,
+        new State.PendingLogin({
+          deviceCode: "private-device-secret",
+          userCode: "BCDF-GHJK",
+          verificationUrl: `${apiUrl}/login/device?code=BCDF-GHJK`,
+          verificationUrlBare: `${apiUrl}/login/device`,
+          interval: 5,
+          expiresAt: "2099-01-01T00:00:00.000Z"
+        })
+      );
+      const mode = (file: string) => Effect.map(fs.stat(file), (info) => info.mode & 0o777);
+      assert.strictEqual(yield* mode(dir), 0o700);
+      assert.strictEqual(yield* mode(state.credentialsPath), 0o600);
+      assert.strictEqual(yield* mode(path.join(dir, "device-login.json")), 0o600);
+      assert.sameMembers(yield* fs.readDirectory(dir), ["credentials.json", "device-login.json"]);
     }).pipe(Effect.scoped)
   );
 });
