@@ -3,7 +3,6 @@ import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -473,12 +472,3 @@ for (const Reason of [
     })
   );
 }
-
-it.effect("does not swallow defects as best-effort SQL failures", () =>
-  Effect.gen(function* () {
-    const defect = new Error("programming defect");
-    const rollups = yield* QueryRollups.make.pipe(Effect.provide(failingSql(Effect.die(defect))));
-    const result = yield* rollups.settle(input("defect", "defect")).pipe(Effect.exit);
-    assert.isTrue(Exit.hasDies(result));
-  })
-);

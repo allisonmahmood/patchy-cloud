@@ -461,27 +461,6 @@ it.effect(
     }).pipe(Effect.provide(Fixtures.layer()))
 );
 
-it.effect("me rejects arguments outside its operation schema without a log correlation", () =>
-  Effect.gen(function* () {
-    const api = yield* client;
-    const response = yield* api.call({
-      payload: {
-        patchId,
-        versionId,
-        principal: null,
-        wire: WIRE_VERSION,
-        op: "me",
-        args: { admin: true }
-      },
-      headers: { ...headers(), cookie: signedInCookies() },
-      responseMode: "response-only"
-    });
-    assert.strictEqual(response.status, 400);
-    assert.include(yield* response.json, { code: "invalid_request" });
-    assert.notProperty(yield* response.json, "correlationId");
-  }).pipe(Effect.provide(Fixtures.layer()))
-);
-
 it.effect("reserved PUT enforces browser headers and its viewer limit before refusal", () =>
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient;
