@@ -1105,67 +1105,6 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
     })
   );
 
-  it.effect("applies alternate openability to actual state before reference state checks", () =>
-    Effect.gen(function* () {
-      const service = yield* Patches.Patches;
-      const live = yield* create({ manifest: { ...Fixtures.manifest, name: "read-open-live" } });
-      const retired = yield* create({
-        manifest: { ...Fixtures.manifest, name: "read-open-retired" }
-      });
-      yield* service.retire(retired.patchId, owner);
-      const openability = yield* Patches.Openability;
-      const narrowed = {
-        companyId: uploader.company.id,
-        userId: uploader.user.id,
-        canOpen: (patch: Patches.Patch) => openability(patch, uploader.user.id)
-      };
-      const rows = yield* service.read({ ...narrowed, state: "all" });
-      assert.deepStrictEqual(
-        rows.map(({ patch }) => patch.id),
-        [retired.patchId]
-      );
-      assert.strictEqual(
-        (yield* service.read({ ...narrowed, state: "retired", patchRef: retired.name }))[0]!.patch
-          .id,
-        retired.patchId
-      );
-      for (const patchRef of [live.name, live.patchId]) {
-        assert.instanceOf(
-          yield* service.read({ ...narrowed, state: "retired", patchRef }).pipe(Effect.flip),
-          Patches.PatchUnavailable
-        );
-      }
-      assert.instanceOf(
-        yield* service.companyInventory(live.patchId, narrowed).pipe(Effect.flip),
-        Patches.PatchUnavailable
-      );
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${retired.patchId}`;
-      assert.deepStrictEqual(yield* service.read({ ...narrowed, state: "all" }), []);
-      assert.instanceOf(
-        yield* service.companyInventory(retired.patchId, access).pipe(Effect.flip),
-        Patches.PatchUnavailable
-      );
-      yield* sql`UPDATE patches SET disabled_at = NULL WHERE id = ${retired.patchId}`;
-      assert.instanceOf(
-        yield* service
-          .companyInventory(retired.patchId, {
-            ...access,
-            companyId: "another-company"
-          })
-          .pipe(Effect.flip),
-        Patches.PatchUnavailable
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.succeed(
-          Patches.Openability,
-          (patch, userId) => patch.ownerUserId === userId && patch.state === "retired"
-        )
-      )
-    )
-  );
-
   it.effect("resolves current names and canonical ids before enforcing the requested state", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;
@@ -1327,6 +1266,17 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
       for (const patchRef of [sources.foreign!.name, sources.foreign!.patchId]) {
         assert.instanceOf(
           yield* service.read({ ...access, state: "all", patchRef }).pipe(Effect.flip),
+          Patches.PatchUnavailable
+        );
+      }
+      const listed = (yield* service.read({ ...access, state: "all" })).map(
+        ({ patch }) => patch.id
+      );
+      assert.include(listed, sources.live!.patchId);
+      assert.notInclude(listed, sources.disabled!.patchId);
+      for (const unavailable of [sources.disabled!, sources.foreign!]) {
+        assert.instanceOf(
+          yield* service.companyInventory(unavailable.patchId, access).pipe(Effect.flip),
           Patches.PatchUnavailable
         );
       }

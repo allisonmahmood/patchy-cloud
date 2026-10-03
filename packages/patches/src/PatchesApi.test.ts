@@ -1003,16 +1003,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
   );
 });
 
-it.layer(
-  Layer.fresh(publishLayer).pipe(
-    Layer.provide(
-      Layer.succeed(
-        Patches.Openability,
-        (patch, userId) => patch.name !== "hidden-discovery" || userId === uploader.user.id
-      )
-    )
-  )
-)("patch discovery over machine tokens", (it) => {
+it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) => {
   it.effect("reports unavailable inventory without inventing an empty database", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -1040,35 +1031,6 @@ it.layer(
     })
   );
 
-  it.effect("hides unopenable patches before resolving state and respects mine", () =>
-    Effect.gen(function* () {
-      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
-      const created = yield* owner.publish({
-        payload: publishRequest({
-          html: html("Hidden"),
-          manifest: { ...Fixtures.manifest, name: "hidden-discovery" }
-        })
-      });
-      expect(
-        (yield* owner.list({ query: { mine: true } })).patches.map((patch) => patch.id)
-      ).toContain(created.patchId);
-      expect(
-        (yield* colleague.list({ query: { state: "all" } })).patches.map((patch) => patch.id)
-      ).not.toContain(created.patchId);
-      assert.deepStrictEqual((yield* colleague.list({ query: { mine: true } })).patches, []);
-      for (const patchRef of [created.patchId, created.name, "unknown-discovery"]) {
-        const response = yield* colleague.detail({
-          params: { patchRef },
-          query: { state: "retired" },
-          responseMode: "response-only"
-        });
-        assert.strictEqual(response.status, 404);
-        assert.deepStrictEqual(yield* response.json, { ok: false, error: "Patch not found." });
-      }
-    })
-  );
-
   it.effect("resolves names before state filters and deleted patches only by id", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -1084,6 +1046,12 @@ it.layer(
         })
       });
       const params = { patchId: created.patchId };
+      const mine = (api: typeof owner) =>
+        Effect.map(api.list({ query: { mine: true } }), ({ patches }) =>
+          patches.map((patch) => patch.id)
+        );
+      expect(yield* mine(owner)).toContain(created.patchId);
+      expect(yield* mine(colleague)).not.toContain(created.patchId);
       for (const [state, filter] of [
         ["live", "retired"],
         ["retired", "live"],
@@ -1132,6 +1100,7 @@ it.layer(
         responseMode: "response-only"
       });
       assert.strictEqual(byName.status, 404);
+      assert.deepStrictEqual(yield* byName.json, { ok: false, error: "Patch not found." });
       expect((yield* colleague.list({ query: {} })).patches.map((patch) => patch.id)).not.toContain(
         created.patchId
       );
