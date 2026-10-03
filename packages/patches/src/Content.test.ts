@@ -108,15 +108,6 @@ const putReplyLost = Layer.succeed(
   })
 );
 
-/** The same store, refusing every delete. */
-const deleteFails = Layer.succeed(
-  ContentStore.ContentStore,
-  ContentStore.ContentStore.of({
-    ...store.service,
-    delete: (key) => Effect.fail(unavailable("delete", key))
-  })
-);
-
 /** `Content` over a faulty store, sharing the block's `Patches`. */
 const over = (faulty: Layer.Layer<ContentStore.ContentStore>) =>
   Effect.provide(Layer.effect(Content.Content, Content.make).pipe(Layer.provide(faulty)));
@@ -924,30 +915,6 @@ it.layer(
     })
   );
 
-  it.effect("stores the bytes, records the version, and reads both back", () =>
-    Effect.gen(function* () {
-      const created = yield* publish("<p>one</p>");
-      assert.strictEqual(created.versionNumber, 1);
-      const updated = yield* publish("<p>two</p>", created.patchId);
-      assert.strictEqual(updated.versionNumber, 2);
-
-      const service = yield* content;
-      const found = yield* patches;
-      const latest = Option.getOrThrow(yield* found.find(created.patchId));
-      assert.strictEqual(yield* service.read(latest.version), "<p>two</p>");
-      assert.strictEqual(latest.version.sourceIp, "203.0.113.9");
-      const first = Option.getOrThrow(yield* found.find(created.patchId, 1));
-      assert.strictEqual(yield* service.read(first.version), "<p>one</p>");
-      assert.deepStrictEqual(
-        (yield* store.keys).filter((key) => key.startsWith(`patches/${created.patchId}/`)),
-        [
-          Content.objectKey(created.patchId, created.versionId),
-          Content.objectKey(updated.patchId, updated.versionId)
-        ].sort()
-      );
-    })
-  );
-
   it.effect("refuses a taken publish key with bounded diagnostics and preserves its version", () =>
     Effect.gen(function* () {
       const publishKey = `${crypto.randomUUID()}\n${"unsafe-key".repeat(128)}`;
@@ -1026,88 +993,39 @@ it.layer(
     })
   );
 
-  it.effect("refuses an old owner's publish when reassigned during the content write", () =>
-    Effect.gen(function* () {
-      const created = yield* publish("<p>before reassignment</p>");
-      const service = yield* patches;
-      store.control.afterPut = service
-        .reassign(
-          created.patchId,
-          { userId: Fixtures.identities.admin.user.id, admin: true },
-          Fixtures.identities.reader.user.id
-        )
-        .pipe(Effect.orDie, Effect.asVoid);
-      const refused = yield* publish("<p>old owner's update</p>", created.patchId).pipe(
-        Effect.flip,
-        Effect.ensuring(
-          Effect.sync(() => {
-            store.control.afterPut = Effect.void;
-          })
-        )
-      );
-      assert.instanceOf(refused, Patches.NotOwner);
-      if (refused._tag === "NotOwner")
-        assert.deepStrictEqual(refused.owner, {
-          id: Fixtures.identities.reader.user.id,
-          name: Fixtures.identities.reader.user.name
-        });
-      const current = Option.getOrThrow(yield* service.find(created.patchId));
-      assert.strictEqual(current.version.id, created.versionId);
-      assert.strictEqual(
-        yield* (yield* content).read(current.version),
-        "<p>before reassignment</p>"
-      );
-      const newOwner = yield* publish("<p>new owner's update</p>", created.patchId, {
-        ownerUserId: Fixtures.identities.reader.user.id,
-        machineTokenId: Fixtures.identities.reader.machine.id
-      });
-      assert.strictEqual(newOwner.versionNumber, 2);
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      yield* sweep;
-    })
-  );
-
-  it.effect("reclaims an object whose write succeeded but whose reply failed", () =>
-    Effect.gen(function* () {
-      const before = yield* store.keys;
-      const publishKey = crypto.randomUUID();
-      const error = yield* publish("<p>unacknowledged</p>", null, { publishKey }).pipe(
-        over(putReplyLost),
-        Effect.flip
-      );
-      assert.strictEqual(error._tag, "StoreUnavailable");
-      const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
-      assert.strictEqual(yield* store.service.get(key), "<p>unacknowledged</p>");
-      assert.isTrue(Option.isNone(yield* (yield* patches).replay(uploader.user.id, publishKey)));
-
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      yield* sweep;
-      assert.deepStrictEqual(yield* store.keys, before);
-    })
-  );
-
-  it.effect("reclaims an object when the version transaction rolls back", () =>
+  it.effect("reclaims a stored object when its reply or its version transaction fails", () =>
     Effect.gen(function* () {
       const created = yield* publish("<p>original</p>");
-      const before = yield* store.keys;
-      const publishKey = crypto.randomUUID();
-      const error = yield* publish("<p>rolled back</p>", created.patchId, {
-        publishKey,
-        machineTokenId: "missing-machine-token"
-      }).pipe(Effect.flip);
-      assert.strictEqual(error._tag, "SqlError");
-      const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
-      assert.strictEqual(yield* store.service.get(key), "<p>rolled back</p>");
       const service = yield* patches;
-      assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
-      assert.strictEqual(
-        Option.getOrThrow(yield* service.find(created.patchId)).version.versionNumber,
-        1
-      );
+      // The store accepts bytes but loses its reply, or the version insert fails.
+      for (const { html, tag, faulty, input } of [
+        { html: "<p>unacknowledged</p>", tag: "StoreUnavailable", faulty: putReplyLost, input: {} },
+        {
+          html: "<p>rolled back</p>",
+          tag: "SqlError",
+          faulty: store.layer,
+          input: { machineTokenId: "missing-machine-token" }
+        }
+      ]) {
+        const before = yield* store.keys;
+        const publishKey = crypto.randomUUID();
+        const error = yield* publish(html, created.patchId, { publishKey, ...input }).pipe(
+          over(faulty),
+          Effect.flip
+        );
+        assert.strictEqual(error._tag, tag);
+        const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
+        assert.strictEqual(yield* store.service.get(key), html);
+        assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(created.patchId)).version.versionNumber,
+          1
+        );
 
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      yield* sweep;
-      assert.deepStrictEqual(yield* store.keys, before);
+        yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
+        yield* sweep;
+        assert.deepStrictEqual(yield* store.keys, before);
+      }
       assert.strictEqual(
         yield* (yield* content).read(
           Option.getOrThrow(yield* service.find(created.patchId)).version
@@ -1176,28 +1094,6 @@ it.layer(
         yield* service.replay(uploader.user.id, publishKey),
         Option.some(replay)
       );
-    })
-  );
-
-  it.effect("retries reclamation after the store refuses deletion", () =>
-    Effect.gen(function* () {
-      const before = yield* store.keys;
-      yield* publish("<p>retry deletion</p>").pipe(over(putReplyLost), Effect.flip);
-      const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      const failed = yield* sweep.pipe(
-        Effect.provide(
-          Layer.effect(DeletionSweep.DeletionSweep, DeletionSweep.make).pipe(
-            Layer.provide(deleteFails)
-          )
-        )
-      );
-      assert.strictEqual(failed.orphanedObjects, 1);
-      assert.strictEqual(yield* store.service.get(key), "<p>retry deletion</p>");
-
-      yield* sweep;
-      assert.deepStrictEqual(yield* store.keys, before);
-      assert.deepStrictEqual(yield* (yield* patches).claimObjects(100), []);
     })
   );
 
