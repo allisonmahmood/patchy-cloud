@@ -161,63 +161,6 @@ for (const [name, services] of [
           );
         })
     );
-    it.effect("reclaims namespaces and blobs from retained databases without mutation keys", () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(NOW);
-        const companies = yield* CompanyDatabases.CompanyDatabases;
-        const inventory = yield* Inventory.Inventory;
-        const sweeper = yield* OrphanSweep.OrphanSweep;
-        const store = yield* ContentStore.ContentStore;
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* FilesystemContentStore.rootDir;
-        const patchId = "sweep_retained_orphan";
-        const key = `files/${patchId}/old`;
-        yield* companies.ensureReady(COMPANY);
-        yield* companies.withCompany(COMPANY)(
-          companies.withPatchLock(patchId)(
-            Effect.gen(function* () {
-              const { sql } = yield* CompanyDatabases.PatchLock;
-              yield* inventory.ensurePatch(patchId);
-              yield* inventory.putStore({
-                description: "Documents identified by file name.",
-                shared: false,
-                patchId,
-                name: "docs"
-              });
-              yield* sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
-                  VALUES (${patchId}, 'docs', 'old.txt', 'old', 5, 'text/plain', 'hash')`;
-              yield* sql`UPDATE patchy.patches SET created_at = '2035-01-01'
-                  WHERE patch_id = ${patchId}`;
-              yield* sql`DROP TABLE patchy.mutation_keys`;
-            })
-          )
-        );
-        yield* store.put(key, "bytes");
-        yield* fs.utimes(`${root}/${key}`, (NOW - 2 * DAY) / 1_000, (NOW - 2 * DAY) / 1_000);
-        yield* Effect.gen(function* () {
-          assert.deepStrictEqual(yield* sweeper.sweep, {
-            namespacesDeleted: 1,
-            filesDeleted: 1,
-            failed: 0
-          });
-          yield* companies.withCompany(COMPANY)(
-            Effect.gen(function* () {
-              const sql = yield* CompanyDatabases.CompanyConnection;
-              assert.deepStrictEqual(
-                yield* sql`SELECT nspname FROM pg_namespace WHERE nspname = ${`p_${patchId}`}`,
-                []
-              );
-              assert.strictEqual(yield* inventory.read(patchId), null);
-              assert.deepStrictEqual(
-                yield* sql`SELECT * FROM patchy.files WHERE patch_id = ${patchId}`,
-                []
-              );
-            })
-          );
-          assert.strictEqual((yield* store.get(key).pipe(Effect.flip))._tag, "ObjectNotFound");
-        }).pipe(Effect.ensuring(companies.ensureReady(COMPANY).pipe(Effect.orDie)));
-      })
-    );
     it.effect(
       "drops old orphan namespaces and their inventory, but preserves live and young namespaces",
       () =>

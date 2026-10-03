@@ -363,9 +363,7 @@ export const make = Effect.gen(function* () {
           })
         );
       });
-      // Upgrade retained inventory before taking a lease or any patch locks.
-      yield* companies.ensureReady(placement.companyId).pipe(
-        Effect.andThen(scan),
+      yield* scan.pipe(
         Effect.catch((error) =>
           Effect.logWarning("Orphan sweep could not scan a company database.", error._tag).pipe(
             Effect.annotateLogs({ companyId: placement.companyId }),
