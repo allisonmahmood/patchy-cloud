@@ -279,6 +279,12 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
                 })
           );
           assert.strictEqual(response.status, 404);
+          if (action === "get") {
+            assert.include(
+              yield* Effect.promise(() => response.text()),
+              "Nothing is waiting for this code."
+            );
+          }
         }
         for (const action of ["confirm", "deny"]) {
           const response = yield* send(
