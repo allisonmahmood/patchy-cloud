@@ -11,6 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
+import * as Pg from "pg";
 import * as Source from "./Source.js";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
@@ -139,6 +140,41 @@ it.effect("rejects a mixed public/private DNS answer before any socket allocatio
       .test(Redacted.make("postgres://reader:secret@warehouse.example/warehouse"))
       .pipe(Effect.flip);
     assert.instanceOf(failure, SourceClient.PublicAddressRequired);
+    assert.strictEqual(sockets, 0);
+  })
+);
+
+it.effect("refuses a cancel whose fresh DNS answer is private before opening a socket", () =>
+  Effect.gen(function* () {
+    let lookups = 0;
+    let sockets = 0;
+    // A connected backend's key; the cancel must resolve its host again, not reuse that socket.
+    const client = Object.assign(new Pg.Client(), { processID: 4242, secretKey: 2424 });
+    const failure = yield* SourceClient.cancel(
+      {
+        host: "warehouse.example",
+        port: 5432,
+        database: "warehouse",
+        role: "reader",
+        password: Redacted.make("secret")
+      },
+      client
+    ).pipe(
+      Effect.provideService(SourceNetwork.SourceNetwork, {
+        resolve: () =>
+          Effect.sync(() => {
+            lookups++;
+            return [{ address: "10.0.0.7" }];
+          }),
+        socket: Effect.sync(() => {
+          sockets++;
+          return new Socket();
+        })
+      }),
+      Effect.flip
+    );
+    assert.instanceOf(failure, SourceClient.PublicAddressRequired);
+    assert.strictEqual(lookups, 1);
     assert.strictEqual(sockets, 0);
   })
 );
