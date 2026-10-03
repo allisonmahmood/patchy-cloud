@@ -285,8 +285,9 @@ test("hidden resume refreshes a stale cookie through the session script without 
   expect(await generations(frame)).toHaveLength(1);
   await expect(pill).toBeVisible();
   // A successful refresh reconnects at once: no page timer may fire from here on. The
-  // clock still runs in real time and cannot pause in the past, so pause a second ahead.
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  // clock still runs in real time and cannot pause in the past, so pause a few seconds
+  // ahead to survive a stalled runner; no retry is scheduled while the refresh is held.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 5_000);
   release.resolve();
   await expect.poll(() => generations(frame)).toHaveLength(2);
   await expect(pill).toBeHidden();
