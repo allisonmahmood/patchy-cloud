@@ -2,7 +2,6 @@ import { assert, it } from "@effect/vitest";
 import { type Manifest, sharedTableId, sharedStoreId } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Wakes } from "@patchy/runtime/core";
-import { contentHash } from "@patchy/core";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -26,28 +25,12 @@ let counter = 0;
 const input = (overrides: Partial<Patches.RecordInput> = {}): Patches.RecordInput => {
   const ordinal = ++counter;
   const patchId = overrides.patchId ?? `p${String(ordinal).padStart(11, "0")}`;
-  return {
-    ...Fixtures.publishRecord(),
-    intent: "create",
+  return Fixtures.recordInput(uploader, {
     patchId,
-    companyId: uploader.company.id,
-    ownerUserId: uploader.user.id,
     versionId: `ver_${patchId}_${ordinal}`,
-    machineTokenId: uploader.machine.id,
     title: `Lifecycle ${ordinal}`,
-    objectKey: `patches/${patchId}/versions/${ordinal}.html`,
-    contentHash: contentHash(String(ordinal)),
-    fileSize: 1,
-    filename: null,
-    repoOrg: null,
-    repoName: null,
-    cliVersion: null,
-    gitBranch: null,
-    gitCommitSha: null,
-    sourceIp: null,
-    userAgent: null,
     ...overrides
-  };
+  });
 };
 const create = Effect.fn("PatchesTest.create")(function* (
   overrides: Partial<Patches.RecordInput> = {}

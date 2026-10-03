@@ -24,7 +24,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { CompanyDatabases } from "@patchy/company-database";
-import { contentHash, newInternalId, newPatchId } from "@patchy/core";
+import { newInternalId, newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { SubscriptionReads, TableOperations } from "@patchy/primitives";
 import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
@@ -98,37 +98,16 @@ const layer = HttpRouter.serve(PortalPages.layer, {
   Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
 );
 
-const publish = Effect.fn("SubscriptionsTest.publish")(function* (
-  identity: Identity,
-  manifest: typeof Manifest.Type,
-  existingPatchId?: string
-) {
-  const patchId = existingPatchId ?? newPatchId();
-  const versionId = newInternalId("ver");
-  return yield* Fixtures.record({
-    ...Fixtures.publishRecord(),
-    manifest,
-    intent: existingPatchId === undefined ? "create" : "update",
-    patchId,
-    versionId,
-    companyId: identity.company.id,
-    ownerUserId: identity.user.id,
-    machineTokenId: identity.machine.id,
-    title: "Shared subscription acceptance",
-    objectKey: `patches/${patchId}/${versionId}.html`,
-    contentHash: contentHash("subscription-acceptance"),
-    fileSize: 1,
-    filename: null,
-    repoOrg: null,
-    repoName: null,
-    cliVersion: null,
-    gitBranch: null,
-    gitCommitSha: null,
-    sourceIp: null,
-    userAgent: null,
-    force: true
-  });
-});
+const publish = (identity: Identity, manifest: typeof Manifest.Type, existingPatchId?: string) =>
+  Fixtures.record(
+    Fixtures.recordInput(identity, {
+      manifest,
+      intent: existingPatchId === undefined ? "create" : "update",
+      patchId: existingPatchId ?? newPatchId(),
+      title: "Shared subscription acceptance",
+      force: true
+    })
+  );
 let counter = 0;
 const setup = Effect.gen(function* () {
   const ordinal = ++counter;

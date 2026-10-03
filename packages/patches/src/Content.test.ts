@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto";
 import { assert, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
@@ -25,76 +22,17 @@ import * as Fixtures from "./test/fixtures.js";
 
 const { uploader } = Fixtures.identities;
 
-/**
- * An in-memory store with a post-write hook for pausing publication or changing
- * its target between preflight and recording. Faults come from alternate layers.
- */
-const memoryStore = (() => {
-  const objects = Ref.makeUnsafe(new Map<string, { bytes: Uint8Array; lastModified: number }>());
-  const control = { afterPut: Effect.void as Effect.Effect<void> };
-  const service = ContentStore.ContentStore.of({
-    list: (prefix) =>
-      Stream.unwrap(
-        Effect.map(Ref.get(objects), (map) =>
-          Stream.fromIterable(
-            [...map]
-              .filter(([key]) => key.startsWith(prefix))
-              .map(([key, object]) => ({ key, lastModified: object.lastModified }))
-          )
-        )
-      ),
-    put: Effect.fn(function* (key, html) {
-      const lastModified = yield* Clock.currentTimeMillis;
-      yield* Ref.update(objects, (map) =>
-        new Map(map).set(key, { bytes: new TextEncoder().encode(html), lastModified })
-      );
-      yield* control.afterPut;
-    }),
-    get: (key) =>
-      Effect.flatMap(Ref.get(objects), (map) => {
-        const bytes = map.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
-      }),
-    putBytes: Effect.fn(function* (key, bytes) {
-      const lastModified = yield* Clock.currentTimeMillis;
-      yield* Ref.update(objects, (map) =>
-        new Map(map).set(key, { bytes: bytes.slice(), lastModified })
-      );
-    }),
-    getBytes: (key) =>
-      Effect.flatMap(Ref.get(objects), (map) => {
-        const bytes = map.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(bytes.slice());
-      }),
-    delete: (key) =>
-      Ref.update(objects, (map) => {
-        const next = new Map(map);
-        next.delete(key);
-        return next;
-      })
-  });
-  return {
-    control,
-    service,
-    layer: Layer.succeed(ContentStore.ContentStore, service),
-    keys: Effect.map(Ref.get(objects), (map) => [...map.keys()].sort())
-  };
-})();
-
-const store = memoryStore;
-const unavailable = (operation: "put" | "delete", key: string) =>
-  new ContentStore.StoreUnavailable({ operation, key, cause: new Error("down") });
+/** Pauses and retargets publications through `store.control`; faults come from alternate layers. */
+const store = Fixtures.memoryStore();
+const unavailable = (key: string) =>
+  new ContentStore.StoreUnavailable({ operation: "put", key, cause: new Error("down") });
 
 /** The same store, refusing every put. */
 const putFails = Layer.succeed(
   ContentStore.ContentStore,
   ContentStore.ContentStore.of({
     ...store.service,
-    put: (key) => Effect.fail(unavailable("put", key))
+    put: (key) => Effect.fail(unavailable(key))
   })
 );
 
@@ -104,13 +42,23 @@ const putReplyLost = Layer.succeed(
   ContentStore.ContentStore.of({
     ...store.service,
     put: (key, html) =>
-      store.service.put(key, html).pipe(Effect.andThen(Effect.fail(unavailable("put", key))))
+      store.service.put(key, html).pipe(Effect.andThen(Effect.fail(unavailable(key))))
   })
 );
 
 /** `Content` over a faulty store, sharing the block's `Patches`. */
 const over = (faulty: Layer.Layer<ContentStore.ContentStore>) =>
   Effect.provide(Layer.effect(Content.Content, Content.make).pipe(Layer.provide(faulty)));
+
+/** `Content` over its own `Patches`, both on this platform client. */
+const overSql = (sql: SqlClient.SqlClient) =>
+  Layer.effect(Content.Content, Content.make).pipe(
+    Layer.provide(
+      Layer.effect(Patches.Patches, Patches.make).pipe(
+        Layer.provide(Layer.succeed(SqlClient.SqlClient, sql))
+      )
+    )
+  );
 
 const content = Effect.flatMap(Content.Content, Effect.succeed);
 const patches = Effect.flatMap(Patches.Patches, Effect.succeed);
@@ -122,24 +70,7 @@ const publish = (
   extra: Partial<Content.PublishInput> = {}
 ) =>
   Effect.flatMap(content, (service) =>
-    service.publish({
-      ...Fixtures.publishRecord(),
-      patchId,
-      companyId: uploader.company.id,
-      ownerUserId: uploader.user.id,
-      machineTokenId: uploader.machine.id,
-      title: "Page",
-      html,
-      filename: null,
-      repoOrg: null,
-      repoName: null,
-      cliVersion: null,
-      gitBranch: null,
-      gitCommitSha: null,
-      sourceIp: "203.0.113.9",
-      userAgent: "vitest",
-      ...extra
-    })
+    service.publish(Fixtures.publishInput(uploader, { patchId, title: "Page", html, ...extra }))
   );
 
 it.layer(
@@ -765,17 +696,7 @@ it.layer(
             )
           )
         );
-      const heldSql = new Proxy(sql, {
-        get: (target, property, receiver) =>
-          property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
-      });
-      const held = Layer.effect(Content.Content, Content.make).pipe(
-        Layer.provide(
-          Layer.effect(Patches.Patches, Patches.make).pipe(
-            Layer.provide(Layer.succeed(SqlClient.SqlClient, heldSql))
-          )
-        )
-      );
+      const held = overSql(Fixtures.withTransactions(sql, withTransaction));
       const attempt = { publishKey: crypto.randomUUID() };
       const publication = yield* publish("<p>deadline</p>", created.patchId, attempt).pipe(
         Effect.provide(held),
@@ -1051,16 +972,7 @@ it.layer(
               : Effect.void
           )
         );
-      const uncertainSql = new Proxy(sql, {
-        get: (target, property, receiver) =>
-          property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
-      });
-      const uncertain = Layer.effect(Content.Content, Content.make).pipe(
-        Layer.provide(
-          Layer.effect(Patches.Patches, Patches.make).pipe(
-            Layer.provide(Layer.succeed(SqlClient.SqlClient, uncertainSql))
-          )
-        ),
+      const uncertain = overSql(Fixtures.withTransactions(sql, withTransaction)).pipe(
         Layer.provide(
           Layer.succeed(ContentStore.ContentStore, {
             ...store.service,
@@ -1144,17 +1056,7 @@ it.layer(
             )
           )
         );
-      const heldSql = new Proxy(sql, {
-        get: (target, property, receiver) =>
-          property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
-      });
-      const held = Layer.effect(Content.Content, Content.make).pipe(
-        Layer.provide(
-          Layer.effect(Patches.Patches, Patches.make).pipe(
-            Layer.provide(Layer.succeed(SqlClient.SqlClient, heldSql))
-          )
-        )
-      );
+      const held = overSql(Fixtures.withTransactions(sql, withTransaction));
       store.control.afterPut = Effect.gen(function* () {
         const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
         // Shorten only this test's lease so the transaction's own deadline stays live.

@@ -21,24 +21,13 @@ const filesystem = FilesystemContentStore.layer.pipe(
 );
 const publish = (name: string) =>
   Effect.flatMap(Content.Content, (content) =>
-    content.publish({
-      ...Fixtures.publishRecord(),
-      manifest: { ...Fixtures.manifest, name },
-      patchId: null,
-      companyId: uploader.company.id,
-      ownerUserId: uploader.user.id,
-      machineTokenId: uploader.machine.id,
-      title: name,
-      html: `<p>${name}</p>`,
-      filename: null,
-      repoOrg: null,
-      repoName: null,
-      cliVersion: null,
-      gitBranch: null,
-      gitCommitSha: null,
-      sourceIp: null,
-      userAgent: null
-    })
+    content.publish(
+      Fixtures.publishInput(uploader, {
+        manifest: { ...Fixtures.manifest, name },
+        title: name,
+        html: `<p>${name}</p>`
+      })
+    )
   );
 const sweep = Effect.flatMap(DeletionSweep.DeletionSweep, (service) => service.sweep);
 const services = Layer.mergeAll(DeletionSweep.layer, Content.layer).pipe(

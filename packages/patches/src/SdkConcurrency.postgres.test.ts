@@ -100,24 +100,9 @@ const publish = Effect.fn("SdkConcurrency.publish")(function* (
   identity = uploader
 ) {
   const content = yield* Content.Content;
-  return yield* content.publish({
-    ...Fixtures.publishRecord(),
-    manifest,
-    patchId,
-    companyId: identity.company.id,
-    ownerUserId: identity.user.id,
-    machineTokenId: identity.machine.id,
-    title: manifest.name!,
-    html,
-    filename: null,
-    repoOrg: null,
-    repoName: null,
-    cliVersion: null,
-    gitBranch: null,
-    gitCommitSha: null,
-    sourceIp: null,
-    userAgent: "real-postgres-concurrency"
-  });
+  return yield* content.publish(
+    Fixtures.publishInput(identity, { manifest, patchId, title: manifest.name!, html })
+  );
 });
 
 const bindingFor = Effect.fn("SdkConcurrency.bindingFor")(function* (
@@ -231,12 +216,8 @@ const observedPatches = Effect.fn("SdkConcurrency.observedPatches")(function* ()
         return yield* operation;
       })
     );
-  const observedSql = new Proxy(sql, {
-    get: (target, property, receiver) =>
-      property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
-  });
   const observed = yield* Patches.make.pipe(
-    Effect.provideService(SqlClient.SqlClient, observedSql)
+    Effect.provideService(SqlClient.SqlClient, Fixtures.withTransactions(sql, withTransaction))
   );
   return {
     session,

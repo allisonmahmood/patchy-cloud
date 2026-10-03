@@ -29,32 +29,17 @@ it.effect(
     Effect.gen(function* () {
       const identity = Fixtures.identities.uploader;
       yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(identity.company.id);
-      yield* Fixtures.record({
-        ...Fixtures.publishRecord(),
-        manifest: {
-          ...Fixtures.manifest,
-          name: "sdk-store-types",
-          files: { assets: { description: "Company assets keyed by filename.", shared: true } }
-        },
-        intent: "create",
-        patchId: "sdkstoretype",
-        companyId: identity.company.id,
-        ownerUserId: identity.user.id,
-        versionId: "sdk-store-types-version",
-        machineTokenId: identity.machine.id,
-        title: "Shared store type source",
-        objectKey: "patches/sdkstoretype/versions/1.html",
-        contentHash: `sha256:${"a".repeat(64)}`,
-        fileSize: 1,
-        filename: null,
-        repoOrg: null,
-        repoName: null,
-        cliVersion: null,
-        gitBranch: null,
-        gitCommitSha: null,
-        sourceIp: null,
-        userAgent: null
-      });
+      yield* Fixtures.record(
+        Fixtures.recordInput(identity, {
+          manifest: {
+            ...Fixtures.manifest,
+            name: "sdk-store-types",
+            files: { assets: { description: "Company assets keyed by filename.", shared: true } }
+          },
+          patchId: "sdkstoretype",
+          title: "Shared store type source"
+        })
+      );
       const generated = yield* Generation.generate(
         Fixtures.identities.uploader.company.id,
         decodeGenerate({

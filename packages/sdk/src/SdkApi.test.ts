@@ -33,7 +33,6 @@ import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { contentHash } from "../../core/src/index.js";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as Fixtures from "../../patches/src/test/fixtures.js";
 import * as Generation from "./Generation.js";
@@ -420,28 +419,13 @@ const sdkOver = <A, E, R>(dependencies: Layer.Layer<A, E, R>) =>
   );
 
 const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string) {
-  yield* Fixtures.record({
-    ...Fixtures.publishRecord(),
-    manifest: { ...Fixtures.manifest, name: patchId },
-    intent: "create",
-    patchId,
-    companyId: identity.company.id,
-    ownerUserId: identity.user.id,
-    versionId: `${patchId}-version`,
-    machineTokenId: identity.machine.id,
-    title: "SDK failure source",
-    objectKey: `patches/${patchId}/versions/1.html`,
-    contentHash: contentHash(patchId),
-    fileSize: 1,
-    filename: null,
-    repoOrg: null,
-    repoName: null,
-    cliVersion: null,
-    gitBranch: null,
-    gitCommitSha: null,
-    sourceIp: null,
-    userAgent: null
-  });
+  yield* Fixtures.record(
+    Fixtures.recordInput(identity, {
+      manifest: { ...Fixtures.manifest, name: patchId },
+      patchId,
+      title: "SDK failure source"
+    })
+  );
   return generateRequest({
     ...Fixtures.manifest,
     uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
@@ -737,73 +721,57 @@ it.layer(layer)("SDK company generation", (it) => {
           shared: false
         };
         yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(identity.company.id);
-        const source: Patches.RecordInput = {
-          ...Fixtures.publishRecord(),
-          manifest: {
-            ...Fixtures.manifest,
-            name: "sdk-shared-source",
-            files: {
-              logos: { description: "Company logos keyed by filename.", shared: true }
-            },
-            tables: {
-              contacts: definition,
-              members,
-              teams,
-              unrelated: {
-                description: "Unrelated records identified by id.",
-                columns: { title: { kind: "text" } },
-                indexes: {}
-              }
-            },
-            uses: {
-              people: {
-                kind: "sharedTable",
-                patchId: "sdktarget001",
-                table: "people",
-                id: "sdktarget001/people",
-                revision: 1
+        yield* Fixtures.record(
+          Fixtures.recordInput(identity, {
+            patchId: "sdktarget001",
+            manifest: {
+              ...Fixtures.manifest,
+              name: "sdk-ref-target",
+              tables: {
+                people: {
+                  description: "People identified by id.",
+                  columns: { name: { kind: "text" } },
+                  indexes: {},
+                  shared: true
+                }
               }
             }
-          },
-          intent: "create",
-          patchId,
-          companyId: identity.company.id,
-          ownerUserId: identity.user.id,
-          versionId: "sdk-shared-version",
-          machineTokenId: identity.machine.id,
-          title: "SDK shared source",
-          objectKey: `patches/${patchId}/versions/1.html`,
-          contentHash: contentHash("sdk-shared"),
-          fileSize: 1,
-          filename: null,
-          repoOrg: null,
-          repoName: null,
-          cliVersion: null,
-          gitBranch: null,
-          gitCommitSha: null,
-          sourceIp: null,
-          userAgent: null
-        };
-        yield* Fixtures.record({
-          ...source,
-          ...Fixtures.publishRecord(),
-          patchId: "sdktarget001",
-          versionId: "sdk-ref-target-version",
-          objectKey: "patches/sdktarget001/versions/1.html",
-          manifest: {
-            ...Fixtures.manifest,
-            name: "sdk-ref-target",
-            tables: {
-              people: {
-                description: "People identified by id.",
-                columns: { name: { kind: "text" } },
-                indexes: {},
-                shared: true
+          })
+        );
+        // The source declares a ref to the target, so the target is recorded first.
+        yield* Fixtures.record(
+          Fixtures.recordInput(identity, {
+            manifest: {
+              ...Fixtures.manifest,
+              name: "sdk-shared-source",
+              files: {
+                logos: { description: "Company logos keyed by filename.", shared: true }
+              },
+              tables: {
+                contacts: definition,
+                members,
+                teams,
+                unrelated: {
+                  description: "Unrelated records identified by id.",
+                  columns: { title: { kind: "text" } },
+                  indexes: {}
+                }
+              },
+              uses: {
+                people: {
+                  kind: "sharedTable",
+                  patchId: "sdktarget001",
+                  table: "people",
+                  id: "sdktarget001/people",
+                  revision: 1
+                }
               }
-            }
-          }
-        });
-        yield* Fixtures.record(source);
+            },
+            patchId,
+            versionId: "sdk-shared-version",
+            title: "SDK shared source"
+          })
+        );
         const platform = yield* PgClient.PgClient;
         // Consumers retain omitted tables; the active manifest is not their authority.
         yield* platform`UPDATE patch_versions SET manifest = ${platform.json(Fixtures.manifest)} WHERE id = 'sdk-shared-version'`;

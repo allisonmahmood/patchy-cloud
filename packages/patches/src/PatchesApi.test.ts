@@ -2,7 +2,6 @@ import { assert, expect, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { sha256 } from "@patchy/core";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -27,6 +26,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
+  type Identity,
   PatchyApi,
   PatchesGroup,
   ShareRequest,
@@ -54,43 +54,7 @@ import * as Fixtures from "./test/fixtures.js";
 
 const { admin, reader, sibling, uploader } = Fixtures.identities;
 
-const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
-  const objects = new Map<string, { bytes: Uint8Array; lastModified: number }>();
-  return ContentStore.ContentStore.of({
-    list: (prefix) =>
-      Stream.suspend(() =>
-        Stream.fromIterable(
-          [...objects]
-            .filter(([key]) => key.startsWith(prefix))
-            .map(([key, object]) => ({ key, lastModified: object.lastModified }))
-        )
-      ),
-    put: Effect.fn(function* (key, html) {
-      objects.set(key, {
-        bytes: new TextEncoder().encode(html),
-        lastModified: yield* Clock.currentTimeMillis
-      });
-    }),
-    get: (key) =>
-      Effect.suspend(() => {
-        const bytes = objects.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
-      }),
-    putBytes: Effect.fn(function* (key, bytes) {
-      objects.set(key, { bytes: bytes.slice(), lastModified: yield* Clock.currentTimeMillis });
-    }),
-    getBytes: (key) =>
-      Effect.suspend(() => {
-        const bytes = objects.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(bytes.slice());
-      }),
-    delete: (key) => Effect.sync(() => void objects.delete(key))
-  });
-});
+const memoryStore = Layer.sync(ContentStore.ContentStore, () => Fixtures.memoryStore().service);
 
 const client = Fixtures.ownRouter(HttpApiTest.groups(PatchyApi, ["patches"]));
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
@@ -1086,34 +1050,47 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
   );
 });
 
-const racingClients = Effect.fn("racingClients")(function* () {
+/** Publish routes whose content writes wait for each other, so two publishes reach the database together. */
+const pairedRoutes = Effect.fn("pairedRoutes")(function* (quota = 100) {
   const store = yield* ContentStore.ContentStore;
   const ready = yield* Deferred.make<void>();
   let puts = 0;
-  const heldStore = Layer.succeed(
-    ContentStore.ContentStore,
-    ContentStore.ContentStore.of({
-      ...store,
-      put: (key, body) =>
-        Effect.gen(function* () {
-          yield* store.put(key, body);
-          if (++puts === 2) yield* Deferred.succeed(ready, undefined);
-          yield* Deferred.await(ready);
-        })
-    })
-  );
-  const routes = Layer.fresh(
+  const paired = ContentStore.ContentStore.of({
+    ...store,
+    put: (key, body) =>
+      store
+        .put(key, body)
+        .pipe(
+          Effect.andThen(
+            Effect.suspend(() => (++puts === 2 ? Deferred.succeed(ready, undefined) : Effect.void))
+          ),
+          Effect.andThen(Deferred.await(ready))
+        )
+  });
+  return Layer.fresh(
     PatchesApi.layer.pipe(
-      Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
-      Layer.provide(publishConfig())
+      Layer.provide(
+        Content.layer.pipe(Layer.provide(Layer.succeed(ContentStore.ContentStore, paired)))
+      ),
+      Layer.provide(publishConfig(CURRENT_RELEASE, quota))
     )
   );
-  // Same company, different users: the owner quota locks cannot serialize the name claims.
-  return yield* Effect.forEach([uploader, reader], (identity) =>
-    Effect.gen(function* () {
-      const api = yield* client.pipe(Effect.provide(Fixtures.as(identity)), Effect.provide(routes));
-      return { identity, api };
-    })
+});
+
+/**
+ * One paired client per identity. By default two users of one company, so the
+ * owner quota lock cannot serialize their name claims.
+ */
+const racingClients = Effect.fn("racingClients")(function* (
+  identities: ReadonlyArray<Identity> = [uploader, reader],
+  quota = 100
+) {
+  const routes = yield* pairedRoutes(quota);
+  return yield* Effect.forEach(identities, (identity) =>
+    Effect.map(
+      client.pipe(Effect.provide(Fixtures.as(identity)), Effect.provide(routes)),
+      (api) => ({ identity, api })
+    )
   );
 });
 
@@ -1461,35 +1438,13 @@ it.layer(publishLayer)("publish attempts", (it) => {
     "settles identical concurrent first publishes even when the winner fills the quota",
     () =>
       Effect.gen(function* () {
-        const store = yield* ContentStore.ContentStore;
         for (const [identity, quota] of [
           [reader, 100],
           [Fixtures.identities.quota, 1]
         ] as const) {
-          const ready = yield* Deferred.make<void>();
-          let puts = 0;
-          const heldStore = Layer.succeed(
-            ContentStore.ContentStore,
-            ContentStore.ContentStore.of({
-              ...store,
-              put: (key, body) =>
-                Effect.gen(function* () {
-                  yield* store.put(key, body);
-                  if (++puts === 2) yield* Deferred.succeed(ready, undefined);
-                  yield* Deferred.await(ready);
-                })
-            })
-          );
           const api = yield* client.pipe(
             Effect.provide(Fixtures.as(identity)),
-            Effect.provide(
-              Layer.fresh(
-                PatchesApi.layer.pipe(
-                  Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
-                  Layer.provide(publishConfig(CURRENT_RELEASE, quota))
-                )
-              )
-            )
+            Effect.provide(yield* pairedRoutes(quota))
           );
           const payload = publishRequest({
             html: html("Concurrent"),
@@ -1652,31 +1607,9 @@ it.layer(publishLayer)("publish attempts", (it) => {
           manifest: { ...Fixtures.manifest, name: "rename-beta" }
         })
       });
-      const store = yield* ContentStore.ContentStore;
-      const ready = yield* Deferred.make<void>();
-      let puts = 0;
-      const heldStore = Layer.succeed(
-        ContentStore.ContentStore,
-        ContentStore.ContentStore.of({
-          ...store,
-          put: (key, body) =>
-            Effect.gen(function* () {
-              yield* store.put(key, body);
-              if (++puts === 2) yield* Deferred.succeed(ready, undefined);
-              yield* Deferred.await(ready);
-            })
-        })
-      );
       const api = yield* client.pipe(
         Effect.provide(Fixtures.as(uploader)),
-        Effect.provide(
-          Layer.fresh(
-            PatchesApi.layer.pipe(
-              Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
-              Layer.provide(publishConfig())
-            )
-          )
-        )
+        Effect.provide(yield* pairedRoutes())
       );
       const responses = yield* Effect.all(
         (
@@ -2479,28 +2412,17 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
             const [row] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
             yield* Deferred.succeed(locked, row!.pid);
             yield* Deferred.await(release);
-            return yield* content.publish({
-              ...Fixtures.publishRecord(),
-              patchId: null,
-              companyId: admin.company.id,
-              ownerUserId: admin.user.id,
-              machineTokenId: admin.machine.id,
-              html: html("Locked connection"),
-              title: "Locked connection",
-              filename: null,
-              repoOrg: null,
-              repoName: null,
-              cliVersion: null,
-              gitBranch: null,
-              gitCommitSha: null,
-              sourceIp: null,
-              userAgent: null,
-              manifest: {
-                ...Fixtures.manifest,
-                name: "locked-connection",
-                uses: { sales: declaration }
-              }
-            });
+            return yield* content.publish(
+              Fixtures.publishInput(admin, {
+                html: html("Locked connection"),
+                title: "Locked connection",
+                manifest: {
+                  ...Fixtures.manifest,
+                  name: "locked-connection",
+                  uses: { sales: declaration }
+                }
+              })
+            );
           })
         )
         .pipe(Effect.forkScoped);

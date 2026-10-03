@@ -14,7 +14,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
-import { contentHash, newInternalId, newPatchId } from "@patchy/core";
+import { newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
   RuntimeStream,
@@ -75,27 +75,7 @@ const request = HttpServerRequest.fromWeb(
   })
 );
 const publish = (patchId: string, intent: "create" | "update") =>
-  Fixtures.record({
-    ...Fixtures.publishRecord(),
-    intent,
-    patchId,
-    versionId: newInternalId("ver"),
-    companyId: identity.company.id,
-    ownerUserId: identity.user.id,
-    machineTokenId: identity.machine.id,
-    title: "Stream lifecycle",
-    objectKey: `patches/${patchId}/${newInternalId("object")}.html`,
-    contentHash: contentHash("stream-lifecycle"),
-    fileSize: 1,
-    filename: null,
-    repoOrg: null,
-    repoName: null,
-    cliVersion: null,
-    gitBranch: null,
-    gitCommitSha: null,
-    sourceIp: null,
-    userAgent: null
-  });
+  Fixtures.record(Fixtures.recordInput(identity, { intent, patchId, title: "Stream lifecycle" }));
 
 const holdNextWake = Effect.gen(function* () {
   const wakes = yield* Wakes.Wakes;
