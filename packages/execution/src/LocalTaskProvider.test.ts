@@ -322,3 +322,46 @@ it.live(
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   { timeout: 30_000 }
 );
+
+it.live(
+  "recovers a dead owner through another provider by killing its surviving supervisor group",
+  () =>
+    Effect.gen(function* () {
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const provider = yield* LocalTaskProvider.make(options);
+      const task = yield* provider.start({
+        taskId: "orphaned-group",
+        deploymentRevision: "deployment"
+      });
+      const source = `export default { async fetch(request) { const input = await request.json(); return Response.json(input.type === "describe" ? {ok:true,handlers:{}} : {ok:true,value:null}); } };`;
+      yield* provider.bind(task.taskId, {
+        companyId: "company",
+        bindingEpoch: 1,
+        bundle: {
+          companyId: "company",
+          patchId: "patch",
+          versionId: "version",
+          bundle: source,
+          sha256: createHash("sha256").update(source).digest("hex")
+        }
+      });
+      const [resident] = (yield* provider.stats(task.taskId, { bindingEpoch: 1 })).processes;
+      const workerd = (yield* procfs(() => Store.processIdentity(resident!.pid)))!;
+      const { record, supervisor } = yield* ownerRecord(options, task.taskId);
+      // A frozen supervisor must not outlive a regressed recovery.
+      yield* killOnExit(supervisor, [record.owner, workerd]);
+      // A stopped supervisor cannot exit by itself when its owner's IPC channel closes.
+      process.kill(supervisor.pid, "SIGSTOP");
+      yield* killOwner(record.owner);
+      assert.includeMembers(
+        (yield* groupOf(supervisor)).map((member) => member.pid),
+        [supervisor.pid, workerd.pid]
+      );
+      const recovered = yield* LocalTaskProvider.make(options);
+      yield* reclaimedThrough(recovered, task.taskId);
+      assert.deepStrictEqual(yield* groupOf(supervisor), []);
+      assert.isFalse(yield* isAlive(supervisor));
+      assert.isFalse(yield* isAlive(workerd));
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  { timeout: 30_000 }
+);
