@@ -9,19 +9,22 @@ import {
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { Transform, pipeline } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
-import { Client } from "pg";
-import type EmbeddedPostgres from "embedded-postgres";
+import { Client, escapeIdentifier } from "pg";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { applyDevSeed } from "@patchy/auth/seed";
 import * as LocalTaskProvider from "../../packages/execution/src/localTaskProvider.js";
 import type { BrowserContext } from "@playwright/test";
 import type { Manifest } from "../../packages/api/src/index.js";
+import { migrations } from "../../apps/server/src/migrations.js";
+import { layerFromUrl, migrate } from "../../packages/sql/src/index.js";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
 import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
@@ -131,51 +134,42 @@ async function stopChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL" = "S
     clearTimeout(timer);
   }
 }
-
-/** Only the front proxy's hostile navigation endpoints are synthetic.
- * Every publish, session verification, runtime call, file and database mutation is production. */
-export async function startInstance(
-  options: {
-    tls?: boolean;
-    environment?: Readonly<Record<string, string>>;
-  } = {}
-): Promise<Instance> {
-  let environment = options.environment ?? {};
-  const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-"));
-  let postgres: EmbeddedPostgres | undefined;
-  let child: ChildProcess | undefined;
-  const children = new Set<ChildProcess>();
-  let platform: Client | undefined;
-  let proxy: Server | Http2SecureServer | undefined;
-  const sessions = new Set<ServerHttp2Session>();
-  let foreign: Server | undefined;
-  const connections = new Set<Client>();
-  let closed = false;
-  const fleetDirectory = path.join(directory, "execution-fleet");
-  let fleetStarted = false;
-  let callbackPorts: number[] | undefined;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    for (const connection of connections) await connection.end();
-    for (const session of sessions) session.destroy();
-    if (proxy) {
-      if ("closeAllConnections" in proxy) await stopServer(proxy);
-      else await new Promise<void>((resolve) => proxy!.close(() => resolve()));
+/** Runs every step in order, even after one throws, then rethrows the first failure. */
+async function settle(steps: ReadonlyArray<() => unknown>) {
+  const failures: unknown[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      failures.push(error);
     }
-    if (foreign) await stopServer(foreign);
-    for (const server of children) await stopChild(server);
-    if (fleetStarted)
-      await Effect.runPromise(
-        LocalTaskProvider.cleanup(fleetDirectory).pipe(
-          Effect.provide(FetchHttpClient.layer),
-          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
-        )
-      );
-    if (platform) await platform.end();
-    if (postgres) await postgres.stop();
-    await rm(directory, { recursive: true, force: true });
-  };
+  }
+  if (failures.length > 0) throw failures[0];
+}
+
+const PLATFORM = "patchy";
+const TEMPLATE = "patchy_tier1_template";
+/** All a cluster holds between tests: Postgres' own databases and the template. */
+const BASELINE = ["postgres", "template0", "template1", TEMPLATE].sort();
+/** One test's `patchy` database, cloned from the cluster's template. */
+export interface PlatformDatabase {
+  readonly url: string;
+  /** Drops the company databases this platform placed, then the platform itself. */
+  drop(): Promise<void>;
+}
+export interface Cluster {
+  /** A fresh platform database, after checking that the cluster is back at its baseline. */
+  clonePlatform(): Promise<PlatformDatabase>;
+  close(): Promise<void>;
+}
+/** One embedded Postgres for a Playwright worker's lifetime, holding a migrated, seeded template.
+ * A worker runs one test at a time, so the cluster serves one test at a time: every
+ * cluster-wide query a spec makes sees only its own databases and connections. */
+export async function startCluster(): Promise<Cluster> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-postgres-"));
+  // Each resource's release, undone newest first on close.
+  const releases: Array<() => unknown> = [() => rm(directory, { recursive: true, force: true })];
+  const close = () => settle(releases.toReversed());
   try {
     const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
     const previous = signals.map((signal) => [signal, new Set(process.listeners(signal))] as const);
@@ -187,10 +181,10 @@ export async function startInstance(
       }
     }
     const reservation = createServer();
-    const databasePort = await listen(reservation);
-    postgres = new Postgres({
-      databaseDir: path.join(directory, "postgres"),
-      port: databasePort,
+    const port = await listen(reservation);
+    const postgres = new Postgres({
+      databaseDir: path.join(directory, "data"),
+      port,
       user: PG_USER,
       password: PG_PASSWORD,
       persistent: false,
@@ -198,11 +192,146 @@ export async function startInstance(
       onLog() {},
       onError() {}
     });
+    releases.push(() => postgres.stop());
     await postgres.initialise();
     await stopServer(reservation);
     await postgres.start();
-    await postgres.createDatabase("patchy");
-    const databaseUrl = `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${databasePort}/patchy`;
+    const url = (database: string) =>
+      `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${port}/${database}`;
+    // What a brand-new instance held: the vitest template's migrations and dev seed, plus the colleague.
+    await postgres.createDatabase(TEMPLATE);
+    await Effect.runPromise(
+      migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(url(TEMPLATE)))))
+    );
+    await applyDevSeed(url(TEMPLATE));
+    const template = new Client({ connectionString: url(TEMPLATE) });
+    await template.connect();
+    try {
+      await template.query(
+        "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_colleague', 'user_colleague', $1, 'colleague@patchy.local', 'Colleague', 'member')",
+        [seed.companyId]
+      );
+    } finally {
+      await template.end();
+    }
+    const admin = new Client({ connectionString: url("postgres") });
+    await admin.connect();
+    releases.push(() => admin.end());
+    // No test can drift a template nothing connects to; cloning still works.
+    await admin.query(`ALTER DATABASE ${TEMPLATE} WITH ALLOW_CONNECTIONS false`);
+    // The migration and seed pools send Terminate without waiting for their backends to
+    // exit; wait those out so the first baseline check is exact.
+    await admin.query(
+      "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = $1",
+      [TEMPLATE]
+    );
+    const dropDatabase = (name: string) =>
+      admin.query(`DROP DATABASE IF EXISTS ${escapeIdentifier(name)} WITH (FORCE)`);
+    const placedDatabases = async () => {
+      const platform = new Client({ connectionString: url(PLATFORM) });
+      await platform.connect();
+      try {
+        const placements = await platform.query<{ database_name: string }>(
+          "SELECT database_name FROM company_databases"
+        );
+        return placements.rows.map((placement) => placement.database_name);
+      } finally {
+        await platform.end();
+      }
+    };
+    return {
+      async clonePlatform() {
+        // A teardown that leaked a database or a connection, or stopped partway, fails here.
+        const databases = await admin.query<{ datname: string }>("SELECT datname FROM pg_database");
+        const found = databases.rows.map((database) => database.datname).sort();
+        if (found.join() !== BASELINE.join())
+          throw new Error(
+            `An earlier test left databases on this worker's cluster: expected ${BASELINE.join(", ")}, found ${found.join(", ")}`
+          );
+        const backends = await admin.query<{ pid: number; datname: string | null; query: string }>(
+          "SELECT pid, datname, query FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()"
+        );
+        if (backends.rows.length > 0)
+          throw new Error(
+            `An earlier test left connections open on this worker's cluster: ${JSON.stringify(backends.rows)}`
+          );
+        await admin.query(`CREATE DATABASE ${PLATFORM} TEMPLATE ${TEMPLATE}`);
+        return {
+          url: url(PLATFORM),
+          async drop() {
+            let placed: ReadonlyArray<string> = [];
+            await settle([
+              async () => {
+                placed = await placedDatabases();
+              },
+              // Every placement the server claimed, ready or not; a claim may never have created its database.
+              () => settle(placed.map((name) => () => dropDatabase(name))),
+              () => dropDatabase(PLATFORM)
+            ]);
+          }
+        };
+      },
+      close
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+/** Only the front proxy's hostile navigation endpoints are synthetic.
+ * Every publish, session verification, runtime call, file and database mutation is production. */
+export async function startInstance(options: {
+  cluster: Cluster;
+  tls?: boolean;
+  environment?: Readonly<Record<string, string>>;
+}): Promise<Instance> {
+  let environment = options.environment ?? {};
+  const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-"));
+  let database: PlatformDatabase | undefined;
+  let child: ChildProcess | undefined;
+  const children = new Set<ChildProcess>();
+  let platform: Client | undefined;
+  let proxy: Server | Http2SecureServer | undefined;
+  const sessions = new Set<ServerHttp2Session>();
+  let foreign: Server | undefined;
+  const connections = new Set<Client>();
+  let closed = false;
+  const fleetDirectory = path.join(directory, "execution-fleet");
+  let fleetStarted = false;
+  let callbackPorts: number[] | undefined;
+  // Everything that could touch the databases stops before they are dropped.
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await settle([
+      ...[...connections].map((connection) => () => connection.end()),
+      () => {
+        for (const session of sessions) session.destroy();
+      },
+      () =>
+        proxy &&
+        ("closeAllConnections" in proxy
+          ? stopServer(proxy)
+          : new Promise<void>((resolve) => proxy!.close(() => resolve()))),
+      () => foreign && stopServer(foreign),
+      ...[...children].map((server) => () => stopChild(server)),
+      () =>
+        fleetStarted &&
+        Effect.runPromise(
+          LocalTaskProvider.cleanup(fleetDirectory).pipe(
+            Effect.provide(FetchHttpClient.layer),
+            Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
+          )
+        ),
+      () => platform?.end(),
+      () => database?.drop(),
+      () => rm(directory, { recursive: true, force: true })
+    ]);
+  };
+  try {
+    database = await options.cluster.clonePlatform();
+    const databaseUrl = database.url;
     const serverReservation = createServer();
     // The proxy follows the backend if a launch has to move to another port.
     let port = await listen(serverReservation);
@@ -495,16 +624,8 @@ export async function startInstance(
     ({ server: child, port } = await launchOnFreePort(port));
     const health = await fetch(`${backendOrigin()}/healthz`);
     if (!health.ok) throw new Error(`Tier 1 health returned ${health.status}`);
-    const { applyDevSeed } = await import(
-      pathToFileURL(path.join(root, "packages/auth/dist/seed.js")).href
-    );
-    await applyDevSeed(databaseUrl);
     platform = new Client({ connectionString: databaseUrl });
     await platform.connect();
-    await platform.query(
-      "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_colleague', 'user_colleague', $1, 'colleague@patchy.local', 'Colleague', 'member')",
-      [seed.companyId]
-    );
     const release = (await (await fetch(`${backendOrigin()}/api/release`)).json()) as {
       release: string;
       manifestVersion: number;
