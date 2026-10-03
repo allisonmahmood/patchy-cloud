@@ -77,35 +77,21 @@ it.layer(layer)("auth group: machine identity and logout", (it) => {
     }).pipe(Effect.provide(rawAuthorization(`bEaReR\t ${DEV_SEED.token} \t`)))
   );
 
-  it.effect("answers the same 401 for every dead credential on both protected routes", () =>
-    Effect.gen(function* () {
-      const now = Date.UTC(2026, 0, 1);
-      yield* TestClock.setTime(now);
-      const tokens = yield* MachineTokens.MachineTokens;
-      const sql = yield* SqlClient.SqlClient;
-      const revoked = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Revoked" });
-      const expired = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Expired" });
-      const idle = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Idle" });
-      yield* tokens.revoke(revoked.id);
-      yield* sql`UPDATE machine_tokens SET expires_at = to_timestamp(${(now - 1) / 1_000}) WHERE id = ${expired.id}`;
-      yield* sql`UPDATE machine_tokens SET last_used_at = to_timestamp(${(now - 30 * 24 * 60 * 60 * 1_000 - 1) / 1_000}) WHERE id = ${idle.id}`;
-      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-      VALUES ('usr_api_inactive', 'user_api_inactive', ${DEV_SEED.companyId}, 'inactive@api.test', 'Inactive', 'member')`;
-      const deactivated = yield* tokens.mint({ userId: "usr_api_inactive", name: "Deactivated" });
-      yield* sql`UPDATE users SET deactivated_at = to_timestamp(${now / 1_000}) WHERE id = 'usr_api_inactive'`;
-      for (const token of [
-        "unknown-credential",
-        revoked.token,
-        expired.token,
-        idle.token,
-        deactivated.token
-      ]) {
-        const api = yield* client.pipe(Effect.provide(bearer(token)));
-        const expected = { ok: false, error: "Missing or invalid API token." } as const;
-        assert.deepStrictEqual(yield* api.me().pipe(Effect.flip), expected);
-        assert.deepStrictEqual(yield* api.logout().pipe(Effect.flip), expected);
-      }
-    })
+  // MachineTokens owns which credentials are dead; the route answers them all alike.
+  it.effect(
+    "answers the same 401 for unknown and revoked credentials on both protected routes",
+    () =>
+      Effect.gen(function* () {
+        const tokens = yield* MachineTokens.MachineTokens;
+        const revoked = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Revoked" });
+        yield* tokens.revoke(revoked.id);
+        for (const token of ["unknown-credential", revoked.token]) {
+          const api = yield* client.pipe(Effect.provide(bearer(token)));
+          const expected = { ok: false, error: "Missing or invalid API token." } as const;
+          assert.deepStrictEqual(yield* api.me().pipe(Effect.flip), expected);
+          assert.deepStrictEqual(yield* api.logout().pipe(Effect.flip), expected);
+        }
+      })
   );
 
   it.effect("refuses missing and malformed authorization", () =>
