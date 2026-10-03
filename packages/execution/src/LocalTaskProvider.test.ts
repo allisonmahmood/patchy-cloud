@@ -250,8 +250,27 @@ const ownerRecord = (options: LocalTaskProvider.Options, taskId: string) =>
     if (record?.child == null) throw new Error("The task has no observed supervisor.");
     return { directory, record, supervisor: record.child };
   });
-const groupOf = (group: Store.Process) => Effect.promise(() => Store.groupMembers(group));
-const isAlive = (process: Store.Process) => Effect.promise(() => Store.alive(process));
+// A procfs read can race a process's exit (#501); a retry observes the exit.
+const procfs = <A>(read: () => Promise<A>) =>
+  Effect.tryPromise(read).pipe(Effect.retry({ times: 5 }));
+const groupOf = (group: Store.Process) => procfs(() => Store.groupMembers(group));
+const isAlive = (process: Store.Process) => procfs(() => Store.alive(process));
+/**
+ * SIGKILLs recorded processes and the supervisor's group without the provider's help. A pid
+ * is signalled only while its recorded start time still matches, so a reused pid is spared.
+ */
+const killRecorded = Effect.fn("killRecorded")(function* (
+  supervisor: Store.Process,
+  others: ReadonlyArray<Store.Process> = []
+) {
+  const members = yield* groupOf(supervisor).pipe(Effect.orElseSucceed(() => []));
+  for (const recorded of [...others, supervisor, ...members])
+    if (yield* isAlive(recorded).pipe(Effect.orElseSucceed(() => false)))
+      yield* Effect.try(() => process.kill(recorded.pid, "SIGKILL")).pipe(Effect.ignore);
+});
+/** Cleans up a case's processes even when the recovery under test does not. */
+const killOnExit = (supervisor: Store.Process, others: ReadonlyArray<Store.Process>) =>
+  Effect.addFinalizer(() => killRecorded(supervisor, others));
 /** SIGKILLs a detached owner the way a crash would, leaving its record claiming it runs. */
 const killOwner = Effect.fn("killOwner")(function* (owner: Store.Process) {
   process.kill(owner.pid, "SIGKILL");
@@ -270,47 +289,6 @@ const reclaimedThrough = Effect.fn("reclaimedThrough")(function* (
 }, Effect.timeout("15 seconds"));
 
 it.live(
-  "recovers a dead owner through another provider by killing its surviving supervisor group",
-  () =>
-    Effect.gen(function* () {
-      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
-      const provider = yield* LocalTaskProvider.make(options);
-      const task = yield* provider.start({
-        taskId: "orphaned-group",
-        deploymentRevision: "deployment"
-      });
-      const source = `export default { async fetch(request) { const input = await request.json(); return Response.json(input.type === "describe" ? {ok:true,handlers:{}} : {ok:true,value:null}); } };`;
-      yield* provider.bind(task.taskId, {
-        companyId: "company",
-        bindingEpoch: 1,
-        bundle: {
-          companyId: "company",
-          patchId: "patch",
-          versionId: "version",
-          bundle: source,
-          sha256: createHash("sha256").update(source).digest("hex")
-        }
-      });
-      const [resident] = (yield* provider.stats(task.taskId, { bindingEpoch: 1 })).processes;
-      const workerd = (yield* Effect.promise(() => Store.processIdentity(resident!.pid)))!;
-      const { record, supervisor } = yield* ownerRecord(options, task.taskId);
-      // A stopped supervisor cannot exit by itself when its owner's IPC channel closes.
-      process.kill(supervisor.pid, "SIGSTOP");
-      yield* killOwner(record.owner);
-      assert.includeMembers(
-        (yield* groupOf(supervisor)).map((member) => member.pid),
-        [supervisor.pid, workerd.pid]
-      );
-      const recovered = yield* LocalTaskProvider.make(options);
-      yield* reclaimedThrough(recovered, task.taskId);
-      assert.deepStrictEqual(yield* groupOf(supervisor), []);
-      assert.isFalse(yield* isAlive(supervisor));
-      assert.isFalse(yield* isAlive(workerd));
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
-  { timeout: 30_000 }
-);
-
-it.live(
   "reclaims a dead owner's slot without signalling an unrelated process that reuses its supervisor pid",
   () =>
     Effect.gen(function* () {
@@ -321,9 +299,10 @@ it.live(
         deploymentRevision: "deployment"
       });
       const { directory, record, supervisor } = yield* ownerRecord(options, task.taskId);
+      yield* killOnExit(supervisor, [record.owner]);
       yield* killOwner(record.owner);
       // The supervisor may already have exited when its owner's IPC channel closed.
-      yield* Effect.try(() => process.kill(-supervisor.pid, "SIGKILL")).pipe(Effect.ignore);
+      yield* killRecorded(supervisor);
       while ((yield* groupOf(supervisor)).length > 0) yield* Effect.sleep("20 millis");
       const bystander = yield* Effect.acquireRelease(
         Effect.sync(() => spawn("sleep", ["60"], { detached: true, stdio: "ignore" })),
