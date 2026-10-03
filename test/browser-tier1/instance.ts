@@ -149,13 +149,14 @@ async function settle(steps: ReadonlyArray<() => unknown>) {
 
 const PLATFORM = "patchy";
 const TEMPLATE = "patchy_tier1_template";
-/** Cluster-wide state a test could leave for the next one: databases, roles and their settings. */
+/** Cluster-wide state a test could leave for the next one: databases, roles with their
+ * attributes, memberships and settings. Databases by name only: vacuum moves their other columns. */
 async function clusterState(admin: Client) {
   const state = await admin.query<{ entry: string }>(
     `SELECT 'database ' || datname AS entry FROM pg_database
-      UNION ALL SELECT 'role ' || rolname FROM pg_roles
-      UNION ALL SELECT 'setting ' || setdatabase || ' ' || setrole || ' ' || array_to_string(setconfig, ' ')
-        FROM pg_db_role_setting`
+      UNION ALL SELECT 'role ' || pg_roles::text FROM pg_roles
+      UNION ALL SELECT 'membership ' || pg_auth_members::text FROM pg_auth_members
+      UNION ALL SELECT 'setting ' || pg_db_role_setting::text FROM pg_db_role_setting`
   );
   return state.rows.map(({ entry }) => entry);
 }
@@ -208,6 +209,17 @@ export async function startCluster(): Promise<Cluster> {
     releases.push(() => postgres.stop());
     const url = (database: string) =>
       `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${port}/${database}`;
+    // Short-lived, so no harness connection is open while a test runs. `end()` returns once
+    // the backend has exited, which keeps the next baseline check exact.
+    const connect = async <A>(database: string, use: (client: Client) => Promise<A>) => {
+      const client = new Client({ connectionString: url(database) });
+      await client.connect();
+      try {
+        return await use(client);
+      } finally {
+        await client.end();
+      }
+    };
     // Exactly what a brand-new instance held: the server's migrations, the dev seed and the
     // colleague. No patches, placements or name backfill.
     await postgres.createDatabase(TEMPLATE);
@@ -215,72 +227,68 @@ export async function startCluster(): Promise<Cluster> {
       migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(url(TEMPLATE)))))
     );
     await applyDevSeed(url(TEMPLATE));
-    const template = new Client({ connectionString: url(TEMPLATE) });
-    await template.connect();
-    try {
-      await template.query(
+    await connect(TEMPLATE, (template) =>
+      template.query(
         "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_colleague', 'user_colleague', $1, 'colleague@patchy.local', 'Colleague', 'member')",
         [seed.companyId]
-      );
-    } finally {
-      await template.end();
-    }
-    const admin = new Client({ connectionString: url("postgres") });
-    await admin.connect();
-    releases.push(() => admin.end());
-    // No test can drift a template nothing connects to; cloning still works.
-    await admin.query(`ALTER DATABASE ${TEMPLATE} WITH ALLOW_CONNECTIONS false`);
-    // The migration and seed pools send Terminate without waiting for their backends to
-    // exit; wait those out so the first baseline check is exact.
-    await admin.query(
-      "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = $1",
-      [TEMPLATE]
+      )
     );
-    const dropDatabase = (name: string) =>
+    const baseline = await connect("postgres", async (admin) => {
+      // No test can drift a template nothing connects to; cloning still works.
+      await admin.query(`ALTER DATABASE ${TEMPLATE} WITH ALLOW_CONNECTIONS false`);
+      // The migration and seed pools send Terminate without waiting for their backends to
+      // exit; wait those out so the first baseline check is exact.
+      await admin.query(
+        "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = $1",
+        [TEMPLATE]
+      );
+      // Postgres' own databases and roles, the template, and no settings.
+      return clusterState(admin);
+    });
+    const dropDatabase = (admin: Client, name: string) =>
       admin.query(`DROP DATABASE IF EXISTS ${escapeIdentifier(name)} WITH (FORCE)`);
-    // Postgres' own databases and roles, the template, and no settings.
-    const baseline = await clusterState(admin);
-    const placedDatabases = async () => {
-      const platform = new Client({ connectionString: url(PLATFORM) });
-      await platform.connect();
-      try {
-        const placements = await platform.query<{ database_name: string }>(
-          "SELECT database_name FROM company_databases"
-        );
-        return placements.rows.map((placement) => placement.database_name);
-      } finally {
-        await platform.end();
-      }
-    };
+    // Every placement the server claimed, ready or not; a claim may never have created its database.
+    const placements = () =>
+      connect(PLATFORM, (platform) =>
+        platform.query<{ database_name: string }>("SELECT database_name FROM company_databases")
+      );
+    const dropPlatform = () =>
+      connect("postgres", (admin) =>
+        settle([
+          async () =>
+            settle(
+              (await placements()).rows.map(
+                (placement) => () => dropDatabase(admin, placement.database_name)
+              )
+            ),
+          () => dropDatabase(admin, PLATFORM)
+        ])
+      );
     return {
-      async clonePlatform() {
-        // A teardown that leaked a database, role, setting or connection, or stopped partway, fails here.
-        const state = await clusterState(admin);
-        const added = state.filter((entry) => !baseline.includes(entry));
-        const removed = baseline.filter((entry) => !state.includes(entry));
-        if (added.length + removed.length > 0)
-          throw new Error(
-            `An earlier test changed this worker's cluster: added [${added.join(", ")}], removed [${removed.join(", ")}]`
+      clonePlatform: () =>
+        connect("postgres", async (admin) => {
+          // A teardown that leaked a database, role, setting or connection, or stopped partway, fails here.
+          const state = await clusterState(admin);
+          const added = state.filter((entry) => !baseline.includes(entry));
+          const removed = baseline.filter((entry) => !state.includes(entry));
+          if (added.length + removed.length > 0)
+            throw new Error(
+              `An earlier test changed this worker's cluster: added [${added.join(", ")}], removed [${removed.join(", ")}]`
+            );
+          const backends = await admin.query<{
+            pid: number;
+            datname: string | null;
+            query: string;
+          }>(
+            "SELECT pid, datname, query FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()"
           );
-        const backends = await admin.query<{ pid: number; datname: string | null; query: string }>(
-          "SELECT pid, datname, query FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()"
-        );
-        if (backends.rows.length > 0)
-          throw new Error(
-            `An earlier test left connections open on this worker's cluster: ${JSON.stringify(backends.rows)}`
-          );
-        await admin.query(`CREATE DATABASE ${PLATFORM} TEMPLATE ${TEMPLATE}`);
-        return {
-          url: url(PLATFORM),
-          async drop() {
-            await settle([
-              // Every placement the server claimed, ready or not; a claim may never have created its database.
-              async () => settle((await placedDatabases()).map((name) => () => dropDatabase(name))),
-              () => dropDatabase(PLATFORM)
-            ]);
-          }
-        };
-      },
+          if (backends.rows.length > 0)
+            throw new Error(
+              `An earlier test left connections open on this worker's cluster: ${JSON.stringify(backends.rows)}`
+            );
+          await admin.query(`CREATE DATABASE ${PLATFORM} TEMPLATE ${TEMPLATE}`);
+          return { url: url(PLATFORM), drop: dropPlatform };
+        }),
       close
     };
   } catch (error) {
