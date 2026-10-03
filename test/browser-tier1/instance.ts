@@ -9,19 +9,22 @@ import {
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { Transform, pipeline } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
-import { Client } from "pg";
-import type EmbeddedPostgres from "embedded-postgres";
+import { Client, escapeIdentifier } from "pg";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { applyDevSeed } from "@patchy/auth/seed";
 import * as LocalTaskProvider from "../../packages/execution/src/localTaskProvider.js";
 import type { BrowserContext } from "@playwright/test";
 import type { Manifest } from "../../packages/api/src/index.js";
+import { migrations } from "../../apps/server/src/migrations.js";
+import { layerFromUrl, migrate } from "../../packages/sql/src/index.js";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
 import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
@@ -131,51 +134,51 @@ async function stopChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL" = "S
     clearTimeout(timer);
   }
 }
-
-/** Only the front proxy's hostile navigation endpoints are synthetic.
- * Every publish, session verification, runtime call, file and database mutation is production. */
-export async function startInstance(
-  options: {
-    tls?: boolean;
-    environment?: Readonly<Record<string, string>>;
-  } = {}
-): Promise<Instance> {
-  let environment = options.environment ?? {};
-  const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-"));
-  let postgres: EmbeddedPostgres | undefined;
-  let child: ChildProcess | undefined;
-  const children = new Set<ChildProcess>();
-  let platform: Client | undefined;
-  let proxy: Server | Http2SecureServer | undefined;
-  const sessions = new Set<ServerHttp2Session>();
-  let foreign: Server | undefined;
-  const connections = new Set<Client>();
-  let closed = false;
-  const fleetDirectory = path.join(directory, "execution-fleet");
-  let fleetStarted = false;
-  let callbackPorts: number[] | undefined;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    for (const connection of connections) await connection.end();
-    for (const session of sessions) session.destroy();
-    if (proxy) {
-      if ("closeAllConnections" in proxy) await stopServer(proxy);
-      else await new Promise<void>((resolve) => proxy!.close(() => resolve()));
+/** Runs every step in order, even after one throws, then rethrows the first failure. */
+async function settle(steps: ReadonlyArray<() => unknown>) {
+  const failures: unknown[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      failures.push(error);
     }
-    if (foreign) await stopServer(foreign);
-    for (const server of children) await stopChild(server);
-    if (fleetStarted)
-      await Effect.runPromise(
-        LocalTaskProvider.cleanup(fleetDirectory).pipe(
-          Effect.provide(FetchHttpClient.layer),
-          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
-        )
-      );
-    if (platform) await platform.end();
-    if (postgres) await postgres.stop();
-    await rm(directory, { recursive: true, force: true });
-  };
+  }
+  if (failures.length > 0) throw failures[0];
+}
+
+const PLATFORM = "patchy";
+const TEMPLATE = "patchy_tier1_template";
+/** Cluster-wide state a test could leave for the next one: databases, roles with their
+ * attributes, memberships and settings. Databases by identity only: vacuum moves their other columns. */
+async function clusterState(admin: Client) {
+  const state = await admin.query<{ entry: string }>(
+    `SELECT 'database ' || datname || ' ' || oid || ' ' || datallowconn AS entry FROM pg_database
+      UNION ALL SELECT 'role ' || pg_roles::text FROM pg_roles
+      UNION ALL SELECT 'membership ' || pg_auth_members::text FROM pg_auth_members
+      UNION ALL SELECT 'setting ' || pg_db_role_setting::text FROM pg_db_role_setting`
+  );
+  return state.rows.map(({ entry }) => entry);
+}
+/** One test's `patchy` database, cloned from the cluster's template. */
+export interface PlatformDatabase {
+  readonly url: string;
+  /** Drops the company databases this platform placed, then the platform itself. */
+  drop(): Promise<void>;
+}
+export interface Cluster {
+  /** A fresh platform database, after checking that the cluster is back at its baseline. */
+  clonePlatform(): Promise<PlatformDatabase>;
+  close(): Promise<void>;
+}
+/** One embedded Postgres for a Playwright worker's lifetime, holding a migrated, seeded template.
+ * A worker runs one test at a time, so the cluster serves one test at a time: every
+ * cluster-wide query a spec makes sees only its own databases and connections. */
+export async function startCluster(): Promise<Cluster> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-postgres-"));
+  // Each resource's release, undone newest first on close.
+  const releases: Array<() => unknown> = [() => rm(directory, { recursive: true, force: true })];
+  const close = () => settle(releases.toReversed());
   try {
     const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
     const previous = signals.map((signal) => [signal, new Set(process.listeners(signal))] as const);
@@ -187,22 +190,176 @@ export async function startInstance(
       }
     }
     const reservation = createServer();
-    const databasePort = await listen(reservation);
-    postgres = new Postgres({
-      databaseDir: path.join(directory, "postgres"),
-      port: databasePort,
+    const port = await listen(reservation);
+    releases.push(() => stopServer(reservation));
+    const postgres = new Postgres({
+      databaseDir: path.join(directory, "data"),
+      port,
       user: PG_USER,
       password: PG_PASSWORD,
       persistent: false,
-      postgresFlags: [...PG_FLAGS, "-c", "listen_addresses=127.0.0.1"],
+      // Without ALTER SYSTEM, no server-wide setting can outlive the test that changed it.
+      postgresFlags: [
+        ...PG_FLAGS,
+        "-c",
+        "listen_addresses=127.0.0.1",
+        "-c",
+        "allow_alter_system=off"
+      ],
       onLog() {},
       onError() {}
     });
     await postgres.initialise();
     await stopServer(reservation);
     await postgres.start();
-    await postgres.createDatabase("patchy");
-    const databaseUrl = `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${databasePort}/patchy`;
+    // Only once started: embedded-postgres' stop() never returns for a cluster whose start failed.
+    releases.push(() => postgres.stop());
+    const url = (database: string) =>
+      `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${port}/${database}`;
+    // Short-lived, so no harness connection is open while a test runs. `end()` returns once
+    // the backend has exited, which keeps the next baseline check exact.
+    const connect = async <A>(database: string, use: (client: Client) => Promise<A>) => {
+      const client = new Client({ connectionString: url(database) });
+      await client.connect();
+      try {
+        return await use(client);
+      } finally {
+        await client.end();
+      }
+    };
+    // Exactly what a brand-new instance held: the server's migrations, the dev seed and the
+    // colleague. No patches, placements or name backfill.
+    await postgres.createDatabase(TEMPLATE);
+    await Effect.runPromise(
+      migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(url(TEMPLATE)))))
+    );
+    await applyDevSeed(url(TEMPLATE));
+    await connect(TEMPLATE, (template) =>
+      template.query(
+        "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_colleague', 'user_colleague', $1, 'colleague@patchy.local', 'Colleague', 'member')",
+        [seed.companyId]
+      )
+    );
+    const baseline = await connect("postgres", async (admin) => {
+      // No test can drift a template nothing connects to; cloning still works.
+      await admin.query(`ALTER DATABASE ${TEMPLATE} WITH ALLOW_CONNECTIONS false`);
+      // The migration and seed pools send Terminate without waiting for their backends to
+      // exit; wait those out so the first baseline check is exact.
+      await admin.query(
+        "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = $1",
+        [TEMPLATE]
+      );
+      // Postgres' own databases and roles, the template, and no settings.
+      return clusterState(admin);
+    });
+    const dropDatabase = (admin: Client, name: string) =>
+      admin.query(`DROP DATABASE IF EXISTS ${escapeIdentifier(name)} WITH (FORCE)`);
+    // Every placement the server claimed, ready or not; a claim may never have created its database.
+    const placements = () =>
+      connect(PLATFORM, (platform) =>
+        platform.query<{ database_name: string }>("SELECT database_name FROM company_databases")
+      );
+    const dropPlatform = () =>
+      connect("postgres", (admin) =>
+        settle([
+          async () =>
+            settle(
+              (await placements()).rows.map(
+                (placement) => () => dropDatabase(admin, placement.database_name)
+              )
+            ),
+          () => dropDatabase(admin, PLATFORM)
+        ])
+      );
+    return {
+      clonePlatform: () =>
+        connect("postgres", async (admin) => {
+          // A teardown that leaked a database, role, setting or connection, or stopped partway, fails here.
+          const state = await clusterState(admin);
+          const added = state.filter((entry) => !baseline.includes(entry));
+          const removed = baseline.filter((entry) => !state.includes(entry));
+          if (added.length + removed.length > 0)
+            throw new Error(
+              `An earlier test changed this worker's cluster: added [${added.join(", ")}], removed [${removed.join(", ")}]`
+            );
+          const backends = await admin.query<{
+            pid: number;
+            datname: string | null;
+            query: string;
+          }>(
+            "SELECT pid, datname, query FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()"
+          );
+          if (backends.rows.length > 0)
+            throw new Error(
+              `An earlier test left connections open on this worker's cluster: ${JSON.stringify(backends.rows)}`
+            );
+          await admin.query(`CREATE DATABASE ${PLATFORM} TEMPLATE ${TEMPLATE}`);
+          return { url: url(PLATFORM), drop: dropPlatform };
+        }),
+      close
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+/** Only the front proxy's hostile navigation endpoints are synthetic.
+ * Every publish, session verification, runtime call, file and database mutation is production. */
+export async function startInstance(options: {
+  cluster: Cluster;
+  tls?: boolean;
+  environment?: Readonly<Record<string, string>>;
+}): Promise<Instance> {
+  let environment = options.environment ?? {};
+  const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-"));
+  let database: PlatformDatabase | undefined;
+  let child: ChildProcess | undefined;
+  const children = new Set<ChildProcess>();
+  let platform: Client | undefined;
+  let proxy: Server | Http2SecureServer | undefined;
+  const sessions = new Set<ServerHttp2Session>();
+  let foreign: Server | undefined;
+  const connections = new Set<Client>();
+  let closed = false;
+  const fleetDirectory = path.join(directory, "execution-fleet");
+  let fleetStarted = false;
+  let callbackPorts: number[] | undefined;
+  // Everything that could touch the databases stops before they are dropped.
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await settle([
+      ...[...connections].map((connection) => () => connection.end()),
+      () => {
+        for (const session of sessions) session.destroy();
+      },
+      async () => {
+        if (!proxy) return;
+        if ("closeAllConnections" in proxy) await stopServer(proxy);
+        else await new Promise<void>((resolve) => proxy!.close(() => resolve()));
+      },
+      async () => {
+        if (foreign) await stopServer(foreign);
+      },
+      ...[...children].map((server) => () => stopChild(server)),
+      async () => {
+        if (fleetStarted)
+          await Effect.runPromise(
+            LocalTaskProvider.cleanup(fleetDirectory).pipe(
+              Effect.provide(FetchHttpClient.layer),
+              Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
+            )
+          );
+      },
+      () => platform?.end(),
+      () => database?.drop(),
+      () => rm(directory, { recursive: true, force: true })
+    ]);
+  };
+  try {
+    database = await options.cluster.clonePlatform();
+    const databaseUrl = database.url;
     const serverReservation = createServer();
     // The proxy follows the backend if a launch has to move to another port.
     let port = await listen(serverReservation);
@@ -495,16 +652,8 @@ export async function startInstance(
     ({ server: child, port } = await launchOnFreePort(port));
     const health = await fetch(`${backendOrigin()}/healthz`);
     if (!health.ok) throw new Error(`Tier 1 health returned ${health.status}`);
-    const { applyDevSeed } = await import(
-      pathToFileURL(path.join(root, "packages/auth/dist/seed.js")).href
-    );
-    await applyDevSeed(databaseUrl);
     platform = new Client({ connectionString: databaseUrl });
     await platform.connect();
-    await platform.query(
-      "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_colleague', 'user_colleague', $1, 'colleague@patchy.local', 'Colleague', 'member')",
-      [seed.companyId]
-    );
     const release = (await (await fetch(`${backendOrigin()}/api/release`)).json()) as {
       release: string;
       manifestVersion: number;

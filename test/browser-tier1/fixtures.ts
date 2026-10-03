@@ -1,7 +1,7 @@
 import { test as base, expect } from "@playwright/test";
 import type { BrowserContext, Frame, Page } from "@playwright/test";
-import { startInstance } from "./instance.js";
-import type { Instance, Published } from "./instance.js";
+import { startCluster, startInstance } from "./instance.js";
+import type { Cluster, Instance, Published } from "./instance.js";
 import type { FixtureWindow } from "./fixture-client.js";
 
 export const test = base.extend<
@@ -10,10 +10,23 @@ export const test = base.extend<
     preparedContext: void;
     serverEnvironment: Readonly<Record<string, string>>;
   },
-  { tls: boolean }
+  { tls: boolean; cluster: Cluster }
 >({
   tls: [false, { option: true, scope: "worker" }],
   serverEnvironment: [{}, { option: true }],
+  // Never a global setup shared by workers: a cluster must serve one test at a time.
+  cluster: [
+    // eslint-disable-next-line no-empty-pattern -- Playwright reads a fixture's dependencies from this pattern.
+    async ({}, use) => {
+      const cluster = await startCluster();
+      try {
+        await use(cluster);
+      } finally {
+        await cluster.close();
+      }
+    },
+    { scope: "worker", timeout: 120_000 }
+  ],
   preparedContext: [
     async ({ context, instance }, use) => {
       await prepare(context, instance);
@@ -22,8 +35,8 @@ export const test = base.extend<
     { auto: true }
   ],
   instance: [
-    async ({ tls, serverEnvironment }, use) => {
-      const instance = await startInstance({ tls, environment: serverEnvironment });
+    async ({ cluster, tls, serverEnvironment }, use) => {
+      const instance = await startInstance({ cluster, tls, environment: serverEnvironment });
       try {
         await use(instance);
       } finally {
