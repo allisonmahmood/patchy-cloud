@@ -36,13 +36,13 @@ const local = Layer.unwrap(
   })
 ).pipe(Layer.provide(NodeFileSystem.layer));
 
-/** The provisioning contract both company database backends meet. */
-const provisioning = (
-  it: Pick<
-    Vitest.MethodsNonLive<CompanyDatabases.CompanyDatabases | Inventory.Inventory | Tables.Tables>,
-    "effect"
-  >
-) => {
+type Provisioning = Pick<
+  Vitest.MethodsNonLive<CompanyDatabases.CompanyDatabases | Inventory.Inventory | Tables.Tables>,
+  "effect"
+>;
+
+/** The provisioning cases where the PGlite dev database could differ; both backends meet them. */
+const backends = (it: Provisioning) => {
   it.effect(
     "fills old rows and old-writer inserts, persists refs and maintains timestamps",
     () => additions("cmp_dev"),
@@ -59,6 +59,15 @@ const provisioning = (
     30_000
   );
   it.effect(
+    "leaves empty patches without inventory and rolls DDL back with inventory",
+    () => emptyAndRollback("cmp_dev"),
+    30_000
+  );
+};
+
+/** Pure diff refusals and Postgres engine limits, which PGlite runs unchanged in WASM. */
+const refusalsAndLimits = (it: Provisioning) => {
+  it.effect(
     "refuses every non-additive change before any DDL and names its object, change and fix",
     () => refusals("cmp_dev"),
     30_000
@@ -66,11 +75,6 @@ const provisioning = (
   it.effect(
     "refuses a table or file store under a name the other kind already holds",
     () => crossKindNames("cmp_dev"),
-    30_000
-  );
-  it.effect(
-    "leaves empty patches without inventory and rolls DDL back with inventory",
-    () => emptyAndRollback("cmp_dev"),
     30_000
   );
   it.effect(
@@ -90,5 +94,8 @@ const provisioning = (
   );
 };
 
-it.layer(postgres.pipe(Layer.provideMerge(TestWakes.layer)))("Tables (Postgres)", provisioning);
-it.layer(local.pipe(Layer.provideMerge(TestWakes.layer)))("Tables (PGlite)", provisioning);
+it.layer(postgres.pipe(Layer.provideMerge(TestWakes.layer)))("Tables (Postgres)", (it) => {
+  backends(it);
+  refusalsAndLimits(it);
+});
+it.layer(local.pipe(Layer.provideMerge(TestWakes.layer)))("Tables (PGlite)", backends);
