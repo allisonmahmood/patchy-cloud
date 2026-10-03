@@ -65,8 +65,8 @@ takes seconds.
 - Each Playwright worker in the tier 1 browser suite runs one Postgres cluster, and
   every test gets a fresh `patchy` database cloned from a template that the worker
   migrated and seeded once. Teardown drops that database and every company database
-  it placed. If a database or connection outlives its test, the next test fails, so
-  a spec closes any client it opens itself.
+  it placed. If a database, role, role setting or connection outlives its test, the
+  next test fails, so a spec closes any client it opens itself.
 - `tsconfig.test.json` keeps Effect's correctness rules and turns off the style
   rules that steer production code toward Effect services.
 - A test that fails with no code cause is flaky. Check open issues labelled

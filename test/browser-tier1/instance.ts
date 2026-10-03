@@ -149,8 +149,16 @@ async function settle(steps: ReadonlyArray<() => unknown>) {
 
 const PLATFORM = "patchy";
 const TEMPLATE = "patchy_tier1_template";
-/** All a cluster holds between tests: Postgres' own databases and the template. */
-const BASELINE = ["postgres", "template0", "template1", TEMPLATE].sort();
+/** Cluster-wide state a test could leave for the next one: databases, roles and their settings. */
+async function clusterState(admin: Client) {
+  const state = await admin.query<{ entry: string }>(
+    `SELECT 'database ' || datname AS entry FROM pg_database
+      UNION ALL SELECT 'role ' || rolname FROM pg_roles
+      UNION ALL SELECT 'setting ' || setdatabase || ' ' || setrole || ' ' || array_to_string(setconfig, ' ')
+        FROM pg_db_role_setting`
+  );
+  return state.rows.map(({ entry }) => entry);
+}
 /** One test's `patchy` database, cloned from the cluster's template. */
 export interface PlatformDatabase {
   readonly url: string;
@@ -182,6 +190,7 @@ export async function startCluster(): Promise<Cluster> {
     }
     const reservation = createServer();
     const port = await listen(reservation);
+    releases.push(() => stopServer(reservation));
     const postgres = new Postgres({
       databaseDir: path.join(directory, "data"),
       port,
@@ -192,13 +201,15 @@ export async function startCluster(): Promise<Cluster> {
       onLog() {},
       onError() {}
     });
-    releases.push(() => postgres.stop());
     await postgres.initialise();
     await stopServer(reservation);
     await postgres.start();
+    // Only once started: embedded-postgres' stop() never returns for a cluster whose start failed.
+    releases.push(() => postgres.stop());
     const url = (database: string) =>
       `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${port}/${database}`;
-    // What a brand-new instance held: the vitest template's migrations and dev seed, plus the colleague.
+    // Exactly what a brand-new instance held: the server's migrations, the dev seed and the
+    // colleague. No patches, placements or name backfill.
     await postgres.createDatabase(TEMPLATE);
     await Effect.runPromise(
       migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(url(TEMPLATE)))))
@@ -227,6 +238,8 @@ export async function startCluster(): Promise<Cluster> {
     );
     const dropDatabase = (name: string) =>
       admin.query(`DROP DATABASE IF EXISTS ${escapeIdentifier(name)} WITH (FORCE)`);
+    // Postgres' own databases and roles, the template, and no settings.
+    const baseline = await clusterState(admin);
     const placedDatabases = async () => {
       const platform = new Client({ connectionString: url(PLATFORM) });
       await platform.connect();
@@ -241,12 +254,13 @@ export async function startCluster(): Promise<Cluster> {
     };
     return {
       async clonePlatform() {
-        // A teardown that leaked a database or a connection, or stopped partway, fails here.
-        const databases = await admin.query<{ datname: string }>("SELECT datname FROM pg_database");
-        const found = databases.rows.map((database) => database.datname).sort();
-        if (found.join() !== BASELINE.join())
+        // A teardown that leaked a database, role, setting or connection, or stopped partway, fails here.
+        const state = await clusterState(admin);
+        const added = state.filter((entry) => !baseline.includes(entry));
+        const removed = baseline.filter((entry) => !state.includes(entry));
+        if (added.length + removed.length > 0)
           throw new Error(
-            `An earlier test left databases on this worker's cluster: expected ${BASELINE.join(", ")}, found ${found.join(", ")}`
+            `An earlier test changed this worker's cluster: added [${added.join(", ")}], removed [${removed.join(", ")}]`
           );
         const backends = await admin.query<{ pid: number; datname: string | null; query: string }>(
           "SELECT pid, datname, query FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()"
@@ -259,13 +273,9 @@ export async function startCluster(): Promise<Cluster> {
         return {
           url: url(PLATFORM),
           async drop() {
-            let placed: ReadonlyArray<string> = [];
             await settle([
-              async () => {
-                placed = await placedDatabases();
-              },
               // Every placement the server claimed, ready or not; a claim may never have created its database.
-              () => settle(placed.map((name) => () => dropDatabase(name))),
+              async () => settle((await placedDatabases()).map((name) => () => dropDatabase(name))),
               () => dropDatabase(PLATFORM)
             ]);
           }
@@ -309,21 +319,24 @@ export async function startInstance(options: {
       () => {
         for (const session of sessions) session.destroy();
       },
-      () =>
-        proxy &&
-        ("closeAllConnections" in proxy
-          ? stopServer(proxy)
-          : new Promise<void>((resolve) => proxy!.close(() => resolve()))),
-      () => foreign && stopServer(foreign),
+      async () => {
+        if (!proxy) return;
+        if ("closeAllConnections" in proxy) await stopServer(proxy);
+        else await new Promise<void>((resolve) => proxy!.close(() => resolve()));
+      },
+      async () => {
+        if (foreign) await stopServer(foreign);
+      },
       ...[...children].map((server) => () => stopChild(server)),
-      () =>
-        fleetStarted &&
-        Effect.runPromise(
-          LocalTaskProvider.cleanup(fleetDirectory).pipe(
-            Effect.provide(FetchHttpClient.layer),
-            Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
-          )
-        ),
+      async () => {
+        if (fleetStarted)
+          await Effect.runPromise(
+            LocalTaskProvider.cleanup(fleetDirectory).pipe(
+              Effect.provide(FetchHttpClient.layer),
+              Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
+            )
+          );
+      },
       () => platform?.end(),
       () => database?.drop(),
       () => rm(directory, { recursive: true, force: true })
