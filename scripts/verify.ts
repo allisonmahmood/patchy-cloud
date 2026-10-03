@@ -39,9 +39,7 @@ const acceptance: ReadonlyArray<Suite> = [
   {
     name: "cli-smoke",
     commands: [
-      ["node", "scripts/packed-cli-e2e.mjs", "--platform-probes"],
-      ["node", "scripts/packed-cli-e2e.mjs", "--lifecycle-probes"],
-      ["node", "scripts/packed-cli-e2e.mjs", "--signal-probes"],
+      ["node", "scripts/packed-cli-e2e.mjs", "--cleanup-check"],
       pnpm("test:packed-cli-e2e"),
       pnpm("test:packed-preact-e2e")
     ]
