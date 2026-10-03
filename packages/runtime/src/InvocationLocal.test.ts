@@ -82,7 +82,15 @@ const services = Layer.mergeAll(
   Layer.provideMerge(TestWakes.layer),
   Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(FetchHttpClient.layer),
-  Layer.provideMerge(Layer.succeed(ContractLimits.overrides, { "tier2.action.deadline": 2_000 })),
+  // Short deadlines keep the timeout cases quick; each test binds its bundle
+  // before the first call, so workerd's cold start never counts against them.
+  Layer.provideMerge(
+    Layer.succeed(ContractLimits.overrides, {
+      "tier2.query.deadline": 500,
+      "tier2.action.deadline": 500,
+      "tier2.settlement.cleanup": 250
+    })
+  ),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, {
       find: () => Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
@@ -170,6 +178,7 @@ it.live(
         callbackUrls: [listener.url],
         environment: "test"
       });
+      yield* executor.bind(bundle);
       const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
         Effect.provideService(Executor.Executor, executor),
         Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
@@ -409,6 +418,7 @@ it.live(
         callbackUrls: [listener.url],
         environment: "test"
       });
+      yield* executor.bind(bundle);
       const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
         Effect.provideService(Executor.Executor, executor),
         Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
