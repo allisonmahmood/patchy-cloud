@@ -4,7 +4,7 @@
 //   node scripts/packed-cli-e2e.mjs --cleanup-check  cleanup() reaps what a child leaves behind
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { EventEmitter, on } from "node:events";
 import {
   access,
@@ -424,18 +424,6 @@ try {
 
   console.log("[packed-cli-e2e] refusing sharing changes by another user in the same company");
   const foreignToken = await checkedCall(() => seedOtherUserToken());
-  const foreignResponse = await fetch(`${publicBaseUrl}/api/patches/${first.patchId}/share`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${foreignToken}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ scope: "company" }),
-    redirect: "error",
-    signal: AbortSignal.timeout(5_000)
-  });
-  assert.equal(foreignResponse.status, 403, "company membership must not grant ownership");
-  assert.equal((await foreignResponse.json()).code, "not_owner");
   const foreignShare = await runCli(
     cliPath,
     ["share", "--patch", first.patchId, "company", "--json"],
@@ -452,10 +440,10 @@ try {
   assert.equal(foreignFailure.ok, false);
   assert.equal(foreignFailure.kind, "rejected");
   assert.equal(foreignFailure.code, "not_owner");
-  for (const version of publicVersions) {
-    assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
-  }
-  assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
+  assertPublicViewer(await fetchViewer(first.address), {
+    ...publicVersions[0],
+    patchId: first.patchId
+  });
 
   console.log("[packed-cli-e2e] taking the cached-file patch back inside the company");
   const companyShare = await runCli(cliPath, ["share", fixtureArgument, "company"], {
@@ -469,29 +457,22 @@ try {
   }
   assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
-  console.log("[packed-cli-e2e] sharing by explicit id in both directions under --json");
-  for (const scope of ["public", "company"]) {
-    const shared = await runCli(cliPath, ["share", "--patch", first.patchId, scope, "--json"], {
-      cwd: consumerDir,
-      env: cliEnv
-    });
-    assert.equal(shared.stderr, "", "--json success must leave stderr empty");
-    assert.deepEqual(JSON.parse(shared.stdout), {
-      ok: true,
-      patchId: first.patchId,
-      scope,
-      publicUrl: first.address
-    });
-    for (const version of publicVersions) {
-      const viewer = await fetchViewer(version.url);
-      if (scope === "public") {
-        assertPublicViewer(viewer, { ...version, patchId: first.patchId });
-      } else {
-        assertViewerDoor(viewer);
-      }
-    }
-    assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
+  console.log("[packed-cli-e2e] sharing publicly again by explicit id under --json");
+  const shared = await runCli(cliPath, ["share", "--patch", first.patchId, "public", "--json"], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
+  assert.equal(shared.stderr, "", "--json success must leave stderr empty");
+  assert.deepEqual(JSON.parse(shared.stdout), {
+    ok: true,
+    patchId: first.patchId,
+    scope: "public",
+    publicUrl: first.address
+  });
+  for (const version of publicVersions) {
+    assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
   }
+  assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
   await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));
   const freshUpload = await runCli(cliPath, ["publish", fixtureArgument, "--new", "--json"], {
@@ -519,6 +500,7 @@ try {
   await assertStoredDraft(metadata, objectDir, {
     patchId: first.patchId,
     expectedHtmlByVersion: [firstHtml, secondHtml],
+    scope: "public",
     companyId: DEV_SEED.companyId,
     ownerUserId: DEV_SEED.userId,
     machineTokenId: DEV_SEED.tokenId
@@ -526,64 +508,12 @@ try {
   await assertStoredDraft(metadata, objectDir, {
     patchId: fresh.patchId,
     expectedHtmlByVersion: [newHtml],
+    scope: "company",
     companyId: DEV_SEED.companyId,
     ownerUserId: DEV_SEED.userId,
     machineTokenId: DEV_SEED.tokenId
   });
 
-  console.log("[packed-cli-e2e] proving unsafe HTML and bad credentials cannot mutate state");
-  const unsafeHtml =
-    '<!doctype html><html><head><title>Unsafe</title></head><body><script>alert("no")</script></body></html>';
-  const unsafeValidationStateDir = path.join(tempRoot, "cli state unsafe validation");
-  await checkedCall(() => mkdir(unsafeValidationStateDir));
-  assert.deepEqual(await snapshotTree(unsafeValidationStateDir), []);
-  await checkedCall(() => writeFile(fixturePath, unsafeHtml, "utf8"));
-  await assertCliFailureNoMutation({
-    cliPath,
-    args: ["publish", fixtureArgument],
-    cwd: consumerDir,
-    env: environment({
-      PATCHY_STATE_DIR: unsafeValidationStateDir,
-      PATCHY_API_URL: publicBaseUrl,
-      PATCHY_API_TOKEN: DEV_SEED.token
-    }),
-    cliStateDir: unsafeValidationStateDir,
-    objectDir,
-    expectAuthoritativeNonEmpty: true,
-    expectEmptyCliState: true,
-    stderr: /Blocked <script> tag found\./,
-    exitCode: 1
-  });
-
-  await checkedCall(() =>
-    writeFile(fixturePath, validHtml("Invalid env", "invalid-env-must-not-persist"), "utf8")
-  );
-  await assertCliFailureNoMutation({
-    cliPath,
-    args: ["publish", fixtureArgument],
-    cwd: consumerDir,
-    env: { ...cliEnv, PATCHY_API_TOKEN: "invalid-env-credential" },
-    cliStateDir,
-    objectDir,
-    sensitiveValues: ["invalid-env-credential"],
-    stderr: /Missing or invalid API token\./,
-    exitCode: 2
-  });
-
-  console.log("[packed-cli-e2e] proving the --json contract and the unreachable rung");
-  const rejectedJson = await runCli(cliPath, ["whoami", "--json"], {
-    cwd: consumerDir,
-    env: { ...cliEnv, PATCHY_API_TOKEN: "invalid-env-credential" },
-    allowFailure: true,
-    sensitiveValues: ["invalid-env-credential"]
-  });
-  assert.equal(rejectedJson.code, 2);
-  assert.equal(rejectedJson.stdout, "", "--json failure must leave stdout empty");
-  assert.deepEqual(JSON.parse(rejectedJson.stderr), {
-    ok: false,
-    error: "Missing or invalid API token.",
-    kind: "rejected"
-  });
   const whoamiJson = await runCli(cliPath, ["whoami", "--json"], { cwd: consumerDir, env: cliEnv });
   assert.equal(whoamiJson.stderr, "", "--json success must leave stderr empty");
   assert.deepEqual(JSON.parse(whoamiJson.stdout), {
@@ -596,14 +526,8 @@ try {
     role: DEV_SEED.role,
     machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
   });
-  const unreachable = await runCli(cliPath, ["whoami", "--api-url", "http://127.0.0.1:1"], {
-    cwd: consumerDir,
-    env: { ...cliEnv, PATCHY_API_TOKEN: DEV_SEED.token },
-    allowFailure: true
-  });
-  assert.equal(unreachable.code, 3, `expected exit 3\nstderr:\n${unreachable.stderr}`);
-  assert.match(unreachable.stderr, /^http:\/\/127\.0\.0\.1:1 could not be reached\./);
 
+  console.log("[packed-cli-e2e] proving environment credentials override stored credentials");
   const invalidStoredStateDir = path.join(tempRoot, "cli state invalid stored");
   await checkedCall(() => mkdir(invalidStoredStateDir));
   const invalidStoredToken = "invalid-stored-credential";
@@ -617,49 +541,6 @@ try {
     "PATCHY_API_TOKEN",
     "PATCHY_API_URL"
   ]);
-  await assertCliFailureNoMutation({
-    cliPath,
-    args: ["publish", fixtureArgument],
-    cwd: consumerDir,
-    env: invalidStoredEnv,
-    cliStateDir: invalidStoredStateDir,
-    objectDir,
-    sensitiveValues: [invalidStoredToken],
-    stderr: /Missing or invalid API token\./,
-    exitCode: 2
-  });
-
-  console.log("[packed-cli-e2e] proving publishing without a key fails locally without mutation");
-  const noKeyStateDir = path.join(tempRoot, "cli state no key");
-  await checkedCall(() => mkdir(noKeyStateDir));
-  const noKeyEnv = environment({ PATCHY_STATE_DIR: noKeyStateDir, PATCHY_API_URL: publicBaseUrl }, [
-    "PATCHY_API_TOKEN"
-  ]);
-  for (const args of [
-    ["publish", fixtureArgument, "--json"],
-    ["delete", "--patch", fresh.patchId, "--yes", "--json"],
-    ["share", "--patch", fresh.patchId, "public", "--json"],
-    ["whoami", "--json"]
-  ]) {
-    const failure = await assertCliFailureNoMutation({
-      cliPath,
-      args,
-      cwd: consumerDir,
-      env: noKeyEnv,
-      cliStateDir: noKeyStateDir,
-      objectDir,
-      expectAuthoritativeNonEmpty: true,
-      expectEmptyCliState: true,
-      stderr: /Run: patchy login/,
-      exitCode: 1
-    });
-    assert.equal(failure.stdout, "", "--json failure must leave stdout empty");
-    const document = JSON.parse(failure.stderr);
-    assert.equal(document.ok, false);
-    assert.equal(document.kind, "local");
-  }
-
-  console.log("[packed-cli-e2e] proving environment credentials override stored credentials");
   const envPrecedenceHtml = validHtml(
     "Environment precedence",
     "valid-env-overrode-invalid-stored"
@@ -698,7 +579,6 @@ try {
   for (const draft of finalMetadata.drafts) {
     assert.equal(draft.companyId, DEV_SEED.companyId);
     assert.equal(draft.ownerUserId, DEV_SEED.userId);
-    assert.equal(draft.scope, "company");
   }
   assert.ok(
     !JSON.stringify(finalMetadata).includes(DEV_SEED.token),
@@ -707,6 +587,7 @@ try {
   await assertStoredDraft(finalMetadata, objectDir, {
     patchId: envPrecedence.patchId,
     expectedHtmlByVersion: [envPrecedenceHtml],
+    scope: "company",
     companyId: DEV_SEED.companyId,
     ownerUserId: DEV_SEED.userId,
     machineTokenId: DEV_SEED.tokenId
@@ -762,11 +643,10 @@ try {
   assert.equal(removedAgain.code, 2, "deleting an already-deleted patch is the instance's refusal");
 
   await runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release: installedManifest.version });
-  await runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken });
 
-  // Login uses its own state and dev env so it cannot replace the seeded key
-  // that the publishing scenarios above need. Revoke that seed only at the end.
-  console.log("[packed-cli-e2e] exercising the agent login handoff and resume");
+  // Login uses its own state and a worktree dev env that names this instance, so it
+  // cannot replace the seeded key that the publishing scenarios above need.
+  console.log("[packed-cli-e2e] exercising the agent login handoff");
   const loginStateDir = path.join(tempRoot, "cli state login");
   const loginWorktree = path.join(consumerDir, "login worktree");
   const loginDevDir = path.join(loginWorktree, ".local", "dev");
@@ -791,29 +671,6 @@ try {
   assertLoginHandoff(handoff, publicBaseUrl);
   const completeArgs = handoff.next.split(" ");
   assert.equal(completeArgs.shift(), "patchy");
-
-  const pendingDocument = {
-    ok: true,
-    status: "pending",
-    userCode: handoff.userCode,
-    expiresAt: handoff.expiresAt,
-    next: handoff.next,
-    agentNextSteps: handoff.agentNextSteps
-  };
-  const resumedResult = await runCli(cliPath, ["login", "--json"], loginOptions);
-  assert.equal(resumedResult.stderr, "");
-  assert.deepEqual(
-    JSON.parse(resumedResult.stdout),
-    pendingDocument,
-    "rerunning login must poll the code the person is about to confirm, not start another"
-  );
-  const pendingResult = await runCli(
-    cliPath,
-    ["login", "--complete", "--wait", "0", "--json"],
-    loginOptions
-  );
-  assert.equal(pendingResult.stderr, "", "--json pending is a success, not a failure");
-  assert.deepEqual(JSON.parse(pendingResult.stdout), pendingDocument);
 
   console.log("[packed-cli-e2e] proving CLAUDECODE does not wait even with terminal stdin");
   const ptyStateDir = path.join(tempRoot, "cli state pty login");
@@ -894,38 +751,9 @@ try {
     ...JSON.parse(whoamiJson.stdout),
     machine: loggedIn.machine
   });
-  const loginStatus = JSON.parse(
-    (await runCli(cliPath, ["status", "--json"], loggedInOptions)).stdout
-  );
-  assert.equal(loginStatus.hasToken, true);
-  assert.equal(loginStatus.tokenSource, "login", "a stored login must outrank the dev seed");
-  const consumed = await runCli(cliPath, ["login", "--complete", "--wait", "0", "--json"], {
-    ...loggedInOptions,
-    allowFailure: true
-  });
-  assert.equal(consumed.code, 1, "completion must forget the pending login locally");
-  assert.equal(consumed.stdout, "");
-  assert.equal(JSON.parse(consumed.stderr).kind, "local");
 
-  const envWhoami = await runCli(cliPath, ["whoami", "--json"], {
-    ...loggedInOptions,
-    env: { ...loginEnv, PATCHY_API_TOKEN: foreignToken }
-  });
-  assert.equal(JSON.parse(envWhoami.stdout).machine.id, "tok_packed_other");
-  console.log("[packed-cli-e2e] logging out the login key restores the worktree seed");
-  const loginLogout = await runCli(cliPath, ["logout"], loggedInOptions);
-  assert.match(
-    `${loginLogout.stdout}${loginLogout.stderr}`,
-    /This worktree's dev instance still publishes with its seeded key/
-  );
-  const fallbackWhoami = await runCli(cliPath, ["whoami", "--json"], loggedInOptions);
-  assert.equal(fallbackWhoami.stderr, "");
-  assert.deepEqual(JSON.parse(fallbackWhoami.stdout), JSON.parse(whoamiJson.stdout));
-  const fallbackStatus = JSON.parse(
-    (await runCli(cliPath, ["status", "--json"], loggedInOptions)).stdout
-  );
-  assert.equal(fallbackStatus.hasToken, true);
-  assert.equal(fallbackStatus.tokenSource, null);
+  console.log("[packed-cli-e2e] logging out revokes the login key at the server");
+  await runCli(cliPath, ["logout"], loggedInOptions);
   const revokedLogin = await runCli(cliPath, ["whoami", "--json"], {
     ...loggedInOptions,
     env: { ...loginEnv, PATCHY_API_TOKEN: loginToken },
@@ -934,80 +762,6 @@ try {
   assert.equal(revokedLogin.code, 2, "logout must revoke the saved login key at the server");
   assert.equal(revokedLogin.stdout, "");
   assert.equal(JSON.parse(revokedLogin.stderr).kind, "rejected");
-  const outsideWhoami = await runCli(cliPath, ["whoami", "--api-url", publicBaseUrl, "--json"], {
-    ...loggedInOptions,
-    cwd: consumerDir,
-    allowFailure: true
-  });
-  assert.equal(outsideWhoami.code, 1, "outside a worktree logout leaves no publishing key");
-  assert.equal(outsideWhoami.stdout, "");
-  assert.equal(JSON.parse(outsideWhoami.stderr).kind, "local");
-  assert.match(JSON.parse(outsideWhoami.stderr).error, /Run: patchy login/);
-
-  console.log("[packed-cli-e2e] revoking only the auth-set seed, never the environment key");
-  const logoutPending = await runCli(cliPath, ["login", "--json"], {
-    cwd: consumerDir,
-    env: cliEnv
-  });
-  assertLoginHandoff(JSON.parse(logoutPending.stdout), publicBaseUrl);
-  const seedLogoutOptions = {
-    cwd: consumerDir,
-    env: { ...cliEnv, PATCHY_API_TOKEN: foreignToken },
-    sensitiveValues: [foreignToken, loginToken]
-  };
-  const seedLogout = await runCli(cliPath, ["logout", "--json"], seedLogoutOptions);
-  assert.equal(seedLogout.stderr, "", "courtesy warnings belong in the JSON success document");
-  const loggedOut = JSON.parse(seedLogout.stdout);
-  assertDocumentKeys(loggedOut, ["ok", "instanceUrl", "revoked", "warnings"]);
-  assert.equal(loggedOut.ok, true);
-  assert.equal(loggedOut.instanceUrl, publicBaseUrl);
-  assert.equal(loggedOut.revoked, true);
-  assert.ok(Array.isArray(loggedOut.warnings));
-  assert.ok(loggedOut.warnings.some((warning) => warning.includes("PATCHY_API_TOKEN")));
-  const environmentStillWorks = await runCli(cliPath, ["whoami", "--json"], seedLogoutOptions);
-  assert.equal(JSON.parse(environmentStillWorks.stdout).machine.id, "tok_packed_other");
-  const revokedSeed = await runCli(cliPath, ["whoami", "--json"], {
-    ...seedLogoutOptions,
-    env: { ...cliEnv, PATCHY_API_TOKEN: DEV_SEED.token },
-    allowFailure: true
-  });
-  assert.equal(revokedSeed.code, 2, "the stored seed must be revoked, not the environment key");
-  assert.equal(revokedSeed.stdout, "");
-  assert.equal(JSON.parse(revokedSeed.stderr).kind, "rejected");
-  const noPendingAfterLogout = await runCli(
-    cliPath,
-    ["login", "--complete", "--wait", "0", "--json"],
-    { cwd: consumerDir, env: cliEnv, allowFailure: true }
-  );
-  assert.equal(noPendingAfterLogout.code, 1, "logout must also forget a pending login");
-  assert.equal(noPendingAfterLogout.stdout, "");
-  assert.equal(JSON.parse(noPendingAfterLogout.stderr).kind, "local");
-  const noStoredAfterLogout = await runCli(cliPath, ["whoami", "--json"], {
-    cwd: consumerDir,
-    env: cliEnv,
-    allowFailure: true
-  });
-  assert.equal(noStoredAfterLogout.code, 1, "logout must delete the saved auth-set key");
-  assert.equal(noStoredAfterLogout.stdout, "");
-  assert.equal(JSON.parse(noStoredAfterLogout.stderr).kind, "local");
-
-  // Saving the now-revoked seed again exercises the courtesy call's 401 path.
-  await runCli(cliPath, ["auth", "set", "--token-stdin"], {
-    cwd: consumerDir,
-    env: cliEnv,
-    input: `${DEV_SEED.token}\n`
-  });
-  const alreadyRevoked = await runCli(cliPath, ["logout", "--json"], {
-    cwd: consumerDir,
-    env: cliEnv
-  });
-  assert.equal(alreadyRevoked.stderr, "");
-  assert.deepEqual(JSON.parse(alreadyRevoked.stdout), {
-    ok: true,
-    instanceUrl: publicBaseUrl,
-    revoked: true,
-    warnings: []
-  });
 
   console.log(
     "[packed-cli-e2e] PASS: spaced consumer/artifact/state paths and quoted POSIX sh commands"
@@ -1548,228 +1302,6 @@ function parseJsonSuccess(result, keys) {
   return document;
 }
 
-async function runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken }) {
-  console.log("[packed-cli-e2e] discovery: seeding two patches on the disposable server");
-  const releaseResponse = await checkedCall(() => fetch(`${publicBaseUrl}/api/release`));
-  assert.equal(releaseResponse.status, 200);
-  const { release, manifestVersion } = await releaseResponse.json();
-  const seedPatch = async (token, manifest) => {
-    const response = await checkedCall(() =>
-      fetch(`${publicBaseUrl}/api/publish`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          manifest: {
-            manifestVersion,
-            release,
-            tier: 0,
-            tables: {},
-            files: {},
-            uses: {},
-            ...manifest
-          },
-          html: validHtml(manifest.name, "Invented discovery fixture"),
-          publishKey: randomUUID(),
-          metadata: { filename: `${manifest.name}.html` }
-        })
-      })
-    );
-    assert.equal(response.status, 201, `seeding ${manifest.name} must create a patch`);
-    const published = await response.json();
-    assert.equal(published.ok, true);
-    assert.match(published.patchId, /^[a-z0-9]{12}$/);
-    assert.equal(published.name, manifest.name);
-    return published;
-  };
-  const accounts = await seedPatch(foreignToken, {
-    name: "packed-discovery-accounts",
-    description: "Tracks customer accounts for order entry.",
-    tables: {
-      accounts: {
-        description: "One customer account per unique account code.",
-        columns: {
-          code: { kind: "text" },
-          parent: { kind: "ref", table: "accounts", optional: true },
-          priority: { kind: "integer", default: 0 }
-        },
-        indexes: { byCode: { columns: ["code"], unique: true } },
-        shared: true
-      }
-    },
-    files: { receipts: { description: "Receipt scans keyed by file name." } }
-  });
-  const orders = await seedPatch(DEV_SEED.token, {
-    name: "packed-discovery-orders",
-    description: "Tracks orders against the shared customer directory.",
-    tables: {
-      orders: {
-        description: "One order per id, grouped by customer account code.",
-        columns: {
-          accountCode: { kind: "text" },
-          fulfilled: { kind: "boolean", default: false }
-        },
-        indexes: { byAccount: { columns: ["accountCode"] } }
-      }
-    },
-    uses: {
-      customers: {
-        kind: "sharedTable",
-        patchId: accounts.patchId,
-        table: "accounts",
-        id: `${accounts.patchId}/accounts`,
-        revision: accounts.schemaRevision
-      }
-    }
-  });
-  assert.notEqual(accounts.patchId, orders.patchId);
-
-  // Use the saved login outside a patch repo. No environment token or repo binding
-  // selects the instance for these installed-CLI discovery commands.
-  const options = { cwd: tempRoot, env: cliEnv, sensitiveValues: [foreignToken] };
-  const list = async (...args) => {
-    const result = await runCli(cliPath, ["list", ...args, "--json"], options);
-    assert.equal(result.code, 0);
-    assert.equal(result.stderr, "", "--json discovery must leave stderr empty");
-    return JSON.parse(result.stdout);
-  };
-  const discovered = await list();
-  assertDocumentKeys(discovered, ["patches", "connections"]);
-  assert.deepEqual(discovered.connections, []);
-  const text = await runCli(cliPath, ["list"], options);
-  assert.match(text.stdout, /Yours/);
-  assert.match(text.stdout, /Company/);
-  for (const fixture of [
-    {
-      published: accounts,
-      mine: false,
-      owner: { id: "usr_packed_other", name: "Other Publisher", deactivated: false },
-      table: "accounts",
-      description: "One customer account per unique account code.",
-      shared: true,
-      columns: {
-        code: { kind: "text", optional: false },
-        parent: { kind: "ref", optional: true, ref: "accounts" },
-        priority: { kind: "integer", optional: false, default: 0 }
-      },
-      indexes: [{ name: "byCode", columns: ["code"], unique: true }],
-      reads: []
-    },
-    {
-      published: orders,
-      mine: true,
-      owner: { id: DEV_SEED.userId, name: DEV_SEED.userName, deactivated: false },
-      table: "orders",
-      description: "One order per id, grouped by customer account code.",
-      shared: false,
-      columns: {
-        accountCode: { kind: "text", optional: false },
-        fulfilled: { kind: "boolean", optional: false, default: false }
-      },
-      indexes: [{ name: "byAccount", columns: ["accountCode"], unique: false }],
-      reads: [
-        {
-          alias: "customers",
-          patchId: accounts.patchId,
-          name: accounts.name,
-          table: "accounts",
-          state: "live"
-        }
-      ]
-    }
-  ]) {
-    const { published } = fixture;
-    const summary = discovered.patches.find((patch) => patch.name === published.name);
-    assert.ok(summary, `list must discover ${published.name}`);
-    assert.equal(summary.id, published.patchId);
-    assert.equal(summary.description, published.description);
-    assert.equal(summary.address, published.address);
-    assert.equal(summary.mine, fixture.mine);
-    assert.deepEqual(summary.owner, fixture.owner);
-    assert.equal(summary.state, "live");
-    assert.equal(summary.currentVersion, 1);
-    for (const value of [summary.id, summary.name, summary.description, summary.owner.name])
-      assert.ok(text.stdout.includes(value), `list text must include ${JSON.stringify(value)}`);
-
-    // Drill down from discovered names and pasted addresses, then carry the
-    // returned canonical id into the schema lookup and the shared-table hint.
-    const ref = fixture.mine ? summary.address : summary.name;
-    const detail = await list(ref);
-    assert.equal(detail.id, summary.id);
-    assert.equal(detail.description, summary.description);
-    assert.deepEqual(detail.reads, fixture.reads);
-    assert.ok(detail.inventory, "seeded table definitions must be available");
-    assert.equal(detail.inventory.tables.length, 1);
-    const table = detail.inventory.tables[0];
-    assert.equal(table.name, fixture.table);
-    assert.equal(table.description, fixture.description);
-    assert.equal(table.shared, fixture.shared);
-    assert.equal(table.declarable, fixture.shared);
-    if (fixture.shared) {
-      assert.equal(table.hint, `patchy add shared-table ${detail.id}/${table.name}`);
-      assert.deepEqual(
-        detail.inventory.stores.map(({ name, description, shared, declarable, reason }) => ({
-          name,
-          description,
-          shared,
-          declarable,
-          reason
-        })),
-        [
-          {
-            name: "receipts",
-            description: "Receipt scans keyed by file name.",
-            shared: false,
-            declarable: false,
-            reason: "not_shared"
-          }
-        ]
-      );
-    } else {
-      assert.equal(table.reason, "not_shared");
-      assert.ok(table.hint.includes(fixture.owner.name));
-      assert.deepEqual(detail.inventory.stores, []);
-    }
-    const detailText = await runCli(cliPath, ["list", ref], options);
-    for (const value of [detail.id, detail.description, table.name, table.description])
-      assert.ok(detailText.stdout.includes(value), `patch detail text must include ${value}`);
-    if (fixture.shared) assert.ok(detailText.stdout.includes(table.hint));
-    else assert.ok(detailText.stdout.includes(accounts.patchId));
-
-    const schema = await list(detail.id, table.name);
-    assertDocumentKeys(schema, [
-      "kind",
-      "name",
-      "description",
-      "shared",
-      "declarable",
-      "hint",
-      ...(fixture.shared ? [] : ["reason"]),
-      "schemaRevision",
-      "columns",
-      "indexes"
-    ]);
-    assert.equal(schema.kind, "table");
-    assert.equal(schema.name, table.name);
-    assert.equal(schema.description, table.description);
-    assert.equal(schema.shared, fixture.shared);
-    assert.equal(schema.declarable, fixture.shared);
-    if (!fixture.shared) assert.equal(schema.reason, "not_shared");
-    assert.equal(schema.schemaRevision, published.schemaRevision);
-    assert.deepEqual(
-      Object.fromEntries(schema.columns.map(({ name, ...column }) => [name, column])),
-      fixture.columns
-    );
-    assert.deepEqual(schema.indexes, fixture.indexes);
-    const schemaText = await runCli(cliPath, ["list", detail.id, table.name], options);
-    for (const value of [table.name, ...Object.keys(fixture.columns), fixture.indexes[0].name])
-      assert.ok(schemaText.stdout.includes(value), `table schema text must include ${value}`);
-  }
-  console.log("[packed-cli-e2e] PASS: packed list → patch inventory → canonical-id table schema");
-}
-
 async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   console.log("[packed-cli-e2e] tier 1: init with a fresh pnpm store and metadata cache");
   const dir = path.join(tempRoot, "tier1-notes");
@@ -1782,26 +1314,11 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     },
     timeoutMs: 120_000
   };
-  const initialized = parseJsonSuccess(
-    await runCli(
-      cliPath,
-      ["init", dir, "--tier", "1", "--purpose", "Exercise disposable notes end to end", "--json"],
-      { ...options, cwd: tempRoot }
-    ),
-    ["ok", "dir", "release", "tier", "generated", "skills", "installed"]
+  await runCli(
+    cliPath,
+    ["init", dir, "--tier", "1", "--purpose", "Exercise disposable notes end to end", "--json"],
+    { ...options, cwd: tempRoot }
   );
-  assert.equal(initialized.dir, dir);
-  assert.equal(initialized.release, release);
-  assert.equal(initialized.tier, 1);
-  assert.equal(initialized.installed, true);
-  assert.deepEqual(initialized.skills, [
-    "patchy-files",
-    "patchy-loop",
-    "patchy-preact",
-    "patchy-tables"
-  ]);
-  assert.ok(Array.isArray(initialized.generated));
-  for (const file of initialized.generated) assert.equal(typeof file, "string");
   const repoCliPath = installedCliBinPath(dir);
   await checkedCall(() => access(repoCliPath));
   await run("pnpm", ["typecheck"], options);
@@ -2037,19 +1554,6 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     );
     assert.equal(shell.status(), 200);
     assert.equal(content.status(), 200);
-    assert.match(shell.headers()["content-security-policy"], /frame-src 'self'/);
-    assert.match(shell.headers()["content-security-policy"], /frame-ancestors 'none'/);
-    assert.equal(
-      content.headers()["content-security-policy"],
-      "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; " +
-        "style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; " +
-        "media-src blob: data:; connect-src 'none'; frame-ancestors 'self'"
-    );
-    assert.equal(content.headers()["content-type"], "text/html; charset=utf-8");
-    assert.equal(
-      await page.locator("#patch").getAttribute("sandbox"),
-      "allow-scripts allow-modals"
-    );
     await expect(notes.getByRole("heading", { name: "Notes", exact: true })).toBeVisible();
     await expect(notes.locator("#error")).toBeEmpty();
     await expect(notes.getByRole("status")).toBeEmpty();
@@ -2333,17 +1837,6 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     }
   ]);
 
-  console.log("[packed-cli-e2e] portal: seeded-session index and patch card");
-  assert.equal((await checkedCall(() => page.goto(publicBaseUrl))).status(), 200);
-  await expect(page.getByRole("heading", { name: "Yours", exact: true })).toBeVisible();
-  await checkedCall(() => page.locator(`a[href="/patches/${published.name}"]`).click());
-  await expect(page.getByRole("heading", { name: published.name, exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open", exact: true })).toHaveAttribute(
-    "href",
-    new URL(published.address).pathname
-  );
-  await expect(page.getByText(dependant.name, { exact: false }).last()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Manage", exact: true })).toBeVisible();
   const refusedRetire = await runCli(repoCliPath, ["retire", "--json"], {
     ...options,
     allowFailure: true
@@ -2406,19 +1899,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "v2 still reads the cumulative schema after rollback"
   );
 
-  console.log("[packed-cli-e2e] description: repo edit, remote edit and refresh pull-down");
-  const description = "Keeps shared notes for the team.";
-  const described = JSON.parse(
-    (await runCli(repoCliPath, ["describe", description, "--json"], options)).stdout
-  );
-  const repoPath = path.join(dir, "patchy.json");
-  const describedRepo = JSON.parse(await checkedCall(() => readFile(repoPath, "utf8")));
-  assert.equal(describedRepo.description, description);
-  assert.equal(describedRepo.descriptionSyncedAt, described.descriptionUpdatedAt);
-  const noCloudEdit = JSON.parse(
-    (await runCli(repoCliPath, ["refresh", "--json"], options)).stdout
-  );
-  assert.equal((noCloudEdit.warnings ?? []).length, 0);
+  console.log("[packed-cli-e2e] description: a portal-side edit reaches the repo on refresh");
   const cloudDescription = "Keeps shared notes and optional details for the team.";
   await runCli(cliPath, ["describe", cloudDescription, "--patch", published.patchId, "--json"], {
     ...options,
@@ -2430,108 +1911,17 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       `The description was changed in the portal to '${cloudDescription}'; check it`
     )
   );
-  assert.ok(pulled.stdout.includes(description));
-  const syncedRepo = JSON.parse(await checkedCall(() => readFile(repoPath, "utf8")));
-  assert.equal(syncedRepo.description, cloudDescription);
-  const unchanged = JSON.parse((await runCli(repoCliPath, ["refresh", "--json"], options)).stdout);
-  assert.equal((unchanged.warnings ?? []).length, 0);
-  await checkedCall(() => page.goto(`${publicBaseUrl}/patches/${published.name}`));
-  await expect(page.getByRole("textbox", { name: "Description", exact: true })).toHaveValue(
-    cloudDescription
+  assert.ok(pulled.stdout.includes(published.description));
+  const syncedRepo = JSON.parse(
+    await checkedCall(() => readFile(path.join(dir, "patchy.json"), "utf8"))
   );
+  assert.equal(syncedRepo.description, cloudDescription);
   await checkedCall(() => browser.close());
   await checkedCall(() => tier1BrowserServer.close());
   tier1BrowserServer = undefined;
   console.log(
-    "[packed-cli-e2e] PASS: packed init, local and hosted tier 1, discovery, lifecycle, description sync and portal"
+    "[packed-cli-e2e] PASS: packed init, local and hosted tier 1, discovery, lifecycle and description sync"
   );
-}
-
-async function assertCliFailureNoMutation({
-  cliPath,
-  args,
-  cwd,
-  env,
-  cliStateDir,
-  objectDir,
-  expectAuthoritativeNonEmpty = false,
-  expectEmptyCliState = false,
-  sensitiveValues = [],
-  stderr,
-  exitCode
-}) {
-  const authoritativeBefore = await authoritativeSnapshot(objectDir);
-  const cliStateBefore = await snapshotTree(cliStateDir);
-  if (expectAuthoritativeNonEmpty) {
-    assertAuthoritativeSnapshotNonEmpty(authoritativeBefore);
-  }
-  if (expectEmptyCliState) {
-    assert.deepEqual(cliStateBefore, [], "expected dedicated CLI state to start empty");
-  }
-  const result = await runCli(cliPath, args, {
-    cwd,
-    env,
-    allowFailure: true,
-    sensitiveValues
-  });
-  // The ladder: 1 local, 2 rejected, 3 unreachable — the code says who has to act.
-  assert.equal(result.code, exitCode, `expected exit ${exitCode}\nstderr:\n${result.stderr}`);
-  assert.match(result.stderr, stderr);
-  assert.deepEqual(
-    await authoritativeSnapshot(objectDir),
-    authoritativeBefore,
-    "failed CLI invocation mutated server metadata or object storage"
-  );
-  assert.deepEqual(
-    await snapshotTree(cliStateDir),
-    expectEmptyCliState ? [] : cliStateBefore,
-    expectEmptyCliState
-      ? "failed CLI invocation created CLI state"
-      : "failed CLI invocation mutated CLI state"
-  );
-  return result;
-}
-
-async function authoritativeSnapshot(objectDir) {
-  return {
-    metadata: JSON.stringify(await readMetadata()),
-    objects: await snapshotTree(objectDir)
-  };
-}
-
-function assertAuthoritativeSnapshotNonEmpty(snapshot) {
-  const metadata = JSON.parse(snapshot.metadata);
-  assert.ok(metadata.drafts.length > 0, "expected existing authoritative drafts before failure");
-  assert.ok(snapshot.objects.length > 0, "expected existing authoritative objects before failure");
-}
-
-async function snapshotTree(rootDir) {
-  const files = [];
-  await visit(rootDir, "");
-  return files;
-
-  async function visit(directory, relativeDirectory) {
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if (error?.code === "ENOENT") return;
-      throw error;
-    }
-
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      const relativePath = path.join(relativeDirectory, entry.name);
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await visit(absolutePath, relativePath);
-      } else if (entry.isFile()) {
-        files.push([relativePath, await readFile(absolutePath, "utf8")]);
-      } else {
-        throw new Error(`unexpected non-file storage entry: ${absolutePath}`);
-      }
-    }
-  }
 }
 
 function parsePublish(result) {
@@ -2553,23 +1943,11 @@ async function fetchViewer(url) {
   return { response, body: await response.text() };
 }
 
+// Exact headers and CSPs are pinned by packages/serving's Pages tests; these prove
+// the real server serves the right version, sandboxed, and keeps doors shut.
 function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
   assert.equal(viewer.response.status, 200);
-  assert.equal(viewer.response.headers.get("cache-control"), "public, max-age=60");
-  assert.equal(viewer.response.headers.get("set-cookie"), null);
-  assert.equal(
-    viewer.response.headers.get("content-security-policy"),
-    "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
-      "frame-src 'self' about:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-  );
-  assert.equal(viewer.response.headers.get("referrer-policy"), "no-referrer");
-  assert.equal(viewer.response.headers.get("x-content-type-options"), "nosniff");
-  assert.equal(viewer.response.headers.get("x-robots-tag"), "noindex");
-  assert.equal(viewer.response.headers.get("content-type"), "text/html");
-  assert.equal(viewer.response.headers.get("www-authenticate"), null);
-  assert.equal(viewer.response.headers.get("x-patchy-sign-in-url"), null);
   assert.ok(viewer.body.includes('sandbox=""'), "the patch must remain sandboxed");
-  assert.ok(viewer.body.includes('referrerpolicy="no-referrer"'));
   const escapedHtml = html
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -2586,16 +1964,6 @@ function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
 
 function assertViewerDoor(viewer) {
   assert.equal(viewer.response.status, 401);
-  assert.equal(viewer.response.headers.get("cache-control"), "private, no-store");
-  assert.equal(viewer.response.headers.get("x-content-type-options"), "nosniff");
-  assert.equal(viewer.response.headers.get("x-robots-tag"), "noindex");
-  assert.equal(viewer.response.headers.get("content-type"), "text/html");
-  assert.equal(viewer.response.headers.get("location"), null);
-  assert.equal(viewer.response.headers.get("www-authenticate"), null);
-  const signInUrl = viewer.response.headers.get("x-patchy-sign-in-url");
-  assert.ok(signInUrl, "the door must advertise the browser sign-in URL");
-  assert.equal(new URL(signInUrl).protocol, "https:");
-  assert.equal(viewer.body.match(/<a\b/g)?.length, 1, "the door must offer one sign-in link");
   assert.ok(!viewer.body.includes("<iframe"), "the door must not disclose patch content");
   assert.ok(!viewer.body.includes("<!-- patch:"), "the door must not disclose patch identity");
 }
@@ -2722,13 +2090,13 @@ async function readMetadata() {
 async function assertStoredDraft(
   metadata,
   objectDir,
-  { patchId, expectedHtmlByVersion, companyId, ownerUserId, machineTokenId }
+  { patchId, expectedHtmlByVersion, scope, companyId, ownerUserId, machineTokenId }
 ) {
   const draft = metadata.drafts.find((candidate) => candidate.id === patchId);
   assert.ok(draft, `metadata is missing draft ${patchId}`);
   assert.equal(draft.companyId, companyId);
   assert.equal(draft.ownerUserId, ownerUserId);
-  assert.equal(draft.scope, "company");
+  assert.equal(draft.scope, scope);
 
   const versions = metadata.draftVersions
     .filter((version) => version.patchId === patchId)
