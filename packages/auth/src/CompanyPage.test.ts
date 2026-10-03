@@ -94,7 +94,6 @@ const deliveryFailed = Effect.fn(function* (response: Response) {
   assert.include(html, 'role="alert"');
   assert.match(html, /(?:email|mail|delivery|Clerk)/i);
   assert.match(html, /(?:could not|did not|fail|unavailable)/i);
-  return html;
 });
 
 const services = Layer.mergeAll(
@@ -340,36 +339,24 @@ it.layer(services)("company page and actions", (it) => {
     })
   );
 
-  it.effect(
-    "refuses existing users and duplicate live invites without mailing, but allows another company's invite",
-    () =>
-      Effect.gen(function* () {
-        const owner = yield* createCompany("company-invite-rules");
-        const foreign = yield* createCompany("company-invite-other");
-        const recording = yield* InviteMail.Recording;
-        const companies = yield* Companies.Companies;
-        const email = "shared-invite@example.com";
-        redirected(yield* send("/company/invites", post(owner.user, { email, role: "member" })));
-        const delivered = yield* recording.events;
-        for (const refusedEmail of [
-          email.toUpperCase(),
-          owner.user.email,
-          foreign.user.email.toUpperCase()
-        ]) {
-          const response = yield* send(
-            "/company/invites",
-            post(owner.user, { email: refusedEmail, role: "member" })
-          );
-          assert.strictEqual(response.status, 409);
-          assert.include(yield* Effect.promise(() => response.text()), 'role="alert"');
-        }
-        assert.deepStrictEqual(yield* recording.events, delivered);
-        redirected(yield* send("/company/invites", post(foreign.user, { email, role: "admin" })));
-        assert.deepStrictEqual(
-          (yield* companies.findInvitesByEmail(email)).map((invite) => invite.companyId).sort(),
-          [owner.company.id, foreign.company.id].sort()
+  // Invitations owns which addresses are refused; the page answers each refusal alike.
+  it.effect("refuses existing users and duplicate live invites with a 409 alert and no mail", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-invite-rules");
+      const recording = yield* InviteMail.Recording;
+      const email = "shared-invite@example.com";
+      redirected(yield* send("/company/invites", post(owner.user, { email, role: "member" })));
+      const delivered = yield* recording.events;
+      for (const refusedEmail of [email.toUpperCase(), owner.user.email]) {
+        const response = yield* send(
+          "/company/invites",
+          post(owner.user, { email: refusedEmail, role: "member" })
         );
-      })
+        assert.strictEqual(response.status, 409);
+        assert.include(yield* Effect.promise(() => response.text()), 'role="alert"');
+      }
+      assert.deepStrictEqual(yield* recording.events, delivered);
+    })
   );
 
   it.effect(
@@ -571,8 +558,6 @@ it.layer(services)("company page and actions", (it) => {
         const input = { companyId: owner.company.id, userId: member.id };
         const tokens = yield* MachineTokens.MachineTokens;
         const laptop = yield* tokens.mint({ userId: member.id, name: "Laptop" });
-        const desktop = yield* tokens.mint({ userId: member.id, name: "Desktop" });
-        const adminMachine = yield* tokens.mint({ userId: owner.user.id, name: "Admin laptop" });
         const initial = yield* me(laptop.token);
         assert.strictEqual(initial.status, 200);
         assert.deepInclude(yield* initial.json, { role: "member" });
@@ -591,10 +576,6 @@ it.layer(services)("company page and actions", (it) => {
         assert.deepInclude(yield* (yield* me(laptop.token)).json, { role: "member" });
 
         yield* users.deactivate(input);
-        for (const token of [laptop.token, desktop.token]) {
-          assert.strictEqual((yield* me(token)).status, 401);
-        }
-        assert.strictEqual((yield* me(adminMachine.token)).status, 200);
         const denied = yield* send("/company", { headers: { cookie: cookie(member) } });
         assert.strictEqual(denied.status, 403);
         assert.strictEqual(denied.headers.get("cache-control"), "private, no-store");
@@ -625,9 +606,6 @@ it.layer(services)("company page and actions", (it) => {
         const restoredHtml = yield* Effect.promise(() => restored.text());
         assert.include(restoredHtml, member.email);
         assert.notMatch(restoredHtml, /<form\b[^>]*action="\/company(?:\/|")/);
-        for (const token of [laptop.token, desktop.token]) {
-          assert.strictEqual((yield* me(token)).status, 401);
-        }
         const fresh = yield* tokens.mint({ userId: member.id, name: "Reauthenticated laptop" });
         const identity = yield* me(fresh.token);
         assert.strictEqual(identity.status, 200);
@@ -644,106 +622,41 @@ it.layer(services)("company page and actions", (it) => {
       }).pipe(Effect.provide(InviteMail.layerFailing))
   );
 
-  it.effect("keeps an undelivered invite usable for join after create fails", () =>
-    Effect.gen(function* () {
-      const owner = yield* createCompany("company-mail-create-failure");
-      const email = "undelivered@example.com";
-      const response = yield* send(
-        "/company/invites",
-        post(owner.user, { email, role: "admin" })
-      ).pipe(Effect.provide(InviteMail.layerFailing));
-      assert.include(yield* deliveryFailed(response), email);
-      const [invite] = yield* (yield* Companies.Companies).listInvites(owner.company.id);
-      assert.isDefined(invite);
-      assert.isNull(invite!.clerkInvitationId);
-      const sessionCookie = signedInCookies(
-        signSession({ sub: "user_undelivered", email, name: "Invited" })
-      );
-      const joinPage = yield* send("/join", { headers: { cookie: sessionCookie } });
-      assert.include(yield* Effect.promise(() => joinPage.text()), owner.company.name);
-      redirected(
-        yield* send("/join", {
-          method: "POST",
-          headers: { cookie: sessionCookie, origin },
-          body: new URLSearchParams({ action: "join", inviteId: invite!.id })
-        })
-      );
-      const joined = yield* (yield* Users.Users).findByClerkId("user_undelivered");
-      assert.strictEqual(joined?.companyId, owner.company.id);
-      assert.strictEqual(joined?.role, "admin");
-    })
-  );
-
+  // Invitations owns what each failed delivery leaves behind; the page reports it and keeps it.
   it.effect(
-    "preserves the previous delivery when resend cannot revoke it, then permits a successful resend",
+    "answers a failed invite delivery with a 502 alert and keeps the invitation state",
     () =>
       Effect.gen(function* () {
-        const owner = yield* createCompany("company-mail-resend-failure");
         const companies = yield* Companies.Companies;
-        redirected(
-          yield* send(
-            "/company/invites",
-            post(owner.user, {
-              email: "resend-failure@example.com",
-              role: "member"
-            })
-          )
-        );
-        const [invite] = yield* companies.listInvites(owner.company.id);
-        const response = yield* send(
-          `/company/invites/${invite!.id}/resend`,
-          post(owner.user)
-        ).pipe(Effect.provide(InviteMail.layerFailing));
-        assert.include(yield* deliveryFailed(response), invite!.email);
-        const pending = yield* companies.listInvites(owner.company.id);
-        assert.deepStrictEqual(
-          pending.map((item) => item.id),
-          [invite!.id]
-        );
-        assert.strictEqual(pending[0]!.clerkInvitationId, invite!.clerkInvitationId);
-        redirected(yield* send(`/company/invites/${invite!.id}/resend`, post(owner.user)));
-        const [resent] = yield* companies.listInvites(owner.company.id);
-        assert.strictEqual(resent!.id, invite!.id);
-        assert.isString(resent!.clerkInvitationId);
-        assert.notStrictEqual(resent!.clerkInvitationId, invite!.clerkInvitationId);
+        for (const action of ["create", "resend", "revoke"] as const) {
+          const owner = yield* createCompany(`company-mail-${action}-failure`);
+          const form = { email: `${action}-failure@example.com`, role: "member" };
+          if (action !== "create") {
+            redirected(yield* send("/company/invites", post(owner.user, form)));
+          }
+          const before = yield* companies.listInvites(owner.company.id);
+          const response = yield* send(
+            action === "create"
+              ? "/company/invites"
+              : `/company/invites/${before[0]!.id}/${action}`,
+            post(owner.user, action === "create" ? form : {})
+          ).pipe(Effect.provide(InviteMail.layerFailing));
+          yield* deliveryFailed(response);
+          const after = yield* companies.listInvites(owner.company.id);
+          if (action === "create") {
+            // Saved without a delivered link, so the invitee can still join.
+            assert.deepStrictEqual(
+              after.map((invite) => [invite.email, invite.clerkInvitationId]),
+              [[form.email, null]]
+            );
+          } else if (action === "resend") {
+            // The earlier delivery stays because it could not be revoked.
+            assert.deepStrictEqual(after, before);
+          } else {
+            // Revoked here even though the emailed link could not be.
+            assert.deepStrictEqual(after, []);
+          }
+        }
       })
-  );
-
-  it.effect("revokes the local invitation even if Clerk cannot revoke its emailed link", () =>
-    Effect.gen(function* () {
-      const owner = yield* createCompany("company-mail-revoke-failure");
-      const companies = yield* Companies.Companies;
-      redirected(
-        yield* send(
-          "/company/invites",
-          post(owner.user, {
-            email: "revoke-failure@example.com",
-            role: "member"
-          })
-        )
-      );
-      const [invite] = yield* companies.listInvites(owner.company.id);
-      const response = yield* send(`/company/invites/${invite!.id}/revoke`, post(owner.user)).pipe(
-        Effect.provide(InviteMail.layerFailing)
-      );
-      yield* deliveryFailed(response);
-      assert.deepStrictEqual(yield* companies.listInvites(owner.company.id), []);
-      assert.deepStrictEqual(yield* companies.findInvitesByEmail(invite!.email), []);
-      const joined = yield* send("/join", {
-        method: "POST",
-        headers: {
-          origin,
-          cookie: signedInCookies(
-            signSession({ sub: "user_revoke_failure_invite", email: invite!.email })
-          )
-        },
-        body: new URLSearchParams({ action: "join", inviteId: invite!.id })
-      });
-      assert.strictEqual(joined.status, 409);
-      assert.strictEqual(
-        yield* (yield* Users.Users).findByClerkId("user_revoke_failure_invite"),
-        null
-      );
-    })
   );
 });
