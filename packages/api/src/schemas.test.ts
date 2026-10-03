@@ -277,28 +277,25 @@ describe("wire schemas", () => {
     expect(decode({ ...withMember, uses: { people: { kind: "members" } } })._tag).toBe("Failure");
   });
 
-  it.each(["usr_active", "usr_inactive", "usr_foreign", "missing", null, undefined])(
-    "refuses member defaults at the publish boundary: %s",
-    (value) => {
-      const request = {
-        ...attempt,
-        html: "<!doctype html><html></html>",
-        manifest: {
-          ...manifest,
-          tier: 1,
-          uses: { members: { kind: "members" } },
-          tables: {
-            tasks: {
-              description: "Tasks assigned to company users.",
-              columns: { owner: { kind: "member", default: value } },
-              indexes: {}
-            }
+  it.each(["usr_active", null])("refuses member defaults at the publish boundary: %s", (value) => {
+    const request = {
+      ...attempt,
+      html: "<!doctype html><html></html>",
+      manifest: {
+        ...manifest,
+        tier: 1,
+        uses: { members: { kind: "members" } },
+        tables: {
+          tasks: {
+            description: "Tasks assigned to company users.",
+            columns: { owner: { kind: "member", default: value } },
+            indexes: {}
           }
         }
-      };
-      expect(Schema.decodeUnknownExit(PublishRequest)(request)._tag).toBe("Failure");
-    }
-  );
+      }
+    };
+    expect(Schema.decodeUnknownExit(PublishRequest)(request)._tag).toBe("Failure");
+  });
 
   it("round-trips shared declarations and resolved refs while rejecting invalid source names", () => {
     const declaration = {

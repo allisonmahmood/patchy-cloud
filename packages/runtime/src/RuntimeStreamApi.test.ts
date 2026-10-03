@@ -2,12 +2,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Cookies from "effect/http/Cookies";
-import { RuntimeStreamGroup } from "@patchy/api";
+import { RuntimeStreamFrame, RuntimeStreamGroup } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
@@ -31,6 +32,7 @@ const layer = RuntimeStreamApi.layer.pipe(
 const api = HttpApiTest.groups(HttpApi.make("patchy").add(RuntimeStreamGroup), ["runtimeStream"], {
   baseUrl: PUBLIC_BASE_URL
 });
+const decodeFrame = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
 const query = {
   patchId: Fixtures.patchId,
   versionId: Fixtures.versionId,
@@ -129,46 +131,42 @@ it.layer(layer)("stream HTTP admission", (it) => {
     }).pipe(Effect.scoped)
   );
 
-  it.effect("responds with a streaming hello rather than waiting for the document to close", () =>
-    Effect.gen(function* () {
-      const client = yield* api;
-      const response = yield* client.stream({ query, headers, responseMode: "response-only" });
-      assert.strictEqual(response.status, 200);
-      assert.include(response.headers["content-type"], "text/event-stream");
-      assert.include(response.headers["cache-control"], "no-store");
-      const pull = yield* Stream.toPull(response.stream);
-      const first = new TextDecoder().decode((yield* pull)[0]);
-      const hello = JSON.parse(first.slice(6).split("\n\n")[0]!);
-      assert.strictEqual(hello.type, "hello");
-      assert.isString(hello.generation);
-      assert.isNumber(hello.serverTime);
-    }).pipe(Effect.scoped)
-  );
-  it.effect("keeps document streams on one replica with a scoped affinity cookie", () =>
-    Effect.gen(function* () {
-      const client = yield* api;
-      let affinity: string | undefined;
-      for (const documentId of ["first_affinity_document", "second_affinity_document"]) {
-        const response = yield* client.stream({
-          query: { ...query, documentId },
-          headers,
-          responseMode: "response-only"
-        });
-        assert.strictEqual(response.status, 200);
-        const cookie = Option.getOrThrow(Cookies.get(response.cookies, "patchy_stream_affinity"));
-        assert.match(cookie.value, /^replica_[a-z0-9]+$/);
-        assert.strictEqual(cookie.options?.path, "/api/runtime");
-        assert.isTrue(cookie.options?.httpOnly);
-        assert.strictEqual(cookie.options?.sameSite, "strict");
-        assert.strictEqual(
-          cookie.options?.secure === true,
-          new URL(PUBLIC_BASE_URL).protocol === "https:"
-        );
-        if (affinity === undefined) affinity = cookie.value;
-        else assert.strictEqual(cookie.value, affinity);
-        const pull = yield* Stream.toPull(response.stream);
-        assert.include(new TextDecoder().decode((yield* pull)[0]), '"type":"hello"');
-      }
-    }).pipe(Effect.scoped)
+  it.effect(
+    "streams hello without waiting for the document to close, on one replica per affinity cookie",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* api;
+        let affinity: string | undefined;
+        for (const documentId of ["first_affinity_document", "second_affinity_document"]) {
+          const response = yield* client.stream({
+            query: { ...query, documentId },
+            headers,
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 200);
+          assert.include(response.headers["content-type"], "text/event-stream");
+          assert.include(response.headers["cache-control"], "no-store");
+          const cookie = Option.getOrThrow(Cookies.get(response.cookies, "patchy_stream_affinity"));
+          assert.match(cookie.value, /^replica_[a-z0-9]+$/);
+          assert.strictEqual(cookie.options?.path, "/api/runtime");
+          assert.isTrue(cookie.options?.httpOnly);
+          assert.strictEqual(cookie.options?.sameSite, "strict");
+          assert.strictEqual(
+            cookie.options?.secure === true,
+            new URL(PUBLIC_BASE_URL).protocol === "https:"
+          );
+          if (affinity === undefined) affinity = cookie.value;
+          else assert.strictEqual(cookie.value, affinity);
+          const pull = yield* Stream.toPull(response.stream);
+          // The frame schema requires hello's generation and server time.
+          const hello = decodeFrame(
+            new TextDecoder()
+              .decode((yield* pull)[0])
+              .slice(6)
+              .trim()
+          );
+          assert.strictEqual(hello.type, "hello");
+        }
+      }).pipe(Effect.scoped)
   );
 });

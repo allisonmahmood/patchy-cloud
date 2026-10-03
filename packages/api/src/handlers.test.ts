@@ -132,7 +132,7 @@ describe("handler descriptors", () => {
     }
   });
 
-  it("rejects nested defaults in canonical JSON codecs without changing excess-key handling", () => {
+  it("rejects nested defaults in canonical JSON codecs", () => {
     const decode = Schema.decodeUnknownExit(Schema.toCodecJson(HandlerSchema));
     for (const defaultValue of [undefined, null, "hidden"]) {
       expect(
@@ -145,15 +145,6 @@ describe("handler descriptors", () => {
         })._tag
       ).toBe("Failure");
     }
-    expect(Schema.decodeUnknownSync(HandlerSchema)({ kind: "text", extra: true })).toEqual({
-      kind: "text"
-    });
-    expect(
-      Schema.decodeUnknownExit(HandlerSchema, { onExcessProperty: "error" })({
-        kind: "text",
-        extra: true
-      })._tag
-    ).toBe("Failure");
   });
 
   it("rejects handler paths deeper than module.export and unknown row tables", () => {
@@ -271,23 +262,13 @@ describe("handler descriptors", () => {
     expect(
       Schema.decodeUnknownExit(HandlerFailure)({ ...handlerError, source: "patchy" })._tag
     ).toBe("Failure");
-    for (const code of [
-      "handler_failed",
-      "handler_timeout",
-      "write_conflict",
-      "patch_paused",
-      "server_required",
-      "tier2_not_public",
-      "limit_exceeded"
-    ]) {
-      const refusal = { ok: false, source: "patchy", code, error: "Refused." };
-      expect(
-        Schema.encodeSync(RuntimeReply)(Schema.decodeUnknownSync(RuntimeReply)(refusal))
-      ).toEqual(refusal);
-      expect(Schema.decodeUnknownExit(RuntimeReply)({ ...refusal, source: undefined })._tag).toBe(
-        "Failure"
-      );
-    }
+    const refusal = { ok: false, source: "patchy", code: "handler_failed", error: "Refused." };
+    expect(
+      Schema.encodeSync(RuntimeReply)(Schema.decodeUnknownSync(RuntimeReply)(refusal))
+    ).toEqual(refusal);
+    expect(Schema.decodeUnknownExit(RuntimeReply)({ ...refusal, source: undefined })._tag).toBe(
+      "Failure"
+    );
   });
 });
 

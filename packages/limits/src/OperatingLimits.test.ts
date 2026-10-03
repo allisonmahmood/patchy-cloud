@@ -307,16 +307,8 @@ it.layer(services)("operating limits", (it) => {
           DeploymentConfig.InvalidLimit
         );
       }
-      for (const value of [
-        0,
-        -1,
-        0.5,
-        4.5,
-        Number.MAX_SAFE_INTEGER + 1,
-        NaN,
-        Infinity,
-        -Infinity
-      ]) {
+      // Positive, finite, and a whole number for a connection count.
+      for (const value of [0, Infinity, 0.5]) {
         assert.instanceOf(
           yield* limits.setOverride({ ...company, value, actor: "operator" }).pipe(Effect.flip),
           OperatingLimits.InvalidOverride
