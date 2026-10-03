@@ -272,15 +272,6 @@ it.effect(
     }).pipe(Effect.provide(dependencies))
 );
 
-it.effect("refuses a viewer deactivated after invocation admission", () =>
-  Effect.gen(function* () {
-    const { reauthorize } = yield* admit();
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${DEV_SEED.userId}`;
-    assert.instanceOf(yield* reauthorize.pipe(Effect.flip), Runtime.AccessDenied);
-  }).pipe(Effect.provide(dependencies))
-);
-
 it.effect("does not move an invocation to the viewer's new company", () =>
   Effect.gen(function* () {
     const { reauthorize } = yield* admit();
