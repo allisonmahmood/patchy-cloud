@@ -23,7 +23,6 @@ export interface FixtureWindow extends Window {
     }>;
     raw(value: unknown, transfer?: Transferable[]): void;
     image(): Promise<void>;
-    printRows(): void;
     queryStatuses: string[];
     subscribeRows(source?: "own" | "shared"): void;
   };
@@ -57,17 +56,6 @@ const harness: FixtureWindow["harness"] = {
       ),
       { contentType: "text/html" }
     );
-  },
-  printRows() {
-    const body = document.querySelector("#rows")!;
-    body.replaceChildren();
-    for (let i = 1; i <= 2000; i++) {
-      const row = document.createElement("tr");
-      const cell = document.createElement("td");
-      cell.textContent = `Print row ${String(i).padStart(4, "0")}`;
-      row.append(cell);
-      body.append(row);
-    }
   },
   queryStatuses: [],
   subscribeRows(source = "own") {

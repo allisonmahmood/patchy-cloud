@@ -20,8 +20,5 @@ export default defineConfig({
     screenshot: "off",
     video: "off"
   },
-  projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "firefox", use: { ...devices["Desktop Firefox"] } }
-  ]
+  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
 });

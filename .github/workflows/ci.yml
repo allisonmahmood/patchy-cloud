@@ -148,7 +148,6 @@ jobs:
         run: pnpm test:packed-tier2-e2e
 
   # Tier 1 and 2 pages in Chromium against an isolated server; `pnpm test:browser`.
-  # Native printing needs a display, so its @print test runs by hand.
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 20

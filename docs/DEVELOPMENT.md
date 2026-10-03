@@ -44,8 +44,7 @@ For a focused loop:
 - `pnpm typecheck:tests` checks every test and harness file in one program,
   about three seconds when warm. Package `src` is checked by `pnpm typecheck`.
 - `pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium <spec>`
-  runs one browser spec. The `@print` test needs a display, X11 and `pdftotext`;
-  run it with `--grep @print`, and add `--project=firefox` for Firefox.
+  runs one browser spec.
 
 Every vitest run builds the shell broker and stages the packed CLI release once
 before its workers start. The release build reuses its last output when nothing
