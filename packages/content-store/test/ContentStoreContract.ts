@@ -161,7 +161,12 @@ export const contentStoreContract = (
       assert.strictEqual(invalid.key, nulPrefix);
     })
   );
+};
 
+/** S3 pages listings at 1,000 keys; the filesystem store has no pages to cross. */
+export const pagedListingContract = (
+  it: Pick<Vitest.MethodsNonLive<ContentStore.ContentStore>, "effect">
+) => {
   it.effect(
     "lists every object beyond a single S3 page without duplicates",
     () =>
