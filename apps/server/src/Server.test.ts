@@ -522,7 +522,7 @@ it.layer(
   );
 
   // What each refusal answers is serving's (Pages.test); this proves the composed
-  // server neither counts them as visits nor lets HEAD skip admission elsewhere.
+  // server counts none of them as a visit and that HEAD follows GET admission.
   it.effect("counts no visit for a refused page request, and HEAD follows GET admission", () =>
     Effect.gen(function* () {
       const created = yield* publish(DEV_SEED.token, { html: html("Restricted content") });
@@ -538,6 +538,12 @@ it.layer(
       const [before] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
       for (const path of [addressPath, `${addressPath}/~v/1`]) {
         assert.strictEqual((yield* send(signedRequest(path, foreignCookie))).status, 404);
+        const head = yield* send(
+          HttpClientRequest.head(path).pipe(HttpClientRequest.setHeader("cookie", foreignCookie))
+        );
+        assert.strictEqual(head.status, 404);
+        assert.strictEqual(head.headers["cache-control"], "private, no-store");
+        assert.strictEqual(yield* head.text, "");
         assert.strictEqual((yield* send(HttpClientRequest.get(path))).status, 401);
         assert.strictEqual((yield* send(signedRequest(path, unenrolledCookie))).status, 303);
       }
