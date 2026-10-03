@@ -2,7 +2,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { validateHtml } from "@patchy/core";
 import {
+  decodePublishRequest,
   projectHandler,
   projectTree,
   publish,
@@ -50,16 +52,15 @@ describe("repo publish checks", () => {
     expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
   });
 
-  // repoBuild.test.ts owns what the inspector refuses; this proves Vite's output reaches both checks.
-  it("refuses unbundled resources and oversized tier 0 bundles before sending, then publishes a reduced page", async () => {
+  // repoBuild.test.ts owns what the inspector refuses; this proves Vite's output reaches both
+  // checks, and that the tier 0 starter `patchy init` writes builds into a page the policy accepts.
+  it("refuses unbundled resources and oversized tier 0 bundles before sending, then publishes the tier 0 starter", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/publish")
         return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 0 });
       projectHandler(request, respond, disconnect);
     });
-    const dir = publishTree(instance.url);
-    const config = path.join(dir, "patchy.config.ts");
-    writeFileSync(config, readFileSync(config, "utf8").replace("tier: 1", "tier: 0"));
+    const dir = publishTree(instance.url, 0);
     const options = {
       cwd: dir,
       stateDir: tempDir(),
@@ -67,6 +68,7 @@ describe("repo publish checks", () => {
     };
     expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
     const entry = path.join(dir, "index.html");
+    const starter = readFileSync(entry, "utf8");
     writeFileSync(
       entry,
       validHtml.replace("</body>", '<img src="https://example.test/pixel.png"></body>')
@@ -91,8 +93,14 @@ describe("repo publish checks", () => {
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
     expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
 
-    writeFileSync(entry, validHtml);
-    const reduced = await runCli(["publish", "--json"], options);
-    expect(reduced, reduced.stderr).toMatchObject({ status: 0, stderr: "" });
+    writeFileSync(entry, starter);
+    const published = await runCli(["publish", "--json"], options);
+    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
+    const sent = decodePublishRequest(
+      instance.requests.find((request) => request.url === "/api/publish")?.body
+    );
+    expect(sent.manifest.tier).toBe(0);
+    expect(sent.html).toContain("<h1>My patch</h1>");
+    expect(validateHtml(sent.html).ok).toBe(true);
   });
 });
