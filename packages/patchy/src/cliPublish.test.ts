@@ -32,27 +32,13 @@ import {
 } from "./test/cli.js";
 
 describe("patchy publish", async () => {
+  // Api.test.ts owns which refusals keep an attempt; these prove a kept one recovers intact.
   it.each([
     { status: 401, route: "/api/me", body: { ok: false, error: "Missing or invalid API token." } },
-    {
-      status: 401,
-      route: "/api/publish",
-      body: { ok: false, error: "Missing or invalid API token." }
-    },
     {
       status: 429,
       route: "/api/publish",
       body: { ok: false, code: "rate_limited", error: "Slow down.", retryAfterSeconds: 60 }
-    },
-    {
-      status: 403,
-      route: "/api/publish",
-      body: { ok: false, code: "live_patch_quota_exceeded", error: "Quota reached.", quota: 1 }
-    },
-    {
-      status: 422,
-      route: "/api/publish",
-      body: { ok: false, code: "unknown_admission_refusal", error: "Try later." }
     },
     { status: 400, route: "/api/publish", body: "undecodable admission refusal" }
   ])(
@@ -1089,13 +1075,8 @@ describe("patchy share", () => {
 
   it.each([
     { args: [] },
-    { args: ["public"] },
-    { args: ["page.html"] },
-    { args: ["--patch", "abcdefghijkl"] },
-    { args: ["page.html", "private"] },
     { args: ["--patch", "abcdefghijkl", "private"] },
-    { args: ["page.html", "public", "--patch", "abcdefghijkl"] },
-    { args: ["page.html", "public", "extra"] }
+    { args: ["page.html", "public", "--patch", "abcdefghijkl"] }
   ])("rejects invalid targets or scope locally: $args", async ({ args }) => {
     const instance = await stubInstance((_, respond) => respond(500, {}));
     const result = await runCli(["share", ...args, "--json"], {

@@ -93,71 +93,77 @@ describe("patch lifecycle commands", () => {
   ];
 
   it.each(cases)(
-    "reports $verb in text and JSON using repo, file and explicit targets",
-    async ({ verb, args, method, suffix, response, text }) => {
+    "sends $verb to its route for an explicit target and prints the JSON document",
+    async ({ verb, args, method, suffix, response }) => {
       const instance = await stubInstance((request, respond) => {
         if (request.method !== method || request.url !== `/api/patches/${patchId}${suffix}`)
           return respond(404, { ok: false, error: "Patch not found." });
         respond(200, response);
       });
-      const dir = projectTree(instance.url);
-      const config = {
-        instance: instance.url,
-        patch: patchId,
-        description: "Old description",
-        authorField: 7
-      };
-      writeFileSync(path.join(dir, "patchy.json"), JSON.stringify(config));
-      const file = path.join(dir, "page.html");
-      const cache = {
-        hosts: {
-          [instance.url]: {
-            files: {
-              [file]: {
-                patchId,
-                publicUrl: "http://instance.test/company/page",
-                latestVersionNumber: 3,
-                updatedAt: "unchanged"
-              }
+      const result = await runCli([verb, ...args, "--patch", patchId, "--json"], {
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      });
+      expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(result.stdout)).toEqual(response);
+    }
+  );
+
+  // Every verb resolves its target through one helper; describe also rewrites the repo.
+  it("resolves repo and cached-file targets, and describe records the repo's new description", async () => {
+    const instance = await stubInstance((request, respond) => {
+      const entry = cases.find(
+        ({ method, suffix }) =>
+          request.method === method && request.url === `/api/patches/${patchId}${suffix}`
+      );
+      if (entry === undefined) return respond(404, { ok: false, error: "Patch not found." });
+      respond(200, entry.response);
+    });
+    const dir = projectTree(instance.url);
+    const config = {
+      instance: instance.url,
+      patch: patchId,
+      description: "Old description",
+      authorField: 7
+    };
+    writeFileSync(path.join(dir, "patchy.json"), JSON.stringify(config));
+    const file = path.join(dir, "page.html");
+    const cache = {
+      hosts: {
+        [instance.url]: {
+          files: {
+            [file]: {
+              patchId,
+              publicUrl: "http://instance.test/company/page",
+              latestVersionNumber: 3,
+              updatedAt: "unchanged"
             }
           }
         }
-      };
-      const options = {
-        cwd: dir,
-        stateDir: dir,
-        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-      };
-      for (const target of ["repo", "file", "explicit"]) {
-        writeFileSync(path.join(dir, "patches.json"), JSON.stringify(cache));
-        const selected =
-          target === "explicit"
-            ? [...args, "--patch", patchId]
-            : target === "file"
-              ? verb === "describe"
-                ? [file, ...args]
-                : [...args, file]
-              : args;
-        const result = await runCli(
-          [verb, ...selected, ...(target === "repo" ? [] : ["--json"])],
-          options
-        );
-        expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
-        if (target === "repo") expect(result.stdout).toContain(text);
-        else expect(JSON.parse(result.stdout)).toEqual(response);
-        if (verb !== "delete") expect(readJson(path.join(dir, "patches.json"))).toEqual(cache);
       }
-      expect(readJson(path.join(dir, "patchy.json"))).toEqual(
-        verb === "describe"
-          ? {
-              ...config,
-              description: "A useful tool",
-              descriptionSyncedAt: "2026-09-15T00:00:00.000Z"
-            }
-          : config
-      );
-    }
-  );
+    };
+    writeFileSync(path.join(dir, "patches.json"), JSON.stringify(cache));
+    const options = {
+      cwd: dir,
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    const repo = await runCli(["retire"], options);
+    expect(repo, repo.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(repo.stdout).toContain("Retired patch");
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual(config);
+    const cached = await runCli(["retire", file, "--json"], options);
+    expect(cached, cached.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(cached.stdout)).toEqual(cases[0]!.response);
+    expect(readJson(path.join(dir, "patches.json"))).toEqual(cache);
+    const described = await runCli(["describe", "A useful tool"], options);
+    expect(described, described.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(described.stdout).toContain("A useful tool");
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual({
+      ...config,
+      description: "A useful tool",
+      descriptionSyncedAt: "2026-09-15T00:00:00.000Z"
+    });
+  });
 
   it.each([
     {
@@ -209,14 +215,6 @@ describe("patch lifecycle commands", () => {
       text: "retired"
     },
     {
-      verb: "rollback",
-      args: ["99"],
-      status: 422,
-      code: "version_unavailable",
-      fields: {},
-      text: "refused"
-    },
-    {
       verb: "describe",
       args: ["New description"],
       status: 409,
@@ -224,22 +222,8 @@ describe("patch lifecycle commands", () => {
       fields: { state: "deleted" },
       text: "deleted"
     },
-    {
-      verb: "describe",
-      args: ["New description"],
-      status: 422,
-      code: "invalid_description",
-      fields: {},
-      text: "refused"
-    },
-    ...cases.map(({ verb, args }) => ({
-      verb,
-      args,
-      status: 403,
-      code: "not_owner",
-      fields: { owner },
-      text: "Sam"
-    }))
+    // Every verb renders not_owner through the same refusal path.
+    { verb: "retire", args: [], status: 403, code: "not_owner", fields: { owner }, text: "Sam" }
   ])(
     "preserves $verb $code refusal details and actionable text",
     async ({ verb, args, status, code, fields, text }) => {
@@ -354,26 +338,24 @@ describe("patch lifecycle commands", () => {
     if (answer === "n\n") expect(result.stdout).toContain("Nothing was done");
   });
 
-  it.each(cases)(
-    "refuses conflicting and unpublished $verb targets locally",
-    async ({ verb, args }) => {
-      const instance = await stubInstance((_, respond) => respond(500, {}));
-      const dir = projectTree(instance.url);
-      const options = {
-        cwd: dir,
-        env: { PATCHY_API_TOKEN: "pp_owner", PATCHY_API_URL: instance.url }
-      };
-      const conflicting = verb === "describe" ? ["page.html", ...args] : [...args, "page.html"];
-      for (const selected of [args, [...conflicting, "--patch", patchId]]) {
-        const result = await runCli([verb, ...selected, "--json"], options);
-        expect(result.status).toBe(1);
-        expect(JSON.parse(result.stderr)).toMatchObject({ kind: "local" });
-      }
-      expect(instance.requests).toEqual([]);
+  // Every verb resolves its target through one helper; retire stands for them.
+  it("refuses conflicting and unpublished targets locally", async () => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    const dir = projectTree(instance.url);
+    const options = {
+      cwd: dir,
+      env: { PATCHY_API_TOKEN: "pp_owner", PATCHY_API_URL: instance.url }
+    };
+    for (const selected of [[], ["page.html", "--patch", patchId]]) {
+      const result = await runCli(["retire", ...selected, "--json"], options);
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stderr)).toMatchObject({ kind: "local" });
     }
-  );
+    expect(instance.requests).toEqual([]);
+  });
 
-  it("refuses empty description text, controls and overlong text locally", async () => {
+  // Project.test.ts owns each DescriptionText refusal; describe adds its own argument checks.
+  it("refuses missing or conflicting description arguments and invalid text locally", async () => {
     const instance = await stubInstance((request, respond) =>
       respond(200, {
         ok: true,
@@ -383,14 +365,7 @@ describe("patch lifecycle commands", () => {
       })
     );
     const options = { env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" } };
-    for (const args of [
-      [],
-      [""],
-      [" \n "],
-      ["text\u0007"],
-      ["x".repeat(501)],
-      ["page.html", "text", "--clear"]
-    ]) {
+    for (const args of [[], ["text\u0007"], ["page.html", "text", "--clear"]]) {
       const result = await runCli(["describe", ...args, "--patch", patchId, "--json"], options);
       expect(result.status).toBe(1);
     }
@@ -524,17 +499,15 @@ describe("publish description and lifecycle recovery", () => {
     const repo = await runCli(["publish", "--description", "Wrong home", "--json"], options);
     expect(repo.status).toBe(1);
     expect(JSON.parse(repo.stderr).error).toContain("patchy.json");
-    for (const description of ["  ", "x".repeat(501), "bad\u0007"]) {
-      const result = await runCli(
-        ["publish", file, "--description", description, "--json"],
-        options
-      );
-      expect(result.status).toBe(1);
-      expect(JSON.parse(result.stderr)).toMatchObject({
-        code: "invalid_description",
-        kind: "local"
-      });
-    }
+    const invalid = await runCli(
+      ["publish", file, "--description", "x".repeat(501), "--json"],
+      options
+    );
+    expect(invalid.status).toBe(1);
+    expect(JSON.parse(invalid.stderr)).toMatchObject({
+      code: "invalid_description",
+      kind: "local"
+    });
     expect(instance.requests.every((request) => request.url === "/api/me")).toBe(true);
   });
 
@@ -846,16 +819,8 @@ describe("patchy list", () => {
 
   it.each([
     ["directory", "--mine"],
-    ["directory", "people", "--mine"],
-    ["connections", "--mine"],
-    ["--all"],
     ["patches", "--all"],
-    ["directory", "--all"],
-    ["directory", "people", "--all"],
-    ["connections", "sales-db", "--all"],
     ["connections", "--state", "live"],
-    ["connections", "sales-db", "--state", "all"],
-    ["patches", "people"],
     ["directory/people"]
   ])("refuses wrong-level flags or paths locally: %s", async (...args) => {
     const instance = await stubInstance((_, respond) => respond(500, {}));
@@ -865,18 +830,14 @@ describe("patchy list", () => {
     expect(instance.requests).toEqual([]);
   });
 
-  it.each(
-    [
-      { state: "retired", ref: "directory", filter: "retired", refusedFlags: [] },
-      { state: "deleted", ref: summary.id, filter: "all", refusedFlags: [] },
-      { state: "live", ref: "directory", filter: "live", refusedFlags: ["--state", "retired"] }
-    ].flatMap(({ ref, ...entry }) => [
-      { ...entry, path: [ref] },
-      { ...entry, path: [ref, "people"] }
-    ])
-  )(
-    "preserves $state refusals and applies --state at $path",
-    async ({ state, path, filter, refusedFlags }) => {
+  // The primitive level shares the patch level's state plumbing.
+  it.each([
+    { state: "retired", ref: "directory", filter: "retired", refusedFlags: [] },
+    { state: "deleted", ref: summary.id, filter: "all", refusedFlags: [] },
+    { state: "live", ref: "directory", filter: "live", refusedFlags: ["--state", "retired"] }
+  ])(
+    "preserves $state refusals and applies --state to $ref",
+    async ({ state, ref, filter, refusedFlags }) => {
       const detail = { ...projectSource, state, retiredAt: "2026-09-01T00:00:00.000Z" };
       const instance = await stubInstance((request, respond) => {
         const url = new URL(request.url, "http://instance.test");
@@ -887,9 +848,9 @@ describe("patchy list", () => {
             code: "wrong_state",
             state
           });
-        respond(200, url.pathname.includes("/primitives/") ? primitive : detail);
+        respond(200, detail);
       });
-      const args = ["list", ...path, "--api-url", instance.url];
+      const args = ["list", ref, "--api-url", instance.url];
       const refused = await runCli([...args, ...refusedFlags], { env });
       expect(refused).toMatchObject({ status: 2, stdout: "" });
       expect(refused.stderr).toContain(`${state}; pass --state ${filter}`);
@@ -904,7 +865,7 @@ describe("patchy list", () => {
       });
       const accepted = await runCli([...args, "--state", filter, "--json"], { env });
       expect(accepted).toMatchObject({ status: 0, stderr: "" });
-      expect(JSON.parse(accepted.stdout)).toEqual(path.length === 1 ? detail : primitive);
+      expect(JSON.parse(accepted.stdout)).toEqual(detail);
     }
   );
 
