@@ -213,81 +213,80 @@ const cloud = Effect.gen(function* () {
   };
 });
 
-for (const revision of revisions) {
-  const invalidDefinitions: ReadonlyArray<
-    [string, (definition: TaskDefinition) => TaskDefinition]
-  > = [
-    ["task role", (definition) => ({ ...definition, taskRoleArn: "credentialed-role" })],
-    [
-      "secret",
-      (definition) => ({
-        ...definition,
-        containerDefinitions: [
-          { name: "exec", user: "0", secrets: [{ name: "TOKEN", valueFrom: "secret" }] }
-        ]
-      })
-    ],
-    [
-      "environment file",
-      (definition) => ({
-        ...definition,
-        containerDefinitions: [
-          { name: "exec", user: "0", environmentFiles: [{ type: "s3", value: "object" }] }
-        ]
-      })
-    ],
-    [
-      "AWS credentials",
-      (definition) => ({
-        ...definition,
-        containerDefinitions: [
-          { name: "exec", user: "0", environment: [{ name: "AWS_ACCESS_KEY_ID", value: "unsafe" }] }
-        ]
-      })
-    ],
-    [
-      "ECS credentials",
-      (definition) => ({
-        ...definition,
-        containerDefinitions: [
-          {
-            name: "exec",
-            user: "0",
-            environment: [{ name: "ECS_CONTAINER_CREDENTIALS_RELATIVE_URI", value: "/unsafe" }]
-          }
-        ]
-      })
-    ],
-    [
-      "image default user",
-      (definition) => ({ ...definition, containerDefinitions: [{ name: "exec" }] })
-    ],
-    [
-      "nonroot user",
-      (definition) => ({ ...definition, containerDefinitions: [{ name: "exec", user: "node" }] })
-    ]
-  ];
-  for (const [name, invalidate] of invalidDefinitions) {
-    it.effect(
-      `rejects ${name} in the ${revision.deploymentRevision} definition before launch`,
-      () =>
-        Effect.gen(function* () {
-          const aws = yield* cloud;
-          aws.definitions.set(
-            revision.taskDefinition,
-            invalidate(aws.definitions.get(revision.taskDefinition)!)
-          );
-          const error = yield* EcsTaskProvider.make(options).pipe(
-            Effect.provide(aws.layer),
-            Effect.flip
-          );
-          assert.instanceOf(error, TaskProvider.TaskProviderError);
-          assert.include(error, { operation: "start", reason: "provider" });
-          assert.strictEqual(aws.tasks.size, 0);
-        })
-    );
-  }
-}
+type Invalidate = (definition: TaskDefinition) => TaskDefinition;
+const invalidDefinitions: ReadonlyArray<[string, Invalidate]> = [
+  ["task role", (definition) => ({ ...definition, taskRoleArn: "credentialed-role" })],
+  [
+    "secret",
+    (definition) => ({
+      ...definition,
+      containerDefinitions: [
+        { name: "exec", user: "0", secrets: [{ name: "TOKEN", valueFrom: "secret" }] }
+      ]
+    })
+  ],
+  [
+    "environment file",
+    (definition) => ({
+      ...definition,
+      containerDefinitions: [
+        { name: "exec", user: "0", environmentFiles: [{ type: "s3", value: "object" }] }
+      ]
+    })
+  ],
+  [
+    "AWS credentials",
+    (definition) => ({
+      ...definition,
+      containerDefinitions: [
+        { name: "exec", user: "0", environment: [{ name: "AWS_ACCESS_KEY_ID", value: "unsafe" }] }
+      ]
+    })
+  ],
+  [
+    "ECS credentials",
+    (definition) => ({
+      ...definition,
+      containerDefinitions: [
+        {
+          name: "exec",
+          user: "0",
+          environment: [{ name: "ECS_CONTAINER_CREDENTIALS_RELATIVE_URI", value: "/unsafe" }]
+        }
+      ]
+    })
+  ],
+  [
+    "image default user",
+    (definition) => ({ ...definition, containerDefinitions: [{ name: "exec" }] })
+  ],
+  [
+    "nonroot user",
+    (definition) => ({ ...definition, containerDefinitions: [{ name: "exec", user: "node" }] })
+  ]
+];
+// make validates every revision in one loop: all cases on the current definition, one on the previous.
+const rejectsDefinition = Effect.fnUntraced(function* (
+  revision: EcsTaskProvider.Revision,
+  invalidate: Invalidate
+) {
+  const aws = yield* cloud;
+  aws.definitions.set(
+    revision.taskDefinition,
+    invalidate(aws.definitions.get(revision.taskDefinition)!)
+  );
+  const error = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer), Effect.flip);
+  assert.instanceOf(error, TaskProvider.TaskProviderError);
+  assert.include(error, { operation: "start", reason: "provider" });
+  assert.strictEqual(aws.tasks.size, 0);
+});
+for (const [name, invalidate] of invalidDefinitions)
+  it.effect(`rejects ${name} in the current definition before launch`, () =>
+    rejectsDefinition(options.current, invalidate)
+  );
+it.effect("rejects a task role in the previous definition before launch", () =>
+  rejectsDefinition(options.previous!, invalidDefinitions[0]![1])
+);
 
 it.effect("retains known ARNs through omitted listings and treats MISSING as uncertainty", () =>
   Effect.gen(function* () {
