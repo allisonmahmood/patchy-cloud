@@ -231,3 +231,60 @@ it("rechecks nested CSS edits, refuses the actual importer, and recovers through
     await watcher.close();
   }
 }, 20_000);
+
+// Each module form that names a package is refused at its authored importer, before an alias
+// or Vite's resolver can hide it. The CLI build suite keeps the rows that prove the wiring.
+it.each([
+  { source: 'require("lodash");', aliased: true },
+  { source: 'void import.defer("lodash");', aliased: true },
+  { source: 'import value = require("lodash"); console.log(value);', aliased: true },
+  { source: 'void import("lodash");' },
+  { source: 'export { default } from "lodash";' },
+  { source: 'import "vite/modulepreload-polyfill";', packageName: "vite" },
+  { source: 'import "lodash";', entry: "src/node_modules/company/refused.ts" },
+  { source: 'import "../node_modules/lodash/index.js";' },
+  { source: 'import "/node_modules/lodash/index.js";' },
+  { source: 'import "./style.css";', importer: "src/style.css" }
+])(
+  "refuses an off-SDK page import naming its importer: $source",
+  async ({
+    source,
+    aliased,
+    packageName = "lodash",
+    entry = "src/refused.ts",
+    importer = entry
+  }) => {
+    const root = page("");
+    writeFileSync(
+      path.join(root, "index.html"),
+      `<!doctype html><html><body><script type="module" src="/${entry}"></script></body></html>`
+    );
+    mkdirSync(path.dirname(path.join(root, entry)), { recursive: true });
+    writeFileSync(path.join(root, entry), source);
+    writeFileSync(path.join(root, "src/local.ts"), "export default 1;");
+    writeFileSync(path.join(root, "src/style.css"), '@import "lodash/style.css";');
+    const dependency = path.join(root, "node_modules/lodash");
+    mkdirSync(dependency);
+    writeFileSync(path.join(dependency, "package.json"), '{"name":"lodash","version":"1.0.0"}');
+    writeFileSync(path.join(dependency, "index.js"), 'document.body.textContent="Dependency";');
+    writeFileSync(path.join(dependency, "style.css"), "body { color: red; }");
+    let refusal: LocalError | undefined;
+    await expect(
+      build({
+        root,
+        configFile: false,
+        logLevel: "silent",
+        ...(aliased ? { resolve: { alias: { lodash: path.join(root, "src/local.ts") } } } : {}),
+        plugins: [
+          pageImports(root, (error) => {
+            refusal = error;
+          })
+        ],
+        build: { write: false }
+      })
+    ).rejects.toThrow();
+    expect(refusal).toMatchObject({ code: "import_refused" });
+    expect(refusal?.message).toContain(`Package "${packageName}"`);
+    expect(refusal?.message).toContain(` in ${importer} `);
+  }
+);
