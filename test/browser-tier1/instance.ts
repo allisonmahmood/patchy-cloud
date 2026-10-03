@@ -150,10 +150,10 @@ async function settle(steps: ReadonlyArray<() => unknown>) {
 const PLATFORM = "patchy";
 const TEMPLATE = "patchy_tier1_template";
 /** Cluster-wide state a test could leave for the next one: databases, roles with their
- * attributes, memberships and settings. Databases by name only: vacuum moves their other columns. */
+ * attributes, memberships and settings. Databases by identity only: vacuum moves their other columns. */
 async function clusterState(admin: Client) {
   const state = await admin.query<{ entry: string }>(
-    `SELECT 'database ' || datname AS entry FROM pg_database
+    `SELECT 'database ' || datname || ' ' || oid || ' ' || datallowconn AS entry FROM pg_database
       UNION ALL SELECT 'role ' || pg_roles::text FROM pg_roles
       UNION ALL SELECT 'membership ' || pg_auth_members::text FROM pg_auth_members
       UNION ALL SELECT 'setting ' || pg_db_role_setting::text FROM pg_db_role_setting`
@@ -198,7 +198,14 @@ export async function startCluster(): Promise<Cluster> {
       user: PG_USER,
       password: PG_PASSWORD,
       persistent: false,
-      postgresFlags: [...PG_FLAGS, "-c", "listen_addresses=127.0.0.1"],
+      // Without ALTER SYSTEM, no server-wide setting can outlive the test that changed it.
+      postgresFlags: [
+        ...PG_FLAGS,
+        "-c",
+        "listen_addresses=127.0.0.1",
+        "-c",
+        "allow_alter_system=off"
+      ],
       onLog() {},
       onError() {}
     });
