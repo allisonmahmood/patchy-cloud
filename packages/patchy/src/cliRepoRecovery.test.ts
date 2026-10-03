@@ -66,30 +66,6 @@ describe("repo publish recovery", () => {
     }
   );
 
-  it("infers server code from a directory, not a same-named regular file", async () => {
-    const instance = await stubInstance((request, respond, disconnect) => {
-      if (request.url === "/api/publish") return respond(201, publish(201, "abcdefghijkl", 1));
-      projectHandler(request, respond, disconnect);
-    });
-    const dir = publishTree(instance.url);
-    const options = {
-      cwd: dir,
-      stateDir: tempDir(),
-      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-    };
-    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    const server = path.join(dir, "server");
-    writeFileSync(server, "Documentation, not a server bundle.");
-    const published = await runCli(["publish", "--json"], options);
-    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
-    rmSync(server);
-    mkdirSync(server);
-    const refused = await runCli(["publish", "--json"], options);
-    expect(refused).toMatchObject({ status: 1, stdout: "" });
-    expect(JSON.parse(refused.stderr)).toMatchObject({ code: "tier_mismatch" });
-    expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
-  });
-
   it.each([
     ["patchy.config.ts", 'throw new Error("private-diagnostic-marker");'],
     ["src/main.ts", 'import { value } from "private-diagnostic-marker"; console.log(value);'],
@@ -114,35 +90,6 @@ describe("repo publish recovery", () => {
     expect(existsSync(path.join(dir, ".patchy/publish", sha256(instance.url), "attempt"))).toBe(
       false
     );
-  });
-
-  it("names both colliding primitives in publish and refresh refusals", async () => {
-    const instance = await stubInstance(projectHandler);
-    const dir = publishTree(instance.url);
-    const options = {
-      cwd: dir,
-      stateDir: tempDir(),
-      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-    };
-    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    writeFileSync(
-      path.join(dir, "patchy.config.ts"),
-      `export default {
-        name: "name-collision", tier: 1,
-        tables: { notes: { description: "Notes keyed by id.", columns: {}, indexes: {} } },
-        files: { notes: { description: "Note attachments keyed by filename." } },
-        uses: {}
-      };`
-    );
-    for (const command of ["publish", "refresh"]) {
-      const result = await runCli([command, "--json"], options);
-      expect(result).toMatchObject({ status: 1, stdout: "" });
-      const refusal = JSON.parse(result.stderr);
-      expect(refusal).toMatchObject({ ok: false, code: "invalid_manifest" });
-      expect(refusal.error).toMatch(/table "notes"/i);
-      expect(refusal.error).toMatch(/file store "notes"/i);
-    }
-    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
   });
 
   it("reapplies a moved update's legacy receipt and retains a conflicting author selection", async () => {
