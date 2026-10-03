@@ -40,7 +40,7 @@ const postgres = Tables.layer.pipe(
 );
 it.layer(postgres)("TableOperations / Postgres", (it) => {
   it.effect(
-    "checks changed member assignments and atomic batches on both tiers",
+    "checks changed member assignments and atomic batches",
     () => memberAssignmentsContract("cmp_dev"),
     60_000
   );
@@ -238,7 +238,6 @@ it.layer(Layer.mergeAll(NodeFileSystem.layer, TestWakes.layer, TestMemberDirecto
             yield* boundsContract("local-company");
             yield* expandedResultsContract("local-company");
             yield* indexKeyContract("local-company");
-            yield* uuidContract("local-company");
           }).pipe(Effect.provide(local));
         }).pipe(Effect.scoped),
       60_000

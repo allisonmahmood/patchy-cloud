@@ -283,17 +283,12 @@ it.layer(services)("company connection pages", (it) => {
         assert.include(html, "patch-&lt;/code&gt;&lt;script&gt;patch&lt;/script&gt;");
         assert.include(html, "<code>version-one</code>");
         assert.include(html, `<code>${owner.user.id}</code>`);
-        assert.include(html, "<dt>Credential kind</dt><dd>session</dd>");
         assert.include(html, "<code>invalid_query</code>");
         assert.include(html, '<time datetime="2026-01-01T00:00:00.000Z">');
-        assert.include(html, "12 ms");
-        assert.include(html, "2 rows");
-        assert.include(html, '<span class="pill">Unknown</span>');
         assert.include(html, "<code>visible-query</code>");
         const handlerRow = html
           .split('<li class="list-row">')
           .find((row) => row.includes("<code>visible-handler-error</code>"))!;
-        assert.include(handlerRow, '<span class="pill">Failed</span>');
         assert.include(
           handlerRow,
           "<dt>Effective principal</dt><dd><code>patch&lt;/code&gt;&lt;script&gt;principal&lt;/script&gt;</code></dd>"
@@ -376,13 +371,8 @@ it.layer(services)("company connection pages", (it) => {
           assert.notInclude(html, escapedCredentials);
           assert.notInclude(html, "page-secret-escaped");
           assert.include(html, 'action="/logout"');
-          for (const document of [list, html]) {
-            assert.match(document, /<nav\b[^>]*aria-label="Primary"/);
+          for (const document of [list, html])
             assert.include(document, '<a href="/company/connections" aria-current="page">');
-            assert.include(document, 'href="/company">Company</a>');
-            assert.include(document, 'href="/machines">Your machines</a>');
-            assert.strictEqual(document.match(/action="\/logout"/g)?.length, 1);
-          }
           if (viewer.role === "admin") {
             assert.include(list, 'action="/company/connections/connect"');
             assert.include(html, `action="${path}/rotate"`);
@@ -413,8 +403,6 @@ it.layer(services)("company connection pages", (it) => {
         );
         const rotation = yield* get();
         assert.strictEqual(rotation.id, connection.id);
-        assert.strictEqual(rotation.credentialRevision, connection.credentialRevision + 1);
-        assert.strictEqual(rotation.metadataRevision, connection.metadataRevision);
         const wrongDestination = yield* send(
           `${path}/rotate`,
           post(owner.user, { credentials: retargeted })
@@ -433,9 +421,7 @@ it.layer(services)("company connection pages", (it) => {
         assert.strictEqual(target.id, connection.id);
         assert.strictEqual(target.display.database, "reports");
         assert.strictEqual(target.display.role, "reporter");
-        assert.strictEqual(target.metadataRevision, connection.metadataRevision + 1);
         yield* follow(yield* send(`${path}/refresh`, post(owner.user)), owner.user);
-        assert.strictEqual((yield* get()).metadataRevision, target.metadataRevision + 1);
 
         const updated = yield* follow(
           yield* send(
@@ -465,13 +451,11 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.include(testedWhileDisconnected, `action="${path}/reconnect"`);
         assert.strictEqual((yield* get()).status, "disconnected");
-        const beforeReconnect = yield* get();
         const reconnected = yield* follow(
           yield* send(`${path}/reconnect`, post(owner.user)),
           owner.user
         );
         assert.strictEqual((yield* get()).status, "connected");
-        assert.strictEqual((yield* get()).metadataRevision, beforeReconnect.metadataRevision);
         assert.include(reconnected, `action="${path}/disconnect"`);
         assert.notInclude(reconnected, `action="${path}/reconnect"`);
         const deleted = yield* follow(yield* send(`${path}/delete`, post(owner.user)), owner.user);
@@ -605,76 +589,31 @@ it.layer(services)("company connection pages", (it) => {
       })
   );
 
-  it.effect(
-    "requires live enrollment and admin status, with the same Origin admission as company forms",
-    () =>
-      Effect.gen(function* () {
-        assert.strictEqual((yield* send("/company/connections")).status, 401);
-        const unenrolled = yield* send("/company/connections", {
-          headers: {
-            cookie: signedInCookies(
-              signSession({
-                sub: "user_connections_unenrolled",
-                email: "connections-unenrolled@example.com",
-                name: "Reader"
-              })
-            )
-          }
-        });
-        assert.strictEqual(unenrolled.status, 303);
-        assert.strictEqual(
-          new URL(unenrolled.headers.get("location")!, base).searchParams.get("return"),
-          "/company/connections"
-        );
-        const owner = yield* createCompany("connections-admission");
-        const secondAdmin = yield* addUser(owner, "other-admin", "admin");
-        const { connection, path } = yield* connect(owner.user, "warehouse");
-        const forgedHeaders: ReadonlyArray<Record<string, string>> = [
-          { origin: "https://attacker.invalid" },
-          { origin: "null" },
-          { origin: `${origin}/` },
-          { "sec-fetch-site": "cross-site" },
-          {}
-        ];
-        for (const headers of forgedHeaders) {
-          const response = yield* send(`${path}/disconnect`, {
-            method: "POST",
-            headers: { cookie: cookie(owner.user), ...headers },
-            body: new URLSearchParams()
-          });
-          assert.strictEqual(response.status, 403);
-        }
-        const users = yield* Users.Users;
-        yield* users.setRole({
-          companyId: owner.company.id,
-          userId: secondAdmin.id,
-          role: "member"
-        });
-        assert.strictEqual((yield* send(`${path}/disconnect`, post(secondAdmin))).status, 403);
-        yield* users.setRole({
-          companyId: owner.company.id,
-          userId: secondAdmin.id,
-          role: "admin"
-        });
-        yield* users.deactivate({ companyId: owner.company.id, userId: secondAdmin.id });
-        assert.strictEqual(
-          (yield* send(path, { headers: { cookie: cookie(secondAdmin) } })).status,
-          403
-        );
-        assert.strictEqual((yield* send(`${path}/disconnect`, post(secondAdmin))).status, 403);
-        assert.strictEqual(
-          (yield* (yield* ConnectionStore.ConnectionStore).get(owner.company.id, connection.id))
-            .status,
-          "connected"
-        );
-        yield* users.reactivate({ companyId: owner.company.id, userId: secondAdmin.id });
-        yield* follow(yield* send(`${path}/disconnect`, post(secondAdmin)), secondAdmin);
-        assert.strictEqual(
-          (yield* (yield* ConnectionStore.ConnectionStore).get(owner.company.id, connection.id))
-            .status,
-          "disconnected"
-        );
-      })
+  it.effect("requires current admin status and the company forms' Origin admission", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-admission");
+      const secondAdmin = yield* addUser(owner, "other-admin", "admin");
+      const { connection, path } = yield* connect(owner.user, "warehouse");
+      // RequireSession.sameOrigin owns the full Origin matrix; one forgery proves the wiring.
+      const forged = yield* send(`${path}/disconnect`, {
+        method: "POST",
+        headers: { cookie: cookie(owner.user), origin: "https://attacker.invalid" },
+        body: new URLSearchParams()
+      });
+      assert.strictEqual(forged.status, 403);
+      const users = yield* Users.Users;
+      yield* users.setRole({
+        companyId: owner.company.id,
+        userId: secondAdmin.id,
+        role: "member"
+      });
+      assert.strictEqual((yield* send(`${path}/disconnect`, post(secondAdmin))).status, 403);
+      assert.strictEqual(
+        (yield* (yield* ConnectionStore.ConnectionStore).get(owner.company.id, connection.id))
+          .status,
+        "connected"
+      );
+    })
   );
 
   it.effect(

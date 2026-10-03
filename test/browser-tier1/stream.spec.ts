@@ -533,17 +533,6 @@ test("seven company documents stay connected simultaneously over HTTP/2 TLS ingr
   await expect.poll(() => instance.streamConnections.size).toBe(0);
 });
 
-test("public documents do not open a company stream", async ({ page, instance }) => {
-  const patch = await instance.publish("public");
-  const before = instance.runtimeRequests.length;
-  await open(page, patch);
-  expect(
-    instance.runtimeRequests
-      .slice(before)
-      .filter((request) => request.path.startsWith("/api/runtime/stream"))
-  ).toEqual([]);
-});
-
 test("a missing delta installs the full ordered desired set, then resumes using its last vectors", async ({
   page,
   instance

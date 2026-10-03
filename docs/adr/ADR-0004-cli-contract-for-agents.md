@@ -693,10 +693,14 @@ and optional domain code determine the branch. Success documents distinguish a
 completed act from a still-pending handoff or the identity of an existing daemon.
 
 **Recovery and local authority remain explicit.** File cache, repo identity and
-device state cannot silently rebind to another instance or user. The packed CLI
-flow exercises command documents, identity, recovery and the init/dev/publish
-loop; real-Postgres concurrency checks cover races PGlite cannot demonstrate.
-[Development](../DEVELOPMENT.md) owns the CI commands and their required checks.
+device state cannot silently rebind to another instance or user. The CLI's own
+suites own its mapping against stub instances: exit codes, `--json` documents,
+formatting and publish recovery (`cliPublish.test.ts`, `cliRepoRecovery.test.ts`),
+with publish-key idempotency proven in `packages/patches`. The packed CLI flow
+proves the installed artifact against a real server, one path per journey:
+identity and login, and the init/dev/publish loop. Real-Postgres concurrency
+checks cover races PGlite cannot demonstrate. [Development](../DEVELOPMENT.md)
+owns the CI commands and their required checks.
 
 ## Alternatives considered
 

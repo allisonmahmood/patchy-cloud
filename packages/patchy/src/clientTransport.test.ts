@@ -235,12 +235,9 @@ it.each([
   client.close();
 });
 
+// Retry depends only on transport loss, never on what a delivered refusal says.
 it.each([
-  { source: "patchy", code: "handler_timeout" },
   { source: "patchy", code: "busy" },
-  { source: "patchy", code: "rate_limited" },
-  { source: "patchy", code: "handler_failed" },
-  { source: "patchy", code: "access_denied" },
   { source: "patchy", code: "unknown_outcome" },
   { source: "handler", code: "unknown_outcome" }
 ])("does not retry a delivered $source $code refusal", async (error) => {
@@ -1078,6 +1075,7 @@ it("HTTP distinguishes declared handler errors, platform refusals and business-s
   }
 });
 
+// Permanent errors and remounts are covered below and in queryRegistry.test.ts.
 it("shares table subscriptions with hook stores and retains data and query errors across session refresh", async () => {
   const port = new FakePort();
   const transport = createPortTransport(port);
@@ -1183,40 +1181,6 @@ it("shares table subscriptions with hook stores and retains data and query error
     error: undefined,
     loading: false
   });
-  stream({
-    type: "error",
-    id: sharedId,
-    permanent: true,
-    error: {
-      ok: false,
-      source: "patchy",
-      code: "limit_exceeded",
-      error: "Snapshot too large",
-      scope: "viewer",
-      limitId: "subscriptions.snapshot.bytes",
-      value: 8388608
-    }
-  });
-  const ended = sharedRows.at(-1);
-  expect(ended).toMatchObject({
-    status: "error",
-    data: page,
-    error: { limitId: "subscriptions.snapshot.bytes", value: 8388608 }
-  });
-  stream({
-    type: "snapshot",
-    id: sharedId,
-    revision: "2",
-    result: { rows: [], cursor: null },
-    vector: {}
-  });
-  stream({ type: "hello", generation: "next", serverTime: 100 });
-  expect(sharedRows.at(-1)).toBe(ended);
-  expect(port.sent.filter((request) => request.op === "subscriptions.subscribe")).toHaveLength(2);
-  const remounted: QuerySnapshot<unknown>[] = [];
-  client.shared.team.list.subscribe({ limit: 20 }, (snapshot) => remounted.push(snapshot));
-  expect(remounted.at(-1)).toBe(ended);
-  expect(port.sent.filter((request) => request.op === "subscriptions.subscribe")).toHaveLength(2);
   client.close();
   await Promise.resolve();
 });

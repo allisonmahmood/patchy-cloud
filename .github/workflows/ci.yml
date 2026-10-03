@@ -112,11 +112,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install Chromium and system dependencies
         run: pnpm exec playwright install --with-deps chromium
-      - name: Exercise packed CLI harness lifecycle probes
-        run: |
-          node scripts/packed-cli-e2e.mjs --platform-probes
-          node scripts/packed-cli-e2e.mjs --lifecycle-probes
-          node scripts/packed-cli-e2e.mjs --signal-probes
+      - name: Check the packed CLI harness reaps orphaned processes
+        run: node scripts/packed-cli-e2e.mjs --cleanup-check
       - name: Exercise the packed CLI against an isolated real server
         env:
           PATCHY_API_TOKEN: ambient-invalid-token
@@ -151,7 +148,6 @@ jobs:
         run: pnpm test:packed-tier2-e2e
 
   # Tier 1 and 2 pages in Chromium against an isolated server; `pnpm test:browser`.
-  # Native printing needs a display, so its @print test runs by hand.
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 20

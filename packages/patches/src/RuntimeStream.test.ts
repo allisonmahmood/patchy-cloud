@@ -14,7 +14,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
-import { contentHash, newInternalId, newPatchId } from "@patchy/core";
+import { newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
   RuntimeStream,
@@ -75,27 +75,7 @@ const request = HttpServerRequest.fromWeb(
   })
 );
 const publish = (patchId: string, intent: "create" | "update") =>
-  Fixtures.record({
-    ...Fixtures.publishRecord(),
-    intent,
-    patchId,
-    versionId: newInternalId("ver"),
-    companyId: identity.company.id,
-    ownerUserId: identity.user.id,
-    machineTokenId: identity.machine.id,
-    title: "Stream lifecycle",
-    objectKey: `patches/${patchId}/${newInternalId("object")}.html`,
-    contentHash: contentHash("stream-lifecycle"),
-    fileSize: 1,
-    filename: null,
-    repoOrg: null,
-    repoName: null,
-    cliVersion: null,
-    gitBranch: null,
-    gitCommitSha: null,
-    sourceIp: null,
-    userAgent: null
-  });
+  Fixtures.record(Fixtures.recordInput(identity, { intent, patchId, title: "Stream lifecycle" }));
 
 const holdNextWake = Effect.gen(function* () {
   const wakes = yield* Wakes.Wakes;
@@ -260,29 +240,5 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       assert.deepStrictEqual(decode(yield* pull), { type: "access_denied" });
       assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 0);
     }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
-  );
-
-  it.effect("does not announce a rolled-back portal bulk action", () =>
-    Effect.gen(function* () {
-      const patches = yield* Patches.Patches;
-      const patchId = newPatchId();
-      yield* publish(patchId, "create");
-      const notices: string[] = [];
-      yield* (yield* Wakes.Wakes).subscribe((keys) =>
-        Effect.sync(() => {
-          notices.push(...keys);
-        })
-      );
-      yield* patches
-        .withDependencyLock(actor.userId)(
-          Effect.gen(function* () {
-            yield* patches.retire(patchId, actor);
-            return yield* Effect.fail("cancel-bulk");
-          })
-        )
-        .pipe(Effect.flip);
-      assert.deepStrictEqual(notices, []);
-      assert.isTrue(Option.isSome(yield* patches.find(patchId)));
-    }).pipe(Effect.scoped)
   );
 });

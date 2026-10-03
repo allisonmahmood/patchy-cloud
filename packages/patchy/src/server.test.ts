@@ -173,20 +173,10 @@ it("validates structural handler descriptors without invoking callbacks or seria
   assert.deepStrictEqual(extractHandlerDescriptors({ leads: { list } }), {
     "leads.list": descriptor
   });
+  // The HandlerDescriptor schema's own refusals are packages/api's; these are extraction's
+  // kind check and its strict decode.
   for (const malformed of [
-    undefined,
-    { ...descriptor, kind: "unknown" },
     { ...descriptor, kind: "action" },
-    { ...descriptor, args: { "": { kind: "text" } } },
-    { ...descriptor, args: { search: { kind: "text", default: "all" } } },
-    {
-      ...descriptor,
-      result: { kind: "object", fields: { nested: { kind: "ref", table: "leads" } } }
-    },
-    { ...descriptor, result: { kind: "upload" } },
-    { ...descriptor, result: { kind: "boolean", optional: true } },
-    { ...descriptor, result: { kind: "enum", values: ["duplicate", "duplicate"] } },
-    { ...descriptor, errors: [""] },
     { ...descriptor, unexpected: true }
   ]) {
     const error = assert.throws(

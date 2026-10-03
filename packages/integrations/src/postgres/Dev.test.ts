@@ -100,72 +100,6 @@ it.layer(Layer.merge(NodeFileSystem.layer, NodePath.layer))("Postgres dev fixtur
   );
 
   it.effect(
-    "executes native fixtures with exact numeric comparisons, microseconds and real read-only failures",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "postgres-native-fixture-" });
-        yield* fs.makeDirectory(`${root}/fixtures`);
-        yield* fs.writeFileString(`${root}/fixtures/postgres-warehouse.sql`, fixtureSql);
-        yield* Effect.gen(function* () {
-          const execution = yield* Execution.Execution;
-          const input = { companyId: "dev", declaration, parameters: [] };
-          const result = yield* execution.query({
-            ...input,
-            text: 'SELECT id, amount, "at", status, tags FROM public.invoices WHERE amount > $1 ORDER BY amount',
-            parameters: ["3"]
-          });
-          assert.deepStrictEqual(result.rows, [
-            ["9007199254740994", "10", "2024-03-01 00:00:00.000001+00", "it's done", null]
-          ]);
-          const denied = yield* execution
-            .query({ ...input, text: "INSERT INTO public.invoices SELECT * FROM public.invoices" })
-            .pipe(Effect.flip);
-          assert.instanceOf(denied, Execution.InvalidQuery);
-          if (denied instanceof Execution.InvalidQuery)
-            assert.strictEqual(denied.details.sqlstate, "25006");
-          const functionDenied = yield* execution
-            .query({ ...input, text: "SELECT public.write_fixture()" })
-            .pipe(Effect.flip);
-          assert.instanceOf(functionDenied, Execution.InvalidQuery);
-          const unchanged = yield* execution.query({
-            ...input,
-            text: "SELECT amount FROM public.invoices ORDER BY amount"
-          });
-          assert.deepStrictEqual(unchanged.rows, [["2"], ["10"]]);
-          const tooMany = yield* execution
-            .query({ ...input, text: "SELECT generate_series(1, 1001)" })
-            .pipe(Effect.flip);
-          assert.instanceOf(tooMany, Execution.TooLarge);
-          const unsupported = yield* execution
-            .query({ ...input, text: "COPY (SELECT 1) TO STDOUT" })
-            .pipe(Effect.flip);
-          assert.instanceOf(unsupported, Execution.InvalidQuery);
-          if (unsupported instanceof Execution.InvalidQuery) {
-            assert.strictEqual(unsupported.details.sqlstate, "0A000");
-            assert.include(unsupported.details.message, "COPY");
-            assert.strictEqual(unsupported.message, denied.message);
-          }
-          const duplicate = yield* execution.query({
-            ...input,
-            text: "SELECT 1 AS duplicate, 2 AS duplicate"
-          });
-          assert.deepStrictEqual(
-            duplicate.fields.map((field) => field.name),
-            ["duplicate", "duplicate"]
-          );
-          assert.deepStrictEqual(duplicate.rows, [[1, 2]]);
-        }).pipe(
-          Effect.provide(
-            Dev.dev(snapshot, { connectionId: declaration.id, handle: declaration.handle, root })
-          ),
-          Effect.scoped
-        );
-      }).pipe(Effect.scoped),
-    30_000
-  );
-
-  it.effect(
     "recreates persisted state when either the fixture or snapshot changes",
     () =>
       Effect.gen(function* () {
@@ -227,7 +161,7 @@ it.layer(Layer.merge(NodeFileSystem.layer, NodePath.layer))("Postgres dev fixtur
   );
 
   it.effect(
-    "destroys timed-out workers and reopens the same fixture for the next call",
+    "destroys timed-out workers and reopens the same fixture with native comparisons, UTC times and COPY refused",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -252,6 +186,23 @@ it.layer(Layer.merge(NodeFileSystem.layer, NodePath.layer))("Postgres dev fixtur
               ["9007199254740994", "10"]
             ]
           );
+          // Untyped text parameters compare as numeric, and timestamptz renders in UTC.
+          const result = yield* execution.query({
+            ...input,
+            text: 'SELECT id, amount, "at", status, tags FROM public.invoices WHERE amount > $1 ORDER BY amount',
+            parameters: ["3"]
+          });
+          assert.deepStrictEqual(result.rows, [
+            ["9007199254740994", "10", "2024-03-01 00:00:00.000001+00", "it's done", null]
+          ]);
+          const unsupported = yield* execution
+            .query({ ...input, text: "COPY (SELECT 1) TO STDOUT" })
+            .pipe(Effect.flip);
+          assert.instanceOf(unsupported, Execution.InvalidQuery);
+          if (unsupported instanceof Execution.InvalidQuery) {
+            assert.strictEqual(unsupported.details.sqlstate, "0A000");
+            assert.include(unsupported.details.message, "COPY");
+          }
         }).pipe(
           Effect.provide(
             Dev.dev(snapshot, { connectionId: declaration.id, handle: declaration.handle, root })

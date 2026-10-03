@@ -90,6 +90,26 @@ try {
     assert.equal(locations.size, 1, `${name}: ${[...locations]}`);
   console.log("[packed-preact] exactly one copy of each UI runtime");
 
+  run(process.execPath, [
+    "--input-type=module",
+    "-e",
+    `import * as client from "patchy/client";
+for (const entry of ["patchy/preact/debug", "patchy/preact/runtime", "patchy/dist/index.js"]) {
+  try {
+    import.meta.resolve(entry);
+  } catch (error) {
+    if (error.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") continue;
+    throw error;
+  }
+  throw new Error("Internal entry is importable: " + entry);
+}
+if (typeof client.createClient !== "function" || typeof client.PatchyError !== "function")
+  throw new Error("Missing client exports");
+for (const name of ["createHttpTransport", "createPortTransport", "createPostMessageTransport"])
+  if (name in client) throw new Error("Internal transport is public: " + name);`
+  ]);
+  console.log("[packed-preact] internal entries and transports stay unexported");
+
   await writeFile(
     path.join(consumer, "tsconfig.json"),
     json({
@@ -106,8 +126,31 @@ try {
         skipLibCheck: false,
         types: ["vite/client"]
       },
-      include: ["main.tsx"]
+      include: ["main.tsx", "contract.ts"]
     })
+  );
+  await writeFile(
+    path.join(consumer, "patchy.config.ts"),
+    `import { defineConfig, table, t } from "patchy/config";
+export default defineConfig({ name: "packed-config", tier: 0, tables: {
+  notes: table("Notes identified by id; at is an ISO timestamp.", { title: t.text(), at: t.timestamp().default("now") })
+}, files: {}, uses: {} });\n`
+  );
+  // A consumer's view of the published types: row helpers compile, internal transports do not.
+  await writeFile(
+    path.join(consumer, "contract.ts"),
+    `import config from "./patchy.config";
+import type { Insert, Row, Update } from "patchy/config";
+// @ts-expect-error HTTP transport is internal, not a frame API.
+import { createHttpTransport } from "patchy/client";
+// @ts-expect-error Port transport is internal until the broker owns its public surface.
+import { createPortTransport } from "patchy/client";
+// @ts-expect-error postMessage transport construction is internal.
+import { createPostMessageTransport } from "patchy/client";
+const inserted: Insert<typeof config, "notes"> = { title: "Saved" };
+const changed: Update<typeof config, "notes"> = { title: "Changed" };
+const at: Row<typeof config, "notes">["at"] = "2026-09-11T00:00:00.000Z";
+void [inserted, changed, at];\n`
   );
   await writeFile(
     path.join(consumer, "vite.config.ts"),
@@ -179,7 +222,7 @@ render(probe, document.body.appendChild(document.createElement("aside")));
 Object.assign(window, { sdkIdentity: { Component, Fragment }, subscriptionCount: () => subscriptions });\n`
   );
   run("pnpm", ["exec", "tsc", "--noEmit"]);
-  console.log("[packed-preact] JSX types resolve without a direct Preact dependency");
+  console.log("[packed-preact] JSX and table types resolve without a direct Preact dependency");
   const require = createRequire(path.join(consumer, "package.json"));
   // Resolve the freshly installed builder toolchain, not this repository's copy.
   const tools = await import(pathToFileURL(require.resolve("vite")).href);

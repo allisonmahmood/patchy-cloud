@@ -119,6 +119,72 @@ const versionAuthority = Effect.gen(function* () {
   };
 });
 
+/**
+ * Opens a document on the latest version and subscribes, holding the first
+ * delivery (its read, or a resume's revision fence) while `change` alters
+ * the version's authority, then lets the delivery go on.
+ */
+const deliveryFence = Effect.fnUntraced(function* (
+  delivery: "snapshot" | "resume" | "failure",
+  change: (authority: Effect.Success<typeof versionAuthority>) => void
+) {
+  const resume = delivery === "resume";
+  const authority = yield* versionAuthority;
+  authority.state.current = authority.latest.versionId;
+  const reading = yield* Deferred.make<void>();
+  const release = yield* Deferred.make<void>();
+  const vector = { [`table:${Fixtures.patchId}:items`]: "1" };
+  const waiting = Deferred.succeed(reading, undefined).pipe(
+    Effect.andThen(Deferred.await(release))
+  );
+  let reads = 0;
+  const streams = yield* makeStreams.pipe(
+    Effect.provide(authority.layer),
+    Effect.provide(WideEvents.layerNoop),
+    Effect.provideService(SubscriptionReads.SubscriptionReads, {
+      admit: ({ onDependency }) =>
+        Effect.sync(() => {
+          for (const key of Object.keys(vector)) onDependency?.(key);
+          return Object.keys(vector);
+        }),
+      revisions: () => (resume ? waiting.pipe(Effect.as(vector)) : Effect.succeed(vector)),
+      read: () =>
+        Effect.gen(function* () {
+          reads++;
+          yield* waiting;
+          if (delivery === "failure")
+            return yield* new HandlerFailed({ correlationId: "fenced-delivery" });
+          return { result: { rows: [{ id: "private-row" }], cursor: null }, vector };
+        })
+    })
+  );
+  const document = {
+    ...input("delivery_fence_document"),
+    versionId: authority.latest.versionId
+  };
+  const pull = yield* Stream.toPull(yield* streams.open(document));
+  const hello = frame(yield* pull);
+  assert(hello.type === "hello");
+  yield* pull;
+  yield* streams.update({
+    ...document,
+    generation: hello.generation,
+    sequence: 1,
+    type: "subscribe",
+    subscription: {
+      id: "items",
+      op: "tables.list",
+      args: { table: "items" },
+      ...(resume ? { vector, revision: "1" } : {})
+    }
+  });
+  assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence: 1 });
+  yield* Deferred.await(reading);
+  change(authority);
+  yield* Deferred.succeed(release, undefined);
+  return { authority, streams, pull, reads: () => reads };
+});
+
 it.layer(layer)("document streams", (it) => {
   it.effect("replaces only the current generation and ignores the old scope's departure", () =>
     Effect.gen(function* () {
@@ -704,87 +770,6 @@ it.layer(layer)("document streams", (it) => {
       });
     }).pipe(Effect.scoped)
   );
-  it.effect("opens and refreshes another patch while one patch's snapshot is blocked", () =>
-    Effect.gen(function* () {
-      const source = yield* LoadedVersions.LoadedVersions;
-      const reading = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      let otherServed = Fixtures.versionId;
-      const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
-        find: (patchId, versionId) =>
-          Effect.gen(function* () {
-            const found = yield* source.find(
-              patchId,
-              patchId === "secondpatch1" && versionId === undefined ? otherServed : versionId
-            );
-            if (patchId === Fixtures.patchId && versionId === undefined) {
-              yield* Deferred.succeed(reading, undefined);
-              yield* Deferred.await(resume);
-            }
-            return found;
-          })
-      });
-      const streams = yield* makeStreams.pipe(
-        Effect.provide(delayed),
-        Effect.provide(WideEvents.layerNoop)
-      );
-      const opening = yield* open("blocked_patch_document").pipe(
-        Effect.provideService(RuntimeStream.RuntimeStream, streams),
-        Effect.forkScoped
-      );
-      yield* Deferred.await(reading);
-      const other = yield* open("independent_patch_document", undefined, "secondpatch1").pipe(
-        Effect.provideService(RuntimeStream.RuntimeStream, streams)
-      );
-      assert.strictEqual(frame(yield* other.pull).type, "hello");
-      yield* other.pull;
-      otherServed = Fixtures.tier1VersionId;
-      yield* streams.notify("secondpatch1");
-      assert.deepStrictEqual(frame(yield* other.pull), {
-        type: "served",
-        versionId: Fixtures.tier1VersionId,
-        tier: 1
-      });
-      yield* Deferred.succeed(resume, undefined);
-      const original = yield* Fiber.join(opening);
-      assert.strictEqual(frame(yield* original.pull).type, "hello");
-      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 2);
-    }).pipe(Effect.scoped)
-  );
-
-  it.effect("keeps an authenticated company document eligible after public sharing", () =>
-    Effect.gen(function* () {
-      const authority = yield* versionAuthority;
-      const streams = yield* makeStreams.pipe(
-        Effect.provide(authority.layer),
-        Effect.provide(WideEvents.layerNoop)
-      );
-      const document = yield* open("shared_company_document").pipe(
-        Effect.provideService(RuntimeStream.RuntimeStream, streams)
-      );
-      yield* document.pull;
-      yield* document.pull;
-      authority.state.retained.set(Fixtures.versionId, {
-        ...authority.initial,
-        scope: "public"
-      });
-      yield* streams.notify(Fixtures.patchId);
-      authority.state.current = authority.latest.versionId;
-      yield* streams.notify(Fixtures.patchId);
-      assert.deepStrictEqual(frame(yield* document.pull), {
-        type: "served",
-        versionId: authority.latest.versionId,
-        tier: authority.latest.manifest.tier
-      });
-      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
-      yield* Scope.close(document.scope, Exit.void);
-      const reconnected = yield* open("shared_company_document").pipe(
-        Effect.provideService(RuntimeStream.RuntimeStream, streams)
-      );
-      assert.strictEqual(frame(yield* reconnected.pull).type, "hello");
-      assert.strictEqual(frame(yield* reconnected.pull).type, "served");
-    }).pipe(Effect.scoped)
-  );
   it.effect(
     "shares the viewer call budget with subscription controls without extending the window",
     () =>
@@ -857,158 +842,43 @@ it.layer(layer)("document streams", (it) => {
 
   for (const delivery of ["snapshot", "resume", "failure"] as const) {
     const resume = delivery === "resume";
-    it.effect(
-      `refuses ${resume ? "an equal-vector resume" : `a ${delivery}`} when the loaded version becomes public before delivery`,
-      () =>
-        Effect.gen(function* () {
-          const authority = yield* versionAuthority;
-          authority.state.current = authority.latest.versionId;
-          const reading = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
-          const vector = { [`table:${Fixtures.patchId}:items`]: "1" };
-          const waiting = Deferred.succeed(reading, undefined).pipe(
-            Effect.andThen(Deferred.await(release))
-          );
-          let reads = 0;
-          const streams = yield* makeStreams.pipe(
-            Effect.provide(authority.layer),
-            Effect.provide(WideEvents.layerNoop),
-            Effect.provideService(SubscriptionReads.SubscriptionReads, {
-              admit: ({ onDependency }) =>
-                Effect.sync(() => {
-                  for (const key of Object.keys(vector)) onDependency?.(key);
-                  return Object.keys(vector);
-                }),
-              revisions: () => (resume ? waiting.pipe(Effect.as(vector)) : Effect.succeed(vector)),
-              read: () =>
-                Effect.gen(function* () {
-                  reads++;
-                  yield* waiting;
-                  if (delivery === "failure")
-                    return yield* new HandlerFailed({ correlationId: "public-delivery" });
-                  return { result: { rows: [{ id: "private-row" }], cursor: null }, vector };
-                })
-            })
-          );
-          const document = {
-            ...input("public_delivery_document"),
-            versionId: authority.latest.versionId
-          };
-          const pull = yield* Stream.toPull(yield* streams.open(document));
-          const hello = frame(yield* pull);
-          assert.strictEqual(hello.type, "hello");
-          if (hello.type !== "hello") return;
-          yield* pull;
-          yield* streams.update({
-            ...document,
-            generation: hello.generation,
-            sequence: 1,
-            type: "subscribe",
-            subscription: {
-              id: "items",
-              op: "tables.list",
-              args: { table: "items" },
-              ...(resume ? { vector, revision: "1" } : {})
-            }
-          });
-          assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence: 1 });
-          yield* Deferred.await(reading);
+    const subject = resume ? "an equal-vector resume" : `a ${delivery}`;
+    it.effect(`refuses ${subject} when the loaded version becomes public before delivery`, () =>
+      Effect.gen(function* () {
+        const { authority, streams, pull, reads } = yield* deliveryFence(delivery, (authority) =>
           authority.state.retained.set(authority.latest.versionId, {
             ...authority.latest,
             scope: "public"
-          });
-          yield* Deferred.succeed(release, undefined);
-          assert.deepStrictEqual(frame(yield* pull), {
-            type: "error",
-            id: "items",
-            permanent: true,
-            error: Runtime.toFailure(new Runtime.PublicUnavailable({}))
-          });
-          assert.strictEqual(reads, resume ? 0 : 1);
-          assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
-          authority.state.current = authority.initial.versionId;
-          yield* streams.notify(Fixtures.patchId);
-          assert.deepStrictEqual(frame(yield* pull), {
-            type: "served",
-            versionId: authority.initial.versionId,
-            tier: authority.initial.manifest.tier
-          });
-        }).pipe(
-          Effect.provideService(HttpServerRequest.HttpServerRequest, request()),
-          Effect.scoped
-        )
+          })
+        );
+        assert.deepStrictEqual(frame(yield* pull), {
+          type: "error",
+          id: "items",
+          permanent: true,
+          error: Runtime.toFailure(new Runtime.PublicUnavailable({}))
+        });
+        assert.strictEqual(reads(), resume ? 0 : 1);
+        assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+        authority.state.current = authority.initial.versionId;
+        yield* streams.notify(Fixtures.patchId);
+        assert.deepStrictEqual(frame(yield* pull), {
+          type: "served",
+          versionId: authority.initial.versionId,
+          tier: authority.initial.manifest.tier
+        });
+      }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.scoped)
     );
-  }
 
-  for (const delivery of ["snapshot", "resume", "failure"] as const) {
-    const resume = delivery === "resume";
-    it.effect(
-      `stops ${resume ? "an equal-vector resume" : `a ${delivery}`} when authority is lost before delivery`,
-      () =>
-        Effect.gen(function* () {
-          const authority = yield* versionAuthority;
-          authority.state.current = authority.latest.versionId;
-          const reading = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
-          const vector = { [`table:${Fixtures.patchId}:items`]: "1" };
-          const waiting = Deferred.succeed(reading, undefined).pipe(
-            Effect.andThen(Deferred.await(release))
-          );
-          let reads = 0;
-          const streams = yield* makeStreams.pipe(
-            Effect.provide(authority.layer),
-            Effect.provide(WideEvents.layerNoop),
-            Effect.provideService(SubscriptionReads.SubscriptionReads, {
-              admit: ({ onDependency }) =>
-                Effect.sync(() => {
-                  for (const key of Object.keys(vector)) onDependency?.(key);
-                  return Object.keys(vector);
-                }),
-              revisions: () => (resume ? waiting.pipe(Effect.as(vector)) : Effect.succeed(vector)),
-              read: () =>
-                Effect.gen(function* () {
-                  reads++;
-                  yield* waiting;
-                  if (delivery === "failure")
-                    return yield* new HandlerFailed({ correlationId: "refused-delivery" });
-                  return { result: { rows: [{ id: "private-row" }], cursor: null }, vector };
-                })
-            })
-          );
-          const document = {
-            ...input("delivery_fence_document"),
-            versionId: authority.latest.versionId
-          };
-          const body = yield* streams.open(document);
-          const pull = yield* Stream.toPull(body);
-          const hello = frame(yield* pull);
-          assert.strictEqual(hello.type, "hello");
-          if (hello.type !== "hello") return;
-          yield* pull;
-          yield* streams.update({
-            ...document,
-            generation: hello.generation,
-            sequence: 1,
-            type: "subscribe",
-            subscription: {
-              id: "items",
-              op: "tables.list",
-              args: { table: "items" },
-              ...(resume ? { vector, revision: "1" } : {})
-            }
-          });
-          assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence: 1 });
-          yield* Deferred.await(reading);
+    it.effect(`stops ${subject} when authority is lost before delivery`, () =>
+      Effect.gen(function* () {
+        const { streams, pull, reads } = yield* deliveryFence(delivery, (authority) => {
           authority.state.current = undefined;
-          yield* Deferred.succeed(release, undefined);
-          assert.deepStrictEqual(frame(yield* pull), { type: "access_denied" });
-          assert.isTrue(Exit.isFailure(yield* Effect.exit(pull)));
-          assert.strictEqual(reads, resume ? 0 : 1);
-          assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
-        }).pipe(
-          Effect.provideService(HttpServerRequest.HttpServerRequest, request()),
-          Effect.scoped
-        )
+        });
+        assert.deepStrictEqual(frame(yield* pull), { type: "access_denied" });
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(pull)));
+        assert.strictEqual(reads(), resume ? 0 : 1);
+        assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+      }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.scoped)
     );
   }
 });

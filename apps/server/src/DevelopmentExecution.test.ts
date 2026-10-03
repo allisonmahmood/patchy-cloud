@@ -267,12 +267,7 @@ it.layer(testServer({ NODE_ENV: "development" }), { excludeTestServices: true })
         }),
       30_000
     );
-  }
-);
 
-it.layer(testServer({ NODE_ENV: "test" }), { excludeTestServices: true })(
-  "mutations through the existing dev cloud server",
-  (it) => {
     it.effect(
       "commits a callback-free mutation once per key and admits an action's nested mutation",
       () =>

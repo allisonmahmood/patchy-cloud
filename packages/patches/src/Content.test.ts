@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto";
 import { assert, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
@@ -25,76 +22,17 @@ import * as Fixtures from "./test/fixtures.js";
 
 const { uploader } = Fixtures.identities;
 
-/**
- * An in-memory store with a post-write hook for pausing publication or changing
- * its target between preflight and recording. Faults come from alternate layers.
- */
-const memoryStore = (() => {
-  const objects = Ref.makeUnsafe(new Map<string, { bytes: Uint8Array; lastModified: number }>());
-  const control = { afterPut: Effect.void as Effect.Effect<void> };
-  const service = ContentStore.ContentStore.of({
-    list: (prefix) =>
-      Stream.unwrap(
-        Effect.map(Ref.get(objects), (map) =>
-          Stream.fromIterable(
-            [...map]
-              .filter(([key]) => key.startsWith(prefix))
-              .map(([key, object]) => ({ key, lastModified: object.lastModified }))
-          )
-        )
-      ),
-    put: Effect.fn(function* (key, html) {
-      const lastModified = yield* Clock.currentTimeMillis;
-      yield* Ref.update(objects, (map) =>
-        new Map(map).set(key, { bytes: new TextEncoder().encode(html), lastModified })
-      );
-      yield* control.afterPut;
-    }),
-    get: (key) =>
-      Effect.flatMap(Ref.get(objects), (map) => {
-        const bytes = map.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
-      }),
-    putBytes: Effect.fn(function* (key, bytes) {
-      const lastModified = yield* Clock.currentTimeMillis;
-      yield* Ref.update(objects, (map) =>
-        new Map(map).set(key, { bytes: bytes.slice(), lastModified })
-      );
-    }),
-    getBytes: (key) =>
-      Effect.flatMap(Ref.get(objects), (map) => {
-        const bytes = map.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(bytes.slice());
-      }),
-    delete: (key) =>
-      Ref.update(objects, (map) => {
-        const next = new Map(map);
-        next.delete(key);
-        return next;
-      })
-  });
-  return {
-    control,
-    service,
-    layer: Layer.succeed(ContentStore.ContentStore, service),
-    keys: Effect.map(Ref.get(objects), (map) => [...map.keys()].sort())
-  };
-})();
-
-const store = memoryStore;
-const unavailable = (operation: "put" | "delete", key: string) =>
-  new ContentStore.StoreUnavailable({ operation, key, cause: new Error("down") });
+/** Pauses and retargets publications through `store.control`; faults come from alternate layers. */
+const store = Fixtures.memoryStore();
+const unavailable = (key: string) =>
+  new ContentStore.StoreUnavailable({ operation: "put", key, cause: new Error("down") });
 
 /** The same store, refusing every put. */
 const putFails = Layer.succeed(
   ContentStore.ContentStore,
   ContentStore.ContentStore.of({
     ...store.service,
-    put: (key) => Effect.fail(unavailable("put", key))
+    put: (key) => Effect.fail(unavailable(key))
   })
 );
 
@@ -104,22 +42,23 @@ const putReplyLost = Layer.succeed(
   ContentStore.ContentStore.of({
     ...store.service,
     put: (key, html) =>
-      store.service.put(key, html).pipe(Effect.andThen(Effect.fail(unavailable("put", key))))
-  })
-);
-
-/** The same store, refusing every delete. */
-const deleteFails = Layer.succeed(
-  ContentStore.ContentStore,
-  ContentStore.ContentStore.of({
-    ...store.service,
-    delete: (key) => Effect.fail(unavailable("delete", key))
+      store.service.put(key, html).pipe(Effect.andThen(Effect.fail(unavailable(key))))
   })
 );
 
 /** `Content` over a faulty store, sharing the block's `Patches`. */
 const over = (faulty: Layer.Layer<ContentStore.ContentStore>) =>
   Effect.provide(Layer.effect(Content.Content, Content.make).pipe(Layer.provide(faulty)));
+
+/** `Content` over its own `Patches`, both on this platform client. */
+const overSql = (sql: SqlClient.SqlClient) =>
+  Layer.effect(Content.Content, Content.make).pipe(
+    Layer.provide(
+      Layer.effect(Patches.Patches, Patches.make).pipe(
+        Layer.provide(Layer.succeed(SqlClient.SqlClient, sql))
+      )
+    )
+  );
 
 const content = Effect.flatMap(Content.Content, Effect.succeed);
 const patches = Effect.flatMap(Patches.Patches, Effect.succeed);
@@ -131,24 +70,7 @@ const publish = (
   extra: Partial<Content.PublishInput> = {}
 ) =>
   Effect.flatMap(content, (service) =>
-    service.publish({
-      ...Fixtures.publishRecord(),
-      patchId,
-      companyId: uploader.company.id,
-      ownerUserId: uploader.user.id,
-      machineTokenId: uploader.machine.id,
-      title: "Page",
-      html,
-      filename: null,
-      repoOrg: null,
-      repoName: null,
-      cliVersion: null,
-      gitBranch: null,
-      gitCommitSha: null,
-      sourceIp: "203.0.113.9",
-      userAgent: "vitest",
-      ...extra
-    })
+    service.publish(Fixtures.publishInput(uploader, { patchId, title: "Page", html, ...extra }))
   );
 
 it.layer(
@@ -774,17 +696,7 @@ it.layer(
             )
           )
         );
-      const heldSql = new Proxy(sql, {
-        get: (target, property, receiver) =>
-          property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
-      });
-      const held = Layer.effect(Content.Content, Content.make).pipe(
-        Layer.provide(
-          Layer.effect(Patches.Patches, Patches.make).pipe(
-            Layer.provide(Layer.succeed(SqlClient.SqlClient, heldSql))
-          )
-        )
-      );
+      const held = overSql(Fixtures.withTransactions(sql, withTransaction));
       const attempt = { publishKey: crypto.randomUUID() };
       const publication = yield* publish("<p>deadline</p>", created.patchId, attempt).pipe(
         Effect.provide(held),
@@ -924,30 +836,6 @@ it.layer(
     })
   );
 
-  it.effect("stores the bytes, records the version, and reads both back", () =>
-    Effect.gen(function* () {
-      const created = yield* publish("<p>one</p>");
-      assert.strictEqual(created.versionNumber, 1);
-      const updated = yield* publish("<p>two</p>", created.patchId);
-      assert.strictEqual(updated.versionNumber, 2);
-
-      const service = yield* content;
-      const found = yield* patches;
-      const latest = Option.getOrThrow(yield* found.find(created.patchId));
-      assert.strictEqual(yield* service.read(latest.version), "<p>two</p>");
-      assert.strictEqual(latest.version.sourceIp, "203.0.113.9");
-      const first = Option.getOrThrow(yield* found.find(created.patchId, 1));
-      assert.strictEqual(yield* service.read(first.version), "<p>one</p>");
-      assert.deepStrictEqual(
-        (yield* store.keys).filter((key) => key.startsWith(`patches/${created.patchId}/`)),
-        [
-          Content.objectKey(created.patchId, created.versionId),
-          Content.objectKey(updated.patchId, updated.versionId)
-        ].sort()
-      );
-    })
-  );
-
   it.effect("refuses a taken publish key with bounded diagnostics and preserves its version", () =>
     Effect.gen(function* () {
       const publishKey = `${crypto.randomUUID()}\n${"unsafe-key".repeat(128)}`;
@@ -1026,88 +914,39 @@ it.layer(
     })
   );
 
-  it.effect("refuses an old owner's publish when reassigned during the content write", () =>
-    Effect.gen(function* () {
-      const created = yield* publish("<p>before reassignment</p>");
-      const service = yield* patches;
-      store.control.afterPut = service
-        .reassign(
-          created.patchId,
-          { userId: Fixtures.identities.admin.user.id, admin: true },
-          Fixtures.identities.reader.user.id
-        )
-        .pipe(Effect.orDie, Effect.asVoid);
-      const refused = yield* publish("<p>old owner's update</p>", created.patchId).pipe(
-        Effect.flip,
-        Effect.ensuring(
-          Effect.sync(() => {
-            store.control.afterPut = Effect.void;
-          })
-        )
-      );
-      assert.instanceOf(refused, Patches.NotOwner);
-      if (refused._tag === "NotOwner")
-        assert.deepStrictEqual(refused.owner, {
-          id: Fixtures.identities.reader.user.id,
-          name: Fixtures.identities.reader.user.name
-        });
-      const current = Option.getOrThrow(yield* service.find(created.patchId));
-      assert.strictEqual(current.version.id, created.versionId);
-      assert.strictEqual(
-        yield* (yield* content).read(current.version),
-        "<p>before reassignment</p>"
-      );
-      const newOwner = yield* publish("<p>new owner's update</p>", created.patchId, {
-        ownerUserId: Fixtures.identities.reader.user.id,
-        machineTokenId: Fixtures.identities.reader.machine.id
-      });
-      assert.strictEqual(newOwner.versionNumber, 2);
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      yield* sweep;
-    })
-  );
-
-  it.effect("reclaims an object whose write succeeded but whose reply failed", () =>
-    Effect.gen(function* () {
-      const before = yield* store.keys;
-      const publishKey = crypto.randomUUID();
-      const error = yield* publish("<p>unacknowledged</p>", null, { publishKey }).pipe(
-        over(putReplyLost),
-        Effect.flip
-      );
-      assert.strictEqual(error._tag, "StoreUnavailable");
-      const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
-      assert.strictEqual(yield* store.service.get(key), "<p>unacknowledged</p>");
-      assert.isTrue(Option.isNone(yield* (yield* patches).replay(uploader.user.id, publishKey)));
-
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      yield* sweep;
-      assert.deepStrictEqual(yield* store.keys, before);
-    })
-  );
-
-  it.effect("reclaims an object when the version transaction rolls back", () =>
+  it.effect("reclaims a stored object when its reply or its version transaction fails", () =>
     Effect.gen(function* () {
       const created = yield* publish("<p>original</p>");
-      const before = yield* store.keys;
-      const publishKey = crypto.randomUUID();
-      const error = yield* publish("<p>rolled back</p>", created.patchId, {
-        publishKey,
-        machineTokenId: "missing-machine-token"
-      }).pipe(Effect.flip);
-      assert.strictEqual(error._tag, "SqlError");
-      const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
-      assert.strictEqual(yield* store.service.get(key), "<p>rolled back</p>");
       const service = yield* patches;
-      assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
-      assert.strictEqual(
-        Option.getOrThrow(yield* service.find(created.patchId)).version.versionNumber,
-        1
-      );
+      // The store accepts bytes but loses its reply, or the version insert fails.
+      for (const { html, tag, faulty, input } of [
+        { html: "<p>unacknowledged</p>", tag: "StoreUnavailable", faulty: putReplyLost, input: {} },
+        {
+          html: "<p>rolled back</p>",
+          tag: "SqlError",
+          faulty: store.layer,
+          input: { machineTokenId: "missing-machine-token" }
+        }
+      ]) {
+        const before = yield* store.keys;
+        const publishKey = crypto.randomUUID();
+        const error = yield* publish(html, created.patchId, { publishKey, ...input }).pipe(
+          over(faulty),
+          Effect.flip
+        );
+        assert.strictEqual(error._tag, tag);
+        const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
+        assert.strictEqual(yield* store.service.get(key), html);
+        assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(created.patchId)).version.versionNumber,
+          1
+        );
 
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      yield* sweep;
-      assert.deepStrictEqual(yield* store.keys, before);
+        yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
+        yield* sweep;
+        assert.deepStrictEqual(yield* store.keys, before);
+      }
       assert.strictEqual(
         yield* (yield* content).read(
           Option.getOrThrow(yield* service.find(created.patchId)).version
@@ -1133,16 +972,7 @@ it.layer(
               : Effect.void
           )
         );
-      const uncertainSql = new Proxy(sql, {
-        get: (target, property, receiver) =>
-          property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
-      });
-      const uncertain = Layer.effect(Content.Content, Content.make).pipe(
-        Layer.provide(
-          Layer.effect(Patches.Patches, Patches.make).pipe(
-            Layer.provide(Layer.succeed(SqlClient.SqlClient, uncertainSql))
-          )
-        ),
+      const uncertain = overSql(Fixtures.withTransactions(sql, withTransaction)).pipe(
         Layer.provide(
           Layer.succeed(ContentStore.ContentStore, {
             ...store.service,
@@ -1176,28 +1006,6 @@ it.layer(
         yield* service.replay(uploader.user.id, publishKey),
         Option.some(replay)
       );
-    })
-  );
-
-  it.effect("retries reclamation after the store refuses deletion", () =>
-    Effect.gen(function* () {
-      const before = yield* store.keys;
-      yield* publish("<p>retry deletion</p>").pipe(over(putReplyLost), Effect.flip);
-      const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
-      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
-      const failed = yield* sweep.pipe(
-        Effect.provide(
-          Layer.effect(DeletionSweep.DeletionSweep, DeletionSweep.make).pipe(
-            Layer.provide(deleteFails)
-          )
-        )
-      );
-      assert.strictEqual(failed.orphanedObjects, 1);
-      assert.strictEqual(yield* store.service.get(key), "<p>retry deletion</p>");
-
-      yield* sweep;
-      assert.deepStrictEqual(yield* store.keys, before);
-      assert.deepStrictEqual(yield* (yield* patches).claimObjects(100), []);
     })
   );
 
@@ -1248,17 +1056,7 @@ it.layer(
             )
           )
         );
-      const heldSql = new Proxy(sql, {
-        get: (target, property, receiver) =>
-          property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
-      });
-      const held = Layer.effect(Content.Content, Content.make).pipe(
-        Layer.provide(
-          Layer.effect(Patches.Patches, Patches.make).pipe(
-            Layer.provide(Layer.succeed(SqlClient.SqlClient, heldSql))
-          )
-        )
-      );
+      const held = overSql(Fixtures.withTransactions(sql, withTransaction));
       store.control.afterPut = Effect.gen(function* () {
         const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
         // Shorten only this test's lease so the transaction's own deadline stays live.

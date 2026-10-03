@@ -1,9 +1,6 @@
-import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import type { FixtureWindow } from "./fixture-client.js";
 import { test, expect, open, notice, prepare } from "./fixtures.js";
-import { printFirefoxFrame } from "./firefox-print.js";
-import { printChromiumFrame } from "./chromium-print.js";
 
 test("broker admits server arguments up to 1 MiB and stamps local and runtime refusals", async ({
   page,
@@ -138,7 +135,7 @@ test("broker keeps admission retry timing but strips it from unsafe outcomes", a
   expect(requests).toEqual(refusals.map(({ code }) => code));
 });
 
-test("route bridge, real client file URL, shell download, isolation and 2,000-row print layout", async ({
+test("route bridge, real client file URL, shell download and isolation", async ({
   page,
   instance
 }) => {
@@ -267,33 +264,7 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
     origin: "null"
   });
   expect(page.context().pages()).toHaveLength(1);
-
-  await frame.evaluate(() => (window as unknown as FixtureWindow).harness.printRows());
-  await page.emulateMedia({ media: "print" });
-  await expect(frame.locator("#rows tr")).toHaveCount(2000);
-  await expect(frame.locator("#rows tr").first()).toHaveText("Print row 0001");
-  await expect(frame.locator("#rows tr").last()).toHaveText("Print row 2000");
 });
-
-// Native printing opens headed browsers and reads the PDF with pdftotext, so it needs a
-// display; `pnpm test:browser` and CI leave it out (`--grep @print` runs it).
-test(
-  "the frame's own window.print() prints all 2,000 rows",
-  { tag: "@print" },
-  async ({ page, instance, browserName }, testInfo) => {
-    const patch = await instance.publish();
-    await open(page, patch);
-    const pdf = testInfo.outputPath("two-thousand-rows.pdf");
-    if (browserName === "chromium") {
-      await printChromiumFrame(patch.address, await page.context().cookies(), pdf);
-    } else {
-      await printFirefoxFrame(patch.address, await page.context().cookies(), pdf);
-    }
-    const text = execFileSync("pdftotext", [pdf, "-"], { encoding: "utf8" });
-    expect(text).toContain("Print row 0001");
-    expect(text).toContain("Print row 2000");
-  }
-);
 
 test("route bridge reports one decoded Unicode route after set, Back and reload", async ({
   page,

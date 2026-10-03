@@ -442,146 +442,39 @@ it.live(
   { timeout: 60_000 }
 );
 
+// Project.test.ts owns the stamp comparison and devPreparation.test.ts the primitive reminders.
 it.live(
-  "packed tier 2 dev starts after Vite and executes handlers for both viewers",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { root, instance } = yield* fixture;
-      // Unlike the tier-1 symlink fixture, an installed CLI resolves the repo's workerd pin.
-      const sdk = path.join(root, "node_modules/patchy");
-      yield* Effect.promise(() => nodeFs.unlink(sdk));
-      yield* fs.makeDirectory(sdk);
-      yield* Effect.promise(() =>
-        nodeFs.cp(path.join(packageDir, "dist"), path.join(sdk, "dist"), { recursive: true })
-      );
-      yield* fs.copyFile(path.join(packageDir, "package.json"), path.join(sdk, "package.json"));
-      yield* nodeFsLink(path.join(packageDir, "node_modules"), path.join(sdk, "node_modules"));
-      const executionRequire = createRequire(
-        new URL("../../execution/package.json", import.meta.url)
-      );
-      yield* nodeFsLink(
-        path.dirname(executionRequire.resolve("workerd/package.json")),
-        path.join(root, "node_modules/workerd")
-      );
-      const configPath = path.join(root, "patchy.config.ts");
-      yield* fs.writeFileString(
-        configPath,
-        (yield* fs.readFileString(configPath)).replace("tier: 1", "tier: 2")
-      );
-      yield* fs.makeDirectory(path.join(root, "server"));
-      yield* fs.writeFileString(
-        path.join(root, "server/viewer.ts"),
-        'import { query, t } from "patchy/server";\n' +
-          "export const current = query({ args: {}, result: t.text(), handler: async (ctx) => ctx.viewer.user.id });\n"
-      );
-      const started = yield* command(root, instance, []);
-      for (const [url, viewerId] of [
-        [started.url, identity.user.id],
-        [started.colleagueUrl, "usr_dev_colleague"]
-      ] as const) {
-        assert.nestedPropertyVal(
-          yield* call(url, "server.call", { handler: "viewer.current", args: {} }, viewerId),
-          "value",
-          viewerId
-        );
-      }
-      yield* command(root, instance, ["stop"]);
-      const log = yield* command(root, instance, ["logs"]);
-      const calls = (log.text as string)
-        .split("\n")
-        .filter((line) => line.startsWith("{"))
-        .map((line) => JSON.parse(line) as Record<string, unknown>)
-        .filter((event) => event.type === "invocation" && event.handler === "viewer.current")
-        .map((event) => ({ viewerId: event.initiatingViewerId, outcome: event.outcome }));
-      assert.sameDeepMembers(calls, [
-        { viewerId: identity.user.id, outcome: "success" },
-        { viewerId: "usr_dev_colleague", outcome: "success" }
-      ]);
-    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
-  { timeout: 60_000 }
-);
-
-it.live(
-  "new dev sessions pull newer cloud descriptions and remind only about unchanged primitive text",
+  "a new dev session pulls a newer cloud description and a joined session makes no request",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { root, instance, requests, cloudDescription } = yield* fixture;
       const repoPath = path.join(root, "patchy.json");
-      const configPath = path.join(root, "patchy.config.ts");
-      const originalConfig = yield* fs.readFileString(configPath);
-      const first = yield* command(root, instance, []);
-      assert.deepStrictEqual(first.warnings, []);
-      assert.strictEqual(
-        JSON.parse(yield* fs.readFileString(repoPath)).description,
-        "Local purpose"
-      );
-
       cloudDescription.description = "Portal purpose";
       cloudDescription.descriptionUpdatedAt = "2026-09-15T12:00:00.000Z";
-      const requested = requests.length;
-      const joined = yield* command(root, instance, []);
-      assert.strictEqual(joined.pid, first.pid);
-      assert.deepStrictEqual(joined.warnings, []);
-      assert.strictEqual(requests.length, requested);
-      assert.strictEqual(
-        JSON.parse(yield* fs.readFileString(repoPath)).description,
-        "Local purpose"
-      );
-      yield* command(root, instance, ["stop"]);
-
-      const changedConfig = originalConfig.replace(
-        "{ title: t.text() }",
-        "{ title: t.text(), category: t.text().optional() }"
-      );
-      yield* fs.writeFileString(configPath, changedConfig);
-      const changed = yield* command(root, instance, []);
-      assert.strictEqual(changed.warnings.length, 2);
-      assert.include(changed.warnings[0], "Portal purpose");
-      assert.include(changed.warnings[0], "Local purpose");
-      assert.include(changed.warnings[1], "Table `notes` changed since its last generation");
-      assert.include(changed.warnings[1], "Notes identified by id.");
-      const synced = JSON.parse(yield* fs.readFileString(repoPath));
-      assert.deepStrictEqual(synced, {
+      const first = yield* command(root, instance, []);
+      assert.strictEqual(first.warnings.length, 1);
+      assert.include(first.warnings[0], "Portal purpose");
+      assert.include(first.warnings[0], "Local purpose");
+      const synced = {
         instance,
         patch: patchId,
         description: "Portal purpose",
         descriptionSyncedAt: cloudDescription.descriptionUpdatedAt,
         custom: { keep: true }
-      });
-      yield* command(root, instance, ["stop"]);
+      };
+      assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(repoPath)), synced);
 
-      yield* fs.writeFileString(
-        repoPath,
-        JSON.stringify({ ...synced, description: "Local revision" })
-      );
-      yield* fs.writeFileString(
-        configPath,
-        changedConfig
-          .replace("Notes identified by id.", "Notes identified by id, with a category and label.")
-          .replace(
-            "category: t.text().optional()",
-            "category: t.text().optional(), label: t.text().optional()"
-          )
-      );
-      const local = yield* command(root, instance, []);
-      assert.deepStrictEqual(local.warnings, []);
-      assert.strictEqual(
-        JSON.parse(yield* fs.readFileString(repoPath)).description,
-        "Local revision"
-      );
-      yield* command(root, instance, ["stop"]);
-
-      cloudDescription.descriptionUpdatedAt = "2026-09-14T12:00:00.000Z";
-      const unchanged = yield* command(root, instance, []);
-      assert.deepStrictEqual(unchanged.warnings, []);
-      assert.strictEqual(
-        JSON.parse(yield* fs.readFileString(repoPath)).description,
-        "Local revision"
-      );
+      cloudDescription.description = "Newer portal purpose";
+      cloudDescription.descriptionUpdatedAt = "2026-09-16T12:00:00.000Z";
+      const requested = requests.length;
+      const joined = yield* command(root, instance, []);
+      assert.strictEqual(joined.pid, first.pid);
+      assert.deepStrictEqual(joined.warnings, []);
+      assert.strictEqual(requests.length, requested);
+      assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(repoPath)), synced);
     }).pipe(Effect.provide(NodeServices.layer)),
-  { timeout: 90_000 }
+  { timeout: 45_000 }
 );
 
 it.live(

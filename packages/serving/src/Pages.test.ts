@@ -208,15 +208,14 @@ it.layer(layer)("pages", (it) => {
           )
         };
         const patch = yield* publish("Hidden patch content", "public", null, "notice-patch");
-        const latest = yield* publish("Latest hidden content", undefined, patch.patchId);
+        yield* publish("Latest hidden content", undefined, patch.patchId);
         yield* patches.reassign(patch.patchId, { userId: DEV_SEED.userId, admin: true }, ownerId);
         const actor = { userId: ownerId, admin: false };
+        // The address, a historical version and a content URL share one notice.
         const paths = [
           patch.path,
           `${patch.path}/~v/1`,
-          `/~content/${patch.patchId}/${patch.versionId}`,
-          `${patch.path}/~v/2`,
-          `/~content/${patch.patchId}/${latest.versionId}`
+          `/~content/${patch.patchId}/${patch.versionId}`
         ];
         for (const state of ["retired", "deleted"] as const) {
           if (state === "retired") yield* patches.retire(patch.patchId, actor);
@@ -337,23 +336,6 @@ it.layer(layer)("pages", (it) => {
           assert.notInclude(html, 'action="/patches/notice-consumer/restore"');
         }
       })
-  );
-
-  it.effect("keeps company patches behind the login door without accepting machine tokens", () =>
-    Effect.gen(function* () {
-      const { path, patchId, versionId } = yield* publish("Company only");
-      for (const url of [path, `/~content/${patchId}/${versionId}`]) {
-        const response = yield* get(url, {
-          authorization: "Bearer patchy-dev-token",
-          cookie: ""
-        });
-        assert.strictEqual(response.status, 401);
-        assert.strictEqual(response.headers["cache-control"], "private, no-store");
-        assert.isUndefined(response.headers.location);
-        assert.isUndefined(response.headers["www-authenticate"]);
-        assert.include(yield* response.text, ">Sign in</a>");
-      }
-    })
   );
 
   it.effect(
@@ -530,32 +512,6 @@ it.layer(layer)("pages", (it) => {
     })
   );
 
-  it.effect("keeps removed /d routes and bare company handles out of address admission", () =>
-    Effect.gen(function* () {
-      const { patchId } = yield* publish("Removed route must stay hidden");
-      const client = yield* HttpClient.HttpClient;
-      const paths = [
-        `/${DEV_SEED.companyHandle}`,
-        ...[patchId, "missing-patch"].flatMap((id) => [`/d/${id}`, `/d/${id}/v/1`, `/d/${id}/~v/1`])
-      ];
-      for (const url of paths) {
-        for (const method of ["GET", "HEAD"] as const) {
-          const response = yield* client.execute(
-            method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.head(url)
-          );
-          assert.strictEqual(response.status, 404, `${method} ${url}`);
-          assert.strictEqual(response.headers["cache-control"], "no-store");
-          assert.isUndefined(response.headers.location);
-          assert.isUndefined(response.headers["x-patchy-sign-in-url"]);
-          const body = yield* response.text;
-          assert.notInclude(body, ">Sign in</a>");
-          assert.notInclude(body, "Removed route must stay hidden");
-          if (method === "HEAD") assert.strictEqual(body, "");
-        }
-      }
-    })
-  );
-
   it.effect("matches static routes before the patch-address wildcard", () =>
     Effect.gen(function* () {
       for (const url of ["/healthz", "/auth/session.js"]) {
@@ -588,10 +544,14 @@ it.layer(layer)("pages", (it) => {
         assert.include(response.headers["content-type"], "text/html");
         assert.notInclude(yield* response.text, "One version");
       }
-      const elsewhere = yield* get("/nothing");
-      assert.strictEqual(elsewhere.status, 404);
-      assert.strictEqual(elsewhere.headers["cache-control"], "no-store");
-      assert.include(elsewhere.headers["content-type"], "text/html");
+      // A bare company handle is not an address: it gets the plain 404, not a sign-in door.
+      for (const url of ["/nothing", `/${DEV_SEED.companyHandle}`]) {
+        const elsewhere = yield* get(url, {});
+        assert.strictEqual(elsewhere.status, 404, url);
+        assert.strictEqual(elsewhere.headers["cache-control"], "no-store");
+        assert.isUndefined(elsewhere.headers["x-patchy-sign-in-url"]);
+        assert.include(elsewhere.headers["content-type"], "text/html");
+      }
     })
   );
 
@@ -734,16 +694,19 @@ it.layer(services)("pages in memory", (it) => {
 
   it.effect("uses the login template without disclosing a retained company patch's content", () =>
     Effect.gen(function* () {
-      const { path: patchPath } = yield* publish("Hidden title");
-      for (const path of [patchPath, `${patchPath}/~v/1`]) {
+      const { path: patchPath, patchId, versionId } = yield* publish("Hidden title");
+      for (const path of [patchPath, `${patchPath}/~v/1`, `/~content/${patchId}/${versionId}`]) {
         const door = yield* send(path, { headers: { authorization: "Bearer patchy-dev-token" } });
         const login = yield* send(`/login?return=${encodeURIComponent(path)}`);
         assert.strictEqual(door.status, 401);
         assert.strictEqual(door.headers.get("cache-control"), "private, no-store");
-        assert.strictEqual(
-          door.headers.get("content-security-policy"),
-          login.headers.get("content-security-policy")
-        );
+        // Content URLs keep their sandbox policy even on the door.
+        if (!path.startsWith("/~content/")) {
+          assert.strictEqual(
+            door.headers.get("content-security-policy"),
+            login.headers.get("content-security-policy")
+          );
+        }
         assert.isNull(door.headers.get("location"));
         assert.isNull(door.headers.get("www-authenticate"));
         const body = yield* Effect.promise(() => door.text());

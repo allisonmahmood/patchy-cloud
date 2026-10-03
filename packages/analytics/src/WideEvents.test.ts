@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
-import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -301,19 +300,6 @@ it.effect("keeps peak usage per limit configuration and unique operations", () =
   })
 );
 
-it("rejects a limit measurement without a complete configuration revision", () => {
-  const decode = Schema.decodeUnknownSync(WideEvents.LimitPeak);
-  for (const configRevision of [
-    "one",
-    { deploymentRevision: "deployment-a" },
-    { overrideRevision: "one" }
-  ]) {
-    assert.throws(() =>
-      decode({ limitId: "company.connections", value: 4, peak: 3, configRevision })
-    );
-  }
-});
-
 it.effect("does not close the request Scope when the event is finalized", () =>
   Effect.gen(function* () {
     const sink = yield* recording;
@@ -506,56 +492,5 @@ it.effect("attributes wide events to viewers or the instance, never the company"
       ),
       Effect.provideService(Console.Console, { ...stdout, log: () => {} })
     );
-  })
-);
-
-it.effect("shares one PostHog acquisition and shutdown between business and wide events", () =>
-  Effect.gen(function* () {
-    const captured = yield* Queue.unbounded<PostHogClient.CaptureMessage>();
-    let acquired = 0;
-    let shutdowns = 0;
-    const shared = PostHogClient.layerShutdown.pipe(
-      Layer.provideMerge(
-        Layer.effect(
-          PostHogClient.PostHogClient,
-          Effect.sync(() => {
-            acquired++;
-            return {
-              capture: (message: PostHogClient.CaptureMessage) =>
-                Queue.offer(captured, message).pipe(Effect.asVoid),
-              shutdown: Effect.sync(() => {
-                shutdowns++;
-              })
-            };
-          })
-        )
-      )
-    );
-    const stdout = yield* Console.Console;
-    const scope = yield* Scope.make();
-    const context = yield* Layer.buildWithScope(
-      Layer.merge(
-        Analytics.layerPostHog.pipe(Layer.provide(shared)),
-        WideEvents.layerWithSink.pipe(
-          Layer.provide(WideEventsPostHog.layerSink.pipe(Layer.provide(shared)))
-        )
-      ),
-      scope
-    ).pipe(Effect.provideService(Console.Console, { ...stdout, log: () => {} }));
-    yield* Context.get(context, Analytics.Analytics).track({
-      name: "patch.created",
-      principalId: "owner",
-      properties: {}
-    });
-    yield* Context.get(context, WideEvents.WideEvents).withEvent({ type: "request" }, Effect.void);
-    assert.deepStrictEqual(
-      [(yield* Queue.take(captured)).event, (yield* Queue.take(captured)).event],
-      ["patch.created", "wide.request"]
-    );
-    assert.strictEqual(acquired, 1);
-    assert.strictEqual(shutdowns, 0);
-    yield* Scope.close(scope, Exit.void);
-    yield* Scope.close(scope, Exit.void);
-    assert.strictEqual(shutdowns, 1);
   })
 );

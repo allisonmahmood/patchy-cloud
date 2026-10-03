@@ -2,7 +2,7 @@ import { it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
 import * as S3ContentStore from "../src/S3ContentStore.js";
-import { contentStoreContract } from "../test/ContentStoreContract.js";
+import { contentStoreContract, pagedListingContract } from "../test/ContentStoreContract.js";
 
 const names: Readonly<Record<string, string>> = {
   PATCHY_S3_ENDPOINT: "AWS_ENDPOINT_URL_S3",
@@ -25,4 +25,5 @@ it.layer(S3ContentStore.layer.pipe(Layer.provide(ConfigProvider.layer(config))),
   timeout: "30 seconds"
 })("S3ContentStore (live Neon)", (it) => {
   contentStoreContract(it);
+  pagedListingContract(it);
 });

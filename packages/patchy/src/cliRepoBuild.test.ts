@@ -20,70 +20,24 @@ import {
 describe("patch-repo builds", () => {
   const env = { PATCHY_API_TOKEN: "pp_project" };
 
+  // Module syntaxes and paths are pageImports.test.ts's; these rows prove the plugin is wired
+  // into the production publish and dev builders, through a builder alias and authored HTML.
   it.each([
     { command: "publish", source: 'import "lodash";', aliased: false },
     { command: "dev", source: 'import "lodash";', aliased: false },
     { command: "publish", source: 'import "lodash";', aliased: true },
-    { command: "publish", source: 'require("lodash");', aliased: true },
-    { command: "publish", source: 'void import.defer("lodash");', aliased: true },
-    {
-      command: "publish",
-      source: 'import value = require("lodash"); console.log(value);',
-      aliased: true
-    },
-    {
-      command: "publish",
-      source: 'import "vite/modulepreload-polyfill";',
-      packageName: "vite"
-    },
-    {
-      command: "publish",
-      source: "vite/modulepreload-polyfill",
-      packageName: "vite",
-      fixture: "html-src"
-    },
-    { command: "publish", source: 'void import("lodash");', aliased: false },
-    { command: "publish", source: 'export { default } from "lodash";', aliased: false },
-    { command: "publish", source: 'import "lodash";', aliased: false, nested: true },
-    { command: "publish", source: 'import "./style.css";', fixture: "css" },
-    { command: "publish", source: 'import "./style.css";', fixture: "nested-css" },
-    { command: "dev", source: 'import "./style.css";', fixture: "nested-css" },
-    { command: "publish", source: 'import "../node_modules/lodash/index.js";', fixture: "package" },
-    { command: "publish", source: 'import "/node_modules/lodash/index.js";', fixture: "package" },
-    {
-      command: "publish",
-      source: 'import {value} from "../server/constants.js"; console.log(value);',
-      fixture: "server"
-    }
+    { command: "publish", source: "vite/modulepreload-polyfill", htmlSrc: true }
   ])(
-    "$command refuses off-SDK page imports ($source, aliased=$aliased, nested=$nested)",
-    async ({ command, source, aliased, nested, fixture, packageName }) => {
+    "$command refuses off-SDK page imports ($source, aliased=$aliased)",
+    async ({ command, source, aliased, htmlSrc }) => {
       const instance = await stubInstance(projectHandler);
       const dir = publishTree(instance.url);
-      const entry = nested ? "src/node_modules/company/refused.ts" : "src/refused.ts";
-      mkdirSync(path.dirname(path.join(dir, entry)), { recursive: true });
+      const entry = "src/refused.ts";
       writeFileSync(
         path.join(dir, "index.html"),
-        `<!doctype html><html><body><script type="module" src="${fixture === "html-src" ? source : `/${entry}`}"></script></body></html>`
+        `<!doctype html><html><body><script type="module" src="${htmlSrc ? source : `/${entry}`}"></script></body></html>`
       );
       writeFileSync(path.join(dir, entry), source);
-      if (fixture === "css" || fixture === "nested-css" || fixture === "package") {
-        const dependency = path.join(dir, "node_modules/lodash");
-        mkdirSync(dependency);
-        writeFileSync(path.join(dependency, "package.json"), '{"name":"lodash","version":"1.0.0"}');
-        writeFileSync(path.join(dependency, "index.js"), 'document.body.textContent="Dependency";');
-        writeFileSync(path.join(dependency, "style.css"), "body { color: red; }");
-        if (fixture === "css")
-          writeFileSync(path.join(dir, "src/style.css"), '@import "lodash/style.css";');
-        if (fixture === "nested-css") {
-          writeFileSync(path.join(dir, "src/style.css"), '@import "./nested.css";');
-          writeFileSync(path.join(dir, "src/nested.css"), '@import "lodash/style.css";');
-        }
-      }
-      if (fixture === "server") {
-        mkdirSync(path.join(dir, "server"));
-        writeFileSync(path.join(dir, "server/constants.ts"), "export const value = 1;");
-      }
       if (aliased) {
         writeFileSync(path.join(dir, "src/local.ts"), "export default 1;");
         const configPath = path.join(dir, "vite.config.ts");
@@ -101,16 +55,8 @@ describe("patch-repo builds", () => {
       expect(result).toMatchObject({ status: 1, stdout: "" });
       const failure = JSON.parse(result.stderr);
       expect(failure).toMatchObject({ kind: "local", code: "import_refused" });
-      expect(failure.error).toContain(fixture === "server" ? "server" : (packageName ?? "lodash"));
-      const importer =
-        fixture === "css"
-          ? "src/style.css"
-          : fixture === "nested-css"
-            ? "src/nested.css"
-            : fixture === "html-src"
-              ? "index.html"
-              : entry;
-      expect(failure.error).toContain(importer);
+      expect(failure.error).toContain(htmlSrc ? "vite" : "lodash");
+      expect(failure.error).toContain(htmlSrc ? "index.html" : entry);
       expect(failure.error).toContain("patchy/preact");
       expect(failure.error).toContain("What the SDK gives you");
       expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
@@ -143,61 +89,20 @@ describe("patch-repo builds", () => {
     expect(decodePublishRequest(request?.body).html).toContain("Vanilla page");
   });
 
+  // The CLI preloads config ahead of Vite; Vite's own NODE_ENV precedence is not restated here.
   it.each([
-    {
-      name: "an unset NODE_ENV",
-      nodeEnv: undefined,
-      envFile: undefined,
-      configEnv: "production",
-      production: true
-    },
-    {
-      name: "an empty NODE_ENV",
-      nodeEnv: "",
-      envFile: undefined,
-      configEnv: "production",
-      production: true
-    },
-    {
-      name: "explicit development",
-      nodeEnv: "development",
-      envFile: undefined,
-      configEnv: "development",
-      production: false
-    },
-    {
-      name: "an env-file development override",
-      nodeEnv: undefined,
-      envFile: "development",
-      configEnv: "production",
-      production: false
-    },
-    {
-      name: "explicit production over an env file",
-      nodeEnv: "production",
-      envFile: "development",
-      configEnv: "production",
-      production: true
-    },
-    {
-      name: "an explicit custom environment over an env file",
-      nodeEnv: "staging",
-      envFile: "development",
-      configEnv: "staging",
-      production: false
-    }
-  ])(
-    "publishes Vite's normal build environment with $name",
-    async ({ nodeEnv, envFile, configEnv, production }) => {
-      const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };
-      const instance = await stubInstance((request, respond, disconnect) => {
-        if (request.url === "/api/publish") return respond(201, response);
-        projectHandler(request, respond, disconnect);
-      });
-      const dir = publishTree(instance.url);
-      writeFileSync(
-        path.join(dir, "vite.config.ts"),
-        `import { defineConfig } from "vite";
+    { name: "an unset NODE_ENV", envFile: undefined, production: true },
+    { name: "an env-file development override", envFile: "development", production: false }
+  ])("publishes Vite's normal build environment with $name", async ({ envFile, production }) => {
+    const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return respond(201, response);
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    writeFileSync(
+      path.join(dir, "vite.config.ts"),
+      `import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
 console.log("Builder config progress");
 export default defineConfig({
@@ -212,42 +117,37 @@ export default defineConfig({
   ]
 });
 `
-      );
-      if (envFile !== undefined)
-        writeFileSync(path.join(dir, ".env.production"), `NODE_ENV=${envFile}\n`);
-      writeFileSync(
-        path.join(dir, "src/main.tsx"),
-        `declare const __BUILDER_NODE_ENV__: string;
+    );
+    if (envFile !== undefined)
+      writeFileSync(path.join(dir, ".env.production"), `NODE_ENV=${envFile}\n`);
+    writeFileSync(
+      path.join(dir, "src/main.tsx"),
+      `declare const __BUILDER_NODE_ENV__: string;
 document.body.textContent = JSON.stringify({
   configEnv: __BUILDER_NODE_ENV__,
   production: import.meta.env.PROD,
   mode: import.meta.env.MODE
 });
 `
-      );
-      const options = {
-        cwd: dir,
-        stateDir: tempDir(),
-        env: { ...env, ...(nodeEnv === undefined ? {} : { NODE_ENV: nodeEnv }) }
-      };
-      const refreshed = await runCli(["refresh", "--json"], options);
-      expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
-      expect(JSON.parse(refreshed.stdout)).toMatchObject({ ok: true, warnings: [] });
-      const published = await runCli(["publish", "--json"], options);
-      expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
-      expect(JSON.parse(published.stdout)).toEqual(response);
-      const request = instance.requests.find((request) => request.url === "/api/publish");
-      const { html } = decodePublishRequest(request?.body);
-      const document = { body: { textContent: "" } };
-      for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))
-        runInNewContext(script[1]!, { document }, { timeout: 1_000 });
-      expect(JSON.parse(document.body.textContent)).toEqual({
-        configEnv,
-        production,
-        mode: "production"
-      });
-    }
-  );
+    );
+    const options = { cwd: dir, stateDir: tempDir(), env };
+    const refreshed = await runCli(["refresh", "--json"], options);
+    expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(refreshed.stdout)).toMatchObject({ ok: true, warnings: [] });
+    const published = await runCli(["publish", "--json"], options);
+    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(published.stdout)).toEqual(response);
+    const request = instance.requests.find((request) => request.url === "/api/publish");
+    const { html } = decodePublishRequest(request?.body);
+    const document = { body: { textContent: "" } };
+    for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))
+      runInNewContext(script[1]!, { document }, { timeout: 1_000 });
+    expect(JSON.parse(document.body.textContent)).toEqual({
+      configEnv: "production",
+      production,
+      mode: "production"
+    });
+  });
 
   it.each([
     { name: "vite", delayed: false },

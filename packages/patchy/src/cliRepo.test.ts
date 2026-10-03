@@ -30,21 +30,18 @@ import toolchain from "./toolchain.json" with { type: "json" };
 describe("patch-repo commands", () => {
   const env = { PATCHY_API_TOKEN: "pp_project" };
 
-  it.each([
-    ["init", "--purpose", "Synthetic notes"],
-    ["refresh"],
-    ["list"],
-    ["add", "postgres/sales-db"],
-    ["remove", "salesDb"]
-  ])("refuses %s without a key before making a request", async (...args) => {
-    const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url);
-    const result = await runCli([...args, "--api-url", instance.url, "--json"], { cwd: dir });
-    expect(result).toMatchObject({ status: 1, stdout: "" });
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
-    expect(JSON.parse(result.stderr).error).toContain("Run: patchy login");
-    expect(instance.requests).toEqual([]);
-  });
+  it.each([["init", "--purpose", "Synthetic notes"], ["refresh"], ["list"]])(
+    "refuses %s without a key before making a request",
+    async (...args) => {
+      const instance = await stubInstance(projectHandler);
+      const dir = projectTree(instance.url);
+      const result = await runCli([...args, "--api-url", instance.url, "--json"], { cwd: dir });
+      expect(result).toMatchObject({ status: 1, stdout: "" });
+      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+      expect(JSON.parse(result.stderr).error).toContain("Run: patchy login");
+      expect(instance.requests).toEqual([]);
+    }
+  );
 
   it("refuses ambiguous Postgres selection with discovered choices and leaves config unchanged", async () => {
     const connections = [
@@ -116,8 +113,8 @@ describe("patch-repo commands", () => {
     }
   );
 
+  // Every declarable refusal shares one branch; an unavailable inventory is its own.
   it.each([
-    { availability: "missing", inventory: { tables: [], stores: [] }, code: "patch_not_openable" },
     {
       availability: "unshared",
       inventory: {
@@ -133,41 +130,14 @@ describe("patch-repo commands", () => {
       },
       code: "patch_not_openable"
     },
-    {
-      availability: "retired",
-      inventory: {
-        tables: [{ ...projectSource.inventory.tables[0], declarable: false, reason: "source_off" }],
-        stores: []
-      },
-      code: "patch_not_openable"
-    },
-    {
-      availability: "file store",
-      inventory: {
-        tables: [],
-        stores: [
-          {
-            name: "people",
-            description: "Directory files.",
-            shared: true,
-            declarable: true,
-            hint: "patchy add shared-store abcdefghijkl/people"
-          }
-        ]
-      },
-      code: "patch_not_openable"
-    },
     { availability: "unavailable", inventory: null, code: "source_unavailable" }
   ])(
     "refuses a $availability shared source without enumerating connections",
-    async ({ availability, inventory, code }) => {
+    async ({ inventory, code }) => {
       const instance = await stubInstance((request, respond, disconnect) => {
         if (request.url.split("?")[0] === "/api/patches/directory")
           return respond(200, {
             ...projectSource,
-            ...(availability === "retired"
-              ? { state: "retired", retiredAt: "2026-09-02T00:00:00.000Z" }
-              : {}),
             inventory
           });
         projectHandler(request, respond, disconnect);
@@ -377,40 +347,37 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     );
   });
 
-  it.each(["not_shared", "source_off"])(
-    "refuses a shared store marked %s before generation",
-    async (reason) => {
-      const instance = await stubInstance((request, respond, disconnect) => {
-        if (request.url.split("?")[0] === "/api/patches/directory")
-          return respond(200, {
-            ...projectSource,
-            inventory: {
-              tables: [],
-              stores: [
-                {
-                  ...projectSource.inventory.stores[0],
-                  shared: reason !== "not_shared",
-                  declarable: false,
-                  reason
-                }
-              ]
-            }
-          });
-        projectHandler(request, respond, disconnect);
-      });
-      const dir = projectTree(instance.url);
-      const result = await runCli(["add", "shared-store", "directory/photos", "--json"], {
-        cwd: dir,
-        env
-      });
-      expect(result).toMatchObject({ status: 2, stdout: "" });
-      expect(JSON.parse(result.stderr)).toMatchObject({ code: "patch_not_openable" });
-      expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
-      expect(instance.requests.map((request) => request.url)).toEqual([
-        "/api/patches/directory?state=all"
-      ]);
-    }
-  );
+  it("refuses a shared but undeclarable store before generation", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url.split("?")[0] === "/api/patches/directory")
+        return respond(200, {
+          ...projectSource,
+          inventory: {
+            tables: [],
+            stores: [
+              {
+                ...projectSource.inventory.stores[0],
+                shared: true,
+                declarable: false,
+                reason: "source_off"
+              }
+            ]
+          }
+        });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = projectTree(instance.url);
+    const result = await runCli(["add", "shared-store", "directory/photos", "--json"], {
+      cwd: dir,
+      env
+    });
+    expect(result).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ code: "patch_not_openable" });
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+    expect(instance.requests.map((request) => request.url)).toEqual([
+      "/api/patches/directory?state=all"
+    ]);
+  });
 
   it("removes the declaration, generated surface and last integration skill, but keeps its fixture", async () => {
     const instance = await stubInstance(projectHandler);
@@ -668,20 +635,6 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       kind: "unreachable"
     },
     {
-      args: ["add", "shared-table", "directory/people"],
-      route: "/api/patches/directory",
-      status: 404,
-      exit: 2,
-      kind: "rejected"
-    },
-    {
-      args: ["add", "shared-table", "directory/people"],
-      route: "/api/patches/directory",
-      status: 503,
-      exit: 3,
-      kind: "unreachable"
-    },
-    {
       args: ["remove", "salesDb"],
       route: "/api/sdk/generate",
       status: 0,
@@ -709,137 +662,129 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     expect(instance.requests.some((request) => request.url.split("?")[0] === route)).toBe(true);
   });
 
-  it.each([1, 2] as const)(
-    "initializes a tier %s typechecking tree offline, refuses reinitialization and preserves sources across tier changes",
-    async (tier) => {
-      const registry = await localPackageRegistry();
-      const instance = await stubInstance(
-        projectHandler,
-        () => CURRENT_RELEASE,
-        readFileSync(
-          path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
-        )
-      );
-      const parent = tempDir();
-      const stateDir = tempDir();
-      // Init targets the remembered instance, not the parent project's binding.
-      writeFileSync(path.join(parent, "patchy.json"), '{"instance":"http://127.0.0.1:1"}\n');
-      writeFileSync(path.join(stateDir, "config.json"), JSON.stringify({ apiUrl: instance.url }));
-      const dir = path.join(parent, "notes-project");
-      const options = { cwd: parent, stateDir, env: { ...env, ...registry } };
-      const args = [
-        "init",
-        "notes-project",
-        "--tier",
-        String(tier),
-        "--purpose",
-        "Synthetic notes for CLI tests",
-        "--json"
-      ];
-      const result = await runCli(args, options);
-      expect(result).toMatchObject({ status: 0, stderr: "" });
-      expect(JSON.parse(result.stdout)).toEqual({
-        ok: true,
-        dir,
-        release: CURRENT_RELEASE,
-        tier,
-        generated: expect.arrayContaining([
-          "patchy/_generated/client.ts",
-          "patchy/_generated/index.json",
-          "patchy/_generated/manifest.json"
-        ]),
-        skills: tier === 2 ? [...coreProjectSkills, "patchy-server"].sort() : coreProjectSkills,
-        installed: true
-      });
-      const authoredPaths = [
-        "patchy.config.ts",
-        "package.json",
-        "tsconfig.json",
-        "vite.config.ts",
-        "src/main.tsx",
-        "src/App.tsx",
-        "index.html",
-        ...(tier === 2 ? ["server/notes.ts"] : []),
-        "AGENTS.md",
-        "CLAUDE.md"
-      ];
-      const before = Object.fromEntries(
-        authoredPaths.map((name) => [name, readFileSync(path.join(dir, name))])
-      );
-      const generatedBefore = treeBytes(path.join(dir, "patchy/_generated"));
-      await exec("pnpm", ["typecheck"], {
-        cwd: dir,
-        env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
-      });
-      expect(readJson(path.join(dir, "patchy.json"))).toEqual({
-        instance: instance.url,
-        description: "Synthetic notes for CLI tests"
-      });
-      const repeated = await runCli(args, options);
-      expect(repeated).toMatchObject({ status: 1, stdout: "" });
-      expect(JSON.parse(repeated.stderr)).toMatchObject({ ok: false, kind: "local" });
-      expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
-      for (const name of authoredPaths)
-        expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+  // The packed tier 2 e2e initializes tier 2; this owns the offline pin and both tier transitions.
+  it("initializes a tier 1 typechecking tree offline, refuses reinitialization and preserves sources across tier changes", async () => {
+    const registry = await localPackageRegistry();
+    const instance = await stubInstance(
+      projectHandler,
+      () => CURRENT_RELEASE,
+      readFileSync(
+        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
+      )
+    );
+    const parent = tempDir();
+    const stateDir = tempDir();
+    // Init targets the remembered instance, not the parent project's binding.
+    writeFileSync(path.join(parent, "patchy.json"), '{"instance":"http://127.0.0.1:1"}\n');
+    writeFileSync(path.join(stateDir, "config.json"), JSON.stringify({ apiUrl: instance.url }));
+    const dir = path.join(parent, "notes-project");
+    const options = { cwd: parent, stateDir, env: { ...env, ...registry } };
+    const args = [
+      "init",
+      "notes-project",
+      "--tier",
+      "1",
+      "--purpose",
+      "Synthetic notes for CLI tests",
+      "--json"
+    ];
+    const result = await runCli(args, options);
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      dir,
+      release: CURRENT_RELEASE,
+      tier: 1,
+      generated: expect.arrayContaining([
+        "patchy/_generated/client.ts",
+        "patchy/_generated/index.json",
+        "patchy/_generated/manifest.json"
+      ]),
+      skills: coreProjectSkills,
+      installed: true
+    });
+    const authoredPaths = [
+      "patchy.config.ts",
+      "package.json",
+      "tsconfig.json",
+      "vite.config.ts",
+      "src/main.tsx",
+      "src/App.tsx",
+      "index.html",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ];
+    const before = Object.fromEntries(
+      authoredPaths.map((name) => [name, readFileSync(path.join(dir, name))])
+    );
+    const generatedBefore = treeBytes(path.join(dir, "patchy/_generated"));
+    await exec("pnpm", ["typecheck"], {
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
+    });
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual({
+      instance: instance.url,
+      description: "Synthetic notes for CLI tests"
+    });
+    const repeated = await runCli(args, options);
+    expect(repeated).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(repeated.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
+    for (const name of authoredPaths)
+      expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
 
-      if (tier === 1) {
-        const refreshOptions = { ...options, cwd: dir };
-        const compilerOptions = {
-          cwd: dir,
-          env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
-        };
-        const config = before["patchy.config.ts"]!.toString("utf8");
-        const upgradedConfig = config.replace("tier: 1", "tier: 2");
-        writeFileSync(path.join(dir, "patchy.config.ts"), upgradedConfig);
-        const upgraded = await runCli(["refresh", "--json"], refreshOptions);
-        expect(upgraded).toMatchObject({ status: 0, stderr: "" });
-        expect(JSON.parse(upgraded.stdout)).toMatchObject({
-          ok: true,
-          changed: { pin: true }
-        });
-        expect(readJson(path.join(dir, "package.json"))).toMatchObject({
-          devDependencies: { workerd: workerdVersion }
-        });
-        expect(readJson(path.join(dir, "node_modules/workerd/package.json"))).toMatchObject({
-          version: workerdVersion
-        });
-        expect(existsSync(path.join(dir, "patchy/_generated/server.ts"))).toBe(true);
-        expect(existsSync(path.join(dir, ".agents/skills/patchy-server/SKILL.md"))).toBe(true);
-        expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(upgradedConfig);
-        for (const name of authoredPaths.filter(
-          (name) => name !== "patchy.config.ts" && name !== "package.json"
-        ))
-          expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
-        await expect(exec("pnpm", ["typecheck"], compilerOptions)).rejects.toMatchObject({
-          code: 2,
-          stdout: expect.stringMatching(/src\/App\.tsx\(\d+,\d+\): error TS2339: Property 'tables'/)
-        });
+    const refreshOptions = { ...options, cwd: dir };
+    const compilerOptions = {
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
+    };
+    const config = before["patchy.config.ts"]!.toString("utf8");
+    const upgradedConfig = config.replace("tier: 1", "tier: 2");
+    writeFileSync(path.join(dir, "patchy.config.ts"), upgradedConfig);
+    const upgraded = await runCli(["refresh", "--json"], refreshOptions);
+    expect(upgraded).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(upgraded.stdout)).toMatchObject({
+      ok: true,
+      changed: { pin: true }
+    });
+    expect(readJson(path.join(dir, "package.json"))).toMatchObject({
+      devDependencies: { workerd: workerdVersion }
+    });
+    expect(readJson(path.join(dir, "node_modules/workerd/package.json"))).toMatchObject({
+      version: workerdVersion
+    });
+    expect(existsSync(path.join(dir, "patchy/_generated/server.ts"))).toBe(true);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-server/SKILL.md"))).toBe(true);
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(upgradedConfig);
+    for (const name of authoredPaths.filter(
+      (name) => name !== "patchy.config.ts" && name !== "package.json"
+    ))
+      expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+    await expect(exec("pnpm", ["typecheck"], compilerOptions)).rejects.toMatchObject({
+      code: 2,
+      stdout: expect.stringMatching(/src\/App\.tsx\(\d+,\d+\): error TS2339: Property 'tables'/)
+    });
 
-        writeFileSync(path.join(dir, "patchy.config.ts"), config);
-        const downgraded = await runCli(["refresh", "--json"], refreshOptions);
-        expect(downgraded).toMatchObject({ status: 0, stderr: "" });
-        expect(JSON.parse(downgraded.stdout)).toMatchObject({
-          ok: true,
-          changed: { pin: true }
-        });
-        expect(readJson(path.join(dir, "package.json"))).not.toHaveProperty(
-          "devDependencies.workerd"
-        );
-        expect(existsSync(path.join(dir, "patchy/_generated/server.ts"))).toBe(false);
-        expect(existsSync(path.join(dir, ".agents/skills/patchy-server"))).toBe(false);
-        for (const name of authoredPaths)
-          expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
-        await exec("pnpm", ["typecheck"], compilerOptions);
+    writeFileSync(path.join(dir, "patchy.config.ts"), config);
+    const downgraded = await runCli(["refresh", "--json"], refreshOptions);
+    expect(downgraded).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(downgraded.stdout)).toMatchObject({
+      ok: true,
+      changed: { pin: true }
+    });
+    expect(readJson(path.join(dir, "package.json"))).not.toHaveProperty("devDependencies.workerd");
+    expect(existsSync(path.join(dir, "patchy/_generated/server.ts"))).toBe(false);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-server"))).toBe(false);
+    for (const name of authoredPaths)
+      expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+    await exec("pnpm", ["typecheck"], compilerOptions);
 
-        const unchanged = await runCli(["refresh", "--json"], refreshOptions);
-        expect(unchanged).toMatchObject({ status: 0, stderr: "" });
-        expect(JSON.parse(unchanged.stdout)).toMatchObject({
-          ok: true,
-          changed: { pin: false }
-        });
-        expect(readFileSync(path.join(dir, "package.json"))).toEqual(before["package.json"]);
-      }
-    },
-    120_000
-  ); // Real archives, isolated pnpm installs and tier-transition typechecks can exceed 30 seconds.
+    const unchanged = await runCli(["refresh", "--json"], refreshOptions);
+    expect(unchanged).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(unchanged.stdout)).toMatchObject({
+      ok: true,
+      changed: { pin: false }
+    });
+    expect(readFileSync(path.join(dir, "package.json"))).toEqual(before["package.json"]);
+  }, 120_000); // Real archives, isolated pnpm installs and tier-transition typechecks can exceed 30 seconds.
 });

@@ -5,8 +5,8 @@ import { makeTestStore } from "../test/S3HttpFixture.js";
 
 for (const { status, code } of [
   { status: 403, code: "AccessDenied" },
-  { status: 404, code: "NoSuchBucket" },
-  { status: 503, code: "ServiceUnavailable" }
+  // A retryable 503 would only add SDK backoff; the mapping is the same.
+  { status: 404, code: "NoSuchBucket" }
 ]) {
   it.effect(
     `reports ${code} as store unavailability, not an absent object`,

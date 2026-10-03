@@ -44,18 +44,12 @@ it.effect(
   () =>
     Effect.gen(function* () {
       let calls = 0;
+      // The gate is by prefix: one operation each for tables, files, shared, members and postgres.
       const operations = [
-        "tables.list",
         "tables.insert",
         "files.list",
-        "shared.list",
-        "shared.files.list",
-        "shared.files.stat",
         "shared.files.get",
-        "members.list",
         "members.search",
-        "members.get",
-        "members.getMany",
         "postgres.list"
       ];
       const handlers = Object.fromEntries(
@@ -141,19 +135,7 @@ it.effect(
         principal: { userId: viewer.user.id },
         args: {}
       };
-      for (const op of [
-        "tables.list",
-        "tables.insert",
-        "files.list",
-        "files.redeem",
-        "shared.list",
-        "shared.files.list",
-        "shared.files.stat",
-        "shared.files.get",
-        "members.list",
-        "postgres.query",
-        "server.call"
-      ]) {
+      for (const op of ["tables.list", "tables.insert", "server.call"]) {
         const error = yield* runtime
           .call({
             patchId: version.patchId,

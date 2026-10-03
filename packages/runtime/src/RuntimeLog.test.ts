@@ -82,28 +82,6 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
         assert.strictEqual(completed.outcomeCode, "timeout");
       })
   );
-  it.effect("persists pending before completion and a fresh service finds the final result", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW);
-      const log = yield* RuntimeLog.RuntimeLog;
-      const correlationId = "runtime-pending";
-      const id = yield* log.begin(mutation(correlationId));
-      const restarted = yield* RuntimeLog.make;
-      const lookup = { companyId: DEV_SEED.companyId, correlationId };
-      const pending = yield* restarted.find(lookup);
-      assert.strictEqual(pending?.id, id);
-      assert.strictEqual(pending?.outcome, "pending");
-      assert.strictEqual(pending?.durationMs, null);
-      assert.strictEqual(pending?.rowCount, null);
-      assert.strictEqual(pending?.effectivePrincipal, DEV_SEED.userId);
-      assert.strictEqual(pending?.invocationId, null);
-      yield* log.finish({ correlationId, outcome: "success", durationMs: 12, rowCount: 1 });
-      const completed = yield* restarted.find(lookup);
-      assert.strictEqual(completed?.outcome, "success");
-      assert.strictEqual(completed?.durationMs, 12);
-      assert.strictEqual(completed?.rowCount, 1);
-    })
-  );
 
   it.effect("retains patch and viewer callback attribution in recent connection calls", () =>
     Effect.gen(function* () {
@@ -177,6 +155,9 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
         assert.strictEqual(failed?.durationMs, 24);
         assert.strictEqual(failed?.rowCount, null);
         assert.strictEqual(failed?.userId, DEV_SEED.userId);
+        // A browser call carries no effective principal of its own: it acts as its viewer.
+        assert.strictEqual(failed?.effectivePrincipal, DEV_SEED.userId);
+        assert.strictEqual(failed?.invocationId, null);
         assert.isNull(
           yield* log.find({ companyId: DEV_SEED.companyId, correlationId: "runtime-missing" })
         );

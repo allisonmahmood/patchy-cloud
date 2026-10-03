@@ -11,6 +11,7 @@ import { LoadedVersions } from "@patchy/runtime";
 import { OperatingLimits } from "@patchy/limits";
 import * as Tables from "./Tables.js";
 import {
+  binaryBoundaryContract,
   companyStageBoundsContract,
   contracts,
   filesystem,
@@ -58,6 +59,12 @@ it.layer(withRuntime(postgres), { timeout: "60 seconds" })(
     for (const [description, contract] of Object.entries(contracts)) {
       it.effect(description, () => contract(companyId), 60_000);
     }
+    // The bytes go to the filesystem content store, not the database, so one backend covers it.
+    it.effect(
+      "round-trips 20 MiB as binary and refuses one more byte without replacing it",
+      () => binaryBoundaryContract(companyId),
+      60_000
+    );
     it.effect(
       "enforces current company stage overrides across patches and fails closed on limit lookup errors",
       () => companyStageBoundsContract(companyId),

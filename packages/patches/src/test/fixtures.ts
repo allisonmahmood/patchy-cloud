@@ -2,10 +2,12 @@
  * Users and machines added to the seeded template. Production Patches never
  * imports Auth: handlers receive identities from the bearer middleware.
  */
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -24,9 +26,12 @@ import {
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ResourceChanges } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
+import { ContentStore } from "@patchy/content-store";
+import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { Tables } from "@patchy/primitives";
 import { SqlConnectionStore, CredentialKeys, PostgresSource } from "@patchy/integrations";
 import { RuntimeLog, Wakes } from "@patchy/runtime";
+import type * as Content from "../Content.js";
 import * as Patches from "../Patches.js";
 
 export const manifest = {
@@ -51,6 +56,116 @@ export const record = (input: Patches.RecordInput) =>
   Effect.flatMap(Patches.Patches, (patches) =>
     patches.prepareObject(input.objectKey).pipe(Effect.andThen(patches.record(input)))
   );
+
+/** The provenance a fixture publish leaves empty. */
+const noProvenance = {
+  filename: null,
+  repoOrg: null,
+  repoName: null,
+  cliVersion: null,
+  gitBranch: null,
+  gitCommitSha: null,
+  sourceIp: null,
+  userAgent: null
+} as const;
+
+/** A `Content.publish` input creating a patch as `identity`; override any field. */
+export const publishInput = (
+  identity: Identity,
+  overrides: Partial<Content.PublishInput> = {}
+): Content.PublishInput => ({
+  ...publishRecord(),
+  ...noProvenance,
+  patchId: null,
+  companyId: identity.company.id,
+  ownerUserId: identity.user.id,
+  machineTokenId: identity.machine.id,
+  title: "Fixture patch",
+  html: "<p>Fixture patch</p>",
+  ...overrides
+});
+
+/**
+ * A `record` input creating a patch as `identity`, with fresh patch and version
+ * ids and an object key under the patch; override any field.
+ */
+export const recordInput = (
+  identity: Identity,
+  overrides: Partial<Patches.RecordInput> = {}
+): Patches.RecordInput => {
+  const patchId = overrides.patchId ?? newPatchId();
+  const versionId = overrides.versionId ?? newInternalId("ver");
+  return {
+    ...publishRecord(),
+    ...noProvenance,
+    intent: "create",
+    patchId,
+    versionId,
+    companyId: identity.company.id,
+    ownerUserId: identity.user.id,
+    machineTokenId: identity.machine.id,
+    title: "Fixture patch",
+    objectKey: `patches/${patchId}/versions/${versionId}.html`,
+    contentHash: contentHash(versionId),
+    fileSize: 1,
+    ...overrides
+  };
+};
+
+/**
+ * An in-memory content store. `afterPut` runs after every stored put, so a test
+ * can pause a publication or change its target between preflight and record.
+ */
+export const memoryStore = () => {
+  const objects = new Map<string, { readonly bytes: Uint8Array; readonly lastModified: number }>();
+  const control = { afterPut: Effect.void as Effect.Effect<void> };
+  const write = (key: string, bytes: Uint8Array) =>
+    Effect.map(Clock.currentTimeMillis, (lastModified) => {
+      objects.set(key, { bytes, lastModified });
+    });
+  const read = (key: string) =>
+    Effect.suspend(() => {
+      const bytes = objects.get(key)?.bytes;
+      return bytes === undefined
+        ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
+        : Effect.succeed(bytes.slice());
+    });
+  const service = ContentStore.ContentStore.of({
+    list: (prefix) =>
+      Stream.suspend(() =>
+        Stream.fromIterable(
+          [...objects]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, object]) => ({ key, lastModified: object.lastModified }))
+        )
+      ),
+    put: (key, html) =>
+      write(key, new TextEncoder().encode(html)).pipe(
+        Effect.andThen(Effect.suspend(() => control.afterPut))
+      ),
+    get: (key) =>
+      Effect.map(read(key), (bytes) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)),
+    putBytes: (key, bytes) => write(key, bytes.slice()),
+    getBytes: read,
+    delete: (key) => Effect.sync(() => void objects.delete(key))
+  });
+  return {
+    service,
+    control,
+    layer: Layer.succeed(ContentStore.ContentStore, service),
+    keys: Effect.sync(() => [...objects.keys()].sort())
+  };
+};
+
+/** `sql` whose transactions go through `withTransaction`, to hold or fail them from a test. */
+export const withTransactions = (
+  sql: SqlClient.SqlClient,
+  withTransaction: SqlClient.SqlClient["withTransaction"]
+): SqlClient.SqlClient =>
+  new Proxy(sql, {
+    get: (target, property, receiver) =>
+      property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
+  });
 
 const company = {
   id: DEV_SEED.companyId,
@@ -132,13 +247,6 @@ export const database = Layer.mergeAll(Layer.effectDiscard(seed), Tables.layer, 
   Layer.provideMerge(CompanyTesting.layer()),
   Layer.provideMerge(resourceChanges)
 );
-
-/** Revokes a fixture machine, as Auth's MachineTokens service would. */
-export const revoke = (machineTokenId: string) =>
-  Effect.flatMap(
-    SqlClient.SqlClient,
-    (sql) => sql`UPDATE machine_tokens SET revoked_at = now() WHERE id = ${machineTokenId}`
-  );
 
 /** The server side of the bearer middleware: the credential is the machine's id. */
 export const authorization = Layer.succeed(

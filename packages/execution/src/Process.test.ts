@@ -30,3 +30,39 @@ it.live.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
     }).pipe(Effect.scoped),
   15_000
 );
+
+it.live.each([
+  "file:///private/credential",
+  "http://user:secret@127.0.0.1/callback",
+  "http://127.0.0.1/callback#secret"
+])("rejects unsupported callback authority without fabricating a cause: %s", (callbackUrl) =>
+  Effect.gen(function* () {
+    const result = yield* startWorkerd({ callbackUrls: [callbackUrl] }).pipe(
+      Effect.scoped,
+      Effect.result
+    );
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "WorkerdError", stage: "config", reason: "invalid_callback_url" }
+    });
+    if (result._tag === "Failure") {
+      expect(result.failure.cause).toBeUndefined();
+      expect(result.failure.message).not.toContain(callbackUrl);
+      expect(result.failure.message).not.toContain("secret");
+    }
+  })
+);
+
+it.live("preserves the native cause of a malformed callback URL", () =>
+  Effect.gen(function* () {
+    const result = yield* startWorkerd({ callbackUrls: ["not a URL"] }).pipe(
+      Effect.scoped,
+      Effect.result
+    );
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "WorkerdError", stage: "config", reason: "invalid_callback_url" }
+    });
+    if (result._tag === "Failure") expect(result.failure.cause).toBeInstanceOf(TypeError);
+  })
+);

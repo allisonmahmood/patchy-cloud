@@ -398,6 +398,11 @@ confirms a stop. Cold-start sizing uses `ready_at - requested_at`, so placement
 and image-pull time count toward the spare target.
 
 `packages/execution/src/Fleet.test.ts` covers controller transitions over Postgres.
+Cases about controller state alone run over an in-memory task inventory that fences
+binding epochs like the supervisor. Fencing, adoption, draining, final metering, the
+physical task budget and one real watchdog kill run over real local tasks; the
+breaker's other kills are synthetic reports through the same collection,
+persistence and acknowledgement path.
 Its lease and housekeeping cases use `TestClock` with an explicit renewal barrier:
 the real SQL renewal must return and the next timer must be armed before time
 advances again. A committed row alone does not prove that the renewal fiber has

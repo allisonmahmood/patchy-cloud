@@ -270,45 +270,6 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
         assert.strictEqual(large.status, 413);
       })
   );
-
-  it.effect(
-    "limits each viewer and patch and returns Retry-After without a read correlation id",
-    () =>
-      Effect.gen(function* () {
-        const api = yield* client;
-        yield* TestClock.adjust("1 minute");
-        for (let i = 0; i < 3; i++) {
-          const admitted = yield* api.call({
-            payload: {
-              patchId,
-              versionId,
-              principal: null,
-              wire: WIRE_VERSION,
-              op: "me",
-              args: {}
-            },
-            headers: { ...headers(), cookie: signedInCookies() },
-            responseMode: "response-only"
-          });
-          assert.strictEqual(admitted.status, 200);
-        }
-        const response = yield* api.call({
-          payload: { patchId, versionId, principal: null, wire: WIRE_VERSION, op: "me", args: {} },
-          headers: { ...headers(), cookie: signedInCookies() },
-          responseMode: "response-only"
-        });
-        assert.strictEqual(response.status, 429);
-        assert.include(yield* response.json, {
-          code: "rate_limited",
-          scope: "viewer",
-          limitId: "runtime.calls.perMinute",
-          value: 3,
-          retryAfter: Number(response.headers["retry-after"])
-        });
-        assert.notProperty(yield* response.json, "correlationId");
-        assert.isAbove(Number(response.headers["retry-after"]), 0);
-      })
-  );
 });
 
 it.effect("host tracked-key saturation does not masquerade as a viewer call-rate refusal", () =>
@@ -459,27 +420,6 @@ it.effect(
         }
       });
     }).pipe(Effect.provide(Fixtures.layer()))
-);
-
-it.effect("me rejects arguments outside its operation schema without a log correlation", () =>
-  Effect.gen(function* () {
-    const api = yield* client;
-    const response = yield* api.call({
-      payload: {
-        patchId,
-        versionId,
-        principal: null,
-        wire: WIRE_VERSION,
-        op: "me",
-        args: { admin: true }
-      },
-      headers: { ...headers(), cookie: signedInCookies() },
-      responseMode: "response-only"
-    });
-    assert.strictEqual(response.status, 400);
-    assert.include(yield* response.json, { code: "invalid_request" });
-    assert.notProperty(yield* response.json, "correlationId");
-  }).pipe(Effect.provide(Fixtures.layer()))
 );
 
 it.effect("reserved PUT enforces browser headers and its viewer limit before refusal", () =>

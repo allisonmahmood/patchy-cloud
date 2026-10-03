@@ -2,11 +2,11 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServer from "effect/http/HttpServer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
@@ -27,9 +27,9 @@ import {
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
-import * as Dev from "./Dev.js";
 import * as Execution from "./Execution.js";
 import * as Operations from "./Operations.js";
+import { nativeExecution } from "../test/nativeExecution.js";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
 
 const declaration = {
@@ -136,13 +136,19 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
     "dispatches every operation and attributes real source successes and read-only failures",
     () =>
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped();
-        yield* fs.makeDirectory(`${root}/fixtures`);
-        yield* fs.writeFileString(
-          `${root}/fixtures/postgres-warehouse.sql`,
-          "INSERT INTO public.orders VALUES (1), (2);"
+        // The source is this block's own database, read through native execution.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.unsafe("CREATE TABLE public.orders (id integer PRIMARY KEY)");
+        yield* sql.unsafe("INSERT INTO public.orders VALUES (1), (2)");
+        const store = yield* ConnectionStore.ConnectionStore.pipe(
+          Effect.provide(
+            ConnectionStoreDev.layer([{ connection, snapshots: [{ revision: 1, snapshot }] }])
+          )
         );
+        const execution = yield* nativeExecution(store, {
+          ...Execution.specLimits,
+          maxBytes: 1024
+        });
         yield* Effect.gen(function* () {
           const handlers = yield* Operations.makeHandlers;
           const api = yield* HttpApiTest.groups(TestApi, ["runtime"], {
@@ -265,18 +271,9 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
           });
           assert.notProperty(resultFailure, "retryAfter");
         }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Dev.dev(
-                snapshot,
-                { root, connectionId: declaration.id, handle: declaration.handle },
-                { ...Execution.specLimits, maxBytes: 1024 }
-              ),
-              ConnectionStoreDev.layer([{ connection, snapshots: [{ revision: 1, snapshot }] }])
-            )
-          )
+          Effect.provideService(Execution.Execution, execution),
+          Effect.provideService(ConnectionStore.ConnectionStore, store)
         );
-      }),
-    30_000 // Cold-start PGlite, then exercise real runtime operations and log queries.
+      }).pipe(Effect.scoped)
   );
 });

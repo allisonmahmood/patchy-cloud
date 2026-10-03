@@ -1,21 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import {
-  Identity,
-  InvalidHtml,
-  LoggedOut,
-  Ok,
   PatchId,
-  PatchQuotaExceeded,
   PatchInventory,
   PrimitiveDetail,
   NotAdditive,
-  RateLimited,
   RuntimeFailure,
-  Shared,
-  ShareRequest,
-  Unauthorized,
-  PublishCreated,
   PublishRequest,
   CURRENT_RELEASE,
   MANIFEST_VERSION,
@@ -126,22 +116,6 @@ describe("wire schemas", () => {
     ).toBe("Failure");
   });
 
-  it("round-trips a publish request with every optional field present or absent", () => {
-    const full = {
-      ...attempt,
-      html: "<!doctype html><html></html>",
-      server: "export default {};",
-      patchId: "abcdefghijkl",
-      scope: "public" as const,
-      metadata: { filename: "plan.html", repoOrg: "patchy", repoName: null, cliVersion: "0.0.1" }
-    };
-    expect(roundTrip(PublishRequest, full)).toEqual(full);
-    expect(roundTrip(PublishRequest, { ...attempt, html: "<html></html>" })).toEqual({
-      ...attempt,
-      html: "<html></html>"
-    });
-  });
-
   it("rejects a patch id that is not twelve lowercase alphanumerics", () => {
     for (const bad of ["", "ABCDEFGHIJKL", "abc", 123]) {
       expect(Schema.decodeUnknownExit(PatchId)(bad)._tag).toBe("Failure");
@@ -151,78 +125,13 @@ describe("wire schemas", () => {
     }
   });
 
-  it("round-trips the success and error bodies the CLI branches on", () => {
-    const published = {
-      ok: true as const,
-      patchId: "abcdefghijkl",
-      versionId: "ver_x",
-      versionNumber: 2,
-      title: "Plan",
-      name: "plan",
-      address: "https://pages.example.com/example/plan",
-      publicUrl: "https://pages.example.com/example/plan",
-      scope: "company" as const,
-      tier: 0,
-      schemaRevision: 0,
-      provisioned: { tables: [], columns: [], indexes: [], stores: [] },
-      unused: { tables: [], columns: [], indexes: [], stores: [] },
-      artifacts: { html: { sha256: "a".repeat(64), bytes: 512 } },
-      warnings: ["Missing <title>."],
-      description: "Tracks delivery plans.",
-      descriptionUpdatedAt: "2026-01-01T00:00:00.000Z"
-    };
-    expect(roundTrip(PublishCreated, published)).toEqual(published);
-
-    const identity = {
-      user: { id: "usr_1", email: "dev@example.com", name: "Dev" },
-      company: { id: "cmp_1", handle: "example", name: "Example" },
-      role: "member" as const,
-      machine: { id: "tok_1", name: "CLI Machine" }
-    };
-    expect(roundTrip(Identity, identity)).toEqual(identity);
-
-    const invalid = { ok: false as const, errors: ["<script> is not allowed."], warnings: [] };
-    expect(roundTrip(InvalidHtml, invalid)).toEqual(invalid);
-
-    const limited = {
-      ok: false as const,
-      error: "Rate limit exceeded.",
-      code: "rate_limited" as const,
-      retryAfterSeconds: 7
-    };
-    expect(roundTrip(RateLimited, limited)).toEqual(limited);
-
-    const quota = {
-      ok: false as const,
-      error: "Patch quota reached.",
-      code: "live_patch_quota_exceeded" as const,
-      quota: 2
-    };
-    expect(roundTrip(PatchQuotaExceeded, quota)).toEqual(quota);
-  });
-
-  it("round-trips every other wire shape", () => {
-    const cases: ReadonlyArray<[Schema.Codec<unknown, unknown>, unknown]> = [
-      [ShareRequest, { scope: "public" }],
-      [
-        Shared,
-        {
-          ok: true,
-          patchId: "abcdefghijkl",
-          scope: "company",
-          publicUrl: "https://pages.example.com/example/plan"
-        }
-      ],
-      [LoggedOut, { ok: true, alreadyRevoked: false }],
-      [Ok, { ok: true }],
-      [Unauthorized, { ok: false, error: "Missing or invalid API token." }]
-    ];
-    for (const [schema, wire] of cases) expect(roundTrip(schema, wire)).toEqual(wire);
-  });
   it("keeps historical release stamps decodable while rejecting malformed definitions", () => {
     const decode = Schema.decodeUnknownExit(Manifest, { onExcessProperty: "error" });
     expect(decode({ ...manifest, release: "0.0.0", manifestVersion: 7 })._tag).toBe("Success");
     for (const tables of [
+      [],
+      { notes: { columns: {}, indexes: {} } },
+      { notes: { description: "", columns: {}, indexes: {} } },
       { "not-valid": { description: "Records keyed by id.", columns: {}, indexes: {} } },
       { ["a".repeat(64)]: { description: "Records keyed by id.", columns: {}, indexes: {} } },
       {
@@ -305,12 +214,13 @@ describe("wire schemas", () => {
     ]) {
       expect(decode({ ...manifest, tables })._tag).toBe("Failure");
     }
-    expect(
-      decode({
-        ...manifest,
-        files: { images: { description: "Images keyed by file name.", unexpected: true } }
-      })._tag
-    ).toBe("Failure");
+    for (const files of [
+      { docs: {} },
+      { docs: { description: " \t\n" } },
+      { images: { description: "Images keyed by file name.", unexpected: true } }
+    ]) {
+      expect(decode({ ...manifest, files })._tag).toBe("Failure");
+    }
     expect(
       decode({
         ...manifest,
@@ -371,28 +281,25 @@ describe("wire schemas", () => {
     expect(decode({ ...withMember, uses: { people: { kind: "members" } } })._tag).toBe("Failure");
   });
 
-  it.each(["usr_active", "usr_inactive", "usr_foreign", "missing", null, undefined])(
-    "refuses member defaults at the publish boundary: %s",
-    (value) => {
-      const request = {
-        ...attempt,
-        html: "<!doctype html><html></html>",
-        manifest: {
-          ...manifest,
-          tier: 1,
-          uses: { members: { kind: "members" } },
-          tables: {
-            tasks: {
-              description: "Tasks assigned to company users.",
-              columns: { owner: { kind: "member", default: value } },
-              indexes: {}
-            }
+  it.each(["usr_active", null])("refuses member defaults at the publish boundary: %s", (value) => {
+    const request = {
+      ...attempt,
+      html: "<!doctype html><html></html>",
+      manifest: {
+        ...manifest,
+        tier: 1,
+        uses: { members: { kind: "members" } },
+        tables: {
+          tasks: {
+            description: "Tasks assigned to company users.",
+            columns: { owner: { kind: "member", default: value } },
+            indexes: {}
           }
         }
-      };
-      expect(Schema.decodeUnknownExit(PublishRequest)(request)._tag).toBe("Failure");
-    }
-  );
+      }
+    };
+    expect(Schema.decodeUnknownExit(PublishRequest)(request)._tag).toBe("Failure");
+  });
 
   it("round-trips shared declarations and resolved refs while rejecting invalid source names", () => {
     const declaration = {

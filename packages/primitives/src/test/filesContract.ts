@@ -120,7 +120,7 @@ export const setup = Effect.fn("test.filesContract.setup")(function* (
   return { databases, tables, handlers, binding, put, get, list, remove, readPointer };
 });
 
-const binaryBoundaryContract = Effect.fn("test.filesContract.binaryBoundary")(function* (
+export const binaryBoundaryContract = Effect.fn("test.filesContract.binaryBoundary")(function* (
   companyId: string
 ) {
   const { put, get, list } = yield* setup(companyId, "fileboundary");
@@ -993,8 +993,6 @@ export const contracts = {
     handlesContract,
   "rechecks source sharing and liveness for metadata and bytes, and recovers unchanged consumers":
     sharedStoreContract,
-  "round-trips 20 MiB as binary and refuses one more byte without replacing it":
-    binaryBoundaryContract,
   "refuses metadata pages above the runtime result byte cap": metadataCapContract,
   "retains the previous pointer and bytes after an object-store write failure":
     storageFailureContract,

@@ -183,64 +183,72 @@ test("public directory broker refuses outsiders without breaking public routes",
   }
 });
 
-test("public directory calls and subscriptions keep the served tier 2 gate", async ({
-  page,
-  context,
-  instance
-}) => {
-  await installSessionRefreshBoundary(context, () => instance.session(context));
-  const patch = await instance.publish("public", undefined, undefined, { uses });
-  const frame = await open(page, patch);
-  await frame.evaluate((wire) => {
-    (window as unknown as FixtureWindow).harness.raw({
-      v: wire,
-      id: "subscribe",
-      op: "subscriptions.subscribe",
-      args: {
-        id: "directory",
-        op: "members.list",
-        args: {}
-      }
-    });
-  }, instance.wire);
-  await expect
-    .poll(() =>
-      frame.evaluate(() =>
-        (window as unknown as FixtureWindow).harness.replies.some(
-          (reply) => reply.data?.type === "snapshot"
+test.describe("on a one-second reconcile tick", () => {
+  // The tick is a deployment operating limit (30 seconds by default); shortening it
+  // here keeps the subscription recheck inside expect's 15-second poll.
+  test.use({
+    serverEnvironment: {
+      PATCHY_LIMITS_JSON: JSON.stringify({ "subscriptions.reconcile.interval": 1_000 })
+    }
+  });
+
+  test("public directory calls and subscriptions keep the served tier 2 gate", async ({
+    page,
+    context,
+    instance
+  }) => {
+    await installSessionRefreshBoundary(context, () => instance.session(context));
+    const patch = await instance.publish("public", undefined, undefined, { uses });
+    const frame = await open(page, patch);
+    await frame.evaluate((wire) => {
+      (window as unknown as FixtureWindow).harness.raw({
+        v: wire,
+        id: "subscribe",
+        op: "subscriptions.subscribe",
+        args: {
+          id: "directory",
+          op: "members.list",
+          args: {}
+        }
+      });
+    }, instance.wire);
+    await expect
+      .poll(() =>
+        frame.evaluate(() =>
+          (window as unknown as FixtureWindow).harness.replies.some(
+            (reply) => reply.data?.type === "snapshot"
+          )
         )
       )
-    )
-    .toBe(true);
-  await instance.share(patch.patchId, "company");
-  const next = await instance.publish("company", undefined, patch.patchId, { uses });
-  await instance.platform.query(
-    "UPDATE patch_versions SET tier = 2, manifest = jsonb_set(manifest, '{tier}', '2') WHERE id = $1",
-    [next.versionId]
-  );
-  await instance.lifecycle(patch.patchId, "rollback", 2);
-  await frame.evaluate((wire) => {
-    (window as unknown as FixtureWindow).harness.raw({
-      v: wire,
-      id: "upgraded-call",
-      op: "members.list",
-      args: {}
-    });
-  }, instance.wire);
-  await expect
-    .poll(() =>
-      frame.evaluate(
-        () =>
-          (window as unknown as FixtureWindow).harness.replies.find(
-            (reply) => reply.id === "upgraded-call"
-          )?.error?.code
+      .toBe(true);
+    await instance.share(patch.patchId, "company");
+    const next = await instance.publish("company", undefined, patch.patchId, { uses });
+    await instance.platform.query(
+      "UPDATE patch_versions SET tier = 2, manifest = jsonb_set(manifest, '{tier}', '2') WHERE id = $1",
+      [next.versionId]
+    );
+    await instance.lifecycle(patch.patchId, "rollback", 2);
+    await frame.evaluate((wire) => {
+      (window as unknown as FixtureWindow).harness.raw({
+        v: wire,
+        id: "upgraded-call",
+        op: "members.list",
+        args: {}
+      });
+    }, instance.wire);
+    await expect
+      .poll(() =>
+        frame.evaluate(
+          () =>
+            (window as unknown as FixtureWindow).harness.replies.find(
+              (reply) => reply.id === "upgraded-call"
+            )?.error?.code
+        )
       )
-    )
-    .toBe("server_required");
-  // Existing directory subscriptions recheck authority on the 30-second reconcile tick.
-  await expect
-    .poll(
-      () =>
+      .toBe("server_required");
+    // Existing directory subscriptions recheck authority on the reconcile tick.
+    await expect
+      .poll(() =>
         frame.evaluate(() =>
           (window as unknown as FixtureWindow).harness.replies.some(
             (reply) =>
@@ -248,10 +256,10 @@ test("public directory calls and subscriptions keep the served tier 2 gate", asy
               reply.data.id === "directory" &&
               reply.data.error.code === "server_required"
           )
-        ),
-      { timeout: 45_000 }
-    )
-    .toBe(true);
+        )
+      )
+      .toBe(true);
+  });
 });
 
 test("public directory bootstrap refreshes an already-stale cookie before binding", async ({

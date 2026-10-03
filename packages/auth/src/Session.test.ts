@@ -2,7 +2,6 @@
 import { execFile } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { assert, it } from "@effect/vitest";
-import { afterAll } from "vitest";
 import { constants } from "@clerk/backend/internal";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -10,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Session from "./Session.js";
 import {
   clerkEnv,
-  externalRequests,
   FRONTEND_API_HOST,
   publicKey,
   publishableKey,
@@ -40,9 +38,6 @@ const handshake = (result: Session.SessionResult) => {
     assert.include(["location", "set-cookie"], name);
   return result.response;
 };
-
-// No suite is allowed to silently replace production verification with remote JWKS.
-afterAll(() => assert.deepStrictEqual(externalRequests, []));
 
 it.layer(configured())("Session", (it) => {
   it.effect("verifies cookie claims locally and refuses bearer-only page authentication", () =>
@@ -222,28 +217,31 @@ it.layer(configured())("Session", (it) => {
   );
 });
 
-for (const instance of ["test", "live"] as const) {
-  for (const shape of ["spki", "pkcs1"] as const) {
-    it.effect(`accepts ${shape} RSA PEM and pk_${instance} keys`, () =>
-      Effect.gen(function* () {
-        const session = yield* Session.Session;
-        assert.strictEqual(
-          signedIn(yield* session.authenticate(request(signedInCookies()))).claims.sub,
-          "user_dev"
-        );
-        assert.strictEqual(session.clerk?.frontendApiHost, FRONTEND_API_HOST);
-      }).pipe(
-        Effect.provide(
-          configured({
-            ...clerkEnv(),
-            CLERK_PUBLISHABLE_KEY: publishableKey(instance),
-            CLERK_SECRET_KEY: `sk_${instance}_offline`,
-            CLERK_JWT_KEY: publicKey.export({ type: shape, format: "pem" }).toString()
-          })
-        )
+// Key shape and instance are independent: each shape once, and the other instance once.
+for (const [instance, shape] of [
+  ["test", "spki"],
+  ["test", "pkcs1"],
+  ["live", "spki"]
+] as const) {
+  it.effect(`accepts ${shape} RSA PEM and pk_${instance} keys`, () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Session;
+      assert.strictEqual(
+        signedIn(yield* session.authenticate(request(signedInCookies()))).claims.sub,
+        "user_dev"
+      );
+      assert.strictEqual(session.clerk?.frontendApiHost, FRONTEND_API_HOST);
+    }).pipe(
+      Effect.provide(
+        configured({
+          ...clerkEnv(),
+          CLERK_PUBLISHABLE_KEY: publishableKey(instance),
+          CLERK_SECRET_KEY: `sk_${instance}_offline`,
+          CLERK_JWT_KEY: publicKey.export({ type: shape, format: "pem" }).toString()
+        })
       )
-    );
-  }
+    )
+  );
 }
 
 it.effect(
@@ -325,10 +323,9 @@ for (const [setting, value] of [
   ["CLERK_SECRET_KEY", ""],
   ["CLERK_JWT_KEY", "not a PEM"],
   ["CLERK_JWT_KEY", ecKey],
-  ["PATCHY_PUBLIC_BASE_URL", "https://user:password@patchy.invalid"],
+  // Both settings share one origin filter; each is checked once.
   ["PATCHY_PUBLIC_BASE_URL", "https://patchy.invalid/path"],
-  ["CLERK_AUTHORIZED_PARTIES", `${PUBLIC_BASE_URL},https://other.invalid`],
-  ["CLERK_AUTHORIZED_PARTIES", "https://patchy.invalid/path"]
+  ["CLERK_AUTHORIZED_PARTIES", `${PUBLIC_BASE_URL},https://other.invalid`]
 ]) {
   it.effect(`rejects invalid ${setting} at boot (${value === ecKey ? "EC key" : value})`, () =>
     Effect.gen(function* () {

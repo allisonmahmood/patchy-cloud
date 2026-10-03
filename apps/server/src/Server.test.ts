@@ -521,85 +521,46 @@ it.layer(
     })
   );
 
-  it.effect(
-    "conceals foreign patches and drives enrollment and deactivation responses by hand",
-    () =>
-      Effect.gen(function* () {
-        const created = yield* publish(DEV_SEED.token, { html: html("Restricted content") });
-        assert.strictEqual(created.status, 201);
-        const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
-        const addressPath = new URL(address).pathname;
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_socket_foreign', 'socket-foreign', 'Foreign')`;
-        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+  // What each refusal answers is serving's (Pages.test); this proves the composed
+  // server counts none of them as a visit and that HEAD follows GET admission.
+  it.effect("counts no visit for a refused page request, and HEAD follows GET admission", () =>
+    Effect.gen(function* () {
+      const created = yield* publish(DEV_SEED.token, { html: html("Restricted content") });
+      assert.strictEqual(created.status, 201);
+      const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
+      const addressPath = new URL(address).pathname;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_socket_foreign', 'socket-foreign', 'Foreign')`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
         VALUES ('usr_socket_foreign', 'user_socket_foreign', 'cmp_socket_foreign', 'foreign@example.com', 'Foreign', 'member'),
           ('usr_socket_inactive', 'user_socket_inactive', ${DEV_SEED.companyId}, 'inactive@example.com', 'Inactive', 'member')`;
-        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_socket_inactive'`;
-        const foreignCookie = sessionCookie("user_socket_foreign", "foreign@example.com");
-        const inactiveCookie = sessionCookie("user_socket_inactive", "inactive@example.com");
-        const unenrolledCookie = sessionCookie("user_socket_unenrolled", "unenrolled@example.com");
-        const [before] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
-        for (const suffix of ["", "/~v/1"]) {
-          const patchPath = `${addressPath}${suffix}`;
-          const missingPath = `/${DEV_SEED.companyHandle}/missing12345${suffix}`;
-          const foreign = yield* send(signedRequest(patchPath, foreignCookie));
-          const missing = yield* send(signedRequest(missingPath, foreignCookie));
-          assert.strictEqual(foreign.status, 404);
-          assert.strictEqual(missing.status, 404);
-          assert.strictEqual(foreign.headers["cache-control"], "private, no-store");
-          assert.strictEqual(yield* foreign.text, yield* missing.text);
-          assert.deepStrictEqual(
-            Object.fromEntries(Object.entries(foreign.headers).filter(([name]) => name !== "date")),
-            Object.fromEntries(Object.entries(missing.headers).filter(([name]) => name !== "date"))
-          );
-
-          const noSession = yield* send(HttpClientRequest.get(patchPath));
-          const missingNoSession = yield* send(HttpClientRequest.get(missingPath));
-          assert.strictEqual(missingNoSession.status, 404);
-          assert.strictEqual(noSession.status, 401);
-          assert.notInclude(yield* noSession.text, "Restricted content");
-          assert.notInclude(yield* missingNoSession.text, "Restricted content");
-
-          const unenrolled = yield* send(signedRequest(patchPath, unenrolledCookie));
-          assert.strictEqual(unenrolled.status, 303);
-          assert.strictEqual(unenrolled.headers["cache-control"], "private, no-store");
-          assert.strictEqual(
-            unenrolled.headers.location,
-            `/join?return=${encodeURIComponent(patchPath)}`
-          );
-          const join = yield* send(signedRequest(unenrolled.headers.location!, unenrolledCookie));
-          assert.strictEqual(join.status, 200);
-          assert.include(
-            yield* join.text,
-            `action="/join?return=${encodeURIComponent(patchPath)}"`
-          );
-
-          const deactivated = yield* send(signedRequest(patchPath, inactiveCookie));
-          assert.strictEqual(deactivated.status, 403);
-          assert.strictEqual(deactivated.headers["cache-control"], "private, no-store");
-          const deactivatedBody = yield* deactivated.text;
-          assert.include(deactivatedBody, 'action="/logout"');
-          assert.notInclude(deactivatedBody, "Restricted content");
-
-          const head = yield* send(
-            HttpClientRequest.head(patchPath).pipe(
-              HttpClientRequest.setHeader("cookie", foreignCookie)
-            )
-          );
-          assert.strictEqual(head.status, 404);
-          assert.strictEqual(head.headers["cache-control"], "private, no-store");
-          assert.strictEqual(yield* head.text, "");
-        }
-        const [after] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
-        assert.deepStrictEqual(after, before, "refused requests must not count as visits");
-        for (const path of ["/healthz", "/login", "/auth/session.js", "/not-a-route"]) {
-          const get = yield* send(HttpClientRequest.get(path));
-          const head = yield* send(HttpClientRequest.head(path));
-          assert.strictEqual(head.status, get.status, `HEAD ${path} follows GET admission`);
-          assert.strictEqual(head.headers["content-type"], get.headers["content-type"]);
-          assert.strictEqual(yield* head.text, "");
-        }
-      })
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_socket_inactive'`;
+      const foreignCookie = sessionCookie("user_socket_foreign", "foreign@example.com");
+      const inactiveCookie = sessionCookie("user_socket_inactive", "inactive@example.com");
+      const unenrolledCookie = sessionCookie("user_socket_unenrolled", "unenrolled@example.com");
+      const [before] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
+      for (const path of [addressPath, `${addressPath}/~v/1`]) {
+        assert.strictEqual((yield* send(signedRequest(path, foreignCookie))).status, 404);
+        const head = yield* send(
+          HttpClientRequest.head(path).pipe(HttpClientRequest.setHeader("cookie", foreignCookie))
+        );
+        assert.strictEqual(head.status, 404);
+        assert.strictEqual(head.headers["cache-control"], "private, no-store");
+        assert.strictEqual(yield* head.text, "");
+        assert.strictEqual((yield* send(HttpClientRequest.get(path))).status, 401);
+        assert.strictEqual((yield* send(signedRequest(path, unenrolledCookie))).status, 303);
+        assert.strictEqual((yield* send(signedRequest(path, inactiveCookie))).status, 403);
+      }
+      const [after] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
+      assert.deepStrictEqual(after, before, "refused requests must not count as visits");
+      for (const path of ["/healthz", "/login", "/auth/session.js", "/not-a-route"]) {
+        const get = yield* send(HttpClientRequest.get(path));
+        const head = yield* send(HttpClientRequest.head(path));
+        assert.strictEqual(head.status, get.status, `HEAD ${path} follows GET admission`);
+        assert.strictEqual(head.headers["content-type"], get.headers["content-type"]);
+        assert.strictEqual(yield* head.text, "");
+      }
+    })
   );
 });
 

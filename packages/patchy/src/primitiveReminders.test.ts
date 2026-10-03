@@ -7,52 +7,63 @@ import * as Path from "effect/Path";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 
-it.effect("ignores explicit default flags but notices a newly unique index", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped();
-    const generated = path.join(root, "patchy/_generated");
-    yield* fs.makeDirectory(generated, { recursive: true });
-    const before: typeof Manifest.Type = {
-      manifestVersion: MANIFEST_VERSION,
-      release: RELEASE,
-      tier: 1,
-      tables: {
-        notes: {
-          description: "Notes keyed by title.",
-          columns: { title: { kind: "text" } },
-          indexes: { byTitle: { columns: ["title"] } }
+it.effect(
+  "ignores explicit defaults and redescribed definitions but notices a newly unique index",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const generated = path.join(root, "patchy/_generated");
+      yield* fs.makeDirectory(generated, { recursive: true });
+      const before: typeof Manifest.Type = {
+        manifestVersion: MANIFEST_VERSION,
+        release: RELEASE,
+        tier: 1,
+        tables: {
+          notes: {
+            description: "Notes keyed by title.",
+            columns: { title: { kind: "text" } },
+            indexes: { byTitle: { columns: ["title"] } }
+          }
+        },
+        files: { documents: { description: "Documents by filename." } },
+        uses: {}
+      };
+      yield* fs.writeFileString(path.join(generated, "manifest.json"), JSON.stringify(before));
+      const explicit: typeof Manifest.Type = {
+        ...before,
+        files: { documents: { description: "Documents by filename.", shared: false } },
+        tables: {
+          notes: {
+            description: "Notes keyed by title.",
+            columns: { title: { kind: "text", optional: false } },
+            indexes: { byTitle: { columns: ["title"], unique: false } },
+            shared: false
+          }
         }
-      },
-      files: { documents: { description: "Documents by filename." } },
-      uses: {}
-    };
-    yield* fs.writeFileString(path.join(generated, "manifest.json"), JSON.stringify(before));
-    const explicit: typeof Manifest.Type = {
-      ...before,
-      files: { documents: { description: "Documents by filename.", shared: false } },
-      tables: {
-        notes: {
-          description: "Notes keyed by title.",
-          columns: { title: { kind: "text", optional: false } },
-          indexes: { byTitle: { columns: ["title"], unique: false } },
-          shared: false
+      };
+      assert.deepStrictEqual(yield* primitiveReminders(root, explicit), []);
+      const changed: typeof Manifest.Type = {
+        ...explicit,
+        tables: {
+          notes: {
+            ...explicit.tables.notes!,
+            indexes: { byTitle: { columns: ["title"], unique: true } }
+          }
         }
-      }
-    };
-    assert.deepStrictEqual(yield* primitiveReminders(root, explicit), []);
-    const changed: typeof Manifest.Type = {
-      ...explicit,
-      tables: {
-        notes: {
-          ...explicit.tables.notes!,
-          indexes: { byTitle: { columns: ["title"], unique: true } }
-        }
-      }
-    };
-    assert.deepStrictEqual(yield* primitiveReminders(root, changed), [
-      "Table `notes` changed since its last generation; check that its description still holds: 'Notes keyed by title.'"
-    ]);
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped)
+      };
+      assert.deepStrictEqual(yield* primitiveReminders(root, changed), [
+        "Table `notes` changed since its last generation; check that its description still holds: 'Notes keyed by title.'"
+      ]);
+      // A definition whose description changed too was already reconsidered by its author.
+      const described: typeof Manifest.Type = {
+        ...changed,
+        tables: {
+          notes: { ...changed.tables.notes!, description: "Notes keyed by a unique title." }
+        },
+        files: { documents: { description: "Signed documents by filename.", shared: true } }
+      };
+      assert.deepStrictEqual(yield* primitiveReminders(root, described), []);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped)
 );

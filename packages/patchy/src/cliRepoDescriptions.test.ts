@@ -1,69 +1,32 @@
-// Repo descriptions, change notices and tier 2 module discovery.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+// Repo descriptions and change notices through the bundled CLI.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 import { sha256 } from "@patchy/core";
 import { PublishRequest } from "@patchy/api";
-import { workerdVersion } from "@patchy/api/guest";
 import {
   decodeForceRequest,
-  decodeGenerateRequest,
   pendingFile,
-  projectConfig,
   projectHandler,
   projectSource,
-  projectTree,
   publish,
   publishTree,
   readJson,
   runCli,
-  stubInstance,
-  tarballPath
+  stubInstance
 } from "./test/cli.js";
 
-describe("tier 2 refresh module discovery", () => {
-  it("discovers source filenames without evaluating server code or requiring descriptors", async () => {
-    const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url, projectConfig.replace("tier: 1", "tier: 2"));
-    writeFileSync(
-      path.join(dir, "package.json"),
-      JSON.stringify({
-        name: "cli-project",
-        private: true,
-        type: "module",
-        devDependencies: { patchy: `${instance.url}${tarballPath}`, workerd: workerdVersion }
-      })
-    );
-    mkdirSync(path.join(dir, "server"));
-    writeFileSync(path.join(dir, "server/leads.ts"), 'throw new Error("must not run");');
-    writeFileSync(path.join(dir, "server/import-rows.ts"), "incomplete TypeScript {");
-    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
-    const result = await runCli(["refresh", "--json"], options);
-    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
-    const request = instance.requests.find((request) => request.url === "/api/sdk/generate")!;
-    expect(decodeGenerateRequest(request.body).serverModules).toEqual(["import-rows", "leads"]);
-    expect(decodeGenerateRequest(request.body).manifest.handlers).toBeUndefined();
-
-    renameSync(path.join(dir, "server/leads.ts"), path.join(dir, "server/contacts.ts"));
-    const refreshed = await runCli(["refresh", "--json"], options);
-    expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
-    const current = instance.requests
-      .filter((request) => request.url === "/api/sdk/generate")
-      .at(-1)!;
-    expect(decodeGenerateRequest(current.body).serverModules).toEqual(["contacts", "import-rows"]);
-  });
-});
-
 describe("repo description sync and change notices", () => {
-  it("pulls only newer cloud descriptions on refresh, then publishes the pulled text and records its stamp", async () => {
-    let cloud = {
-      description: "Portal description",
-      descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
-    };
+  // Project.test.ts owns which stamps pull; this proves publish sends and records the pulled text.
+  it("publishes a newer cloud description over local text and records the returned stamp", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/patches/abcdefghijkl?state=all")
-        return respond(200, { ...projectSource, ...cloud });
+        return respond(200, {
+          ...projectSource,
+          description: "New portal text",
+          descriptionUpdatedAt: "2026-09-16T00:00:00.000Z"
+        });
       if (request.url === "/api/publish") {
         const sent = Schema.decodeUnknownSync(PublishRequest)(request.body);
         return respond(200, {
@@ -76,46 +39,19 @@ describe("repo description sync and change notices", () => {
       projectHandler(request, respond, disconnect);
     });
     const dir = publishTree(instance.url);
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
     const repoFile = path.join(dir, "patchy.json");
     writeFileSync(
       repoFile,
       JSON.stringify({
         instance: instance.url,
         patch: "abcdefghijkl",
-        description: "Replaced local text",
-        descriptionSyncedAt: "2026-09-14T00:00:00.000Z",
-        authorField: 7
-      })
-    );
-    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
-    const refreshed = await runCli(["refresh"], options);
-    expect(refreshed.status, refreshed.stderr).toBe(0);
-    expect(refreshed.stdout).toContain(
-      "The description was changed in the portal to 'Portal description'; check it"
-    );
-    expect(refreshed.stdout).toContain("Replaced local text");
-    expect(readJson(repoFile)).toEqual({
-      instance: instance.url,
-      patch: "abcdefghijkl",
-      description: cloud.description,
-      descriptionSyncedAt: cloud.descriptionUpdatedAt,
-      authorField: 7
-    });
-    writeFileSync(
-      repoFile,
-      JSON.stringify({
-        instance: instance.url,
-        patch: "abcdefghijkl",
         description: "Local edit",
-        descriptionSyncedAt: cloud.descriptionUpdatedAt,
+        descriptionSyncedAt: "2026-09-15T00:00:00.000Z",
         authorField: 7
       })
     );
-    const local = await runCli(["refresh", "--json"], options);
-    expect(local).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(local.stdout).warnings).toEqual([]);
-    expect(readJson(repoFile)).toMatchObject({ description: "Local edit" });
-    cloud = { description: "New portal text", descriptionUpdatedAt: "2026-09-16T00:00:00.000Z" };
     const published = await runCli(["publish", "--force", "--json"], options);
     expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(published.stdout)).toMatchObject({
@@ -134,12 +70,9 @@ describe("repo description sync and change notices", () => {
     });
   });
 
-  it("carries definition-only reminders through refresh and publish without blocking either command", async () => {
-    const instance = await stubInstance((request, respond, disconnect) => {
-      if (request.url === "/api/publish")
-        return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 1 });
-      projectHandler(request, respond, disconnect);
-    });
+  // primitiveReminders.test.ts owns the comparison; publish carries reminders in the tests below.
+  it("carries definition-only reminders through refresh without blocking it", async () => {
+    const instance = await stubInstance(projectHandler);
     const dir = publishTree(instance.url);
     const config = path.join(dir, "patchy.config.ts");
     const original = readFileSync(config, "utf8");
@@ -149,18 +82,6 @@ describe("repo description sync and change notices", () => {
       config,
       original.replace("title: t.text()", "title: t.text(), extra: t.text().optional()")
     );
-    const published = await runCli(["publish", "--json"], options);
-    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(published.stdout).warnings).toContainEqual(
-      expect.stringContaining("Table `notes` changed since its last generation")
-    );
-    writeFileSync(
-      config,
-      original.replace(
-        "title: t.text()",
-        "title: t.text(), extra: t.text().optional(), other: t.text().optional()"
-      )
-    );
     const refreshed = await runCli(["refresh", "--json"], options);
     expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(refreshed.stdout).warnings).toContainEqual(
@@ -168,18 +89,6 @@ describe("repo description sync and change notices", () => {
     );
     const unchanged = await runCli(["refresh", "--json"], options);
     expect(JSON.parse(unchanged.stdout).warnings).toEqual([]);
-    writeFileSync(
-      config,
-      original
-        .replace(
-          "title: t.text()",
-          "title: t.text(), extra: t.text().optional(), other: t.text().optional(), another: t.text().optional()"
-        )
-        .replace("One note", "A revised note")
-    );
-    const described = await runCli(["refresh", "--json"], options);
-    expect(described.status, described.stderr).toBe(0);
-    expect(JSON.parse(described.stdout).warnings).toEqual([]);
   });
 
   it("recovers a lost repo publish response with the original primitive reminder", async () => {
@@ -227,14 +136,8 @@ describe("repo description sync and change notices", () => {
     expect(existsSync(attemptPath)).toBe(false);
   });
 
-  it.each([
-    ["src/main.ts", "const title: string = 42;", "Typecheck"],
-    [
-      "vite.config.ts",
-      'throw new Error("synthetic build failure"); export default {};',
-      "Vite build"
-    ]
-  ])("reports discovered notices when %s fails before sending", async (file, source, stage) => {
+  // Notices survive any later local failure; a typecheck failure stands for every stage.
+  it("reports discovered notices when the typecheck fails before sending", async () => {
     let cloud = { description: "Synthetic notes", descriptionUpdatedAt: null as string | null };
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/patches/abcdefghijkl?state=all")
@@ -265,13 +168,13 @@ describe("repo description sync and change notices", () => {
         "title: t.text(), extra: t.text().optional()"
       )
     );
-    writeFileSync(path.join(dir, file), source);
+    writeFileSync(path.join(dir, "src/main.ts"), "const title: string = 42;");
     const failed = await runCli(["publish", "--json"], options);
     expect(failed).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(failed.stderr)).toMatchObject({
       ok: false,
       kind: "local",
-      error: expect.stringContaining(stage),
+      error: expect.stringContaining("Typecheck"),
       warnings: [
         expect.stringContaining("Changed portal description"),
         expect.stringContaining("Table `notes` changed since its last generation")

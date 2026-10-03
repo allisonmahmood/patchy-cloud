@@ -32,7 +32,8 @@ const options = {
 const invocation = (
   loaded: Executor.BoundVersion,
   handler: string,
-  attemptId: string
+  attemptId: string,
+  deadlineMs = 30_000
 ): GuestProtocol.Invoke => {
   if (loaded.processGeneration === undefined)
     throw new Error("Local binding omitted its process generation.");
@@ -42,7 +43,7 @@ const invocation = (
     processGeneration: loaded.processGeneration,
     invocationId: `inv_${attemptId}`,
     attemptId,
-    deadline: Date.now() + 30_000,
+    deadline: Date.now() + deadlineMs,
     handler,
     args: {},
     viewer: {
@@ -109,7 +110,7 @@ it.live(
 );
 
 it.live(
-  "recovers a health-killed local generation only on a fresh host bind, without replay",
+  "recovers a watchdog-killed local generation only on a fresh host bind, without replay",
   () =>
     Effect.gen(function* () {
       const local = yield* Local.make(options);
@@ -119,12 +120,11 @@ it.live(
         reply: { ok: true, value: 1 }
       });
       expect(yield* local.bind(bundle)).toEqual(first);
-      const started = Date.now();
+      // A short deadline takes the deadline kill; Supervisor.test.ts owns the six-second stall.
       const killed = yield* local
-        .invoke(invocation(first, "demo.spin", "spin"))
+        .invoke(invocation(first, "demo.spin", "spin", 250))
         .pipe(Effect.result);
       expect(killed).toMatchObject({ _tag: "Failure", failure: { reason: "process_killed" } });
-      expect(Date.now() - started).toBeLessThan(15_000);
       expect(
         yield* local.invoke(invocation(first, "demo.read", "missing")).pipe(Effect.result)
       ).toMatchObject({

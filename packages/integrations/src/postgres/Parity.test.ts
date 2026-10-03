@@ -15,8 +15,6 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Pg from "pg";
-import { inject } from "vitest";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Dev from "./Dev.js";
@@ -25,6 +23,7 @@ import { generate } from "./Generate.js";
 import * as Operations from "./Operations.js";
 import * as Source from "./Source.js";
 import * as SourceClient from "./SourceClient.js";
+import { nativeExecution } from "../test/nativeExecution.js";
 
 const declaration = {
   kind: "postgres" as const,
@@ -140,41 +139,6 @@ const discover = Effect.gen(function* () {
           )
       })
     )
-  );
-});
-
-// Replace only transport acquisition with this isolated cluster, not native execution policy.
-const nativeExecution = Effect.fn("test.parity.nativeExecution")(function* (
-  store: ConnectionStore.ConnectionStore["Service"]
-) {
-  const sql = yield* SqlClient.SqlClient;
-  const databases = yield* sql<{ database: string }>`SELECT current_database() AS database`;
-  const url = new URL(inject("postgres").adminUrl);
-  url.pathname = `/${databases[0]!.database}`;
-  return yield* Execution.makeWithClient(
-    Effect.fn("test.parity.openNative")(function* () {
-      const client = yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const client = new Pg.Client({ connectionString: url.toString() });
-          client.on("error", () => Execution.destroy(client));
-          return client;
-        }),
-        (client) => Effect.sync(() => Execution.destroy(client))
-      );
-      yield* Effect.tryPromise({
-        try: () => client.connect(),
-        catch: (cause) =>
-          new SourceClient.SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) })
-      });
-      return client;
-    }),
-    (_settings, client) => Effect.sync(() => Execution.destroy(client))
-  ).pipe(
-    Effect.provideService(ConnectionStore.ConnectionStore, {
-      ...store,
-      poolCredentials: () =>
-        Effect.succeed(Redacted.make("postgres://reader:secret@fixture.example/fixture"))
-    })
   );
 });
 

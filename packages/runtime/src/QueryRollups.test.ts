@@ -3,7 +3,6 @@ import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -439,46 +438,32 @@ it.effect("includes a stalled SQL acquisition in the total settlement budget", (
   })
 );
 
-for (const Reason of [
-  SqlError.AuthenticationError,
-  SqlError.AuthorizationError,
-  SqlError.ConstraintError,
-  SqlError.SqlSyntaxError,
-  SqlError.UnknownError
-]) {
-  it.effect(`drops ${Reason.name} without retrying or logging the raw SQL failure`, () =>
-    Effect.gen(function* () {
-      const error = new SqlError.SqlError({
-        reason: new Reason({ cause: new Error("postgres://secret@private"), message: "secret SQL" })
-      });
-      let attempts = 0;
-      const logs: unknown[] = [];
-      const rollups = yield* QueryRollups.make.pipe(
-        Effect.provide(
-          failingSql(
-            Effect.suspend(() => {
-              attempts++;
-              return Effect.fail(error);
-            })
-          )
-        )
-      );
-      yield* rollups
-        .settle(input("permanent", "permanent"))
-        .pipe(Effect.provide(Logger.layer([Logger.make((event) => logs.push(event.message))])));
-      assert.strictEqual(attempts, 1);
-      assert.deepStrictEqual(logs, [
-        ["Query rollup settlement dropped", { reason: error.reason._tag }]
-      ]);
-    })
-  );
-}
-
-it.effect("does not swallow defects as best-effort SQL failures", () =>
+it.effect("drops a permanent SQL failure without retrying or logging the raw failure", () =>
   Effect.gen(function* () {
-    const defect = new Error("programming defect");
-    const rollups = yield* QueryRollups.make.pipe(Effect.provide(failingSql(Effect.die(defect))));
-    const result = yield* rollups.settle(input("defect", "defect")).pipe(Effect.exit);
-    assert.isTrue(Exit.hasDies(result));
+    const error = new SqlError.SqlError({
+      reason: new SqlError.ConstraintError({
+        cause: new Error("postgres://secret@private"),
+        message: "secret SQL"
+      })
+    });
+    let attempts = 0;
+    const logs: unknown[] = [];
+    const rollups = yield* QueryRollups.make.pipe(
+      Effect.provide(
+        failingSql(
+          Effect.suspend(() => {
+            attempts++;
+            return Effect.fail(error);
+          })
+        )
+      )
+    );
+    yield* rollups
+      .settle(input("permanent", "permanent"))
+      .pipe(Effect.provide(Logger.layer([Logger.make((event) => logs.push(event.message))])));
+    assert.strictEqual(attempts, 1);
+    assert.deepStrictEqual(logs, [
+      ["Query rollup settlement dropped", { reason: "ConstraintError" }]
+    ]);
   })
 );

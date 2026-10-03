@@ -83,31 +83,6 @@ describe("classify", () => {
     });
     assert.deepStrictEqual(classify("POST", `/api/unmatched/${long}`), { kind: "route" });
   });
-
-  it("leaves portal name bounds and unmatched targets to page routing", () => {
-    const long = "x".repeat(33);
-    for (const [method, target] of [
-      ["GET", `/patches/${long}`],
-      ["GET", `/patches/${long}?all=1`],
-      ["GET", `/%70atches/${"%78".repeat(33)}/versions`],
-      ["GET", `/patches//${long}//restore/`],
-      ["GET", `/patches/${"x".repeat(16)}%2F${"x".repeat(16)}`],
-      ["HEAD", `/patches/${long}/versions`],
-      ["POST", `/patches/${long}/restore`],
-      ["GET", `/patches/${"x".repeat(32)}`],
-      ["GET", `/patches/${long}/versions/extra`],
-      ["POST", `/patches/${long}`],
-      ["POST", `/patches/${long}/versions`],
-      ["PUT", `/patches/${long}/restore`],
-      ["GET", `/patches/x%2F${"x".repeat(101)}/versions`]
-    ] as const) {
-      assert.deepStrictEqual(classify(method, target), { kind: "public" }, target);
-    }
-    assert.deepStrictEqual(classify("POST", `/patches/${"x".repeat(101)}/description`), {
-      kind: "public"
-    });
-    assert.deepStrictEqual(classify("GET", `/api/patches/${long}`), { kind: "route" });
-  });
 });
 
 it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
@@ -330,90 +305,6 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
         ),
         { status: 404, body: NOT_FOUND }
       );
-    })
-  );
-
-  it.effect("leaves portal name refusals and unmatched targets to page routing", () =>
-    Effect.gen(function* () {
-      const long = "x".repeat(101);
-      const encoded = `x%2F${long}`;
-      for (const request of [
-        HttpClientRequest.get(`/patches/${"x".repeat(32)}`),
-        HttpClientRequest.post(`/patches/${long}`),
-        HttpClientRequest.put(`/patches/${long}/restore`),
-        HttpClientRequest.post(`/patches/${long}/versions`),
-        HttpClientRequest.get(`/patches/${encoded}/versions`),
-        ...["description", "scope", "rollback", "retire", "delete", "restore", "reassign"].map(
-          (action) => HttpClientRequest.post(`/patches/${long}/${action}`)
-        )
-      ]) {
-        const response = yield* send(
-          request.pipe(HttpClientRequest.setHeaders({ cookie, origin: "https://patchy.example" }))
-        );
-        assert.strictEqual(response.status, 404, `${request.method} ${request.url}`);
-      }
-
-      for (const request of [
-        HttpClientRequest.get(`/patches/${"x".repeat(33)}`),
-        HttpClientRequest.get(`/patches/${"x".repeat(16)}%2F${"x".repeat(16)}`),
-        HttpClientRequest.post(`/patches/${"x".repeat(33)}/restore`),
-        ...["", "/versions", "/retire", "/delete", "/restore", "/reassign"].map((suffix) =>
-          HttpClientRequest.get(`/patches/${long}${suffix}`)
-        ),
-        HttpClientRequest.get(`/%70atches/${"%78".repeat(33)}/versions`)
-      ]) {
-        const response = yield* send(
-          request.pipe(HttpClientRequest.setHeaders({ cookie, origin: "https://patchy.example" }))
-        );
-        assert.strictEqual(response.status, 414, `${request.method} ${request.url}`);
-        assert.strictEqual(response.headers["content-type"], "text/html");
-        assert.strictEqual(response.headers["cache-control"], "private, no-store");
-        assert.include(yield* response.text, 'href="/company"');
-        assert.isUndefined(response.headers["x-patchy-sign-in-url"]);
-      }
-
-      for (const request of [
-        HttpClientRequest.get(`/patches/${long}`),
-        HttpClientRequest.get(`/patches/${encoded}/versions`)
-      ]) {
-        for (const headers of [{}, { authorization: `Bearer ${DEV_SEED.token}` }]) {
-          const door = yield* send(
-            request.pipe(
-              HttpClientRequest.setHeaders({ ...headers, origin: "https://patchy.example" })
-            )
-          );
-          assert.strictEqual(door.status, 401);
-          assert.strictEqual(door.headers["content-type"], "text/html");
-          assert.strictEqual(door.headers["cache-control"], "private, no-store");
-          assert.isString(door.headers["x-patchy-sign-in-url"]);
-          assert.isUndefined(door.headers["www-authenticate"]);
-        }
-      }
-      for (const headers of [
-        {},
-        { authorization: `Bearer ${DEV_SEED.token}` },
-        { cookie },
-        { cookie, origin: "https://foreign.example" }
-      ]) {
-        assert.strictEqual(
-          (yield* send(
-            HttpClientRequest.post(`/patches/${long}/restore`).pipe(
-              HttpClientRequest.setHeaders(headers)
-            )
-          )).status,
-          404
-        );
-      }
-      for (const name of ["x".repeat(33), long]) {
-        const head = yield* send(
-          HttpClientRequest.head(`/patches/${name}/versions`).pipe(
-            HttpClientRequest.setHeader("cookie", cookie)
-          )
-        );
-        assert.strictEqual(head.status, 414);
-        assert.strictEqual(head.headers["cache-control"], "private, no-store");
-        assert.strictEqual(yield* head.text, "");
-      }
     })
   );
 

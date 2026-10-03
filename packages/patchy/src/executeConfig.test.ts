@@ -230,10 +230,7 @@ describe("executeConfig", () => {
   it.each([
     'tables: { notes: table("", { title: t.text() }) }',
     'files: { attachments: files(" \\t\\n") }',
-    "tables: { notes: { columns: {}, indexes: {} } }",
-    "files: { attachments: {} }",
-    'tables: { notes: { description: " \\t\\n", columns: {}, indexes: {} } }',
-    'files: { attachments: { description: "" } }'
+    "tables: { notes: { columns: {}, indexes: {} } }"
   ])("refuses missing or blank descriptions during config execution: %s", async (definition) => {
     const path = await fixture(
       `export default defineConfig({ name: "invalid-description", tier: 1, ${definition} });`
@@ -253,7 +250,12 @@ describe("executeConfig", () => {
       const result = resolve
         ? executeConfig(path)
         : ConfigExecution.executeConfig(path, { resolve: false });
-      await expect(result).rejects.toThrow(/(?=.*table)(?=.*file)(?=.*notes)/i);
+      // Refresh and publish report this through configFailure, naming both primitives.
+      const failure = await result.then(() => undefined, ConfigExecution.configFailure);
+      expect(failure).toMatchObject({
+        code: "invalid_manifest",
+        message: expect.stringMatching(/(?=.*table)(?=.*file)(?=.*notes)/i)
+      });
     }
   );
 

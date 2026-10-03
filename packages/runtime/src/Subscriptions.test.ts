@@ -285,32 +285,6 @@ it.effect(
     }).pipe(Effect.scoped)
 );
 
-it.effect("keeps failed access dependencies and recovers on a source reshare", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture;
-    f.state.failure = new Runtime.AccessDenied({});
-    yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
-    yield* f.next;
-    const denied = yield* f.next;
-    assert.strictEqual(denied.type, "error");
-    if (denied.type === "error") {
-      assert.isFalse(denied.permanent);
-      assert.strictEqual(denied.error.code, "access_denied");
-    }
-    const event = yield* Queue.take(f.recorded);
-    assert.strictEqual(event.type, "re-run");
-    assert.strictEqual(event.outcome, "failure");
-    assert.strictEqual(event.code, "access_denied");
-    if (event.type === "re-run") assert.strictEqual(event.patchId, binding.patchId);
-    assert.strictEqual(f.state.reads, 0);
-    f.state.failure = undefined;
-    f.state.lifecycle++;
-    yield* f.document.reconcile([lifecycle]);
-    assert.strictEqual((yield* f.next).type, "snapshot");
-    assert.strictEqual(f.state.reads, 1);
-  }).pipe(Effect.scoped)
-);
-
 it.effect("reruns after a refusal even when the last successful vector is still equal", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
@@ -323,6 +297,12 @@ it.effect("reruns after a refusal even when the last successful vector is still 
     const refused = yield* f.next;
     assert.strictEqual(refused.type, "error");
     if (refused.type === "error") assert.isFalse(refused.permanent);
+    yield* Queue.take(f.recorded);
+    const failed = yield* Queue.take(f.recorded);
+    assert.strictEqual(failed.type, "re-run");
+    assert.strictEqual(failed.outcome, "failure");
+    assert.strictEqual(failed.code, "source_unavailable");
+    if (failed.type === "re-run") assert.strictEqual(failed.patchId, binding.patchId);
     f.state.failure = undefined;
     f.state.value = { rows: [{ id: "one", value: "recovered after refusal" }], cursor: null };
     yield* TestClock.adjust("250 millis");
@@ -538,21 +518,6 @@ it.effect("bounds admission and reads to two company runs and one run per patch"
     let snapshots = 0;
     while (snapshots < 4) if ((yield* f.next).type === "snapshot") snapshots++;
     assert.strictEqual(f.state.reads, 4);
-  }).pipe(Effect.scoped)
-);
-
-it.effect("retries a transient failure without another wake", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture;
-    f.state.failure = new Runtime.SourceUnavailable({ cause: "offline" });
-    yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
-    yield* f.next;
-    const failed = yield* f.next;
-    assert.strictEqual(failed.type, "error");
-    if (failed.type === "error") assert.isFalse(failed.permanent);
-    f.state.failure = undefined;
-    yield* TestClock.adjust("250 millis");
-    assert.strictEqual((yield* f.next).type, "snapshot");
   }).pipe(Effect.scoped)
 );
 

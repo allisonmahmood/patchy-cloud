@@ -184,6 +184,31 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
       }),
     { timeout: 30_000 }
   );
+  it.effect(
+    "reminds about a primitive whose definition changed under the same description",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, prepare } = yield* harness({ index: currentIndex });
+        yield* fs.makeDirectory(path.join(root, "patchy/_generated"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "patchy/_generated/manifest.json"),
+          JSON.stringify({
+            manifestVersion: MANIFEST_VERSION,
+            release: RELEASE,
+            tier: 1,
+            tables: { notes: { description: "Notes identified by id.", columns: {}, indexes: {} } },
+            files: {},
+            uses: {}
+          })
+        );
+        assert.deepStrictEqual((yield* prepare).warnings, [
+          "Table `notes` changed since its last generation; check that its description still holds: 'Notes identified by id.'"
+        ]);
+      }),
+    { timeout: 30_000 }
+  );
   it.effect("prepares members without requiring a fixture or declaration snapshot", () =>
     Effect.gen(function* () {
       const { prepare } = yield* harness({

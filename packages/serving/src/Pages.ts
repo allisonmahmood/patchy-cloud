@@ -286,7 +286,6 @@ const otherPages = HttpRouter.use((router) =>
       })
     );
     yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
-    yield* router.add("*", "/d/*", notFound);
     yield* router.add("*", "/~content/*", notFound);
   })
 );

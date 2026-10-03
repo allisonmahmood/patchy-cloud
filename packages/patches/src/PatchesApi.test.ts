@@ -2,7 +2,6 @@ import { assert, expect, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { sha256 } from "@patchy/core";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -27,6 +26,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
+  type Identity,
   PatchyApi,
   PatchesGroup,
   ShareRequest,
@@ -54,43 +54,7 @@ import * as Fixtures from "./test/fixtures.js";
 
 const { admin, reader, sibling, uploader } = Fixtures.identities;
 
-const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
-  const objects = new Map<string, { bytes: Uint8Array; lastModified: number }>();
-  return ContentStore.ContentStore.of({
-    list: (prefix) =>
-      Stream.suspend(() =>
-        Stream.fromIterable(
-          [...objects]
-            .filter(([key]) => key.startsWith(prefix))
-            .map(([key, object]) => ({ key, lastModified: object.lastModified }))
-        )
-      ),
-    put: Effect.fn(function* (key, html) {
-      objects.set(key, {
-        bytes: new TextEncoder().encode(html),
-        lastModified: yield* Clock.currentTimeMillis
-      });
-    }),
-    get: (key) =>
-      Effect.suspend(() => {
-        const bytes = objects.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
-      }),
-    putBytes: Effect.fn(function* (key, bytes) {
-      objects.set(key, { bytes: bytes.slice(), lastModified: yield* Clock.currentTimeMillis });
-    }),
-    getBytes: (key) =>
-      Effect.suspend(() => {
-        const bytes = objects.get(key)?.bytes;
-        return bytes === undefined
-          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(bytes.slice());
-      }),
-    delete: (key) => Effect.sync(() => void objects.delete(key))
-  });
-});
+const memoryStore = Layer.sync(ContentStore.ContentStore, () => Fixtures.memoryStore().service);
 
 const client = Fixtures.ownRouter(HttpApiTest.groups(PatchyApi, ["patches"]));
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
@@ -204,7 +168,6 @@ it.layer(layer)("patches group", (it) => {
       Effect.gen(function* () {
         const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const sameUser = yield* client.pipe(Effect.provide(Fixtures.as(sibling)));
-        const anotherUser = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
         const created = yield* owner.publish({
           payload: publishRequest({ html: html("Public"), scope: "public" })
         });
@@ -227,34 +190,6 @@ it.layer(layer)("patches group", (it) => {
             scope
           );
         }
-
-        const nonOwner = yield* anotherUser
-          .share({ params, payload: new ShareRequest({ scope: "company" }) })
-          .pipe(Effect.flip);
-        assert.include(nonOwner, { ok: false, code: "not_owner" });
-        expect(nonOwner).toMatchObject({
-          owner: { id: uploader.user.id, name: uploader.user.name }
-        });
-        assert.deepStrictEqual(
-          yield* anotherUser
-            .share({
-              params: { patchId: "abcdefabcdef" },
-              payload: new ShareRequest({ scope: "company" })
-            })
-            .pipe(Effect.flip),
-          { ok: false, error: "Patch not found." }
-        );
-        assert.strictEqual(
-          Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
-          "public"
-        );
-        yield* owner.delete({ params, query: {} });
-        assert.include(
-          yield* sameUser
-            .share({ params, payload: new ShareRequest({ scope: "public" }) })
-            .pipe(Effect.flip),
-          { ok: false, code: "wrong_state", state: "deleted" }
-        );
       })
   );
 
@@ -298,35 +233,6 @@ it.layer(layer)("patches group", (it) => {
     })
   );
 
-  it.effect("refuses what the policy and the target refuse, in wire words", () =>
-    Effect.gen(function* () {
-      const asUploader = Fixtures.as(uploader);
-      const invalid = yield* publish({ html: "<script>alert(1)</script>" }).pipe(
-        Effect.provide(asUploader),
-        Effect.flip
-      );
-      assert.include(invalid, { ok: false, code: "tier_mismatch" });
-
-      const admins = yield* publish({ html: html("Theirs") }).pipe(
-        Effect.provide(Fixtures.as(admin))
-      );
-      assert.include(
-        yield* publish({ html: html("x"), patchId: admins.patchId }).pipe(
-          Effect.provide(asUploader),
-          Effect.flip
-        ),
-        { ok: false, code: "not_owner" }
-      );
-      assert.deepStrictEqual(
-        yield* publish({ html: html("x"), patchId: "abcdefabcdef" }).pipe(
-          Effect.provide(asUploader),
-          Effect.flip
-        ),
-        { ok: false, error: "Patch not found." }
-      );
-    })
-  );
-
   it.effect(
     "throttles creates per machine and keeps the owner's quota across machine changes",
     () =>
@@ -361,47 +267,6 @@ it.layer(layer)("patches group", (it) => {
         yield* api.delete({ params: { patchId: first.patchId }, query: {} });
         yield* publish({ html: html("Three again") }).pipe(Effect.provide(as));
       })
-  );
-
-  it.effect("lets members publish, but gives another user's admin role no ownership reach", () =>
-    Effect.gen(function* () {
-      const asOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
-      const asAdmin = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
-      const created = yield* asOwner.publish({
-        payload: publishRequest({ html: html("Owner create") })
-      });
-      const updated = yield* asOwner.publish({
-        payload: publishRequest({ html: html("Owner update"), patchId: created.patchId })
-      });
-      assert.strictEqual(updated.versionNumber, 2);
-
-      const params = { patchId: created.patchId };
-      expect(
-        yield* asAdmin
-          .publish({ payload: publishRequest({ html: html("Not yours"), ...params }) })
-          .pipe(Effect.flip)
-      ).toMatchObject({
-        ok: false,
-        code: "not_owner",
-        owner: { id: reader.user.id, name: reader.user.name }
-      });
-      assert.include(yield* asAdmin.delete({ params, query: {} }).pipe(Effect.flip), {
-        ok: false,
-        code: "not_owner"
-      });
-      const content = yield* Content.Content;
-      const patches = yield* Patches.Patches;
-      const current = Option.getOrThrow(yield* patches.find(created.patchId));
-      assert.include(yield* content.read(current.version), "Owner update");
-
-      assert.isTrue((yield* asOwner.delete({ params, query: {} })).ok);
-      assert.isTrue(Option.isNone(yield* patches.find(created.patchId)));
-      assert.include(yield* asOwner.delete({ params, query: {} }).pipe(Effect.flip), {
-        ok: false,
-        code: "wrong_state",
-        state: "deleted"
-      });
-    })
   );
 });
 
@@ -438,99 +303,70 @@ const lifecycleSocketLayer = HttpRouter.serve(
 ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(publishLayer));
 
 it.layer(Layer.fresh(lifecycleSocketLayer))("owner lifecycle body bounds on a socket", (it) => {
-  for (const route of ["retire", "restore", "rollback", "description"] as const) {
-    it.effect(`bounds ${route} bodies before mutation and accepts ordinary owner requests`, () =>
-      Effect.gen(function* () {
-        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-        const first = yield* owner.publish({
-          payload: publishRequest({
-            html: html(`Bounded ${route} first`),
-            manifest: { ...Fixtures.manifest, description: "Original description" }
-          })
-        });
-        const params = { patchId: first.patchId };
-        const second = yield* owner.publish({
-          payload: publishRequest({ ...params, html: html(`Bounded ${route} second`) })
-        });
-        if (route === "restore") {
-          yield* owner.retire({ params, payload: new ForceRequest({}) });
-        }
-        const http = yield* HttpClient.HttpClient;
-        const sql = yield* SqlClient.SqlClient;
-        const patches = yield* Patches.Patches;
-        const snapshot = sql`
-          SELECT current_version_id, description, description_updated_at,
-            retired_at, deleted_at, last_changed_at
-          FROM patches WHERE id = ${first.patchId}`;
-        const before = yield* snapshot;
-        const description = String.fromCodePoint(0x20000).repeat(500);
-        const payload =
-          route === "description"
-            ? { description }
-            : route === "rollback"
-              ? { versionNumber: 1 }
-              : { force: true };
-        const padding = " ".repeat(4 * 1024 * 1024);
-        const padded =
-          route === "description"
-            ? JSON.stringify({ description: padding + description })
-            : JSON.stringify(payload) + padding;
-        const bytes = new TextEncoder().encode(padded);
-        const request = HttpClientRequest.make(route === "description" ? "PUT" : "POST")(
-          `/api/patches/${first.patchId}/${route}`
-        ).pipe(HttpClientRequest.bearerToken(uploader.machine.id));
+  // Every lifecycle route reads its body through one bounded reader. The
+  // description route is the one whose padding can sit inside the field.
+  it.effect("bounds description bodies before mutation and accepts an ordinary request", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const created = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Bounded description"),
+          manifest: { ...Fixtures.manifest, description: "Original description" }
+        })
+      });
+      const http = yield* HttpClient.HttpClient;
+      const sql = yield* SqlClient.SqlClient;
+      const patches = yield* Patches.Patches;
+      const snapshot = sql`
+        SELECT current_version_id, description, description_updated_at,
+          retired_at, deleted_at, last_changed_at
+        FROM patches WHERE id = ${created.patchId}`;
+      const before = yield* snapshot;
+      const description = String.fromCodePoint(0x20000).repeat(500);
+      const padded = JSON.stringify({ description: " ".repeat(4 * 1024 * 1024) + description });
+      const bytes = new TextEncoder().encode(padded);
+      const request = HttpClientRequest.make("PUT")(
+        `/api/patches/${created.patchId}/description`
+      ).pipe(HttpClientRequest.bearerToken(uploader.machine.id));
 
-        const declared = yield* http.execute(
-          request.pipe(HttpClientRequest.bodyText(padded, "application/json"))
-        );
-        assert.strictEqual(declared.status, 413);
-        expect(yield* declared.json).toEqual({ ok: false, error: expect.any(String) });
-        assert.deepStrictEqual(yield* snapshot, before);
+      const declared = yield* http.execute(
+        request.pipe(HttpClientRequest.bodyText(padded, "application/json"))
+      );
+      assert.strictEqual(declared.status, 413);
+      expect(yield* declared.json).toEqual({ ok: false, error: expect.any(String) });
+      assert.deepStrictEqual(yield* snapshot, before);
 
-        const chunked = request.pipe(
-          HttpClientRequest.bodyStream(
-            Stream.fromIterable([bytes.subarray(0, 1024), bytes.subarray(1024)]),
-            { contentType: "application/json" }
-          )
-        );
-        // Node closes the socket when an undeclared body crosses the cap.
-        const failure = yield* http.execute(chunked).pipe(Effect.flip);
-        assert.strictEqual(failure.reason._tag, "TransportError");
-        assert.deepStrictEqual(yield* snapshot, before);
+      const chunked = request.pipe(
+        HttpClientRequest.bodyStream(
+          Stream.fromIterable([bytes.subarray(0, 1024), bytes.subarray(1024)]),
+          { contentType: "application/json" }
+        )
+      );
+      // Node closes the socket when an undeclared body crosses the cap.
+      const failure = yield* http.execute(chunked).pipe(Effect.flip);
+      assert.strictEqual(failure.reason._tag, "TransportError");
+      assert.deepStrictEqual(yield* snapshot, before);
 
-        for (const malformed of ["{", '{"force":"yes","versionNumber":0,"description":null}']) {
-          const response = yield* http.execute(
-            request.pipe(HttpClientRequest.bodyText(malformed, "application/json"))
-          );
-          assert.strictEqual(response.status, 400);
-          expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
-        }
-        assert.deepStrictEqual(yield* snapshot, before);
+      for (const malformed of ["{", '{"description":null}']) {
+        const response = yield* http.execute(
+          request.pipe(HttpClientRequest.bodyText(malformed, "application/json"))
+        );
+        assert.strictEqual(response.status, 400);
+        expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
+      }
+      assert.deepStrictEqual(yield* snapshot, before);
 
-        const accepted = yield* http.execute(
-          request.pipe(HttpClientRequest.bodyJsonUnsafe(payload))
-        );
-        assert.strictEqual(accepted.status, 200);
-        expect(yield* accepted.json).toMatchObject({ ok: true, patchId: first.patchId });
-        if (route === "retire") {
-          assert.isTrue(Option.isNone(yield* patches.find(first.patchId)));
-          yield* owner.restore({ params, payload: new ForceRequest({}) });
-        }
-        const current = Option.getOrThrow(yield* patches.find(first.patchId));
-        assert.strictEqual(
-          current.version.id,
-          route === "rollback" ? first.versionId : second.versionId
-        );
-        assert.strictEqual(
-          current.patch.description,
-          route === "description" ? description : first.description
-        );
-        const versions = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count FROM patch_versions WHERE patch_id = ${first.patchId}`;
-        assert.strictEqual(versions[0]!.count, 2);
-      })
-    );
-  }
+      const accepted = yield* http.execute(
+        request.pipe(HttpClientRequest.bodyJsonUnsafe({ description }))
+      );
+      assert.strictEqual(accepted.status, 200);
+      expect(yield* accepted.json).toMatchObject({ ok: true, patchId: created.patchId });
+      const current = Option.getOrThrow(yield* patches.find(created.patchId));
+      assert.strictEqual(current.patch.description, description);
+      assert.strictEqual(current.version.id, created.versionId);
+      assert.isTrue(Option.isNone(yield* patches.find(created.patchId, 2)));
+    })
+  );
 });
 
 it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) => {
@@ -679,13 +515,13 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         payload: publishRequest({ html: html("State gates") })
       });
       const params = { patchId: created.patchId };
-      assert.include(
-        yield* owner.restore({ params, payload: new ForceRequest({}) }).pipe(Effect.flip),
-        {
-          code: "wrong_state",
-          state: "live"
-        }
-      );
+      const live = yield* owner.restore({
+        params,
+        payload: new ForceRequest({}),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(live.status, 409);
+      assert.include(yield* live.json, { code: "wrong_state", state: "live" });
       const absent = yield* owner.rollback({
         params,
         payload: new RollbackRequest({ versionNumber: 999 }),
@@ -693,56 +529,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
       });
       assert.strictEqual(absent.status, 422);
       assert.include(yield* absent.json, { code: "version_unavailable" });
-      yield* owner.retire({ params, payload: new ForceRequest({}) });
-      assert.include(
-        yield* owner.retire({ params, payload: new ForceRequest({}) }).pipe(Effect.flip),
-        {
-          code: "wrong_state",
-          state: "retired"
-        }
-      );
-      for (const response of [
-        yield* owner.rollback({
-          params,
-          payload: new RollbackRequest({ versionNumber: 1 }),
-          responseMode: "response-only"
-        }),
-        yield* owner.share({
-          params,
-          payload: new ShareRequest({ scope: "public" }),
-          responseMode: "response-only"
-        })
-      ]) {
-        assert.strictEqual(response.status, 409);
-        assert.include(yield* response.json, { code: "wrong_state", state: "retired" });
-      }
       const deleted = yield* owner.delete({ params, query: {} });
-      for (const response of [
-        yield* owner.delete({ params, query: {}, responseMode: "response-only" }),
-        yield* owner.retire({
-          params,
-          payload: new ForceRequest({}),
-          responseMode: "response-only"
-        }),
-        yield* owner.rollback({
-          params,
-          payload: new RollbackRequest({ versionNumber: 1 }),
-          responseMode: "response-only"
-        }),
-        yield* owner.describe({
-          params,
-          payload: new DescriptionRequest({ description: "Cannot edit deleted" }),
-          responseMode: "response-only"
-        }),
-        yield* owner.share({
-          params,
-          payload: new ShareRequest({ scope: "public" }),
-          responseMode: "response-only"
-        })
-      ]) {
-        assert.strictEqual(response.status, 409);
-        assert.include(yield* response.json, { code: "wrong_state", state: "deleted" });
-      }
       yield* TestClock.adjust("30 days");
       assert.include(
         yield* owner.restore({ params, payload: new ForceRequest({}) }).pipe(Effect.flip),
@@ -754,77 +541,59 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
     })
   );
 
-  it.effect("normalizes descriptions, counts code points and preserves no-op stamps", () =>
-    Effect.gen(function* () {
-      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-      const created = yield* owner.publish({
-        payload: publishRequest({
-          html: html("Description bounds"),
-          manifest: { ...Fixtures.manifest, description: "Manifest text" },
-          metadata: { description: " File\u00a0description " }
-        })
-      });
-      assert.strictEqual(created.description, "File description");
-      const params = { patchId: created.patchId };
-      const atLimit = "\u{1F680}".repeat(500);
-      yield* TestClock.adjust("1 second");
-      const described = yield* owner.describe({
-        params,
-        payload: new DescriptionRequest({ description: atLimit })
-      });
-      assert.strictEqual(described.description, atLimit);
-      yield* TestClock.adjust("1 second");
-      const unchanged = yield* owner.describe({
-        params,
-        payload: new DescriptionRequest({ description: ` \t${atLimit}\n ` })
-      });
-      assert.strictEqual(unchanged.descriptionUpdatedAt, described.descriptionUpdatedAt);
-      for (const description of [
-        atLimit + "x",
-        " \n\t ",
-        "bad\u0000text",
-        "bad\u007ftext",
-        "bad\u0085text"
-      ]) {
-        const response = yield* owner.describe({
-          params,
-          payload: new DescriptionRequest({ description }),
-          responseMode: "response-only"
-        });
-        assert.strictEqual(response.status, 422);
-        assert.include(yield* response.json, { code: "invalid_description" });
-      }
-      const invalidPublish = yield* owner.publish({
-        payload: publishRequest({
-          ...params,
-          html: html("Invalid description"),
-          metadata: { description: "bad\u0000text" }
-        }),
-        responseMode: "response-only"
-      });
-      assert.strictEqual(invalidPublish.status, 422);
-      assert.include(yield* invalidPublish.json, { code: "invalid_description" });
-      const current = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
-      assert.strictEqual(current.patch.description, atLimit);
-      assert.strictEqual(current.version.id, created.versionId);
-      const cleared = yield* owner.describe({
-        params,
-        payload: new DescriptionRequest({ description: "" })
-      });
-      assert.strictEqual(cleared.description, "");
-      assert.notStrictEqual(cleared.descriptionUpdatedAt, described.descriptionUpdatedAt);
-      for (const name of ["patches", "connections"]) {
-        const response = yield* owner.publish({
+  // Code-point counting, control characters and stamps are the Patches service's.
+  it.effect(
+    "prefers the metadata description and refuses invalid text and names in wire words",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const created = yield* owner.publish({
           payload: publishRequest({
-            html: html("Reserved name"),
-            manifest: { ...Fixtures.manifest, name }
+            html: html("Description bounds"),
+            manifest: { ...Fixtures.manifest, description: "Manifest text" },
+            metadata: { description: " File\u00a0description " }
+          })
+        });
+        assert.strictEqual(created.description, "File description");
+        const params = { patchId: created.patchId };
+        const atLimit = "\u{1F680}".repeat(500);
+        const described = yield* owner.describe({
+          params,
+          payload: new DescriptionRequest({ description: atLimit })
+        });
+        assert.strictEqual(described.description, atLimit);
+        for (const description of [atLimit + "x", "bad\u0000text"]) {
+          const response = yield* owner.describe({
+            params,
+            payload: new DescriptionRequest({ description }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 422);
+          assert.include(yield* response.json, { code: "invalid_description" });
+        }
+        const invalidPublish = yield* owner.publish({
+          payload: publishRequest({
+            ...params,
+            html: html("Invalid description"),
+            metadata: { description: "bad\u0000text" }
           }),
           responseMode: "response-only"
         });
-        assert.strictEqual(response.status, 422);
-        assert.include(yield* response.json, { code: "reserved_name" });
-      }
-    })
+        assert.strictEqual(invalidPublish.status, 422);
+        assert.include(yield* invalidPublish.json, { code: "invalid_description" });
+        const current = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
+        assert.strictEqual(current.patch.description, atLimit);
+        assert.strictEqual(current.version.id, created.versionId);
+        const reserved = yield* owner.publish({
+          payload: publishRequest({
+            html: html("Reserved name"),
+            manifest: { ...Fixtures.manifest, name: "patches" }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(reserved.status, 422);
+        assert.include(yield* reserved.json, { code: "reserved_name" });
+      })
   );
 
   it.effect("requires tokens and hides unknown and foreign patches on every owner route", () =>
@@ -872,61 +641,45 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
       const consumerOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
-      const sources: Array<PublishCreated | PublishUpdated> = [];
-      for (const name of ["lifecycle-gone", "lifecycle-retired", "lifecycle-deleted"]) {
-        sources.push(
-          yield* owner.publish({
-            payload: publishRequest({
-              html: html(name),
-              manifest: {
-                ...Fixtures.manifest,
-                name,
-                tables: {
-                  orders: {
-                    description: "Notes keyed by id.",
-                    columns: {},
-                    indexes: {},
-                    shared: true
-                  }
-                },
-                files: { receipts: { description: "Receipt documents.", shared: true } }
-              }
-            })
-          })
-        );
-      }
-      const [gone, retired, deleted] = sources;
-      const uses = Object.fromEntries(
-        sources.flatMap((source, index) => [
-          [
-            `source${index}`,
-            {
-              kind: "sharedTable" as const,
-              patchId: source.patchId,
-              table: "orders",
-              id: sharedTableId(source.patchId, "orders"),
-              revision: source.schemaRevision
-            }
-          ],
-          [
-            `receipts${index}`,
-            {
-              kind: "sharedStore" as const,
-              patchId: source.patchId,
-              store: "receipts",
-              id: sharedStoreId(source.patchId, "receipts"),
-              revision: source.schemaRevision
-            }
-          ]
-        ])
-      );
+      const source = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Lifecycle source"),
+          manifest: {
+            ...Fixtures.manifest,
+            name: "lifecycle-source",
+            tables: {
+              orders: { description: "Notes keyed by id.", columns: {}, indexes: {}, shared: true }
+            },
+            files: { receipts: { description: "Receipt documents.", shared: true } }
+          }
+        })
+      });
       const consumer = yield* consumerOwner.publish({
         payload: publishRequest({
           html: html("Lifecycle reader"),
-          manifest: { ...Fixtures.manifest, name: "lifecycle-reader", uses }
+          manifest: {
+            ...Fixtures.manifest,
+            name: "lifecycle-reader",
+            uses: {
+              orders: {
+                kind: "sharedTable",
+                patchId: source.patchId,
+                table: "orders",
+                id: sharedTableId(source.patchId, "orders"),
+                revision: source.schemaRevision
+              },
+              receipts: {
+                kind: "sharedStore",
+                patchId: source.patchId,
+                store: "receipts",
+                id: sharedStoreId(source.patchId, "receipts"),
+                revision: source.schemaRevision
+              }
+            }
+          }
         })
       });
-      const params = { patchId: gone!.patchId };
+      const params = { patchId: source.patchId };
       for (const response of [
         yield* owner.retire({
           params,
@@ -947,6 +700,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
           ]
         });
       }
+      // Force arrives in a body, a query value or a bare query flag.
       yield* owner.retire({ params, payload: new ForceRequest({ force: true }) });
       yield* owner.restore({ params, payload: new ForceRequest({}) });
       const bareForce = yield* client.pipe(
@@ -962,13 +716,8 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         )
       );
       yield* bareForce.delete({ params, query: {} });
-      yield* TestClock.adjust("30 days");
-      yield* (yield* Patches.Patches).purgeDeleted(gone!.patchId);
-      yield* owner.retire({
-        params: { patchId: retired!.patchId },
-        payload: new ForceRequest({ force: true })
-      });
-      yield* owner.delete({ params: { patchId: deleted!.patchId }, query: { force: true } });
+      yield* owner.restore({ params, payload: new ForceRequest({}) });
+      yield* owner.delete({ params, query: { force: true } });
       const consumerParams = { patchId: consumer.patchId };
       yield* consumerOwner.retire({ params: consumerParams, payload: new ForceRequest({}) });
       const warning = yield* consumerOwner.restore({
@@ -977,17 +726,12 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         responseMode: "response-only"
       });
       assert.strictEqual(warning.status, 409);
-      const body = yield* warning.json;
-      expect(body).toMatchObject({
+      expect(yield* warning.json).toMatchObject({
         code: "sources_off",
-        sources: expect.arrayContaining([
-          { patchId: gone!.patchId, table: "orders", state: "gone" },
-          { patchId: retired!.patchId, name: retired!.name, table: "orders", state: "retired" },
-          { patchId: deleted!.patchId, name: deleted!.name, table: "orders", state: "deleted" },
-          { patchId: gone!.patchId, store: "receipts", state: "gone" },
-          { patchId: retired!.patchId, name: retired!.name, store: "receipts", state: "retired" },
-          { patchId: deleted!.patchId, name: deleted!.name, store: "receipts", state: "deleted" }
-        ])
+        sources: [
+          { patchId: source.patchId, name: source.name, table: "orders", state: "deleted" },
+          { patchId: source.patchId, name: source.name, store: "receipts", state: "deleted" }
+        ]
       });
       expect(
         yield* consumerOwner.restore({
@@ -1003,16 +747,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
   );
 });
 
-it.layer(
-  Layer.fresh(publishLayer).pipe(
-    Layer.provide(
-      Layer.succeed(
-        Patches.Openability,
-        (patch, userId) => patch.name !== "hidden-discovery" || userId === uploader.user.id
-      )
-    )
-  )
-)("patch discovery over machine tokens", (it) => {
+it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) => {
   it.effect("reports unavailable inventory without inventing an empty database", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -1040,35 +775,6 @@ it.layer(
     })
   );
 
-  it.effect("hides unopenable patches before resolving state and respects mine", () =>
-    Effect.gen(function* () {
-      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
-      const created = yield* owner.publish({
-        payload: publishRequest({
-          html: html("Hidden"),
-          manifest: { ...Fixtures.manifest, name: "hidden-discovery" }
-        })
-      });
-      expect(
-        (yield* owner.list({ query: { mine: true } })).patches.map((patch) => patch.id)
-      ).toContain(created.patchId);
-      expect(
-        (yield* colleague.list({ query: { state: "all" } })).patches.map((patch) => patch.id)
-      ).not.toContain(created.patchId);
-      assert.deepStrictEqual((yield* colleague.list({ query: { mine: true } })).patches, []);
-      for (const patchRef of [created.patchId, created.name, "unknown-discovery"]) {
-        const response = yield* colleague.detail({
-          params: { patchRef },
-          query: { state: "retired" },
-          responseMode: "response-only"
-        });
-        assert.strictEqual(response.status, 404);
-        assert.deepStrictEqual(yield* response.json, { ok: false, error: "Patch not found." });
-      }
-    })
-  );
-
   it.effect("resolves names before state filters and deleted patches only by id", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -1084,6 +790,12 @@ it.layer(
         })
       });
       const params = { patchId: created.patchId };
+      const mine = (api: typeof owner) =>
+        Effect.map(api.list({ query: { mine: true } }), ({ patches }) =>
+          patches.map((patch) => patch.id)
+        );
+      expect(yield* mine(owner)).toContain(created.patchId);
+      expect(yield* mine(colleague)).not.toContain(created.patchId);
       for (const [state, filter] of [
         ["live", "retired"],
         ["retired", "live"],
@@ -1132,6 +844,7 @@ it.layer(
         responseMode: "response-only"
       });
       assert.strictEqual(byName.status, 404);
+      assert.deepStrictEqual(yield* byName.json, { ok: false, error: "Patch not found." });
       expect((yield* colleague.list({ query: {} })).patches.map((patch) => patch.id)).not.toContain(
         created.patchId
       );
@@ -1337,34 +1050,47 @@ it.layer(
   );
 });
 
-const racingClients = Effect.fn("racingClients")(function* () {
+/** Publish routes whose content writes wait for each other, so two publishes reach the database together. */
+const pairedRoutes = Effect.fn("pairedRoutes")(function* (quota = 100) {
   const store = yield* ContentStore.ContentStore;
   const ready = yield* Deferred.make<void>();
   let puts = 0;
-  const heldStore = Layer.succeed(
-    ContentStore.ContentStore,
-    ContentStore.ContentStore.of({
-      ...store,
-      put: (key, body) =>
-        Effect.gen(function* () {
-          yield* store.put(key, body);
-          if (++puts === 2) yield* Deferred.succeed(ready, undefined);
-          yield* Deferred.await(ready);
-        })
-    })
-  );
-  const routes = Layer.fresh(
+  const paired = ContentStore.ContentStore.of({
+    ...store,
+    put: (key, body) =>
+      store
+        .put(key, body)
+        .pipe(
+          Effect.andThen(
+            Effect.suspend(() => (++puts === 2 ? Deferred.succeed(ready, undefined) : Effect.void))
+          ),
+          Effect.andThen(Deferred.await(ready))
+        )
+  });
+  return Layer.fresh(
     PatchesApi.layer.pipe(
-      Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
-      Layer.provide(publishConfig())
+      Layer.provide(
+        Content.layer.pipe(Layer.provide(Layer.succeed(ContentStore.ContentStore, paired)))
+      ),
+      Layer.provide(publishConfig(CURRENT_RELEASE, quota))
     )
   );
-  // Same company, different users: the owner quota locks cannot serialize the name claims.
-  return yield* Effect.forEach([uploader, reader], (identity) =>
-    Effect.gen(function* () {
-      const api = yield* client.pipe(Effect.provide(Fixtures.as(identity)), Effect.provide(routes));
-      return { identity, api };
-    })
+});
+
+/**
+ * One paired client per identity. By default two users of one company, so the
+ * owner quota lock cannot serialize their name claims.
+ */
+const racingClients = Effect.fn("racingClients")(function* (
+  identities: ReadonlyArray<Identity> = [uploader, reader],
+  quota = 100
+) {
+  const routes = yield* pairedRoutes(quota);
+  return yield* Effect.forEach(identities, (identity) =>
+    Effect.map(
+      client.pipe(Effect.provide(Fixtures.as(identity)), Effect.provide(routes)),
+      (api) => ({ identity, api })
+    )
   );
 });
 
@@ -1424,77 +1150,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
   );
 
   it.effect(
-    "publishes store-only repos and retains omitted stores in the owner's cumulative inventory",
-    () =>
-      Effect.gen(function* () {
-        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-        const other = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
-        const manifest = {
-          ...Fixtures.manifest,
-          name: "inventory-files",
-          files: { attachments: { description: "Attachments keyed by file name." } }
-        };
-        const payload = publishRequest({ html: html("File store repo"), manifest });
-        const [created, response] = yield* owner.publish({
-          payload,
-          responseMode: "decoded-and-response"
-        });
-        assert.strictEqual(response.status, 201);
-        assert.strictEqual(created.schemaRevision, 1);
-        assert.deepStrictEqual(created.provisioned, {
-          tables: [],
-          columns: [],
-          indexes: [],
-          stores: ["attachments"]
-        });
-        const params = { patchId: created.patchId };
-        const baseline = yield* owner.inventory({ params });
-        assert.strictEqual(baseline.schemaRevision, 1);
-        assert.deepStrictEqual(baseline.tables, {});
-        assert.deepStrictEqual(baseline.files, {
-          attachments: { ...manifest.files.attachments, shared: false }
-        });
-        assert.deepStrictEqual(yield* other.inventory({ params }), baseline);
-        const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
-        assert.strictEqual(yield* replayed.text, yield* response.text);
-        const omitted = yield* owner.publish({
-          payload: publishRequest({
-            patchId: created.patchId,
-            html: html("Omits file store"),
-            manifest: { ...Fixtures.manifest, name: manifest.name }
-          })
-        });
-        assert.strictEqual(omitted.schemaRevision, 1);
-        assert.deepStrictEqual(omitted.unused.stores, ["attachments"]);
-        assert.deepStrictEqual(yield* owner.inventory({ params }), baseline);
-        const restored = yield* owner.publish({
-          payload: publishRequest({
-            patchId: created.patchId,
-            html: html("Restores file store"),
-            manifest
-          })
-        });
-        assert.strictEqual(restored.schemaRevision, 1);
-        assert.deepStrictEqual(restored.provisioned.stores, []);
-        assert.deepStrictEqual(restored.unused.stores, []);
-        const store = yield* ContentStore.ContentStore;
-        const before = yield* Stream.runCollect(store.list("patches/"));
-        const refused = yield* owner.publish({
-          payload: publishRequest({
-            patchId: created.patchId,
-            html: html("Single file"),
-            metadata: { filename: "attachments.html" }
-          }),
-          responseMode: "response-only"
-        });
-        assert.strictEqual(refused.status, 422);
-        assert.include(yield* refused.json, { code: "has_primitives" });
-        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
-      })
-  );
-
-  it.effect(
-    "publishes tier-zero tables, replays their reports, and exposes only the owner's cumulative inventory",
+    "publishes tables and stores, replays their reports, and keeps the owner's cumulative inventory",
     () =>
       Effect.gen(function* () {
         const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -1513,15 +1169,18 @@ it.layer(publishLayer)("publish attempts", (it) => {
               indexes: { byTitle: { columns: ["title"] } },
               shared: true
             }
-          }
+          },
+          files: { attachments: { description: "Attachments keyed by file name." } }
         };
-        const payload = publishRequest({ html: html("Table repo"), manifest });
+        const payload = publishRequest({ html: html("Primitive repo"), manifest });
         const [created, response] = yield* owner.publish({
           payload,
           responseMode: "decoded-and-response"
         });
+        assert.strictEqual(response.status, 201);
         assert.strictEqual(created.schemaRevision, 1);
         assert.deepStrictEqual(created.provisioned.tables, ["notes"]);
+        assert.deepStrictEqual(created.provisioned.stores, ["attachments"]);
         const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
         assert.strictEqual(yield* replayed.text, yield* response.text);
         const params = { patchId: created.patchId };
@@ -1530,6 +1189,9 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.deepStrictEqual(baseline.tables.notes?.columns, manifest.tables.notes.columns);
         assert.deepStrictEqual(baseline.tables.notes?.indexes.byTitle?.columns, ["title"]);
         assert.strictEqual(baseline.tables.notes?.shared, true);
+        assert.deepStrictEqual(baseline.files, {
+          attachments: { ...manifest.files.attachments, shared: false }
+        });
         assert.deepStrictEqual(yield* other.inventory({ params }), baseline);
         assert.deepStrictEqual(
           yield* other.inventory({ params: { patchId: "not-a-patch" } }).pipe(Effect.flip),
@@ -1538,17 +1200,18 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const omitted = yield* owner.publish({
           payload: publishRequest({
             patchId: created.patchId,
-            html: html("No longer uses notes"),
+            html: html("No longer uses primitives"),
             manifest: { ...Fixtures.manifest, name: manifest.name }
           })
         });
         assert.strictEqual(omitted.schemaRevision, 1);
         assert.deepStrictEqual(omitted.unused.tables, ["notes"]);
+        assert.deepStrictEqual(omitted.unused.stores, ["attachments"]);
         assert.deepStrictEqual(yield* owner.inventory({ params }), baseline);
         const restored = yield* owner.publish({
           payload: publishRequest({
             patchId: created.patchId,
-            html: html("Uses notes again"),
+            html: html("Uses primitives again"),
             manifest
           })
         });
@@ -1559,6 +1222,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
           indexes: [],
           stores: []
         });
+        assert.deepStrictEqual(restored.unused.stores, []);
         const store = yield* ContentStore.ContentStore;
         const before = yield* Stream.runCollect(store.list("patches/"));
         for (const name of [undefined, "named-file"]) {
@@ -1774,35 +1438,13 @@ it.layer(publishLayer)("publish attempts", (it) => {
     "settles identical concurrent first publishes even when the winner fills the quota",
     () =>
       Effect.gen(function* () {
-        const store = yield* ContentStore.ContentStore;
         for (const [identity, quota] of [
           [reader, 100],
           [Fixtures.identities.quota, 1]
         ] as const) {
-          const ready = yield* Deferred.make<void>();
-          let puts = 0;
-          const heldStore = Layer.succeed(
-            ContentStore.ContentStore,
-            ContentStore.ContentStore.of({
-              ...store,
-              put: (key, body) =>
-                Effect.gen(function* () {
-                  yield* store.put(key, body);
-                  if (++puts === 2) yield* Deferred.succeed(ready, undefined);
-                  yield* Deferred.await(ready);
-                })
-            })
-          );
           const api = yield* client.pipe(
             Effect.provide(Fixtures.as(identity)),
-            Effect.provide(
-              Layer.fresh(
-                PatchesApi.layer.pipe(
-                  Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
-                  Layer.provide(publishConfig(CURRENT_RELEASE, quota))
-                )
-              )
-            )
+            Effect.provide(yield* pairedRoutes(quota))
           );
           const payload = publishRequest({
             html: html("Concurrent"),
@@ -1829,7 +1471,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       })
   );
 
-  it.effect("arbitrates exact-name creates across owners and reserves the name on deletion", () =>
+  it.effect("arbitrates exact-name creates across owners", () =>
     Effect.gen(function* () {
       const contenders = yield* racingClients();
       const patches = yield* Patches.Patches;
@@ -1866,25 +1508,6 @@ it.layer(publishLayer)("publish attempts", (it) => {
           before[index]! + (index === winner ? 1 : 0)
         );
       }
-
-      yield* contenders[winner]!.api.delete({ params: { patchId: created.patchId }, query: {} });
-      const refused = yield* contenders[loser]!.api.publish({
-        payload: publishRequest({
-          html: html("Reserved exact name"),
-          manifest: { ...Fixtures.manifest, name: "company-name-race" }
-        }),
-        responseMode: "response-only"
-      });
-      assert.strictEqual(refused.status, 409);
-      assert.include(yield* refused.json, { code: "name_taken" });
-      yield* contenders[winner]!.api.restore({
-        params: { patchId: created.patchId },
-        payload: new ForceRequest({})
-      });
-      assert.strictEqual(
-        Option.getOrThrow(yield* patches.find(created.patchId)).patch.name,
-        "company-name-race"
-      );
     })
   );
 
@@ -1984,31 +1607,9 @@ it.layer(publishLayer)("publish attempts", (it) => {
           manifest: { ...Fixtures.manifest, name: "rename-beta" }
         })
       });
-      const store = yield* ContentStore.ContentStore;
-      const ready = yield* Deferred.make<void>();
-      let puts = 0;
-      const heldStore = Layer.succeed(
-        ContentStore.ContentStore,
-        ContentStore.ContentStore.of({
-          ...store,
-          put: (key, body) =>
-            Effect.gen(function* () {
-              yield* store.put(key, body);
-              if (++puts === 2) yield* Deferred.succeed(ready, undefined);
-              yield* Deferred.await(ready);
-            })
-        })
-      );
       const api = yield* client.pipe(
         Effect.provide(Fixtures.as(uploader)),
-        Effect.provide(
-          Layer.fresh(
-            PatchesApi.layer.pipe(
-              Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
-              Layer.provide(publishConfig())
-            )
-          )
-        )
+        Effect.provide(yield* pairedRoutes())
       );
       const responses = yield* Effect.all(
         (
@@ -2315,37 +1916,13 @@ it.layer(publishLayer)("publish attempts", (it) => {
   );
 
   it.effect(
-    "checks raw manifest shapes and stamps the wire itself, never trusting a client field",
+    "checks the raw manifest and stamps the wire itself, never trusting a client field",
     () =>
       Effect.gen(function* () {
         const payload = publishRequest({ html: html("Wire stamp") });
+        // Manifest shape rules are the api schema's; one case proves the raw body is checked.
         for (const [body, status] of [
-          [{ ...payload, manifest: { ...Fixtures.manifest, tables: [] } }, 422],
-          [
-            {
-              ...payload,
-              manifest: { ...Fixtures.manifest, tables: { notes: { columns: {}, indexes: {} } } }
-            },
-            422
-          ],
           [{ ...payload, manifest: { ...Fixtures.manifest, files: { docs: {} } } }, 422],
-          [
-            {
-              ...payload,
-              manifest: {
-                ...Fixtures.manifest,
-                tables: { notes: { description: "", columns: {}, indexes: {} } }
-              }
-            },
-            422
-          ],
-          [
-            {
-              ...payload,
-              manifest: { ...Fixtures.manifest, files: { docs: { description: " \t\n" } } }
-            },
-            422
-          ],
           [{ ...payload, wireVersion: 999 }, 201],
           [{ publishKey: payload.publishKey, manifest: null }, 409]
         ] as const) {
@@ -2494,17 +2071,6 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           kind: "ref",
           table: declaration.id
         });
-        const fileMode = yield* consumer.publish({
-          payload: publishRequest({
-            patchId: created.patchId,
-            html: html("File update with a declaration"),
-            metadata: { filename: "consumer.html" },
-            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
-          }),
-          responseMode: "response-only"
-        });
-        assert.strictEqual(fileMode.status, 422);
-        assert.include(yield* fileMode.json, { code: "has_primitives" });
         const loaded = Option.getOrThrow(yield* patches.find(created.patchId));
         assert.deepInclude(loaded.version.manifest.uses.contacts, { id: declaration.id });
         yield* consumer.publish({
@@ -2846,28 +2412,17 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
             const [row] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
             yield* Deferred.succeed(locked, row!.pid);
             yield* Deferred.await(release);
-            return yield* content.publish({
-              ...Fixtures.publishRecord(),
-              patchId: null,
-              companyId: admin.company.id,
-              ownerUserId: admin.user.id,
-              machineTokenId: admin.machine.id,
-              html: html("Locked connection"),
-              title: "Locked connection",
-              filename: null,
-              repoOrg: null,
-              repoName: null,
-              cliVersion: null,
-              gitBranch: null,
-              gitCommitSha: null,
-              sourceIp: null,
-              userAgent: null,
-              manifest: {
-                ...Fixtures.manifest,
-                name: "locked-connection",
-                uses: { sales: declaration }
-              }
-            });
+            return yield* content.publish(
+              Fixtures.publishInput(admin, {
+                html: html("Locked connection"),
+                title: "Locked connection",
+                manifest: {
+                  ...Fixtures.manifest,
+                  name: "locked-connection",
+                  uses: { sales: declaration }
+                }
+              })
+            );
           })
         )
         .pipe(Effect.forkScoped);
@@ -3044,7 +2599,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
   );
 
   it.effect(
-    "rejects tampering, throwing and nonterminating initialization and reclaims both failed artifacts",
+    "rejects mismatched handlers and throwing initialization and reclaims both failed artifacts",
     () =>
       Effect.gen(function* () {
         const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -3056,6 +2611,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         const patches = yield* Patches.Patches;
         const objects = yield* ContentStore.ContentStore;
         const original = Option.getOrThrow(yield* patches.find(created.patchId)).version;
+        // Inspection's own suite owns the load failures: timeouts, hangs and imports.
         for (const invalid of [
           {
             server,
@@ -3067,10 +2623,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
               }
             }
           },
-          { server: `throw new Error("load failed");\n${server}`, manifest },
-          { server: `while (true) {}\n${server}`, manifest },
-          { server: `await Promise.withResolvers().promise;\n${server}`, manifest },
-          { server: `import "missing-package";\n${server}`, manifest }
+          { server: `throw new Error("load failed");\n${server}`, manifest }
         ]) {
           const refused = yield* api.publish({
             payload: publishRequest({

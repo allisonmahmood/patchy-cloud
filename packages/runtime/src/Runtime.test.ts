@@ -377,131 +377,96 @@ it.effect("a failing handler's HTTP correlation finds the attributed failure row
   )
 );
 
-it.effect(
-  "times out the entire integration handler and interrupts its resources before recording the correlated failure",
-  () =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<Binding.Binding["Service"]>();
-      const released = yield* Deferred.make<void>();
-      yield* Effect.gen(function* () {
-        const api = yield* Fixtures.client;
-        const fiber = yield* api
-          .call({
-            payload: envelope("postgres.query", {
-              connection: "sales",
-              sql: "SELECT 1",
-              params: [],
-              shape: { result: { kind: "integer" } }
-            }),
-            headers: authenticatedHeaders(),
-            responseMode: "response-only"
-          })
-          .pipe(Effect.forkChild);
-        const binding = yield* Deferred.await(entered);
-        const log = yield* RuntimeLog.RuntimeLog;
-        const lookup = { companyId: DEV_SEED.companyId, correlationId: binding.correlationId };
-        yield* TestClock.adjust(14_999);
-        assert.strictEqual((yield* log.find(lookup))?.outcome, "pending");
-        assert.isFalse(yield* Deferred.isDone(released));
-        yield* TestClock.adjust(1);
-        const response = yield* Fiber.join(fiber);
-        const failure = decodeFailure(yield* response.json);
-        assert.strictEqual(response.status, 504);
-        assert.strictEqual(failure.code, "timeout");
-        assert.include(failure, {
-          scope: "viewer",
-          limitId: "integration.deadline",
-          value: 15_000
-        });
-        assert.notProperty(failure, "retryAfter");
-        assert.isUndefined(response.headers["retry-after"]);
-        assert.strictEqual(failure.correlationId, binding.correlationId);
-        assert.isTrue(yield* Deferred.isDone(released));
-        const call = yield* log.find(lookup);
-        assert.strictEqual(call?.outcome, "failure");
-        assert.strictEqual(call?.outcomeCode, "timeout");
-        assert.strictEqual(call?.connectionId, "connection-runtime");
-        assert.strictEqual(call?.durationMs, 15_000);
-      }).pipe(
-        Effect.provide(
-          Fixtures.layer({
-            "postgres.query": Runtime.handler(
-              {
-                kind: "integration",
-                input: PostgresQuery,
-                output: PostgresRows,
-                connectionId,
-                sql: queryText
-              },
-              () =>
-                Effect.gen(function* () {
-                  yield* Deferred.succeed(entered, yield* Binding.Binding);
-                  return yield* Effect.never;
-                }).pipe(Effect.ensuring(Deferred.succeed(released, undefined)))
-            )
-          })
-        )
-      );
-    })
-);
-
-it.effect("times out a mutation at its configured deadline and logs the deadline it enforced", () =>
-  Effect.gen(function* () {
-    const entered = yield* Deferred.make<Binding.Binding["Service"]>();
-    const released = yield* Deferred.make<void>();
-    yield* Effect.gen(function* () {
-      const api = yield* Fixtures.client;
-      const fiber = yield* api
-        .call({
-          payload: envelope("tables.insert"),
-          headers: authenticatedHeaders(),
-          responseMode: "response-only"
-        })
-        .pipe(Effect.forkChild);
-      const binding = yield* Deferred.await(entered);
-      const log = yield* RuntimeLog.RuntimeLog;
-      const lookup = { companyId: DEV_SEED.companyId, correlationId: binding.correlationId };
-      yield* TestClock.adjust(4_999);
-      assert.isFalse(yield* Deferred.isDone(released));
-      yield* TestClock.adjust(1);
-      const response = yield* Fiber.join(fiber);
-      const failure = decodeFailure(yield* response.json);
-      assert.strictEqual(response.status, 504);
-      assert.strictEqual(failure.code, "timeout");
-      assert.include(failure, {
-        scope: "viewer",
-        limitId: "runtime.mutation.deadline",
-        value: 5_000
-      });
-      assert.notProperty(failure, "retryAfter");
-      assert.isUndefined(response.headers["retry-after"]);
-      assert.strictEqual(failure.correlationId, binding.correlationId);
-      assert.isTrue(yield* Deferred.isDone(released));
-      const call = yield* log.find(lookup);
-      assert.strictEqual(call?.outcome, "failure");
-      assert.strictEqual(call?.outcomeCode, "timeout");
-      assert.strictEqual(call?.deadlineMs, 5_000);
-      assert.strictEqual(call?.durationMs, 5_000);
-    }).pipe(
-      Effect.provide(
-        Fixtures.layer(
-          {
-            me,
-            "tables.insert": {
-              kind: "mutation",
-              run: () =>
-                Effect.gen(function* () {
-                  yield* Deferred.succeed(entered, yield* Binding.Binding);
-                  return yield* Effect.never;
-                }).pipe(Effect.ensuring(Deferred.succeed(released, undefined)))
-            }
-          },
-          { "runtime.mutation.deadline": 5000 }
-        )
+for (const row of [
+  {
+    subject: "the entire integration handler",
+    op: "postgres.query",
+    args: {
+      connection: "sales",
+      sql: "SELECT 1",
+      params: [],
+      shape: { result: { kind: "integer" } }
+    },
+    limitId: "integration.deadline",
+    deadlineMs: 15_000,
+    connectionId: "connection-runtime",
+    handlers: (hang: Effect.Effect<never, never, Binding.Binding>) => ({
+      "postgres.query": Runtime.handler(
+        {
+          kind: "integration",
+          input: PostgresQuery,
+          output: PostgresRows,
+          connectionId,
+          sql: queryText
+        },
+        () => hang
       )
-    );
-  })
-);
+    }),
+    limits: {}
+  },
+  {
+    subject: "a mutation",
+    op: "tables.insert",
+    args: {},
+    limitId: "runtime.mutation.deadline",
+    deadlineMs: 5_000,
+    connectionId: null,
+    handlers: (hang: Effect.Effect<never, never, Binding.Binding>) => ({
+      me,
+      "tables.insert": { kind: "mutation", run: () => hang } satisfies Runtime.Handler
+    }),
+    limits: { "runtime.mutation.deadline": 5_000 }
+  }
+]) {
+  it.effect(
+    `times out ${row.subject} at its deadline and interrupts it before logging the correlated failure`,
+    () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<Binding.Binding["Service"]>();
+        const released = yield* Deferred.make<void>();
+        const hang = Effect.gen(function* () {
+          yield* Deferred.succeed(entered, yield* Binding.Binding);
+          return yield* Effect.never;
+        }).pipe(Effect.ensuring(Deferred.succeed(released, undefined)));
+        yield* Effect.gen(function* () {
+          const api = yield* Fixtures.client;
+          const fiber = yield* api
+            .call({
+              payload: envelope(row.op, row.args),
+              headers: authenticatedHeaders(),
+              responseMode: "response-only"
+            })
+            .pipe(Effect.forkChild);
+          const binding = yield* Deferred.await(entered);
+          const log = yield* RuntimeLog.RuntimeLog;
+          const lookup = { companyId: DEV_SEED.companyId, correlationId: binding.correlationId };
+          yield* TestClock.adjust(row.deadlineMs - 1);
+          assert.strictEqual((yield* log.find(lookup))?.outcome, "pending");
+          assert.isFalse(yield* Deferred.isDone(released));
+          yield* TestClock.adjust(1);
+          const response = yield* Fiber.join(fiber);
+          const failure = decodeFailure(yield* response.json);
+          assert.strictEqual(response.status, 504);
+          assert.strictEqual(failure.code, "timeout");
+          assert.include(failure, {
+            scope: "viewer",
+            limitId: row.limitId,
+            value: row.deadlineMs
+          });
+          assert.notProperty(failure, "retryAfter");
+          assert.isUndefined(response.headers["retry-after"]);
+          assert.strictEqual(failure.correlationId, binding.correlationId);
+          assert.isTrue(yield* Deferred.isDone(released));
+          const call = yield* log.find(lookup);
+          assert.strictEqual(call?.outcome, "failure");
+          assert.strictEqual(call?.outcomeCode, "timeout");
+          assert.strictEqual(call?.connectionId, row.connectionId);
+          assert.strictEqual(call?.deadlineMs, row.deadlineMs);
+          assert.strictEqual(call?.durationMs, row.deadlineMs);
+        }).pipe(Effect.provide(Fixtures.layer(row.handlers(hang), row.limits)));
+      })
+  );
+}
 
 it.effect(
   "a never-returning handler is logged pending before execution and remains unknown after interruption",

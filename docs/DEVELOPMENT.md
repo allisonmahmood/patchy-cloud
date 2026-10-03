@@ -26,9 +26,10 @@ offers start, stop, environment and **Check** actions; import them once from
 | `pnpm verify`           | `check`, then every acceptance suite CI runs except live Clerk                             | before calling a change ready to ship |
 | `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed | docs and runner changes               |
 
-`pnpm verify` mirrors CI's jobs: `postgres-concurrency`, `cli-smoke` (the packed
-CLI's probes and end to end, and the packed Preact runtime), `tier2-smoke` (the
-packed tier 2 journey) and `browser` (tier 1 and 2 pages in Chromium). It keeps
+`pnpm verify` mirrors CI's jobs: `postgres-concurrency`, `cli-smoke` (a
+one-second check that the packed harness reaps orphaned processes, the packed CLI
+end to end, and the packed Preact runtime), `tier2-smoke` (the packed tier 2
+journey) and `browser` (tier 1 and 2 pages in Chromium). It keeps
 going after a failure and prints a summary. CI also runs `pnpm test` on Node
 22.22.0 and 24, and `clerk-live` on pushes to `main` and same-repository PRs.
 
@@ -43,8 +44,7 @@ For a focused loop:
 - `pnpm typecheck:tests` checks every test and harness file in one program,
   about three seconds when warm. Package `src` is checked by `pnpm typecheck`.
 - `pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium <spec>`
-  runs one browser spec. The `@print` test needs a display, X11 and `pdftotext`;
-  run it with `--grep @print`, and add `--project=firefox` for Firefox.
+  runs one browser spec.
 
 Every vitest run builds the shell broker and stages the packed CLI release once
 before its workers start. The release build reuses its last output when nothing

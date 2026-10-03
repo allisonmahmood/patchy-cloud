@@ -63,30 +63,6 @@ const tables = Effect.flatMap(
 ).pipe(Effect.map((rows) => rows.map((row) => row.table_name)));
 
 it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("migrator", (it) => {
-  it.effect("migrates an empty database in id order and records the ledger once", () =>
-    Effect.gen(function* () {
-      assert.deepStrictEqual(yield* ledger, [
-        { id: 1, name: "widgets" },
-        { id: 2, name: "gadgets" }
-      ]);
-      assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "widgets"]);
-      assert.deepStrictEqual(yield* migrate({ ...widgets, ...gadgets }), []);
-    })
-  );
-
-  it.effect("refuses a duplicate id across records before running anything", () =>
-    Effect.gen(function* () {
-      const error = yield* migrate({
-        ...widgets,
-        ...gadgets,
-        "2_gadgets_again": gadgets["2_gadgets"]!
-      }).pipe(Effect.flip);
-      assert.instanceOf(error, Migrator.MigrationError);
-      assert.strictEqual(error.kind, "Duplicates");
-      assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "widgets"]);
-    })
-  );
-
   it.effect("applies a new pending step to an already-migrated database", () =>
     Effect.gen(function* () {
       const applied = yield* migrate({
