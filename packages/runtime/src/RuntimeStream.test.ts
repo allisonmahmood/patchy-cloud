@@ -17,7 +17,7 @@ import * as SqlError from "effect/sql/SqlError";
 import { RuntimeStreamFrame, WIRE_VERSION } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
-import { PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
+import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
@@ -211,6 +211,45 @@ it.layer(layer)("document streams", (it) => {
       assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
       yield* Scope.close(second.scope, Exit.void);
       assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("refuses another viewer opening the same document, even with its generation", () =>
+    Effect.gen(function* () {
+      const streams = yield* RuntimeStream.RuntimeStream;
+      const document = "claimed_document";
+      const owner = yield* open(document);
+      const hello = frame(yield* owner.pull);
+      assert(hello.type === "hello");
+      yield* owner.pull;
+      const member = HttpServerRequest.fromWeb(
+        new Request(`${PUBLIC_BASE_URL}/api/runtime/stream`, {
+          headers: {
+            ...Fixtures.headers({ userId: "usr_member" }),
+            cookie: signedInCookies(
+              signSession({ sub: "user_member", email: "member@patchy.local" })
+            ),
+            "sec-fetch-site": "same-origin",
+            "x-patchy-generation": hello.generation
+          }
+        })
+      );
+      const refused = yield* streams
+        .open(input(document))
+        .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, member), Effect.flip);
+      assert.instanceOf(refused, RuntimeStream.StreamReplaced);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId, Fixtures.patchId), 1);
+      // The owner keeps its document: its next control is admitted on the same stream.
+      yield* streams
+        .update({
+          ...input(document),
+          generation: hello.generation,
+          sequence: 1,
+          type: "replace",
+          subscriptions: []
+        })
+        .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()));
+      assert.deepStrictEqual(frame(yield* owner.pull), { type: "admitted", sequence: 1 });
     }).pipe(Effect.scoped)
   );
 
