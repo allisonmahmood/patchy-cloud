@@ -156,8 +156,13 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   yield* say(`postgres pid=${postgresPid} port=${plan.ports.postgres}`);
 
   // The server migrates on its own way up too; running it here first means
-  // the seed below always lands on the current schema.
-  yield* migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
+  // the seed below always lands on the current schema. The supervisor has no
+  // terminal, so a refusal (a ledger from before a squash says to reset) is
+  // written to dev.log, where `pnpm dev` points.
+  yield* migrate(migrations).pipe(
+    Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))),
+    Effect.tapError((error) => say(error.message))
+  );
   const inherited = yield* Config.all({
     PATH: Config.String("PATH"),
     HOME: Config.String("HOME").pipe(Config.withDefault(plan.stateDir))
