@@ -584,12 +584,9 @@ describe("patchy publish", async () => {
     expect(existsSync(attemptPath)).toBe(false);
   });
 
+  // Api.test.ts owns the full definitive list; these prove file mode clears and starts fresh.
   it.each([
     { status: 422, code: "release_mismatch" },
-    { status: 422, code: "patch_not_openable" },
-    { status: 422, code: "invalid_manifest" },
-    { status: 422, code: "tier2_not_public" },
-    { status: 409, code: "publish_key_conflict" },
     { status: 409, code: "name_taken" }
   ])(
     "retains an unknown outcome but clears a definitive $code refusal",

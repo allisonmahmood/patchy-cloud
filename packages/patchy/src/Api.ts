@@ -95,6 +95,39 @@ export type ClientFailure = Refusal | HttpClientError.HttpClientError | Schema.S
 
 export const isRefusal = (error: ClientFailure): error is Refusal => "ok" in error;
 
+/** Wire literal of the patch-route 404; `publish` and `delete` each turn it into their next action. */
+export const PATCH_NOT_FOUND = "Patch not found.";
+
+/**
+ * ADR-0004's definitive publish refusals: the instance decided this attempt, so
+ * the caller clears its key. Admission refusals (including authentication, quota
+ * and rate limits) cannot tell whether an earlier send committed, so they keep it.
+ */
+export const isDefinitivePublishRefusal = (error: ClientFailure, update: boolean): boolean =>
+  isRefusal(error) &&
+  (error.status === 413 ||
+    (error.status === 422 &&
+      (error.code === "release_mismatch" ||
+        error.code === "invalid_manifest" ||
+        error.code === "tier_mismatch" ||
+        error.code === "tier2_not_public" ||
+        error.code === "has_primitives" ||
+        error.code === "patch_not_openable" ||
+        error.code === "connection_not_connected" ||
+        error.code === "stale_generated" ||
+        error.code === "not_additive" ||
+        error.code === "reserved_name" ||
+        error.code === "invalid_description" ||
+        error.errors !== undefined)) ||
+    (error.status === 409 &&
+      (error.code === "publish_key_conflict" ||
+        error.code === "name_taken" ||
+        error.code === "has_dependants" ||
+        error.code === "patch_retired" ||
+        error.code === "patch_deleted")) ||
+    (error.status === 403 && error.code === "not_owner") ||
+    (error.status === 404 && update && error.error === PATCH_NOT_FOUND));
+
 /** Generic refusal text includes the wire's optional validation errors. */
 export const refusalMessage = (refusal: Refusal, fallback: string): string => {
   const errors = refusal.errors ?? [];

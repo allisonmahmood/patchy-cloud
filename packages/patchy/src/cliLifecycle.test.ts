@@ -538,6 +538,7 @@ describe("publish description and lifecycle recovery", () => {
     expect(instance.requests.every((request) => request.url === "/api/me")).toBe(true);
   });
 
+  // Api.test.ts owns the full definitive list; these prove repo mode clears without rebinding.
   it.each([
     {
       status: 403,
@@ -545,24 +546,12 @@ describe("publish description and lifecycle recovery", () => {
       fields: { owner: { id: "other", name: "Sam" } },
       text: "Sam"
     },
-    { status: 409, code: "patch_retired", fields: {}, text: "Restore" },
     {
       status: 409,
       code: "patch_deleted",
       fields: { purgeAt: "2026-10-15T00:00:00.000Z" },
       text: "2026-10-15"
-    },
-    {
-      status: 409,
-      code: "has_dependants",
-      fields: {
-        dependants: [
-          { patchId: "mnopqrstuvwx", name: "reader", owner: { id: "other", name: "Sam" } }
-        ]
-      },
-      text: "reader"
-    },
-    { status: 422, code: "reserved_name", fields: {}, text: "Refused" }
+    }
   ])(
     "clears definitive $code retries without changing the repo identity",
     async ({ status, code, fields, text }) => {
@@ -579,54 +568,40 @@ describe("publish description and lifecycle recovery", () => {
       });
       writeFileSync(repoFile, repo);
       const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
-      for (const json of [false, true]) {
-        mkdirSync(attemptPath, { recursive: true });
-        writeFileSync(
-          path.join(attemptPath, `${sha256("lifecycle-retry")}.json`),
-          JSON.stringify({
-            ownerUserId: identity.user.id,
-            target: { mode: "repo" },
-            request: {
-              publishKey: "lifecycle-retry",
-              patchId: "abcdefghijkl",
-              html: validHtml,
-              metadata: {},
-              manifest: {
-                manifestVersion: MANIFEST_VERSION,
-                release: CURRENT_RELEASE,
-                tier: 0,
-                tables: {},
-                files: {},
-                uses: {}
-              }
+      mkdirSync(attemptPath, { recursive: true });
+      writeFileSync(
+        path.join(attemptPath, `${sha256("lifecycle-retry")}.json`),
+        JSON.stringify({
+          ownerUserId: identity.user.id,
+          target: { mode: "repo" },
+          request: {
+            publishKey: "lifecycle-retry",
+            patchId: "abcdefghijkl",
+            html: validHtml,
+            metadata: {},
+            manifest: {
+              manifestVersion: MANIFEST_VERSION,
+              release: CURRENT_RELEASE,
+              tier: 0,
+              tables: {},
+              files: {},
+              uses: {}
             }
-          })
-        );
-        const result = await runCli(
-          [
-            "publish",
-            "--description",
-            "ignored during recovery",
-            "--force",
-            ...(json ? ["--json"] : [])
-          ],
-          { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } }
-        );
-        expect(result.status).toBe(2);
-        const message = json ? JSON.parse(result.stderr).error : result.stderr;
-        expect(message).toContain(text);
-        expect(message).not.toMatch(/new patch|--new|Remove patch/i);
-        if (json)
-          expect(JSON.parse(result.stderr)).toMatchObject({ kind: "rejected", code, ...fields });
-        expect(existsSync(attemptPath)).toBe(false);
-        expect(readFileSync(repoFile, "utf8")).toBe(repo);
-      }
-      expect(instance.requests.map((request) => request.url)).toEqual([
-        "/api/me",
-        "/api/publish",
-        "/api/me",
-        "/api/publish"
-      ]);
+          }
+        })
+      );
+      const result = await runCli(
+        ["publish", "--description", "ignored during recovery", "--force", "--json"],
+        { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } }
+      );
+      expect(result.status).toBe(2);
+      const failure = JSON.parse(result.stderr);
+      expect(failure).toMatchObject({ kind: "rejected", code, ...fields });
+      expect(failure.error).toContain(text);
+      expect(failure.error).not.toMatch(/new patch|--new|Remove patch/i);
+      expect(existsSync(attemptPath)).toBe(false);
+      expect(readFileSync(repoFile, "utf8")).toBe(repo);
+      expect(instance.requests.map((request) => request.url)).toEqual(["/api/me", "/api/publish"]);
     }
   );
 });

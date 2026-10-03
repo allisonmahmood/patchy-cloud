@@ -93,8 +93,6 @@ const scopeLines = {
 
 /** Wire literal of the 401 (`Unauthorized` in `@patchy/api`); the hint below keys on it. */
 const UNAUTHORIZED = "Missing or invalid API token.";
-/** Wire literal of the patch-route 404; `publish` and `delete` each turn it into their next action. */
-const PATCH_NOT_FOUND = "Patch not found.";
 
 /**
  * Appended to a 401/403 from the default instance only — the local server this
@@ -378,42 +376,14 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   const { published, document } = yield* Api.publish(token, attempt.request, replay).pipe(
     Effect.catch((error) =>
       Effect.gen(function* () {
-        // Admission refusals (including authentication, quota and rate
-        // limits) cannot tell us whether an earlier send committed.
-        const definitive =
-          Api.isRefusal(error) &&
-          (error.status === 413 ||
-            (error.status === 422 &&
-              (error.code === "release_mismatch" ||
-                error.code === "invalid_manifest" ||
-                error.code === "tier_mismatch" ||
-                error.code === "tier2_not_public" ||
-                error.code === "has_primitives" ||
-                error.code === "patch_not_openable" ||
-                error.code === "connection_not_connected" ||
-                error.code === "stale_generated" ||
-                error.code === "not_additive" ||
-                error.code === "reserved_name" ||
-                error.code === "invalid_description" ||
-                error.errors !== undefined)) ||
-            (error.status === 409 &&
-              (error.code === "publish_key_conflict" ||
-                error.code === "name_taken" ||
-                error.code === "has_dependants" ||
-                error.code === "patch_retired" ||
-                error.code === "patch_deleted")) ||
-            (error.status === 403 && error.code === "not_owner") ||
-            (error.status === 404 &&
-              attempt.request.patchId !== undefined &&
-              error.error === PATCH_NOT_FOUND));
-        if (definitive) {
+        if (Api.isDefinitivePublishRefusal(error, attempt.request.patchId !== undefined)) {
           yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey, repo);
         }
         if (
           attempt.request.patchId !== undefined &&
           Api.isRefusal(error) &&
           error.status === 404 &&
-          error.error === PATCH_NOT_FOUND
+          error.error === Api.PATCH_NOT_FOUND
         ) {
           return yield* new RejectedError({
             refusal: {
@@ -803,7 +773,7 @@ const del = Command.make(
           .delete({ params: { patchId }, query: options.force ? { force: true } : {} })
           .pipe(
             Effect.catch((error) => {
-              if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
+              if (Api.isRefusal(error) && error.error === Api.PATCH_NOT_FOUND) {
                 return new RejectedError({
                   refusal: {
                     ok: false,
