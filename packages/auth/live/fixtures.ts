@@ -2,6 +2,7 @@ import { createClerkClient } from "@clerk/backend";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 
 export interface LiveSettings {
   runId: string;
@@ -67,8 +68,16 @@ export const sweep = Effect.fn("ClerkLive.sweep")(function* (settings: LiveSetti
     if (user.emailAddresses.some((email) => emails.includes(email.emailAddress)))
       yield* Effect.promise(() => client.users.deleteUser(user.id));
   }
+  // Clerk's user list lags deletion, so a user deleted a moment ago can still be
+  // listed. Re-check for a few seconds before calling the run leaky.
   const remaining = yield* Effect.promise(() =>
     client.users.getUserList({ emailAddress: emails, limit: 1 })
+  ).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("1 second"),
+      times: 10,
+      until: (list) => list.totalCount === 0
+    })
   );
   if (remaining.totalCount !== 0) throw new Error(`Clerk users remain for run ${settings.runId}.`);
   const invitations = yield* Effect.promise(() =>

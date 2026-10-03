@@ -88,11 +88,14 @@ try {
       sweep(settings).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv())))
     );
     console.log(`Clerk sweep ${settings.runId}: zero users remain.`);
-  } catch {
+  } catch (error) {
     console.error(
-      `Clerk sweep failed. Retry: CLERK_TEST_RUN_ID=${settings.runId} pnpm test:clerk --cleanup`
+      `Clerk sweep failed. Retry: CLERK_TEST_RUN_ID=${settings.runId} pnpm test:clerk --cleanup`,
+      error
     );
-    exitCode ||= 1;
+    // In CI the workflow's own --cleanup step runs next and fails the job if
+    // users remain; a sweep failure here must not fail a run whose tests passed.
+    if (cleanup || !process.env.GITHUB_ACTIONS) exitCode ||= 1;
   } finally {
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onTerminate);
