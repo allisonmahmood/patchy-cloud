@@ -261,28 +261,4 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 0);
     }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
   );
-
-  it.effect("does not announce a rolled-back portal bulk action", () =>
-    Effect.gen(function* () {
-      const patches = yield* Patches.Patches;
-      const patchId = newPatchId();
-      yield* publish(patchId, "create");
-      const notices: string[] = [];
-      yield* (yield* Wakes.Wakes).subscribe((keys) =>
-        Effect.sync(() => {
-          notices.push(...keys);
-        })
-      );
-      yield* patches
-        .withDependencyLock(actor.userId)(
-          Effect.gen(function* () {
-            yield* patches.retire(patchId, actor);
-            return yield* Effect.fail("cancel-bulk");
-          })
-        )
-        .pipe(Effect.flip);
-      assert.deepStrictEqual(notices, []);
-      assert.isTrue(Option.isSome(yield* patches.find(patchId)));
-    }).pipe(Effect.scoped)
-  );
 });

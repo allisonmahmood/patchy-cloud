@@ -939,12 +939,15 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         yield* patches.delete(initial.patchId, owner);
         yield* TestClock.adjust(30 * DAY);
         const held = yield* gate();
-        const session = yield* Deferred.make<number>();
+        const sessions = yield* Deferred.make<{ platform: number; company: number }>();
         const withPatchLock: CompanyDatabases.CompanyDatabases["Service"]["withPatchLock"] =
           (patchId) => (effect) =>
             companies.withPatchLock(patchId)(
               Effect.gen(function* () {
-                yield* Deferred.succeed(session, yield* backendPid(platform));
+                yield* Deferred.succeed(sessions, {
+                  platform: yield* backendPid(platform),
+                  company: yield* backendPid(yield* CompanyDatabases.CompanyConnection)
+                });
                 yield* held.pause;
                 return yield* effect;
               })
@@ -959,7 +962,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           Effect.provideService(Patches.Patches, gated)
         );
         const sweeping = yield* sweeper.sweep.pipe(Effect.forkScoped);
-        const pid = yield* Deferred.await(session);
+        const pids = yield* Deferred.await(sessions);
         const restoreSession = yield* Deferred.make<number>();
         const restoring = yield* platform
           .withTransaction(
@@ -969,9 +972,30 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
             })
           )
           .pipe(Effect.flip, Effect.forkScoped);
-        assert.deepStrictEqual(yield* blockedBy(pid), [yield* Deferred.await(restoreSession)]);
+        assert.deepStrictEqual(yield* blockedBy(pids.platform), [
+          yield* Deferred.await(restoreSession)
+        ]);
+        // A company-side writer waits on the sweep's patch lock, not only on its row.
+        const companySession = yield* Deferred.make<number>();
+        const competing = yield* companies
+          .withCompany(uploader.company.id)(
+            Effect.gen(function* () {
+              const sql = yield* CompanyDatabases.CompanyConnection;
+              yield* sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(companySession, yield* backendPid(sql));
+                  yield* companies.withPatchLock(initial.patchId)(Effect.void);
+                })
+              );
+            })
+          )
+          .pipe(Effect.forkScoped);
+        assert.deepStrictEqual(yield* blockedBy(pids.company), [
+          yield* Deferred.await(companySession)
+        ]);
         yield* Deferred.succeed(held.release, undefined);
         assert.instanceOf(yield* Fiber.join(restoring), Patches.PatchUnavailable);
+        yield* Fiber.join(competing);
         assert.deepStrictEqual(yield* Fiber.join(sweeping), {
           deleted: 1,
           skipped: 0,

@@ -215,6 +215,13 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         })
       );
       assert.deepStrictEqual(batches, [[`patch:${first.patchId}`]]);
+      // A failed outermost action announces nothing either.
+      yield* service
+        .withDependencyLock(owner.userId)(
+          service.retire(second.patchId, owner).pipe(Effect.andThen(Effect.fail("cancel")))
+        )
+        .pipe(Effect.flip);
+      assert.deepStrictEqual(batches, [[`patch:${first.patchId}`]]);
       assert.strictEqual((yield* stored(first.patchId)).lifecycle_revision, "2");
       assert.strictEqual((yield* stored(second.patchId)).lifecycle_revision, "1");
       assert.isTrue(Option.isSome(yield* service.find(second.patchId)));
