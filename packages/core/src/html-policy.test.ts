@@ -1,36 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { HtmlFixture } from "../../../test/html-fixtures.mjs";
 import { readFixtureCorpus } from "../../../test/html-fixtures.mjs";
 import { BLOCKED_PROTOCOLS, BLOCKED_TAGS, validateHtml } from "./html-policy.js";
 
 type BlockedTag = (typeof BLOCKED_TAGS)[number];
-type BlockedProtocol = (typeof BLOCKED_PROTOCOLS)[number];
+type Scheme<Protocol> = Protocol extends `${infer Name}:` ? Name : never;
+type BlockedScheme = Scheme<(typeof BLOCKED_PROTOCOLS)[number]>;
 
-const fixtureByBlockedTag = {
-  script: "blocked-tag-script.html",
-  form: "blocked-tag-form.html",
-  iframe: "blocked-tag-iframe.html",
-  object: "blocked-tag-object.html",
-  embed: "blocked-tag-embed.html",
-  applet: "blocked-tag-applet.html",
-  base: "blocked-tag-base.html",
-  link: "blocked-tag-link.html"
-} as const satisfies Record<BlockedTag, string>;
-
-const fixtureByBlockedProtocol = {
-  "javascript:": {
-    filename: "blocked-protocol-javascript.html",
-    sourceMarker: "java&#10;script:"
-  },
-  "vbscript:": {
-    filename: "blocked-protocol-vbscript.html",
-    sourceMarker: "vbscript:"
-  },
-  "file:": {
-    filename: "blocked-protocol-file.html",
-    sourceMarker: "file:"
-  }
-} as const satisfies Record<BlockedProtocol, { filename: string; sourceMarker: string }>;
+/** Adding a blocked tag or protocol fails typecheck until it has a reject fixture. */
+type RequiredRejectFixtures = Record<
+  `blocked-tag-${BlockedTag}.html` | `blocked-protocol-${BlockedScheme}.html`,
+  readonly string[]
+> &
+  Readonly<Record<string, readonly string[]>>;
 
 const expectedErrorsByRejectFixture: Readonly<Record<string, readonly string[]>> = {
   "blocked-protocol-file.html": ['Blocked unsafe URL in "href" attribute.'],
@@ -48,38 +29,12 @@ const expectedErrorsByRejectFixture: Readonly<Record<string, readonly string[]>>
   "meta-refresh.html": ["Blocked meta refresh tag found."],
   "srcdoc-attribute.html": ['Blocked "srcdoc" attribute found.'],
   "unsafe-inline-css.html": ["Blocked unsafe inline CSS."]
-};
+} satisfies RequiredRejectFixtures;
 
 const acceptFixtures = await readFixtureCorpus("accept");
 const rejectFixtures = await readFixtureCorpus("reject");
-const rejectFixtureByFilename = new Map(
-  rejectFixtures.map((fixture) => [fixture.filename, fixture])
-);
-
-function rejectFixture(filename: string): HtmlFixture {
-  const fixture = rejectFixtureByFilename.get(filename);
-  if (!fixture) {
-    throw new Error(`Missing reject fixture ${filename}.`);
-  }
-  return fixture;
-}
 
 describe("validateHtml", () => {
-  it.each(BLOCKED_TAGS)("rejects the <%s> fixture", (tagName) => {
-    const fixture = rejectFixture(fixtureByBlockedTag[tagName]);
-
-    expect(fixture.html).toContain(`<${tagName}`);
-    expect(validateHtml(fixture.html).errors).toEqual([`Blocked <${tagName}> tag found.`]);
-  });
-
-  it.each(BLOCKED_PROTOCOLS)("rejects the %s URL fixture", (protocol) => {
-    const fixtureCase = fixtureByBlockedProtocol[protocol];
-    const fixture = rejectFixture(fixtureCase.filename);
-
-    expect(fixture.html.toLowerCase()).toContain(fixtureCase.sourceMarker);
-    expect(validateHtml(fixture.html).errors).toEqual(['Blocked unsafe URL in "href" attribute.']);
-  });
-
   it.each(acceptFixtures)("accepts $filename", ({ html }) => {
     expect(validateHtml(html).ok).toBe(true);
   });
