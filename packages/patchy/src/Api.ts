@@ -10,11 +10,15 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type * as HttpApi from "effect/http-api/HttpApi";
+import type * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import type * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import {
   Authorization,
   authorizationClient,
   makeClient,
+  type PatchyApi,
   PublishCreated,
   type PublishRequest,
   PublishUpdated
@@ -81,12 +85,19 @@ export const publish = Effect.fn("Api.publish")(function* (
   return { published: result.success, document: encodePublish(result.success) };
 });
 
+type PatchyGroups = typeof PatchyApi extends HttpApi.HttpApi<string, infer Groups> ? Groups : never;
+/** Every `code` a declared refusal can carry, read off `PatchyApi`'s error schemas. */
+export type RefusalCode = Extract<
+  HttpApiEndpoint.Errors<HttpApiGroup.Endpoints<PatchyGroups>>,
+  { readonly code: unknown }
+>["code"];
+
 /** What any refusal on the wire looks like: `{ ok: false, error }`, or the 422's `errors`. */
 export interface Refusal {
   readonly ok: false;
   readonly error?: string;
   readonly errors?: ReadonlyArray<string>;
-  readonly code?: string;
+  readonly code?: RefusalCode;
   /** Internal only: the publish transport observed this before wire decoding. */
   readonly status?: number | undefined;
 }
@@ -128,8 +139,11 @@ export const isDefinitivePublishRefusal = (error: ClientFailure, update: boolean
     (error.status === 403 && error.code === "not_owner") ||
     (error.status === 404 && update && error.error === PATCH_NOT_FOUND));
 
+/** A refusal relayed from an installed CLI's failure document may carry another release's codes. */
+type RelayedRefusal = Omit<Refusal, "code"> & { readonly code?: string };
+
 /** Generic refusal text includes the wire's optional validation errors. */
-export const refusalMessage = (refusal: Refusal, fallback: string): string => {
+export const refusalMessage = (refusal: RelayedRefusal, fallback: string): string => {
   const errors = refusal.errors ?? [];
   const details = errors.length > 0 ? `\n- ${errors.join("\n- ")}` : "";
   return `${refusal.error ?? fallback}${details}`;
@@ -138,7 +152,7 @@ export const refusalMessage = (refusal: Refusal, fallback: string): string => {
 const decodeRefusal = Schema.decodeUnknownOption(RejectedError.fields.refusal);
 
 /** Both wire responses and installed CLI failures carry the same refusal context. */
-export const fromRefusal = (error: Refusal, fallback: string): RejectedError => {
+export const fromRefusal = (error: RelayedRefusal, fallback: string): RejectedError => {
   const decoded = decodeRefusal(error);
   const message = refusalMessage(error, fallback);
   return new RejectedError({

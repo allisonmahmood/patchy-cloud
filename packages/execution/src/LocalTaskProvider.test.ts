@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off -- Real processes exercise provider identity, execution and stop metering.
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import { assert, it } from "@effect/vitest";
@@ -9,6 +10,8 @@ import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as LocalTaskProvider from "./localTaskProvider.js";
+import * as Store from "./localTaskStore.js";
+import type * as TaskProvider from "./TaskProvider.js";
 
 const listener = (headers: IncomingMessage["headers"][]) =>
   Effect.acquireRelease(
@@ -238,4 +241,84 @@ it.live(
       assert.deepStrictEqual(yield* provider.stop(task.taskId), stopped);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   { timeout: 10_000 }
+);
+
+const ownerRecord = (options: LocalTaskProvider.Options, taskId: string) =>
+  Effect.promise(async () => {
+    const directory = Store.taskDirectory(options.directory, taskId);
+    const record = await Store.readRecord(directory);
+    if (record?.child == null) throw new Error("The task has no observed supervisor.");
+    return { directory, record, supervisor: record.child };
+  });
+// A procfs read can race a process's exit (#501); a retry observes the exit.
+const procfs = <A>(read: () => Promise<A>) =>
+  Effect.tryPromise(read).pipe(Effect.retry({ times: 5 }));
+const groupOf = (group: Store.Process) => procfs(() => Store.groupMembers(group));
+const isAlive = (process: Store.Process) => procfs(() => Store.alive(process));
+/**
+ * SIGKILLs recorded processes and the supervisor's group without the provider's help. A pid
+ * is signalled only while its recorded start time still matches, so a reused pid is spared.
+ */
+const killRecorded = Effect.fn("killRecorded")(function* (
+  supervisor: Store.Process,
+  others: ReadonlyArray<Store.Process> = []
+) {
+  const members = yield* groupOf(supervisor).pipe(Effect.orElseSucceed(() => []));
+  for (const recorded of [...others, supervisor, ...members])
+    if (yield* isAlive(recorded).pipe(Effect.orElseSucceed(() => false)))
+      yield* Effect.try(() => process.kill(recorded.pid, "SIGKILL")).pipe(Effect.ignore);
+});
+/** Cleans up a case's processes even when the recovery under test does not. */
+const killOnExit = (supervisor: Store.Process, others: ReadonlyArray<Store.Process>) =>
+  Effect.addFinalizer(() => killRecorded(supervisor, others));
+/** SIGKILLs a detached owner the way a crash would, leaving its record claiming it runs. */
+const killOwner = Effect.fn("killOwner")(function* (owner: Store.Process) {
+  process.kill(owner.pid, "SIGKILL");
+  while (yield* isAlive(owner)) yield* Effect.sleep("20 millis");
+}, Effect.timeout("5 seconds"));
+/** Any provider operation relaunches a dead owner; the new owner recovers under the lock. */
+const reclaimedThrough = Effect.fn("reclaimedThrough")(function* (
+  provider: TaskProvider.TaskProvider["Service"],
+  taskId: string
+) {
+  while (true) {
+    const task = (yield* provider.list).find((task) => task.taskId === taskId);
+    if (task?.state === "stopped") return task;
+    yield* Effect.sleep("20 millis");
+  }
+}, Effect.timeout("15 seconds"));
+
+it.live(
+  "reclaims a dead owner's slot without signalling an unrelated process that reuses its supervisor pid",
+  () =>
+    Effect.gen(function* () {
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const provider = yield* LocalTaskProvider.make(options);
+      const task = yield* provider.start({
+        taskId: "reused-pid",
+        deploymentRevision: "deployment"
+      });
+      const { directory, record, supervisor } = yield* ownerRecord(options, task.taskId);
+      yield* killOnExit(supervisor, [record.owner]);
+      yield* killOwner(record.owner);
+      // The supervisor may already have exited when its owner's IPC channel closed.
+      yield* killRecorded(supervisor);
+      while ((yield* groupOf(supervisor)).length > 0) yield* Effect.sleep("20 millis");
+      const bystander = yield* Effect.acquireRelease(
+        Effect.sync(() => spawn("sleep", ["60"], { detached: true, stdio: "ignore" })),
+        (child) => Effect.sync(() => child.kill("SIGKILL"))
+      );
+      const unrelated = (yield* Effect.promise(() => Store.processIdentity(bystander.pid!)))!;
+      // The record names a live pid whose start time differs: not authority to kill its group.
+      yield* Effect.promise(() =>
+        Store.writeRecord(directory, {
+          ...record,
+          child: { pid: unrelated.pid, identity: `${unrelated.identity}-earlier` }
+        })
+      );
+      const recovered = yield* LocalTaskProvider.make(options);
+      yield* reclaimedThrough(recovered, task.taskId);
+      assert.isTrue(yield* isAlive(unrelated));
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  { timeout: 30_000 }
 );

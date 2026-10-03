@@ -104,6 +104,8 @@ export const make = Effect.gen(function* () {
     Stream.unwrap(
       Effect.gen(function* () {
         if (prefix !== "") yield* ContentStore.checkKey(prefix);
+        // Any repeated token, not only the last one, would page forever.
+        const seen = new Set<string>();
         return Stream.paginate(undefined as string | undefined, (continuationToken) =>
           Effect.tryPromise({
             try: async (abortSignal) => {
@@ -127,10 +129,11 @@ export const make = Effect.gen(function* () {
               });
               if (
                 page.IsTruncated &&
-                (!page.NextContinuationToken || page.NextContinuationToken === continuationToken)
+                (!page.NextContinuationToken || seen.has(page.NextContinuationToken))
               ) {
                 throw new Error("S3 listing omitted a progressing continuation token.");
               }
+              if (page.NextContinuationToken) seen.add(page.NextContinuationToken);
               return [
                 objects,
                 page.IsTruncated ? Option.some(page.NextContinuationToken!) : Option.none()

@@ -60,3 +60,57 @@ it.effect("fails rather than returning a truncated GetObject body", () =>
     assert.deepInclude(failure, { _tag: "StoreUnavailable", operation: "get", key });
   })
 );
+
+const modified = "2026-01-02T03:04:05.000Z";
+const object = (key?: string, lastModified?: string) =>
+  `<Contents>${key === undefined ? "" : `<Key>${key}</Key>`}${
+    lastModified === undefined ? "" : `<LastModified>${lastModified}</LastModified>`
+  }</Contents>`;
+const page = (truncated: boolean, next: string | undefined, contents: string) =>
+  `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>${truncated}</IsTruncated>${
+    next === undefined ? "" : `<NextContinuationToken>${next}</NextContinuationToken>`
+  }${contents}</ListBucketResult>`;
+
+for (const [name, respond, requests] of [
+  ["an object without a key", () => page(false, undefined, object(undefined, modified)), 1],
+  ["an object without a modification time", () => page(false, undefined, object("listed/a")), 1],
+  [
+    "an invalid modification time",
+    () => page(false, undefined, object("listed/a", "not-a-date")),
+    1
+  ],
+  [
+    "a truncated page without a continuation token",
+    () => page(true, undefined, object("listed/a", modified)),
+    1
+  ],
+  [
+    "a continuation token that repeats the request's",
+    () => page(true, "same", object("listed/a", modified)),
+    2
+  ],
+  [
+    "continuation tokens that cycle",
+    (token: string | null) => page(true, token === "first" ? "second" : "first", ""),
+    3
+  ]
+] as const) {
+  it.effect(`fails a listing with ${name} after ${requests} request(s)`, () =>
+    Effect.gen(function* () {
+      let served = 0;
+      const store = yield* makeTestStore((request, response) => {
+        const url = new URL(request.url!, "http://localhost");
+        // A listing that never stops is the failure under test; bound it so the case ends.
+        const body =
+          ++served > 10
+            ? "<Error><Code>InternalError</Code></Error>"
+            : respond(url.searchParams.get("continuation-token"));
+        response.writeHead(served > 10 ? 500 : 200, { "content-type": "application/xml" });
+        response.end(body);
+      });
+      const failure = yield* store.list("listed/").pipe(Stream.runCollect, Effect.flip);
+      assert.deepInclude(failure, { _tag: "StoreUnavailable", operation: "list", key: "listed/" });
+      assert.strictEqual(served, requests);
+    })
+  );
+}

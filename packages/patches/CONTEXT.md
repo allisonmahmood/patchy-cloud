@@ -117,7 +117,7 @@ A patch that has been neither retired nor deleted. A separate operator take-down
 _Avoid_: active patch, published patch (every patch is published)
 
 **Patch quota**:
-The ceiling on non-deleted, non-disabled patches one owner user may hold, surviving a restart and a replacement machine token. Retired patches still count; it is separate from the per-machine rate limit on creating patches.
+The ceiling on non-deleted, non-disabled patches one owner user may hold, surviving a restart and a replacement machine token. Retired patches still count; it is separate from the per-machine rate limit on creating patches. It gates creating patches only: restoring or reassigning one can leave an owner above it.
 _Avoid_: patch limit (the per-minute one), storage quota (this counts patches, not bytes)
 
 **Patch event**:

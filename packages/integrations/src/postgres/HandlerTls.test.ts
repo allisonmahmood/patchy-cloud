@@ -21,9 +21,12 @@ import {
   RuntimeLog,
   ServerBundles
 } from "@patchy/runtime";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import EmbeddedPostgres from "embedded-postgres";
@@ -198,9 +201,29 @@ const tlsPostgres = Effect.gen(function* () {
       return socket;
     })
   });
-  return { trust, network };
+  // A superuser view of the source's backends, outside the code under test.
+  const backends = (query: string) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => postgres.getPgClient("postgres", "127.0.0.1")),
+      (client) =>
+        Effect.promise(async () => {
+          await client.connect();
+          const result = await client.query<{ pid: number }>(
+            "SELECT pid FROM pg_stat_activity WHERE query = $1",
+            [query]
+          );
+          return result.rows.map((row) => row.pid);
+        }),
+      (client) => Effect.promise(() => client.end())
+    );
+  return { trust, network, backends };
 });
+// One disposable TLS Postgres serves every case; each case sets the trust it needs.
+class TlsSource extends Context.Service<TlsSource, Effect.Success<typeof tlsPostgres>>()(
+  "@patchy/integrations/HandlerTls.test/TlsSource"
+) {}
 
+const poll = Schedule.spaced("20 millis");
 const services = Layer.mergeAll(
   RuntimeLog.layer,
   InvocationLog.layer,
@@ -217,81 +240,87 @@ const services = Layer.mergeAll(
   )
 );
 
-it.live(
-  "ctx.connections verifies TLS and returns real Postgres rows as a non-superuser through workerd",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* tlsPostgres;
-      yield* fixture.trust(true);
-      const source = yield* Source.make.pipe(
-        Effect.provideService(SourceNetwork.SourceNetwork, fixture.network)
-      );
-      const wrongHostname = yield* source
-        .test(
-          Redacted.make(`postgres://reader:${password}@wrong.example/postgres?sslmode=verify-full`)
-        )
-        .pipe(Effect.flip);
-      assert.instanceOf(wrongHostname, SourceClient.TlsRequired);
-      const connections = yield* SqlConnectionStore.make.pipe(
-        Effect.provideService(Source.Source, source)
-      );
-      const connection = yield* connections.connect({
-        companyId: "cmp_dev",
-        userId: "usr_dev",
-        handle: "tls-warehouse",
-        description: "TLS handler acceptance",
-        credentials
-      });
-      const viewer = {
-        user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
-        company: { id: "cmp_dev", name: "Patchy Dev", handle: "patchy-dev" },
-        admin: false
-      };
-      const binding = Binding.Binding.of({
-        companyId: "cmp_dev",
-        patchId: "handlertls01",
-        versionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaa",
-        wireVersion: WIRE_VERSION,
-        scope: "company",
-        correlationId: "tls-handler",
-        principal: { userId: viewer.user.id },
-        identity: viewer,
-        manifest: {
-          manifestVersion: 1,
-          release: CURRENT_RELEASE,
-          tier: 2,
-          tables: {},
-          files: {},
-          uses: {
-            warehouse: {
-              kind: "postgres",
-              id: connection.id,
-              handle: connection.handle,
-              revision: connection.metadataRevision
-            }
-          },
-          handlers: { "leads.read": { kind: "action", args: {}, result: { kind: "json" } } }
-        }
-      });
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
+  excludeTestServices: true,
+  timeout: 60_000
+})("TLS Postgres source", (it) => {
+  it.effect(
+    "ctx.connections verifies TLS and returns real Postgres rows as a non-superuser through workerd",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* TlsSource;
+        yield* fixture.trust(true);
+        const source = yield* Source.make.pipe(
+          Effect.provideService(SourceNetwork.SourceNetwork, fixture.network)
+        );
+        const wrongHostname = yield* source
+          .test(
+            Redacted.make(
+              `postgres://reader:${password}@wrong.example/postgres?sslmode=verify-full`
+            )
+          )
+          .pipe(Effect.flip);
+        assert.instanceOf(wrongHostname, SourceClient.TlsRequired);
+        const connections = yield* SqlConnectionStore.make.pipe(
+          Effect.provideService(Source.Source, source)
+        );
+        const connection = yield* connections.connect({
+          companyId: "cmp_dev",
+          userId: "usr_dev",
+          handle: "tls-warehouse",
+          description: "TLS handler acceptance",
+          credentials
+        });
+        const viewer = {
+          user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
+          company: { id: "cmp_dev", name: "Patchy Dev", handle: "patchy-dev" },
+          admin: false
+        };
+        const binding = Binding.Binding.of({
+          companyId: "cmp_dev",
+          patchId: "handlertls01",
+          versionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaa",
+          wireVersion: WIRE_VERSION,
+          scope: "company",
+          correlationId: "tls-handler",
+          principal: { userId: viewer.user.id },
+          identity: viewer,
+          manifest: {
+            manifestVersion: 1,
+            release: CURRENT_RELEASE,
+            tier: 2,
+            tables: {},
+            files: {},
+            uses: {
+              warehouse: {
+                kind: "postgres",
+                id: connection.id,
+                handle: connection.handle,
+                revision: connection.metadataRevision
+              }
+            },
+            handlers: { "leads.read": { kind: "action", args: {}, result: { kind: "json" } } }
+          }
+        });
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
       VALUES (${binding.patchId}, 'cmp_dev', 'usr_dev', 'TLS acceptance', 'tls-acceptance')`;
-      const execution = yield* Execution.make().pipe(
-        Effect.provideService(ConnectionStore.ConnectionStore, connections),
-        Effect.provideService(SourceNetwork.SourceNetwork, fixture.network)
-      );
-      const handlers = yield* Operations.makeHandlers.pipe(
-        Effect.provideService(ConnectionStore.ConnectionStore, connections),
-        Effect.provideService(Execution.Execution, execution)
-      );
-      const gateway = yield* CallbackGateway.make(handlers);
-      const listener = yield* CallbackGatewayApi.listen().pipe(
-        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
-      );
-      const built = yield* Effect.promise(() =>
-        build({
-          stdin: {
-            contents: `import { action, createGuest, t } from "patchy/server";
+        const execution = yield* Execution.make().pipe(
+          Effect.provideService(ConnectionStore.ConnectionStore, connections),
+          Effect.provideService(SourceNetwork.SourceNetwork, fixture.network)
+        );
+        const handlers = yield* Operations.makeHandlers.pipe(
+          Effect.provideService(ConnectionStore.ConnectionStore, connections),
+          Effect.provideService(Execution.Execution, execution)
+        );
+        const gateway = yield* CallbackGateway.make(handlers);
+        const listener = yield* CallbackGatewayApi.listen().pipe(
+          Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+        );
+        const built = yield* Effect.promise(() =>
+          build({
+            stdin: {
+              contents: `import { action, createGuest, t } from "patchy/server";
           const read = action({args:{},result:t.json(),handler:async ctx => {
             const leads = await ctx.connections.warehouse.leads.list();
             const session = await ctx.connections.warehouse.query(
@@ -301,64 +330,153 @@ it.live(
             return {leads,session};
           }});
           export default createGuest({leads:{read}});`,
-            resolveDir: new URL("../../../patchy", import.meta.url).pathname,
-            sourcefile: "tls-handler.ts"
-          },
-          bundle: true,
-          write: false,
-          platform: "browser",
-          format: "esm",
-          target: "es2022",
-          conditions: ["development"]
-        })
-      );
-      const text = built.outputFiles[0]!.text;
-      const bundle: GuestProtocol.Bundle = {
-        companyId: binding.companyId,
-        patchId: binding.patchId,
-        versionId: binding.versionId,
-        bundle: text,
-        sha256: sha256(text)
-      };
-      const executor = yield* Local.make({
-        companyId: binding.companyId,
-        callbackUrls: [listener.url],
-        environment: "test"
-      });
-      const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
-        Effect.provideService(Executor.Executor, executor),
-        Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
-      );
-      const call = Effect.suspend(() =>
-        invocations.call(
-          { handler: "leads.read", args: {} },
-          { ...binding, correlationId: newInternalId("call") },
-          Effect.succeed(viewer)
-        )
-      );
-      // No cached runtime connection exists: the callback must refuse the untrusted CA.
-      yield* fixture.trust(false);
-      assert.strictEqual((yield* call.pipe(Effect.flip)).code, "source_unavailable");
-      yield* fixture.trust(true);
-      assert.deepStrictEqual(yield* call, {
-        ok: true,
-        value: {
-          leads: {
-            ok: true,
-            rows: [
-              { id: 1, name: "Ada" },
-              { id: 2, name: "Grace" }
-            ],
-            cursor: null
-          },
-          session: {
-            ok: true,
-            rows: [
-              { role: "reader", superuser: false, createdb: false, createrole: false, ssl: true }
-            ]
+              resolveDir: new URL("../../../patchy", import.meta.url).pathname,
+              sourcefile: "tls-handler.ts"
+            },
+            bundle: true,
+            write: false,
+            platform: "browser",
+            format: "esm",
+            target: "es2022",
+            conditions: ["development"]
+          })
+        );
+        const text = built.outputFiles[0]!.text;
+        const bundle: GuestProtocol.Bundle = {
+          companyId: binding.companyId,
+          patchId: binding.patchId,
+          versionId: binding.versionId,
+          bundle: text,
+          sha256: sha256(text)
+        };
+        const executor = yield* Local.make({
+          companyId: binding.companyId,
+          callbackUrls: [listener.url],
+          environment: "test"
+        });
+        const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+          Effect.provideService(Executor.Executor, executor),
+          Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
+        );
+        const call = Effect.suspend(() =>
+          invocations.call(
+            { handler: "leads.read", args: {} },
+            { ...binding, correlationId: newInternalId("call") },
+            Effect.succeed(viewer)
+          )
+        );
+        // No cached runtime connection exists: the callback must refuse the untrusted CA.
+        yield* fixture.trust(false);
+        assert.strictEqual((yield* call.pipe(Effect.flip)).code, "source_unavailable");
+        yield* fixture.trust(true);
+        assert.deepStrictEqual(yield* call, {
+          ok: true,
+          value: {
+            leads: {
+              ok: true,
+              rows: [
+                { id: 1, name: "Ada" },
+                { id: 2, name: "Grace" }
+              ],
+              cursor: null
+            },
+            session: {
+              ok: true,
+              rows: [
+                { role: "reader", superuser: false, createdb: false, createrole: false, ssl: true }
+              ]
+            }
           }
-        }
-      });
-    }).pipe(Effect.scoped, Effect.provide(services)),
-  { timeout: 60_000 }
-);
+        });
+      }),
+    60_000
+  );
+
+  it.effect(
+    "cancels a statement past its deadline over verified TLS so its backend is gone",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* TlsSource;
+        yield* fixture.trust(true);
+        const network = fixture.network;
+        const source = yield* Source.make.pipe(
+          Effect.provideService(SourceNetwork.SourceNetwork, network)
+        );
+        const connections = yield* SqlConnectionStore.make.pipe(
+          Effect.provideService(Source.Source, source)
+        );
+        const connection = yield* connections.connect({
+          companyId: "cmp_dev",
+          userId: "usr_dev",
+          handle: "tls-cancel",
+          description: "TLS cancellation",
+          credentials
+        });
+        // A large statement timeout means only the CancelRequest can stop the sleep in time.
+        const execution = yield* Execution.make({
+          ...Execution.specLimits,
+          deadlineMs: 2_000,
+          statementMs: 60_000
+        }).pipe(
+          Effect.provideService(ConnectionStore.ConnectionStore, connections),
+          Effect.provideService(SourceNetwork.SourceNetwork, network)
+        );
+        const sleeping = "SELECT pg_sleep(60)";
+        const running = (yield* fixture.backends(sleeping)).length;
+        assert.strictEqual(running, 0);
+        const pending = yield* execution
+          .query({
+            companyId: "cmp_dev",
+            declaration: {
+              kind: "postgres",
+              id: connection.id,
+              handle: connection.handle,
+              revision: connection.metadataRevision
+            },
+            text: sleeping,
+            parameters: []
+          })
+          .pipe(Effect.flip, Effect.forkChild);
+        const [backend] = yield* fixture
+          .backends(sleeping)
+          .pipe(Effect.repeat({ until: (pids) => pids.length > 0, schedule: poll }));
+        assert.instanceOf(yield* Fiber.join(pending), Execution.Timeout);
+        yield* fixture
+          .backends(sleeping)
+          .pipe(
+            Effect.repeat({ until: (pids) => !pids.includes(backend!), schedule: poll }),
+            Effect.timeout("5 seconds")
+          );
+
+        // The cancel opens its own TLS connection and refuses a certificate it cannot verify.
+        const settings = yield* Source.parseCredentials(credentials);
+        const client = yield* SourceClient.open(settings, "patchy-runtime").pipe(
+          Effect.provideService(SourceNetwork.SourceNetwork, network)
+        );
+        void client.query(sleeping).catch(() => undefined);
+        const [held] = yield* fixture
+          .backends(sleeping)
+          .pipe(Effect.repeat({ until: (pids) => pids.length > 0, schedule: poll }));
+        // A closed client socket alone does not stop a sleeping backend.
+        Execution.destroy(client);
+        yield* fixture.trust(false);
+        const refused = yield* SourceClient.cancel(settings, client).pipe(
+          Effect.provideService(SourceNetwork.SourceNetwork, network),
+          Effect.flip
+        );
+        assert.instanceOf(refused, SourceClient.SourceUnavailable);
+        assert.include(yield* fixture.backends(sleeping), held);
+        yield* fixture.trust(true);
+        yield* SourceClient.cancel(settings, client).pipe(
+          Effect.provideService(SourceNetwork.SourceNetwork, network)
+        );
+        yield* fixture
+          .backends(sleeping)
+          .pipe(
+            Effect.repeat({ until: (pids) => !pids.includes(held!), schedule: poll }),
+            Effect.timeout("5 seconds")
+          );
+      }),
+    60_000
+  );
+});

@@ -1,34 +1,38 @@
 // The CLI contract from outside: the exit-code ladder, login, keys and status.
-import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
-  cliPath,
   htmlFile,
   identity,
   readJson,
+  requestBarrier,
   runCli,
   stubInstance,
   tempDir
 } from "./test/cli.js";
 
 describe("the exit-code ladder", async () => {
-  it("exits 130 on SIGINT, as Effect's interruption", async () => {
-    const instance = await stubInstance(() => undefined);
-    const child = spawn(process.execPath, [cliPath, "whoami", "--api-url", instance.url], {
-      env: { PATH: process.env.PATH ?? "", PATCHY_STATE_DIR: tempDir(), PATCHY_API_TOKEN: "t" }
-    });
-    child.stdin.end();
-    await new Promise<void>((resolve) => {
-      const poll = () => (instance.requests.length > 0 ? resolve() : setTimeout(poll, 20));
-      poll();
-    });
-    child.kill("SIGINT");
-    const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
-    expect(status).toBe(130);
-  });
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "exits 130 on %s, as Effect's interruption",
+    async (signal) => {
+      // The held request marks the CLI as mid-command; runCli registers the child for cleanup.
+      const barrier = requestBarrier();
+      const instance = await stubInstance(barrier.handler);
+      let child: ChildProcess | undefined;
+      const running = runCli(["whoami", "--api-url", instance.url], {
+        env: { PATCHY_API_TOKEN: "t" },
+        onSpawn: (spawned) => {
+          child = spawned;
+        }
+      });
+      await barrier.wait(running);
+      child?.kill(signal);
+      expect((await running).status).toBe(130);
+    }
+  );
 
   it("exits 1 when the caller can fix it: a file that fails validation", async () => {
     const dir = tempDir();

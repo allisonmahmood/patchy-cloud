@@ -17,7 +17,7 @@ import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
 
 const DAY = 24 * 60 * 60 * 1000;
-const { admin, sibling, uploader, reader } = Fixtures.identities;
+const { admin, quota, sibling, uploader, reader } = Fixtures.identities;
 const owner = { userId: uploader.user.id, admin: false };
 const administrator = { userId: admin.user.id, admin: true };
 let counter = 0;
@@ -529,6 +529,31 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${disabled.patchId}`;
       assert.strictEqual(yield* service.countQuotaPatches(uploader.user.id), before + 2);
+    })
+  );
+
+  it.effect("gates only creation on the owner quota, so restore and reassign may exceed it", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const actor = { userId: quota.user.id, admin: false };
+      const asQuotaOwner = {
+        ownerUserId: quota.user.id,
+        machineTokenId: quota.machine.id,
+        livePatchQuota: 1
+      };
+      const first = yield* create(asQuotaOwner);
+      yield* service.delete(first.patchId, actor);
+      const second = yield* create(asQuotaOwner);
+      yield* service.restore(first.patchId, actor);
+      const handedOver = yield* create();
+      yield* service.reassign(handedOver.patchId, administrator, quota.user.id);
+      assert.strictEqual(yield* service.countQuotaPatches(quota.user.id), 3);
+      // Creation stays refused until the owner is back under the quota.
+      for (const patch of [first, second, handedOver]) {
+        assert.instanceOf(yield* create(asQuotaOwner).pipe(Effect.flip), Patches.PatchQuotaReached);
+        yield* service.delete(patch.patchId, actor);
+      }
+      yield* create(asQuotaOwner);
     })
   );
 
@@ -1250,6 +1275,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
       );
       assert.include(listed, sources.live!.patchId);
       assert.notInclude(listed, sources.disabled!.patchId);
+      assert.notInclude(listed, sources.foreign!.patchId);
       for (const unavailable of [sources.disabled!, sources.foreign!]) {
         assert.instanceOf(
           yield* service.companyInventory(unavailable.patchId, access).pipe(Effect.flip),

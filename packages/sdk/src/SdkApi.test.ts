@@ -27,7 +27,13 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, Release, SdkGroup, WIRE_VERSION } fr
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
-import { Generated, Manifest, isManagedOutputPath, type GenerateRequest } from "@patchy/api";
+import {
+  Generated,
+  Identity,
+  Manifest,
+  isManagedOutputPath,
+  type GenerateRequest
+} from "@patchy/api";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
@@ -870,6 +876,66 @@ it.layer(layer)("SDK company generation", (it) => {
           assert.isUndefined(error.table);
         }
       })
+  );
+
+  it.effect("generates against a source only for its own company", () =>
+    Effect.gen(function* () {
+      // A real source in another company: its platform rows and its own company database.
+      const foreign = new Identity({
+        user: { id: "usr_sdk_foreign", email: "foreign@patchy.local", name: "Foreign" },
+        company: { id: "cmp_sdk_foreign", handle: "sdk-foreign", name: "Foreign company" },
+        role: "member",
+        machine: { id: "tok_sdk_foreign", name: "Foreign machine" }
+      });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES (${foreign.company.id}, ${foreign.company.handle}, ${foreign.company.name})`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${foreign.user.id}, ${`clerk_${foreign.user.id}`}, ${foreign.company.id},
+                ${foreign.user.email}, ${foreign.user.name}, ${foreign.role})`;
+      yield* sql`INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+        VALUES (${foreign.machine.id}, ${foreign.user.id}, ${foreign.machine.name},
+                ${`hash:${foreign.machine.id}`}, now(), now() + interval '90 days', now())`;
+      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(foreign.company.id);
+      const patchId = "sdkforeign01";
+      yield* Fixtures.record(
+        Fixtures.recordInput(foreign, {
+          patchId,
+          manifest: {
+            ...Fixtures.manifest,
+            name: "sdk-foreign-source",
+            tables: {
+              contacts: {
+                description: "Contacts identified by id.",
+                columns: {},
+                indexes: {},
+                shared: true
+              }
+            },
+            files: { logos: { description: "Company logos keyed by filename.", shared: true } }
+          }
+        })
+      );
+      const requests = [
+        generateRequest({
+          ...Fixtures.manifest,
+          uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+        }),
+        generateRequest({
+          ...Fixtures.manifest,
+          uses: { logos: { kind: "sharedStore", patchId, store: "logos" } }
+        }),
+        { ...generateRequest(), patchId }
+      ];
+      for (const payload of requests) yield* Generation.generate(foreign.company.id, payload);
+      // Generation must ask with the caller's company, never the source's.
+      const api = yield* sdkOver(Layer.empty);
+      for (const payload of requests) {
+        const response = yield* api.generate({ payload, responseMode: "response-only" });
+        assert.strictEqual(response.status, 422);
+        assert.include(yield* response.json, { code: "patch_not_openable" });
+      }
+    })
   );
 
   it.effect("answers each unavailable generation source with a bounded 503 that names it", () =>
