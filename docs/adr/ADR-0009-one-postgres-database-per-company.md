@@ -89,20 +89,24 @@ Inventory reads acquire the same patch lock as provisioning, so their revision
 and component queries cannot straddle a writer's commit. These metadata reads
 may wait for provisioning; they do not return a partly old, partly new inventory.
 
-`Inventory.initialize` runs the shared idempotent `Inventory.upgrade` steps after
-creating missing tables. `ensureReady` also upgrades already-ready placements.
-Changes to existing structures belong in those upgrades, such as `ADD COLUMN IF
-NOT EXISTS`, not only in fresh-database DDL. The portable inventory contract runs
-initialization twice against an already-initialized database with a missing column,
-on PostgreSQL and PGlite, and checks that existing rows and definitions survive.
-A versioned per-company migration ledger remains deferred.
+`Inventory.initialize` creates the whole inventory and is idempotent: a
+provisioning interrupted after it ran runs it again. `ensureReady` leaves
+already-ready placements alone. The inventory was squashed with the platform
+baselines before launch, and the upgrade steps for retained inventory went with
+them. Once a company database worth keeping exists, a change to an existing
+structure needs an upgrade path again: steps `ensureReady` runs on ready
+placements, tested on PostgreSQL and PGlite for keeping rows and definitions.
+The portable inventory contract runs initialization again on an initialized
+database and checks that the inventory, rows and file handle key survive. A
+versioned per-company migration ledger remains deferred.
 
 Authorised file handles use a company-local signing key in
-`patchy.file_handle_key`. Initialization creates it once; idempotent upgrades
-preserve it, so replicas and restarts mint the same handles. Metadata queries
-only read it, including inside read-only query snapshots. The file index has a
-company-wide unique object-id index for redemption. Object ids are immutable
-and never reused or moved between stores; replacement writes a new object.
+`patchy.file_handle_key`. Initialization creates it once and a repeated
+initialization preserves it, so replicas and restarts mint the same handles.
+Metadata queries only read it, including inside read-only query snapshots. The
+file index has a company-wide unique object-id index for redemption. Object ids
+are immutable and never reused or moved between stores; replacement writes a new
+object.
 Redemption checks the live pointer before source authority and releases the
 company lease before fetching bytes.
 

@@ -668,7 +668,7 @@ bounded by the remaining cleanup allowance. A slow wake cannot consume a company
 slot or turn committed success into a timeout; durable reconciliation covers a
 missed wake.
 
-The company inventory upgrade creates the mutation-key store idempotently.
+Company inventory initialization creates the mutation-key store.
 The key, owning patch, handler, loaded version, initiating viewer, originating
 invocation id, argument fingerprint, result and written revisions commit together.
 Only the transaction owner announces touched resources after that commit. A replay
