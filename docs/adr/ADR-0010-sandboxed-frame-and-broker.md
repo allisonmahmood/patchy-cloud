@@ -107,6 +107,7 @@ if its patch becomes public; public data-operation refusals remain errors for
 patch code, not access-loss notices.
 The shell forces at most three token refreshes per reconnect streak. A new
 `hello`, returning from suspension or coming online resets that budget.
+A successful refresh reconnects at once; it is not a failure and adds no backoff.
 Refresh/network failures keep the document and its backoff; no operation is replayed.
 
 EOF, a network cut and deployment drain use the same capped, jittered-backoff reconnect.
