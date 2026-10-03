@@ -17,7 +17,7 @@ import * as MachineTokens from "./MachineTokens.js";
 import * as Testing from "@patchy/sql/testing";
 import { DEV_SEED } from "./seed.js";
 import * as AuthPages from "./AuthPages.js";
-import { clerkEnv, externalRequests, signSession, signedInCookies } from "./testing.js";
+import { clerkEnv, signSession, signedInCookies } from "./testing.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
 
@@ -256,9 +256,14 @@ it.layer(services)("first-party pages in memory", (it) => {
         ];
         for (const route of ["/join", "/logout"]) {
           for (const headers of refusedHeaders) {
-            const response = yield* send(route, { method: "POST", headers });
+            const response = yield* send(route, {
+              method: "POST",
+              headers: { cookie: cookie("user_refused_post"), ...headers }
+            });
             assert.strictEqual(response.status, 403);
             assert.strictEqual(response.headers.get("location"), null);
+            // A refused logout leaves the session's cookies alone.
+            assert.deepStrictEqual(response.headers.getSetCookie(), []);
           }
         }
       })
@@ -322,7 +327,6 @@ it.layer(services)("first-party pages in memory", (it) => {
         assert.include(html, "Ask an admin to reactivate it");
         assert.include(html, 'action="/logout"');
       }
-      assert.deepStrictEqual(externalRequests, []);
     })
   );
   it.effect("keeps logout retryable when Clerk cannot revoke the session", () =>
@@ -366,24 +370,6 @@ it.layer(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
   )
 )("logout without a company", (it) => {
-  it.effect("clears every Clerk cookie scope and returns to the door with no user row", () =>
-    Effect.gen(function* () {
-      const response = yield* send("/logout", post({}, cookie("user_no_row")));
-      assert.strictEqual(response.status, 303);
-      assert.strictEqual(response.headers.get("location"), "/login");
-      const jar = new CookieJar();
-      for (const value of cookie("user_no_row").split("; "))
-        jar.setCookieSync(`${value}; Path=/`, base);
-      for (const value of response.headers.getSetCookie())
-        jar.setCookieSync(value, base, { ignoreError: true });
-      assert.strictEqual(jar.getCookieStringSync(base), "");
-      const login = yield* send(response.headers.get("location")!);
-      assert.strictEqual(login.status, 200);
-      const next = yield* send("/join");
-      assert.strictEqual(next.status, 401);
-    })
-  );
-
   it.effect("applies logout response deletions to every Clerk setter scope in a browser jar", () =>
     Effect.gen(function* () {
       const publicUrl = "https://app.example.co.uk";

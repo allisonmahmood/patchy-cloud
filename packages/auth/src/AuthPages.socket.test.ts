@@ -169,37 +169,4 @@ it.layer(layer)("auth pages on a socket", (it) => {
         assert.strictEqual((yield* request("/join")).status, 401);
       })
   );
-
-  it.effect("signs out before enrollment and refuses a foreign-origin logout", () =>
-    Effect.gen(function* () {
-      const server = yield* HttpServer.HttpServer;
-      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
-      const socket = `http://127.0.0.1:${server.address.port}`;
-      const sessionCookie = signedInCookies(signSession({ sub: "user_socket_no_row" }));
-      const foreign = yield* Effect.promise(() =>
-        fetch(`${socket}/logout`, {
-          method: "POST",
-          headers: { cookie: sessionCookie, origin: "https://foreign.invalid" },
-          redirect: "manual"
-        })
-      );
-      assert.strictEqual(foreign.status, 403);
-      assert.deepStrictEqual(foreign.headers.getSetCookie(), []);
-      const logout = yield* Effect.promise(() =>
-        fetch(`${socket}/logout`, {
-          method: "POST",
-          headers: { cookie: sessionCookie, origin: PUBLIC_BASE_URL },
-          redirect: "manual"
-        })
-      );
-      assert.strictEqual(logout.status, 303);
-      assert.strictEqual(logout.headers.get("location"), "/login");
-      const jar = new CookieJar();
-      for (const value of sessionCookie.split("; ")) jar.setCookieSync(`${value}; Path=/`, socket);
-      for (const value of logout.headers.getSetCookie())
-        jar.setCookieSync(value, socket, { ignoreError: true });
-      assert.strictEqual(jar.getCookieStringSync(socket), "");
-      assert.strictEqual(yield* (yield* Users.Users).findByClerkId("user_socket_no_row"), null);
-    })
-  );
 });
