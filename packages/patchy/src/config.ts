@@ -1,4 +1,6 @@
 /** Code-first definitions. Builders do not load the Node-only config executor. */
+// Source-mode tests load this file in the config child, which only strips types: keep it
+// erasable (declared fields instead of constructor parameter properties, no enum or namespace).
 declare const idBrand: unique symbol;
 export type Id<Table extends string> = string & { readonly [idBrand]: Table };
 export type ColumnKind =
@@ -55,10 +57,13 @@ type FieldDescriptors<F extends Fields> = { readonly [K in keyof F]: DescriptorO
 
 /** Composite schemas have field optionality, but no table default or reference modifier. */
 export class ValueSchema<D extends object, Optional extends boolean = false> {
-  constructor(
-    readonly descriptor: D,
-    readonly isOptional: Optional
-  ) {}
+  readonly descriptor: D;
+  readonly isOptional: Optional;
+
+  constructor(descriptor: D, isOptional: Optional) {
+    this.descriptor = descriptor;
+    this.isOptional = isOptional;
+  }
 
   optional(this: ValueSchema<D, false>): ValueSchema<D, true> {
     return new ValueSchema(this.descriptor, true);
@@ -89,13 +94,25 @@ export class Column<
   Defaulted extends boolean = boolean,
   Target extends string = string
 > {
+  readonly kind: K;
+  readonly isOptional: Optional;
+  readonly hasDefault: Defaulted;
+  readonly table: Target | undefined;
+  readonly defaultValue: unknown;
+
   constructor(
-    readonly kind: K,
-    readonly isOptional: Optional,
-    readonly hasDefault: Defaulted,
-    readonly table: Target | undefined = undefined,
-    readonly defaultValue: unknown = undefined
-  ) {}
+    kind: K,
+    isOptional: Optional,
+    hasDefault: Defaulted,
+    table: Target | undefined = undefined,
+    defaultValue: unknown = undefined
+  ) {
+    this.kind = kind;
+    this.isOptional = isOptional;
+    this.hasDefault = hasDefault;
+    this.table = table;
+    this.defaultValue = defaultValue;
+  }
 
   optional(this: Column<K, false, false, Target>): Column<K, true, false, Target> {
     if (this.hasDefault) throw new Error("A defaulted column cannot be optional.");
