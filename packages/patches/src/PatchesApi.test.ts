@@ -1077,10 +1077,7 @@ const pairedRoutes = Effect.fn("pairedRoutes")(function* (quota = 100) {
   );
 });
 
-/**
- * One paired client per identity. By default two users of one company, so the
- * owner quota lock cannot serialize their name claims.
- */
+/** One paired client per identity: two users of one company by default, or one owner twice. */
 const racingClients = Effect.fn("racingClients")(function* (
   identities: ReadonlyArray<Identity> = [uploader, reader],
   quota = 100
@@ -1469,6 +1466,32 @@ it.layer(publishLayer)("publish attempts", (it) => {
           );
         }
       })
+  );
+
+  it.effect("admits one of two different creates racing for an owner's last quota slot", () =>
+    Effect.gen(function* () {
+      const owner = Fixtures.identities.quota;
+      const patches = yield* Patches.Patches;
+      const quota = (yield* patches.countQuotaPatches(owner.user.id)) + 1;
+      // Both creates pass the route's unlocked count; the record transaction decides.
+      const contenders = yield* racingClients([owner, owner], quota);
+      const responses = yield* Effect.all(
+        contenders.map(({ api }, index) =>
+          api.publish({
+            payload: publishRequest({
+              html: html(`Last quota slot ${index}`),
+              manifest: { ...Fixtures.manifest, name: `last-quota-slot-${index}` }
+            }),
+            responseMode: "response-only"
+          })
+        ),
+        { concurrency: "unbounded" }
+      );
+      assert.deepStrictEqual(responses.map((response) => response.status).toSorted(), [201, 403]);
+      const refused = responses.find((response) => response.status === 403)!;
+      assert.include(yield* refused.json, { code: "live_patch_quota_exceeded", quota });
+      assert.strictEqual(yield* patches.countQuotaPatches(owner.user.id), quota);
+    })
   );
 
   it.effect("arbitrates exact-name creates across owners", () =>
