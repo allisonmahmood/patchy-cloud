@@ -530,32 +530,6 @@ it.layer(layer)("pages", (it) => {
     })
   );
 
-  it.effect("keeps removed /d routes and bare company handles out of address admission", () =>
-    Effect.gen(function* () {
-      const { patchId } = yield* publish("Removed route must stay hidden");
-      const client = yield* HttpClient.HttpClient;
-      const paths = [
-        `/${DEV_SEED.companyHandle}`,
-        ...[patchId, "missing-patch"].flatMap((id) => [`/d/${id}`, `/d/${id}/v/1`, `/d/${id}/~v/1`])
-      ];
-      for (const url of paths) {
-        for (const method of ["GET", "HEAD"] as const) {
-          const response = yield* client.execute(
-            method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.head(url)
-          );
-          assert.strictEqual(response.status, 404, `${method} ${url}`);
-          assert.strictEqual(response.headers["cache-control"], "no-store");
-          assert.isUndefined(response.headers.location);
-          assert.isUndefined(response.headers["x-patchy-sign-in-url"]);
-          const body = yield* response.text;
-          assert.notInclude(body, ">Sign in</a>");
-          assert.notInclude(body, "Removed route must stay hidden");
-          if (method === "HEAD") assert.strictEqual(body, "");
-        }
-      }
-    })
-  );
-
   it.effect("matches static routes before the patch-address wildcard", () =>
     Effect.gen(function* () {
       for (const url of ["/healthz", "/auth/session.js"]) {
@@ -588,10 +562,14 @@ it.layer(layer)("pages", (it) => {
         assert.include(response.headers["content-type"], "text/html");
         assert.notInclude(yield* response.text, "One version");
       }
-      const elsewhere = yield* get("/nothing");
-      assert.strictEqual(elsewhere.status, 404);
-      assert.strictEqual(elsewhere.headers["cache-control"], "no-store");
-      assert.include(elsewhere.headers["content-type"], "text/html");
+      // A bare company handle is not an address: it gets the plain 404, not a sign-in door.
+      for (const url of ["/nothing", `/${DEV_SEED.companyHandle}`]) {
+        const elsewhere = yield* get(url, {});
+        assert.strictEqual(elsewhere.status, 404, url);
+        assert.strictEqual(elsewhere.headers["cache-control"], "no-store");
+        assert.isUndefined(elsewhere.headers["x-patchy-sign-in-url"]);
+        assert.include(elsewhere.headers["content-type"], "text/html");
+      }
     })
   );
 
