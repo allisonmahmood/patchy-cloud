@@ -288,6 +288,108 @@ it.effect("rejects a task role in the previous definition before launch", () =>
   rejectsDefinition(options.previous!, invalidDefinitions[0]![1])
 );
 
+// The host's environment, as OPERATIONS.md documents it, for the options above.
+const environment: Readonly<Record<string, string>> = {
+  ECS_REGION: options.region,
+  ECS_CLUSTER: options.cluster,
+  EXECUTION_FLEET_ID: options.fleetId,
+  ECS_EXEC_SUBNET_IDS: JSON.stringify(options.subnetIds),
+  ECS_EXEC_BOOTSTRAP_SECURITY_GROUP_ID: options.bootstrapSecurityGroupId,
+  EXECUTION_DEPLOYMENT_REVISION: options.current.deploymentRevision,
+  ECS_EXEC_TASK_DEFINITION: options.current.taskDefinition,
+  EXECUTION_MANAGEMENT_SECRET: Redacted.value(options.current.secret),
+  EXECUTION_CALLBACK_URLS: JSON.stringify(options.callbackUrls)
+};
+const previousEnvironment: Readonly<Record<string, string>> = {
+  EXECUTION_PREVIOUS_DEPLOYMENT_REVISION: options.previous!.deploymentRevision,
+  ECS_EXEC_PREVIOUS_TASK_DEFINITION: options.previous!.taskDefinition,
+  EXECUTION_MANAGEMENT_PREVIOUS_SECRET: Redacted.value(options.previous!.secret)
+};
+const configured = (values: Readonly<Record<string, string>>) =>
+  EcsTaskProvider.config.parse(ConfigProvider.fromUnknown(values));
+
+it.effect("keeps a partial previous revision in the config so make refuses it", () =>
+  Effect.gen(function* () {
+    const aws = yield* cloud;
+    const complete = yield* configured({ ...environment, ...previousEnvironment });
+    assert.include(complete.previous, {
+      deploymentRevision: options.previous!.deploymentRevision,
+      taskDefinition: options.previous!.taskDefinition
+    });
+    assert.strictEqual(
+      Redacted.value(complete.previous!.secret),
+      Redacted.value(options.previous!.secret)
+    );
+    yield* EcsTaskProvider.make(complete).pipe(Effect.provide(aws.layer));
+    assert.isUndefined((yield* configured(environment)).previous);
+    for (const [name, value] of Object.entries(previousEnvironment)) {
+      const partial = yield* configured({ ...environment, [name]: value });
+      assert.isDefined(partial.previous, name);
+      const error = yield* EcsTaskProvider.make(partial).pipe(
+        Effect.provide(aws.layer),
+        Effect.flip
+      );
+      assert.include(error, { operation: "start", reason: "provider" }, name);
+    }
+    for (const [name, value] of [
+      ["EXECUTION_MANAGEMENT_SECRET", ""],
+      ["EXECUTION_CALLBACK_URLS", JSON.stringify(["http://8.8.8.8:8787/callback"])]
+    ] as const)
+      assert.strictEqual(
+        (yield* configured({ ...environment, [name]: value }).pipe(Effect.flip))._tag,
+        "ConfigError",
+        name
+      );
+    assert.strictEqual(aws.tasks.size, 0);
+  })
+);
+
+it.effect("refuses unsafe revision, callback and secret options before launching", () =>
+  Effect.gen(function* () {
+    const otherFamily = `${arnPrefix}:task-definition/other:1`;
+    const invalid: ReadonlyArray<readonly [string, EcsTaskProvider.Options]> = [
+      [
+        "a previous revision named like the current one",
+        {
+          ...options,
+          previous: {
+            ...options.previous!,
+            deploymentRevision: options.current.deploymentRevision
+          }
+        }
+      ],
+      [
+        "a previous definition from another family",
+        { ...options, previous: { ...options.previous!, taskDefinition: otherFamily } }
+      ],
+      ["no callback URL", { ...options, callbackUrls: [] }],
+      ["a public callback URL", { ...options, callbackUrls: ["http://8.8.8.8:8787/callback"] }],
+      [
+        "an empty current secret",
+        { ...options, current: { ...options.current, secret: Redacted.make("") } }
+      ],
+      [
+        "an empty previous secret",
+        { ...options, previous: { ...options.previous!, secret: Redacted.make("") } }
+      ]
+    ];
+    for (const [name, invalidOptions] of invalid) {
+      const aws = yield* cloud;
+      // A safe definition, so only the option checks can refuse the other family.
+      aws.definitions.set(otherFamily, {
+        ...aws.definitions.get(options.previous!.taskDefinition)!,
+        taskDefinitionArn: otherFamily
+      });
+      const error = yield* EcsTaskProvider.make(invalidOptions).pipe(
+        Effect.provide(aws.layer),
+        Effect.flip
+      );
+      assert.include(error, { operation: "start", reason: "provider" }, name);
+      assert.strictEqual(aws.tasks.size, 0, name);
+    }
+  })
+);
+
 it.effect("retains known ARNs through omitted listings and treats MISSING as uncertainty", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000_000);
