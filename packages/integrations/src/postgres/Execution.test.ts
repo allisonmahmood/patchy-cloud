@@ -57,6 +57,7 @@ const setup = Effect.fn("test.executionSetup")(function* (limits: Partial<Execut
     yield* sql.unsafe(`CREATE ROLE "${rolePrefix}_${revision}" LOGIN PASSWORD 'secret'`);
     yield* sql.unsafe(`ALTER ROLE "${rolePrefix}_${revision}" SET timezone = 'Pacific/Auckland'`);
     yield* sql.unsafe(`ALTER ROLE "${rolePrefix}_${revision}" SET datestyle = 'SQL, DMY'`);
+    yield* sql.unsafe(`ALTER ROLE "${rolePrefix}_${revision}" SET extra_float_digits = 0`);
     yield* sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${rolePrefix}_${revision}"`);
     yield* sql.unsafe(
       `GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO "${rolePrefix}_${revision}"`
@@ -264,6 +265,10 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
           "2026-09-10 12:13:14.123456"
         ]);
         assert.strictEqual(precise.rows[0]![4], "2026-09-10 12:13:14.123456+00");
+        const floats = yield* execution.query(
+          input("SELECT 0.1::float8 + 0.2::float8, 1.2345678::float4")
+        );
+        assert.deepStrictEqual(floats.rows, [[0.30000000000000004, 1.2345678]]);
         const arrays = yield* execution.query(
           input(
             "SELECT ARRAY[1234567890.1234567890123456789::numeric], ARRAY['2026-09-10 12:13:14.123456'::timestamp]"

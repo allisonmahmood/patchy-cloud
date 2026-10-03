@@ -264,6 +264,9 @@ export const runStatement = Effect.fn("Postgres.runStatement")(
       );
       yield* transport.execute<never>("SET LOCAL TIME ZONE 'UTC'", [], ignoreRow);
       yield* transport.execute<never>("SET LOCAL DateStyle = 'ISO, YMD'", [], ignoreRow);
+      // Exact float text on every server: shortest round-trip on 12+, 17 digits on 11 and older.
+      // Keyset cursors carry the decoded values, so a rounded float would re-match its own row.
+      yield* transport.execute<never>("SET LOCAL extra_float_digits = 3", [], ignoreRow);
       const rows: Array<ReadonlyArray<unknown>> = [];
       let bytes = 2;
       let namesBytes: number | undefined;

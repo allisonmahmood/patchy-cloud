@@ -743,6 +743,42 @@ it.effect("refresh never rewrites the pinned contract and source drift fails exp
   }).pipe(Effect.scoped)
 );
 
+it.effect("float keysets advance with exact values when the source rounds floats by default", () =>
+  Effect.gen(function* () {
+    const { sql, transport } = yield* database();
+    yield* sql('UPDATE "sales"";--"."order"";--" SET double = 0.1::float8 + 0.2::float8');
+    // PGlite ignores role and database defaults; a session SET stands in for one.
+    const { call } = yield* operations({
+      ...transport,
+      execute: (text, parameters, onRow) =>
+        (text === "BEGIN READ ONLY"
+          ? transport.execute<never>("SET extra_float_digits = 0", [], () => undefined)
+          : Effect.void
+        ).pipe(Effect.andThen(transport.execute(text, parameters, onRow)))
+    });
+    const rows: Array<[unknown, unknown]> = [];
+    let cursor: string | null = null;
+    for (let calls = 0; calls < 8; calls++) {
+      const page: typeof PostgresPage.Type = yield* call("postgres.list", {
+        connection: "sales",
+        relation,
+        select: ['id";--', "double"],
+        orderBy: { column: "double", direction: "asc" },
+        limit: 1,
+        ...(cursor === null ? {} : { cursor })
+      }).pipe(Effect.flatMap(decodePage));
+      rows.push(...page.rows.map((row): [unknown, unknown] => [row['id";--'], row.double]));
+      cursor = page.cursor;
+      if (cursor === null) break;
+    }
+    assert.isNull(cursor);
+    assert.deepStrictEqual(
+      rows,
+      [1, 2, 3, 4].map((id) => [id, 0.30000000000000004])
+    );
+  }).pipe(Effect.scoped)
+);
+
 it.effect(
   "refuses native numeric drift hidden by text projection, including empty and unselected results",
   () =>
