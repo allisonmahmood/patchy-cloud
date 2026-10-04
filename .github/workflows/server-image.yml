@@ -48,7 +48,7 @@ jobs:
           node scripts/build-server-image.mjs --tag patchy-server:ci --output "$RUNNER_TEMP/server-image-rebuild.tar"
           cmp .local/server-image.tar "$RUNNER_TEMP/server-image-rebuild.tar"
           cmp .local/server-image.tar.json "$RUNNER_TEMP/server-image-rebuild.tar.json"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: server-image-linux-amd64
           path: |
