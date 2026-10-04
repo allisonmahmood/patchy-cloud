@@ -142,6 +142,8 @@ export class Session extends Context.Service<
       { readonly publishableKey: string; readonly frontendApiHost: string } | undefined;
     /** Where a signed-out reader goes to sign in and come back to `path`. */
     readonly signInUrl: (path: string) => string;
+    /** Clerk's waitlist for a person without an invitation; absent with the dev runner's people. */
+    readonly waitlistUrl: string | undefined;
     readonly authenticate: (request: Request) => Effect.Effect<SessionResult, SessionError>;
     readonly isActive: (identity: {
       readonly sid: string;
@@ -398,6 +400,7 @@ export const make = Effect.gen(function* () {
     publicBaseUrl: publicUrl.origin,
     clerk: { publishableKey, frontendApiHost },
     signInUrl,
+    waitlistUrl: `https://${portalHost}/waitlist`,
     authenticate,
     isActive,
     revoke,

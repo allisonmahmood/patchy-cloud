@@ -508,7 +508,7 @@ is a visible failure to report, not an invitation to keep refreshing.
 When a page refuses access, report the refusal rather than treating its HTML as the patch:
 
 - **401, Sign in**: "This patch needs your browser sign-in. Open its Sign in link,
-  then I'll read it through your browser." Use the door's link (also in
+  then I'll read it through your browser." Use the door's Sign in link (also in
   `x-patchy-sign-in-url`); it returns to the patch. Do not send a publishing key or
   copy session cookies into a URL fetch.
 - **303 to `/join`**: "Sign-in worked; finish creating or joining your company in

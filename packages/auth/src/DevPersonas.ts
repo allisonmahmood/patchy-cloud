@@ -113,6 +113,7 @@ export const make = Effect.gen(function* () {
     publicBaseUrl: publicUrl.origin,
     clerk: undefined,
     signInUrl: (path) => new URL(`/dev/sign-in?return=${encodeURIComponent(path)}`, publicUrl).href,
+    waitlistUrl: undefined,
     authenticate,
     // Deactivation is enforced through the users table, as it is for Clerk sessions.
     isActive: () => Effect.succeed(true),

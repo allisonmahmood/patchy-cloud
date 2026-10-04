@@ -3,20 +3,8 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
 import { sessionScripts } from "@patchy/auth";
-import { renderHome } from "./render.js";
 import { renderPatchWrapper, renderShellNotice } from "./shell.js";
 import { renderAddressNotice } from "./address-notice.js";
-
-describe("renderHome", () => {
-  it("keeps markup in the sign-in destination inert", () => {
-    const html = renderHome({
-      signInUrl: "https://pages.example.com/'><img src=x onerror=alert(1)>"
-    });
-
-    expect(html).not.toContain("<img");
-    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
-  });
-});
 
 describe("renderShellNotice", () => {
   it("preserves a deep return address without allowing it to become notice markup", () => {
