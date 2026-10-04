@@ -114,8 +114,11 @@ it.layer(services, { timeout: "60 seconds" })("live Clerk", (it) => {
       const link = created.data[0]?.url;
       assert.isDefined(link);
       const accepted = yield* Effect.promise(() => fetch(link, { redirect: "manual" }));
-      const landing = new URL(accepted.headers.get("location") ?? "", link);
-      assert.strictEqual(landing.pathname, "/sign-up");
+      const location = accepted.headers.get("location");
+      assert.isNotNull(location);
+      const landing = new URL(location);
+      const portal = new URL((yield* Session.Session).signInUrl("/")).origin;
+      assert.strictEqual(`${landing.origin}${landing.pathname}`, `${portal}/sign-up`);
       assert.isTrue(landing.searchParams.has("__clerk_ticket"));
       yield* mail.revoke(first);
       const revoked = yield* Effect.promise(() =>
