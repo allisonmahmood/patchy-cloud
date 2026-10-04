@@ -228,7 +228,9 @@ Then log the CLI in with `PATCHY_API_TOKEN` unset: an agent runs
 and after they confirm runs the returned `next` command
 (`pnpm patchy login --complete <userCode>`). `pnpm patchy whoami` then names
 their machine, not **Dev Machine**. **Inviting from a Clerk instance sends real
-email**; use `+clerk_test` addresses and revoke test invitations.
+email**; use `+clerk_test` addresses and revoke test invitations. The emailed
+link signs the person up on Clerk's page, which cannot send them back to this
+worktree, so they open `/join` here afterwards.
 
 ## A patch repo against this worktree
 

@@ -19,39 +19,27 @@ export class InviteMailError extends Schema.TaggedError<InviteMailError>()("Invi
   }
 }
 
-export class InvitationAlreadyRevoked extends Schema.TaggedError<InvitationAlreadyRevoked>()(
-  "InvitationAlreadyRevoked",
+/** Clerk has nothing left to revoke: the emailed invitation was revoked, or accepted at sign-up. */
+export class InvitationNotPending extends Schema.TaggedError<InvitationNotPending>()(
+  "InvitationNotPending",
   { invitationId: Schema.String, cause: Schema.optional(Schema.Defect()) }
 ) {
   override get message() {
-    return "The emailed invitation is already revoked.";
+    return "The emailed invitation is already revoked or accepted.";
   }
 }
 
-const Origin = Schema.URLFromString.check(
-  Schema.makeFilter(
-    (url) =>
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      url.username === "" &&
-      url.password === "" &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === ""
-  )
-);
+const notPendingCodes = new Set(["invitation_already_revoked", "invitation_already_accepted"]);
 
 export class InviteMail extends Context.Service<
   InviteMail,
   {
     readonly create: (email: string) => Effect.Effect<string, InviteMailError>;
-    readonly revoke: (
-      id: string
-    ) => Effect.Effect<void, InviteMailError | InvitationAlreadyRevoked>;
+    readonly revoke: (id: string) => Effect.Effect<void, InviteMailError | InvitationNotPending>;
   }
 >()("@patchy/companies/InviteMail") {}
 
 export const make = Effect.gen(function* () {
-  const publicUrl = yield* Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL");
   const secretKey = yield* Config.schema(
     Schema.Redacted(Schema.NonEmptyString),
     "CLERK_SECRET_KEY"
@@ -60,15 +48,16 @@ export const make = Effect.gen(function* () {
     secretKey: Redacted.value(secretKey),
     telemetry: { disabled: true }
   });
-  const redirectUrl = new URL("/join", publicUrl).href;
+  // No redirect URL: the emailed link then opens Clerk's own sign-up or sign-in page, which
+  // consumes the invitation ticket, the only way past waitlist mode. Clerk then sends the
+  // person to the instance's home URL, and the app takes a person without a company to /join.
   const create = Effect.fn("InviteMail.create")(function* (email: string) {
     const invitation = yield* Effect.tryPromise({
       try: () =>
         client.invitations.createInvitation({
           emailAddress: email,
           ignoreExisting: true,
-          notify: true,
-          redirectUrl
+          notify: true
         }),
       catch: (cause) => new InviteMailError({ operation: "create", cause })
     });
@@ -81,8 +70,8 @@ export const make = Effect.gen(function* () {
         isClerkAPIResponseError(cause) &&
         cause.status === 400 &&
         cause.errors.length > 0 &&
-        cause.errors.every((error) => error.code === "invitation_already_revoked")
-          ? new InvitationAlreadyRevoked({ invitationId: id, cause })
+        cause.errors.every((error) => notPendingCodes.has(error.code))
+          ? new InvitationNotPending({ invitationId: id, cause })
           : new InviteMailError({ operation: "revoke", invitationId: id, cause })
     }).pipe(Effect.asVoid)
   );
