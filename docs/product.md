@@ -562,6 +562,24 @@ Node globals, `eval` and `new Function` are refused. Other workerd APIs are
 incidental, not a supported contract; the exact list and engine pin live in
 ADR-0012.
 
+### Local personal-agent prototype
+
+A development/test-only adapter lets an owner's personal agent discover selected
+handlers and call them without an open browser. It authenticates an existing
+machine token as its owner and requires a separate grant for each patch. Cloud
+reads the patch's current `read-only` or `actions` policy for every admission;
+grants follow mode changes. Read-only exposes selected queries; actions exposes
+selected declared handlers. Raw table access is not implemented in this slice.
+Tier 2's handler rules, transactions, mutation replay and initiating-person data
+permissions apply unchanged. The host adds `ctx.viewer.agent` from the machine
+credential and stores that agent alongside the initiating person in invocation
+records. Patch code can copy these claims to its activity timeline.
+
+The seed lives in `.local/dev/agent-connections.json`; there is no settings UI or
+production admission. The companion MCP process owns discovery presentation and
+request-key persistence, never patch business rules or patch data access. This is
+an interactive local exception to browser admission, not a tier 3 launch.
+
 ### Tier 3 is next
 
 Tier 3 starts work without a viewer present: inbound HTTP routes, webhooks,

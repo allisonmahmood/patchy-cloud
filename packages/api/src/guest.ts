@@ -3,6 +3,7 @@ import { HandlerDescriptors, HandlerName } from "./handlers.js";
 import { FileBody, RuntimeFailure, RuntimeReply } from "./runtime.js";
 import { Identity } from "./schemas.js";
 import { limitRefusal } from "./limits.js";
+import { AgentIdentity } from "./agents.js";
 
 /** Private execution wire, never mounted on the public HttpApi. Stored versions retain it. */
 export const wireVersion = 1;
@@ -19,7 +20,8 @@ const args = Schema.Record(Schema.String, Schema.Json);
 const viewer = Schema.Struct({
   user: Identity.fields.user,
   company: Identity.fields.company,
-  admin: Schema.Boolean
+  admin: Schema.Boolean,
+  agent: Schema.optionalKey(AgentIdentity)
 });
 
 export const BundleBinding = Schema.Struct({

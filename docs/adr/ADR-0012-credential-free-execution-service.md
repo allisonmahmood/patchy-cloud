@@ -13,6 +13,16 @@ measured the engine and process cut; the
 [init prototype](https://github.com/allisonmahmood/patchy-cloud/issues/314#issuecomment-5840222752)
 proved bundle inspection and the guest callback path.
 
+## Development-only personal-agent admission
+
+The local personal-agent prototype admits selected handlers through a separate
+machine-authenticated adapter without a browser document. It is disabled outside
+development/test. Per-patch grants and current handler policy gate admission;
+Invocation remains the execution and settlement owner. Company callbacks
+reauthenticate the machine owner's live access. The host supplies optional agent
+claims and retains them with the initiating person in its invocation record.
+This exception adds no production unattended runtime or ambient guest authority.
+
 ## Implementation boundary
 
 The execution service is built in `packages/execution`, with engine, inspection,
