@@ -16,7 +16,7 @@ The build in PRs #417 through #453 implements the tier 2 map's handler, sync, ex
 
 - [#413](https://github.com/allisonmahmood/patchy-cloud/issues/413)'s reference CRM journey and tier-picking check run by hand after the stack merges. The automated acceptance work is built; those two checks have not run.
 - Version revocation remains an open question on [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425). The `revoked` frame exists, but there is no way to revoke a version.
-- Production infrastructure and the first deploy, [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), are not built.
+- Production infrastructure and its deploy workflow are written in `apps/infra` and `.github/workflows/deploy.yml` ([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)); the first deploy, [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), has not happened.
 
 This is the closing documentation pass for [#294](https://github.com/allisonmahmood/patchy-cloud/issues/294). Allison closes the map and its issues after merge.
 

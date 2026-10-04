@@ -93,9 +93,9 @@ the stored server bytes in a throwaway process. A descriptor disagreement,
 top-level throw, unresolved module or unfinished initializer is HTTP 422
 `invalid_manifest`, `kind: "rejected"`, exit 2. A tier 2 repo with no handlers
 publishes with a warning. Production admits tier 2 only with
-`EXECUTION_PROVIDER=ecs`. Production infrastructure and first deploy remain unbuilt on
-[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
-[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
+`EXECUTION_PROVIDER=ecs`. Production infrastructure is written
+([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)) and awaits its
+first deploy ([#416](https://github.com/allisonmahmood/patchy-cloud/issues/416)).
 
 The browser runtime has its own refusal contract in [API](../API.md), not CLI
 exit codes. It includes `handler_failed`, `handler_timeout`, `write_conflict`,

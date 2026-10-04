@@ -195,6 +195,32 @@ const recording = Effect.gen(function* () {
 
 it.layer(services)("host fleet controller", (it) => {
   it.effect(
+    "promotes a revision its hosts run once they warm its spares, never one none runs",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider } = yield* setupMemory("promote-old");
+        const candidate = yield* Fleet.make({
+          replicaId: "promote-new-host",
+          deploymentRevision: "promote-new",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        const refused = yield* Fleet.promote("promote-missing", "1 minute").pipe(Effect.flip);
+        assert.strictEqual(refused._tag, "FleetRevisionNotRegistered");
+        // Once staged, the new revision's hosts take over housekeeping and warm its spares.
+        assert.isTrue(yield* candidate.stageDeployment("promote-new"));
+        yield* candidate.housekeeping();
+        yield* Fleet.promote("promote-new", "1 minute");
+        const rollout = sql`SELECT current_revision, staged_revision FROM execution_rollout`;
+        const promoted = { current_revision: "promote-new", staged_revision: null };
+        assert.deepStrictEqual((yield* rollout)[0], promoted);
+        // A rerun after success returns at once, even with its spares since claimed.
+        yield* sql`DELETE FROM execution_tasks WHERE deployment_revision = 'promote-new'`;
+        yield* Fleet.promote("promote-new", "1 minute");
+        assert.deepStrictEqual((yield* rollout)[0], promoted);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
     "claims one company once and retries an ambiguous acknowledgement on its exact task and epoch",
     () =>
       Effect.gen(function* () {

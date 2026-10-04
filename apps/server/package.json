@@ -19,6 +19,7 @@
     "dev": "tsx --conditions=development watch src/start.ts",
     "start": "node dist/start.js",
     "exec": "node dist/exec.js",
+    "fleet": "node dist/fleet.js",
     "test": "vitest run",
     "docker": "docker build -f Dockerfile -t patchy-server ../.."
   },

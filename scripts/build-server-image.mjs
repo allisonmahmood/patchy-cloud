@@ -39,7 +39,8 @@ Exports a Docker-loadable image tar and FILE.json without a daemon or registry p
 The default output is .local/server-image.tar; --stage only assembles the runtime.
 SOURCE_DATE_EPOCH and REVISION default to the current git commit's time and hash.
 VERSION defaults to the server package version. No credentials enter the image.
-Host: node dist/start.js (default, user node). Exec: node dist/exec.js.`);
+Host: node dist/start.js (default, user node). Exec: node dist/exec.js.
+Fleet operations, such as a deploy's promote: node dist/fleet.js.`);
   process.exit(0);
 }
 if (process.platform !== "linux" || process.arch !== "x64") {
@@ -83,6 +84,7 @@ const metadata = {
   pnpm: pnpmVersion,
   hostCommand: ["node", "dist/start.js"],
   execCommand: ["node", "dist/exec.js"],
+  fleetCommand: ["node", "dist/fleet.js"],
   user: "node"
 };
 const buildEnv = { ...process.env, SOURCE_DATE_EPOCH: String(epoch), TZ: "UTC", LC_ALL: "C" };
@@ -137,7 +139,8 @@ async function stageRuntime(destination) {
   }
   await normalize(destination);
 
-  for (const file of ["dist/start.js", "dist/exec.js"]) await access(path.join(app, file));
+  for (const file of ["dist/start.js", "dist/exec.js", "dist/fleet.js"])
+    await access(path.join(app, file));
   const executionRoot = path.join(app, "node_modules/@patchy/execution");
   const execution = createRequire(await realpath(path.join(executionRoot, "package.json")));
   await access(path.join(executionRoot, "dist/loader.js"));
