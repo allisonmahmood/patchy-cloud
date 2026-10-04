@@ -109,7 +109,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 ### Tests
 
-`pnpm check` runs format, lint, typecheck and the offline tests while you work; run `pnpm verify` (CI's suites except live Clerk) before calling a change ready. `pnpm test` is offline (including the fetch guard); `pnpm test:clerk` runs the live Backend-API and Playwright tiers with real development keys and run-scoped cleanup. Read `docs/DEVELOPMENT.md` before running them: they create Clerk users and send invitation mail.
+`pnpm check` runs format, lint, typecheck, the infrastructure synth and the offline tests while you work; run `pnpm verify` (CI's suites except live Clerk) before calling a change ready. `pnpm test` is offline (including the fetch guard); `pnpm test:clerk` runs the live Backend-API and Playwright tiers with real development keys and run-scoped cleanup. Read `docs/DEVELOPMENT.md` before running them: they create Clerk users and send invitation mail.
 
 `@effect/vitest`: `it.layer` shares one migrated Postgres per block, `it.effect` for each case, `HttpApiTest.groups` for API routes, `NodeHttpServer.layerTest` when the test needs what a real socket sees, `TestClock` for the clock, `Scope` for anything that must be closed. Inject faults with an alternate layer, not a mock. Copy an existing suite in the package you are in; `packages/patches` and `packages/serving` show the `it.layer` shape over a migrated database.
 

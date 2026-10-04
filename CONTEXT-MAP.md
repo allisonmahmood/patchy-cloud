@@ -31,6 +31,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, business events and per-hop wide events, with stdout and a shared optional PostHog client
 - [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the contract and operating limits registry, company overrides with history, and the fixed-window rate limiter behind every per-minute limit
 - [Hosting](./apps/server/CONTEXT.md) — `apps/server`, the process that assembles and runs the hosting server. Its `CONTEXT.md` holds only wiring terms
+- `apps/infra` — the AWS CDK app Hosting runs on in production: network, load balancer, hosts, the exec task definition, secrets and alerts. No `CONTEXT.md`: it names AWS resources, not product terms
 
 ## Relationships
 

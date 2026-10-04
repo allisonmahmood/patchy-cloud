@@ -1,7 +1,7 @@
 /**
  * `pnpm check` and `pnpm verify`: CI's required checks, run locally.
  *
- *   pnpm check              format, lint, typecheck and the offline tests
+ *   pnpm check              format, lint, typecheck, infrastructure synth and the offline tests
  *   pnpm verify             check, then every acceptance suite CI requires except live Clerk
  *   pnpm verify --changed   the same, skipping the acceptance suites when nothing since the
  *                           merge base with origin/main can change what they exercise
@@ -31,6 +31,7 @@ const check: ReadonlyArray<Suite> = [
   // stale pass (no-floating-promises). verify lints from scratch, as CI does.
   { name: "lint", commands: [mode === "verify" ? pnpm("lint", "--no-cache") : pnpm("lint")] },
   { name: "typecheck", commands: [pnpm("typecheck")] },
+  { name: "synth", commands: [pnpm("--filter", "@patchy/infra", "synth:example")] },
   { name: "test", commands: [pnpm("test")] }
 ];
 

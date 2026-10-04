@@ -72,6 +72,7 @@ Run `pnpm patchy dev` to exercise it locally over PGlite and invented fixtures, 
 A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to working in it, for people and agents alike.
 
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
+- `apps/infra` — production infrastructure as AWS CDK: per environment, a base stack (image registry, deploy identity, budget, secrets) and an app stack (network, load balancer, hosts, exec task definition, uptime alert). CI synthesizes it offline (`@patchy/infra`).
 - `packages/patchy`: `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files, edits declarations, discovers company tools and data sources, and manages owned patches.
 - `packages/sdk` — current release and immutable tarball distribution, the front door's `/llms.txt` and `/install.mjs`, authenticated generation, and canonical project skills under `skills/` (`@patchy/sdk`).
 - `packages/core`: shared HTML validation, hashing, ID helpers, and the first-party card shell, app shell and component set (`@patchy/core`).
@@ -92,7 +93,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `examples/plan.html` — a Patchy-styled starter patch.
 - `scenarios/` — companies, people and patches that `pnpm dev up` builds local environments from (`scripts/dev`).
 
-`pnpm check` runs format, lint, typecheck and the offline tests. `pnpm verify` adds every acceptance suite CI runs except live Clerk; install Chromium first with `pnpm exec playwright install --with-deps chromium`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-tiers) runs the live Clerk tiers with development keys.
+`pnpm check` runs format, lint, typecheck, the infrastructure synth and the offline tests. `pnpm verify` adds every acceptance suite CI runs except live Clerk; install Chromium first with `pnpm exec playwright install --with-deps chromium`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-tiers) runs the live Clerk tiers with development keys.
 
 ## Security
 
