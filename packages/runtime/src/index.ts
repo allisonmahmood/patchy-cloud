@@ -24,3 +24,5 @@ export * as StreamAdmission from "./StreamAdmission.js";
 export * as StreamLimits from "./StreamLimits.js";
 export { migrations } from "./migrations.js";
 export { me } from "./me.js";
+export * as AgentRuntime from "./AgentRuntime.js";
+export * as AgentRuntimeApi from "./AgentRuntimeApi.js";

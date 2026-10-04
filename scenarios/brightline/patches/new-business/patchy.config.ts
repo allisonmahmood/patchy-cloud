@@ -35,6 +35,8 @@ export default defineConfig({
         deal: t.ref("deals"),
         kind: t.text(),
         actor: t.member(),
+        agentId: t.text().optional(),
+        agentName: t.text().optional(),
         fromStage: t.text().optional(),
         toStage: t.text().optional(),
         assignee: t.member().optional(),
