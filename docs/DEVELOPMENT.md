@@ -366,3 +366,8 @@ write/refusal receipts from actual results with the patch link. Its
 local Patchy with simulated Slack events and an isolated temporary Hermes home;
 it sends no Slack messages. Real inbound/outbound delivery still needs a fresh
 owner message after enabling the plugin and restarting the gateway.
+
+The companion keeps each Cloud mutation key bound to immutable arguments. A
+confirmed handler refusal rolls back the mutation and permits a corrected
+attempt with a fresh key under the same Slack request. Successful or unconfirmed
+attempts never permit changed arguments; exact recovery retains their key.
