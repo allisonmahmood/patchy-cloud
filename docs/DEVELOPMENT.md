@@ -357,3 +357,12 @@ refusal, read-only mode, grant removal and host-established agent attribution in
 both the patch timeline and `/patches/<name>/log`. Ordinary browser calls must
 still work without agent claims. The sibling companion's `exercise.py` runs this
 journey through MCP against the local Brightline sales patch.
+
+For Slack, the companion's `hermes-plugin/` uses Hermes' existing gateway,
+tool-request middleware and final-response hooks. It carries the incoming Slack
+message id into tool context, attaches a stable mutation request key and formats
+write/refusal receipts from actual results with the patch link. Its
+`slack-check.py --hermes <Hermes checkout>` exercises those hooks and MCP against
+local Patchy with simulated Slack events and an isolated temporary Hermes home;
+it sends no Slack messages. Real inbound/outbound delivery still needs a fresh
+owner message after enabling the plugin and restarting the gateway.
