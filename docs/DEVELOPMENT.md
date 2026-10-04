@@ -350,6 +350,24 @@ retain read-only transactions and writes retain handler rules and keyed replay.
 The adapter shares the runtime per-person/patch call budget and the protected API
 address budget. It does not expose direct table operations.
 
+The sibling companion is agent-independent MCP over stdio. Its `connect login`
+command delegates to the existing `patchy login` browser confirmation and stores
+credentials in a separate `PATCHY_STATE_DIR` per connection profile, leaving the
+person's ordinary CLI state untouched. It checks the expected email and live
+`/api/me` identity before connecting. Local scenarios use dev personas, not
+Clerk email verification. Real sign-in testing needs a separate Clerk instance
+and the correct company membership; keep the scenario database intact.
+
+For same-person credential replacement, companion setup can rotate that
+connection's existing development grants in the matching Cloud checkout without
+changing patch modes or selected handlers. It never grants a new patch or carries
+access to another owner or agent profile. Mutation request keys survive a
+same-person replacement; changing owners starts separate request history. Run
+the companion's `connect-check.mjs <Cloud checkout> <Patchy executable>` to check
+real browser confirmation, generic MCP execution, attribution, replacement,
+account isolation and logout. It revokes its temporary credentials and removes
+its test grants, leaving a labeled patch note as evidence.
+
 Exercise discovery, a real mutation, same-key recovery, an existing handler
 refusal, read-only mode, grant removal and host-established agent attribution in
 both the patch timeline and `/patches/<name>/log`. Ordinary browser calls must
