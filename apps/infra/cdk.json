@@ -1,0 +1,8 @@
+{
+  "app": "node --import tsx src/main.ts",
+  "notices": false,
+  "context": {
+    "cli-telemetry": false,
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  }
+}

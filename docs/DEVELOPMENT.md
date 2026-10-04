@@ -22,7 +22,7 @@ offers start, stop, environment and **Check** actions; import them once from
 
 | Command                 | Runs                                                                                       | When                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
-| `pnpm check`            | format, lint, typecheck (tests included) and the offline tests                             | while working; a few minutes          |
+| `pnpm check`            | format, lint, typecheck (tests included), the infrastructure synth and the offline tests   | while working; a few minutes          |
 | `pnpm verify`           | `check`, then every acceptance suite CI runs except live Clerk                             | before calling a change ready to ship |
 | `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed | docs and runner changes               |
 

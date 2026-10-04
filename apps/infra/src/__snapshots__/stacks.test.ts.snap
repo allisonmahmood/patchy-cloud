@@ -1,0 +1,315 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`pins every security group and rule, and closes egress everywhere but the hosts 1`] = `
+{
+  "AlbGroupC166012E": {
+    "Properties": {
+      "GroupDescription": "Patchy load balancer: public HTTP(S) in, hosts out",
+      "SecurityGroupEgress": [
+        {
+          "CidrIp": "255.255.255.255/32",
+          "Description": "Disallow all traffic",
+          "FromPort": 252,
+          "IpProtocol": "icmp",
+          "ToPort": 86,
+        },
+      ],
+      "SecurityGroupIngress": [
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "Public HTTPS",
+          "FromPort": 443,
+          "IpProtocol": "tcp",
+          "ToPort": 443,
+        },
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "Public HTTP, redirected",
+          "FromPort": 80,
+          "IpProtocol": "tcp",
+          "ToPort": 80,
+        },
+      ],
+      "VpcId": {
+        "Ref": "Network1C6012B5",
+      },
+    },
+    "Type": "AWS::EC2::SecurityGroup",
+  },
+  "AlbGrouptoappHostGroup347041708080BEFB02A9": {
+    "Properties": {
+      "Description": "Load balancer to target",
+      "DestinationSecurityGroupId": {
+        "Fn::GetAtt": [
+          "HostGroup2045F7BA",
+          "GroupId",
+        ],
+      },
+      "FromPort": 8080,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "AlbGroupC166012E",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "ToPort": 8080,
+    },
+    "Type": "AWS::EC2::SecurityGroupEgress",
+  },
+  "EndpointGroupFCFEDB84": {
+    "Properties": {
+      "GroupDescription": "Patchy interface endpoints: HTTPS from exec and hosts",
+      "SecurityGroupEgress": [
+        {
+          "CidrIp": "255.255.255.255/32",
+          "Description": "Disallow all traffic",
+          "FromPort": 252,
+          "IpProtocol": "icmp",
+          "ToPort": 86,
+        },
+      ],
+      "VpcId": {
+        "Ref": "Network1C6012B5",
+      },
+    },
+    "Type": "AWS::EC2::SecurityGroup",
+  },
+  "EndpointGroupfromappExecBootstrapGroupB8AF813C443F7B0066B": {
+    "Properties": {
+      "Description": "From exec",
+      "FromPort": 443,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "EndpointGroupFCFEDB84",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "ExecBootstrapGroup01638397",
+          "GroupId",
+        ],
+      },
+      "ToPort": 443,
+    },
+    "Type": "AWS::EC2::SecurityGroupIngress",
+  },
+  "EndpointGroupfromappHostGroup34704170443F08B37E5": {
+    "Properties": {
+      "Description": "From hosts",
+      "FromPort": 443,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "EndpointGroupFCFEDB84",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "HostGroup2045F7BA",
+          "GroupId",
+        ],
+      },
+      "ToPort": 443,
+    },
+    "Type": "AWS::EC2::SecurityGroupIngress",
+  },
+  "ExecBootstrapGroup01638397": {
+    "Properties": {
+      "GroupDescription": "Patchy exec: host management in; endpoints, S3 image layers and host callbacks out",
+      "SecurityGroupEgress": [
+        {
+          "CidrIp": "255.255.255.255/32",
+          "Description": "Disallow all traffic",
+          "FromPort": 252,
+          "IpProtocol": "icmp",
+          "ToPort": 86,
+        },
+      ],
+      "VpcId": {
+        "Ref": "Network1C6012B5",
+      },
+    },
+    "Type": "AWS::EC2::SecurityGroup",
+  },
+  "ExecBootstrapGroupfromappHostGroup347041708788C91F977E": {
+    "Properties": {
+      "Description": "Host management",
+      "FromPort": 8788,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "ExecBootstrapGroup01638397",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "HostGroup2045F7BA",
+          "GroupId",
+        ],
+      },
+      "ToPort": 8788,
+    },
+    "Type": "AWS::EC2::SecurityGroupIngress",
+  },
+  "ExecBootstrapGrouptoappEndpointGroup0DD7DCC2443344F8EAF": {
+    "Properties": {
+      "Description": "ECR and logs endpoints",
+      "DestinationSecurityGroupId": {
+        "Fn::GetAtt": [
+          "EndpointGroupFCFEDB84",
+          "GroupId",
+        ],
+      },
+      "FromPort": 443,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "ExecBootstrapGroup01638397",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "ToPort": 443,
+    },
+    "Type": "AWS::EC2::SecurityGroupEgress",
+  },
+  "ExecBootstrapGrouptoappHostGroup3470417087897E605CA1": {
+    "Properties": {
+      "Description": "Host callbacks",
+      "DestinationSecurityGroupId": {
+        "Fn::GetAtt": [
+          "HostGroup2045F7BA",
+          "GroupId",
+        ],
+      },
+      "FromPort": 8789,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "ExecBootstrapGroup01638397",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "ToPort": 8789,
+    },
+    "Type": "AWS::EC2::SecurityGroupEgress",
+  },
+  "ExecBootstrapGrouptopl63a5400a4437A073ECC": {
+    "Properties": {
+      "Description": "ECR image layers in S3",
+      "DestinationPrefixListId": "pl-63a5400a",
+      "FromPort": 443,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "ExecBootstrapGroup01638397",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "ToPort": 443,
+    },
+    "Type": "AWS::EC2::SecurityGroupEgress",
+  },
+  "ExecSealedGroup44113308": {
+    "Properties": {
+      "GroupDescription": "Patchy exec, sealed: host management in, nothing out",
+      "SecurityGroupEgress": [
+        {
+          "CidrIp": "255.255.255.255/32",
+          "Description": "Disallow all traffic",
+          "FromPort": 252,
+          "IpProtocol": "icmp",
+          "ToPort": 86,
+        },
+      ],
+      "VpcId": {
+        "Ref": "Network1C6012B5",
+      },
+    },
+    "Type": "AWS::EC2::SecurityGroup",
+  },
+  "ExecSealedGroupfromappHostGroup3470417087884898A34C": {
+    "Properties": {
+      "Description": "Host management",
+      "FromPort": 8788,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "ExecSealedGroup44113308",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "HostGroup2045F7BA",
+          "GroupId",
+        ],
+      },
+      "ToPort": 8788,
+    },
+    "Type": "AWS::EC2::SecurityGroupIngress",
+  },
+  "HostGroup2045F7BA": {
+    "Properties": {
+      "GroupDescription": "Patchy hosts: the load balancer and exec callbacks in; Clerk, Neon, AWS and PostHog out",
+      "SecurityGroupEgress": [
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "Allow all outbound traffic by default",
+          "IpProtocol": "-1",
+        },
+      ],
+      "VpcId": {
+        "Ref": "Network1C6012B5",
+      },
+    },
+    "Type": "AWS::EC2::SecurityGroup",
+  },
+  "HostGroupfromappAlbGroup8FA5DCD880804A6817CB": {
+    "Properties": {
+      "Description": "Load balancer to target",
+      "FromPort": 8080,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "HostGroup2045F7BA",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "AlbGroupC166012E",
+          "GroupId",
+        ],
+      },
+      "ToPort": 8080,
+    },
+    "Type": "AWS::EC2::SecurityGroupIngress",
+  },
+  "HostGroupfromappExecBootstrapGroupB8AF813C87893F67EB19": {
+    "Properties": {
+      "Description": "Exec callbacks",
+      "FromPort": 8789,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "HostGroup2045F7BA",
+          "GroupId",
+        ],
+      },
+      "IpProtocol": "tcp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "ExecBootstrapGroup01638397",
+          "GroupId",
+        ],
+      },
+      "ToPort": 8789,
+    },
+    "Type": "AWS::EC2::SecurityGroupIngress",
+  },
+}
+`;

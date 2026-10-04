@@ -30,6 +30,12 @@ updates:
           - "@effect/sql-pg"
           - "@effect/sql-pglite"
           - "@effect/vitest"
+      # The CDK library and CLI release weekly, in step; review them together.
+      aws-cdk:
+        patterns:
+          - aws-cdk
+          - aws-cdk-lib
+          - constructs
       patch-updates:
         update-types:
           - patch

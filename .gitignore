@@ -27,3 +27,6 @@ packages/patchy/artifacts/
 
 # Neon CLI project context, written by `neon link`.
 .neon
+
+# CDK synth output.
+apps/infra/cdk.out/

@@ -96,6 +96,10 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      - name: Synthesize the infrastructure with example context, offline
+        env:
+          AWS_EC2_METADATA_DISABLED: "true"
+        run: pnpm --filter @patchy/infra synth:example
 
   cli-smoke:
     # The supported minimum keeps the original check name; Node 26 is what most new users install.
