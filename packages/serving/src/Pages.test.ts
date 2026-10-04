@@ -746,7 +746,11 @@ it.layer(services)("pages in memory", (it) => {
         const body = yield* Effect.promise(() => door.text());
         assert.strictEqual(body, yield* Effect.promise(() => login.text()));
         assert.notInclude(body, "Hidden title");
-        assert.strictEqual((body.match(/<a /g) ?? []).length, 1);
+        assert.strictEqual(
+          (body.match(/<a /g) ?? []).length,
+          2,
+          "only Sign in and Join the waitlist"
+        );
         const target = new URL(door.headers.get("x-patchy-sign-in-url")!);
         assert.strictEqual(target.searchParams.get("redirect_url"), `${PUBLIC_BASE_URL}${path}`);
       }

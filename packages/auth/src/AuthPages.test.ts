@@ -70,12 +70,13 @@ const services = Layer.mergeAll(
 );
 
 it.layer(services)("first-party pages in memory", (it) => {
-  it.effect("offers one portal link and confines its return to a local path", () =>
+  it.effect("offers sign-in and the waitlist and confines its return to a local path", () =>
     Effect.gen(function* () {
       const login = yield* send("/login?return=%2Fprivate%3Fview%3Dmine");
       assert.strictEqual(login.status, 200);
       const body = yield* Effect.promise(() => login.text());
-      assert.strictEqual((body.match(/<a /g) ?? []).length, 1);
+      assert.strictEqual((body.match(/<a /g) ?? []).length, 2);
+      assert.include(body, 'href="https://accounts.patchy.invalid/waitlist"');
       assert.include(body, encodeURIComponent(`${origin}/private?view=mine`));
       const defaultLogin = yield* send("/login");
       assert.include(

@@ -31,6 +31,11 @@ export class Enrollment extends Context.Service<Enrollment, Viewer["Service"] | 
   "@patchy/auth/RequireSession/Enrollment"
 ) {}
 
+/**
+ * The signed-out door at `/`, `/login`, company pages and private patch addresses. With Clerk,
+ * sign-up runs through its waitlist: a new person's account starts from an invitation email's
+ * link, and anyone else can join the waitlist.
+ */
 export function door(
   session: Session.Session["Service"],
   path: string,
@@ -38,9 +43,15 @@ export function door(
   status = 401
 ) {
   const url = session.signInUrl(path);
+  const signIn = `<a class="btn btn-primary" href="${escapeAttribute(url)}">Sign in</a>`;
+  const { waitlistUrl } = session;
   return pageResponse({
     title: failed ? "Sign-in could not complete" : "Sign in to Patchy",
-    body: `<p>${failed ? "Try signing in again." : "Continue to your company."}</p><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(url)}">Sign in</a></div>`,
+    body: failed
+      ? `<p>Try signing in again.</p><div class="actions">${signIn}</div>`
+      : waitlistUrl === undefined
+        ? `<p>Continue to your company.</p><div class="actions">${signIn}</div>`
+        : `<p>Patchy Cloud is in private beta. Sign in to continue to your company.</p><p class="supporting-text">Invited, but new here? Start from the link in your invitation email. It creates your account.</p><div class="actions">${signIn}<a class="btn btn-quiet" href="${escapeAttribute(waitlistUrl)}">Join the waitlist</a></div>`,
     status
   }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
 }

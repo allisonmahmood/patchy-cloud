@@ -16,7 +16,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/http/HttpRouter";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
@@ -51,7 +50,7 @@ import { Limits, OperatingLimits } from "@patchy/limits";
 import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
 import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
-import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
+import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
   InvocationLog,
   Runtime,
@@ -256,24 +255,7 @@ const middleware = HttpRouter.middleware(
 /** Root and fallback have one owner; no capability's registration order chooses /. */
 const landing = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add(
-      "GET",
-      "/",
-      PortalPages.errors(
-        RequireSession.withViewer(PortalPages.index).pipe(
-          Effect.map((response) =>
-            response.status === 401 && response.headers["x-patchy-sign-in-url"]
-              ? HttpServerResponse.setBody(
-                  response,
-                  HttpServerResponse.html(
-                    renderHome({ signInUrl: response.headers["x-patchy-sign-in-url"] })
-                  ).body
-                )
-              : response
-          )
-        )
-      )
-    );
+    yield* router.add("GET", "/", PortalPages.errors(RequireSession.withViewer(PortalPages.index)));
     yield* router.add("*", "/*", Pages.notFound);
   })
 );

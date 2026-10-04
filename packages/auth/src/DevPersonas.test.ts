@@ -98,7 +98,9 @@ it.layer(services)("dev personas", (it) => {
         door.headers.get("x-patchy-sign-in-url"),
         `${base}/dev/sign-in?return=${encodeURIComponent("/private")}`
       );
-      assert.notInclude(yield* Effect.promise(() => door.text()), "clerk");
+      const body = yield* Effect.promise(() => door.text());
+      assert.notInclude(body, "clerk");
+      assert.notInclude(body, "waitlist", "personas have no sign-up to wait for");
     })
   );
 

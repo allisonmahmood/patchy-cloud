@@ -186,7 +186,7 @@ it.layer(
             `${publicBaseUrl}/`
           );
           const body = yield* door.text;
-          assert.strictEqual(body.match(/<a\b/g)?.length, 1);
+          assert.strictEqual(body.match(/<a\b/g)?.length, 2, "only Sign in and Join the waitlist");
           assert.notInclude(body, `/patches/${name}`);
         }
         const portal = yield* send(signedRequest("/"));
@@ -342,7 +342,7 @@ it.layer(
         const signInUrl = new URL(door.headers["x-patchy-sign-in-url"]!);
         assert.strictEqual(signInUrl.searchParams.get("redirect_url"), `${publicBaseUrl}${path}`);
         const body = yield* door.text;
-        assert.strictEqual(body.match(/<a\b/g)?.length, 1);
+        assert.strictEqual(body.match(/<a\b/g)?.length, 2, "only Sign in and Join the waitlist");
         assert.notInclude(body, "Company secret");
         assert.notInclude(body, "<iframe");
         const login = yield* send(
