@@ -334,3 +334,26 @@ with a closed environment: the plan, `NODE_ENV=development`, a keyring generated
 once per worktree in `.local/dev/dev.env`, and either the personas secret or
 Clerk's keys. Development instances execute tier 2 handlers with the local
 workerd executor; production refuses it.
+
+## Local personal-agent adapter
+
+Only development/test hosts admit `/api/agent/patches/:patchId` and its `/call`
+route. Seed `.local/dev/agent-connections.json` with `patches` entries
+`{ patchId, mode: "read-only" | "actions", handlers: string[] }` and separate
+`grants` entries `{ machineId, patchId }`. The file is read for every admission:
+changing mode or removing a grant applies without reconnecting the agent. No file
+means no access. This is a local owner/admin seed, not a production settings API.
+
+Use a dedicated personal-agent machine token minted by Auth for the intended
+scenario person, not an admin seed token. Existing machine revocation and person
+deactivation apply. Describe returns the current served version and selected
+handler schemas. Calls include that version and use existing Invocation; queries
+retain read-only transactions and writes retain handler rules and keyed replay.
+The adapter shares the runtime per-person/patch call budget and the protected API
+address budget. It does not expose direct table operations.
+
+Exercise discovery, a real mutation, same-key recovery, an existing handler
+refusal, read-only mode, grant removal and host-established agent attribution in
+both the patch timeline and `/patches/<name>/log`. Ordinary browser calls must
+still work without agent claims. The sibling companion's `exercise.py` runs this
+journey through MCP against the local Brightline sales patch.

@@ -350,6 +350,7 @@ function Timeline({
           <div class="event-body">
             <p class="event-text">
               <strong>{name(event.actor)}</strong> {describeEvent(event, name)}
+              {event.agentName !== null && <> · via {event.agentName}</>}
             </p>
             {event.kind === "note" && event.note !== null && (
               <p class="event-quote">{event.note}</p>

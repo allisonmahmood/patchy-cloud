@@ -53,6 +53,8 @@ import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@pat
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
   InvocationLog,
+  AgentRuntime,
+  AgentRuntimeApi,
   Runtime,
   RuntimeProduction,
   RuntimeApi,
@@ -141,7 +143,8 @@ const services = Layer.mergeAll(
       const members = yield* Members.make;
       const postgres = yield* PostgresOperations.makeHandlers;
       const handlers = { me, ...tables, ...files, ...members, ...postgres };
-      const runtime = Layer.merge(
+      const runtime = Layer.mergeAll(
+        AgentRuntime.layer,
         RuntimeProduction.layer(handlers),
         RuntimeStream.layer.pipe(
           Layer.provide(Subscriptions.layer),
@@ -229,7 +232,8 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     ConnectionsApi.layer,
     SdkApi.layer,
     RuntimeApi.layer,
-    RuntimeStreamApi.layer
+    RuntimeStreamApi.layer,
+    AgentRuntimeApi.layer
   ]),
   Layer.provide(Authorization.layer)
 );
