@@ -207,8 +207,9 @@ API at `clerk.patchyhq.com` and the Account Portal at `accounts.patchyhq.com`,
 and sends mail from `patchyhq.com`. The app's origin is
 `https://cloud.patchyhq.com`: the instance's home URL, and the deployment's
 `PATCHY_PUBLIC_BASE_URL` and `CLERK_AUTHORIZED_PARTIES`. Sign-ups that carry no
-redirect, such as a waitlist approval, land on the home URL. Creating the
-instance for `patchyhq.com` makes the home URL `https://patchyhq.com`.
+redirect, such as a waitlist approval or a company's invitation, land on the
+home URL. Creating the instance for `patchyhq.com` makes the home URL
+`https://patchyhq.com`.
 `POST /v1/instance/change_domain` with
 `{ "home_url": "https://cloud.patchyhq.com", "is_secondary": false }` moves it
 to the app's host and keeps the Clerk domain and keys.
@@ -223,7 +224,10 @@ to the app's host and keeps the Clerk domain and keys.
 - **Sign-up** is in Waitlist mode during the private beta
   ([#481](https://github.com/allisonmahmood/patchy-cloud/issues/481)). People join
   at `accounts.patchyhq.com/waitlist`, and approving someone sends them an
-  invitation.
+  invitation. Only an invitation's link gets a new person past the waitlist,
+  because the Account Portal page it opens consumes the invitation's ticket.
+  Invitations a company sends from `/company` work the same way, so they
+  carry no redirect to a Patchy page, which could not consume the ticket.
 - **Sign-in** is by email code. Clerk's shared OAuth credentials work only in
   development, so cloning carries social providers over without credentials.
   Production keeps them off until it has its own

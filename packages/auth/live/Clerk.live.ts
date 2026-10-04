@@ -109,6 +109,14 @@ it.layer(services, { timeout: "60 seconds" })("live Clerk", (it) => {
         created.data.map(({ id, emailAddress, status }) => ({ id, emailAddress, status })),
         [{ id: first, emailAddress: settings.inviteEmail, status: "pending" }]
       );
+      // Waitlist mode admits a new person only with the ticket, so the emailed link must
+      // open Clerk's sign-up, which consumes it, rather than a Patchy page, which cannot.
+      const link = created.data[0]?.url;
+      assert.isDefined(link);
+      const accepted = yield* Effect.promise(() => fetch(link, { redirect: "manual" }));
+      const landing = new URL(accepted.headers.get("location") ?? "", link);
+      assert.strictEqual(landing.pathname, "/sign-up");
+      assert.isTrue(landing.searchParams.has("__clerk_ticket"));
       yield* mail.revoke(first);
       const revoked = yield* Effect.promise(() =>
         client.invitations.getInvitationList({ query: settings.inviteEmail, status: "revoked" })

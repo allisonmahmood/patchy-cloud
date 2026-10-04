@@ -100,7 +100,7 @@ export const revoke = Effect.fn("Invitations.revoke")(function* (
           : yield* mail.revoke(invite.clerkInvitationId).pipe(
               Effect.as(false),
               Effect.catchTags({
-                InvitationAlreadyRevoked: () => Effect.succeed(false),
+                InvitationNotPending: () => Effect.succeed(false),
                 InviteMailError: () => Effect.succeed(true)
               })
             );
@@ -126,7 +126,7 @@ export const resend = Effect.fn("Invitations.resend")(function* (
           Effect.as(false),
           // Clerk can commit a revoke whose response never reaches us.
           Effect.catchTags({
-            InvitationAlreadyRevoked: () => Effect.succeed(false),
+            InvitationNotPending: () => Effect.succeed(false),
             InviteMailError: () => Effect.succeed(true)
           })
         );
