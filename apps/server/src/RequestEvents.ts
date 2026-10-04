@@ -30,8 +30,8 @@ import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { PatchId } from "@patchy/api";
 
-/** Probes poll this from several places; their traffic would swamp the stream and say nothing. */
-const healthProbe = "/healthz";
+/** Probes poll these from several places; their traffic would swamp the stream and say nothing. */
+const healthProbes = new Set(["/healthz", "/healthz/deep"]);
 
 /** A refusal body's code: snake_case, so nothing a client sent can ride along. */
 const decodeCode = Schema.decodeUnknownOption(
@@ -144,7 +144,7 @@ export const layer = HttpRouter.middleware(
     make,
     (record) => (app) =>
       Effect.flatMap(HttpRouter.RouteContext, ({ route, params }) =>
-        route.path.startsWith("/api/runtime/") || route.path === healthProbe
+        route.path.startsWith("/api/runtime/") || healthProbes.has(route.path)
           ? app
           : record(
               route.path,

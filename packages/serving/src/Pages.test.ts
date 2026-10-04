@@ -5,6 +5,7 @@ import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -31,7 +32,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { Content, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { ddl } from "@patchy/sql";
+import { ddl, layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
 import * as Wakes from "../../runtime/src/Wakes.js";
@@ -529,6 +530,15 @@ it.layer(layer)("pages", (it) => {
     })
   );
 
+  it.effect("answers the deep health check from the database, naming the running build", () =>
+    Effect.gen(function* () {
+      const response = yield* get("/healthz/deep", {});
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers["cache-control"], "no-store");
+      assert.deepStrictEqual(yield* response.json, { ok: true, revision: "development" });
+    })
+  );
+
   it.effect("404s as HTML, uncached, and keeps a patch URL's headers on the 404 too", () =>
     Effect.gen(function* () {
       const { path } = yield* publish("One version");
@@ -618,6 +628,30 @@ const send = Effect.fn(function* (path: string, options: RequestInit = {}) {
     )
   );
   return HttpServerResponse.toWeb(response);
+});
+
+/** The health routes alone, over a database that refuses every connection. */
+const unreachableDatabase = HttpRouter.serve(Pages.health, {
+  disableLogger: true,
+  disableListenLog: true
+}).pipe(
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provide(layerFromUrl(Redacted.make("postgresql://postgres:postgres@127.0.0.1:1/patchy"))),
+  Layer.provide(
+    ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_DEPLOYMENT_REVISION: "abc123" }))
+  )
+);
+
+it.layer(unreachableDatabase)("health without a database", (it) => {
+  it.effect("keeps the shallow check up and fails the deep one, still naming the build", () =>
+    Effect.gen(function* () {
+      const shallow = yield* get("/healthz", {});
+      assert.strictEqual(shallow.status, 200);
+      const deep = yield* get("/healthz/deep", {});
+      assert.strictEqual(deep.status, 503);
+      assert.deepStrictEqual(yield* deep.json, { ok: false, revision: "abc123" });
+    })
+  );
 });
 
 it.layer(services)("pages in memory", (it) => {

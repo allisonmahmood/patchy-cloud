@@ -427,7 +427,8 @@ it.layer(server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(Layer.provideMer
         for (const field of ["route", "method", "status", "parentId"])
           assert.notProperty(runtime.event, field);
 
-        assert.deepStrictEqual((yield* eventsOf(HttpClientRequest.get("/healthz"))).events, []);
+        for (const probe of ["/healthz", "/healthz/deep"])
+          assert.deepStrictEqual((yield* eventsOf(HttpClientRequest.get(probe))).events, []);
       })
     );
 

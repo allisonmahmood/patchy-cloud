@@ -1,5 +1,5 @@
 /**
- * The routes a reader hits: the health check, patch addresses
+ * The routes a reader hits: the health checks, patch addresses
  * (`/:company/:name[/~v/:n][/route]`) and exact-version content URLs.
  * The server owns the root and catch-all together. Pages read through
  * `patches`; metadata and visits go through `Patches`, and `Content` reads
@@ -7,13 +7,14 @@
  * under are `serving-headers.ts`.
  */
 import * as Clock from "effect/Clock";
-import type { ConfigError } from "effect/Config";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
@@ -285,17 +286,47 @@ const otherPages = HttpRouter.use((router) =>
         });
       })
     );
-    yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
     yield* router.add("*", "/~content/*", notFound);
+  })
+);
+
+/**
+ * The health routes. `/healthz` is shallow, for the load balancer and ECS: a
+ * database blip must not make ECS replace every host. `/healthz/deep` is the
+ * uptime check's: 200 only while the platform database answers, and either
+ * way it names the running build, so anyone can see which revision is live.
+ */
+export const health = HttpRouter.use((router) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const revision = yield* Config.String("PATCHY_DEPLOYMENT_REVISION").pipe(
+      Config.withDefault("development")
+    );
+    yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
+    yield* router.add(
+      "GET",
+      "/healthz/deep",
+      sql`SELECT 1`.pipe(
+        // Route 53 waits two seconds for an answer; a slow database is a failed probe.
+        Effect.timeout("2 seconds"),
+        Effect.as(true),
+        // Every failure is the probe's answer, not the route's error.
+        Effect.catch(() => Effect.succeed(false)),
+        Effect.map((ok) =>
+          HttpServerResponse.jsonUnsafe({ ok, revision }, { status: ok ? 200 : 503 })
+        )
+      )
+    );
   })
 );
 
 export const layer: Layer.Layer<
   never,
-  ConfigError,
+  Config.ConfigError,
   | HttpRouter.HttpRouter
   | Session.Session
   | Companies.Companies
   | Users.Users
+  | SqlClient.SqlClient
   | HttpRouter.Request.From<"Requires", Content.Content | Patches.Patches | Session.Session>
-> = Layer.mergeAll(patches, otherPages);
+> = Layer.mergeAll(patches, otherPages, health);

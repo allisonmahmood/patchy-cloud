@@ -28,6 +28,21 @@ the URL used in the browser; it is Clerk's single origin authority.
 `PORT` defaults to 3000; set it and the public origin together if changing ports.
 The optional Clerk settings follow [Development: Clerk keys](DEVELOPMENT.md#clerk-keys).
 
+Before it touches Postgres, a `NODE_ENV=production` host also refuses a
+`PATCHY_PUBLIC_BASE_URL` that is not HTTPS and a missing or incomplete
+[Neon Object Storage](#neon-object-storage) configuration, since a container's
+disk is gone on the next deploy. `PATCHY_ENVIRONMENT` names the deployment, such
+as `production` or `staging`; with `PATCHY_ENVIRONMENT=production` the host also
+refuses Clerk's `pk_test_`/`sk_test_` keys. Staging and the tier 2 spike keep
+development or fake keys.
+
+`GET /healthz` always answers `{ "ok": true }`: it is the load balancer's and
+ECS's check, so a database blip does not make ECS replace every host.
+`GET /healthz/deep` is the uptime check's: it answers 200 only while the platform
+database answers within two seconds, 503 otherwise, and either way names the
+running build, `{ "ok": true, "revision": "<PATCHY_DEPLOYMENT_REVISION>" }`, so
+anyone can see which revision is live without AWS access.
+
 The company admin URL targets a maintenance database with a provisioning login
 allowed to `CREATE DATABASE` and assign the data role as owner. The data URL is a
 template: its database path is replaced by the company's placement. Production
@@ -121,7 +136,7 @@ the token itself is never recorded. Routes about one patch add `patchId` and a
 `versionId`: the version a page served, a publish created or a rollback made
 current, and otherwise the patch's current version.
 `requestBytes` is the declared length, and `responseBytes` is the body sent.
-Health probes (`/healthz`) emit nothing.
+Health probes (`/healthz`, `/healthz/deep`) emit nothing.
 
 No key is needed for stdout. `pnpm dev` captures these lines with the other
 server output; `pnpm dev logs` displays them.
@@ -237,7 +252,8 @@ S3-compatible API. Otherwise it stores bytes under `PATCHY_STORAGE_DIR` on the
 local filesystem. Local development and offline tests keep the filesystem
 layer; the worktree runner does not forward ambient storage settings.
 
-Configure all five dedicated settings for a server deployment. The
+Configure all five dedicated settings for a server deployment; a
+`NODE_ENV=production` host refuses to start without them. The
 [live contract suite](#the-live-content-store-suite) uses the spike names listed above.
 
 | Setting                       | Value                                                     |
