@@ -45,5 +45,6 @@ USER node
 
 EXPOSE 3000
 
-# Exec tasks override the command with ["node", "dist/exec.js"].
+# Exec tasks override the command with ["node", "dist/exec.js"]; one-off fleet
+# operations, such as a deploy's promote, with ["node", "dist/fleet.js", ...].
 CMD ["node", "dist/start.js"]

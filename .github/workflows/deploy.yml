@@ -1,0 +1,278 @@
+name: Deploy
+
+# Every production release deploys from here, and nothing else does: a person
+# starts a run on main and approves it in the `production` environment. A
+# rollback is a run on an earlier merged commit. docs/OPERATIONS.md has the
+# runbooks, including rotating the management secret with the rotation input.
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Merged commit to release, as a full sha (blank releases the head of main; an earlier one is a rollback)
+        required: false
+      rotation:
+        description: A step of rotating the management secret (docs/OPERATIONS.md), or a plain release
+        type: choice
+        options: [release, overlap, seal]
+        default: release
+
+permissions:
+  contents: read
+  id-token: write
+
+# CloudFormation refuses overlapping updates to one stack; this keeps a second
+# run from racing the first across the two stacks and the promote step.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # The environment allows only main too; this says so where the run starts.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment:
+      name: production
+      url: https://cloud.patchyhq.com
+    env:
+      AWS_REGION: us-east-1
+      COMMIT: ${{ inputs.revision || github.sha }}
+      ROTATION: ${{ inputs.rotation || 'release' }}
+      # Secrets of the `production` environment. None is secret, but this
+      # repository's run logs are public and only secrets are masked in them.
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      CERTIFICATE_ARN: ${{ secrets.CERTIFICATE_ARN }}
+      ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}
+    steps:
+      - name: Mask each alert address
+        run: |
+          IFS=, read -ra emails <<< "$ALERT_EMAILS"
+          for email in "${emails[@]}"; do echo "::add-mask::$email"; done
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          # The whole history, so the next step can check the commit is on main.
+          fetch-depth: 0
+          persist-credentials: false
+      # A release's deployment revision is its commit. Each rotation deploy
+      # needs a revision of its own, even on the same commit, so the fleet
+      # replaces every exec task that holds the old secret.
+      - name: Release only merged commits
+        run: |
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "revision must be a full commit sha"; exit 1; }
+          git merge-base --is-ancestor "$COMMIT" origin/main || { echo "$COMMIT is not on main"; exit 1; }
+          case "$ROTATION" in
+            release) revision=$COMMIT ;;
+            overlap | seal) revision=$COMMIT-$ROTATION-$GITHUB_RUN_NUMBER ;;
+            *) echo "Unknown rotation step $ROTATION"; exit 1 ;;
+          esac
+          echo "DEPLOYMENT_REVISION=$revision" >> "$GITHUB_ENV"
+
+      # 1. The deploy role trusts only this repository's `production` environment.
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/patchy-production-deploy
+          aws-region: us-east-1
+          role-duration-seconds: 7200
+          mask-aws-account-id: true
+
+      # 2. A cancelled run can leave its promote task behind; a late promotion
+      #    would stage a revision this run is about to replace.
+      - name: Stop leftover promote tasks
+        run: |
+          if ! listed=$(aws ecs list-tasks --cluster patchy-production --started-by deploy-promote \
+            --query 'taskArns[]' --output text 2> "$RUNNER_TEMP/ecs.err"); then
+            grep -q ClusterNotFound "$RUNNER_TEMP/ecs.err" || { cat "$RUNNER_TEMP/ecs.err"; exit 1; }
+            listed=""
+          fi
+          read -ra tasks <<< "$listed"
+          for task in "${tasks[@]}"; do
+            aws ecs stop-task --cluster patchy-production --task "$task" --reason superseded > /dev/null
+          done
+          (( ${#tasks[@]} == 0 )) || aws ecs wait tasks-stopped --cluster patchy-production --tasks "${tasks[@]}"
+
+      # 3. Until this release is promoted, the fleet still replenishes the
+      #    promoted revision's spares, so the new hosts must be able to launch
+      #    them. The record, written only by this workflow, holds the promoted
+      #    release and any release whose promotion has not finished, each with
+      #    the management secret slot it reads and the release it was deployed
+      #    beside. This release is recorded as pending before anything deploys,
+      #    so a re-run of an interrupted run finds and reuses its settings.
+      #    While a promotion is unfinished, only re-running it or rolling back
+      #    to the promoted release may deploy. An overlap moves to the idle
+      #    slot; every other release keeps the slot. While a rotation is under
+      #    way (the promoted release and its previous read different slots),
+      #    only a seal, or an overlap that undoes it, may deploy: the old slot's
+      #    tasks are still draining.
+      - name: Find what this release rolls out beside
+        run: |
+          record=null
+          if value=$(aws ssm get-parameter --name /patchy/production/promoted-release \
+            --query Parameter.Value --output text 2> "$RUNNER_TEMP/ssm.err"); then
+            record=$value
+          elif ! grep -q ParameterNotFound "$RUNNER_TEMP/ssm.err"; then
+            cat "$RUNNER_TEMP/ssm.err"; exit 1
+          fi
+          echo "$record" > "$RUNNER_TEMP/record.json"
+          jq -c --arg target "$DEPLOYMENT_REVISION" --arg rotation "$ROTATION" \
+            --argjson attempt "$GITHUB_RUN_ATTEMPT" '
+            def beside($release): $release | {revision, execTaskDefinition, slot};
+            def other($slot): if $slot == "a" then "b" else "a" end;
+            if $attempt > 1 and $rotation != "release"
+              and ([.pending.revision, .promoted.revision] | index($target) | not) then
+              error("This rotation run is not on record: a later release superseded it, or it failed before recording its release. Start a new run instead.")
+            elif . == null then
+              if $rotation == "release" then {slot: "a", previous: null}
+              else error("A rotation needs a promoted release to rotate from.") end
+            elif .pending then
+              if .pending.revision == $target then .pending | {slot, previous}
+              elif .promoted.revision == $target then
+                # A pending release with no exec task definition never reached its app deploy.
+                {slot: .promoted.slot, previous: (if .pending.execTaskDefinition then beside(.pending) else .promoted.previous end)}
+              else error("The promotion of \(.pending.revision) did not finish. Re-run that run"
+                + (if .promoted then ", or the run that released \(.promoted.revision) to roll back." else "." end))
+              end
+            elif .promoted.revision == $target then .promoted | {slot, previous}
+            elif $rotation == "overlap" then {slot: other(.promoted.slot), previous: beside(.promoted)}
+            elif $rotation == "release" and ((.promoted.previous.slot // .promoted.slot) != .promoted.slot) then
+              error("A rotation is under way: finish it with a seal run, or undo it with an overlap run.")
+            else {slot: .promoted.slot, previous: beside(.promoted)}
+            end' "$RUNNER_TEMP/record.json" > "$RUNNER_TEMP/release.json"
+          jq -r '"SECRET_SLOT=\(.slot)"' "$RUNNER_TEMP/release.json" >> "$GITHUB_ENV"
+          jq -r '.previous // empty | "PREVIOUS_REVISION=\(.revision)",
+            "PREVIOUS_EXEC_TASK_DEFINITION=\(.execTaskDefinition)", "PREVIOUS_SECRET_SLOT=\(.slot)"' \
+            "$RUNNER_TEMP/release.json" >> "$GITHUB_ENV"
+          echo "Reading slot $(jq -r .slot "$RUNNER_TEMP/release.json"), beside $(jq -r '.previous.revision // "nothing"' "$RUNNER_TEMP/release.json")."
+          # Pending before anything deploys: a first release's hosts even promote themselves.
+          jq -c --arg revision "$DEPLOYMENT_REVISION" --slurpfile release "$RUNNER_TEMP/release.json" '
+            (. // {}) | if .pending.revision == $revision then . else
+              .pending = ($release[0] | {revision: $revision, execTaskDefinition: null, slot, previous}) end' \
+            "$RUNNER_TEMP/record.json" > "$RUNNER_TEMP/pending.json"
+          mv "$RUNNER_TEMP/pending.json" "$RUNNER_TEMP/record.json"
+          aws ssm put-parameter --name /patchy/production/promoted-release --type String \
+            --overwrite --value "$(cat "$RUNNER_TEMP/record.json")" > /dev/null
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          # Matches the digest-pinned node:24-slim image and the local recipe.
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install pinned crane
+        env:
+          CRANE_VERSION: v0.22.1
+          CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+        run: |
+          mkdir -p "$RUNNER_TEMP/crane-bin"
+          curl --fail --location --silent --show-error \
+            "https://github.com/google/go-containerregistry/releases/download/$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" \
+            --output "$RUNNER_TEMP/crane.tar.gz"
+          echo "$CRANE_SHA256  $RUNNER_TEMP/crane.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/crane.tar.gz" -C "$RUNNER_TEMP/crane-bin" crane
+          echo "$RUNNER_TEMP/crane-bin" >> "$GITHUB_PATH"
+
+      # 4. The reproducible server image, as server-image.yml builds it.
+      - name: Build the server image
+        run: |
+          node scripts/build-server-image.mjs --tag "patchy-server:$COMMIT"
+          echo "IMAGE_DIGEST=$(crane digest --tarball .local/server-image.tar)" >> "$GITHUB_ENV"
+
+      # 5. The registry, deploy identity, budget and secrets. CDK prints stack
+      #    outputs, resource ids among them; the public log leaves them out.
+      - name: Deploy the base stack
+        working-directory: apps/infra
+        shell: bash
+        run: |
+          pnpm exec cdk deploy patchy-production-base --exclusively --require-approval never \
+            -c environment=production -c "alertEmails=$ALERT_EMAILS" \
+            -c "revision=$DEPLOYMENT_REVISION" -c "imageDigest=$IMAGE_DIGEST" \
+            -c domain=cloud.patchyhq.com -c "certificateArn=$CERTIFICATE_ARN" -c secretSlot=a \
+            --outputs-file "$RUNNER_TEMP/base.json" 2>&1 |
+            sed -u -E '/^patchy-production-[a-z]+\.[A-Za-z]+ = /d; /^arn:aws:cloudformation:/d'
+
+      # 6. Tagged with the commit. Tags are immutable, so a rollback finds its
+      #    image already there, and the reproducible build must match it exactly.
+      - name: Push the image
+        run: |
+          repository=$(jq -r '."patchy-production-base".RepositoryUri' "$RUNNER_TEMP/base.json")
+          existing=$(aws ecr describe-images --repository-name "${repository#*/}" \
+            --image-ids "imageTag=$COMMIT" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)
+          if [[ -n "$existing" && "$existing" != "None" ]]; then
+            [[ "$existing" == "$IMAGE_DIGEST" ]] ||
+              { echo "ECR holds $COMMIT as $existing, but this build is $IMAGE_DIGEST"; exit 1; }
+            echo "$COMMIT is already in ECR as $IMAGE_DIGEST."
+            exit 0
+          fi
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker"
+          aws ecr get-login-password | crane auth login "${repository%%/*}" -u AWS --password-stdin
+          crane push .local/server-image.tar "$repository:$COMMIT"
+          [[ "$(crane digest "$repository:$COMMIT")" == "$IMAGE_DIGEST" ]]
+
+      # 7. Pinned to the digest. CloudFormation waits for ECS to settle; a host
+      #    that cannot start trips the circuit breaker and the update rolls back.
+      - name: Deploy the app stack
+        working-directory: apps/infra
+        shell: bash
+        run: |
+          previous=()
+          if [[ -n "${PREVIOUS_REVISION:-}" ]]; then
+            previous=(-c "previousRevision=$PREVIOUS_REVISION"
+              -c "previousExecTaskDefinition=$PREVIOUS_EXEC_TASK_DEFINITION"
+              -c "previousSecretSlot=$PREVIOUS_SECRET_SLOT")
+          fi
+          pnpm exec cdk deploy patchy-production-app --exclusively --require-approval never \
+            -c environment=production -c "alertEmails=$ALERT_EMAILS" \
+            -c "revision=$DEPLOYMENT_REVISION" -c "imageDigest=$IMAGE_DIGEST" \
+            -c domain=cloud.patchyhq.com -c "certificateArn=$CERTIFICATE_ARN" \
+            -c "secretSlot=$SECRET_SLOT" "${previous[@]}" --outputs-file "$RUNNER_TEMP/app.json" 2>&1 |
+            sed -u -E '/^patchy-production-[a-z]+\.[A-Za-z]+ = /d; /^arn:aws:cloudformation:/d'
+          app() { jq -r --arg key "$1" '."patchy-production-app"[$key]' "$RUNNER_TEMP/app.json"; }
+          for id in $(app LoadBalancerDnsName) $(app HostSecurityGroupId) $(app HostSubnetIds | tr , ' '); do
+            echo "::add-mask::$id"
+          done
+          for key in ClusterName HostServiceName HostTaskDefinitionArn ExecTaskDefinitionArn \
+            HostSubnetIds HostSecurityGroupId; do
+            echo "APP_$key=$(app "$key")" >> "$GITHUB_ENV"
+          done
+          jq -c --arg definition "$(app ExecTaskDefinitionArn)" '.pending.execTaskDefinition = $definition' \
+            "$RUNNER_TEMP/record.json" > "$RUNNER_TEMP/pending.json"
+          mv "$RUNNER_TEMP/pending.json" "$RUNNER_TEMP/record.json"
+          aws ssm put-parameter --name /patchy/production/promoted-release --type String \
+            --overwrite --value "$(cat "$RUNNER_TEMP/record.json")" > /dev/null
+
+      # 8. Only now that the new hosts serve: promoting earlier would leave a
+      #    staged revision with no hosts if the rollout had failed.
+      - name: Promote the fleet to this revision
+        run: |
+          overrides=$(jq -cn --arg revision "$DEPLOYMENT_REVISION" \
+            '{containerOverrides: [{name: "host", command: ["node", "dist/fleet.js", "promote", $revision]}]}')
+          task=$(aws ecs run-task --cluster "$APP_ClusterName" --task-definition "$APP_HostTaskDefinitionArn" \
+            --launch-type FARGATE --count 1 --started-by deploy-promote --overrides "$overrides" \
+            --network-configuration "awsvpcConfiguration={subnets=[$APP_HostSubnetIds],securityGroups=[$APP_HostSecurityGroupId],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          [[ "$task" == arn:* ]] || { echo "The promote task did not start."; exit 1; }
+          aws ecs wait tasks-stopped --cluster "$APP_ClusterName" --tasks "$task"
+          code=$(aws ecs describe-tasks --cluster "$APP_ClusterName" --tasks "$task" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          # Its output can name database hosts, so it stays in CloudWatch, out of this public log.
+          [[ "$code" == 0 ]] ||
+            { echo "Promotion failed ($code); see host/host/${task##*/} in /patchy/production/host."; exit 1; }
+          jq -c '{promoted: .pending}' "$RUNNER_TEMP/record.json" > "$RUNNER_TEMP/promoted.json"
+          mv "$RUNNER_TEMP/promoted.json" "$RUNNER_TEMP/record.json"
+          aws ssm put-parameter --name /patchy/production/promoted-release --type String \
+            --overwrite --value "$(cat "$RUNNER_TEMP/record.json")" > /dev/null
+
+      # 9. The service's primary deployment is this release's task definition.
+      - name: Confirm the release is live
+        run: |
+          read -r definition state < <(aws ecs describe-services --cluster "$APP_ClusterName" \
+            --services "$APP_HostServiceName" \
+            --query 'services[0].deployments[?status==`PRIMARY`] | [0].[taskDefinition, rolloutState]' \
+            --output text)
+          echo "Primary deployment: $definition ($state)"
+          [[ "$definition" == "$APP_HostTaskDefinitionArn" && "$state" == COMPLETED ]]

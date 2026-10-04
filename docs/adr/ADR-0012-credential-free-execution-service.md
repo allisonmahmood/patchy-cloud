@@ -39,9 +39,9 @@ Local processes do not prove Fargate containment.
 
 The ECS provider is built and passed role-only Fargate acceptance on
 [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406); **Fargate deployment and
-measurements** below records the run. Production infrastructure
-[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and first deploy
-[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416) remain unbuilt.
+measurements** below records the run. **Production topology** records the
+infrastructure written for [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415);
+its first deploy is [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
 
 ## Engine, guest wire and inspection
 
@@ -391,6 +391,68 @@ in B. Four distinct process reports on the same task recorded `stall`, with
 windows. Successful sibling replies are not evidence of unchanged sibling speed.
 The role-only run was torn down and its network configuration matched the pre-run
 snapshots. [Full measurements and teardown evidence are recorded on #406](https://github.com/allisonmahmood/patchy-cloud/issues/406#issuecomment-5920910104).
+
+## Production topology
+
+[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) writes production
+as AWS CDK in `apps/infra`: two CloudFormation stacks per environment in
+`us-east-1`, chosen over Alchemy because CloudFormation holds the state, refuses
+overlapping updates and rolls back a failed one. Nothing is deployed until
+[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
+
+The **base stack** holds what outlives a release: the ECR repository, with
+immutable tags named by commit; the GitHub OIDC provider and a deploy role
+trusted only for the repository's GitHub environment of the same name; the
+$300 forecast budget; the host secret, declared without a value and filled by a
+person; and the fleet management secret, with two slots of which a release reads
+one. Only production
+declares the account-wide provider and budget. It deploys first: a host cannot
+start until its image is in ECR and its secret is filled.
+
+The **app stack** is one release, pinned to an image digest:
+
+- **Network.** Two public subnets hold the load balancer and the hosts, with
+  public IPs and no NAT gateway. Exec tasks use one isolated subnet whose only
+  ways out are interface endpoints for ECR and CloudWatch Logs and a gateway
+  endpoint for S3. There is no Secrets Manager endpoint. The interface endpoints'
+  private DNS applies to the whole VPC, so their security group admits the hosts
+  as well as exec tasks.
+- **Security groups.** The load balancer takes 80 and 443 from anywhere and
+  reaches hosts on 8080. Hosts take 8080 from it and 8789 from `exec-bootstrap`,
+  and reach anything. `exec-bootstrap` takes 8788 from hosts and reaches only the
+  endpoints, S3 and the hosts' 8789. `exec-sealed` takes 8788 from hosts and
+  reaches nothing. Every group but the hosts' declares its egress inline, so
+  AWS's default allow-all egress is removed. An offline snapshot test pins them.
+- **Load balancer.** HTTPS with the existing certificate, 80 redirecting, HTTP/2
+  and a 3,600-second idle timeout. Hosts are one target group with
+  application-cookie stickiness on `patchy_stream_affinity`, a 90-second
+  deregistration delay and the shallow `/healthz` check.
+- **Hosts.** One ECS service of two tasks at 0.5 vCPU and 2 GiB, rolling at
+  100/200 percent with circuit-breaker rollback, as user 1000 with a 120-second
+  stop timeout. Settings come from the host secret by key. The host task role is
+  the fleet policy in [Operations](../OPERATIONS.md#ecs-provider-configuration).
+- **Exec.** A task definition with no service and no task role, as user 0 with
+  the spike's capability drops, and an execution role that only pulls the image
+  and ships logs. Replaced revisions stay registered so hosts still on the
+  previous release can launch from theirs.
+- **Uptime.** A Route 53 HTTPS check on `/healthz/deep` through the public name
+  raises a CloudWatch alarm that emails through SNS.
+
+A release is one run of the deploy workflow: build the reproducible image,
+deploy the base stack, push the image, deploy the app stack, which waits for ECS
+to settle, then promote the fleet with `node dist/fleet.js promote <revision>`
+as a one-off host task. Promotion follows the rollout, never precedes it: a
+staged revision whose hosts failed would have none. Until promotion the fleet
+still replenishes the promoted revision's spares, so each release's hosts
+carry the promoted release, which the workflow records after each promotion, as
+their previous revision, exec task definition and secret; a host that cannot
+launch a revision would strand its reserved tasks.
+Between the old hosts draining and promotion nothing replenishes spares;
+existing spares cover that window. The management secret stays constant across
+releases, so a release is one deploy. Rotating it writes the new secret into the
+idle slot, where no running host looks, then takes two deploys, overlap then
+seal, each with a revision of its own; a failure or rollback at any point leaves
+both slots readable.
 
 ## Seven hosting decisions
 

@@ -9,8 +9,10 @@ import * as ExecutionLifecycle from "@patchy/runtime/execution-lifecycle";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -35,6 +37,24 @@ export class FleetError extends Schema.TaggedError<FleetError>()("FleetError", {
 }) {
   override get message() {
     return `Execution fleet ${this.operation} failed.`;
+  }
+}
+/** No host has registered the revision, so none is running it to warm its spares. */
+export class RevisionNotRegistered extends Schema.TaggedError<RevisionNotRegistered>()(
+  "FleetRevisionNotRegistered",
+  { revision: Schema.String }
+) {
+  override get message() {
+    return `No host has registered deployment revision ${this.revision}; deploy its hosts first.`;
+  }
+}
+/** The revision's hosts did not warm enough spares to promote it in time. */
+export class SparesNotReady extends Schema.TaggedError<SparesNotReady>()("FleetSparesNotReady", {
+  revision: Schema.String,
+  minimumSpares: Schema.Number
+}) {
+  override get message() {
+    return `Deployment revision ${this.revision} did not reach ${this.minimumSpares} ready spares in time; it stays staged.`;
   }
 }
 class LeaseLost extends Schema.TaggedError<LeaseLost>()("FleetLeaseLost", {
@@ -63,6 +83,42 @@ const executionError = (cause: TaskProvider.TaskProviderError) =>
     ...(cause.limits === undefined ? {} : { limits: cause.limits }),
     cause
   });
+
+/** A revision promotes once this many of its spares are ready. */
+const minimumSparesOf = (config: Effect.Success<typeof DeploymentConfig.load>) =>
+  Math.max(1, Math.min(config.get("execution.pool.spares"), config.get("execution.fleet.budget")));
+
+/**
+ * Stages `revision` and promotes it once its hosts have warmed its spares,
+ * polling each second for at most `timeout`. It moves rollout rows only: the
+ * revision's hosts registered it and warm its spares, so this runs in any
+ * process beside them on the platform database, such as a one-off deploy task.
+ * Promoting an earlier revision is a rollback.
+ */
+export const promote = Effect.fn("Fleet.promote")(function* (
+  revision: string,
+  timeout: Duration.Input
+) {
+  const store = yield* FleetStore.make;
+  const minimumSpares = minimumSparesOf(yield* DeploymentConfig.load);
+  // Done already, as when a first deployment's hosts promoted it themselves.
+  const current = store.rollout.pipe(
+    Effect.map((rollout) => rollout.currentRevision === revision && rollout.stagedRevision === null)
+  );
+  if (yield* current) return;
+  if (!(yield* store.stageDeployment(revision)))
+    return yield* new RevisionNotRegistered({ revision });
+  const promoted = Effect.gen(function* () {
+    return (yield* store.promoteDeployment(revision, minimumSpares)) || (yield* current);
+  });
+  yield* promoted.pipe(
+    Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("1 second") }),
+    Effect.timeoutOrElse({
+      duration: timeout,
+      orElse: () => Effect.fail(new SparesNotReady({ revision, minimumSpares }))
+    })
+  );
+});
 
 /** Host code, not a service deployment. One instance is scoped to one host replica. */
 export const make = Effect.fn("Fleet.make")(function* (options: Options) {
@@ -308,10 +364,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     },
     Effect.mapError((cause) => new FleetError({ operation: "drain", cause }))
   );
-  const minimumSpares = Math.max(
-    1,
-    Math.min(config.get("execution.pool.spares"), config.get("execution.fleet.budget"))
-  );
+  const minimumSpares = minimumSparesOf(config);
   const isolate = <A, E, R>(taskId: string, work: Effect.Effect<A, E, R>) =>
     work.pipe(
       Effect.timeout(config.get("execution.pool.wait")),

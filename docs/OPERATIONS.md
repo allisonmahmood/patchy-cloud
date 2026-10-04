@@ -1,10 +1,10 @@
 # Operating Patchy Cloud
 
 Running the server outside `pnpm dev`: its configuration, Clerk, the stores, the
-execution service and fleet, and the tier 2 spike deploy. The local loop is in
-[Development](DEVELOPMENT.md). Production infrastructure and the first deploy,
-[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
-[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), are not built.
+execution service and fleet, production and its runbooks, and the tier 2 spike
+deploy. The local loop is in [Development](DEVELOPMENT.md). Production is written
+([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)) but not yet
+deployed ([#416](https://github.com/allisonmahmood/patchy-cloud/issues/416)).
 
 ## Running the server by hand
 
@@ -162,7 +162,7 @@ Every event has `sampleProbability: 1`; delivery is best effort, not metering.
 
 #### Finding a request in CloudWatch
 
-In a deployment, these lines land in the host service's log group. CloudWatch Logs
+In production, these lines land in the host log group, `/patchy/production/host`. CloudWatch Logs
 Insights discovers their JSON fields. Filter on `type`, `route`, `viewerId`,
 `outcome`, `code` and the time range; `deploymentRevision` names the build that
 served each request. When someone reports a failed publish:
@@ -403,7 +403,9 @@ let housekeeping prepare spares, then call `promoteDeployment(revision)`.
 Promotion returns false until the required warm capacity exists. Existing companies
 move to ready replacement tasks incrementally, retaining admitted work on the old
 binding. Rollback stages and promotes the earlier revision through the same operations.
-No direct row edits are needed.
+No direct row edits are needed. `Fleet.promote` does both, polling until the spares
+are warm; the image runs it as `node dist/fleet.js promote <revision>`, which
+production's [deploy workflow](#deploying) runs as a one-off host task.
 
 The housekeeping lease renews during provider work, and a failing task does not
 block unrelated reconciliation or replenishment. A lost activity database session
@@ -444,15 +446,234 @@ After old hosts drain, deploy a sealing revision with the same current secret
 and all three previous-revision settings removed; promote it and drain the
 overlap revision before declaring the old secret retired.
 The fleet id stays constant across releases; task ids and binding epochs do not.
+In production `apps/infra` sets all of these; see [Production](#production).
+
+## Production
+
+Production runs on AWS in `us-east-1`, written as AWS CDK in `apps/infra`;
+[ADR-0012](adr/ADR-0012-credential-free-execution-service.md#production-topology)
+records the topology. Each environment has two stacks, `patchy-<environment>-base`
+and `patchy-<environment>-app`. The CDK app takes every input from context, never
+from the tree: `environment` and `alertEmails` always, and for the app stack
+`revision`, `imageDigest`, `domain` and `certificateArn`; `apps/infra/src/main.ts`
+lists them. `pnpm --filter @patchy/infra synth:example` synthesizes both offline.
+
+The host secret, `patchy/<environment>/host`, is one JSON object a person fills
+in. Its description lists the keys, and each becomes the host environment variable
+it names. A deploy never writes it, and a host cannot start until every key is
+present. The management secret, `patchy/<environment>/fleet-management`, is
+two slots, `{"a": "…", "b": "…"}`. Slot `a` is generated once, `b` stays empty
+until the first rotation, and each release reads one slot; only
+[rotation](#rotating-the-management-secret)
+changes it. Host logs go to `/patchy/<environment>/host` and exec logs to
+`/patchy/<environment>/exec`, each kept 90 days.
+
+### Setting up production
+
+Once, by an administrator, as part of [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416):
+
+1. Bootstrap CDK in the account for `us-east-1`.
+2. Deploy the base stack from the administrator's shell. It creates the deploy
+   role the workflow assumes, and fails if the account already has a GitHub OIDC
+   provider:
+
+   ```sh
+   pnpm --filter @patchy/infra exec cdk deploy patchy-production-base \
+     -c environment=production -c alertEmails=<address>,<address>
+   ```
+
+3. Fill the host secret from a private file outside the checkout:
+   `aws secretsmanager put-secret-value --secret-id patchy/production/host --secret-string file://<file>`.
+4. In GitHub, create the `production` environment with a required reviewer,
+   deployments limited to `main`, and three environment secrets: `AWS_ACCOUNT_ID`, `CERTIFICATE_ARN` and
+   `ALERT_EMAILS` (comma-separated). None is secret; the repository's run logs are
+   public, and only secrets are masked in them.
+5. Run the [deploy workflow](#deploying).
+6. Point `cloud.patchyhq.com` at the app stack's `LoadBalancerDnsName` output with
+   a CNAME. Keep the certificate's validation record: ACM renews the certificate
+   only while it resolves.
+7. Each alert address confirms its SNS subscription from AWS's email. Budget
+   alerts need no confirmation. The uptime alarm fires until the CNAME resolves.
+
+### Deploying
+
+Every release goes through the Deploy workflow, `.github/workflows/deploy.yml`,
+and nothing else deploys: run it on `main` from the Actions tab and approve it in
+the `production` environment. Nobody deploys from a laptop. One run goes at a
+time; a second waits. A run:
+
+1. assumes the deploy role through GitHub's OIDC provider;
+2. stops any promote task a cancelled run left behind;
+3. decides, from the release record below, the secret slot the release reads and
+   the release it rolls out beside, and records it as pending;
+4. builds the reproducible server image from the commit, as `server-image.yml` does;
+5. deploys the base stack;
+6. pushes the image to ECR with `crane`, tagged with the commit;
+7. deploys the app stack, pinned to the image digest, with the promoted release
+   as its previous revision. CloudFormation waits for ECS to settle. A host that
+   cannot start trips the circuit breaker: the service rolls back and the stack
+   update fails and rolls back, before any promotion;
+8. promotes the fleet with `node dist/fleet.js promote <revision>`, run once as a
+   task from the host task definition, and records the release as promoted. The
+   promotion waits up to five minutes for the new hosts to warm their spares;
+9. confirms the service's primary deployment is on the new task definition.
+
+A release's deployment revision is its commit, and `/healthz/deep` names it.
+Promotion waits for ECS on purpose: promoting first would leave a staged revision
+with no hosts if the rollout failed. Until promotion the fleet still replenishes
+the promoted revision's spares, which is why the new hosts carry its revision,
+exec task definition and secret as the previous settings in
+[ECS provider configuration](#ecs-provider-configuration). Between the old hosts
+draining and promotion nothing replenishes spares; the existing spares cover
+that window.
+
+The workflow keeps a record in the SSM parameter
+`/patchy/production/promoted-release`, and nothing else writes it: the promoted
+release and, while one is unfinished, the release being promoted, each with the
+secret slot it reads and the previous release it was deployed beside. A release
+is pending from before anything deploys (a first release's hosts even promote
+themselves) until its promotion, and the previous settings come from the record,
+never from what is deployed: a run that deployed hosts but did not promote leaves
+the fleet on the release before it. A re-run reuses its release's recorded
+settings.
+
+If a run fails, times out or is cancelled after recording its release, the
+release stays pending, and the workflow refuses any other release until it is
+settled: re-run the failed run, whose finished stack deploys are then no-ops and
+whose promote step tries again (it returns at once if the promotion did happen),
+or [roll back](#rolling-back) to the promoted release. Promotion needs two ready spares of
+the new revision within the fleet budget of 15 tasks. A fleet whose bound tasks
+and old spares already fill the budget cannot warm them until companies go idle.
+
+The run's log is public. The workflow masks the account id, certificate and alert
+addresses, keeps stack outputs and resource ids out of it, and leaves the promote
+task's own output in CloudWatch.
+
+### Rolling back
+
+Start a run with `revision` set to the earlier commit's full sha, which must be
+on `main`, or re-run the plain release run that released it. To settle an
+unfinished promotion by going back, re-run the run that released the promoted
+revision; a re-run keeps its revision, including a rotation step's suffix, and
+its recorded settings. Once a later release is promoted, re-running an overlap or
+seal run is refused; start a new run on its commit instead. The
+build is reproducible, so it produces the image ECR already holds for that
+commit; the run fails if the digests differ. The app stack returns to that
+release, and promotion stages and promotes its revision.
+
+Migrations do not roll back. Each release must work against the schema the next
+one leaves, so roll back only to a release that accepts the current schema.
+
+### Restoring data
+
+Neon holds the platform database and one database per company on the production
+branch, with the Object Storage bucket beside them
+([#492](https://github.com/allisonmahmood/patchy-cloud/issues/492)). Neon's branch
+restore moves every database on the branch to a point in its history window
+together, so placements and company data stay consistent. It does not restore
+Object Storage, which is not part of the database timeline
+([Neon: branch restore](https://neon.com/docs/postgres/backup-restore/branch-restore)).
+Never repair rows by hand.
+
+1. Make sure no deploy run is in progress. With administrator credentials, take
+   every host and exec task down and wait until each has stopped, hosts first so
+   none launches another exec task:
+
+   ```sh
+   tasks() { for status in RUNNING STOPPED; do
+     aws ecs list-tasks --cluster patchy-production --family "$1" --desired-status $status \
+       --query taskArns --output text; done; }
+   hosts=$(tasks patchy-production-host)
+   aws ecs update-service --cluster patchy-production --service patchy-production-host \
+     --desired-count 0 > /dev/null
+   [ -z "$hosts" ] || aws ecs wait tasks-stopped --cluster patchy-production --tasks $hosts
+   execs=$(tasks patchy-production-exec)
+   for task in $execs; do
+     aws ecs stop-task --cluster patchy-production --task "$task" --reason restore > /dev/null
+   done
+   [ -z "$execs" ] || aws ecs wait tasks-stopped --cluster patchy-production --tasks $execs
+   ```
+
+2. Restore the production branch to the chosen time. Neon keeps the state it
+   replaces as a branch named `<branch>_old_<timestamp>`. To look first, create a
+   branch at that time instead and point a disposable server at it.
+3. Set the desired count back to 2 within the hour, and wait for `/healthz/deep`.
+   The hosts reconcile the restored fleet rows against ECS, which reports a
+   stopped task for about an hour. A row naming a task ECS has forgotten keeps
+   its share of the fleet budget: the controller never takes a missing task as
+   stopped, and no operation clears such rows yet. A restore to a point well
+   before the last fleet change can therefore leave part of the budget held.
+4. Check the content store. Patch versions and files are objects that rows name
+   by key, and the restore brings back no object deleted since the restore point.
+   A deleted patch's version objects go 30 days after its deletion, and a replaced
+   or deleted file's object a day after the orphan sweep finds it, so rows from
+   before such a removal name bytes that are gone. Objects written after the
+   restore point are strays. Open a few restored patches, including one with
+   files, before telling anyone it is back.
+5. Rerun the deploy workflow on the running commit. The restored rollout state
+   may name an older revision; the promote step returns the fleet to the running
+   one. Until it does, the hosts cannot launch spares of that older revision,
+   so restore the database to a point after the last promotion where you can.
+
+Keep every credential key retired within the history window in
+`PATCHY_CREDENTIAL_KEYS`. A restored connection may still be encrypted with it,
+and the server cannot decrypt a row whose key id the keyring lacks.
+
+### Rotating the management secret
+
+Rotate when there is a reason: a suspected compromise, someone with access
+leaving, or a calendar date. The secret has two slots, and the record names the
+one the promoted release reads; the other is idle. Rotation writes the new
+secret into the idle slot, where no running host looks, then takes two deploys,
+as the spike's rollout and seal did. The overlap deploy's hosts read the new slot
+and still reach the promoted release's tasks through the old one. The sealing
+deploy reads only the new slot. Each gets a revision of its own,
+`<commit>-overlap-<run>` and `<commit>-seal-<run>`, so the fleet replaces every
+exec task that knew the old secret; the commit can stay the same. Later releases
+keep the new slot.
+
+1. With administrator credentials, find the promoted release's slot and write a
+   new secret (`openssl rand -hex 32` makes one) into the other slot of
+   `patchy/production/fleet-management`, leaving the promoted slot as it is:
+
+   ```sh
+   aws ssm get-parameter --name /patchy/production/promoted-release \
+     --query Parameter.Value --output text | jq -r .promoted.slot
+   ```
+
+2. Run the workflow with `rotation` set to `overlap`. If the run fails, re-run
+   it, or [roll back](#rolling-back) to the promoted release; either way both
+   slots stay readable, so the secret needs no change. A run that failed before
+   recording its release, such as at sign-in, deployed nothing, and its re-run is
+   refused: start a new run instead. Once the overlap is
+   promoted, the rotation is under way until the seal: the workflow then accepts
+   only a seal run, or an overlap run, which undoes the rotation on whatever
+   commit you choose, because the old slot's exec tasks are still draining.
+3. Wait until no exec task of the revision you rotated away from is running. Once
+   the overlap is promoted, the record names it as `promoted.previous.revision`:
+
+   ```sh
+   aws ecs list-tasks --cluster patchy-production --family patchy-production-exec \
+     --query taskArns --output text |
+     xargs -r aws ecs describe-tasks --cluster patchy-production --include TAGS --tasks |
+     jq -r --arg revision "<revision>" '.tasks[]
+       | select(any((.tags // [])[]; .key == "patchy:deployment-revision" and .value == $revision))
+       | .taskArn'
+   ```
+
+4. Run the workflow with `rotation` set to `seal`.
+5. Wait, as in step 3, until no exec task of the overlap revision, now the
+   record's `promoted.previous.revision`, is running. The old secret now opens
+   nothing; rotation is complete only now.
+6. Remove the old slot's value from the secret. No release reads it any more, and
+   the next rotation writes a new one there.
 
 ## Deploying only the tier 2 spike
 
 The ECS provider, reproducible host/exec image and guarded spike deploy script
 are built, and role-only Fargate acceptance passed on
-[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406). This spike is not production
-infrastructure [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)
-or the first deploy [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416);
-both remain unbuilt.
+[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406). The spike runs on
+its own hand-built stack; it is not [Production](#production).
 
 `scripts/tier2-spike.mjs` reads its allowlist only from the existing private
 files below. It does not accept account, caller, region or project overrides

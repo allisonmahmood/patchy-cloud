@@ -20,9 +20,9 @@ The ECS fleet provider is built and passed role-only Fargate acceptance on
 [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406); production admission requires it.
 The reference CRM journey and tier-picking check on
 [#413](https://github.com/allisonmahmood/patchy-cloud/issues/413) run by hand after
-the stack merges. Production infrastructure and deployment,
-[#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) and
-[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), are not built.
+the stack merges. Production infrastructure and its deploy workflow are written
+([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)); the first
+deploy, [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), has not happened.
 Version revocation is unresolved on
 [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425): the `revoked`
 frame exists, but no revocation operation does. Chromium desktop is the supported
@@ -72,7 +72,7 @@ Run `pnpm patchy dev` to exercise it locally over PGlite and invented fixtures, 
 A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to working in it, for people and agents alike.
 
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
-- `apps/infra` — production infrastructure as AWS CDK: per environment, a base stack (image registry, deploy identity, budget, secrets) and an app stack (network, load balancer, hosts, exec task definition, uptime alert). CI synthesizes it offline (`@patchy/infra`).
+- `apps/infra` — production infrastructure as AWS CDK: per environment, a base stack (image registry, deploy identity, budget, secrets) and an app stack (network, load balancer, hosts, exec task definition, uptime alert). CI synthesizes it offline, and releases apply it through the deploy workflow (`@patchy/infra`).
 - `packages/patchy`: `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files, edits declarations, discovers company tools and data sources, and manages owned patches.
 - `packages/sdk` — current release and immutable tarball distribution, the front door's `/llms.txt` and `/install.mjs`, authenticated generation, and canonical project skills under `skills/` (`@patchy/sdk`).
 - `packages/core`: shared HTML validation, hashing, ID helpers, and the first-party card shell, app shell and component set (`@patchy/core`).
