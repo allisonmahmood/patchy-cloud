@@ -82,7 +82,8 @@ export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
 /**
  * Where a patch's bytes go is wiring, not a setting: Neon Object Storage when
  * its S3 bucket is configured, the local filesystem otherwise. An incomplete
- * S3 configuration fails startup here rather than the first publish.
+ * S3 configuration fails startup here rather than the first publish, and
+ * `start.ts` refuses a production host without one.
  */
 const contentStore = Layer.unwrap(
   Effect.map(Config.option(S3ContentStore.bucket), (bucket) =>

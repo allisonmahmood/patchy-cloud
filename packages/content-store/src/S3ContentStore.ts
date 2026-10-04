@@ -19,18 +19,20 @@ import * as ContentStore from "./ContentStore.js";
 /** Selecting a bucket selects S3; every other setting is then required at startup. */
 export const bucket = Config.NonEmptyString("PATCHY_S3_BUCKET");
 
-export const make = Effect.gen(function* () {
-  const name = yield* bucket;
-  const endpoint = yield* Config.URL("PATCHY_S3_ENDPOINT");
-  const region = yield* Config.NonEmptyString("PATCHY_S3_REGION");
-  const accessKeyId = yield* Config.schema(
-    Schema.Redacted(Schema.NonEmptyString),
-    "PATCHY_S3_ACCESS_KEY_ID"
-  );
-  const secretAccessKey = yield* Config.schema(
+/** All five settings; a production host checks them before acquiring Postgres. */
+export const config = Config.all({
+  name: bucket,
+  endpoint: Config.URL("PATCHY_S3_ENDPOINT"),
+  region: Config.NonEmptyString("PATCHY_S3_REGION"),
+  accessKeyId: Config.schema(Schema.Redacted(Schema.NonEmptyString), "PATCHY_S3_ACCESS_KEY_ID"),
+  secretAccessKey: Config.schema(
     Schema.Redacted(Schema.NonEmptyString),
     "PATCHY_S3_SECRET_ACCESS_KEY"
-  );
+  )
+});
+
+export const make = Effect.gen(function* () {
+  const { name, endpoint, region, accessKeyId, secretAccessKey } = yield* config;
   const client = yield* Effect.acquireRelease(
     Effect.sync(
       () =>

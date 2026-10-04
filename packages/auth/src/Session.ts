@@ -71,6 +71,9 @@ const PublishableKey = Schema.String.check(
 );
 const SecretKey = Schema.String.check(Schema.isPattern(/^sk_(test|live)_[A-Za-z0-9]+$/));
 const decodeSecretKey = Schema.decodeUnknownSync(SecretKey);
+const live = { expected: "a live Clerk key with PATCHY_ENVIRONMENT=production" };
+const LivePublishableKey = PublishableKey.check(Schema.isPattern(/^pk_live_/, live));
+const LiveSecretKey = SecretKey.check(Schema.isPattern(/^sk_live_/, live));
 const Origin = Schema.URLFromString.check(
   Schema.makeFilter(
     (url) =>
@@ -82,17 +85,45 @@ const Origin = Schema.URLFromString.check(
       url.hash === ""
   )
 );
+const HttpsOrigin = Origin.check(
+  Schema.makeFilter((url) => url.protocol === "https:", {
+    expected: "an https: origin with NODE_ENV=production"
+  })
+);
 const SafeReason = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,127}$/));
 const isSafeReason = Schema.is(SafeReason);
 
-/** The origin readers use; shared with the dev personas Session. */
+/** The origin readers use; shared with the dev personas Session, which refuses production itself. */
 export const publicUrlConfig = Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL");
+
+/** A production host serves its origin over HTTPS only. */
+const servedUrl = Config.String("NODE_ENV").pipe(
+  Config.withDefault("development"),
+  Config.flatMap((environment) =>
+    environment === "production"
+      ? Config.schema(HttpsOrigin, "PATCHY_PUBLIC_BASE_URL")
+      : publicUrlConfig
+  )
+);
+
+/** The production deployment takes live Clerk keys only; staging and the spike keep test keys. */
+const liveKeys = Config.String("PATCHY_ENVIRONMENT").pipe(
+  Config.withDefault("development"),
+  Config.map((environment) => environment === "production")
+);
 
 /** Auth owns these settings; the entrypoint checks them before acquiring Postgres. */
 export const config = Config.all({
-  publicUrl: publicUrlConfig,
-  publishableKey: Config.schema(PublishableKey, "CLERK_PUBLISHABLE_KEY"),
-  secretKey: Config.Redacted("CLERK_SECRET_KEY"),
+  publicUrl: servedUrl,
+  publishableKey: Config.flatMap(liveKeys, (required) =>
+    Config.schema(required ? LivePublishableKey : PublishableKey, "CLERK_PUBLISHABLE_KEY")
+  ),
+  // Redacted, so a refusal never prints the key.
+  secretKey: Config.flatMap(liveKeys, (required) =>
+    required
+      ? Config.schema(Schema.Redacted(LiveSecretKey), "CLERK_SECRET_KEY")
+      : Config.Redacted("CLERK_SECRET_KEY")
+  ),
   jwtKey: Config.option(Config.String("CLERK_JWT_KEY")),
   authorizedParty: Config.option(Config.schema(Origin, "CLERK_AUTHORIZED_PARTIES"))
 });

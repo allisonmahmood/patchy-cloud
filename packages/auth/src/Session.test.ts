@@ -338,6 +338,42 @@ for (const [setting, value] of [
   );
 }
 
+const live = { CLERK_PUBLISHABLE_KEY: publishableKey("live"), CLERK_SECRET_KEY: "sk_live_offline" };
+for (const [setting, env] of [
+  ["PATCHY_PUBLIC_BASE_URL", { NODE_ENV: "production" }],
+  [
+    "CLERK_PUBLISHABLE_KEY",
+    { PATCHY_ENVIRONMENT: "production", CLERK_PUBLISHABLE_KEY: publishableKey() }
+  ],
+  ["CLERK_SECRET_KEY", { PATCHY_ENVIRONMENT: "production", CLERK_SECRET_KEY: "sk_test_offline" }]
+] as const) {
+  it.effect(`refuses ${setting} unfit for production at boot`, () =>
+    Effect.gen(function* () {
+      const error = yield* Session.Session.pipe(
+        Effect.provide(configured({ ...clerkEnv(), ...live, ...env })),
+        Effect.flip
+      );
+      assert.include(error.message, setting);
+      assert.notInclude(error.message, "sk_test_offline");
+    })
+  );
+}
+
+it.effect("boots production on HTTPS with live keys, and staging with test keys", () =>
+  Effect.gen(function* () {
+    const https = { NODE_ENV: "production", PATCHY_PUBLIC_BASE_URL: "https://patchy.example" };
+    for (const env of [
+      { ...https, ...live, PATCHY_ENVIRONMENT: "production" },
+      { ...https, PATCHY_ENVIRONMENT: "staging" }
+    ]) {
+      const session = yield* Session.Session.pipe(
+        Effect.provide(configured({ ...clerkEnv(), ...env }))
+      );
+      assert.strictEqual(session.publicBaseUrl, "https://patchy.example");
+    }
+  })
+);
+
 it.effect("allows omitted local JWT key without fetching during boot", () =>
   Effect.gen(function* () {
     const env = clerkEnv();

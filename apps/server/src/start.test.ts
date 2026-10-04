@@ -54,3 +54,12 @@ it("rejects an invalid company database URL without exposing its credential", ()
   expect(output).toContain("PATCHY_COMPANY_DB_ADMIN_URL");
   expect(output).not.toContain(secret);
 }, 75_000);
+
+it("refuses a production host without Neon Object Storage before trying to connect to Postgres", () => {
+  const output = refusedStart({
+    ...validEnv(),
+    NODE_ENV: "production",
+    PATCHY_PUBLIC_BASE_URL: "https://patchy.example"
+  });
+  expect(output).toContain("PATCHY_S3_BUCKET");
+}, 75_000);

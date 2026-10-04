@@ -5,7 +5,9 @@
  * the scope closes everything in it: the listener, the sweep, the analytics
  * flush (bounded, so a slow backend never holds the exit), the database pool.
  * A missing `DATABASE_URL`, an incomplete S3 configuration or a migration
- * that fails all fail here, before the server listens.
+ * that fails all fail here, before the server listens. A `NODE_ENV=production`
+ * host also refuses to start without Neon Object Storage or on a plain-HTTP
+ * public origin, and `PATCHY_ENVIRONMENT=production` refuses Clerk's test keys.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- the Node server is Node's to create.
 import { createServer } from "node:http";
@@ -18,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/http/HttpServer";
 import { DevPersonas, Session } from "@patchy/auth";
 import { PgCompanyDatabases } from "@patchy/company-database";
+import { S3ContentStore } from "@patchy/content-store";
 import { CredentialKeys } from "@patchy/integrations";
 import * as Sql from "@patchy/sql";
 import { Runtime, RuntimeStream } from "@patchy/runtime";
@@ -71,6 +74,9 @@ NodeRuntime.runMain(
     ]);
     if (yield* DevPersonas.enabled) yield* DevPersonas.config;
     else yield* Session.config;
+    // A production host keeps patch bytes in Neon Object Storage, never on a disk the next deploy discards.
+    if ((yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"))) === "production")
+      yield* S3ContentStore.config;
     return yield* Layer.launch(server);
   })
 );
