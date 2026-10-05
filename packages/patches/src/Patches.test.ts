@@ -281,6 +281,41 @@ it.layer(
       }).pipe(Effect.scoped)
   );
 
+  it.effect("reports a caller's queued event only when the dependency lock commits", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const userEvents = (userId: string) =>
+        events.filter(
+          (event) => "userId" in event.properties && event.properties.userId === userId
+        );
+      const event = (userId: string): Analytics.AnalyticsEvent => ({
+        name: "user.deactivated",
+        principalId: administrator.userId,
+        companyId: uploader.company.id,
+        properties: { userId }
+      });
+      const rolledBack = yield* service
+        .withDependencyLock(owner.userId)(
+          service
+            .reportOnCommit(event("usr_rolled_back"))
+            .pipe(Effect.andThen(Effect.fail("cancel")))
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(rolledBack, "cancel");
+      assert.deepStrictEqual(userEvents("usr_rolled_back"), []);
+      yield* service.withDependencyLock(owner.userId)(
+        Effect.gen(function* () {
+          yield* service.reportOnCommit(event("usr_committed"));
+          assert.deepStrictEqual(userEvents("usr_committed"), []);
+        })
+      );
+      assert.deepStrictEqual(userEvents("usr_committed"), [event("usr_committed")]);
+      // Outside the lock there is no commit to wait for.
+      const outside = yield* service.reportOnCommit(event("usr_outside")).pipe(Effect.exit);
+      assert.isTrue(Exit.hasDies(outside));
+    })
+  );
+
   for (const actor of [owner, administrator]) {
     for (const state of ["live", "retired", "deleted"] as const) {
       it.effect(

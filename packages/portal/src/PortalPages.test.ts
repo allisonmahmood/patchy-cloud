@@ -2240,6 +2240,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
+        const retiring = yield* publish(workspace.owner, "lock-wait-retiring");
         const sql = yield* SqlClient.SqlClient;
         const locked = yield* Deferred.make<number>();
         const release = yield* Deferred.make<void>();
@@ -2263,8 +2264,10 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
             Effect.timeout("10 seconds"),
             TestClock.withLive
           );
+        // The retirement runs first, then deactivation waits on the company row.
         const confirmation = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
-          choice: "keep"
+          choice: "confirm",
+          patch: [retiring.patchId]
         }).pipe(Effect.forkScoped);
         yield* waiting(1);
         yield* Fiber.interrupt(confirmation);
@@ -2272,7 +2275,12 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         yield* waiting(0);
         yield* Deferred.succeed(release, undefined);
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.strictEqual(
+          (yield* readPatch(workspace.admin, retiring.patchId)).patch.state,
+          "live"
+        );
         assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
+        assert.deepStrictEqual(reported(retiring.patchId), []);
       }).pipe(Effect.scoped),
     15_000
   );
@@ -2885,7 +2893,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
 
 it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
   it.effect(
-    "reports a committed deactivation when the admin disconnects while its wakes publish",
+    "reports a committed deactivation and its retirement when the admin disconnects while wakes publish",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
@@ -2940,6 +2948,10 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
         assert.deepStrictEqual(lifecycleEvents(workspace.id), [
           ["user.deactivated", workspace.admin.id, workspace.owner.id]
         ]);
+        assert.deepStrictEqual(
+          reported(retiring.patchId).map((event) => event.name),
+          ["patch.retired"]
+        );
       }),
     15_000
   );
@@ -3006,6 +3018,7 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       assert.deepStrictEqual(yield* readPatch(workspace.admin, second.patchId), beforeSecond);
       assert.deepStrictEqual(announced, []);
       assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
+      assert.deepStrictEqual([first.patchId, second.patchId].flatMap(reported), []);
     }).pipe(Effect.scoped)
   );
 });

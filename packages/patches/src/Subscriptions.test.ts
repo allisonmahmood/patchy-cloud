@@ -73,8 +73,7 @@ const services = Layer.mergeAll(
   Limits.layer,
   Session.layer,
   Companies.layer,
-  Users.layer,
-  Analytics.layerNoop
+  Users.layer
 ).pipe(
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database),
