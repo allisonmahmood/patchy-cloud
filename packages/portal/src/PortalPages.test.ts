@@ -360,6 +360,44 @@ it.layer(layer)("portal pages on a socket", (it) => {
       server: { objectKey: `agent-sales-${ordinal}.js`, sha256: sha256(""), bytes: 0 }
     });
   });
+  it.effect("organizes agent access by patch and keeps each patch's grants and mode separate", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const first = yield* sales(workspace.owner);
+      const second = yield* sales(workspace.owner);
+      const agents = yield* AgentAccess.AgentAccess;
+      const owner = { userId: workspace.owner.id, companyId: workspace.id };
+      const tokens = yield* MachineTokens.MachineTokens;
+      const machine = yield* tokens.mint({ userId: workspace.member.id, name: "Alex's agent" });
+      const identity = yield* tokens.authenticate(machine.token);
+      assert.isNotNull(identity);
+      if (identity === null) return;
+      yield* agents.save(first.patchId, owner, {
+        mode: "actions",
+        handlers: ["deals.read", "deals.note"],
+        revision: 0
+      });
+      yield* agents.grant(first.patchId, owner, machine.id);
+      assert.isNull(yield* agents.read(second.patchId, identity));
+      yield* agents.grant(second.patchId, owner, machine.id);
+      for (const patch of [first, second]) {
+        const response = yield* request(`/patches/${patch.name}/agent-access`, workspace.owner);
+        assert.strictEqual(response.status, 200);
+        const html = yield* response.text;
+        assert.include(html, 'aria-label="Patch index"');
+        for (const choice of [first, second])
+          assert.include(
+            html,
+            `href="/patches/${choice.name}/agent-access"${choice.patchId === patch.patchId ? ' aria-current="page"' : ""}`
+          );
+        assert.include(html, `name="expectedPatchId" value="${patch.patchId}"`);
+        assert.include(html, `value="${patch === first ? "actions" : "read-only"}" selected`);
+      }
+      yield* agents.revoke(first.patchId, owner, machine.id);
+      assert.isNull(yield* agents.read(first.patchId, identity));
+      assert.strictEqual((yield* agents.read(second.patchId, identity))?.mode, "read-only");
+    })
+  );
   it.effect(
     "manages personal agents as owner or admin and follows mode changes and revocation",
     () =>

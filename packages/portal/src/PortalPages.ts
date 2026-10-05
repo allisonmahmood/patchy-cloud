@@ -22,6 +22,7 @@ import {
   type PatchAction,
   renderConfirmation,
   renderPortal,
+  renderIndex,
   renderVersions,
   styles
 } from "./render.js";
@@ -213,7 +214,7 @@ const decodeAgentPolicy = Schema.decodeUnknownEffect(
 
 const agentAccessPage = Effect.fn("PortalPages.agentAccessPage")(
   function* (name: string) {
-    const { viewer, session, access } = yield* context;
+    const { viewer, session, access, all } = yield* context;
     if (name.length > maxNameLength) return yield* overlongName;
     if (!isName(name))
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -252,10 +253,13 @@ const agentAccessPage = Effect.fn("PortalPages.agentAccessPage")(
           default:
             return yield* new AgentAccess.AgentAccessInvalid({ reason: "handler" });
         }
-        return HttpServerResponse.redirect(`/patches/${encodeURIComponent(name)}/agent-access`, {
-          status: 303,
-          headers: { "cache-control": "private, no-store" }
-        });
+        return HttpServerResponse.redirect(
+          `/patches/${encodeURIComponent(name)}/agent-access${all ? "?all=1" : ""}`,
+          {
+            status: 303,
+            headers: { "cache-control": "private, no-store" }
+          }
+        );
       });
       const result = yield* posted.pipe(
         Effect.catchTags({
@@ -282,7 +286,24 @@ const agentAccessPage = Effect.fn("PortalPages.agentAccessPage")(
         heading: "",
         styles,
         status,
-        body: renderAgentAccess({ name, patchId: selected.patch.id, access: settings, notice }),
+        body: `<div class="portal">${renderIndex({
+          rows,
+          card: selected,
+          viewer,
+          all,
+          now: yield* Clock.currentTimeMillis,
+          pathFor: (row) => {
+            const canManage = row.owner.id === viewer.user.id || viewer.role === "admin";
+            const action =
+              canManage &&
+              row.patch.state === "live" &&
+              row.tier === 2 &&
+              row.patch.scope === "company"
+                ? "/agent-access"
+                : "";
+            return `/patches/${encodeURIComponent(row.patch.name)}${action}`;
+          }
+        })}${renderAgentAccess({ name, patchId: selected.patch.id, access: settings, notice, all })}</div>`,
         app: { viewer, section: "patches" }
       },
       session
