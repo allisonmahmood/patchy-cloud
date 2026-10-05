@@ -228,6 +228,15 @@ to the app's host and keeps the Clerk domain and keys.
   because the Account Portal page it opens consumes the invitation's ticket.
   Invitations a company sends from `/company` work the same way, so they
   carry no redirect to a Patchy page, which could not consume the ticket.
+- **Legal consent** is on
+  ([#493](https://github.com/allisonmahmood/patchy-cloud/issues/493)). The
+  Account Portal's sign-up page requires a ticked box that links the beta terms,
+  `https://patchyhq.com/cloud/terms`, and the privacy notice,
+  `https://patchyhq.com/cloud/privacy`. Clerk records the time on the user as
+  `legal_accepted_at`. The marketing site serves both pages, outside this
+  repository; moving either needs `compliance.legal_consent` changed with
+  `clerk config patch`. The development and CI instances leave it off, so no
+  test covers the checkbox.
 - **Sign-in** is by email code. Clerk's shared OAuth credentials work only in
   development, so cloning carries social providers over without credentials.
   Production keeps them off until it has its own

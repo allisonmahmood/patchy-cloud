@@ -649,7 +649,7 @@ Only the current public version is public and caches for at most a minute at bot
 
 ### The operator
 
-The **operator** — Patchy, running the platform — is not a company role and holds no company powers. Its future powers are platform-shaped: company lifecycle, quotas, and moderation — taking a patch off its address, never acting inside the company. None of those surfaces is built; disabling a patch is a SQL statement by hand until that effort is designed. Support means being invited like anyone else; a customer-support role is not designed. **Suspension** will stop a whole company's serving and publishing while keeping its data, including when it runs out of credits and cannot top up. Company deletion by its admin, its recovery window and the eventual release of the handle are future work too.
+The **operator** — Patchy, running the platform — is not a company role and holds no company powers. Its future powers are platform-shaped: company lifecycle, quotas, and moderation — taking a patch off its address, never acting inside the company. None of those surfaces is built; disabling a patch is a SQL statement by hand until that effort is designed. Support means being invited like anyone else; a customer-support role is not designed. **Suspension** will stop a whole company's serving and publishing while keeping its data, including when it runs out of credits and cannot top up. Company deletion by its admin, its recovery window and the eventual release of the handle are future work too. Until then the beta terms promise the exit by hand: when a company admin asks, Patchy exports the company's tables and files and deletes its content within 60 days.
 
 The operator will use its own login and dashboards, never a company in the product and never the `patchy` CLI.
 
@@ -662,6 +662,8 @@ Log in once, and every patch you have access to opens when someone sends you its
 A person signs in with Google, Microsoft or a code sent to their email through Clerk's Account Portal. There are no passwords. One Clerk session opens the company's patches and first-party pages, including the portal. A company link opened without a session shows the login door, whose Sign in link returns the person to that patch. Company patches use this door on tiers 0, 1 and 2. A public patch needs no sign-in.
 
 During the private beta, Clerk creates a new account only from an invitation's link: a company's invitation, or an approval from the waitlist. The login door says so and offers **Join the waitlist** beside Sign in.
+
+Creating an account means ticking a box on Clerk's sign-up page that accepts the [beta terms](https://patchyhq.com/cloud/terms) and the [privacy notice](https://patchyhq.com/cloud/privacy). That one acceptance covers the company a person creates and their use of a company they join; nothing is signed.
 
 Company **SSO** is future work: Patchy will enable it for a company, and its admin will set up SAML or OIDC against their IdP themselves — Patchy never handles the IdP credentials. SSO will be enforced on the company's verified domain, so everyone at `acme.com` signs in through Acme's IdP and nothing else. SSO is intended as a paid feature; the price is a pricing question, not a design one.
 
