@@ -17,7 +17,7 @@ One structured record of a single hop of work, emitted once at its end. It sits 
 _Avoid_: log line, metric, trace (the linkage, not the record)
 
 **Request event**:
-The wide event for one server request. Runtime requests record their own, as [Runtime](../runtime/CONTEXT.md) defines; every other request names its matched route template, never the URL, with the method and the status the client received. The outcome follows that status: a 4xx is refused with its body's code, a 5xx is a failure. Health probes emit none.
+The wide event for one server request. Runtime requests record their own, as [Runtime](../runtime/CONTEXT.md) defines; every other request names its matched route template, never the URL, with the method and the status the client received. A `patchy` CLI request adds the CLI's release, command and coding agent from its `Patchy-Cli` header, each only when it parses. The outcome follows that status: a 4xx is refused with its body's code, a 5xx is a failure. Health probes emit none.
 _Avoid_: access log (it records URLs), request log
 
 **Limit peak**:

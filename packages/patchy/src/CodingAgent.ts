@@ -10,37 +10,48 @@ import type { CodingAgent } from "@patchy/api";
 
 /**
  * Each agent and the variable its harness sets for its commands, as its own
- * docs or source say. A harness's commands inherit the variables of whatever
- * launched it, so the first one present wins and the list runs from markers
- * only a harness's own commands carry to Claude Code, the usual outer shell.
+ * docs or source say; every agent in the contract's list has one. A harness's
+ * commands inherit the variables of whatever launched it, so the first one
+ * present wins and the order runs from markers only a harness's own commands
+ * carry to Claude Code, the usual outer shell.
  */
-export const variables = [
-  // codex-rs/protocol/src/shell_environment.rs: set in every sandbox mode.
-  ["codex", "CODEX_THREAD_ID"],
-  ["cursor", "CURSOR_AGENT"],
-  // packages/core/src/services/shellExecutionService.ts
-  ["gemini-cli", "GEMINI_CLI"],
-  // Kilo Code is built on OpenCode and also sets OPENCODE.
-  ["kilo-code", "KILO"],
-  ["opencode", "OPENCODE"],
-  ["copilot-cli", "COPILOT_CLI"],
-  ["grok", "GROK_AGENT"],
-  // internal/shell/shell.go, CrushEnvMarkers
-  ["crush", "CRUSH"],
-  ["qwen-code", "QWEN_CODE"],
-  ["pi", "PI_CODING_AGENT"],
-  ["augment", "AUGMENT_AGENT"],
-  // The VS Code extensions set these in the terminals they run commands in.
-  ["roo-code", "ROO_ACTIVE"],
-  ["cline", "CLINE_ACTIVE"],
-  // Only Claude Code's own commands; CLAUDECODE is also set in IDE terminals people type in.
-  ["claude-code", "CLAUDE_CODE_CHILD_SESSION"]
-] as const satisfies ReadonlyArray<readonly [Exclude<CodingAgent, "unknown">, string]>;
+const variables = {
+  // openai/codex codex-rs/protocol/src/shell_environment.rs: every sandbox mode.
+  codex: "CODEX_THREAD_ID",
+  // cursor.com/docs/agent/tools/terminal, and the cursor-agent bundle.
+  cursor: "CURSOR_AGENT",
+  // google-gemini/gemini-cli packages/core/src/services/shellExecutionService.ts
+  "gemini-cli": "GEMINI_CLI",
+  // Kilo-Org/kilocode packages/opencode/src/index.ts; Kilo also sets OPENCODE.
+  "kilo-code": "KILO",
+  // anomalyco/opencode packages/opencode/src/index.ts
+  opencode: "OPENCODE",
+  // The Copilot CLI changelog: "detect Copilot CLI subprocesses via COPILOT_CLI=1".
+  "copilot-cli": "COPILOT_CLI",
+  // The Grok CLI's shell prelude; also a profile setting, so presence counts.
+  grok: "GROK_AGENT",
+  // charmbracelet/crush internal/shell/shell.go, CrushEnvMarkers
+  crush: "CRUSH",
+  // QwenLM/qwen-code packages/core/src/services/shellExecutionService.ts
+  "qwen-code": "QWEN_CODE",
+  // badlogic/pi-mono packages/coding-agent/src/cli/setup.ts
+  pi: "PI_CODING_AGENT",
+  // docs.augmentcode.com/cli/reference, environment variables.
+  augment: "AUGMENT_AGENT",
+  // RooCodeInc/Roo-Code src/integrations/terminal/Terminal.ts
+  "roo-code": "ROO_ACTIVE",
+  // cline/cline apps/vscode/src/hosts/vscode/terminal/VscodeTerminalRegistry.ts
+  cline: "CLINE_ACTIVE",
+  // code.claude.com/docs/en/env-vars: set only by Claude Code for its tools' and
+  // hooks' commands. CLAUDECODE is also set in IDE terminals people type in.
+  "claude-code": "CLAUDE_CODE_CHILD_SESSION"
+} satisfies Record<Exclude<CodingAgent, "unknown">, string>;
 
 /** The agent whose variable is set, or `unknown`. Presence counts, even an empty value. */
 export const detect: Effect.Effect<CodingAgent> = Effect.gen(function* () {
-  for (const [agent, name] of variables) {
-    const value = yield* Config.String(name).pipe(Config.option, Effect.orDie);
+  // Keys keep the declared order; `satisfies` has already checked each one.
+  for (const agent of Object.keys(variables) as ReadonlyArray<keyof typeof variables>) {
+    const value = yield* Config.String(variables[agent]).pipe(Config.option, Effect.orDie);
     if (Option.isSome(value)) return agent;
   }
   return "unknown";
