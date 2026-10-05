@@ -95,6 +95,8 @@ export const create = mutation({
         deal: deal.id,
         kind: "created",
         actor: ctx.viewer.user.id,
+        agentId: ctx.viewer.agent?.id ?? null,
+        agentName: ctx.viewer.agent?.name ?? null,
         toStage: "lead",
         assignee: owner,
         at: now
@@ -141,6 +143,8 @@ export const move = mutation({
       deal: deal.id,
       kind: "moved",
       actor: ctx.viewer.user.id,
+      agentId: ctx.viewer.agent?.id ?? null,
+      agentName: ctx.viewer.agent?.name ?? null,
       fromStage: deal.stage,
       toStage: args.stage,
       note: lostReason,
@@ -169,6 +173,8 @@ export const update = mutation({
       deal: deal.id,
       kind: "edited",
       actor: ctx.viewer.user.id,
+      agentId: ctx.viewer.agent?.id ?? null,
+      agentName: ctx.viewer.agent?.name ?? null,
       note: changes.join(" · "),
       at: now
     });
@@ -203,6 +209,8 @@ export const assign = mutation({
         deal: deal.id,
         kind: "assigned",
         actor: ctx.viewer.user.id,
+        agentId: ctx.viewer.agent?.id ?? null,
+        agentName: ctx.viewer.agent?.name ?? null,
         assignee: args.owner,
         at: now
       });
@@ -232,6 +240,8 @@ export const addNote = mutation({
       deal: deal.id,
       kind: "note",
       actor: ctx.viewer.user.id,
+      agentId: ctx.viewer.agent?.id ?? null,
+      agentName: ctx.viewer.agent?.name ?? null,
       note,
       at: now
     });
@@ -297,6 +307,8 @@ export const importLeads = mutation({
           deal: deal.id,
           kind: "imported",
           actor: ctx.viewer.user.id,
+          agentId: ctx.viewer.agent?.id ?? null,
+          agentName: ctx.viewer.agent?.name ?? null,
           toStage: "lead",
           assignee: deal.owner,
           at: now

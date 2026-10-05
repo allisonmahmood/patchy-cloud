@@ -123,3 +123,12 @@ _Avoid_: patch limit (the per-minute one), storage quota (this counts patches, n
 **Patch event**:
 A committed publish, update or owner deletion, attributed to the user who acted; reclamation belongs to the instance. Events contain ids, sizes, counts and states, never content, a filename, a URL or an address.
 _Avoid_: audit log, activity feed
+
+**Agent access**:
+The owner or company admin's saved read-only or declared-actions mode and selected
+handler names for one live company Tier 2 patch. An **agent grant** authorizes one
+active machine connection separately for that patch; it stores no mode snapshot,
+so it follows access changes. Revoke removes that connection's grant. Authentication
+and runtime handlers still enforce the initiating person's permissions. The current
+external execution adapter remains development/test only; raw table mode is future
+work. The portal exposes these controls at `/patches/<name>/agent-access`.

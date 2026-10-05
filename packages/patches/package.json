@@ -31,11 +31,12 @@
     "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@patchy/auth": "workspace:*",
+    "@patchy/companies": "workspace:*"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@patchy/auth": "workspace:*",
     "vitest": "^5.0.3"
   }
 }

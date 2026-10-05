@@ -106,6 +106,13 @@ the viewer. Server code holds no credential and has no direct network path;
 reach outside systems through declared company integrations in actions.
 Handler memory is not durable state, and handlers cannot schedule background work.
 
+For the development-only personal-agent adapter, `ctx.viewer.agent` optionally
+contains the host-established machine `{ id, name }`. `ctx.viewer.user` remains
+the person whose permissions and handler rules apply. Copy both to an activity
+row in the mutation transaction when the patch needs visible attribution. Browser
+calls have no agent; never accept an actor or agent identity in handler arguments.
+This does not enable production unattended execution.
+
 ### Query snapshots and live access
 
 A query with declared owned tables, file stores, shared tables or shared stores

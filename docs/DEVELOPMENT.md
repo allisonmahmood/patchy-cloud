@@ -334,3 +334,68 @@ with a closed environment: the plan, `NODE_ENV=development`, a keyring generated
 once per worktree in `.local/dev/dev.env`, and either the personas secret or
 Clerk's keys. Development instances execute tier 2 handlers with the local
 workerd executor; production refuses it.
+
+## Local personal-agent adapter
+
+Only development/test hosts admit `/api/agent/patches/:patchId` and its `/call`
+route. Patch owners and company admins choose read-only or selected declared
+operations and authorize/revoke individual connections at
+`/patches/<name>/agent-access`. Settings and grants live in the platform database;
+reads and calls recheck them every time. Sign-in alone gives no patch authorization.
+Raw table access and production execution remain out of scope.
+
+An existing `.local/dev/agent-connections.json` can be imported explicitly with
+the sibling companion's `local-access.mjs <Cloud checkout> apply` (JSON on stdin),
+using `node --import <Cloud checkout>/node_modules/tsx/dist/loader.mjs
+--conditions=development`. Its `inspect` command reads the current settings.
+This fixture helper requires a matching loopback development instance and uses
+Cloud's access service. It never accesses patch-owned data. It is a developer
+fixture tool, not an authorization path for deployed agents. After importing,
+editing the old JSON file has no effect. The companion seeder and exercises use
+the same helper; older prototype checkouts retain their file fixture behavior.
+
+Use a dedicated personal-agent machine token minted by Auth for the intended
+scenario person, not an admin seed token. Existing machine revocation and person
+deactivation apply. Describe returns the current served version and selected
+handler schemas. Calls include that version and use existing Invocation; queries
+retain read-only transactions and writes retain handler rules and keyed replay.
+The adapter shares the runtime per-person/patch call budget and the protected API
+address budget. It does not expose direct table operations.
+
+The sibling companion is agent-independent MCP over stdio. Its `connect login`
+command delegates to the existing `patchy login` browser confirmation and stores
+credentials in a separate `PATCHY_STATE_DIR` per connection profile, leaving the
+person's ordinary CLI state untouched. It checks the expected email and live
+`/api/me` identity before connecting. Local scenarios use dev personas, not
+Clerk email verification. Real sign-in testing needs a separate Clerk instance
+and the correct company membership; keep the scenario database intact.
+
+For same-person credential replacement, companion setup can rotate that
+connection's existing development grants in the matching Cloud checkout without
+changing patch modes or selected handlers. It never grants a new patch or carries
+access to another owner or agent profile. Mutation request keys survive a
+same-person replacement; changing owners starts separate request history. Run
+the companion's `connect-check.mjs <Cloud checkout> <Patchy executable>` to check
+real browser confirmation, generic MCP execution, attribution, replacement,
+account isolation and logout. It revokes its temporary credentials and removes
+its test grants, leaving a labeled patch note as evidence.
+
+Exercise discovery, a real mutation, same-key recovery, an existing handler
+refusal, read-only mode, grant removal and host-established agent attribution in
+both the patch timeline and `/patches/<name>/log`. Ordinary browser calls must
+still work without agent claims. The sibling companion's `exercise.py` runs this
+journey through MCP against the local Brightline sales patch.
+
+For Slack, the companion's `hermes-plugin/` uses Hermes' existing gateway,
+tool-request middleware and final-response hooks. It carries the incoming Slack
+message id into tool context, attaches a stable mutation request key and formats
+write/refusal receipts from actual results with the patch link. Its
+`slack-check.py --hermes <Hermes checkout>` exercises those hooks and MCP against
+local Patchy with simulated Slack events and an isolated temporary Hermes home;
+it sends no Slack messages. Real inbound/outbound delivery still needs a fresh
+owner message after enabling the plugin and restarting the gateway.
+
+The companion keeps each Cloud mutation key bound to immutable arguments. A
+confirmed handler refusal rolls back the mutation and permits a corrected
+attempt with a fresh key under the same Slack request. Successful or unconfirmed
+attempts never permit changed arguments; exact recovery retains their key.

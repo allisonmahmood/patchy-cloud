@@ -21,7 +21,7 @@ import {
   sharedTableId
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Session } from "@patchy/auth";
+import { MachineTokens, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { CompanyDatabases } from "@patchy/company-database";
 import { newInternalId, newPatchId } from "@patchy/core";
@@ -41,6 +41,7 @@ import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
 import * as PortalPages from "../../portal/src/PortalPages.js";
 import * as LoadedVersions from "./LoadedVersions.js";
+import * as AgentAccess from "./AgentAccess.js";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
 
@@ -92,6 +93,9 @@ const layer = HttpRouter.serve(PortalPages.layer, {
   disableLogger: true,
   disableListenLog: true
 }).pipe(
+  Layer.provide(
+    AgentAccess.layer.pipe(Layer.provide(MachineTokens.layer), Layer.provide(services))
+  ),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(InvocationLog.layer),
   Layer.provideMerge(runtime),

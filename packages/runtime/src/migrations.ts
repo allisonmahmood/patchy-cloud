@@ -100,5 +100,6 @@ export const migrations: Migrations = {
     )`,
     `CREATE INDEX runtime_query_rollup_runs_applied
       ON runtime_query_rollup_runs (applied_at)`
-  )
+  ),
+  "0009_runtime_agent": ddl(`ALTER TABLE runtime_invocations ADD COLUMN agent JSONB`)
 };

@@ -272,7 +272,10 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     if (binding.scope === "public") return yield* new Runtime.PublicUnavailable({});
     if (binding.identity === null || binding.manifest.tier !== 2)
       return yield* new Runtime.AccessDenied({});
-    const viewer = binding.identity;
+    const viewer = {
+      ...binding.identity,
+      ...(binding.agent === undefined ? {} : { agent: binding.agent })
+    };
     const input = yield* decodeCall(args).pipe(
       Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
     );
@@ -421,6 +424,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           handler: input.handler,
           kind: descriptor.kind,
           initiatingViewerId: viewer.user.id,
+          agent: binding.agent ?? null,
           parentId: parent?.capability.attempt.invocationId ?? null,
           correlationId: binding.correlationId,
           startedAt,
