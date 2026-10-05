@@ -50,6 +50,22 @@ type Publication = PatchSubject & {
   readonly actionHandlers: number;
 };
 
+/** A user's role in their company, as Companies defines it. */
+type Role = "admin" | "member";
+
+/** An invitation's email delivery. */
+type Delivery = {
+  readonly inviteId: string;
+  /** False when the email did not go out; the invitation stays pending either way. */
+  readonly emailed: boolean;
+};
+
+/** The connection an event is about and what it connects to, such as `postgres`. */
+type ConnectionSubject = {
+  readonly connectionId: string;
+  readonly integration: string;
+};
+
 /**
  * Every business event, named for what happened, with the properties it carries
  * beyond `companyId`. Each entry says when it fires and who its principal is.
@@ -104,6 +120,41 @@ export type AnalyticsCatalogue = Catalogue<{
   readonly "patch.reassigned": PatchSubject & {
     readonly fromUserId: string;
   };
+
+  /** A person created a company as its first admin. Principal: that new user. */
+  readonly "company.created": Record<string, never>;
+
+  /**
+   * A person became a user, by creating a company or accepting an invitation.
+   * Principal: that new user.
+   */
+  readonly "user.joined":
+    | { readonly via: "create"; readonly role: Role }
+    | { readonly via: "invite"; readonly role: Role; readonly inviteId: string };
+
+  /** An admin invited an email address. Principal: that admin. */
+  readonly "invite.sent": Delivery & { readonly role: Role };
+
+  /** An admin resent a pending invitation. Principal: that admin. */
+  readonly "invite.resent": Delivery;
+
+  /** An admin revoked a pending invitation. Principal: that admin. */
+  readonly "invite.revoked": { readonly inviteId: string };
+
+  /** An admin changed a user's role. Principal: that admin. */
+  readonly "user.role_changed": { readonly userId: string; readonly role: Role };
+
+  /** An admin deactivated a user. Principal: that admin. */
+  readonly "user.deactivated": { readonly userId: string };
+
+  /** An admin reactivated a user. Principal: that admin. */
+  readonly "user.reactivated": { readonly userId: string };
+
+  /** An admin connected an integration to the company. Principal: that admin. */
+  readonly "connection.connected": ConnectionSubject;
+
+  /** An admin deleted a connection. Principal: that admin. */
+  readonly "connection.deleted": ConnectionSubject;
 }>;
 
 export type AnalyticsEventName = keyof AnalyticsCatalogue;

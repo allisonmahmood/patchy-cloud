@@ -346,7 +346,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const otherCompany = "cmp_other_connections";
         const other = { ...identity(connected), companyId: otherCompany };
         assert.deepStrictEqual(yield* store.list(otherCompany), []);
-        const operations = [
+        const operations: ReadonlyArray<Effect.Effect<unknown, ConnectionStore.ConnectionError>> = [
           store.get(otherCompany, connected.id),
           store.snapshot(otherCompany, connected.id, 1),
           store.test(other),
@@ -479,7 +479,7 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
         "connection_not_connected"
       );
       const target = { companyId: connection.companyId, userId: "dev-user", id: connection.id };
-      for (const operation of [
+      const operations: ReadonlyArray<Effect.Effect<unknown, ConnectionStore.ConnectionError>> = [
         store.connect(input("local-disabled")),
         store.poolCredentials(
           connection.companyId,
@@ -494,7 +494,8 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
         store.reconnect(target),
         store.describe({ ...target, description: "changed" }),
         store.delete(target)
-      ]) {
+      ];
+      for (const operation of operations) {
         assert.strictEqual(
           (yield* operation.pipe(Effect.flip)).code,
           "connection_mutation_unavailable"

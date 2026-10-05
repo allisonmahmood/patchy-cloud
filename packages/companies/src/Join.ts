@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
+import { Analytics } from "@patchy/analytics";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Companies from "./Companies.js";
 import type { Claims } from "./Users.js";
@@ -97,10 +98,18 @@ export const handle = Effect.fn("Join.handle")(function* (
   const fields = Object.fromEntries(yield* request.urlParamsBody);
   const entered = { name: (fields.name ?? "").trim(), handle: fields.handle ?? "" };
   const companies = yield* Companies.Companies;
+  const analytics = yield* Analytics.Analytics;
   return yield* Effect.gen(function* () {
     const form = yield* decodeForm({ ...fields, name: entered.name });
+    // Each call has committed when it returns; a refused one fails before its event.
     if (form.action === "join") {
-      yield* companies.consumeInvite({ ...claims, inviteId: form.inviteId });
+      const user = yield* companies.consumeInvite({ ...claims, inviteId: form.inviteId });
+      yield* analytics.track({
+        name: "user.joined",
+        principalId: user.id,
+        companyId: user.companyId,
+        properties: { via: "invite", role: user.role, inviteId: form.inviteId }
+      });
     } else {
       if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
         return yield* render(claims, returnTo, entered, {
@@ -108,12 +117,19 @@ export const handle = Effect.fn("Join.handle")(function* (
           status: 409
         });
       }
-      yield* companies.create({
+      const { company, user } = yield* companies.create({
         clerkUserId: claims.clerkUserId,
         email: claims.email,
         userName: claims.name,
         name: form.name,
         handle: form.handle
+      });
+      const joined = { principalId: user.id, companyId: company.id };
+      yield* analytics.track({ name: "company.created", ...joined, properties: {} });
+      yield* analytics.track({
+        name: "user.joined",
+        ...joined,
+        properties: { via: "create", role: user.role }
       });
     }
     return {

@@ -67,9 +67,13 @@ export class Users extends Context.Service<
     readonly findByEmail: (email: string) => Effect.Effect<User | null, SqlError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<User>, SqlError>;
     readonly refreshClaims: (claims: Claims) => Effect.Effect<User | null, SqlError>;
+    /** `changed` is false when the user already had the role. */
     readonly setRole: (
       input: UserRef & { readonly role: Role }
-    ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
+    ) => Effect.Effect<
+      { readonly user: User; readonly changed: boolean },
+      UserNotFound | LastAdmin | SqlError
+    >;
     /** Preview only; deactivate rechecks under the company and user locks. */
     readonly checkDeactivation: (
       input: UserRef
@@ -183,10 +187,10 @@ export const make = Effect.gen(function* () {
     sql.withTransaction(
       Effect.gen(function* () {
         const user = yield* lockUser(input);
-        if (user.role === input.role) return user;
+        if (user.role === input.role) return { user, changed: false };
         if (input.role === "member") yield* preserveAdmin(user);
         yield* sql`UPDATE users SET role = ${input.role} WHERE id = ${input.userId}`;
-        return new User({ ...user, role: input.role });
+        return { user: new User({ ...user, role: input.role }), changed: true };
       })
     )
   );

@@ -46,6 +46,14 @@ const routes = Layer.merge(
   PortalPages.layer,
   HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
 );
+/** A company's user lifecycle events, as `[name, principal, user]`. */
+const lifecycleEvents = (companyId: string) =>
+  events.flatMap((event) =>
+    event.companyId === companyId &&
+    (event.name === "user.deactivated" || event.name === "user.reactivated")
+      ? [[event.name, event.principalId, event.properties.userId]]
+      : []
+  );
 const services = Layer.mergeAll(
   Patches.layer,
   Session.layer,
@@ -2220,6 +2228,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
             (yield* readPatch(workspace.member, unrelated.patchId)).patch.description,
             "Edited during confirmation"
           );
+          assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
         }).pipe(Effect.scoped),
       15_000
     );
@@ -2322,6 +2331,9 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         const card = yield* (yield* request(cardPath(source.name), workspace.member)).text;
         assert.include(text(card), "Priya (deactivated)");
         assert.strictEqual((yield* request("/", workspace.owner)).status, 403);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id]
+        ]);
       })
   );
 
@@ -2383,6 +2395,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           assert.strictEqual((yield* readPatch(workspace.admin, patchId)).patch.state, "live");
         assert.deepStrictEqual(committedKeys, []);
         assert.deepStrictEqual(selection.flatMap(reported), []);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
 
         const committed = yield* post(path, workspace.admin, {
           choice: "confirm",
@@ -2409,6 +2422,9 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           const card = yield* (yield* request(cardPath(saved.patch.name), workspace.member)).text;
           assert.include(text(card), "Retired by Sam");
         }
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id]
+        ]);
       }).pipe(Effect.scoped)
   );
 
@@ -2509,6 +2525,10 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.deepStrictEqual(yield* readPatch(workspace.admin, retired.patchId), beforeRetired);
         assert.deepStrictEqual(yield* readPatch(workspace.admin, deleted.patchId), beforeDeleted);
         assert.strictEqual((yield* request("/", workspace.owner)).status, 200);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id],
+          ["user.reactivated", workspace.admin.id, workspace.owner.id]
+        ]);
       })
   );
 
@@ -2761,6 +2781,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.strictEqual(refused.status, 409);
         assert.isNull((yield* readUser(workspace.admin)).deactivatedAt);
         assert.strictEqual((yield* readPatch(workspace.admin, patch.patchId)).patch.state, "live");
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
       })
   );
 
@@ -2808,6 +2829,8 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
           assert.deepStrictEqual(yield* readPatch(workspace.admin, patch.patchId), beforePatch);
         }
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
+        assert.deepStrictEqual(lifecycleEvents(foreign.id), []);
       })
   );
 });
@@ -2874,6 +2897,7 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       assert.deepStrictEqual(yield* readPatch(workspace.admin, first.patchId), beforeFirst);
       assert.deepStrictEqual(yield* readPatch(workspace.admin, second.patchId), beforeSecond);
       assert.deepStrictEqual(announced, []);
+      assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
     }).pipe(Effect.scoped)
   );
 });

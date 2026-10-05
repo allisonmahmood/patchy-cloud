@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
+import { Analytics } from "@patchy/analytics";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";
@@ -83,6 +84,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
   return yield* Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const users = yield* Users.Users;
+    const analytics = yield* Analytics.Analytics;
+    // Each action has committed when it returns; a refused one fails before its event.
+    const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
     let mailFailed = false;
     if (action.kind === "invite") {
       const fields = Object.fromEntries(yield* request.urlParamsBody);
@@ -93,15 +97,47 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
         invitedBy: viewer.user.id
       });
       mailFailed = result.mailFailed;
-    } else if (action.kind === "revoke" || action.kind === "resend") {
-      const input = { companyId: viewer.company.id, inviteId: action.id };
-      const result = yield* action.kind === "revoke"
-        ? Invitations.revoke(input)
-        : Invitations.resend(input);
+      yield* analytics.track({
+        name: "invite.sent",
+        ...admin,
+        properties: { inviteId: result.invite.id, role: result.invite.role, emailed: !mailFailed }
+      });
+    } else if (action.kind === "revoke") {
+      const result = yield* Invitations.revoke({
+        companyId: viewer.company.id,
+        inviteId: action.id
+      });
+      // Here mail failure means Clerk kept the emailed link; Patchy revoked the invitation.
       mailFailed = result.mailFailed;
+      yield* analytics.track({
+        name: "invite.revoked",
+        ...admin,
+        properties: { inviteId: result.invite.id }
+      });
+    } else if (action.kind === "resend") {
+      const result = yield* Invitations.resend({
+        companyId: viewer.company.id,
+        inviteId: action.id
+      });
+      mailFailed = result.mailFailed;
+      yield* analytics.track({
+        name: "invite.resent",
+        ...admin,
+        properties: { inviteId: result.invite.id, emailed: !mailFailed }
+      });
     } else if (action.kind === "role") {
       const form = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
-      yield* users.setRole({ companyId: viewer.company.id, userId: action.id, role: form.role });
+      const { changed } = yield* users.setRole({
+        companyId: viewer.company.id,
+        userId: action.id,
+        role: form.role
+      });
+      if (changed)
+        yield* analytics.track({
+          name: "user.role_changed",
+          ...admin,
+          properties: { userId: action.id, role: form.role }
+        });
     }
     if (mailFailed) {
       return yield* render(viewer, {

@@ -7,6 +7,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
+import type { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { PatchName, PatchState, SharingScope } from "@patchy/api";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
@@ -588,6 +589,7 @@ export const layer: Layer.Layer<
       | InvocationLog.InvocationLog
       | ConnectionStore.ConnectionStore
       | SqlClient.SqlClient
+      | Analytics.Analytics
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {

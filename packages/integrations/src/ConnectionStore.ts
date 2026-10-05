@@ -213,7 +213,8 @@ export class ConnectionStore extends Context.Service<
     readonly describe: (
       input: Identity & { readonly description: string }
     ) => Effect.Effect<Connection, ConnectionError>;
-    readonly delete: (input: Identity) => Effect.Effect<void, ConnectionError>;
+    /** Returns the connection as it was before deletion. */
+    readonly delete: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     /** Hold the connection lock until the declaring version commits in the caller's platform transaction. */
     readonly resolve: (
       companyId: string,

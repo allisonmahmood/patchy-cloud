@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
+import { Analytics } from "@patchy/analytics";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
@@ -142,6 +143,9 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
       : yield* decodeChoice(Option.getOrUndefined(UrlParams.getFirst(fields, "choice"))).pipe(
           Effect.catchTags({ SchemaError: () => Effect.void })
         );
+  // Set once the user row changes and reported only after the outermost transaction
+  // commits. The dependency lock serializes commits, so a repeat sees the new state.
+  let changed = false;
   const run = Effect.gen(function* () {
     const ref = { companyId: viewer.company.id, userId: id };
     const user =
@@ -223,12 +227,13 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     }
     if (action === "deactivate") yield* users.deactivate(ref);
     else yield* users.reactivate(ref);
+    changed = true;
     return HttpServerResponse.redirect("/company", {
       status: 303,
       headers: { "cache-control": "private, no-store" }
     });
   });
-  return yield* (
+  const response = yield* (
     choice === "keep" || choice === "confirm"
       ? patches.withDependencyLock(viewer.user.id)(run)
       : run
@@ -257,4 +262,12 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
         Effect.succeed(refuse("A selected patch has unavailable sources. Nothing was done.", 409))
     })
   );
+  if (changed)
+    yield* (yield* Analytics.Analytics).track({
+      name: action === "deactivate" ? "user.deactivated" : "user.reactivated",
+      principalId: viewer.user.id,
+      companyId: viewer.company.id,
+      properties: { userId: id }
+    });
+  return response;
 });

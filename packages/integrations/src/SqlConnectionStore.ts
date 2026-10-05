@@ -369,7 +369,7 @@ export const make = Effect.gen(function* () {
     (input: Identity) =>
       sql.withTransaction(
         Effect.gen(function* () {
-          yield* lock(input);
+          const connection = yield* lock(input);
           const references =
             yield* sql`SELECT 1 FROM patch_versions v JOIN patches p ON p.id = v.patch_id
       WHERE p.company_id = ${input.companyId} AND EXISTS (
@@ -378,6 +378,7 @@ export const make = Effect.gen(function* () {
       ) LIMIT 1`;
           if (references.length !== 0) return yield* new ConnectionInUse({});
           yield* sql`DELETE FROM connections WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return connection;
         })
       ),
     Effect.catchTags(safe("delete"))

@@ -66,7 +66,7 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
-  Layer.provide(Analytics.layerNoop),
+  Layer.provideMerge(Analytics.layerNoop),
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(settings)

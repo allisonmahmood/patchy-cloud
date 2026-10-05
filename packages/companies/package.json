@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@clerk/backend": "3.21.1",
+    "@patchy/analytics": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"

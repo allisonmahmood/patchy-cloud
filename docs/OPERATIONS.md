@@ -209,6 +209,10 @@ The events, by area:
   portal or a member's deactivation or reactivation made it. A refused,
   rolled-back or no-op change reports nothing. `byAdmin` says the actor used a
   company admin's rights.
+- Companies and users: `company.created`, `user.joined`, `user.role_changed`,
+  `user.deactivated`, `user.reactivated`.
+- Invitations: `invite.sent`, `invite.resent`, `invite.revoked`.
+- Connections: `connection.connected`, `connection.deleted`.
 
 ## Clerk
 

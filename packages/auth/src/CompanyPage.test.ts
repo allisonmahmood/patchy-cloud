@@ -96,6 +96,11 @@ const deliveryFailed = Effect.fn(function* (response: Response) {
   assert.match(html, /(?:could not|did not|fail|unavailable)/i);
 });
 
+const events: Analytics.AnalyticsEvent[] = [];
+/** A company's business events, without the company they all share. */
+const reported = (companyId: string) =>
+  events.flatMap(({ companyId: company, ...event }) => (company === companyId ? [event] : []));
+
 const services = Layer.mergeAll(
   AuthApi.layer,
   HttpServer.layerServices,
@@ -107,7 +112,15 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Authorization.layer),
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
-  Layer.provideMerge(Layer.mergeAll(Limits.layer, Analytics.layerNoop)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Limits.layer,
+      Layer.succeed(
+        Analytics.Analytics,
+        Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
+      )
+    )
+  ),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
 );
@@ -336,6 +349,16 @@ it.layer(services)("company page and actions", (it) => {
         body: new URLSearchParams({ action: "join", inviteId: invite!.id })
       });
       assert.strictEqual(join.status, 409);
+      const principalId = owner.user.id;
+      assert.deepStrictEqual(reported(owner.company.id), [
+        {
+          name: "invite.sent",
+          principalId,
+          properties: { inviteId: invite!.id, role: "admin", emailed: true }
+        },
+        { name: "invite.resent", principalId, properties: { inviteId: invite!.id, emailed: true } },
+        { name: "invite.revoked", principalId, properties: { inviteId: invite!.id } }
+      ]);
     })
   );
 
@@ -356,6 +379,10 @@ it.layer(services)("company page and actions", (it) => {
         assert.include(yield* Effect.promise(() => response.text()), 'role="alert"');
       }
       assert.deepStrictEqual(yield* recording.events, delivered);
+      assert.deepStrictEqual(
+        reported(owner.company.id).map((event) => event.name),
+        ["invite.sent"]
+      );
     })
   );
 
@@ -390,6 +417,7 @@ it.layer(services)("company page and actions", (it) => {
           []
         );
         assert.deepStrictEqual(yield* recording.events, before);
+        assert.deepStrictEqual(reported(owner.company.id), []);
       })
   );
 
@@ -424,6 +452,7 @@ it.layer(services)("company page and actions", (it) => {
         assert.deepStrictEqual(yield* users.list(owner.company.id), beforeUsers);
         assert.deepStrictEqual(yield* companies.listInvites(owner.company.id), beforeInvites);
         assert.deepStrictEqual(yield* recording.events, beforeMail);
+        assert.deepStrictEqual(reported(owner.company.id), []);
       })
   );
 
@@ -465,6 +494,7 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(yield* users.list(owner.company.id), beforeUsers);
       assert.deepStrictEqual(yield* companies.listInvites(owner.company.id), beforeInvites);
       assert.deepStrictEqual(yield* recording.events, beforeMail);
+      assert.deepStrictEqual(reported(owner.company.id), []);
     })
   );
 
@@ -503,6 +533,8 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(yield* users.list(foreign.company.id), beforeUsers);
       assert.deepStrictEqual(yield* companies.listInvites(foreign.company.id), beforeInvites);
       assert.deepStrictEqual(yield* recording.events, beforeMail);
+      assert.deepStrictEqual(reported(owner.company.id), []);
+      assert.deepStrictEqual(reported(foreign.company.id), []);
     })
   );
 
@@ -521,6 +553,7 @@ it.layer(services)("company page and actions", (it) => {
       const user = yield* (yield* Users.Users).findByClerkId(owner.user.clerkUserId);
       assert.strictEqual(user?.role, "admin");
       assert.isNull(user?.deactivatedAt);
+      assert.deepStrictEqual(reported(owner.company.id), []);
     })
   );
 
@@ -545,6 +578,10 @@ it.layer(services)("company page and actions", (it) => {
         1
       );
       assert.strictEqual(users.filter((user) => user.role === "member").length, 1);
+      assert.deepStrictEqual(
+        reported(owner.company.id).map((event) => event.properties),
+        [{ userId: users.find((user) => user.role === "member")!.id, role: "member" }]
+      );
     })
   );
 
@@ -574,6 +611,22 @@ it.layer(services)("company page and actions", (it) => {
           yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "member" }))
         );
         assert.deepInclude(yield* (yield* me(laptop.token)).json, { role: "member" });
+        // A stale form asking for the role the user already has changes nothing.
+        redirected(
+          yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "member" }))
+        );
+        assert.deepStrictEqual(reported(owner.company.id), [
+          {
+            name: "user.role_changed",
+            principalId: owner.user.id,
+            properties: { userId: member.id, role: "admin" }
+          },
+          {
+            name: "user.role_changed",
+            principalId: owner.user.id,
+            properties: { userId: member.id, role: "member" }
+          }
+        ]);
 
         yield* users.deactivate(input);
         const denied = yield* send("/company", { headers: { cookie: cookie(member) } });
@@ -656,6 +709,19 @@ it.layer(services)("company page and actions", (it) => {
             // Revoked here even though the emailed link could not be.
             assert.deepStrictEqual(after, []);
           }
+          const inviteId = (before[0] ?? after[0])!.id;
+          const principalId = owner.user.id;
+          assert.deepStrictEqual(reported(owner.company.id).slice(action === "create" ? 0 : 1), [
+            action === "create"
+              ? {
+                  name: "invite.sent",
+                  principalId,
+                  properties: { inviteId, role: "member", emailed: false }
+                }
+              : action === "resend"
+                ? { name: "invite.resent", principalId, properties: { inviteId, emailed: false } }
+                : { name: "invite.revoked", principalId, properties: { inviteId } }
+          ]);
         }
       })
   );

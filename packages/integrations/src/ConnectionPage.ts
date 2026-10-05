@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import { Analytics } from "@patchy/analytics";
 import type { RequireSession } from "@patchy/auth";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import { RuntimeLog } from "@patchy/runtime";
@@ -183,8 +184,20 @@ export const handle = Effect.fn("ConnectionPage.handle")(function* (
   }
   return yield* Effect.gen(function* () {
     const store = yield* ConnectionStore.ConnectionStore;
+    const analytics = yield* Analytics.Analytics;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const identity = { companyId: viewer.company.id, userId: viewer.user.id };
+    // Each call has committed when it returns; a refused one fails before its event.
+    const report = (
+      name: "connection.connected" | "connection.deleted",
+      connection: ConnectionStore.Connection
+    ) =>
+      analytics.track({
+        name,
+        principalId: viewer.user.id,
+        companyId: viewer.company.id,
+        properties: { connectionId: connection.id, integration: connection.integration }
+      });
     let target: string;
     if (action.kind === "connect") {
       const form = yield* decodeConnect(Object.fromEntries(yield* request.urlParamsBody));
@@ -194,6 +207,7 @@ export const handle = Effect.fn("ConnectionPage.handle")(function* (
         description: form.description,
         credentials: Redacted.make(form.credentials)
       });
+      yield* report("connection.connected", connection);
       target = pathFor(connection.id);
     } else {
       const input = { ...identity, id: action.id };
@@ -205,7 +219,7 @@ export const handle = Effect.fn("ConnectionPage.handle")(function* (
         const form = yield* decodeDescription(Object.fromEntries(yield* request.urlParamsBody));
         yield* store.describe({ ...input, description: form.description });
       } else if (action.kind === "delete") {
-        yield* store.delete(input);
+        yield* report("connection.deleted", yield* store.delete(input));
         target = "/company/connections";
       } else {
         yield* store[action.kind](input);
