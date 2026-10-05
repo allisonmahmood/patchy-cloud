@@ -21,7 +21,7 @@ One patch's page at `/patches/<name>/log` for its current owner and admins: its 
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
 
 **Manage**:
-The owner or admin's controls on a card: description, who can open it, served version and uncomplicated restore stay inline. Retire, delete, restore with off sources and admin-only reassign lead to confirmation pages.
+The owner or admin's controls on a card: description, who can open it, served version and uncomplicated restore stay inline. Retire, delete, restore with off sources and admin-only reassign lead to confirmation pages. Agent access leads to a page for the owner/admin to choose operations and grant or revoke named personal-agent connections. Patches owns the saved policy and admission.
 _Avoid_: settings, admin panel, edit mode
 
 **Confirmation page**:

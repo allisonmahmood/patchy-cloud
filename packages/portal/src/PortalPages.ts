@@ -8,11 +8,11 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { PatchName, PatchState, SharingScope } from "@patchy/api";
+import { AgentMode, PatchName, PatchState, SharingScope } from "@patchy/api";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
-import { Patches } from "@patchy/patches";
+import { AgentAccess, Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
@@ -25,6 +25,7 @@ import {
   renderVersions,
   styles
 } from "./render.js";
+import { renderAgentAccess } from "./agentAccess.js";
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
 const isName = Schema.is(PatchName);
@@ -202,6 +203,102 @@ const render = Effect.fn("PortalPages.render")(function* (
     session
   );
 });
+
+const decodeAgentPolicy = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    mode: AgentMode,
+    revision: Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))
+  })
+);
+
+const agentAccessPage = Effect.fn("PortalPages.agentAccessPage")(
+  function* (name: string) {
+    const { viewer, session, access } = yield* context;
+    if (name.length > maxNameLength) return yield* overlongName;
+    if (!isName(name))
+      return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+    const rows = yield* (yield* Patches.Patches).read({ ...access, state: "all" });
+    const selected = rows.find((row) => row.patch.name === name);
+    if (selected === undefined)
+      return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+    const agents = yield* AgentAccess.AgentAccess;
+    const actor = { userId: viewer.user.id, companyId: viewer.company.id };
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    let notice: string | undefined;
+    let status = 200;
+    if (request.method === "POST") {
+      const entries = yield* request.urlParamsBody.pipe(
+        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
+      );
+      const form = Object.fromEntries(entries);
+      const posted = Effect.gen(function* () {
+        if (form.expectedPatchId !== selected.patch.id)
+          return yield* new AgentAccess.AgentAccessInvalid({ reason: "stale" });
+        switch (form.action) {
+          case "save": {
+            const policy = yield* decodeAgentPolicy(form);
+            yield* agents.save(selected.patch.id, actor, {
+              ...policy,
+              handlers: [...entries].filter(([key]) => key === "handler").map(([, value]) => value)
+            });
+            break;
+          }
+          case "grant":
+            yield* agents.grant(selected.patch.id, actor, form.machineId ?? "");
+            break;
+          case "revoke":
+            yield* agents.revoke(selected.patch.id, actor, form.machineId ?? "");
+            break;
+          default:
+            return yield* new AgentAccess.AgentAccessInvalid({ reason: "handler" });
+        }
+        return HttpServerResponse.redirect(`/patches/${encodeURIComponent(name)}/agent-access`, {
+          status: 303,
+          headers: { "cache-control": "private, no-store" }
+        });
+      });
+      const result = yield* posted.pipe(
+        Effect.catchTags({
+          AgentAccessInvalid: (error) =>
+            Effect.sync(() => {
+              notice = error.message;
+              status = 409;
+              return null;
+            }),
+          SchemaError: () =>
+            Effect.sync(() => {
+              notice = "Check the submitted fields.";
+              status = 422;
+              return null;
+            })
+        })
+      );
+      if (result !== null) return result;
+    }
+    const settings = yield* agents.inspect(selected.patch.id, actor);
+    return pageResponse(
+      {
+        title: `${name} agent access`,
+        heading: "",
+        styles,
+        status,
+        body: renderAgentAccess({ name, patchId: selected.patch.id, access: settings, notice }),
+        app: { viewer, section: "patches" }
+      },
+      session
+    );
+  },
+  Effect.catchTags({
+    AgentAccessDenied: () =>
+      errorPage(
+        403,
+        "Access refused",
+        "Only the patch owner or a company admin can manage agent access. Nothing was done."
+      ),
+    AgentAccessInvalid: (error) =>
+      errorPage(409, "Agent access unavailable", `${error.message} Nothing was done.`)
+  })
+);
 
 const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
   name: string,
@@ -546,6 +643,11 @@ const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRespon
 export const index = render().pipe(pageErrors);
 
 const patchRoutes = [
+  ...(["GET", "POST"] as const).map((method) => ({
+    method,
+    path: "/patches/:name/agent-access" as const,
+    handle: agentAccessPage
+  })),
   {
     method: "GET" as const,
     path: "/patches/:name" as const,
@@ -585,6 +687,7 @@ export const layer: Layer.Layer<
       | Companies.Companies
       | Users.Users
       | Patches.Patches
+      | AgentAccess.AgentAccess
       | InvocationLog.InvocationLog
       | ConnectionStore.ConnectionStore
       | SqlClient.SqlClient
@@ -607,9 +710,16 @@ export const layer: Layer.Layer<
     }
     for (const route of patchRoutes) {
       const handler = RequireSession.withViewer(
-        Effect.flatMap(HttpRouter.params, (params) => route.handle(params.name ?? "")).pipe(
-          pageErrors
-        )
+        Effect.flatMap(
+          HttpRouter.params,
+          (
+            params
+          ): Effect.Effect<
+            HttpServerResponse.HttpServerResponse,
+            Effect.Error<ReturnType<(typeof patchRoutes)[number]["handle"]>>,
+            Effect.Services<ReturnType<(typeof patchRoutes)[number]["handle"]>>
+          > => route.handle(params.name ?? "")
+        ).pipe(pageErrors)
       );
       yield* router.add(
         route.method,

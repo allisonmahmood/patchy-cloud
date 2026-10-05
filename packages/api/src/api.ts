@@ -976,9 +976,9 @@ export class AgentGroup extends HttpApiGroup.make("agent")
       .annotateMerge(
         describe(
           "Development-only personal-agent adapter. A dedicated machine credential needs a separate " +
-            "grant for this live tier 2 patch in .local/dev/agent-connections.json. Returns the served " +
+            "grant for this live tier 2 patch. Owners/admins manage saved access at /patches/<name>/agent-access. Returns the served " +
             "version's selected handler descriptors; read-only mode exposes queries only. Cloud reloads " +
-            "the connection file for each request. Raw-table mode and management UI are later slices."
+            "the saved policy for each request. Raw-table mode remains a later slice."
         )
       ),
     HttpApiEndpoint.post("call", "/agent/patches/:patchId/call", {

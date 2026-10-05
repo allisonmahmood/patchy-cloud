@@ -336,11 +336,21 @@ workerd executor; production refuses it.
 ## Local personal-agent adapter
 
 Only development/test hosts admit `/api/agent/patches/:patchId` and its `/call`
-route. Seed `.local/dev/agent-connections.json` with `patches` entries
-`{ patchId, mode: "read-only" | "actions", handlers: string[] }` and separate
-`grants` entries `{ machineId, patchId }`. The file is read for every admission:
-changing mode or removing a grant applies without reconnecting the agent. No file
-means no access. This is a local owner/admin seed, not a production settings API.
+route. Patch owners and company admins choose read-only or selected declared
+operations and authorize/revoke individual connections at
+`/patches/<name>/agent-access`. Settings and grants live in the platform database;
+reads and calls recheck them every time. Sign-in alone gives no patch authorization.
+Raw table access and production execution remain out of scope.
+
+An existing `.local/dev/agent-connections.json` can be imported explicitly with
+the sibling companion's `local-access.mjs <Cloud checkout> apply` (JSON on stdin),
+using `node --import <Cloud checkout>/node_modules/tsx/dist/loader.mjs
+--conditions=development`. Its `inspect` command reads the current settings.
+This fixture helper requires a matching loopback development instance and uses
+Cloud's access service. It never accesses patch-owned data. It is a developer
+fixture tool, not an authorization path for deployed agents. After importing,
+editing the old JSON file has no effect. The companion seeder and exercises use
+the same helper; older prototype checkouts retain their file fixture behavior.
 
 Use a dedicated personal-agent machine token minted by Auth for the intended
 scenario person, not an admin seed token. Existing machine revocation and person

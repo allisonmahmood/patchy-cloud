@@ -575,8 +575,15 @@ permissions apply unchanged. The host adds `ctx.viewer.agent` from the machine
 credential and stores that agent alongside the initiating person in invocation
 records. Patch code can copy these claims to its activity timeline.
 
-The seed lives in `.local/dev/agent-connections.json`; there is no settings UI or
-production admission. The companion MCP process owns discovery presentation and
+Patch owners and company admins manage access at `/patches/<name>/agent-access`.
+Cloud stores the mode, selected current handler names and individual machine grants
+in its platform database. The page lists connections by person and owner-supplied
+machine name, supports grant/revoke, and refuses stale mode/operation forms.
+Ordinary members cannot change these controls. Sign-in alone grants no patch access.
+Inactive credentials and retired/deleted patches cannot execute. There is no Off
+mode: removing a grant removes that connection's access. Raw table mode and
+production admission remain future slices. Development fixture files are explicit
+import inputs only; the runtime never uses them to override saved settings. The companion MCP process owns discovery presentation and
 request-key persistence, never patch business rules or patch data access. This is
 an interactive local exception to browser admission, not a tier 3 launch.
 

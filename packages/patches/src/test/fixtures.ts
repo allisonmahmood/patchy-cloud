@@ -1,6 +1,6 @@
 /**
- * Users and machines added to the seeded template. Production Patches never
- * imports Auth: handlers receive identities from the bearer middleware.
+ * Users and machines added to the seeded template. Patch handlers receive identities from bearer middleware; agent-access management
+ * reuses Auth’s active-machine list.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";

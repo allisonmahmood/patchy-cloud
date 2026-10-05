@@ -445,6 +445,12 @@ importers:
       '@patchy/api':
         specifier: workspace:*
         version: link:../api
+      '@patchy/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@patchy/companies':
+        specifier: workspace:*
+        version: link:../companies
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database
@@ -479,9 +485,6 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)(vitest@5.0.3(@types/node@22.20.4)(vite@8.3.2(@types/node@22.20.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      '@patchy/auth':
-        specifier: workspace:*
-        version: link:../auth
       vitest:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@22.20.4)(vite@8.3.2(@types/node@22.20.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
