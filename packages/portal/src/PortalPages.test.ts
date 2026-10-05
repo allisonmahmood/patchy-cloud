@@ -442,7 +442,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.include(html, "Alex’s agent &lt;script&gt;");
           assert.include(html, 'value="read-only" selected');
           assert.include(html, "deals.read");
+          const cardHtml = yield* (yield* request(`/patches/${patch.name}`, person)).text;
+          assert.include(cardHtml, `>Open</a><a class="btn" href="${path}">Agent access</a>`);
         }
+        const memberCard = yield* (yield* request(`/patches/${patch.name}`, workspace.member)).text;
+        assert.notInclude(memberCard, `href="${path}"`);
         assert.strictEqual((yield* request(path, workspace.member)).status, 403);
         assert.strictEqual(
           (yield* post(path, workspace.member, {
