@@ -101,7 +101,7 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(taken)) return { deleted: 0, skipped: 0, failed: 1, orphanedObjects: 0 };
     if (Option.isNone(taken.value))
       return { deleted: 0, skipped: 1, failed: 0, orphanedObjects: 0 };
-    const { companyId, versionCount } = taken.value.value;
+    const { companyId, ownerUserId, versionCount } = taken.value.value;
     yield* reclaimResources(companyId, patchId).pipe(
       Effect.catch((error) =>
         Effect.logWarning(
@@ -116,7 +116,8 @@ export const make = Effect.gen(function* () {
     yield* analytics.track({
       name: "patch.purged",
       principalId: null,
-      properties: { patchId, versionsRemoved: versionCount }
+      companyId,
+      properties: { patchId, ownerUserId, versionsRemoved: versionCount }
     });
 
     return { deleted: 1, skipped: 0, failed: 0, orphanedObjects: 0 } satisfies SweepResult;

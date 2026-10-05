@@ -540,8 +540,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           yield* analytics.track({
             name: patchId === null ? "patch.created" : "patch.updated",
             principalId: identity.user.id,
+            companyId: identity.company.id,
             properties: {
               patchId: recorded.patchId,
+              // Only the owner publishes, so the publisher is the owner.
+              ownerUserId: identity.user.id,
               machineTokenId: identity.machine.id,
               versionNumber: recorded.versionNumber,
               scope: recorded.scope,
@@ -846,7 +849,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           yield* analytics.track({
             name: "patch.deleted",
             principalId: identity.user.id,
-            properties: { patchId: params.patchId }
+            companyId: patch.companyId,
+            properties: { patchId: patch.id, ownerUserId: patch.ownerUserId }
           });
           return new Deleted({
             ok: true,

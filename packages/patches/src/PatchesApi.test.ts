@@ -139,10 +139,18 @@ it.layer(layer)("patches group", (it) => {
       }).pipe(Effect.provide(Fixtures.as(uploader)));
       assert.strictEqual(restricted.scope, "company");
       assert.deepStrictEqual(
-        events
-          .filter((event) => event.properties.patchId === created.patchId)
-          .map((event) => event.properties.scope),
-        ["company", "public", "public", "company"]
+        events.flatMap((event) =>
+          (event.name === "patch.created" || event.name === "patch.updated") &&
+          event.properties.patchId === created.patchId
+            ? [[event.name, event.companyId, event.properties.ownerUserId, event.properties.scope]]
+            : []
+        ),
+        [
+          ["patch.created", uploader.company.id, uploader.user.id, "company"],
+          ["patch.updated", uploader.company.id, uploader.user.id, "public"],
+          ["patch.updated", uploader.company.id, uploader.user.id, "public"],
+          ["patch.updated", uploader.company.id, uploader.user.id, "company"]
+        ]
       );
 
       const served = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
@@ -439,6 +447,19 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         deletedAt: "2026-01-01T00:01:00.000Z",
         purgeAt: "2026-01-31T00:01:00.000Z"
       });
+      assert.deepStrictEqual(
+        events.filter(
+          (event) => event.name === "patch.deleted" && event.properties.patchId === first.patchId
+        ),
+        [
+          {
+            name: "patch.deleted",
+            principalId: uploader.user.id,
+            companyId: uploader.company.id,
+            properties: { patchId: first.patchId, ownerUserId: uploader.user.id }
+          }
+        ]
+      );
       yield* owner.restore({ params, payload: new ForceRequest({}) });
       assert.strictEqual(
         Option.getOrThrow(yield* patches.find(first.patchId)).version.id,
@@ -2604,7 +2625,9 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
             .patchTier,
           1
         );
-        const event = events.find((event) => event.properties.patchId === created.patchId);
+        const event = events.find(
+          (event) => event.name === "patch.created" && event.properties.patchId === created.patchId
+        );
         assert.deepInclude(event?.properties, {
           tier: 2,
           sdkImports: ["patchy/server"],

@@ -100,6 +100,7 @@ it.layer(layer)("DeviceLogins", (it) => {
           {
             name: "token.minted",
             principalId: userId,
+            companyId: DEV_SEED.companyId,
             properties: { tokenId: result.machine.id, replaced: false }
           }
         ]
@@ -343,11 +344,15 @@ it.layer(layer)("DeviceLogins", (it) => {
         if (result.status !== "complete") assert.fail("Confirmed replacement should mint");
         else
           assert.deepStrictEqual(
-            events.filter((event) => event.properties.tokenId === result.machine.id),
+            events.filter(
+              (event) =>
+                event.name === "token.minted" && event.properties.tokenId === result.machine.id
+            ),
             [
               {
                 name: "token.minted",
                 principalId: userId,
+                companyId: DEV_SEED.companyId,
                 properties: { tokenId: result.machine.id, replaced }
               }
             ]
@@ -386,11 +391,15 @@ it.layer(layer)("DeviceLogins", (it) => {
           assert.strictEqual((yield* tokens.authenticate(result.token))?.machine.name, old.name);
           // An owned dead predecessor still describes re-login succession.
           assert.deepStrictEqual(
-            events.filter((event) => event.properties.tokenId === result.machine.id),
+            events.filter(
+              (event) =>
+                event.name === "token.minted" && event.properties.tokenId === result.machine.id
+            ),
             [
               {
                 name: "token.minted",
                 principalId: userId,
+                companyId: DEV_SEED.companyId,
                 properties: { tokenId: result.machine.id, replaced: true }
               }
             ]
@@ -472,6 +481,7 @@ it.layer(layer)("DeviceLogins", (it) => {
             {
               name: "token.minted",
               principalId: userId,
+              companyId: DEV_SEED.companyId,
               properties: { tokenId: complete.machine.id, replaced: false }
             }
           ]

@@ -181,6 +181,28 @@ The patch repo's local runtime uses the same record with compact stdout output.
 `layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs
 to the tier 2 dev-loop ticket; the existing CLI log response is unchanged.
 
+### Business events
+
+Business events are the product moments the server reports to PostHog, through
+the client wide events use. They never reach stdout, and without
+`PATCHY_POSTHOG_API_KEY` they are dropped. The catalogue in
+`packages/analytics/src/Analytics.ts` names each event, says when it fires and
+types its properties; the list below follows it.
+
+An event's distinct id is its principal: the user who acted, or `patchy-instance`
+when nobody did, as when the deletion sweep purges a patch. Events create no
+person profile (`$process_person_profile: false`) and use no PostHog groups.
+
+Every event carries `companyId`, so company numbers are queries over that
+property. Patch events also carry `patchId` and `ownerUserId`, the owner at the
+moment of the event. Properties are ids, sizes, counts and states, never names,
+email addresses, URLs or free text.
+
+The events, by area:
+
+- Machine tokens: `token.minted`.
+- Patches: `patch.created`, `patch.updated`, `patch.deleted`, `patch.purged`.
+
 ## Clerk
 
 Clerk holds the browser session

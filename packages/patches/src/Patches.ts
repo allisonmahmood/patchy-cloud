@@ -815,7 +815,7 @@ export class Patches extends Context.Service<
     readonly purgeDeleted: (
       patchId: string
     ) => Effect.Effect<
-      Option.Option<{ companyId: string; versionCount: number }>,
+      Option.Option<{ companyId: string; ownerUserId: string; versionCount: number }>,
       SqlError | DatabaseError
     >;
   }
@@ -2225,9 +2225,13 @@ export const make = Effect.gen(function* () {
 
   const purgeTarget = SqlSchema.findOneOption({
     Request: Schema.String,
-    Result: Schema.Struct({ companyId: Schema.String, deletedAt: NullableStamp }),
-    execute: (patchId) => sql`SELECT company_id AS "companyId", deleted_at AS "deletedAt"
-      FROM patches WHERE id = ${patchId} FOR UPDATE`
+    Result: Schema.Struct({
+      companyId: Schema.String,
+      ownerUserId: Schema.String,
+      deletedAt: NullableStamp
+    }),
+    execute: (patchId) => sql`SELECT company_id AS "companyId", owner_user_id AS "ownerUserId",
+      deleted_at AS "deletedAt" FROM patches WHERE id = ${patchId} FOR UPDATE`
   });
   const purgeDeleted = Effect.fn("Patches.purgeDeleted")(
     function* (patchId: string) {
@@ -2236,7 +2240,7 @@ export const make = Effect.gen(function* () {
       const millis = yield* Clock.currentTimeMillis;
       if (target.value.deletedAt.getTime() + Duration.toMillis(RECOVERY_WINDOW) > millis)
         return Option.none();
-      const companyId = target.value.companyId;
+      const { companyId, ownerUserId } = target.value;
       const removeRows = Effect.gen(function* () {
         yield* sql`INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
           SELECT object_key, ${stamp(millis)}, true FROM patch_versions WHERE patch_id = ${patchId}
@@ -2248,7 +2252,7 @@ export const make = Effect.gen(function* () {
         yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
         yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
         yield* announce(patchId);
-        return Option.some({ companyId, versionCount: removed.length });
+        return Option.some({ companyId, ownerUserId, versionCount: removed.length });
       });
       // No platform row disappears while a publisher holds its company inventory.
       // An absent placement means this patch never provisioned a namespace.

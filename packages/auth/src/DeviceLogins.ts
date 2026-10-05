@@ -164,12 +164,13 @@ export const make = Effect.gen(function* () {
   const confirmingIdentity = SqlSchema.findOne({
     Request: Schema.String,
     Result: Schema.Struct({
+      companyId: Schema.String,
       companyHandle: Schema.String,
       companyName: Schema.String,
       email: Schema.String
     }),
     execute: (userId) => sql`
-      SELECT c.handle AS "companyHandle", c.name AS "companyName", u.email
+      SELECT c.id AS "companyId", c.handle AS "companyHandle", c.name AS "companyName", u.email
       FROM users u JOIN companies c ON c.id = u.company_id WHERE u.id = ${userId}`
   });
 
@@ -346,6 +347,7 @@ export const make = Effect.gen(function* () {
           event: {
             name: "token.minted",
             principalId: row.userId,
+            companyId: identity.companyId,
             properties: { tokenId: minted.id, replaced }
           }
         };
