@@ -32,6 +32,21 @@ type PatchChange = PatchSubject & {
   readonly byAdmin: boolean;
 };
 
+/**
+ * The release and coding agent of the `patchy` CLI behind the current request,
+ * each only once its `Patchy-Cli` header parsed. Empty for a browser, an older
+ * CLI or a header that did not parse.
+ */
+export type Cli = {
+  readonly cliVersion?: string;
+  readonly agent?: string;
+};
+
+/** Provided by the request event, which parses the header; emitters spread it into properties. */
+export const CurrentCli = Context.Reference<Cli>("@patchy/analytics/Analytics/CurrentCli", {
+  defaultValue: () => ({})
+});
+
 /** What a publish reports about the version it recorded. */
 type Publication = PatchSubject & {
   readonly machineTokenId: string;
@@ -73,17 +88,17 @@ type ConnectionSubject = {
  */
 export type AnalyticsCatalogue = Catalogue<{
   /** A device login's poll minted a machine token. Principal: the user who signed in. */
-  readonly "token.minted": {
+  readonly "token.minted": Cli & {
     readonly tokenId: string;
     /** The login replaced one of the user's earlier machine tokens. */
     readonly replaced: boolean;
   };
 
   /** A publish created a patch and its first version. Principal: the publisher. */
-  readonly "patch.created": Publication;
+  readonly "patch.created": Publication & Cli;
 
   /** A publish added a version to an existing patch. Principal: the publisher. */
-  readonly "patch.updated": Publication;
+  readonly "patch.updated": Publication & Cli;
 
   /** A patch entered its recovery window. Principal: the user who deleted it. */
   readonly "patch.deleted": PatchChange;

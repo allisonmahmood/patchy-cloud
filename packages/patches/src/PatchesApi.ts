@@ -573,7 +573,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               ).length,
               actionHandlers: Object.values(manifest.handlers ?? {}).filter(
                 (handler) => handler.kind === "action"
-              ).length
+              ).length,
+              ...(yield* Analytics.CurrentCli)
             }
           });
           return HttpServerResponse.text(recorded.responseBody, {

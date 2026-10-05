@@ -201,7 +201,13 @@ describe("patchy publish", async () => {
     expect(
       instance.requests.filter((request) => request.authorization === "Bearer pp_other")
     ).toEqual([
-      { method: "GET", url: "/api/me", authorization: "Bearer pp_other", body: undefined }
+      {
+        method: "GET",
+        url: "/api/me",
+        authorization: "Bearer pp_other",
+        patchyCli: `${CURRENT_RELEASE} publish unknown`,
+        body: undefined
+      }
     ]);
     const recovered = await runCli(["publish", "missing.html", "--json"], {
       stateDir: dir,

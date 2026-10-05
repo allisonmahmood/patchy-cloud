@@ -1,13 +1,16 @@
 /**
  * The instance over HTTP: the client derived from `@patchy/api`, pointed at
  * the resolved instance, and the one place a refusal or a failed request is
- * turned into a `CliError` whose kind says who has to act.
+ * turned into a `CliError` whose kind says who has to act. Every request names
+ * the CLI's release, command and coding agent in its `Patchy-Cli` header.
  */
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as HttpApi from "effect/http-api/HttpApi";
@@ -17,14 +20,19 @@ import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import {
   Authorization,
   authorizationClient,
+  type CliCommand,
+  formatPatchyCli,
   makeClient,
+  PATCHY_CLI_HEADER,
   type PatchyApi,
   PublishCreated,
   type PublishRequest,
   PublishUpdated
 } from "@patchy/api";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import * as CodingAgent from "./CodingAgent.js";
 import * as Instance from "./Instance.js";
+import { RELEASE } from "./release.js";
 
 /** Retained receipts may predate description and artifact metadata. Validate them when present. */
 const PublishReceipt = Schema.Struct({
@@ -36,15 +44,30 @@ const PublishReceipt = Schema.Struct({
 const decodePublishReceipt = Schema.decodeUnknownEffect(PublishReceipt);
 const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpdated]));
 
+/** The command this process runs; every command that reaches the instance provides it. */
+export class CurrentCommand extends Context.Service<CurrentCommand, CliCommand>()(
+  "patchy/Api/CurrentCommand"
+) {}
+
 /** Public login requests need no bearer; protected calls supply one explicitly. */
 export const client = (token?: Redacted.Redacted) =>
   Effect.gen(function* () {
     const instance = yield* Instance.Instance;
+    const http = yield* HttpClient.HttpClient;
+    const header = formatPatchyCli({
+      cliVersion: RELEASE,
+      cliCommand: yield* CurrentCommand,
+      agent: yield* CodingAgent.detect
+    });
     return yield* makeClient(instance.apiUrl).pipe(
       Effect.provide(
         token === undefined
           ? HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
           : authorizationClient(token)
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.mapRequest(http, HttpClientRequest.setHeader(PATCHY_CLI_HEADER, header))
       )
     );
   });

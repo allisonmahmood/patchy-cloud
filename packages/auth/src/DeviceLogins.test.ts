@@ -75,7 +75,10 @@ it.layer(layer)("DeviceLogins", (it) => {
         status: "slow_down"
       });
       yield* TestClock.adjust(5_000);
-      const result = yield* logins.poll(login.deviceCode);
+      // The request event provides the CLI its Patchy-Cli header named.
+      const result = yield* logins
+        .poll(login.deviceCode)
+        .pipe(Effect.provideService(Analytics.CurrentCli, { cliVersion: "0.0.1", agent: "codex" }));
       assert.strictEqual(result.status, "complete");
       if (result.status !== "complete") return;
       assert.strictEqual(result.machine.name, "Work laptop");
@@ -101,7 +104,12 @@ it.layer(layer)("DeviceLogins", (it) => {
             name: "token.minted",
             principalId: userId,
             companyId: DEV_SEED.companyId,
-            properties: { tokenId: result.machine.id, replaced: false }
+            properties: {
+              tokenId: result.machine.id,
+              replaced: false,
+              cliVersion: "0.0.1",
+              agent: "codex"
+            }
           }
         ]
       );

@@ -138,6 +138,14 @@ current, and otherwise the patch's current version.
 `requestBytes` is the declared length, and `responseBytes` is the body sent.
 Health probes (`/healthz`, `/healthz/deep`) emit nothing.
 
+A request from the `patchy` CLI names the CLI in its `Patchy-Cli` header,
+`<release> <command> <agent>`, such as `0.0.1 publish claude-code`. The event
+records `cliVersion` when the release is three dot-separated numbers, and
+`cliCommand` and `agent` when they are in the closed lists in
+`packages/api/src/cli.ts`. A field that does not parse is dropped, and a
+header that is not exactly three fields records none. A request without the
+header, from a browser or an older CLI, records none of the three.
+
 No key is needed for stdout. `pnpm dev` captures these lines with the other
 server output; `pnpm dev logs` displays them.
 
@@ -195,9 +203,12 @@ person profile (`$process_person_profile: false`) and use no PostHog groups.
 
 Every event carries `companyId`, so company numbers are queries over that
 property. Patch events also carry `patchId` and `ownerUserId`, the owner at the
-moment of the event. Properties are ids, sizes, counts and states. The only
-names are identifiers a patch's manifest declares, such as its table and store
-keys; never a person's or company's name, an email address, a URL or free text.
+moment of the event. `token.minted`, `patch.created` and `patch.updated` add
+the CLI's `cliVersion` and `agent` when their request's `Patchy-Cli` header
+named them, under the request event's rules. Properties are ids, sizes, counts
+and states. The only names are identifiers a patch's manifest declares, such as
+its table and store keys; never a person's or company's name, an email address,
+a URL or free text.
 
 The events, by area:
 

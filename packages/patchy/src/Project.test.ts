@@ -9,6 +9,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Api from "./Api.js";
 import * as Instance from "./Instance.js";
 import * as Project from "./Project.js";
 
@@ -59,6 +60,7 @@ const sync = Effect.fn("test.Project.sync")(function* (
   });
   const result = yield* Project.syncDescription(root, Redacted.make("sync-token")).pipe(
     Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(Api.CurrentCommand, "refresh"),
     Effect.provideService(Instance.Instance, { apiUrl, source: "env", token: Option.none() })
   );
   const saved: unknown = JSON.parse(yield* fs.readFileString(repoFile));

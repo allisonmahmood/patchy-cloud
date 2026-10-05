@@ -114,7 +114,11 @@ it.layer(layer)("patches group", (it) => {
       const created = yield* publish({
         html: html("First"),
         metadata: { filename: "Launch Plan.HTML" }
-      }).pipe(Effect.provide(Fixtures.as(uploader)));
+      }).pipe(
+        Effect.provide(Fixtures.as(uploader)),
+        // The request event provides the CLI its Patchy-Cli header named.
+        Effect.provideService(Analytics.CurrentCli, { cliVersion: "0.0.1", agent: "claude-code" })
+      );
       assert.instanceOf(created, PublishCreated);
       assert.strictEqual(created.title, "First");
       assert.strictEqual(created.scope, "company");
@@ -152,14 +156,30 @@ it.layer(layer)("patches group", (it) => {
         events.flatMap((event) =>
           (event.name === "patch.created" || event.name === "patch.updated") &&
           event.properties.patchId === created.patchId
-            ? [[event.name, event.companyId, event.properties.ownerUserId, event.properties.scope]]
+            ? [
+                [
+                  event.name,
+                  event.companyId,
+                  event.properties.ownerUserId,
+                  event.properties.scope,
+                  event.properties.cliVersion,
+                  event.properties.agent
+                ]
+              ]
             : []
         ),
         [
-          ["patch.created", uploader.company.id, uploader.user.id, "company"],
-          ["patch.updated", uploader.company.id, uploader.user.id, "public"],
-          ["patch.updated", uploader.company.id, uploader.user.id, "public"],
-          ["patch.updated", uploader.company.id, uploader.user.id, "company"]
+          [
+            "patch.created",
+            uploader.company.id,
+            uploader.user.id,
+            "company",
+            "0.0.1",
+            "claude-code"
+          ],
+          ["patch.updated", uploader.company.id, uploader.user.id, "public", undefined, undefined],
+          ["patch.updated", uploader.company.id, uploader.user.id, "public", undefined, undefined],
+          ["patch.updated", uploader.company.id, uploader.user.id, "company", undefined, undefined]
         ]
       );
 

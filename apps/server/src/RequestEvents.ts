@@ -15,6 +15,11 @@
  * `success`, a 4xx is `refused` with its body's `code`, a 5xx is `failure`,
  * and an interruption stays `interrupted`. Events name the template, never
  * the URL, and read no request body.
+ *
+ * A `patchy` CLI request names its release, command and coding agent in its
+ * `Patchy-Cli` header. The fields that parse ride on the event, and the
+ * release and agent reach the request's business events through
+ * `Analytics.CurrentCli`.
  */
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -27,8 +32,9 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerError from "effect/http/HttpServerError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { PatchId } from "@patchy/api";
+import { PATCHY_CLI_HEADER, PatchId, parsePatchyCli } from "@patchy/api";
 
 /** Probes poll these from several places; their traffic would swamp the stream and say nothing. */
 const healthProbes = new Set(["/healthz", "/healthz/deep"]);
@@ -98,6 +104,7 @@ export const make = Effect.map(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const method = (yield* sentMethod) ?? request.method;
         const declared = request.headers["content-length"];
+        const { cliCommand, ...cli } = parsePatchyCli(request.headers[PATCHY_CLI_HEADER]);
         const exit = yield* events.withEvent(
           {
             type: "request",
@@ -105,12 +112,14 @@ export const make = Effect.map(
             method,
             ...(declared !== undefined && /^\d+$/.test(declared)
               ? { requestBytes: Number(declared) }
-              : {})
+              : {}),
+            cliCommand,
+            ...cli
           },
           // Interrupting the handler must not also skip recording what it answered.
           Effect.uninterruptibleMask((restore) =>
             Effect.exit(restore(app)).pipe(Effect.tap((exit) => received(exit, method)))
-          )
+          ).pipe(Effect.provideService(Analytics.CurrentCli, cli))
         );
         return yield* exit;
       })

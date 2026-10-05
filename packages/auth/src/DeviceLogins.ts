@@ -348,7 +348,7 @@ export const make = Effect.gen(function* () {
             name: "token.minted",
             principalId: row.userId,
             companyId: identity.companyId,
-            properties: { tokenId: minted.id, replaced }
+            properties: { tokenId: minted.id, replaced, ...(yield* Analytics.CurrentCli) }
           }
         };
       })
