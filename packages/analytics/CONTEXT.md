@@ -1,6 +1,6 @@
 # Analytics
 
-The business moments and runtime work the instance reports about itself. [Patches](../patches/CONTEXT.md) and [Auth](../auth/CONTEXT.md) decide which business moments matter; Analytics owns their reporting vocabulary and wide events.
+The business moments and runtime work the instance reports about itself. [Patches](../patches/CONTEXT.md), [Auth](../auth/CONTEXT.md), [Companies](../companies/CONTEXT.md), [Portal](../portal/CONTEXT.md) and [Integrations](../integrations/CONTEXT.md) decide which business moments matter; Analytics owns their reporting vocabulary and wide events.
 
 ## Language
 

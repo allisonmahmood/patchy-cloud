@@ -223,6 +223,14 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     }
     if (action === "deactivate") yield* users.deactivate(ref);
     else yield* users.reactivate(ref);
+    // Reported with the patch events once the dependency lock's transaction commits.
+    // That lock serializes these commits, so a repeat is refused above.
+    yield* patches.reportOnCommit({
+      name: action === "deactivate" ? "user.deactivated" : "user.reactivated",
+      principalId: viewer.user.id,
+      companyId: viewer.company.id,
+      properties: { userId: id }
+    });
     return HttpServerResponse.redirect("/company", {
       status: 303,
       headers: { "cache-control": "private, no-store" }

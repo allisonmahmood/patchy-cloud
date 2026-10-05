@@ -698,6 +698,12 @@ export class Patches extends Context.Service<
     readonly withDependencyLock: (
       actorUserId: string
     ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>;
+    /**
+     * Inside `withDependencyLock`, queues the caller's own event to report with the
+     * lifecycle events once the lock's transaction commits; a rollback drops it.
+     * Deactivation and reactivation report their user change this way.
+     */
+    readonly reportOnCommit: (event: Analytics.AnalyticsEvent) => Effect.Effect<void>;
     /** Company-readable inventory; unavailable company-database inventory is null, not empty. */
     readonly companyInventory: (
       patchId: string,
@@ -2369,6 +2375,12 @@ export const make = Effect.gen(function* () {
     portalCard,
     addressNotice,
     withDependencyLock,
+    reportOnCommit: (event) =>
+      Effect.flatMap(pendingLifecycle, (pending) =>
+        pending === undefined
+          ? Effect.die(new Error("reportOnCommit runs only inside withDependencyLock."))
+          : Effect.sync(() => void pending.events.push(event))
+      ),
     companyInventory,
     sharedTable,
     sharedStore,

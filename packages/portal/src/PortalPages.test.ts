@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import { TestClock } from "effect/testing";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -46,6 +47,14 @@ const routes = Layer.merge(
   PortalPages.layer,
   HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
 );
+/** A company's user lifecycle events, as `[name, principal, user]`. */
+const lifecycleEvents = (companyId: string) =>
+  events.flatMap((event) =>
+    event.companyId === companyId &&
+    (event.name === "user.deactivated" || event.name === "user.reactivated")
+      ? [[event.name, event.principalId, event.properties.userId]]
+      : []
+  );
 const services = Layer.mergeAll(
   Patches.layer,
   Session.layer,
@@ -2220,10 +2229,61 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
             (yield* readPatch(workspace.member, unrelated.patchId)).patch.description,
             "Edited during confirmation"
           );
+          assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
         }).pipe(Effect.scoped),
       15_000
     );
   }
+
+  it.effect(
+    "stops waiting and reports nothing when the admin disconnects during a lock wait",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const retiring = yield* publish(workspace.owner, "lock-wait-retiring");
+        const sql = yield* SqlClient.SqlClient;
+        const locked = yield* Deferred.make<number>();
+        const release = yield* Deferred.make<void>();
+        // Hold the company row, as an invitation does while Clerk delivers it.
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT id FROM companies WHERE id = ${workspace.id} FOR UPDATE`;
+              const [backend] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+              yield* Deferred.succeed(locked, backend!.pid);
+              yield* Deferred.await(release);
+            })
+          )
+          .pipe(Effect.forkScoped);
+        const blocker = yield* Deferred.await(locked);
+        const waiting = (count: number) =>
+          sql<{ pid: number }>`
+            SELECT pid FROM pg_stat_activity
+            WHERE datname = current_database() AND ${blocker} = ANY(pg_blocking_pids(pid))`.pipe(
+            Effect.repeat({ until: (rows) => rows.length === count }),
+            Effect.timeout("10 seconds"),
+            TestClock.withLive
+          );
+        // The retirement runs first, then deactivation waits on the company row.
+        const confirmation = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
+          choice: "confirm",
+          patch: [retiring.patchId]
+        }).pipe(Effect.forkScoped);
+        yield* waiting(1);
+        yield* Fiber.interrupt(confirmation);
+        // The lock is still held, so only cancellation can end the wait.
+        yield* waiting(0);
+        yield* Deferred.succeed(release, undefined);
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.strictEqual(
+          (yield* readPatch(workspace.admin, retiring.patchId)).patch.state,
+          "live"
+        );
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
+        assert.deepStrictEqual(reported(retiring.patchId), []);
+      }).pipe(Effect.scoped),
+    15_000
+  );
 
   it.effect("renders lifecycle picks and previews while company mutation locks are held", () =>
     Effect.gen(function* () {
@@ -2322,6 +2382,14 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         const card = yield* (yield* request(cardPath(source.name), workspace.member)).text;
         assert.include(text(card), "Priya (deactivated)");
         assert.strictEqual((yield* request("/", workspace.owner)).status, 403);
+        // Repeating it is refused and reports nothing more.
+        const repeated = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
+          choice: "keep"
+        });
+        assert.strictEqual(repeated.status, 409);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id]
+        ]);
       })
   );
 
@@ -2383,6 +2451,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           assert.strictEqual((yield* readPatch(workspace.admin, patchId)).patch.state, "live");
         assert.deepStrictEqual(committedKeys, []);
         assert.deepStrictEqual(selection.flatMap(reported), []);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
 
         const committed = yield* post(path, workspace.admin, {
           choice: "confirm",
@@ -2409,6 +2478,9 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           const card = yield* (yield* request(cardPath(saved.patch.name), workspace.member)).text;
           assert.include(text(card), "Retired by Sam");
         }
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id]
+        ]);
       }).pipe(Effect.scoped)
   );
 
@@ -2509,6 +2581,10 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.deepStrictEqual(yield* readPatch(workspace.admin, retired.patchId), beforeRetired);
         assert.deepStrictEqual(yield* readPatch(workspace.admin, deleted.patchId), beforeDeleted);
         assert.strictEqual((yield* request("/", workspace.owner)).status, 200);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id],
+          ["user.reactivated", workspace.admin.id, workspace.owner.id]
+        ]);
       })
   );
 
@@ -2761,6 +2837,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.strictEqual(refused.status, 409);
         assert.isNull((yield* readUser(workspace.admin)).deactivatedAt);
         assert.strictEqual((yield* readPatch(workspace.admin, patch.patchId)).patch.state, "live");
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
       })
   );
 
@@ -2808,11 +2885,77 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
           assert.deepStrictEqual(yield* readPatch(workspace.admin, patch.patchId), beforePatch);
         }
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
+        assert.deepStrictEqual(lifecycleEvents(foreign.id), []);
       })
   );
 });
 
 it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
+  it.effect(
+    "reports a committed deactivation and its retirement when the admin disconnects while wakes publish",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const retiring = yield* publish(workspace.owner, "wake-paused");
+        const wakes = yield* Wakes.Wakes;
+        const publishing = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        // Wakes go out after the commit; pause there.
+        const pausedWakes = Layer.succeed(
+          Wakes.Wakes,
+          Wakes.Wakes.of({
+            subscribe: wakes.subscribe,
+            publish: (keys, cause) =>
+              Deferred.succeed(publishing, undefined).pipe(
+                Effect.andThen(Deferred.await(resume)),
+                Effect.andThen(wakes.publish(keys, cause))
+              )
+          })
+        );
+        const pausedServer = HttpRouter.serve(routes, {
+          disableLogger: true,
+          disableListenLog: true
+        }).pipe(
+          Layer.provide(Layer.fresh(Patches.layer).pipe(Layer.provide(pausedWakes))),
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+        );
+        yield* Effect.gen(function* () {
+          const confirmation = yield* post(
+            userPath(workspace.owner, "deactivate"),
+            workspace.admin,
+            {
+              choice: "confirm",
+              patch: [retiring.patchId]
+            }
+          ).pipe(Effect.forkChild);
+          yield* Deferred.await(publishing);
+          yield* Fiber.interrupt(confirmation);
+          // Let the closed socket reach the server before publication resumes.
+          yield* Effect.sleep("200 millis").pipe(TestClock.withLive);
+          yield* Deferred.succeed(resume, undefined);
+          yield* Effect.sync(() => lifecycleEvents(workspace.id)).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("10 millis"),
+              until: (reported) => reported.length > 0
+            }),
+            Effect.timeout("10 seconds"),
+            TestClock.withLive
+          );
+        }).pipe(Effect.provide(pausedServer));
+        assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id]
+        ]);
+        assert.deepStrictEqual(
+          reported(retiring.patchId).map((event) => event.name),
+          ["patch.retired"]
+        );
+      }),
+    15_000
+  );
+
   it.effect("rolls back the selected retirements and user when deactivation fails", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
@@ -2874,6 +3017,8 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       assert.deepStrictEqual(yield* readPatch(workspace.admin, first.patchId), beforeFirst);
       assert.deepStrictEqual(yield* readPatch(workspace.admin, second.patchId), beforeSecond);
       assert.deepStrictEqual(announced, []);
+      assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
+      assert.deepStrictEqual([first.patchId, second.patchId].flatMap(reported), []);
     }).pipe(Effect.scoped)
   );
 });

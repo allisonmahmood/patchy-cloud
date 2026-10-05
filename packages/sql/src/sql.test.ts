@@ -2,11 +2,20 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Redacted from "effect/Redacted";
-import { LEDGER_TABLE, migrate, pool, unsupportedUrlParameters, type Migrations } from "./index.js";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  LEDGER_TABLE,
+  migrate,
+  pool,
+  unsupportedUrlParameters,
+  withReportedCommit,
+  type Migrations
+} from "./index.js";
 import * as Testing from "./testing.js";
 
 const ddl = (statement: string) =>
@@ -134,6 +143,84 @@ it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("ledger history", (it) 
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* migrate(widgets), []);
       assert.strictEqual((yield* ledger).length, 2);
+    })
+  );
+});
+
+/** A table whose COMMIT sleeps, through a deferred constraint trigger. */
+const slowCommit: Migrations = {
+  "1_slow_commit": Effect.forEach(
+    [
+      "CREATE TABLE reported (id integer PRIMARY KEY)",
+      "CREATE FUNCTION slow_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(1); RETURN NULL; END $$",
+      "CREATE CONSTRAINT TRIGGER reported_slow_commit AFTER INSERT ON reported DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION slow_commit()"
+    ],
+    ddl,
+    { discard: true }
+  )
+};
+
+it.layer(Testing.emptyLayer(slowCommit))("reported commits", (it) => {
+  /** Waits until another connection is running `query`. */
+  const running = (query: string) =>
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`SELECT pid FROM pg_stat_activity
+        WHERE datname = current_database() AND state = 'active' AND query ILIKE ${query}`
+    ).pipe(
+      Effect.repeat({ until: (rows) => rows.length === 1 }),
+      Effect.timeout("10 seconds"),
+      TestClock.withLive
+    );
+  const stored = (id: number) =>
+    Effect.flatMap(SqlClient.SqlClient, (sql) => sql`SELECT id FROM reported WHERE id = ${id}`);
+
+  it.effect("reports a change whose COMMIT is interrupted, once it has committed", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const reports: number[] = [];
+      const change = withReportedCommit(
+        sql`INSERT INTO reported (id) VALUES (1)`.pipe(Effect.as(1)),
+        (id) => Effect.sync(() => void reports.push(id))
+      );
+      const fiber = yield* Effect.forkChild(change);
+      yield* running("commit%");
+      yield* Fiber.interrupt(fiber);
+      assert.deepStrictEqual(reports, [1]);
+      assert.strictEqual((yield* stored(1)).length, 1);
+    })
+  );
+
+  it.effect("reports nothing for a change cancelled before it commits", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const reports: number[] = [];
+      const change = withReportedCommit(
+        sql`INSERT INTO reported (id) VALUES (2)`.pipe(
+          Effect.andThen(sql`SELECT pg_sleep(30)`),
+          Effect.as(2)
+        ),
+        (id) => Effect.sync(() => void reports.push(id))
+      );
+      const fiber = yield* Effect.forkChild(change);
+      yield* running("%pg_sleep(30)%");
+      yield* Fiber.interrupt(fiber);
+      assert.deepStrictEqual(reports, []);
+      assert.strictEqual((yield* stored(2)).length, 0);
+    })
+  );
+
+  it.effect("leaves reporting to the caller's own transaction", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const reports: number[] = [];
+      yield* sql.withTransaction(
+        withReportedCommit(sql`INSERT INTO reported (id) VALUES (3)`.pipe(Effect.as(3)), (id) =>
+          Effect.sync(() => void reports.push(id))
+        )
+      );
+      assert.deepStrictEqual(reports, []);
+      assert.strictEqual((yield* stored(3)).length, 1);
     })
   );
 });

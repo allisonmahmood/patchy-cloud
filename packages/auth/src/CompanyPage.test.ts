@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -96,6 +98,11 @@ const deliveryFailed = Effect.fn(function* (response: Response) {
   assert.match(html, /(?:could not|did not|fail|unavailable)/i);
 });
 
+const events: Analytics.AnalyticsEvent[] = [];
+/** A company's business events, without the company they all share. */
+const reported = (companyId: string) =>
+  events.flatMap(({ companyId: company, ...event }) => (company === companyId ? [event] : []));
+
 const services = Layer.mergeAll(
   AuthApi.layer,
   HttpServer.layerServices,
@@ -107,7 +114,15 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Authorization.layer),
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
-  Layer.provideMerge(Layer.mergeAll(Limits.layer, Analytics.layerNoop)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Limits.layer,
+      Layer.succeed(
+        Analytics.Analytics,
+        Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
+      )
+    )
+  ),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
 );
@@ -336,6 +351,54 @@ it.layer(services)("company page and actions", (it) => {
         body: new URLSearchParams({ action: "join", inviteId: invite!.id })
       });
       assert.strictEqual(join.status, 409);
+      const principalId = owner.user.id;
+      assert.deepStrictEqual(reported(owner.company.id), [
+        {
+          name: "invite.sent",
+          principalId,
+          properties: { inviteId: invite!.id, role: "admin", emailed: true }
+        },
+        { name: "invite.resent", principalId, properties: { inviteId: invite!.id, emailed: true } },
+        { name: "invite.revoked", principalId, properties: { inviteId: invite!.id } }
+      ]);
+    })
+  );
+
+  // Delivery commits even when the browser disconnects; its event must follow it.
+  it.effect("reports an invitation that commits after its request was interrupted", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-mail-interrupted");
+      const delivering = yield* Deferred.make<void>();
+      const delivered = yield* Deferred.make<void>();
+      const slowMail = Layer.succeed(
+        InviteMail.InviteMail,
+        InviteMail.InviteMail.of({
+          create: () =>
+            Deferred.succeed(delivering, undefined).pipe(
+              Effect.andThen(Deferred.await(delivered)),
+              Effect.as("clerk_inv_slow")
+            ),
+          revoke: () => Effect.void
+        })
+      );
+      const request = yield* send(
+        "/company/invites",
+        post(owner.user, { email: "interrupted@example.com", role: "member" })
+      ).pipe(Effect.provide(slowMail), Effect.forkChild);
+      yield* Deferred.await(delivering);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(request));
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(delivered, undefined);
+      yield* Fiber.join(interrupting);
+      const [invite] = yield* (yield* Companies.Companies).listInvites(owner.company.id);
+      assert.strictEqual(invite?.clerkInvitationId, "clerk_inv_slow");
+      assert.deepStrictEqual(reported(owner.company.id), [
+        {
+          name: "invite.sent",
+          principalId: owner.user.id,
+          properties: { inviteId: invite!.id, role: "member", emailed: true }
+        }
+      ]);
     })
   );
 
@@ -356,6 +419,10 @@ it.layer(services)("company page and actions", (it) => {
         assert.include(yield* Effect.promise(() => response.text()), 'role="alert"');
       }
       assert.deepStrictEqual(yield* recording.events, delivered);
+      assert.deepStrictEqual(
+        reported(owner.company.id).map((event) => event.name),
+        ["invite.sent"]
+      );
     })
   );
 
@@ -390,6 +457,7 @@ it.layer(services)("company page and actions", (it) => {
           []
         );
         assert.deepStrictEqual(yield* recording.events, before);
+        assert.deepStrictEqual(reported(owner.company.id), []);
       })
   );
 
@@ -424,6 +492,7 @@ it.layer(services)("company page and actions", (it) => {
         assert.deepStrictEqual(yield* users.list(owner.company.id), beforeUsers);
         assert.deepStrictEqual(yield* companies.listInvites(owner.company.id), beforeInvites);
         assert.deepStrictEqual(yield* recording.events, beforeMail);
+        assert.deepStrictEqual(reported(owner.company.id), []);
       })
   );
 
@@ -465,6 +534,7 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(yield* users.list(owner.company.id), beforeUsers);
       assert.deepStrictEqual(yield* companies.listInvites(owner.company.id), beforeInvites);
       assert.deepStrictEqual(yield* recording.events, beforeMail);
+      assert.deepStrictEqual(reported(owner.company.id), []);
     })
   );
 
@@ -503,6 +573,8 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(yield* users.list(foreign.company.id), beforeUsers);
       assert.deepStrictEqual(yield* companies.listInvites(foreign.company.id), beforeInvites);
       assert.deepStrictEqual(yield* recording.events, beforeMail);
+      assert.deepStrictEqual(reported(owner.company.id), []);
+      assert.deepStrictEqual(reported(foreign.company.id), []);
     })
   );
 
@@ -521,6 +593,7 @@ it.layer(services)("company page and actions", (it) => {
       const user = yield* (yield* Users.Users).findByClerkId(owner.user.clerkUserId);
       assert.strictEqual(user?.role, "admin");
       assert.isNull(user?.deactivatedAt);
+      assert.deepStrictEqual(reported(owner.company.id), []);
     })
   );
 
@@ -545,6 +618,10 @@ it.layer(services)("company page and actions", (it) => {
         1
       );
       assert.strictEqual(users.filter((user) => user.role === "member").length, 1);
+      assert.deepStrictEqual(
+        reported(owner.company.id).map((event) => event.properties),
+        [{ userId: users.find((user) => user.role === "member")!.id, role: "member" }]
+      );
     })
   );
 
@@ -574,6 +651,22 @@ it.layer(services)("company page and actions", (it) => {
           yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "member" }))
         );
         assert.deepInclude(yield* (yield* me(laptop.token)).json, { role: "member" });
+        // A stale form asking for the role the user already has changes nothing.
+        redirected(
+          yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "member" }))
+        );
+        assert.deepStrictEqual(reported(owner.company.id), [
+          {
+            name: "user.role_changed",
+            principalId: owner.user.id,
+            properties: { userId: member.id, role: "admin" }
+          },
+          {
+            name: "user.role_changed",
+            principalId: owner.user.id,
+            properties: { userId: member.id, role: "member" }
+          }
+        ]);
 
         yield* users.deactivate(input);
         const denied = yield* send("/company", { headers: { cookie: cookie(member) } });
@@ -643,18 +736,35 @@ it.layer(services)("company page and actions", (it) => {
           ).pipe(Effect.provide(InviteMail.layerFailing));
           yield* deliveryFailed(response);
           const after = yield* companies.listInvites(owner.company.id);
+          const principalId = owner.user.id;
+          const last = reported(owner.company.id).at(-1);
           if (action === "create") {
             // Saved without a delivered link, so the invitee can still join.
             assert.deepStrictEqual(
               after.map((invite) => [invite.email, invite.clerkInvitationId]),
               [[form.email, null]]
             );
+            assert.deepStrictEqual(last, {
+              name: "invite.sent",
+              principalId,
+              properties: { inviteId: after[0]!.id, role: "member", emailed: false }
+            });
           } else if (action === "resend") {
             // The earlier delivery stays because it could not be revoked.
             assert.deepStrictEqual(after, before);
+            assert.deepStrictEqual(last, {
+              name: "invite.resent",
+              principalId,
+              properties: { inviteId: before[0]!.id, emailed: false }
+            });
           } else {
             // Revoked here even though the emailed link could not be.
             assert.deepStrictEqual(after, []);
+            assert.deepStrictEqual(last, {
+              name: "invite.revoked",
+              principalId,
+              properties: { inviteId: before[0]!.id }
+            });
           }
         }
       })

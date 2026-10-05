@@ -203,7 +203,14 @@ export class ConnectionStore extends Context.Service<
       id: string,
       revision: number
     ) => Effect.Effect<typeof Snapshot.Type, ConnectionError>;
-    readonly connect: (input: ConnectInput) => Effect.Effect<Connection, ConnectionError>;
+    /**
+     * `report` runs with the commit, after discovery: a disconnect during COMMIT
+     * still reports, and a refusal or rollback never does.
+     */
+    readonly connect: (
+      input: ConnectInput,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) => Effect.Effect<Connection, ConnectionError>;
     readonly test: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly rotate: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
     readonly retarget: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
@@ -213,7 +220,11 @@ export class ConnectionStore extends Context.Service<
     readonly describe: (
       input: Identity & { readonly description: string }
     ) => Effect.Effect<Connection, ConnectionError>;
-    readonly delete: (input: Identity) => Effect.Effect<void, ConnectionError>;
+    /** Returns the connection as it was before deletion; `report` runs as `connect`'s does. */
+    readonly delete: (
+      input: Identity,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) => Effect.Effect<Connection, ConnectionError>;
     /** Hold the connection lock until the declaring version commits in the caller's platform transaction. */
     readonly resolve: (
       companyId: string,

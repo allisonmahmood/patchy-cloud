@@ -2,7 +2,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
+import { Analytics } from "@patchy/analytics";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
 import type { Claims } from "./Users.js";
 
@@ -97,10 +99,21 @@ export const handle = Effect.fn("Join.handle")(function* (
   const fields = Object.fromEntries(yield* request.urlParamsBody);
   const entered = { name: (fields.name ?? "").trim(), handle: fields.handle ?? "" };
   const companies = yield* Companies.Companies;
+  const analytics = yield* Analytics.Analytics;
   return yield* Effect.gen(function* () {
     const form = yield* decodeForm({ ...fields, name: entered.name });
+    // Each change reports with its commit; a refusal or rollback reports nothing.
     if (form.action === "join") {
-      yield* companies.consumeInvite({ ...claims, inviteId: form.inviteId });
+      yield* withReportedCommit(
+        companies.consumeInvite({ ...claims, inviteId: form.inviteId }),
+        (user) =>
+          analytics.track({
+            name: "user.joined",
+            principalId: user.id,
+            companyId: user.companyId,
+            properties: { via: "invite", role: user.role, inviteId: form.inviteId }
+          })
+      );
     } else {
       if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
         return yield* render(claims, returnTo, entered, {
@@ -108,12 +121,23 @@ export const handle = Effect.fn("Join.handle")(function* (
           status: 409
         });
       }
-      yield* companies.create({
+      const created = companies.create({
         clerkUserId: claims.clerkUserId,
         email: claims.email,
         userName: claims.name,
         name: form.name,
         handle: form.handle
+      });
+      yield* withReportedCommit(created, ({ company, user }) => {
+        const joined = { principalId: user.id, companyId: company.id };
+        return Effect.andThen(
+          analytics.track({ name: "company.created", ...joined, properties: {} }),
+          analytics.track({
+            name: "user.joined",
+            ...joined,
+            properties: { via: "create", role: user.role }
+          })
+        );
       });
     }
     return {

@@ -4,6 +4,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
+import type { Analytics } from "@patchy/analytics";
 import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
 import * as DevicePages from "./DevicePages.js";
 import type * as DeviceLogins from "./DeviceLogins.js";
@@ -122,6 +123,7 @@ export const layer: Layer.Layer<
       | SqlClient.SqlClient
       | DeviceLogins.DeviceLogins
       | MachineTokens.MachineTokens
+      | Analytics.Analytics
     >
 > = Layer.merge(
   DevicePages.layer,

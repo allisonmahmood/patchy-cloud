@@ -117,9 +117,14 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             (yield* users.deactivate(adminRef).pipe(Effect.flip))._tag,
             "LastAdmin"
           );
-          assert.strictEqual((yield* users.setRole({ ...memberRef, role: "admin" })).role, "admin");
+          assert.deepInclude(yield* users.setRole({ ...memberRef, role: "admin" }), {
+            changed: true
+          });
+          assert.deepInclude(yield* users.setRole({ ...memberRef, role: "admin" }), {
+            changed: false
+          });
           assert.strictEqual(
-            (yield* users.setRole({ ...adminRef, role: "member" })).role,
+            (yield* users.setRole({ ...adminRef, role: "member" })).user.role,
             "member"
           );
           assert.strictEqual(

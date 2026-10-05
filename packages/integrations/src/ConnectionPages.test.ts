@@ -12,6 +12,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
+import { Analytics } from "@patchy/analytics";
 import { PostgresDeclaration } from "@patchy/api";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -92,12 +93,17 @@ const source = Layer.effect(
   )
 );
 
+const events: Analytics.AnalyticsEvent[] = [];
 const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
   Users.layer,
   HttpServer.layerServices,
-  SqlConnectionStore.layer
+  SqlConnectionStore.layer,
+  Layer.succeed(
+    Analytics.Analytics,
+    Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
+  )
 ).pipe(
   Layer.provideMerge(RuntimeLog.layer),
   Layer.provideMerge(source),
@@ -184,6 +190,21 @@ const connect = Effect.fn(function* (
   assert.strictEqual(target.pathname, `/company/connections/${connection.id}`);
   return { connection, path: target.pathname };
 });
+/** The connection events a company reported, as `[name, principal, connection]`. */
+const reported = (companyId: string) =>
+  events.flatMap((event) =>
+    event.companyId === companyId &&
+    (event.name === "connection.connected" || event.name === "connection.deleted")
+      ? [
+          [
+            event.name,
+            event.principalId,
+            event.properties.connectionId,
+            event.properties.integration
+          ]
+        ]
+      : []
+  );
 const follow = Effect.fn(function* (response: Response, user: Users.User) {
   assert.strictEqual(response.status, 303);
   const page = yield* send(response.headers.get("location")!, {
@@ -465,6 +486,10 @@ it.layer(services)("company connection pages", (it) => {
           404
         );
         assert.deepStrictEqual(yield* store.list(owner.company.id), []);
+        assert.deepStrictEqual(reported(owner.company.id), [
+          ["connection.connected", owner.user.id, connection.id, "postgres"],
+          ["connection.deleted", owner.user.id, connection.id, "postgres"]
+        ]);
       })
   );
 
@@ -530,6 +555,9 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.strictEqual(invalid.status, 422);
         assert.notInclude(yield* Effect.promise(() => invalid.text()), "page-secret-malformed");
+        assert.deepStrictEqual(reported(owner.company.id), [
+          ["connection.connected", owner.user.id, connection.id, "postgres"]
+        ]);
       })
   );
 
@@ -586,6 +614,10 @@ it.layer(services)("company connection pages", (it) => {
           yield* (yield* ConnectionStore.ConnectionStore).list(other.company.id),
           []
         );
+        assert.deepStrictEqual(reported(owner.company.id), [
+          ["connection.connected", owner.user.id, connection.id, "postgres"]
+        ]);
+        assert.deepStrictEqual(reported(other.company.id), []);
       })
   );
 
@@ -651,6 +683,10 @@ it.layer(services)("company connection pages", (it) => {
           (yield* send(path, { headers: { cookie: cookie(owner.user) } })).status,
           200
         );
+        // The refused deletion rolled back and reported nothing.
+        assert.deepStrictEqual(reported(owner.company.id), [
+          ["connection.connected", owner.user.id, connection.id, "postgres"]
+        ]);
       })
   );
 });

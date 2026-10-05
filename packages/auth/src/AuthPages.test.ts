@@ -55,6 +55,11 @@ const post = (
   body: new URLSearchParams(body),
   headers: { cookie: sessionCookie, origin, ...extra }
 });
+const events: Analytics.AnalyticsEvent[] = [];
+const recordedAnalytics = Layer.succeed(
+  Analytics.Analytics,
+  Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
+);
 const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
@@ -63,7 +68,7 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
-  Layer.provide(Analytics.layerNoop),
+  Layer.provideMerge(recordedAnalytics),
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
@@ -164,6 +169,16 @@ it.layer(services)("first-party pages in memory", (it) => {
         post({ action: "create", name: "Other", handle: "other-enroll" }, sessionCookie)
       );
       assert.strictEqual(refused.status, 409);
+      // Both belong to the new user, and the refused second create adds nothing.
+      const user = yield* (yield* Users.Users).findByClerkId("user_enroll");
+      const attribution = { principalId: user!.id, companyId: user!.companyId };
+      assert.deepStrictEqual(
+        events.filter((event) => event.principalId === user!.id),
+        [
+          { name: "company.created", ...attribution, properties: {} },
+          { name: "user.joined", ...attribution, properties: { via: "create", role: "admin" } }
+        ]
+      );
     })
   );
 
@@ -222,11 +237,23 @@ it.layer(services)("first-party pages in memory", (it) => {
         post({ action: "join", inviteId: first.id }, sessionCookie)
       );
       assert.strictEqual(refused.status, 409);
+      assert.deepStrictEqual(
+        events.filter((event) => event.principalId === user!.id),
+        [
+          {
+            name: "user.joined",
+            principalId: user!.id,
+            companyId: other.company.id,
+            properties: { via: "invite", role: "admin", inviteId: second.id }
+          }
+        ]
+      );
     })
   );
 
   it.effect("keeps entered values when a handle is taken, reserved or malformed", () =>
     Effect.gen(function* () {
+      const reported = events.length;
       for (const [handle, status] of [
         [DEV_SEED.companyHandle, 409],
         ["admin", 422],
@@ -244,6 +271,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         assert.include(html, "Keep &quot;this&quot;");
         assert.include(html, 'role="alert"');
       }
+      assert.strictEqual(events.length, reported);
     })
   );
 
@@ -367,7 +395,7 @@ it.layer(
   Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording).pipe(
     Layer.provideMerge(DeviceLogins.layer),
     Layer.provideMerge(MachineTokens.layer),
-    Layer.provide(Analytics.layerNoop),
+    Layer.provideMerge(Analytics.layerNoop),
     Layer.provide(Limits.layer),
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))

@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import type * as SqlClient from "effect/sql/SqlClient";
+import type { Analytics } from "@patchy/analytics";
 import { type Companies, type Users } from "@patchy/companies";
 import type * as ConnectionStore from "./ConnectionStore.js";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -91,6 +92,7 @@ export const layer: Layer.Layer<
       | SqlClient.SqlClient
       | ConnectionStore.ConnectionStore
       | RuntimeLog.RuntimeLog
+      | Analytics.Analytics
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {

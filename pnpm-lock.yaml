@@ -254,6 +254,9 @@ importers:
       '@clerk/backend':
         specifier: 3.21.1
         version: 3.21.1
+      '@patchy/analytics':
+        specifier: workspace:*
+        version: link:../analytics
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
