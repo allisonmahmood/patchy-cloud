@@ -1,6 +1,7 @@
 /**
- * The sql capability: a Postgres client from config, and Effect's Migrator
- * over the migration records the capability packages own. This package owns
+ * The sql capability: a Postgres client from config, Effect's Migrator over
+ * the migration records the capability packages own, and a transaction that
+ * reports its change with its commit. This package owns
  * no tables; see CONTEXT.md for the migration contract and README.md for how
  * a capability decodes rows.
  */
@@ -10,6 +11,7 @@ import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -113,6 +115,27 @@ export const layerFromUrl = (url: Redacted.Redacted<string>) => PgClient.layerFr
 
 /** The client the server runs on: `DATABASE_URL`, read as a secret. */
 export const layer = Layer.unwrap(Effect.map(Config.Redacted("DATABASE_URL"), layerFromUrl));
+
+/**
+ * Runs `change` as the outermost transaction and `report` with its commit. Only
+ * the change is cancellable, lock waits included: an interrupt that arrives
+ * during COMMIT waits for the committed change to report, and a rolled-back or
+ * cancelled change reports nothing. Inside a caller's transaction there is no
+ * commit to wait for, so it reports nothing rather than report a rollback.
+ */
+export const withReportedCommit = <A, E, R, R2>(
+  change: Effect.Effect<A, E, R>,
+  report: (value: A) => Effect.Effect<void, never, R2>
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const outer = yield* Effect.serviceOption(sql.transactionService);
+    return yield* Effect.uninterruptibleMask((restore) =>
+      sql
+        .withTransaction(restore(change))
+        .pipe(Effect.tap((value) => (Option.isSome(outer) ? Effect.void : report(value))))
+    );
+  });
 
 /**
  * Runs statements in order on the ambient client; the shape of a migration

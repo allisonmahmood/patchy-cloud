@@ -4,6 +4,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
 import type { Claims } from "./Users.js";
 
@@ -101,20 +102,17 @@ export const handle = Effect.fn("Join.handle")(function* (
   const analytics = yield* Analytics.Analytics;
   return yield* Effect.gen(function* () {
     const form = yield* decodeForm({ ...fields, name: entered.name });
-    // Each call commits before its event, and a refused one fails first. The work
-    // stays cancellable; once it returns, a disconnect can't drop its event.
+    // Each change reports with its commit; a refusal or rollback reports nothing.
     if (form.action === "join") {
-      yield* Effect.uninterruptibleMask((restore) =>
-        restore(companies.consumeInvite({ ...claims, inviteId: form.inviteId })).pipe(
-          Effect.tap((user) =>
-            analytics.track({
-              name: "user.joined",
-              principalId: user.id,
-              companyId: user.companyId,
-              properties: { via: "invite", role: user.role, inviteId: form.inviteId }
-            })
-          )
-        )
+      yield* withReportedCommit(
+        companies.consumeInvite({ ...claims, inviteId: form.inviteId }),
+        (user) =>
+          analytics.track({
+            name: "user.joined",
+            principalId: user.id,
+            companyId: user.companyId,
+            properties: { via: "invite", role: user.role, inviteId: form.inviteId }
+          })
       );
     } else {
       if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
@@ -130,21 +128,17 @@ export const handle = Effect.fn("Join.handle")(function* (
         name: form.name,
         handle: form.handle
       });
-      yield* Effect.uninterruptibleMask((restore) =>
-        restore(created).pipe(
-          Effect.tap(({ company, user }) => {
-            const joined = { principalId: user.id, companyId: company.id };
-            return Effect.andThen(
-              analytics.track({ name: "company.created", ...joined, properties: {} }),
-              analytics.track({
-                name: "user.joined",
-                ...joined,
-                properties: { via: "create", role: user.role }
-              })
-            );
+      yield* withReportedCommit(created, ({ company, user }) => {
+        const joined = { principalId: user.id, companyId: company.id };
+        return Effect.andThen(
+          analytics.track({ name: "company.created", ...joined, properties: {} }),
+          analytics.track({
+            name: "user.joined",
+            ...joined,
+            properties: { via: "create", role: user.role }
           })
-        )
-      );
+        );
+      });
     }
     return {
       title: "Company joined",

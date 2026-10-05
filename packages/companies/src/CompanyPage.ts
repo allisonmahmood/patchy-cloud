@@ -5,6 +5,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";
 import * as Users from "./Users.js";
@@ -85,9 +86,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     const request = yield* HttpServerRequest.HttpServerRequest;
     const users = yield* Users.Users;
     const analytics = yield* Analytics.Analytics;
-    // Each action commits before its event, and a refused one fails first. Once it
-    // returns, a disconnect can't drop its event. Invitations are uninterruptible
-    // already; the role change stays cancellable until its commit returns.
+    // A refused action fails before its event. Invitations deliver uninterruptibly,
+    // so each reports in the same region; the role change reports with its commit.
     const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
     let mailFailed = false;
     if (action.kind === "invite") {
@@ -142,18 +142,14 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
         userId: action.id,
         role: form.role
       });
-      yield* Effect.uninterruptibleMask((restore) =>
-        restore(change).pipe(
-          Effect.tap(({ changed }) =>
-            changed
-              ? analytics.track({
-                  name: "user.role_changed",
-                  ...admin,
-                  properties: { userId: action.id, role: form.role }
-                })
-              : Effect.void
-          )
-        )
+      yield* withReportedCommit(change, ({ changed }) =>
+        changed
+          ? analytics.track({
+              name: "user.role_changed",
+              ...admin,
+              properties: { userId: action.id, role: form.role }
+            })
+          : Effect.void
       );
     }
     if (mailFailed) {

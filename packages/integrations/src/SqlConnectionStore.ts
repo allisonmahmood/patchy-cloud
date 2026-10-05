@@ -4,6 +4,7 @@ import * as Companies from "@patchy/companies/Companies";
 import { newInternalId } from "@patchy/core";
 import { RuntimeLog } from "@patchy/runtime";
 import { registry } from "@patchy/limits/registry";
+import { withReportedCommit } from "@patchy/sql";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -224,15 +225,20 @@ export const make = Effect.gen(function* () {
     },
     Effect.catchTags(safe("snapshot"))
   );
+  /** The outermost transaction of a change whose caller reports it with the commit. */
+  const reportedTransaction = <A, E>(
+    change: Effect.Effect<A, E>,
+    report: (value: A) => Effect.Effect<void> = () => Effect.void
+  ) => withReportedCommit(change, report).pipe(Effect.provideService(SqlClient.SqlClient, sql));
   const connect = Effect.fn("ConnectionStore.connect")(
-    function* (input: ConnectInput) {
+    function* (input: ConnectInput, report?: (connection: Connection) => Effect.Effect<void>) {
       if (!Companies.isHandle(input.handle)) return yield* new InvalidConnectionHandle({});
       if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
       const identity = { ...input, id: newInternalId("conn"), integration: "postgres" as const };
       const inspected = yield* inspect(identity, input.credentials);
       const encrypted = yield* keys.encrypt(identity, input.credentials);
       const now = yield* Clock.currentTimeMillis;
-      return yield* sql.withTransaction(
+      return yield* reportedTransaction(
         Effect.gen(function* () {
           const inserted = yield* sql`INSERT INTO connections
         (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
@@ -244,7 +250,8 @@ export const make = Effect.gen(function* () {
           if (inserted.length === 0) return yield* new ConnectionHandleTaken({});
           yield* writeSnapshot(identity, 1, inspected.snapshot, now);
           return yield* get(input.companyId, identity.id);
-        })
+        }),
+        report
       );
     },
     Effect.catchTags(safe("connect"))
@@ -366,8 +373,8 @@ export const make = Effect.gen(function* () {
     Effect.catchTags(safe("describe"))
   );
   const remove = Effect.fn("ConnectionStore.delete")(
-    (input: Identity) =>
-      sql.withTransaction(
+    (input: Identity, report?: (connection: Connection) => Effect.Effect<void>) =>
+      reportedTransaction(
         Effect.gen(function* () {
           const connection = yield* lock(input);
           const references =
@@ -379,7 +386,8 @@ export const make = Effect.gen(function* () {
           if (references.length !== 0) return yield* new ConnectionInUse({});
           yield* sql`DELETE FROM connections WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return connection;
-        })
+        }),
+        report
       ),
     Effect.catchTags(safe("delete"))
   );

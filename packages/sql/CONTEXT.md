@@ -12,6 +12,10 @@ _Avoid_: schema version, patch (that word is the product's), idempotent migratio
 The database's record of applied migrations, not the application version last run. Its highest applied id is the high-water mark: only higher ids are eligible, so lower-numbered gaps are not backfilled. Migrating refuses a ledger that disagrees with the record up to the lower of the two high-water marks: a database migrated by another history, such as one from before the baselines were squashed.
 _Avoid_: migration history, version table
 
+**Reported commit**:
+A change run as the outermost transaction whose report runs with its COMMIT (`withReportedCommit`). The change stays cancellable, lock waits included; an interrupt during COMMIT waits until the committed change has reported, and a rolled-back change reports nothing.
+_Avoid_: after-commit hook (nothing is registered; the report follows this transaction only)
+
 **Baseline**:
 A capability's first migration, creating its tables as they stood when it landed. The platform baselines were squashed before launch, one per capability.
 _Avoid_: initial schema, snapshot
