@@ -89,7 +89,7 @@ it.effect("reports an event no principal performed under the instance", () =>
 
 // Typechecking runs this test; its body does nothing at runtime.
 it("holds each event to its own catalogue entry", () => {
-  void [
+  void ([
     // @ts-expect-error Every business event names its company.
     { name: "patch.deleted", principalId: "usr_1", properties: event.properties },
     {
@@ -106,7 +106,7 @@ it("holds each event to its own catalogue entry", () => {
       // @ts-expect-error Properties belong to the event that declares them.
       properties: { tokenId: "mtk_1", replaced: false, patchId: "pch_1" }
     }
-  ] satisfies ReadonlyArray<Analytics.AnalyticsEvent>;
+  ] satisfies ReadonlyArray<Analytics.AnalyticsEvent>);
 });
 
 it.effect("keeps a failing backend away from the caller", () =>
