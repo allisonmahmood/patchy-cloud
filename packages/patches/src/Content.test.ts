@@ -687,12 +687,16 @@ it.layer(
       const created = yield* publish("<p>original</p>");
       const sql = yield* SqlClient.SqlClient;
       const staged = yield* Deferred.make<void>();
+      // The stall stands for a transaction body still working, which a deadline may interrupt.
       const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
         sql.withTransaction(
           effect.pipe(
             Effect.tap((result) =>
               typeof result === "object" && result !== null && "responseBody" in result
-                ? Deferred.succeed(staged, undefined).pipe(Effect.andThen(Effect.never))
+                ? Deferred.succeed(staged, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.interruptible
+                  )
                 : Effect.void
             )
           )
