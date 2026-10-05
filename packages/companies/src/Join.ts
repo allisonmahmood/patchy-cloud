@@ -101,19 +101,20 @@ export const handle = Effect.fn("Join.handle")(function* (
   const analytics = yield* Analytics.Analytics;
   return yield* Effect.gen(function* () {
     const form = yield* decodeForm({ ...fields, name: entered.name });
-    // Each call commits before its event, and a refused one fails first. A
-    // disconnect must not separate a commit from its event.
+    // Each call commits before its event, and a refused one fails first. The work
+    // stays cancellable; once it returns, a disconnect can't drop its event.
     if (form.action === "join") {
-      yield* companies.consumeInvite({ ...claims, inviteId: form.inviteId }).pipe(
-        Effect.tap((user) =>
-          analytics.track({
-            name: "user.joined",
-            principalId: user.id,
-            companyId: user.companyId,
-            properties: { via: "invite", role: user.role, inviteId: form.inviteId }
-          })
-        ),
-        Effect.uninterruptible
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(companies.consumeInvite({ ...claims, inviteId: form.inviteId })).pipe(
+          Effect.tap((user) =>
+            analytics.track({
+              name: "user.joined",
+              principalId: user.id,
+              companyId: user.companyId,
+              properties: { via: "invite", role: user.role, inviteId: form.inviteId }
+            })
+          )
+        )
       );
     } else {
       if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
@@ -122,15 +123,15 @@ export const handle = Effect.fn("Join.handle")(function* (
           status: 409
         });
       }
-      yield* companies
-        .create({
-          clerkUserId: claims.clerkUserId,
-          email: claims.email,
-          userName: claims.name,
-          name: form.name,
-          handle: form.handle
-        })
-        .pipe(
+      const created = companies.create({
+        clerkUserId: claims.clerkUserId,
+        email: claims.email,
+        userName: claims.name,
+        name: form.name,
+        handle: form.handle
+      });
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(created).pipe(
           Effect.tap(({ company, user }) => {
             const joined = { principalId: user.id, companyId: company.id };
             return Effect.andThen(
@@ -141,9 +142,9 @@ export const handle = Effect.fn("Join.handle")(function* (
                 properties: { via: "create", role: user.role }
               })
             );
-          }),
-          Effect.uninterruptible
-        );
+          })
+        )
+      );
     }
     return {
       title: "Company joined",

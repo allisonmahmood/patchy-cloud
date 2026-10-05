@@ -85,8 +85,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     const request = yield* HttpServerRequest.HttpServerRequest;
     const users = yield* Users.Users;
     const analytics = yield* Analytics.Analytics;
-    // Each action commits before its event, and a refused one fails first. A
-    // disconnect must not separate a commit from its event.
+    // Each action commits before its event, and a refused one fails first. Once it
+    // returns, a disconnect can't drop its event. Invitations are uninterruptible
+    // already; the role change stays cancellable until its commit returns.
     const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
     let mailFailed = false;
     if (action.kind === "invite") {
@@ -136,9 +137,13 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       mailFailed = result.mailFailed;
     } else if (action.kind === "role") {
       const form = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
-      yield* users
-        .setRole({ companyId: viewer.company.id, userId: action.id, role: form.role })
-        .pipe(
+      const change = users.setRole({
+        companyId: viewer.company.id,
+        userId: action.id,
+        role: form.role
+      });
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(change).pipe(
           Effect.tap(({ changed }) =>
             changed
               ? analytics.track({
@@ -147,9 +152,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
                   properties: { userId: action.id, role: form.role }
                 })
               : Effect.void
-          ),
-          Effect.uninterruptible
-        );
+          )
+        )
+      );
     }
     if (mailFailed) {
       return yield* render(viewer, {

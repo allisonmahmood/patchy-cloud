@@ -187,22 +187,23 @@ export const handle = Effect.fn("ConnectionPage.handle")(function* (
     const analytics = yield* Analytics.Analytics;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const identity = { companyId: viewer.company.id, userId: viewer.user.id };
-    // Each call commits before its event, and a refused one fails first. A
-    // disconnect must not separate a commit from its event.
+    // Each call commits before its event, and a refused one fails first. The work
+    // stays cancellable; once it returns, a disconnect can't drop its event.
     const reported = (
       name: "connection.connected" | "connection.deleted",
       change: Effect.Effect<ConnectionStore.Connection, ConnectionStore.ConnectionError>
     ) =>
-      change.pipe(
-        Effect.tap((connection) =>
-          analytics.track({
-            name,
-            principalId: viewer.user.id,
-            companyId: viewer.company.id,
-            properties: { connectionId: connection.id, integration: connection.integration }
-          })
-        ),
-        Effect.uninterruptible
+      Effect.uninterruptibleMask((restore) =>
+        restore(change).pipe(
+          Effect.tap((connection) =>
+            analytics.track({
+              name,
+              principalId: viewer.user.id,
+              companyId: viewer.company.id,
+              properties: { connectionId: connection.id, integration: connection.integration }
+            })
+          )
+        )
       );
     let target: string;
     if (action.kind === "connect") {

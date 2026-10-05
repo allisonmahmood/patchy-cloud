@@ -234,10 +234,10 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     });
   });
   const analytics = yield* Analytics.Analytics;
-  // A disconnect must not separate the commit from its event.
-  const commit = patches
-    .withDependencyLock(viewer.user.id)(run)
-    .pipe(
+  // The transaction, lock waits included, stays cancellable; once it has
+  // committed, a disconnect can't drop its event.
+  const commit = Effect.uninterruptibleMask((restore) =>
+    restore(patches.withDependencyLock(viewer.user.id)(run)).pipe(
       Effect.tap(() =>
         changed
           ? analytics.track({
@@ -247,9 +247,9 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
               properties: { userId: id }
             })
           : Effect.void
-      ),
-      Effect.uninterruptible
-    );
+      )
+    )
+  );
   return yield* (choice === "keep" || choice === "confirm" ? commit : run).pipe(
     Effect.catchTags({
       UserNotFound: (error) => Effect.succeed(refuse(error.message, 404)),

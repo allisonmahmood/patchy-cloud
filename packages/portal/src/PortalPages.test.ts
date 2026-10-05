@@ -2234,6 +2234,48 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
     );
   }
 
+  it.effect(
+    "stops waiting and reports nothing when the admin disconnects during a lock wait",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const sql = yield* SqlClient.SqlClient;
+        const locked = yield* Deferred.make<number>();
+        const release = yield* Deferred.make<void>();
+        // Hold the company row, as an invitation does while Clerk delivers it.
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT id FROM companies WHERE id = ${workspace.id} FOR UPDATE`;
+              const [backend] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+              yield* Deferred.succeed(locked, backend!.pid);
+              yield* Deferred.await(release);
+            })
+          )
+          .pipe(Effect.forkScoped);
+        const blocker = yield* Deferred.await(locked);
+        const waiting = (count: number) =>
+          sql<{ pid: number }>`
+            SELECT pid FROM pg_stat_activity
+            WHERE datname = current_database() AND ${blocker} = ANY(pg_blocking_pids(pid))`.pipe(
+            Effect.repeat({ until: (rows) => rows.length === count }),
+            Effect.timeout("10 seconds"),
+            TestClock.withLive
+          );
+        const confirmation = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
+          choice: "keep"
+        }).pipe(Effect.forkScoped);
+        yield* waiting(1);
+        yield* Fiber.interrupt(confirmation);
+        // The lock is still held, so only cancellation can end the wait.
+        yield* waiting(0);
+        yield* Deferred.succeed(release, undefined);
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
+      }).pipe(Effect.scoped),
+    15_000
+  );
+
   it.effect("renders lifecycle picks and previews while company mutation locks are held", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
