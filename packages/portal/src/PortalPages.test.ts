@@ -2331,6 +2331,11 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         const card = yield* (yield* request(cardPath(source.name), workspace.member)).text;
         assert.include(text(card), "Priya (deactivated)");
         assert.strictEqual((yield* request("/", workspace.owner)).status, 403);
+        // Repeating it is refused and reports nothing more.
+        const repeated = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
+          choice: "keep"
+        });
+        assert.strictEqual(repeated.status, 409);
         assert.deepStrictEqual(lifecycleEvents(workspace.id), [
           ["user.deactivated", workspace.admin.id, workspace.owner.id]
         ]);

@@ -696,32 +696,36 @@ it.layer(services)("company page and actions", (it) => {
           ).pipe(Effect.provide(InviteMail.layerFailing));
           yield* deliveryFailed(response);
           const after = yield* companies.listInvites(owner.company.id);
+          const principalId = owner.user.id;
+          const last = reported(owner.company.id).at(-1);
           if (action === "create") {
             // Saved without a delivered link, so the invitee can still join.
             assert.deepStrictEqual(
               after.map((invite) => [invite.email, invite.clerkInvitationId]),
               [[form.email, null]]
             );
+            assert.deepStrictEqual(last, {
+              name: "invite.sent",
+              principalId,
+              properties: { inviteId: after[0]!.id, role: "member", emailed: false }
+            });
           } else if (action === "resend") {
             // The earlier delivery stays because it could not be revoked.
             assert.deepStrictEqual(after, before);
+            assert.deepStrictEqual(last, {
+              name: "invite.resent",
+              principalId,
+              properties: { inviteId: before[0]!.id, emailed: false }
+            });
           } else {
             // Revoked here even though the emailed link could not be.
             assert.deepStrictEqual(after, []);
+            assert.deepStrictEqual(last, {
+              name: "invite.revoked",
+              principalId,
+              properties: { inviteId: before[0]!.id }
+            });
           }
-          const inviteId = (before[0] ?? after[0])!.id;
-          const principalId = owner.user.id;
-          assert.deepStrictEqual(reported(owner.company.id).slice(action === "create" ? 0 : 1), [
-            action === "create"
-              ? {
-                  name: "invite.sent",
-                  principalId,
-                  properties: { inviteId, role: "member", emailed: false }
-                }
-              : action === "resend"
-                ? { name: "invite.resent", principalId, properties: { inviteId, emailed: false } }
-                : { name: "invite.revoked", principalId, properties: { inviteId } }
-          ]);
         }
       })
   );
