@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { CURRENT_RELEASE } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
   htmlFile,
@@ -481,13 +482,25 @@ describe("patchy whoami", async () => {
     });
     expect(instance.requests[0]).toMatchObject({
       url: "/api/me",
-      authorization: "Bearer pp_stored"
+      authorization: "Bearer pp_stored",
+      patchyCli: `${CURRENT_RELEASE} whoami unknown`
     });
 
     const json = await runCli(["whoami", "--json"], { stateDir: dir });
     expect(json.status).toBe(0);
     expect(json.stderr).toBe("");
     expect(JSON.parse(json.stdout)).toEqual(identity);
+  });
+
+  it("names the coding agent running it, never the variable's value", async () => {
+    const instance = await stubInstance((_, respond) => respond(200, identity));
+    const result = await runCli(["whoami", "--api-url", instance.url], {
+      env: { PATCHY_API_TOKEN: "pp_env", CODEX_THREAD_ID: "secret-thread-id" }
+    });
+    expect(result.status).toBe(0);
+    expect(instance.requests.map((request) => request.patchyCli)).toEqual([
+      `${CURRENT_RELEASE} whoami codex`
+    ]);
   });
 });
 

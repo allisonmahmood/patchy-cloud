@@ -1261,6 +1261,36 @@ The dev seed is available only when the URL source is `dev-env`. An explicit
 `--api-url` selects `flag` even for the same URL: use a stored credential or
 `PATCHY_API_TOKEN` then, rather than expecting the dev-env token to follow the flag.
 
+## The `Patchy-Cli` header
+
+Every request a command sends to the instance names the CLI in one header,
+`Patchy-Cli: <release> <command> <agent>`, such as
+`Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records
+and nothing else depends on it. The command is the one you ran (`auth set`,
+`status`, `setup` and `validate` send no requests). The agent is the first of
+these whose variable is set in the CLI's environment, or `unknown`:
+
+| Agent         | Variable                    |
+| ------------- | --------------------------- |
+| `codex`       | `CODEX_THREAD_ID`           |
+| `cursor`      | `CURSOR_AGENT`              |
+| `gemini-cli`  | `GEMINI_CLI`                |
+| `kilo-code`   | `KILO`                      |
+| `opencode`    | `OPENCODE`                  |
+| `copilot-cli` | `COPILOT_CLI`               |
+| `grok`        | `GROK_AGENT`                |
+| `crush`       | `CRUSH`                     |
+| `qwen-code`   | `QWEN_CODE`                 |
+| `pi`          | `PI_CODING_AGENT`           |
+| `augment`     | `AUGMENT_AGENT`             |
+| `roo-code`    | `ROO_ACTIVE`                |
+| `cline`       | `CLINE_ACTIVE`              |
+| `claude-code` | `CLAUDE_CODE_CHILD_SESSION` |
+
+Presence counts; the CLI never sends a variable's value. A harness's commands
+inherit the variables of whatever launched it, which is why Claude Code, the
+usual outer shell, comes last.
+
 ## State
 
 The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):

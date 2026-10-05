@@ -20,6 +20,7 @@ import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Prompt from "effect/cli/Prompt";
 import {
+  type CliCommand,
   PatchName,
   Identity,
   Deleted,
@@ -1141,30 +1142,38 @@ const dev = Command.make(
 
 // --- the tree ---------------------------------------------------------------
 
+/**
+ * Names a command on the `Patchy-Cli` header of every request it sends; a
+ * command must be in the contract's `CliCommand` list to reach the instance.
+ */
+const reaching = <Name extends CliCommand, Input, ContextInput, E, R>(
+  command: Command.Command<Name, Input, ContextInput, E, R>
+) => Command.provideSync(command, Api.CurrentCommand, command.name);
+
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Build patch repos and publish patches to a Patchy Cloud instance."),
   Command.withSubcommands([
-    login,
-    logout,
+    reaching(login),
+    reaching(logout),
     auth,
-    whoami,
+    reaching(whoami),
     status,
     setup,
     validate,
-    publish,
-    share,
-    del,
-    retire,
-    restore,
-    rollback,
-    describe,
-    init,
-    dev,
-    refresh,
-    list,
-    add,
-    remove,
-    generateProject
+    reaching(publish),
+    reaching(share),
+    reaching(del),
+    reaching(retire),
+    reaching(restore),
+    reaching(rollback),
+    reaching(describe),
+    reaching(init),
+    reaching(dev),
+    reaching(refresh),
+    reaching(list),
+    reaching(add),
+    reaching(remove),
+    reaching(generateProject)
   ]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );

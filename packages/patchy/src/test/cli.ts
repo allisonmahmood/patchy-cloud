@@ -98,6 +98,8 @@ export interface Recorded {
   readonly method: string;
   readonly url: string;
   readonly authorization: string | undefined;
+  /** The `Patchy-Cli` header: release, command and coding agent. */
+  readonly patchyCli: string | string[] | undefined;
   readonly body: unknown;
 }
 
@@ -124,6 +126,7 @@ export const stubInstance = async (
         method: request.method ?? "",
         url: request.url ?? "",
         authorization: request.headers.authorization,
+        patchyCli: request.headers["patchy-cli"],
         body: raw ? JSON.parse(raw) : undefined
       };
       requests.push(recorded);

@@ -20,6 +20,7 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
@@ -86,6 +87,12 @@ const routes = HttpRouter.use((router) =>
       )
     );
     yield* router.add("GET", "/defect", Effect.die(new Error("boom")));
+    // Answers with the CLI the request event handed its business events.
+    yield* router.add(
+      "GET",
+      "/cli",
+      Effect.map(Analytics.CurrentCli, (cli) => HttpServerResponse.jsonUnsafe(cli))
+    );
     yield* router.add("*", "/*", HttpServerResponse.text("missing", { status: 404 }));
   })
 );
@@ -128,6 +135,34 @@ it.layer(router)("the request event's outcome rules", (it) => {
         responseBytes: 4
       });
       assert.notInclude(WideEvents.formatJson(event), "secret=query");
+    })
+  );
+
+  it.effect("records what a Patchy-Cli header names and hands its release and agent on", () =>
+    Effect.gen(function* () {
+      const { response, event } = yield* eventOf(
+        HttpClientRequest.get("/cli").pipe(
+          HttpClientRequest.setHeader("Patchy-Cli", "0.4.2 publish gemini-cli")
+        )
+      );
+      assert.include(event, { cliVersion: "0.4.2", cliCommand: "publish", agent: "gemini-cli" });
+      assert.deepStrictEqual(yield* response.json, { cliVersion: "0.4.2", agent: "gemini-cli" });
+    })
+  );
+
+  it.effect("records nothing extra without the header or from one that does not parse", () =>
+    Effect.gen(function* () {
+      for (const header of [undefined, "0.4.2 publish", "latest <script> me@example.com"]) {
+        const { response, event } = yield* eventOf(
+          header === undefined
+            ? HttpClientRequest.get("/cli")
+            : HttpClientRequest.get("/cli").pipe(HttpClientRequest.setHeader("Patchy-Cli", header))
+        );
+        assert.notProperty(event, "cliVersion");
+        assert.notProperty(event, "cliCommand");
+        assert.notProperty(event, "agent");
+        assert.deepStrictEqual(yield* response.json, {});
+      }
     })
   );
 

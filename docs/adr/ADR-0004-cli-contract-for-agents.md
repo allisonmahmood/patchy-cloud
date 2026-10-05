@@ -689,6 +689,18 @@ existing attempt. Clearing unlinks only that key's file, then removes only an
 empty slot: a late K1 response cannot unlink K2's file or remove its nonempty
 slot. Never discard an attempt merely because its outcome is unknown.
 
+### The `Patchy-Cli` header
+
+Every request a command sends to the instance carries
+`Patchy-Cli: <release> <command> <agent>`, such as `0.0.1 publish claude-code`.
+The command comes from `CliCommand` in `packages/api`; every command that
+reaches the instance is in it. The agent is the first coding agent whose
+harness variable is set, from `CodingAgent`, or `unknown`. No environment value
+or free text is sent. The header feeds usage records only: no route requires
+or answers it, so an instance that ignores it behaves the same. The
+[README](../../packages/patchy/README.md#the-patchy-cli-header) lists the
+variables.
+
 ### Signals and built-ins
 
 SIGINT and SIGTERM interrupt the fiber and exit 130, not `128+n`. Effect's

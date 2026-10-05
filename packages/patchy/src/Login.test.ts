@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Api from "./Api.js";
 import * as Instance from "./Instance.js";
 import * as State from "./State.js";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -76,6 +77,7 @@ const makeLoginHarness = (client: HttpClient.HttpClient, credentialSaveDelay = 0
         Effect.provideService(Instance.ApiUrlFlag, Option.none()),
         Effect.provideService(Output.JsonFlag, true),
         Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(Api.CurrentCommand, "login"),
         Effect.provide(Stdio.layerTest({}))
       )
   };

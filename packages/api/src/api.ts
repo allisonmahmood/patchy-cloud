@@ -977,6 +977,9 @@ export class PatchyApi extends HttpApi.make("patchy")
         "Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a " +
         "401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when " +
         "clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit " +
-        "responses also carry `retryAfterSeconds`."
+        "responses also carry `retryAfterSeconds`. The `patchy` CLI names itself on every " +
+        "request with `Patchy-Cli: <release> <command> <agent>`, such as " +
+        "`Patchy-Cli: 0.0.1 publish claude-code`. The server records the fields that parse in " +
+        "usage records and nothing else; no route requires or answers the header."
     })
   ) {}

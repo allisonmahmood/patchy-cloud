@@ -41,7 +41,7 @@ Whoever is running the CLI — an agent first, a developer touching the cloud di
 _Avoid_: operator, user (ambiguous with the account the driver acts as)
 
 **Agent**:
-Software acting for a user, with that user's machine token: the CLI's primary driver. Never a who, always a how — it is indistinguishable from its user except by the machine name on the token, and it holds no identity of its own.
+Software acting for a user, with that user's machine token: the CLI's primary driver. Never a who, always a how — it is indistinguishable from its user except by the machine name on the token, and it holds no identity of its own. The CLI names which coding agent runs it, such as `claude-code`, on every request for usage records: the kind of harness, read from a variable it sets, never an identity.
 _Avoid_: bot, service account, agent identity
 
 **Onboarding**:

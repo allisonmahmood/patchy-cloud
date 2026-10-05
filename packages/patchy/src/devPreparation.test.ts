@@ -10,6 +10,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Api from "./Api.js";
 import * as Preparation from "./devPreparation.js";
 import * as Instance from "./Instance.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
@@ -81,6 +82,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   );
   const prepare = Preparation.prepare(root, Redacted.make("preparation-token")).pipe(
     Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(Api.CurrentCommand, "dev"),
     Effect.provideService(Instance.Instance, { apiUrl, source: "env", token: Option.none() })
   );
   return { root, generated, prepare };

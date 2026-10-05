@@ -3,7 +3,7 @@
 Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`.
 Edit the schemas or renderer, then regenerate this file. There is no automated API-document drift check.
 
-Every route lives under `/api`. Most speak JSON; runtime file routes carry raw bytes. `GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the runtime headers and loaded-version admission described below; machine tokens are refused. Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit responses also carry `retryAfterSeconds`.
+Every route lives under `/api`. Most speak JSON; runtime file routes carry raw bytes. `GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the runtime headers and loaded-version admission described below; machine tokens are refused. Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit responses also carry `retryAfterSeconds`. The `patchy` CLI names itself on every request with `Patchy-Cli: <release> <command> <agent>`, such as `Patchy-Cli: 0.0.1 publish claude-code`. The server records the fields that parse in usage records and nothing else; no route requires or answers the header.
 
 ## auth
 

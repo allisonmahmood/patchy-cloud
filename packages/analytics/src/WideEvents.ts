@@ -70,6 +70,12 @@ const routeFields = {
   method: Schema.optionalKey(Schema.String),
   status: Schema.optionalKey(Schema.Number)
 };
+/** What a `patchy` CLI request's `Patchy-Cli` header named, each field only once it parsed. */
+const cliFields = {
+  cliVersion: Schema.optionalKey(Schema.String),
+  cliCommand: Schema.optionalKey(Schema.String),
+  agent: Schema.optionalKey(Schema.String)
+};
 const rerunFields = {
   streamId: Schema.optionalKey(Schema.String),
   causedByEventId: Schema.optionalKey(Schema.String)
@@ -98,6 +104,7 @@ export const EventFields = Schema.Struct({
   ...outcomeFields,
   ...invocationMetrics,
   ...routeFields,
+  ...cliFields,
   ...rerunFields,
   ...streamMetrics,
   ...processMetrics,
@@ -124,6 +131,7 @@ export const RequestEvent = Schema.Struct({
   ...attribution,
   ...invocationMetrics,
   ...routeFields,
+  ...cliFields,
   ...operations
 });
 export type RequestEvent = typeof RequestEvent.Type;
