@@ -1268,7 +1268,8 @@ Every request a command sends to the instance names the CLI in one header,
 `Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records
 and nothing else depends on it. The command is the one you ran (`auth set`,
 `status`, `setup` and `validate` send no requests). The agent is the first of
-these whose variable is set in the CLI's environment, or `unknown`:
+these whose variable is set in the CLI's environment (`GROK_AGENT` only at
+`1`), or `unknown`:
 
 | Agent         | Variable                    |
 | ------------- | --------------------------- |
@@ -1278,7 +1279,7 @@ these whose variable is set in the CLI's environment, or `unknown`:
 | `kilo-code`   | `KILO`                      |
 | `opencode`    | `OPENCODE`                  |
 | `copilot-cli` | `COPILOT_CLI`               |
-| `grok`        | `GROK_AGENT`                |
+| `grok`        | `GROK_AGENT=1`              |
 | `crush`       | `CRUSH`                     |
 | `qwen-code`   | `QWEN_CODE`                 |
 | `pi`          | `PI_CODING_AGENT`           |

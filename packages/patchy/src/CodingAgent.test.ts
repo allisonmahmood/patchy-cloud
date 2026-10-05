@@ -10,7 +10,7 @@ const detectIn = (env: Record<string, string>) =>
     )
   );
 
-it.effect("names the agent whose harness variable is set, even empty", () =>
+it.effect("names the agent whose harness variable matches, even empty", () =>
   Effect.gen(function* () {
     for (const [env, agent] of [
       [{ CLAUDE_CODE_CHILD_SESSION: "1" }, "claude-code"],
@@ -20,7 +20,7 @@ it.effect("names the agent whose harness variable is set, even empty", () =>
       [{ KILO: "1", OPENCODE: "1" }, "kilo-code"],
       [{ OPENCODE: "1" }, "opencode"],
       [{ COPILOT_CLI: "1" }, "copilot-cli"],
-      [{ GROK_AGENT: "default" }, "grok"],
+      [{ GROK_AGENT: "1" }, "grok"],
       [{ CRUSH: "1" }, "crush"],
       [{ QWEN_CODE: "1" }, "qwen-code"],
       [{ PI_CODING_AGENT: "true" }, "pi"],
@@ -38,7 +38,11 @@ it.effect("names a harness launched from Claude Code, and is unknown without one
       yield* detectIn({ CLAUDE_CODE_CHILD_SESSION: "1", CLAUDECODE: "1", CODEX_THREAD_ID: "t" }),
       "codex"
     );
-    // An IDE terminal a person types in carries CLAUDECODE alone.
-    assert.strictEqual(yield* detectIn({ CLAUDECODE: "1", TERM: "xterm", CI: "1" }), "unknown");
+    // An IDE terminal a person types in carries CLAUDECODE alone, and a person
+    // may choose a Grok profile with GROK_AGENT.
+    assert.strictEqual(
+      yield* detectIn({ CLAUDECODE: "1", GROK_AGENT: "work", TERM: "xterm", CI: "1" }),
+      "unknown"
+    );
   })
 );

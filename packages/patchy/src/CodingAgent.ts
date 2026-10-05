@@ -10,7 +10,8 @@ import type { CodingAgent } from "@patchy/api";
 
 /**
  * Each agent and the variable its harness sets for its commands, as its own
- * docs or source say; every agent in the contract's list has one. A harness's
+ * docs or source say; every agent in the contract's list has one. `NAME`
+ * matches when it is set, even empty; `NAME=value` only at that value. A harness's
  * commands inherit the variables of whatever launched it, so the first one
  * present wins and the order runs from markers only a harness's own commands
  * carry to Claude Code, the usual outer shell.
@@ -28,8 +29,9 @@ const variables = {
   opencode: "OPENCODE",
   // The Copilot CLI changelog: "detect Copilot CLI subprocesses via COPILOT_CLI=1".
   "copilot-cli": "COPILOT_CLI",
-  // The Grok CLI's shell prelude; also a profile setting, so presence counts.
-  grok: "GROK_AGENT",
+  // xai-org/grok-build crates/codegen/xai-grok-tools/src/util/env.rs. People
+  // also set it to choose a profile; Grok's own commands get exactly 1.
+  grok: "GROK_AGENT=1",
   // charmbracelet/crush internal/shell/shell.go, CrushEnvMarkers
   crush: "CRUSH",
   // QwenLM/qwen-code packages/core/src/services/shellExecutionService.ts
@@ -47,12 +49,13 @@ const variables = {
   "claude-code": "CLAUDE_CODE_CHILD_SESSION"
 } satisfies Record<Exclude<CodingAgent, "unknown">, string>;
 
-/** The agent whose variable is set, or `unknown`. Presence counts, even an empty value. */
+/** The first agent whose variable matches, or `unknown`. */
 export const detect: Effect.Effect<CodingAgent> = Effect.gen(function* () {
   // Keys keep the declared order; `satisfies` has already checked each one.
   for (const agent of Object.keys(variables) as ReadonlyArray<keyof typeof variables>) {
-    const value = yield* Config.String(variables[agent]).pipe(Config.option, Effect.orDie);
-    if (Option.isSome(value)) return agent;
+    const [name, expected] = variables[agent].split("=");
+    const value = yield* Config.String(name!).pipe(Config.option, Effect.orDie);
+    if (Option.isSome(value) && (expected === undefined || value.value === expected)) return agent;
   }
   return "unknown";
 });
