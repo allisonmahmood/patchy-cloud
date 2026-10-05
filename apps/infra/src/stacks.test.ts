@@ -122,6 +122,26 @@ it("rolls hosts out beside the promoted release, back if they cannot start, and 
   });
 });
 
+it("lets only this repository's production environment assume the deploy role", () => {
+  base.hasResourceProperties("AWS::IAM::Role", {
+    RoleName: "patchy-production-deploy",
+    AssumeRolePolicyDocument: {
+      Statement: [
+        Match.objectLike({
+          Action: "sts:AssumeRoleWithWebIdentity",
+          Condition: {
+            StringEquals: {
+              "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+              "token.actions.githubusercontent.com:sub":
+                "repo:allisonmahmood@20662394/patchy-cloud@1347287974:environment:production"
+            }
+          }
+        })
+      ]
+    }
+  });
+});
+
 it("leaves the host secret to a person and generates the management secret once", () => {
   base.hasResourceProperties("AWS::SecretsManager::Secret", {
     Name: "patchy/production/host",

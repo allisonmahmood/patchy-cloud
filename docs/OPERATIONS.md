@@ -507,7 +507,10 @@ Once, by an administrator, as part of [#416](https://github.com/allisonmahmood/p
 4. In GitHub, create the `production` environment with a required reviewer,
    deployments limited to `main`, and three environment secrets: `AWS_ACCOUNT_ID`, `CERTIFICATE_ARN` and
    `ALERT_EMAILS` (comma-separated). None is secret; the repository's run logs are
-   public, and only secrets are masked in them.
+   public, and only secrets are masked in them. Keep the repository's immutable
+   OIDC subject on: the deploy role trusts only
+   `repo:allisonmahmood@20662394/patchy-cloud@1347287974:environment:production`,
+   so a token with the name-only subject cannot assume it.
 5. Run the [deploy workflow](#deploying).
 6. Point `cloud.patchyhq.com` at the app stack's `LoadBalancerDnsName` output with
    a CNAME. Keep the certificate's validation record: ACM renews the certificate

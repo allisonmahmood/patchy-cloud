@@ -14,7 +14,7 @@ import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
-import { names, region, repositorySlug } from "./names.js";
+import { githubSubjectRepo, names, region } from "./names.js";
 
 /**
  * The host settings a person fills into the host secret, by key. A deploy
@@ -121,14 +121,15 @@ export class BaseStack extends Stack {
         );
 
     // Trusted only for this repository's GitHub environment of the same name,
-    // which a person approves before every deploy.
+    // which a person approves before every deploy. The subject is GitHub's
+    // immutable form: the repo segment, then the job's environment.
     const deployRole = new iam.Role(this, "DeployRole", {
       roleName: name.deployRole,
       maxSessionDuration: Duration.hours(2),
       assumedBy: new iam.WebIdentityPrincipal(provider.openIdConnectProviderArn, {
         StringEquals: {
           [`${githubTokens}:aud`]: "sts.amazonaws.com",
-          [`${githubTokens}:sub`]: `repo:${repositorySlug}:environment:${props.environment}`
+          [`${githubTokens}:sub`]: `${githubSubjectRepo}:environment:${props.environment}`
         }
       })
     });
