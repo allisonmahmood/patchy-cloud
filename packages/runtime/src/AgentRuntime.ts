@@ -2,13 +2,10 @@
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import {
   AgentCall,
-  AgentConnections,
   AgentPatch,
   type Identity,
   type ServerCallReply,
@@ -18,13 +15,10 @@ import { MachineTokens } from "@patchy/auth";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { newInternalId } from "@patchy/core";
+import * as AgentPolicies from "./AgentPolicies.js";
 import * as Invocation from "./Invocation.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
-
-const decodeConnections = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentConnections), {
-  onExcessProperty: "error"
-});
 
 export class AgentRuntime extends Context.Service<
   AgentRuntime,
@@ -43,36 +37,20 @@ export class AgentRuntime extends Context.Service<
 >()("@patchy/runtime/AgentRuntime") {}
 
 export const make = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
+  const policies = yield* AgentPolicies.AgentPolicies;
   const versions = yield* LoadedVersions.LoadedVersions;
   const invocation = yield* Effect.serviceOption(Invocation.Invocation);
   const tokens = yield* MachineTokens.MachineTokens;
   const limits = yield* Limits.Limits;
   const callsPerMinute = yield* ContractLimits.get("runtime.calls.perMinute");
   const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
-  const file = yield* Config.String("PATCHY_AGENT_CONNECTIONS_FILE").pipe(
-    Config.withDefault(".local/dev/agent-connections.json")
-  );
-
   const admit = Effect.fn("AgentRuntime.admit")(function* (patchId: string, identity: Identity) {
     if (environment !== "development" && environment !== "test")
       return yield* new Runtime.AccessDenied({});
-    const exists = yield* fs
-      .exists(file)
+    const policy = yield* policies
+      .read(patchId, identity)
       .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-    if (!exists) return yield* new Runtime.AccessDenied({});
-    const connections = yield* fs.readFileString(file).pipe(
-      Effect.flatMap(decodeConnections),
-      Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-    );
-    if (
-      !connections.grants.some(
-        (grant) => grant.machineId === identity.machine.id && grant.patchId === patchId
-      )
-    )
-      return yield* new Runtime.AccessDenied({});
-    const policy = connections.patches.find((patch) => patch.patchId === patchId);
-    if (policy === undefined) return yield* new Runtime.AccessDenied({});
+    if (policy === null) return yield* new Runtime.AccessDenied({});
     const loaded = yield* versions
       .find(patchId)
       .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
@@ -130,6 +108,8 @@ export const make = Effect.gen(function* () {
       )
         return yield* new Runtime.AccessDenied({});
       const live = yield* admit(patchId, current);
+      if (live.version.versionId !== version.versionId)
+        return yield* new Runtime.PrincipalChanged({});
       if (!Object.hasOwn(live.handlers, input.handler)) return yield* new Runtime.AccessDenied({});
       return { user: current.user, company: current.company, admin: current.role === "admin" };
     });

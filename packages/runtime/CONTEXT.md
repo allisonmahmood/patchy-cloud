@@ -29,10 +29,11 @@ The decision that a live viewer may start a handler on an eligible loaded versio
 _Avoid_: callback authorisation, presence lease
 
 **Agent grant**:
-Development-only authority for one personal-agent machine credential to call one
-patch. Admission reads the patch's current read-only or declared-handler policy;
-the grant has no separate mode snapshot. Removing it refuses subsequent calls.
-_Avoid_: company-wide agent access, data permission, background identity
+Patch-owned authority for one personal-agent machine credential to call one
+live company Tier 2 patch through the development adapter. Patches stores grants
+and the current policy; Runtime reads them at admission and callback boundaries.
+The grant has no mode snapshot and follows access changes. Removing it refuses
+new calls and later callbacks. Production external execution remains unavailable.
 
 **Agent attribution**:
 The host-established machine id and name accompanying the initiating person.

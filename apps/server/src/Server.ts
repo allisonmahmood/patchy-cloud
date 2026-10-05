@@ -47,7 +47,14 @@ import {
   PostgresOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
+import {
+  AgentAccess,
+  Content,
+  LoadedVersions,
+  DeletionSweep,
+  Patches,
+  PatchesApi
+} from "@patchy/patches";
 import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
@@ -131,6 +138,7 @@ const resourceChanges = Layer.effect(
 
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
 const services = Layer.mergeAll(
+  AgentAccess.layer,
   Artifact.layer,
   Content.layer,
   DeletionSweep.layer,
@@ -144,7 +152,10 @@ const services = Layer.mergeAll(
       const postgres = yield* PostgresOperations.makeHandlers;
       const handlers = { me, ...tables, ...files, ...members, ...postgres };
       const runtime = Layer.mergeAll(
-        AgentRuntime.layer,
+        AgentRuntime.layer.pipe(
+          Layer.provide(AgentAccess.policiesLayer),
+          Layer.provide(AgentAccess.layer)
+        ),
         RuntimeProduction.layer(handlers),
         RuntimeStream.layer.pipe(
           Layer.provide(Subscriptions.layer),
