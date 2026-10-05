@@ -13,7 +13,10 @@ import * as PostHogClient from "./PostHogClient.js";
 /** What an event property may hold. Ids, sizes, counts, and states — nothing else. */
 export type AnalyticsPropertyValue = string | number | boolean | null | ReadonlyArray<string>;
 
-/** Holds every catalogue entry to property values an event may carry. */
+/**
+ * Holds every catalogue entry to property values an event may carry. Entries are
+ * type aliases, not interfaces: an interface has no index signature to check.
+ */
 type Catalogue<T extends { readonly [Name in keyof T]: Record<string, AnalyticsPropertyValue> }> =
   T;
 
