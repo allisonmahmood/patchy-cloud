@@ -234,21 +234,23 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     });
   });
   const analytics = yield* Analytics.Analytics;
-  // The transaction, lock waits included, stays cancellable; once it has
-  // committed, a disconnect can't drop its event.
+  // Only the work inside the transaction, lock waits included, is cancellable. Its
+  // commit, the wakes published after it and the event can't be split by a disconnect.
   const commit = Effect.uninterruptibleMask((restore) =>
-    restore(patches.withDependencyLock(viewer.user.id)(run)).pipe(
-      Effect.tap(() =>
-        changed
-          ? analytics.track({
-              name: action === "deactivate" ? "user.deactivated" : "user.reactivated",
-              principalId: viewer.user.id,
-              companyId: viewer.company.id,
-              properties: { userId: id }
-            })
-          : Effect.void
+    patches
+      .withDependencyLock(viewer.user.id)(restore(run))
+      .pipe(
+        Effect.tap(() =>
+          changed
+            ? analytics.track({
+                name: action === "deactivate" ? "user.deactivated" : "user.reactivated",
+                principalId: viewer.user.id,
+                companyId: viewer.company.id,
+                properties: { userId: id }
+              })
+            : Effect.void
+        )
       )
-    )
   );
   return yield* (choice === "keep" || choice === "confirm" ? commit : run).pipe(
     Effect.catchTags({

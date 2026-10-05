@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import { TestClock } from "effect/testing";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -2883,6 +2884,66 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
 });
 
 it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
+  it.effect(
+    "reports a committed deactivation when the admin disconnects while its wakes publish",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const retiring = yield* publish(workspace.owner, "wake-paused");
+        const wakes = yield* Wakes.Wakes;
+        const publishing = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        // Wakes go out after the commit; pause there.
+        const pausedWakes = Layer.succeed(
+          Wakes.Wakes,
+          Wakes.Wakes.of({
+            subscribe: wakes.subscribe,
+            publish: (keys, cause) =>
+              Deferred.succeed(publishing, undefined).pipe(
+                Effect.andThen(Deferred.await(resume)),
+                Effect.andThen(wakes.publish(keys, cause))
+              )
+          })
+        );
+        const pausedServer = HttpRouter.serve(routes, {
+          disableLogger: true,
+          disableListenLog: true
+        }).pipe(
+          Layer.provide(Layer.fresh(Patches.layer).pipe(Layer.provide(pausedWakes))),
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+        );
+        yield* Effect.gen(function* () {
+          const confirmation = yield* post(
+            userPath(workspace.owner, "deactivate"),
+            workspace.admin,
+            {
+              choice: "confirm",
+              patch: [retiring.patchId]
+            }
+          ).pipe(Effect.forkChild);
+          yield* Deferred.await(publishing);
+          yield* Fiber.interrupt(confirmation);
+          // Let the closed socket reach the server before publication resumes.
+          yield* Effect.sleep("200 millis").pipe(TestClock.withLive);
+          yield* Deferred.succeed(resume, undefined);
+          yield* Effect.sync(() => lifecycleEvents(workspace.id)).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("10 millis"),
+              until: (reported) => reported.length > 0
+            }),
+            Effect.timeout("10 seconds"),
+            TestClock.withLive
+          );
+        }).pipe(Effect.provide(pausedServer));
+        assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.deepStrictEqual(lifecycleEvents(workspace.id), [
+          ["user.deactivated", workspace.admin.id, workspace.owner.id]
+        ]);
+      }),
+    15_000
+  );
+
   it.effect("rolls back the selected retirements and user when deactivation fails", () =>
     Effect.gen(function* () {
       const workspace = yield* company();

@@ -1233,7 +1233,8 @@ export const make = Effect.gen(function* () {
   const withDependencyLock: Patches["Service"]["withDependencyLock"] = (actorUserId) => (effect) =>
     withLifecycleTransaction(
       Effect.gen(function* () {
-        yield* lockDependencies(actorUserId);
+        // Cancellable even when the caller protects the commit around it.
+        yield* Effect.interruptible(lockDependencies(actorUserId));
         return yield* effect;
       })
     );
