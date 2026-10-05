@@ -2538,7 +2538,8 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           ...Fixtures.manifest,
           tier: 2 as const,
           handlers: tier2Handlers,
-          sdkImports: ["patchy/server"]
+          // The manifest is client supplied; analytics reports only SDK entry points.
+          sdkImports: ["patchy/server", "Jane <jane@example.com>"]
         };
         const payload = publishRequest({ html: page, server, manifest });
         const created = yield* api.publish({ payload });
@@ -2556,7 +2557,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         assert.strictEqual(stored.patchTier, 2);
         assert.strictEqual(stored.version.wireVersion, WIRE_VERSION);
         assert.strictEqual(stored.version.server?.sha256, created.artifacts.server!.sha256);
-        assert.deepStrictEqual(stored.version.manifest.sdkImports, ["patchy/server"]);
+        assert.deepStrictEqual(stored.version.manifest.sdkImports, manifest.sdkImports);
         assert.strictEqual(
           yield* (yield* ContentStore.ContentStore).get(stored.version.server!.objectKey),
           server
