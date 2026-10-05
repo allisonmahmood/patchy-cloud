@@ -87,6 +87,15 @@ it("rolls hosts out beside the promoted release, back if they cannot start, and 
       })
     ]
   });
+  // At MaximumPercent 200, four hosts' company pools must fit Neon's connection limit.
+  template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+    Family: "patchy-production-host",
+    ContainerDefinitions: [
+      Match.objectLike({
+        Environment: Match.arrayWith([{ Name: "PATCHY_COMPANY_DB_MAX_BACKENDS", Value: "64" }])
+      })
+    ]
+  });
   template.hasResourceProperties("AWS::ECS::Service", {
     DesiredCount: 2,
     DeploymentConfiguration: {

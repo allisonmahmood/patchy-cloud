@@ -321,6 +321,9 @@ export class AppStack extends Stack {
         CLERK_AUTHORIZED_PARTIES: origin,
         PATCHY_TRUST_PROXY: vpc.vpcCidrBlock,
         PATCHY_LIMITS_JSON: this.toJsonString({ "execution.fleet.budget": 15 }),
+        // Four hosts during a rolling deploy must fit Neon's connection limit;
+        // raise it with the compute (docs/OPERATIONS.md, Production).
+        PATCHY_COMPANY_DB_MAX_BACKENDS: "64",
         PATCHY_DEPLOYMENT_REVISION: props.revision,
         EXECUTION_PROVIDER: "ecs",
         EXECUTION_DEPLOYMENT_REVISION: props.revision,

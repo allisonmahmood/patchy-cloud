@@ -481,6 +481,12 @@ until the first rotation, and each release reads one slot; only
 changes it. Host logs go to `/patchy/<environment>/host` and exec logs to
 `/patchy/<environment>/exec`, each kept 90 days.
 
+Production caps `PATCHY_COMPANY_DB_MAX_BACKENDS` at 64 rather than the default
+200: a rolling deploy runs up to four hosts, and four hosts at 64 plus their other
+[connections](#running-the-server-by-hand) and the promote task's platform pool
+must stay under the Neon compute's 446 non-superuser connections. Raise it
+together with the compute's connection ceiling.
+
 ### Setting up production
 
 Once, by an administrator, as part of [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416):
