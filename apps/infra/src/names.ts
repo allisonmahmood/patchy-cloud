@@ -7,8 +7,14 @@
 /** Patchy runs in one region; the server and its spike assume it too. */
 export const region = "us-east-1";
 
-/** The repository whose `production` GitHub environment may deploy. */
-export const repositorySlug = "allisonmahmood/patchy-cloud";
+/**
+ * The repository whose `production` GitHub environment may deploy, as the
+ * `repo` segment of its OIDC subject. The repository issues GitHub's immutable
+ * subject, which pins the owner and repository ids beside their names, so a
+ * renamed or re-registered name cannot claim it. GitHub reports it as
+ * `sub_claim_prefix` from `repos/{owner}/{repo}/actions/oidc/customization/sub`.
+ */
+export const githubSubjectRepo = "repo:allisonmahmood@20662394/patchy-cloud@1347287974";
 
 export const names = (environment: string) => {
   const prefix = `patchy-${environment}`;
