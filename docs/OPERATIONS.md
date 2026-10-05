@@ -205,9 +205,10 @@ Every event carries `companyId`, so company numbers are queries over that
 property. Patch events also carry `patchId` and `ownerUserId`, the owner at the
 moment of the event. `token.minted`, `patch.created` and `patch.updated` add
 the CLI's `cliVersion` and `agent` when their request's `Patchy-Cli` header
-named them, under the request event's rules. Properties are ids, sizes, counts and states. The only
-names are identifiers a patch's manifest declares, such as its table and store
-keys; never a person's or company's name, an email address, a URL or free text.
+named them, under the request event's rules. Properties are ids, sizes, counts
+and states. The only names are identifiers a patch's manifest declares, such as
+its table and store keys; never a person's or company's name, an email address,
+a URL or free text.
 
 The events, by area:
 
