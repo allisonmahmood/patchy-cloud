@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -358,6 +360,44 @@ it.layer(services)("company page and actions", (it) => {
         },
         { name: "invite.resent", principalId, properties: { inviteId: invite!.id, emailed: true } },
         { name: "invite.revoked", principalId, properties: { inviteId: invite!.id } }
+      ]);
+    })
+  );
+
+  // Delivery commits even when the browser disconnects; its event must follow it.
+  it.effect("reports an invitation that commits after its request was interrupted", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-mail-interrupted");
+      const delivering = yield* Deferred.make<void>();
+      const delivered = yield* Deferred.make<void>();
+      const slowMail = Layer.succeed(
+        InviteMail.InviteMail,
+        InviteMail.InviteMail.of({
+          create: () =>
+            Deferred.succeed(delivering, undefined).pipe(
+              Effect.andThen(Deferred.await(delivered)),
+              Effect.as("clerk_inv_slow")
+            ),
+          revoke: () => Effect.void
+        })
+      );
+      const request = yield* send(
+        "/company/invites",
+        post(owner.user, { email: "interrupted@example.com", role: "member" })
+      ).pipe(Effect.provide(slowMail), Effect.forkChild);
+      yield* Deferred.await(delivering);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(request));
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(delivered, undefined);
+      yield* Fiber.join(interrupting);
+      const [invite] = yield* (yield* Companies.Companies).listInvites(owner.company.id);
+      assert.strictEqual(invite?.clerkInvitationId, "clerk_inv_slow");
+      assert.deepStrictEqual(reported(owner.company.id), [
+        {
+          name: "invite.sent",
+          principalId: owner.user.id,
+          properties: { inviteId: invite!.id, role: "member", emailed: true }
+        }
       ]);
     })
   );

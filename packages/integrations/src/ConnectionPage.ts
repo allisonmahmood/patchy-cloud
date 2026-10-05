@@ -187,27 +187,35 @@ export const handle = Effect.fn("ConnectionPage.handle")(function* (
     const analytics = yield* Analytics.Analytics;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const identity = { companyId: viewer.company.id, userId: viewer.user.id };
-    // Each call has committed when it returns; a refused one fails before its event.
-    const report = (
+    // Each call commits before its event, and a refused one fails first. A
+    // disconnect must not separate a commit from its event.
+    const reported = (
       name: "connection.connected" | "connection.deleted",
-      connection: ConnectionStore.Connection
+      change: Effect.Effect<ConnectionStore.Connection, ConnectionStore.ConnectionError>
     ) =>
-      analytics.track({
-        name,
-        principalId: viewer.user.id,
-        companyId: viewer.company.id,
-        properties: { connectionId: connection.id, integration: connection.integration }
-      });
+      change.pipe(
+        Effect.tap((connection) =>
+          analytics.track({
+            name,
+            principalId: viewer.user.id,
+            companyId: viewer.company.id,
+            properties: { connectionId: connection.id, integration: connection.integration }
+          })
+        ),
+        Effect.uninterruptible
+      );
     let target: string;
     if (action.kind === "connect") {
       const form = yield* decodeConnect(Object.fromEntries(yield* request.urlParamsBody));
-      const connection = yield* store.connect({
-        ...identity,
-        handle: form.handle,
-        description: form.description,
-        credentials: Redacted.make(form.credentials)
-      });
-      yield* report("connection.connected", connection);
+      const connection = yield* reported(
+        "connection.connected",
+        store.connect({
+          ...identity,
+          handle: form.handle,
+          description: form.description,
+          credentials: Redacted.make(form.credentials)
+        })
+      );
       target = pathFor(connection.id);
     } else {
       const input = { ...identity, id: action.id };
@@ -219,7 +227,7 @@ export const handle = Effect.fn("ConnectionPage.handle")(function* (
         const form = yield* decodeDescription(Object.fromEntries(yield* request.urlParamsBody));
         yield* store.describe({ ...input, description: form.description });
       } else if (action.kind === "delete") {
-        yield* report("connection.deleted", yield* store.delete(input));
+        yield* reported("connection.deleted", store.delete(input));
         target = "/company/connections";
       } else {
         yield* store[action.kind](input);

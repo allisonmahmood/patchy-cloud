@@ -101,15 +101,20 @@ export const handle = Effect.fn("Join.handle")(function* (
   const analytics = yield* Analytics.Analytics;
   return yield* Effect.gen(function* () {
     const form = yield* decodeForm({ ...fields, name: entered.name });
-    // Each call has committed when it returns; a refused one fails before its event.
+    // Each call commits before its event, and a refused one fails first. A
+    // disconnect must not separate a commit from its event.
     if (form.action === "join") {
-      const user = yield* companies.consumeInvite({ ...claims, inviteId: form.inviteId });
-      yield* analytics.track({
-        name: "user.joined",
-        principalId: user.id,
-        companyId: user.companyId,
-        properties: { via: "invite", role: user.role, inviteId: form.inviteId }
-      });
+      yield* companies.consumeInvite({ ...claims, inviteId: form.inviteId }).pipe(
+        Effect.tap((user) =>
+          analytics.track({
+            name: "user.joined",
+            principalId: user.id,
+            companyId: user.companyId,
+            properties: { via: "invite", role: user.role, inviteId: form.inviteId }
+          })
+        ),
+        Effect.uninterruptible
+      );
     } else {
       if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
         return yield* render(claims, returnTo, entered, {
@@ -117,20 +122,28 @@ export const handle = Effect.fn("Join.handle")(function* (
           status: 409
         });
       }
-      const { company, user } = yield* companies.create({
-        clerkUserId: claims.clerkUserId,
-        email: claims.email,
-        userName: claims.name,
-        name: form.name,
-        handle: form.handle
-      });
-      const joined = { principalId: user.id, companyId: company.id };
-      yield* analytics.track({ name: "company.created", ...joined, properties: {} });
-      yield* analytics.track({
-        name: "user.joined",
-        ...joined,
-        properties: { via: "create", role: user.role }
-      });
+      yield* companies
+        .create({
+          clerkUserId: claims.clerkUserId,
+          email: claims.email,
+          userName: claims.name,
+          name: form.name,
+          handle: form.handle
+        })
+        .pipe(
+          Effect.tap(({ company, user }) => {
+            const joined = { principalId: user.id, companyId: company.id };
+            return Effect.andThen(
+              analytics.track({ name: "company.created", ...joined, properties: {} }),
+              analytics.track({
+                name: "user.joined",
+                ...joined,
+                properties: { via: "create", role: user.role }
+              })
+            );
+          }),
+          Effect.uninterruptible
+        );
     }
     return {
       title: "Company joined",

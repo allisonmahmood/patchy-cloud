@@ -233,11 +233,24 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
       headers: { "cache-control": "private, no-store" }
     });
   });
-  const response = yield* (
-    choice === "keep" || choice === "confirm"
-      ? patches.withDependencyLock(viewer.user.id)(run)
-      : run
-  ).pipe(
+  const analytics = yield* Analytics.Analytics;
+  // A disconnect must not separate the commit from its event.
+  const commit = patches
+    .withDependencyLock(viewer.user.id)(run)
+    .pipe(
+      Effect.tap(() =>
+        changed
+          ? analytics.track({
+              name: action === "deactivate" ? "user.deactivated" : "user.reactivated",
+              principalId: viewer.user.id,
+              companyId: viewer.company.id,
+              properties: { userId: id }
+            })
+          : Effect.void
+      ),
+      Effect.uninterruptible
+    );
+  return yield* (choice === "keep" || choice === "confirm" ? commit : run).pipe(
     Effect.catchTags({
       UserNotFound: (error) => Effect.succeed(refuse(error.message, 404)),
       LastAdmin: (error) => Effect.succeed(refuse(error.message, 409)),
@@ -262,12 +275,4 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
         Effect.succeed(refuse("A selected patch has unavailable sources. Nothing was done.", 409))
     })
   );
-  if (changed)
-    yield* (yield* Analytics.Analytics).track({
-      name: action === "deactivate" ? "user.deactivated" : "user.reactivated",
-      principalId: viewer.user.id,
-      companyId: viewer.company.id,
-      properties: { userId: id }
-    });
-  return response;
 });
