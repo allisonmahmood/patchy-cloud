@@ -384,15 +384,33 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const response = yield* request(`/patches/${patch.name}/agent-access`, workspace.owner);
         assert.strictEqual(response.status, 200);
         const html = yield* response.text;
-        assert.include(html, 'aria-label="Patch index"');
+        assert.include(html, 'id="agent-patch" name="patch"');
         for (const choice of [first, second])
           assert.include(
             html,
-            `href="/patches/${choice.name}/agent-access"${choice.patchId === patch.patchId ? ' aria-current="page"' : ""}`
+            `<option value="${choice.name}"${choice.patchId === patch.patchId ? " selected" : ""}>${choice.name}</option>`
           );
         assert.include(html, `name="expectedPatchId" value="${patch.patchId}"`);
         assert.include(html, `value="${patch === first ? "actions" : "read-only"}" selected`);
       }
+      const switchPatch = yield* request(
+        `/patches/${first.name}/agent-access?patch=${second.name}`,
+        workspace.owner
+      );
+      assert.strictEqual(switchPatch.status, 303);
+      assert.strictEqual(switchPatch.headers.location, `/patches/${second.name}/agent-access`);
+      assert.strictEqual(
+        (yield* request(`/patches/${first.name}/agent-access?patch=unavailable`, workspace.owner))
+          .status,
+        404
+      );
+      assert.strictEqual(
+        (yield* request(
+          `/patches/${first.name}/agent-access?patch=${second.name}`,
+          workspace.member
+        )).status,
+        404
+      );
       yield* agents.revoke(first.patchId, owner, machine.id);
       assert.isNull(yield* agents.read(first.patchId, identity));
       assert.strictEqual((yield* agents.read(second.patchId, identity))?.mode, "read-only");

@@ -81,10 +81,9 @@ const actionForm = (
 const indexGroup = (
   title: string,
   rows: readonly Patches.ReadPatch[],
-  card: Patches.ReadPatch | null,
+  card: Patches.PortalCard | null,
   all: boolean,
-  now: number,
-  pathFor?: (row: Patches.ReadPatch) => string
+  now: number
 ): string => {
   if (rows.length === 0) return "";
   const items = rows.map((row) => {
@@ -96,18 +95,17 @@ const indexGroup = (
           ? `deleted · gone in ${daysLeft(epochMillis(patch.purgeAt!), now)} days`
           : "";
     const clause = firstClause(patch.description);
-    return `<li class="list-row"><a class="list-link" href="${escapeAttribute(pathFor === undefined ? cardPath(patch, all) : `${pathFor(row)}${all ? "?all=1" : ""}`)}"${card?.patch.id === patch.id ? ' aria-current="page"' : ""}><span class="portal-index-line">${escapeHtml(patch.name)}</span><span class="supporting-text portal-index-line">${escapeHtml(clause || "No description")}</span>${state ? `<span class="pill">${escapeHtml(state)}</span>` : ""}${row.owner.deactivated ? '<span class="pill">owner deactivated</span>' : ""}</a></li>`;
+    return `<li class="list-row"><a class="list-link" href="${escapeAttribute(cardPath(patch, all))}"${card?.patch.id === patch.id ? ' aria-current="page"' : ""}><span class="portal-index-line">${escapeHtml(patch.name)}</span><span class="supporting-text portal-index-line">${escapeHtml(clause || "No description")}</span>${state ? `<span class="pill">${escapeHtml(state)}</span>` : ""}${row.owner.deactivated ? '<span class="pill">owner deactivated</span>' : ""}</a></li>`;
   });
   return `<section class="section"><h2 class="section-heading">${escapeHtml(title)}</h2><ul class="list list-compact">${items.join("")}</ul></section>`;
 };
 
-export const renderIndex = (input: {
+const renderIndex = (input: {
   readonly rows: readonly Patches.ReadPatch[];
-  readonly card: Patches.ReadPatch | null;
+  readonly card: Patches.PortalCard | null;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly all: boolean;
   readonly now: number;
-  readonly pathFor?: (row: Patches.ReadPatch) => string;
 }): string => {
   const yours: Patches.ReadPatch[] = [];
   const company: Patches.ReadPatch[] = [];
@@ -125,18 +123,12 @@ export const renderIndex = (input: {
   const liveCount = yours.length + company.length;
   const count = liveCount + (input.all ? off.length : 0);
   const togglePath =
-    input.card === null
-      ? input.all
-        ? "/"
-        : "/?all=1"
-      : input.pathFor === undefined
-        ? cardPath(input.card.patch, !input.all)
-        : `${input.pathFor(input.card)}${input.all ? "" : "?all=1"}`;
+    input.card === null ? (input.all ? "/" : "/?all=1") : cardPath(input.card.patch, !input.all);
   const toggle =
     off.length === 0
       ? ""
       : `<p><a href="${escapeAttribute(togglePath)}">${input.all ? "Hide" : "Show"} retired and deleted</a></p>`;
-  return `<aside class="portal-index" aria-label="Patch index"><p class="supporting-text">${escapeHtml(count)} ${count === 1 ? "patch" : "patches"}</p>${toggle}${liveCount === 0 ? '<p class="supporting-text">No live patches.</p>' : ""}${indexGroup("Yours", yours, input.card, input.all, input.now, input.pathFor)}${indexGroup("Company", company, input.card, input.all, input.now, input.pathFor)}${input.all ? indexGroup("Retired and deleted", off, input.card, input.all, input.now, input.pathFor) : ""}</aside>`;
+  return `<aside class="portal-index" aria-label="Patch index"><p class="supporting-text">${escapeHtml(count)} ${count === 1 ? "patch" : "patches"}</p>${toggle}${liveCount === 0 ? '<p class="supporting-text">No live patches.</p>' : ""}${indexGroup("Yours", yours, input.card, input.all, input.now)}${indexGroup("Company", company, input.card, input.all, input.now)}${input.all ? indexGroup("Retired and deleted", off, input.card, input.all, input.now) : ""}</aside>`;
 };
 
 const titleLine = (patch: Patches.Patch): string => {
