@@ -97,11 +97,11 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
       Companies.layer,
       Users.layer,
       MachineTokens.layer,
-      Analytics.layerNoop,
       Limits.layer,
       InviteMail.layerRecording
     )
   ),
+  Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(ConnectionStoreDev.layer([])),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),

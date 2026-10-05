@@ -81,11 +81,21 @@ const recordingAnalytics = Layer.succeed(
     track: (event) => Effect.sync(() => void events.push(event))
   })
 );
+/** The lifecycle events reported about one patch, in order, without its publishes. */
+const lifecycleEvents = (patchId: string) =>
+  events.filter(
+    (event) =>
+      event.name !== "patch.created" &&
+      event.name !== "patch.updated" &&
+      "patchId" in event.properties &&
+      event.properties.patchId === patchId
+  );
 
 const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
-  Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer, recordingAnalytics)),
+  Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
+  Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
     ConfigProvider.layer(
@@ -187,7 +197,8 @@ it.layer(layer)("patches group", (it) => {
         );
 
         const params = { patchId: created.patchId };
-        for (const scope of ["company", "public"] as const) {
+        // Sharing to the scope it already has changes nothing and reports nothing.
+        for (const scope of ["company", "public", "public"] as const) {
           const shared = yield* sameUser.share({ params, payload: new ShareRequest({ scope }) });
           assert.deepStrictEqual(
             { ...shared },
@@ -198,6 +209,21 @@ it.layer(layer)("patches group", (it) => {
             scope
           );
         }
+        const change = { patchId: created.patchId, ownerUserId: uploader.user.id, byAdmin: false };
+        assert.deepStrictEqual(lifecycleEvents(created.patchId), [
+          {
+            name: "patch.shared",
+            principalId: uploader.user.id,
+            companyId: uploader.company.id,
+            properties: { ...change, scope: "company", previousScope: "public" }
+          },
+          {
+            name: "patch.shared",
+            principalId: uploader.user.id,
+            companyId: uploader.company.id,
+            properties: { ...change, scope: "public", previousScope: "company" }
+          }
+        ]);
       })
   );
 
@@ -299,8 +325,9 @@ const publishConfig = (
   );
 const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
-  Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer, recordingAnalytics)),
+  Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
+  Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
 );
@@ -447,24 +474,25 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         deletedAt: "2026-01-01T00:01:00.000Z",
         purgeAt: "2026-01-31T00:01:00.000Z"
       });
-      assert.deepStrictEqual(
-        events.filter(
-          (event) => event.name === "patch.deleted" && event.properties.patchId === first.patchId
-        ),
-        [
-          {
-            name: "patch.deleted",
-            principalId: uploader.user.id,
-            companyId: uploader.company.id,
-            properties: { patchId: first.patchId, ownerUserId: uploader.user.id }
-          }
-        ]
-      );
       yield* owner.restore({ params, payload: new ForceRequest({}) });
       assert.strictEqual(
         Option.getOrThrow(yield* patches.find(first.patchId)).version.id,
         next.versionId
       );
+      const envelope = { principalId: uploader.user.id, companyId: uploader.company.id };
+      const change = { patchId: first.patchId, ownerUserId: uploader.user.id, byAdmin: false };
+      // Each change reports once; describing is not a lifecycle change.
+      assert.deepStrictEqual(lifecycleEvents(first.patchId), [
+        { name: "patch.retired", ...envelope, properties: change },
+        { name: "patch.restored", ...envelope, properties: change },
+        {
+          name: "patch.rolled_back",
+          ...envelope,
+          properties: { ...change, versionNumber: 1, fromVersionNumber: 2 }
+        },
+        { name: "patch.deleted", ...envelope, properties: change },
+        { name: "patch.restored", ...envelope, properties: change }
+      ]);
     })
   );
 
@@ -525,6 +553,11 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         }
         assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
         assert.strictEqual(Option.isSome(yield* patches.find(created.patchId)), state === "live");
+        // Only the owner's own change reports; every refusal reports nothing.
+        assert.deepStrictEqual(
+          lifecycleEvents(created.patchId).map((event) => event.name),
+          { live: [], retired: ["patch.retired"], deleted: ["patch.deleted"] }[state]
+        );
       }
     })
   );

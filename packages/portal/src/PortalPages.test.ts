@@ -20,6 +20,7 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
+import { Analytics } from "@patchy/analytics";
 import { RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
@@ -33,6 +34,14 @@ import * as PortalPages from "./PortalPages.js";
 import { InvocationLog, RuntimeLog, Wakes } from "@patchy/runtime";
 
 const DAY = 24 * 60 * 60 * 1_000;
+const events: Analytics.AnalyticsEvent[] = [];
+const recordingAnalytics = Layer.succeed(
+  Analytics.Analytics,
+  Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
+);
+/** The business events reported about one patch, in order. */
+const reported = (patchId: string) =>
+  events.filter((event) => "patchId" in event.properties && event.properties.patchId === patchId);
 const routes = Layer.merge(
   PortalPages.layer,
   HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
@@ -44,6 +53,7 @@ const services = Layer.mergeAll(
   Users.layer,
   InvocationLog.layer
 ).pipe(
+  Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(
     ConnectionStoreDev.layer([
       {
@@ -621,6 +631,20 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
       const saved = yield* readPatch(workspace.owner, patch.patchId);
       assert.strictEqual(saved.patch.scope, "public");
+      assert.deepStrictEqual(reported(patch.patchId), [
+        {
+          name: "patch.shared",
+          principalId: workspace.admin.id,
+          companyId: workspace.id,
+          properties: {
+            patchId: patch.patchId,
+            ownerUserId: workspace.owner.id,
+            byAdmin: true,
+            scope: "public",
+            previousScope: "company"
+          }
+        }
+      ]);
       assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
       assert.strictEqual(saved.patch.description, before.patch.description);
       assert.include(
@@ -689,6 +713,20 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
         const saved = yield* readPatch(workspace.owner, patch.patchId);
         assert.strictEqual(saved.currentVersion, 1);
+        assert.deepStrictEqual(reported(patch.patchId), [
+          {
+            name: "patch.rolled_back",
+            principalId: workspace.owner.id,
+            companyId: workspace.id,
+            properties: {
+              patchId: patch.patchId,
+              ownerUserId: workspace.owner.id,
+              byAdmin: false,
+              versionNumber: 1,
+              fromVersionNumber: 2
+            }
+          }
+        ]);
         assert.strictEqual(saved.patch.currentVersionId, patch.versionId);
         assert.strictEqual(saved.patch.description, before.patch.description);
         assert.strictEqual(saved.patch.descriptionUpdatedAt, before.patch.descriptionUpdatedAt);
@@ -733,6 +771,18 @@ it.layer(layer)("portal pages on a socket", (it) => {
             assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
             const saved = yield* readPatch(workspace.owner, patch.patchId);
             assert.strictEqual(saved.patch.state, action === "retire" ? "retired" : "deleted");
+            assert.deepStrictEqual(reported(patch.patchId), [
+              {
+                name: action === "retire" ? "patch.retired" : "patch.deleted",
+                principalId: person.id,
+                companyId: workspace.id,
+                properties: {
+                  patchId: patch.patchId,
+                  ownerUserId: workspace.owner.id,
+                  byAdmin: person === workspace.admin
+                }
+              }
+            ]);
             assert.strictEqual(saved.patch.lastChangedBy, person.id);
             assert.strictEqual(
               saved.patch[action === "retire" ? "retiredBy" : "deletedBy"],
@@ -794,6 +844,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
               assert.include(forms(fresh), path);
               assert.strictEqual(inputs(fresh, "ack", "checkbox").length, 1);
               assert.deepStrictEqual(yield* readPatch(workspace.owner, source.patchId), before);
+              assert.deepStrictEqual(reported(source.patchId), []);
             }
             const accepted = yield* post(path, workspace.admin, { ...fields, ack: "1" });
             assert.strictEqual(accepted.status, 303);
@@ -1118,6 +1169,19 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
           const saved = yield* readPatch(workspace.owner, patch.patchId);
           assert.strictEqual(saved.patch.state, "live");
+          // After the setup's own retirement or deletion, the restore reports once.
+          assert.deepStrictEqual(reported(patch.patchId).slice(1), [
+            {
+              name: "patch.restored",
+              principalId: person.id,
+              companyId: workspace.id,
+              properties: {
+                patchId: patch.patchId,
+                ownerUserId: workspace.owner.id,
+                byAdmin: person === workspace.admin
+              }
+            }
+          ]);
           assert.strictEqual(saved.patch.name, patch.name);
           assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
           assert.strictEqual(saved.patch.description, before.patch.description);
@@ -1509,6 +1573,16 @@ it.layer(layer)("portal pages on a socket", (it) => {
       });
       assert.strictEqual(noop.status, 303);
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), beforeNoop);
+      const reassigned = (from: Person, to: Person): Analytics.AnalyticsEvent => ({
+        name: "patch.reassigned",
+        principalId: workspace.admin.id,
+        companyId: workspace.id,
+        properties: { patchId: patch.patchId, ownerUserId: to.id, fromUserId: from.id }
+      });
+      assert.deepStrictEqual(reported(patch.patchId).slice(1), [
+        reassigned(workspace.owner, workspace.member),
+        reassigned(workspace.member, workspace.admin)
+      ]);
     })
   );
 
@@ -2133,6 +2207,11 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           assert.strictEqual(response.status, 409);
           assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
           assert.deepStrictEqual(yield* readPatch(workspace.admin, first.patchId), beforeFirst);
+          // The batch changed the first patch before the moved one refused; it rolled back unreported.
+          assert.deepStrictEqual(
+            reported(first.patchId).map((event) => event.name),
+            action === "reactivate" ? ["patch.retired"] : []
+          );
           assert.deepStrictEqual(
             (yield* readPatch(workspace.admin, moved.patchId)).patch,
             reassigned
@@ -2303,6 +2382,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         for (const patchId of selection)
           assert.strictEqual((yield* readPatch(workspace.admin, patchId)).patch.state, "live");
         assert.deepStrictEqual(committedKeys, []);
+        assert.deepStrictEqual(selection.flatMap(reported), []);
 
         const committed = yield* post(path, workspace.admin, {
           choice: "confirm",
@@ -2312,6 +2392,15 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         assert.strictEqual(committed.headers.location, "/company");
         assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
         assert.deepStrictEqual(committedKeys, [selection.map((id) => `patch:${id}`).sort()]);
+        assert.sameDeepMembers(
+          selection.flatMap(reported),
+          selection.map((patchId): Analytics.AnalyticsEvent => ({
+            name: "patch.retired",
+            principalId: workspace.admin.id,
+            companyId: workspace.id,
+            properties: { patchId, ownerUserId: workspace.owner.id, byAdmin: true }
+          }))
+        );
         for (const patchId of selection) {
           const saved = yield* readPatch(workspace.admin, patchId);
           assert.strictEqual(saved.patch.state, "retired");
@@ -2538,6 +2627,15 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         for (const patch of [own, admin]) {
           const saved = yield* readPatch(workspace.admin, patch.patchId);
           assert.strictEqual(saved.patch.state, "live");
+          // After the setup's retirement, reactivation restores once.
+          assert.deepStrictEqual(reported(patch.patchId).slice(1), [
+            {
+              name: "patch.restored",
+              principalId: workspace.admin.id,
+              companyId: workspace.id,
+              properties: { patchId: patch.patchId, ownerUserId: workspace.owner.id, byAdmin: true }
+            }
+          ]);
           assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
           const card = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
           assert.notInclude(text(card), "Priya (deactivated)");

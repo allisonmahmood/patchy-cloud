@@ -75,7 +75,8 @@ const publish = (
 
 it.layer(
   Layer.mergeAll(Content.layer, DeletionSweep.layer).pipe(
-    Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer, Analytics.layerNoop)),
+    Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer)),
+    Layer.provideMerge(Analytics.layerNoop),
     Layer.provideMerge(Fixtures.database)
   )
 )("Content", (it) => {
@@ -686,12 +687,16 @@ it.layer(
       const created = yield* publish("<p>original</p>");
       const sql = yield* SqlClient.SqlClient;
       const staged = yield* Deferred.make<void>();
+      // The stall stands for a transaction body still working, which a deadline may interrupt.
       const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
         sql.withTransaction(
           effect.pipe(
             Effect.tap((result) =>
               typeof result === "object" && result !== null && "responseBody" in result
-                ? Deferred.succeed(staged, undefined).pipe(Effect.andThen(Effect.never))
+                ? Deferred.succeed(staged, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.interruptible
+                  )
                 : Effect.void
             )
           )
@@ -1118,6 +1123,7 @@ it.layer(
 it.layer(
   Content.layer.pipe(
     Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer)),
+    Layer.provideMerge(Analytics.layerNoop),
     Layer.provideMerge(Fixtures.integrations),
     Layer.provideMerge(
       Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer({ maxBackends: 0 })))

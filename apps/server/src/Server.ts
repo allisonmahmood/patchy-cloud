@@ -166,7 +166,6 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
-      Analytics.layer,
       WideEventsPostHog.layer,
       Limits.layer,
       OperatingLimits.layer,
@@ -181,6 +180,7 @@ const services = Layer.mergeAll(
         SqlConnectionStore.layer.pipe(Layer.provide([CredentialKeys.layer, PostgresSource.layer]))
       ),
       Layer.provideMerge(Tables.layer),
+      Layer.provideMerge(Analytics.layer),
       Layer.provideMerge(Inventory.layer),
       Layer.provideMerge(PgCompanyDatabases.layer)
     )
