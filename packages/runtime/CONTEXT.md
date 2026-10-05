@@ -28,6 +28,19 @@ _Avoid_: revoked, permission lost
 The decision that a live viewer may start a handler on an eligible loaded version of a live company patch, within its admission limits. Dispatched work retains that admission until settlement.
 _Avoid_: callback authorisation, presence lease
 
+**Agent grant**:
+Patch-owned authority for one personal-agent machine credential to call one
+live company Tier 2 patch through the development adapter. Patches stores grants
+and the current policy; Runtime reads them at admission and callback boundaries.
+The grant has no mode snapshot and follows access changes. Removing it refuses
+new calls and later callbacks. Production external execution remains unavailable.
+
+**Agent attribution**:
+The host-established machine id and name accompanying the initiating person.
+Handlers receive optional `ctx.viewer.agent`; invocation records retain its
+snapshot even if the machine is later revoked. Ordinary browser calls have none.
+_Avoid_: caller-supplied actor, cryptographic signature, patch identity
+
 **Callback authorisation**:
 The decision about one operation requested by an invocation. Owned resources inherit invocation admission; company resources require the initiating viewer's current authority.
 _Avoid_: invocation admission, guest permission

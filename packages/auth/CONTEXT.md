@@ -9,7 +9,7 @@ The credential a machine holds to act as one user, shared by the agents on it an
 _Avoid_: API key, personal access token, agent token (an agent has no identity of its own)
 
 **Identity**:
-The user, their company and role, and the machine acting for them on a bearer-authenticated request. Every bearer is a user; a different machine token for that user reaches the same patches.
+The user, their company and role, and the machine acting for them on a bearer-authenticated request. Every bearer is a user; a different machine token for that user has the same company discovery reach. Personal-agent execution additionally requires a grant for that particular connection on each patch.
 _Avoid_: account, principal (on the wire), permission set
 
 **Revocation**:
@@ -33,5 +33,5 @@ The authorization of a machine through a short-lived URL and code that the perso
 _Avoid_: device flow (the protocol), OAuth, paste your token
 
 **Your machines**:
-The user's list of live machine tokens — name, creation, last use and expiry — with revoke-one and revoke-all. The user's control over which machines may act for them; browser sign-out lives here too.
+The user's list of live machine tokens — name, creation, last use and expiry — with revoke-one and revoke-all. The user's control over which machines may act for them; browser sign-out lives here too. It links to the portal’s personal-agent setup, and includes named personal-agent connections as well as publishing machines.
 _Avoid_: sessions (a browser's), API keys

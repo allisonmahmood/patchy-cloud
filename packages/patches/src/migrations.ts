@@ -96,5 +96,22 @@ export const migrations: Migrations = {
     WHERE deleted_at IS NOT NULL`,
     `CREATE UNIQUE INDEX patch_versions_server_object_key_idx
     ON patch_versions(server_object_key) WHERE server_object_key IS NOT NULL`
+  ),
+  "0010_patch_agent_access": ddl(
+    `CREATE TABLE patch_agent_access (
+      patch_id TEXT PRIMARY KEY REFERENCES patches(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL CHECK (mode IN ('read-only', 'actions')),
+      handlers JSONB NOT NULL CHECK (jsonb_typeof(handlers) = 'array'),
+      revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+      changed_by TEXT NOT NULL REFERENCES users(id),
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+    `CREATE TABLE patch_agent_grants (
+      patch_id TEXT NOT NULL REFERENCES patch_agent_access(patch_id) ON DELETE CASCADE,
+      machine_id TEXT NOT NULL REFERENCES machine_tokens(id) ON DELETE CASCADE,
+      granted_by TEXT NOT NULL REFERENCES users(id),
+      granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (patch_id, machine_id)
+    )`
   )
 };

@@ -95,6 +95,8 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.include(html, "Company &lt;confirm&gt;");
         assert.include(html, "Alex &quot;Owner&quot;");
         assert.include(html, owner.user.email);
+        assert.include(html, "name the connection after your agent or machine");
+        assert.include(html, "Patch owners separately grant access");
         assert.include(html, 'value="Laptop &quot;&lt;hint&gt;&quot;"');
         assert.include(html, "clerk.headless.browser.js");
         const confirmed = yield* send(

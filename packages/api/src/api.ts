@@ -15,6 +15,7 @@ import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
 import * as OpenApi from "effect/http-api/OpenApi";
+import { AgentCall, AgentPatch } from "./agents.js";
 import {
   BadRequest,
   Conflict,
@@ -964,8 +965,51 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
   )
   .prefix("/api") {}
 
+export class AgentGroup extends HttpApiGroup.make("agent")
+  .add(
+    HttpApiEndpoint.get("describe", "/agent/patches/:patchId", {
+      params: { patchId: Schema.String },
+      success: AgentPatch,
+      error: [...protectedErrors, ...runtimeErrors]
+    })
+      .middleware(Authorization)
+      .annotateMerge(
+        describe(
+          "Development-only personal-agent adapter. A dedicated machine credential needs a separate " +
+            "grant for this live tier 2 patch. Owners/admins manage saved access at /patches/<name>/agent-access. Returns the served " +
+            "version's selected handler descriptors; read-only mode exposes queries only. Cloud reloads " +
+            "the saved policy for each request. Raw-table mode remains a later slice."
+        )
+      ),
+    HttpApiEndpoint.post("call", "/agent/patches/:patchId/call", {
+      params: { patchId: Schema.String },
+      payload: AgentCall,
+      success: ServerCallReply,
+      error: [...protectedErrors, ...runtimeErrors]
+    })
+      .middleware(Authorization)
+      .annotateMerge(
+        describe(
+          "Runs a selected handler through the existing invocation engine as the credential's user. " +
+            "Checks live membership, per-patch grant, current mode and served version before execution. " +
+            "The credential's machine id/name supplies agent attribution; callers cannot choose an actor. " +
+            "Pass the described versionId and retain one mutationKey for an explicit retry of the same " +
+            "mutation. Never replay actions or automatically retry unknown outcomes. Disabled in production."
+        )
+      )
+  )
+  .prefix("/api") {}
+
 export class PatchyApi extends HttpApi.make("patchy")
-  .add(AuthGroup, PatchesGroup, ConnectionsGroup, SdkGroup, RuntimeGroup, RuntimeStreamGroup)
+  .add(
+    AuthGroup,
+    PatchesGroup,
+    ConnectionsGroup,
+    SdkGroup,
+    RuntimeGroup,
+    RuntimeStreamGroup,
+    AgentGroup
+  )
   .annotateMerge(
     OpenApi.annotations({
       title: "Patchy Cloud API",

@@ -51,6 +51,8 @@ export interface Me {
   readonly user: { readonly id: string; readonly name: string; readonly email: string };
   readonly company: { readonly id: string; readonly handle: string; readonly name: string };
   readonly admin: boolean;
+  /** Present for an external personal-agent invocation, supplied by Cloud. */
+  readonly agent?: { readonly id: string; readonly name: string };
 }
 
 /** Structural subset implemented by browser MessagePort and the fake-port acceptance seam. */

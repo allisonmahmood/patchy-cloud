@@ -20,14 +20,14 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
-import { RequireSession, Session } from "@patchy/auth";
+import { MachineTokens, RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "@patchy/core";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { Patches } from "@patchy/patches";
+import { AgentAccess, Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
 import { InvocationLog, RuntimeLog, Wakes } from "@patchy/runtime";
@@ -38,12 +38,13 @@ const routes = Layer.merge(
   HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
 );
 const services = Layer.mergeAll(
+  AgentAccess.layer,
   Patches.layer,
   Session.layer,
   Companies.layer,
-  Users.layer,
   InvocationLog.layer
 ).pipe(
+  Layer.provideMerge(Layer.merge(MachineTokens.layer, Users.layer)),
   Layer.provideMerge(
     ConnectionStoreDev.layer([
       {
@@ -344,6 +345,272 @@ const assertStale = (html: string, action: string) => {
 };
 
 it.layer(layer)("portal pages on a socket", (it) => {
+  const sales = Effect.fn("AgentAccessTest.sales")(function* (person: Person) {
+    const ordinal = ++counter;
+    return yield* publish(person, `agent-sales-${ordinal}`, {
+      manifest: {
+        ...manifest,
+        name: `agent-sales-${ordinal}`,
+        tier: 2,
+        handlers: {
+          "deals.read": { kind: "query", args: {}, result: { kind: "json" } },
+          "deals.note": { kind: "mutation", args: {}, result: { kind: "json" } }
+        }
+      },
+      server: { objectKey: `agent-sales-${ordinal}.js`, sha256: sha256(""), bytes: 0 }
+    });
+  });
+  it.effect(
+    "gives each person a private setup message while public instructions contain no identity",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        assert.strictEqual((yield* request("/machines/connect-agent", null)).status, 401);
+        for (const person of [workspace.owner, workspace.member]) {
+          const page = yield* request("/machines/connect-agent", person);
+          assert.strictEqual(page.status, 200);
+          assert.strictEqual(page.headers["cache-control"], "private, no-store");
+          const html = yield* page.text;
+          assert.include(html, person.email);
+          assert.include(html, workspace.id);
+          assert.include(html, `${PUBLIC_BASE_URL}/agent-setup.txt`);
+          const other = person === workspace.owner ? workspace.member : workspace.owner;
+          assert.notInclude(html, other.email);
+        }
+        const publicSetup = yield* request("/agent-setup.txt", null);
+        assert.strictEqual(publicSetup.status, 200);
+        assert.strictEqual(publicSetup.headers["content-type"], "text/plain; charset=utf-8");
+        assert.strictEqual(publicSetup.headers["cache-control"], "no-store");
+        const instructions = yield* publicSetup.text;
+        assert.include(instructions, "./connect config --connection");
+        assert.include(instructions, "./connect logout --connection");
+        assert.notInclude(instructions, workspace.owner.email);
+        assert.notInclude(instructions, workspace.id);
+        assert.notInclude(instructions, workspace.owner.machineTokenId);
+      })
+  );
+  it.effect("organizes agent access by patch and keeps each patch's grants and mode separate", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const first = yield* sales(workspace.owner);
+      const second = yield* sales(workspace.owner);
+      const agents = yield* AgentAccess.AgentAccess;
+      const owner = { userId: workspace.owner.id, companyId: workspace.id };
+      const tokens = yield* MachineTokens.MachineTokens;
+      const machine = yield* tokens.mint({ userId: workspace.member.id, name: "Alex's agent" });
+      const identity = yield* tokens.authenticate(machine.token);
+      assert.isNotNull(identity);
+      if (identity === null) return;
+      yield* agents.save(first.patchId, owner, {
+        mode: "actions",
+        handlers: ["deals.read", "deals.note"],
+        revision: 0
+      });
+      yield* agents.grant(first.patchId, owner, machine.id);
+      assert.isNull(yield* agents.read(second.patchId, identity));
+      yield* agents.grant(second.patchId, owner, machine.id);
+      for (const patch of [first, second]) {
+        const response = yield* request(`/patches/${patch.name}/agent-access`, workspace.owner);
+        assert.strictEqual(response.status, 200);
+        const html = yield* response.text;
+        assert.include(html, 'id="agent-patch" name="patch"');
+        for (const choice of [first, second])
+          assert.include(
+            html,
+            `<option value="${choice.name}"${choice.patchId === patch.patchId ? " selected" : ""}>${choice.name}</option>`
+          );
+        assert.include(html, `name="expectedPatchId" value="${patch.patchId}"`);
+        assert.include(html, `value="${patch === first ? "actions" : "read-only"}" selected`);
+      }
+      const switchPatch = yield* request(
+        `/patches/${first.name}/agent-access?patch=${second.name}`,
+        workspace.owner
+      );
+      assert.strictEqual(switchPatch.status, 303);
+      assert.strictEqual(switchPatch.headers.location, `/patches/${second.name}/agent-access`);
+      assert.strictEqual(
+        (yield* request(`/patches/${first.name}/agent-access?patch=unavailable`, workspace.owner))
+          .status,
+        404
+      );
+      assert.strictEqual(
+        (yield* request(
+          `/patches/${first.name}/agent-access?patch=${second.name}`,
+          workspace.member
+        )).status,
+        404
+      );
+      yield* agents.revoke(first.patchId, owner, machine.id);
+      assert.isNull(yield* agents.read(first.patchId, identity));
+      assert.strictEqual((yield* agents.read(second.patchId, identity))?.mode, "read-only");
+    })
+  );
+  it.effect(
+    "manages personal agents as owner or admin and follows mode changes and revocation",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const patch = yield* sales(workspace.owner);
+        const path = `/patches/${patch.name}/agent-access`;
+        const agents = yield* AgentAccess.AgentAccess;
+        const owner = { userId: workspace.owner.id, companyId: workspace.id };
+        const tokens = yield* MachineTokens.MachineTokens;
+        const machine = yield* tokens.mint({
+          userId: workspace.member.id,
+          name: "Alex’s agent <script>"
+        });
+        const identity = yield* tokens.authenticate(machine.token);
+        assert.isNotNull(identity);
+        if (identity === null) return;
+        assert.isNull(yield* agents.read(patch.patchId, identity));
+        for (const person of [workspace.owner, workspace.admin]) {
+          const response = yield* request(path, person);
+          assert.strictEqual(response.status, 200);
+          assert.strictEqual(response.headers["cache-control"], "private, no-store");
+          const html = yield* response.text;
+          assert.include(html, "Alex’s agent &lt;script&gt;");
+          assert.include(html, 'value="read-only" selected');
+          assert.include(html, "deals.read");
+          const cardHtml = yield* (yield* request(`/patches/${patch.name}`, person)).text;
+          assert.include(cardHtml, `>Open</a><a class="btn" href="${path}">Agent access</a>`);
+        }
+        const memberCard = yield* (yield* request(`/patches/${patch.name}`, workspace.member)).text;
+        assert.notInclude(memberCard, `href="${path}"`);
+        assert.strictEqual((yield* request(path, workspace.member)).status, 403);
+        assert.strictEqual(
+          (yield* post(path, workspace.member, {
+            action: "grant",
+            expectedPatchId: patch.patchId,
+            machineId: machine.id
+          })).status,
+          403
+        );
+        const foreign = yield* company();
+        assert.strictEqual((yield* request(path, foreign.admin)).status, 404);
+        assert.strictEqual((yield* request(path, null)).status, 401);
+        assert.strictEqual(
+          (yield* request(
+            path,
+            workspace.owner,
+            { action: "grant", expectedPatchId: patch.patchId, machineId: machine.id },
+            { origin: "https://evil.example" }
+          )).status,
+          403
+        );
+        assert.strictEqual(
+          (yield* post(path, workspace.owner, {
+            action: "grant",
+            expectedPatchId: patch.patchId,
+            machineId: foreign.member.machineTokenId
+          })).status,
+          409
+        );
+        assert.strictEqual(
+          (yield* post(path, workspace.owner, {
+            action: "grant",
+            expectedPatchId: patch.patchId,
+            machineId: machine.id
+          })).status,
+          303
+        );
+        assert.strictEqual((yield* agents.read(patch.patchId, identity))?.mode, "read-only");
+        let current = yield* agents.inspect(patch.patchId, owner);
+        assert.strictEqual(
+          (yield* post(path, workspace.admin, {
+            action: "save",
+            expectedPatchId: patch.patchId,
+            revision: String(current.policy.revision),
+            mode: "actions",
+            handler: ["deals.read", "deals.note"]
+          })).status,
+          303
+        );
+        assert.deepStrictEqual((yield* agents.read(patch.patchId, identity))?.handlers, [
+          "deals.read",
+          "deals.note"
+        ]);
+        assert.strictEqual((yield* agents.read(patch.patchId, identity))?.mode, "actions");
+        // An old form must not overwrite a more recent decision.
+        assert.strictEqual(
+          (yield* post(path, workspace.owner, {
+            action: "save",
+            expectedPatchId: patch.patchId,
+            revision: String(current.policy.revision),
+            mode: "read-only"
+          })).status,
+          409
+        );
+        current = yield* agents.inspect(patch.patchId, owner);
+        assert.strictEqual(
+          (yield* post(path, workspace.owner, {
+            action: "save",
+            expectedPatchId: patch.patchId,
+            revision: String(current.policy.revision),
+            mode: "read-only",
+            handler: ["deals.read", "deals.note"]
+          })).status,
+          303
+        );
+        assert.strictEqual((yield* agents.read(patch.patchId, identity))?.mode, "read-only");
+        assert.strictEqual(
+          (yield* post(path, workspace.owner, {
+            action: "revoke",
+            expectedPatchId: patch.patchId,
+            machineId: machine.id
+          })).status,
+          303
+        );
+        assert.isNull(yield* agents.read(patch.patchId, identity));
+        // Authorization never crosses into another credential, even for the same person.
+        const other = yield* tokens.mint({
+          userId: workspace.member.id,
+          name: "Alex’s other agent"
+        });
+        yield* agents.grant(patch.patchId, owner, machine.id);
+        const otherIdentity = yield* tokens.authenticate(other.token);
+        assert.isNotNull(otherIdentity);
+        if (otherIdentity !== null) assert.isNull(yield* agents.read(patch.patchId, otherIdentity));
+        yield* tokens.revoke(machine.id);
+        assert.isNull(yield* agents.read(patch.patchId, identity));
+      })
+  );
+  it.effect("refuses removed handlers, wrong patch forms and retired patches", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* sales(workspace.owner);
+      const path = `/patches/${patch.name}/agent-access`;
+      assert.strictEqual(
+        (yield* post(path, workspace.owner, {
+          action: "save",
+          expectedPatchId: "other",
+          mode: "actions",
+          revision: "0"
+        })).status,
+        409
+      );
+      assert.strictEqual(
+        (yield* post(path, workspace.owner, {
+          action: "save",
+          expectedPatchId: patch.patchId,
+          mode: "actions",
+          revision: "0",
+          handler: ["fake.write"]
+        })).status,
+        409
+      );
+      assert.strictEqual(
+        (yield* post(path, workspace.owner, {
+          action: "save",
+          expectedPatchId: patch.patchId,
+          mode: "off",
+          revision: "0"
+        })).status,
+        422
+      );
+      yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.owner), true);
+      assert.strictEqual((yield* request(path, workspace.owner)).status, 409);
+    })
+  );
   it.effect("shows member, owner and admin views of one card and its retained versions", () =>
     Effect.gen(function* () {
       const workspace = yield* company();

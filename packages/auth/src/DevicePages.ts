@@ -75,10 +75,10 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
   return pageResponse(
     {
       title: "Device login",
-      heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
+      heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code your agent or terminal showed you?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
       styles,
       status: refusal === undefined ? 200 : invalid ? 422 : 409,
-      body: `${notice}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(viewer.user.id)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
+      body: `${notice}<p>A device just ran <code>patchy login</code> and wants to connect to <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the connection after your agent or machine and confirm. Patch owners separately grant access to use each patch. If you didn't request this connection, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(viewer.user.id)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
     },
     session
   );
@@ -142,7 +142,7 @@ const postDevice = Effect.gen(function* () {
         form.action === "confirm"
           ? message(
               "Confirmed.",
-              "<p>Your terminal finishes logging in on its own within a few seconds. You can close this tab.</p>"
+              "<p>Return to your agent or terminal to finish connecting. You can close this tab.</p>"
             )
           : message(
               "Nothing was logged in.",
@@ -169,7 +169,7 @@ const machines = Effect.gen(function* () {
     {
       title: "Your machines",
       app: { viewer, section: "machines" },
-      body: `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
+      body: `<p><a class="btn btn-primary" href="/machines/connect-agent">Connect your personal agent</a></p><p>Connections at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
     },
     session
   );

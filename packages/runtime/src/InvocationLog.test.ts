@@ -53,6 +53,7 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
         new InvocationLog.Invocation({
           ...input,
           effectivePrincipal: "patch",
+          agent: null,
           startedAt: new Date(input.startedAt),
           deadline: new Date(input.deadline),
           settledAt: null,
@@ -80,6 +81,26 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
       );
       assert.isNull(yield* restarted.find({ ...lookup, companyId: "cmp_other" }));
       assert.isNull(yield* restarted.find({ ...lookup, invocationId: "invocation-missing" }));
+    })
+  );
+
+  it.effect("keeps host-established agent attribution after settlement and service restart", () =>
+    Effect.gen(function* () {
+      const log = yield* InvocationLog.InvocationLog;
+      const input = {
+        ...begin("invocation-agent"),
+        agent: { id: "mac_personal", name: "Aggie" }
+      };
+      yield* log.begin(input);
+      yield* log.finish(finish(input.id));
+      const restarted = yield* InvocationLog.make;
+      const retained = yield* restarted.find({
+        companyId: input.companyId,
+        invocationId: input.id
+      });
+      assert.deepStrictEqual(retained?.agent, input.agent);
+      assert.strictEqual(retained?.initiatingViewerId, input.initiatingViewerId);
+      assert.strictEqual(retained?.outcome, "success");
     })
   );
 

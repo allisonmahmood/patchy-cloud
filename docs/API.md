@@ -445,6 +445,44 @@ Responses:
 - `503` [RuntimeFailure_7](#runtimefailure_7)
 - `504` [RuntimeFailure_8](#runtimefailure_8)
 
+## agent
+
+### `GET /api/agent/patches/:patchId`
+
+Development-only personal-agent adapter. A dedicated machine credential needs a separate grant for this live tier 2 patch. Owners/admins manage saved access at /patches/<name>/agent-access. Returns the served version's selected handler descriptors; read-only mode exposes queries only. Cloud reloads the saved policy for each request. Raw-table mode remains a later slice.
+
+Responses:
+
+- `200` { patchId: string, versionId: string, mode: "read-only" | "actions", handlers: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } } }
+- `400` { ok: false, error: string } | [RuntimeFailure](#runtimefailure)
+- `401` [RuntimeFailure_1](#runtimefailure_1) | { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `404` { ok: false, error: string } | [RuntimeFailure_3](#runtimefailure_3)
+- `409` [RuntimeFailure_4](#runtimefailure_4)
+- `413` [RuntimeFailure_5](#runtimefailure_5)
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer } | [RuntimeFailure_6](#runtimefailure_6)
+- `503` [RuntimeFailure_7](#runtimefailure_7)
+- `504` [RuntimeFailure_8](#runtimefailure_8)
+
+### `POST /api/agent/patches/:patchId/call`
+
+Runs a selected handler through the existing invocation engine as the credential's user. Checks live membership, per-patch grant, current mode and served version before execution. The credential's machine id/name supplies agent attribution; callers cannot choose an actor. Pass the described versionId and retain one mutationKey for an explicit retry of the same mutation. Never replay actions or automatically retry unknown outcomes. Disabled in production.
+
+Request body: { versionId: string, handler: string, args: { [key: string]: unknown }, mutationKey?: string }
+
+Responses:
+
+- `200` [ServerCallReply](#servercallreply)
+- `400` { ok: false, error: string } | [RuntimeFailure](#runtimefailure)
+- `401` [RuntimeFailure_1](#runtimefailure_1) | { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `404` { ok: false, error: string } | [RuntimeFailure_3](#runtimefailure_3)
+- `409` [RuntimeFailure_4](#runtimefailure_4)
+- `413` [RuntimeFailure_5](#runtimefailure_5)
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer } | [RuntimeFailure_6](#runtimefailure_6)
+- `503` [RuntimeFailure_7](#runtimefailure_7)
+- `504` [RuntimeFailure_8](#runtimefailure_8)
+
 ## Version eligibility
 
 The stream contract includes a reserved `revoked` frame, and the shell stops if it receives one. There is no version-revocation operation or persisted revocation state. Admission checks retained versions and the existing patch/session/access states. Who may revoke a version, how that appears and how it is undone remain open on [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425). The frame is not evidence that version revocation is built.
@@ -539,23 +577,6 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure_6
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
-}
-```
-
 ### RuntimeFailure_5
 
 ```
@@ -574,23 +595,6 @@ substituting the host's limit configuration.
 ```
 
 ### RuntimeFailure_4
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string
-}
-```
-
-### RuntimeFailure_3
 
 ```
 {
@@ -641,7 +645,7 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure
+### RuntimeFailure_6
 
 ```
 {
@@ -658,13 +662,37 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeSuccess
+### RuntimeFailure_3
 
 ```
 {
-  ok: true,
-  value: unknown,
-  revisions?: { [key: string]: string }
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
+}
+```
+
+### RuntimeFailure
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string
 }
 ```
 
@@ -685,6 +713,22 @@ RuntimeSuccess | HandlerFailure
 }
 ```
 
+### RuntimeSuccess
+
+```
+{
+  ok: true,
+  value: unknown,
+  revisions?: { [key: string]: string }
+}
+```
+
+### HandlerSchema
+
+```
+{ kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: true } | { kind: "object", fields: { [key: string]: HandlerSchema }, optional?: true } | { kind: "array", element: HandlerSchema, optional?: true } | { kind: "enum", values: string[], optional?: true } | { kind: "nullable", value: HandlerSchema, optional?: true } | { kind: "row", table: string, optional?: true } | { kind: "fileHandle" | "upload", optional?: true }
+```
+
 ### RuntimeCall
 
 ```
@@ -695,12 +739,6 @@ RuntimeSuccess | HandlerFailure
 
 ```
 { userId: string } | null
-```
-
-### HandlerSchema
-
-```
-{ kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: true } | { kind: "object", fields: { [key: string]: HandlerSchema }, optional?: true } | { kind: "array", element: HandlerSchema, optional?: true } | { kind: "enum", values: string[], optional?: true } | { kind: "nullable", value: HandlerSchema, optional?: true } | { kind: "row", table: string, optional?: true } | { kind: "fileHandle" | "upload", optional?: true }
 ```
 
 ### Release

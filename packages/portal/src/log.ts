@@ -75,7 +75,7 @@ const version = (names: LogNames, id: string) => {
 
 /** "Alice · Sales CRM v12 · leads.import (action)": who ran what, in the reader's words. */
 const sentence = (entry: InvocationLog.Invocation, names: LogNames) =>
-  `${person(names, entry.initiatingViewerId)} · ${names.patch} ${version(names, entry.versionId)} · ${entry.handler} (${entry.kind})`;
+  `${person(names, entry.initiatingViewerId)}${entry.agent === null ? "" : ` via ${entry.agent.name}`} · ${names.patch} ${version(names, entry.versionId)} · ${entry.handler} (${entry.kind})`;
 
 /** Timing facts for a top-level entry: duration, retries and a reply its page never got. */
 const timing = (entry: InvocationLog.Invocation) =>
@@ -258,7 +258,7 @@ export const renderLog = (input: {
   }
   const rows = input.entries.map((entry) => {
     const { invocation } = entry;
-    return `<tr id="${escapeAttribute(entryId(invocation))}"><td>${time(invocation.startedAt, now)}</td><td>${escapeHtml(person(names, invocation.initiatingViewerId))}</td><td>${escapeHtml(version(names, invocation.versionId))}</td><td><code>${escapeHtml(invocation.handler)}</code></td><td>${escapeHtml(invocation.kind)}</td><td>${outcome(invocation.outcome, invocation.outcomeCode)}</td><td>${escapeHtml(timing(invocation))}</td></tr>${expansion(entry, names)}`;
+    return `<tr id="${escapeAttribute(entryId(invocation))}"><td>${time(invocation.startedAt, now)}</td><td>${escapeHtml(person(names, invocation.initiatingViewerId))}${invocation.agent === null ? "" : ` via ${escapeHtml(invocation.agent.name)}`}</td><td>${escapeHtml(version(names, invocation.versionId))}</td><td><code>${escapeHtml(invocation.handler)}</code></td><td>${escapeHtml(invocation.kind)}</td><td>${outcome(invocation.outcome, invocation.outcomeCode)}</td><td>${escapeHtml(timing(invocation))}</td></tr>${expansion(entry, names)}`;
   });
   return `<article>${back}${intro}${form}<p class="supporting-text">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p><div class="portal-table"><table class="table log-table" aria-label="Log entries"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Person</th><th scope="col">Version</th><th scope="col">Handler</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${window}${paging}</article>`;
 };
