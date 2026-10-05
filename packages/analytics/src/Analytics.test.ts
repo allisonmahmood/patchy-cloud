@@ -12,9 +12,10 @@ import * as Analytics from "./Analytics.js";
 import * as PostHogClient from "./PostHogClient.js";
 
 const event: Analytics.AnalyticsEvent = {
-  name: "patch.created",
+  name: "patch.deleted",
   principalId: "usr_1",
-  properties: { patchId: "pch_1", versionNumber: 1 }
+  companyId: "cmp_1",
+  properties: { patchId: "pch_1", ownerUserId: "usr_1" }
 };
 
 /** A client that keeps every message and answers shutdown at once. */
@@ -52,7 +53,7 @@ function failure(operation: "capture" | "shutdown") {
 const track = (event: Analytics.AnalyticsEvent) =>
   Effect.flatMap(Analytics.Analytics, (analytics) => analytics.track(event));
 
-it.effect("reports an event on its principal without a person profile", () =>
+it.effect("reports an event on its principal and company without a person profile", () =>
   Effect.gen(function* () {
     const client = recording();
     yield* track(event).pipe(
@@ -61,8 +62,13 @@ it.effect("reports an event on its principal without a person profile", () =>
     assert.deepStrictEqual(client.messages, [
       {
         distinctId: "usr_1",
-        event: "patch.created",
-        properties: { patchId: "pch_1", versionNumber: 1, $process_person_profile: false }
+        event: "patch.deleted",
+        properties: {
+          patchId: "pch_1",
+          ownerUserId: "usr_1",
+          companyId: "cmp_1",
+          $process_person_profile: false
+        }
       }
     ]);
   })
@@ -71,12 +77,37 @@ it.effect("reports an event on its principal without a person profile", () =>
 it.effect("reports an event no principal performed under the instance", () =>
   Effect.gen(function* () {
     const client = recording();
-    yield* track({ ...event, name: "patch.purged", principalId: null }).pipe(
-      Effect.provide(Analytics.layerPostHog.pipe(Layer.provide(client.layer)))
-    );
+    yield* track({
+      name: "patch.purged",
+      principalId: null,
+      companyId: "cmp_1",
+      properties: { patchId: "pch_1", ownerUserId: "usr_1", versionsRemoved: 1 }
+    }).pipe(Effect.provide(Analytics.layerPostHog.pipe(Layer.provide(client.layer))));
     assert.strictEqual(client.messages[0]?.distinctId, Analytics.INSTANCE_DISTINCT_ID);
   })
 );
+
+// Typechecking runs this test; its body does nothing at runtime.
+it("holds each event to its own catalogue entry", () => {
+  void ([
+    // @ts-expect-error Every business event names its company.
+    { name: "patch.deleted", principalId: "usr_1", properties: event.properties },
+    {
+      name: "patch.deleted",
+      principalId: "usr_1",
+      companyId: "cmp_1",
+      // @ts-expect-error A patch event names its owner.
+      properties: { patchId: "pch_1" }
+    },
+    {
+      name: "token.minted",
+      principalId: "usr_1",
+      companyId: "cmp_1",
+      // @ts-expect-error Properties belong to the event that declares them.
+      properties: { tokenId: "mtk_1", replaced: false, patchId: "pch_1" }
+    }
+  ] satisfies ReadonlyArray<Analytics.AnalyticsEvent>);
+});
 
 it.effect("keeps a failing backend away from the caller", () =>
   Effect.gen(function* () {

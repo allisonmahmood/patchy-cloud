@@ -248,6 +248,12 @@ const keyConflict = () =>
     error: "Publish key was already used with a different payload."
   });
 
+/**
+ * The shape of an SDK entry point, such as `patchy/server`. A manifest's
+ * `sdkImports` is client supplied, so analytics drops anything else.
+ */
+const SDK_ENTRY_POINT = /^patchy\/[a-z][a-z0-9/-]*$/;
+
 /** Where the publication came from, as far as the request says. */
 const requestOrigin = Effect.map(HttpServerRequest.HttpServerRequest, (request) => ({
   sourceIp: Option.getOrNull(request.remoteAddress),
@@ -540,15 +546,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           yield* analytics.track({
             name: patchId === null ? "patch.created" : "patch.updated",
             principalId: identity.user.id,
+            companyId: identity.company.id,
             properties: {
               patchId: recorded.patchId,
+              // Only the owner publishes, so the publisher is the owner.
+              ownerUserId: identity.user.id,
               machineTokenId: identity.machine.id,
               versionNumber: recorded.versionNumber,
               scope: recorded.scope,
               tier: recorded.tier,
               htmlBytes: recorded.artifacts.html.bytes,
               serverBytes: recorded.artifacts.server?.bytes ?? 0,
-              sdkImports: manifest.sdkImports ?? [],
+              sdkImports: (manifest.sdkImports ?? []).filter((source) =>
+                SDK_ENTRY_POINT.test(source)
+              ),
               tables: Object.keys(manifest.tables),
               stores: Object.keys(manifest.files),
               integrations: Object.entries(manifest.uses).map(
@@ -846,7 +857,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           yield* analytics.track({
             name: "patch.deleted",
             principalId: identity.user.id,
-            properties: { patchId: params.patchId }
+            companyId: patch.companyId,
+            properties: { patchId: patch.id, ownerUserId: patch.ownerUserId }
           });
           return new Deleted({
             ok: true,

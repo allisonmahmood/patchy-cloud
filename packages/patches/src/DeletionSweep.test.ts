@@ -60,8 +60,13 @@ const refusing = (
           )
         : objects.delete(key)
   });
+const events: Analytics.AnalyticsEvent[] = [];
+const recordingAnalytics = Layer.succeed(
+  Analytics.Analytics,
+  Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
+);
 const services = Layer.mergeAll(DeletionSweep.layer, Content.layer).pipe(
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, filesystem, Analytics.layerNoop)),
+  Layer.provideMerge(Layer.mergeAll(Patches.layer, filesystem, recordingAnalytics)),
   Layer.provideMerge(Fixtures.database),
   Layer.provideMerge(NodeFileSystem.layer)
 );
@@ -97,6 +102,23 @@ it.layer(services)("DeletionSweep", (it) => {
         failed: 0,
         orphanedObjects: 0
       });
+      assert.deepStrictEqual(
+        events.filter(
+          (event) => event.name === "patch.purged" && event.properties.patchId === deleted.patchId
+        ),
+        [
+          {
+            name: "patch.purged",
+            principalId: null,
+            companyId: uploader.company.id,
+            properties: {
+              patchId: deleted.patchId,
+              ownerUserId: uploader.user.id,
+              versionsRemoved: 1
+            }
+          }
+        ]
+      );
       assert.strictEqual((yield* objects.get(key).pipe(Effect.flip))._tag, "ObjectNotFound");
       assert.strictEqual(
         (yield* patches.restore(deleted.patchId, actor).pipe(Effect.flip))._tag,

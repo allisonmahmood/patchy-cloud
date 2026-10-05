@@ -5,7 +5,7 @@ The business moments and runtime work the instance reports about itself. [Patche
 ## Language
 
 **Analytics event**:
-A server-side business moment: a patch created, updated, deleted or purged, or a machine token minted. It carries ids, sizes, counts and states, never page content, a filename, source address or URL; reporting is optional and its failure never fails the caller's request.
+A server-side business moment, such as a patch published or a machine token minted. The catalogue in `src/Analytics.ts` names each event and the properties it carries. Every event names the company it happened in, and a patch event names the patch's owner at that moment. It carries ids, sizes, counts and states, and the identifiers a patch's manifest declares, never a person's or company's name, an email address, page content, a filename, source address, URL or free text; reporting is optional and its failure never fails the caller's request.
 _Avoid_: telemetry, tracking, pageview, metric (an analytics event names what happened in the domain, not what the process measured)
 
 **Principal of an event**:
