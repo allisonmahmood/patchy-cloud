@@ -13,7 +13,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -691,7 +690,11 @@ export class Patches extends Context.Service<
       Option.Option<{ patch: Patch; actorName: string | null; sourcesOff: boolean }>,
       SqlError
     >;
-    /** Hold the company's dependency advisory lock in a transaction, without locking patch rows. */
+    /**
+     * Hold the company's dependency advisory lock in a transaction, without locking patch rows.
+     * Lifecycle changes inside it wake and report only once it commits. Compose them directly:
+     * a raw `sql.withTransaction` savepoint around one that rolls back and is caught keeps them.
+     */
     readonly withDependencyLock: (
       actorUserId: string
     ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>;
@@ -1017,16 +1020,19 @@ export const make = Effect.gen(function* () {
     // and its business events go unreported rather than report a rollback.
     const outerTransaction = yield* Effect.serviceOption(sql.transactionService);
     const pending: PendingLifecycle = { wakes: [], events: [] };
-    const result = yield* sql
-      .withTransaction(work.pipe(Effect.provideService(pendingLifecycle, pending)))
-      .pipe(
-        // A committed change reports even when its caller is interrupted just after.
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit) && Option.isNone(outerTransaction)
-            ? Effect.forEach(pending.events, analytics.track, { discard: true })
-            : Effect.void
+    // Only the work is interruptible. An interrupt that arrives during COMMIT waits
+    // until a committed change has reported its events.
+    const result = yield* Effect.uninterruptibleMask((restore) =>
+      sql
+        .withTransaction(restore(work.pipe(Effect.provideService(pendingLifecycle, pending))))
+        .pipe(
+          Effect.tap(() =>
+            Option.isSome(outerTransaction)
+              ? Effect.void
+              : Effect.forEach(pending.events, analytics.track, { discard: true })
+          )
         )
-      );
+    );
     if (Option.isSome(outerTransaction)) return result;
     if (pending.wakes.length > 0) yield* wakes.publish([...new Set(pending.wakes)]);
     return result;

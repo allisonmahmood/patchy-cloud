@@ -1169,16 +1169,19 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
           const saved = yield* readPatch(workspace.owner, patch.patchId);
           assert.strictEqual(saved.patch.state, "live");
-          assert.deepStrictEqual(reported(patch.patchId).at(-1), {
-            name: "patch.restored",
-            principalId: person.id,
-            companyId: workspace.id,
-            properties: {
-              patchId: patch.patchId,
-              ownerUserId: workspace.owner.id,
-              byAdmin: person === workspace.admin
+          // After the setup's own retirement or deletion, the restore reports once.
+          assert.deepStrictEqual(reported(patch.patchId).slice(1), [
+            {
+              name: "patch.restored",
+              principalId: person.id,
+              companyId: workspace.id,
+              properties: {
+                patchId: patch.patchId,
+                ownerUserId: workspace.owner.id,
+                byAdmin: person === workspace.admin
+              }
             }
-          });
+          ]);
           assert.strictEqual(saved.patch.name, patch.name);
           assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
           assert.strictEqual(saved.patch.description, before.patch.description);
@@ -2624,12 +2627,15 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         for (const patch of [own, admin]) {
           const saved = yield* readPatch(workspace.admin, patch.patchId);
           assert.strictEqual(saved.patch.state, "live");
-          assert.deepStrictEqual(reported(patch.patchId).at(-1), {
-            name: "patch.restored",
-            principalId: workspace.admin.id,
-            companyId: workspace.id,
-            properties: { patchId: patch.patchId, ownerUserId: workspace.owner.id, byAdmin: true }
-          });
+          // After the setup's retirement, reactivation restores once.
+          assert.deepStrictEqual(reported(patch.patchId).slice(1), [
+            {
+              name: "patch.restored",
+              principalId: workspace.admin.id,
+              companyId: workspace.id,
+              properties: { patchId: patch.patchId, ownerUserId: workspace.owner.id, byAdmin: true }
+            }
+          ]);
           assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
           const card = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
           assert.notInclude(text(card), "Priya (deactivated)");
