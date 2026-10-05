@@ -360,6 +360,35 @@ it.layer(layer)("portal pages on a socket", (it) => {
       server: { objectKey: `agent-sales-${ordinal}.js`, sha256: sha256(""), bytes: 0 }
     });
   });
+  it.effect(
+    "gives each person a private setup message while public instructions contain no identity",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        assert.strictEqual((yield* request("/machines/connect-agent", null)).status, 401);
+        for (const person of [workspace.owner, workspace.member]) {
+          const page = yield* request("/machines/connect-agent", person);
+          assert.strictEqual(page.status, 200);
+          assert.strictEqual(page.headers["cache-control"], "private, no-store");
+          const html = yield* page.text;
+          assert.include(html, person.email);
+          assert.include(html, workspace.id);
+          assert.include(html, `${PUBLIC_BASE_URL}/agent-setup.txt`);
+          const other = person === workspace.owner ? workspace.member : workspace.owner;
+          assert.notInclude(html, other.email);
+        }
+        const publicSetup = yield* request("/agent-setup.txt", null);
+        assert.strictEqual(publicSetup.status, 200);
+        assert.strictEqual(publicSetup.headers["content-type"], "text/plain; charset=utf-8");
+        assert.strictEqual(publicSetup.headers["cache-control"], "no-store");
+        const instructions = yield* publicSetup.text;
+        assert.include(instructions, "./connect config --connection");
+        assert.include(instructions, "./connect logout --connection");
+        assert.notInclude(instructions, workspace.owner.email);
+        assert.notInclude(instructions, workspace.id);
+        assert.notInclude(instructions, workspace.owner.machineTokenId);
+      })
+  );
   it.effect("organizes agent access by patch and keeps each patch's grants and mode separate", () =>
     Effect.gen(function* () {
       const workspace = yield* company();

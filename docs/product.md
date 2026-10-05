@@ -569,7 +569,8 @@ handlers and call them without an open browser. It authenticates an existing
 machine token as its owner and requires a separate grant for each patch. Cloud
 reads the patch's current `read-only` or `actions` policy for every admission;
 grants follow mode changes. Read-only exposes selected queries; actions exposes
-selected declared handlers. Raw table access is not implemented in this slice.
+selected declared handlers. Generic row editing, if offered, is a declared operation;
+there is no separate raw-table access mode.
 Tier 2's handler rules, transactions, mutation replay and initiating-person data
 permissions apply unchanged. The host adds `ctx.viewer.agent` from the machine
 credential and stores that agent alongside the initiating person in invocation
@@ -581,11 +582,21 @@ in its platform database. The page lists connections by person and owner-supplie
 machine name, supports grant/revoke, and refuses stale mode/operation forms.
 Ordinary members cannot change these controls. Sign-in alone grants no patch access.
 Inactive credentials and retired/deleted patches cannot execute. There is no Off
-mode: removing a grant removes that connection's access. Raw table mode and
-production admission remain future slices. Development fixture files are explicit
+mode: removing a grant removes that connection's access. Production admission
+remains a future slice. Development fixture files are explicit
 import inputs only; the runtime never uses them to override saved settings. The companion MCP process owns discovery presentation and
 request-key persistence, never patch business rules or patch data access. This is
 an interactive local exception to browser admission, not a tier 3 launch.
+
+The portal's **Connect your agent** opens `/machines/connect-agent`: a signed-in
+person copies an account/company-specific setup message to their own personal agent.
+Public `/agent-setup.txt` describes the local companion's login, MCP registration,
+live account/access checks and disconnect; it contains no personal credentials or
+account details. Setup uses the existing machine login, with one private profile per
+agent. The person confirms the account/company and names the connection in their
+browser; patch grants remain a separate owner/admin decision. The companion emits
+its MCP configuration and reports currently authorized patches. This prototype
+requires the agent and companion on the same computer as Cloud.
 
 ### Tier 3 is next
 

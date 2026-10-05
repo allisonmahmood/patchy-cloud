@@ -130,5 +130,5 @@ handler names for one live company Tier 2 patch. An **agent grant** authorizes o
 active machine connection separately for that patch; it stores no mode snapshot,
 so it follows access changes. Revoke removes that connection's grant. Authentication
 and runtime handlers still enforce the initiating person's permissions. The current
-external execution adapter remains development/test only; raw table mode is future
-work. The portal exposes these controls at `/patches/<name>/agent-access`.
+external execution adapter remains development/test only. Generic row editing
+can be exposed as declared operations; no separate raw-table mode exists. The portal exposes these controls at `/patches/<name>/agent-access`.

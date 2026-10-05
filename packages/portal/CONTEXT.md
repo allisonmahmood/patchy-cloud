@@ -4,6 +4,14 @@ Where a signed-in person finds and manages their company's patches. The patch, i
 
 ## Language
 
+**Personal-agent setup**:
+`/machines/connect-agent` gives the signed-in person a setup message containing
+this instance, their email and company. Public `/agent-setup.txt` gives the agent
+local companion instructions, with no personal account details. Entry points live
+on the index, Your machines and Agent access. Auth owns browser confirmation and
+revocation; the companion owns its isolated login profile and MCP registration.
+The agent verifies live identity and patch grants before reporting readiness.
+
 **Portal**:
 The signed-in landing at `/`: the company's patches on one side and one patch's card on the other. It lists only the viewer's own company, public patches included, and never another company's.
 _Avoid_: dashboard, home page (the root is a sign-in door when signed out), directory (the index is one half of it)

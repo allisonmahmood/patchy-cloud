@@ -128,7 +128,7 @@ const renderIndex = (input: {
     off.length === 0
       ? ""
       : `<p><a href="${escapeAttribute(togglePath)}">${input.all ? "Hide" : "Show"} retired and deleted</a></p>`;
-  return `<aside class="portal-index" aria-label="Patch index"><p class="supporting-text">${escapeHtml(count)} ${count === 1 ? "patch" : "patches"}</p>${toggle}${liveCount === 0 ? '<p class="supporting-text">No live patches.</p>' : ""}${indexGroup("Yours", yours, input.card, input.all, input.now)}${indexGroup("Company", company, input.card, input.all, input.now)}${input.all ? indexGroup("Retired and deleted", off, input.card, input.all, input.now) : ""}</aside>`;
+  return `<aside class="portal-index" aria-label="Patch index"><p><a class="btn btn-quiet" href="/machines/connect-agent">Connect your agent</a></p><p class="supporting-text">${escapeHtml(count)} ${count === 1 ? "patch" : "patches"}</p>${toggle}${liveCount === 0 ? '<p class="supporting-text">No live patches.</p>' : ""}${indexGroup("Yours", yours, input.card, input.all, input.now)}${indexGroup("Company", company, input.card, input.all, input.now)}${input.all ? indexGroup("Retired and deleted", off, input.card, input.all, input.now) : ""}</aside>`;
 };
 
 const titleLine = (patch: Patches.Patch): string => {
@@ -340,7 +340,7 @@ export const renderPortal = (input: {
     // Many first publishers have never signed in a CLI, so the way in is three plain steps.
     const company = escapeHtml(input.viewer.company.name);
     const setup = `Set up Patchy using ${input.publicBaseUrl.replace(/\/+$/u, "")}/llms.txt`;
-    return `${refusal(input.notice)}<article><h1 class="page-heading">No patches yet</h1><p>Anything published lists here for everyone at ${company}. Getting your agent ready takes three steps.</p><ol class="list"><li class="list-row"><p><strong>Paste this to your agent.</strong></p><code class="copy-address" aria-label="Setup line, select to copy">${escapeHtml(setup)}</code></li><li class="list-row"><p><strong>Confirm the code it shows you.</strong></p><p class="supporting-text">Your agent opens nothing. It gives you a link and a code; sign in and confirm that this machine can publish as you.</p></li><li class="list-row"><p><strong>Ask for a page or a tool.</strong></p><p class="supporting-text">"Publish this plan with Patchy" or "Build us a tool for tracking leads with Patchy".</p></li></ol></article>`;
+    return `${refusal(input.notice)}<article><h1 class="page-heading">No patches yet</h1><p><a href="/machines/connect-agent">Connect your personal agent to use patches</a></p><p>Anything published lists here for everyone at ${company}. Getting your agent ready takes three steps.</p><ol class="list"><li class="list-row"><p><strong>Paste this to your agent.</strong></p><code class="copy-address" aria-label="Setup line, select to copy">${escapeHtml(setup)}</code></li><li class="list-row"><p><strong>Confirm the code it shows you.</strong></p><p class="supporting-text">Your agent opens nothing. It gives you a link and a code; sign in and confirm that this machine can publish as you.</p></li><li class="list-row"><p><strong>Ask for a page or a tool.</strong></p><p class="supporting-text">"Publish this plan with Patchy" or "Build us a tool for tracking leads with Patchy".</p></li></ol></article>`;
   }
   const card =
     input.card === null

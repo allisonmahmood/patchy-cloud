@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
+import { renderAgentConnect } from "./agentConnect.js";
 import { renderAgentAccess } from "./agentAccess.js";
 import { firstClause } from "./render.js";
 
@@ -47,5 +48,27 @@ describe("agent access", () => {
     expect(saveForm).toContain('name="handler" value="deals.read" checked');
     expect(saveForm).toContain('name="handler" value="deals.note">');
     expect(saveForm).toContain('name="revision" value="2"');
+  });
+});
+
+describe("personal-agent setup", () => {
+  it("escapes account and company text inside the copyable message", () => {
+    const html = renderAgentConnect({
+      publicBaseUrl: "https://patchy.example/",
+      viewer: {
+        user: { id: "usr-owner", email: "owner@company.example", name: "Owner" },
+        company: {
+          id: "cmp-owner",
+          handle: "company",
+          name: "</textarea><script>company</script>"
+        },
+        role: "member"
+      }
+    });
+    expect(html).toContain("https://patchy.example/agent-setup.txt");
+    expect(html).toContain("&lt;/textarea&gt;&lt;script&gt;company&lt;/script&gt;");
+    expect(html).not.toContain("<script>");
+    expect(html.match(/<\/textarea>/g)).toHaveLength(1);
+    expect(html).toContain('href="/machines"');
   });
 });

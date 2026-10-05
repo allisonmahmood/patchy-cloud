@@ -26,6 +26,7 @@ import {
   styles
 } from "./render.js";
 import { renderAgentAccess } from "./agentAccess.js";
+import { agentSetupInstructions, renderAgentConnect } from "./agentConnect.js";
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
 const isName = Schema.is(PatchName);
@@ -725,6 +726,38 @@ export const layer: Layer.Layer<
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
+    yield* router.add(
+      "GET",
+      "/agent-setup.txt",
+      Effect.map(Session.Session, (session) =>
+        HttpServerResponse.text(agentSetupInstructions(session.publicBaseUrl), {
+          contentType: "text/plain; charset=utf-8",
+          headers: { "cache-control": "no-store" }
+        })
+      )
+    );
+    yield* router.add(
+      "GET",
+      "/machines/connect-agent",
+      errors(
+        RequireSession.withViewer(
+          Effect.gen(function* () {
+            const viewer = yield* RequireSession.Viewer;
+            const session = yield* Session.Session;
+            return pageResponse(
+              {
+                title: "Connect your personal agent",
+                heading: "",
+                styles,
+                body: renderAgentConnect({ viewer, publicBaseUrl: session.publicBaseUrl }),
+                app: { viewer, section: "machines" }
+              },
+              session
+            );
+          })
+        )
+      )
+    );
     for (const action of ["deactivate", "reactivate"] as const) {
       for (const method of ["GET", "POST"] as const) {
         const handler = RequireSession.withViewer(
