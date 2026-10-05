@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { Analytics } from "@patchy/analytics";
 import { type Manifest, sharedTableId, sharedStoreId } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Wakes } from "@patchy/runtime/core";
@@ -21,6 +22,14 @@ const { admin, quota, sibling, uploader, reader } = Fixtures.identities;
 const owner = { userId: uploader.user.id, admin: false };
 const administrator = { userId: admin.user.id, admin: true };
 let counter = 0;
+const events: Analytics.AnalyticsEvent[] = [];
+const recordingAnalytics = Layer.succeed(
+  Analytics.Analytics,
+  Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
+);
+/** The business events reported about one patch, in order. */
+const reported = (patchId: string) =>
+  events.filter((event) => "patchId" in event.properties && event.properties.patchId === patchId);
 
 const input = (overrides: Partial<Patches.RecordInput> = {}): Patches.RecordInput => {
   const ordinal = ++counter;
@@ -67,7 +76,9 @@ const declaration = (patchId: string, revision = 1) => ({
   revision
 });
 
-it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (it) => {
+it.layer(
+  Patches.layer.pipe(Layer.provideMerge(recordingAnalytics), Layer.provideMerge(Fixtures.database))
+)("Patches", (it) => {
   const moves: ReadonlyArray<{
     name: string;
     allowed: readonly Patches.PatchState[];
@@ -172,43 +183,102 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
     })
   );
 
-  it.effect("announces only committed patches when a nested portal action rolls back", () =>
+  it.effect("reports each lifecycle change once, and nothing for a no-op or refusal", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;
-      const first = yield* create();
-      const second = yield* create();
-      const batches: string[][] = [];
-      yield* (yield* Wakes.Wakes).subscribe((keys) =>
-        Effect.sync(() => {
-          batches.push([...keys]);
-        })
+      const patch = yield* create();
+      const { patchId } = patch;
+      yield* service.setScope(patchId, owner, "company");
+      yield* service.rollback(patchId, owner, 1);
+      yield* service.setScope(patchId, administrator, "public");
+      yield* update(patchId);
+      yield* service.rollback(patchId, owner, 1);
+      yield* service.retire(patchId, administrator);
+      yield* service.restore(patchId, owner);
+      yield* service.reassign(patchId, administrator, uploader.user.id);
+      yield* service.reassign(patchId, administrator, reader.user.id);
+      yield* service.delete(patchId, administrator);
+      assert.instanceOf(
+        yield* service.retire(patchId, administrator).pipe(Effect.flip),
+        Patches.WrongState
       );
-      yield* service.withDependencyLock(owner.userId)(
-        Effect.gen(function* () {
-          yield* service.retire(first.patchId, owner);
-          assert.strictEqual(
-            yield* service
-              .withDependencyLock(owner.userId)(
-                service.retire(second.patchId, owner).pipe(Effect.andThen(Effect.fail("cancel")))
-              )
-              .pipe(Effect.flip),
-            "cancel"
-          );
-          assert.deepStrictEqual(batches, []);
-        })
-      );
-      assert.deepStrictEqual(batches, [[`patch:${first.patchId}`]]);
-      // A failed outermost action announces nothing either.
-      yield* service
-        .withDependencyLock(owner.userId)(
-          service.retire(second.patchId, owner).pipe(Effect.andThen(Effect.fail("cancel")))
-        )
-        .pipe(Effect.flip);
-      assert.deepStrictEqual(batches, [[`patch:${first.patchId}`]]);
-      assert.strictEqual((yield* stored(first.patchId)).lifecycle_revision, "2");
-      assert.strictEqual((yield* stored(second.patchId)).lifecycle_revision, "1");
-      assert.isTrue(Option.isSome(yield* service.find(second.patchId)));
-    }).pipe(Effect.scoped)
+      const by = (actor: Patches.Actor, ownerUserId = uploader.user.id) => ({
+        principalId: actor.userId,
+        companyId: uploader.company.id,
+        properties: { patchId, ownerUserId, byAdmin: actor.admin }
+      });
+      const shared = by(administrator);
+      const rolledBack = by(owner);
+      assert.deepStrictEqual(reported(patchId), [
+        {
+          name: "patch.shared",
+          ...shared,
+          properties: { ...shared.properties, scope: "public", previousScope: "company" }
+        },
+        {
+          name: "patch.rolled_back",
+          ...rolledBack,
+          properties: { ...rolledBack.properties, versionNumber: 1, fromVersionNumber: 2 }
+        },
+        { name: "patch.retired", ...by(administrator) },
+        { name: "patch.restored", ...by(owner) },
+        {
+          name: "patch.reassigned",
+          principalId: administrator.userId,
+          companyId: uploader.company.id,
+          properties: { patchId, ownerUserId: reader.user.id, fromUserId: uploader.user.id }
+        },
+        { name: "patch.deleted", ...by(administrator, reader.user.id) }
+      ]);
+    })
+  );
+
+  it.effect(
+    "announces and reports only committed changes when a nested portal action rolls back",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* Patches.Patches;
+        const first = yield* create();
+        const second = yield* create();
+        const batches: string[][] = [];
+        yield* (yield* Wakes.Wakes).subscribe((keys) =>
+          Effect.sync(() => {
+            batches.push([...keys]);
+          })
+        );
+        yield* service.withDependencyLock(owner.userId)(
+          Effect.gen(function* () {
+            yield* service.retire(first.patchId, owner);
+            assert.strictEqual(
+              yield* service
+                .withDependencyLock(owner.userId)(
+                  service.retire(second.patchId, owner).pipe(Effect.andThen(Effect.fail("cancel")))
+                )
+                .pipe(Effect.flip),
+              "cancel"
+            );
+            assert.deepStrictEqual(batches, []);
+            // Nothing reports before the outer transaction commits.
+            assert.deepStrictEqual(reported(first.patchId), []);
+          })
+        );
+        assert.deepStrictEqual(batches, [[`patch:${first.patchId}`]]);
+        assert.deepStrictEqual(
+          reported(first.patchId).map((event) => event.name),
+          ["patch.retired"]
+        );
+        // A failed outermost action announces nothing either.
+        yield* service
+          .withDependencyLock(owner.userId)(
+            service.retire(second.patchId, owner).pipe(Effect.andThen(Effect.fail("cancel")))
+          )
+          .pipe(Effect.flip);
+        assert.deepStrictEqual(batches, [[`patch:${first.patchId}`]]);
+        assert.deepStrictEqual(reported(second.patchId), []);
+        assert.strictEqual((yield* stored(first.patchId)).lifecycle_revision, "2");
+        assert.strictEqual((yield* stored(second.patchId)).lifecycle_revision, "1");
+        assert.isTrue(Option.isSome(yield* service.find(second.patchId)));
+      }).pipe(Effect.scoped)
   );
 
   for (const actor of [owner, administrator]) {
@@ -1070,7 +1140,9 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
   }
 });
 
-it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches reads", (it) => {
+it.layer(
+  Patches.layer.pipe(Layer.provideMerge(Analytics.layerNoop), Layer.provideMerge(Fixtures.database))
+)("Patches reads", (it) => {
   const access: Patches.ReadAccess = {
     companyId: uploader.company.id,
     userId: reader.user.id,

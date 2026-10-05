@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { RuntimeStreamFrame, WIRE_VERSION } from "@patchy/api";
+import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
@@ -44,6 +45,7 @@ const dependencies = Layer.mergeAll(
   Companies.layer,
   Users.layer
 ).pipe(
+  Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );

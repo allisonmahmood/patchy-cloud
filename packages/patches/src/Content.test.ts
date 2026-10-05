@@ -75,7 +75,8 @@ const publish = (
 
 it.layer(
   Layer.mergeAll(Content.layer, DeletionSweep.layer).pipe(
-    Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer, Analytics.layerNoop)),
+    Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer)),
+    Layer.provideMerge(Analytics.layerNoop),
     Layer.provideMerge(Fixtures.database)
   )
 )("Content", (it) => {
@@ -1118,6 +1119,7 @@ it.layer(
 it.layer(
   Content.layer.pipe(
     Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer)),
+    Layer.provideMerge(Analytics.layerNoop),
     Layer.provideMerge(Fixtures.integrations),
     Layer.provideMerge(
       Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer({ maxBackends: 0 })))

@@ -854,12 +854,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
           yield* WideEvents.enrich(Patches.eventFields(patch));
-          yield* analytics.track({
-            name: "patch.deleted",
-            principalId: identity.user.id,
-            companyId: patch.companyId,
-            properties: { patchId: patch.id, ownerUserId: patch.ownerUserId }
-          });
           return new Deleted({
             ok: true,
             patchId: patch.id,

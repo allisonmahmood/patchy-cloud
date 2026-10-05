@@ -66,7 +66,8 @@ const recordingAnalytics = Layer.succeed(
   Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
 );
 const services = Layer.mergeAll(DeletionSweep.layer, Content.layer).pipe(
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, filesystem, recordingAnalytics)),
+  Layer.provideMerge(Layer.mergeAll(Patches.layer, filesystem)),
+  Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Fixtures.database),
   Layer.provideMerge(NodeFileSystem.layer)
 );

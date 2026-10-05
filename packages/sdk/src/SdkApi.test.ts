@@ -35,6 +35,7 @@ import {
   type GenerateRequest
 } from "@patchy/api";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
+import { Analytics } from "@patchy/analytics";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
@@ -118,7 +119,12 @@ const discoverRelease = Effect.gen(function* () {
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(Artifact.layer),
   Layer.provideMerge(artifactStore),
-  Layer.provideMerge(Patches.layer.pipe(Layer.provideMerge(Fixtures.database))),
+  Layer.provideMerge(
+    Patches.layer.pipe(
+      Layer.provideMerge(Analytics.layerNoop),
+      Layer.provideMerge(Fixtures.database)
+    )
+  ),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provide(
     ConfigProvider.layer(

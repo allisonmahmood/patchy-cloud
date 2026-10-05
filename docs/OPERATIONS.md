@@ -203,6 +203,12 @@ The events, by area:
 
 - Machine tokens: `token.minted`.
 - Patches: `patch.created`, `patch.updated`, `patch.deleted`, `patch.purged`.
+- Patch lifecycle: `patch.shared`, `patch.retired`, `patch.restored`,
+  `patch.rolled_back`, `patch.reassigned`, and `patch.deleted` above. The Patches
+  service reports each once, after the change commits, whether the CLI, the
+  portal or a member's deactivation or reactivation made it. A refused,
+  rolled-back or no-op change reports nothing. `byAdmin` says the actor used a
+  company admin's rights.
 
 ## Clerk
 

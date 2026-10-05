@@ -20,6 +20,7 @@ import {
   WIRE_VERSION,
   sharedTableId
 } from "@patchy/api";
+import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
@@ -74,6 +75,7 @@ const services = Layer.mergeAll(
   Companies.layer,
   Users.layer
 ).pipe(
+  Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database),
   Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))

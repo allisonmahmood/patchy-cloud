@@ -5,6 +5,8 @@
  *
  * Lifecycle changes and the deletion window use the Effect clock. Retired and
  * deleted rows retain their versions and company inventory until reclamation.
+ * Each lifecycle change reports its business event here, after the outermost
+ * transaction commits, so every caller reports it once and a rollback never.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -17,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   DescriptionText,
@@ -633,7 +636,12 @@ class UnnamedPatch extends Schema.Class<UnnamedPatch>("UnnamedPatch")({
   title: Schema.String
 }) {}
 
-const pendingLifecycle = Context.Reference<Array<string> | undefined>(
+/** What a lifecycle transaction reports once its outermost commit lands. */
+interface PendingLifecycle {
+  readonly wakes: Array<string>;
+  readonly events: Array<Analytics.AnalyticsEvent>;
+}
+const pendingLifecycle = Context.Reference<PendingLifecycle | undefined>(
   "@patchy/patches/pendingLifecycle",
   { defaultValue: () => undefined }
 );
@@ -976,35 +984,44 @@ export const make = Effect.gen(function* () {
   const tables = yield* Tables.Tables;
   const connections = yield* ConnectionStore.ConnectionStore;
   const wakes = yield* Wakes.Wakes;
+  const analytics = yield* Analytics.Analytics;
   const announce = (patchId: string) =>
     Effect.map(pendingLifecycle, (pending) => {
-      pending!.push(`patch:${patchId}`);
+      pending!.wakes.push(`patch:${patchId}`);
+    });
+  /** Reports a lifecycle change once the transaction that made it commits. */
+  const report = (event: Analytics.AnalyticsEvent) =>
+    Effect.map(pendingLifecycle, (pending) => {
+      pending!.events.push(event);
     });
   // The company dependency lock is the outer transaction for portal bulk actions.
-  // Keep their notices until its commit; a failed batch emits none.
+  // Keep their notices and events until its commit; a failed batch emits none.
   const withLifecycleTransaction = Effect.fnUntraced(function* <A, E, R>(
     work: Effect.Effect<A, E, R>
   ) {
     const existing = yield* pendingLifecycle;
     if (existing !== undefined) {
-      const length = existing.length;
+      const [wakeCount, eventCount] = [existing.wakes.length, existing.events.length];
       return yield* sql.withTransaction(work).pipe(
         Effect.onError(() =>
           Effect.sync(() => {
-            existing.length = length;
+            existing.wakes.length = wakeCount;
+            existing.events.length = eventCount;
           })
         )
       );
     }
     // An unrelated SQL owner has no commit hook here. Its durable revision is
-    // reconciled rather than sending a hint before that transaction settles.
+    // reconciled rather than sending a hint before that transaction settles,
+    // and its business events go unreported rather than report a rollback.
     const outerTransaction = yield* Effect.serviceOption(sql.transactionService);
-    const pending: Array<string> = [];
+    const pending: PendingLifecycle = { wakes: [], events: [] };
     const result = yield* sql.withTransaction(
       work.pipe(Effect.provideService(pendingLifecycle, pending))
     );
     if (Option.isSome(outerTransaction)) return result;
-    if (pending.length > 0) yield* wakes.publish([...new Set(pending)]);
+    yield* Effect.forEach(pending.events, analytics.track, { discard: true });
+    if (pending.wakes.length > 0) yield* wakes.publish([...new Set(pending.wakes)]);
     return result;
   });
 
@@ -2019,6 +2036,12 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
     )
   );
+  /** What every lifecycle event says about the patch row an actor changed. */
+  const changed = (row: PatchRow, actor: Actor) => ({
+    patchId: row.id,
+    ownerUserId: row.ownerUserId,
+    byAdmin: actor.admin
+  });
   const setScope = Effect.fn("Patches.setScope")(function* (
     patchId: string,
     actor: Actor,
@@ -2041,6 +2064,13 @@ export const make = Effect.gen(function* () {
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'sharing changed' WHERE id = ${patchId}`;
     yield* announce(patchId);
+    if (scope !== row.scope)
+      yield* report({
+        name: "patch.shared",
+        principalId: actor.userId,
+        companyId: row.companyId,
+        properties: { ...changed(row, actor), scope, previousScope: row.scope }
+      });
     return {
       id: row.id,
       scope,
@@ -2069,6 +2099,12 @@ export const make = Effect.gen(function* () {
         last_changed_action = 'retired'
         WHERE id = ${patchId}`;
     yield* announce(patchId);
+    yield* report({
+      name: "patch.retired",
+      principalId: actor.userId,
+      companyId: row.companyId,
+      properties: changed(row, actor)
+    });
     return yield* afterChange(patchId);
   }, withLifecycleTransaction);
   const delete_ = Effect.fn("Patches.delete")(function* (
@@ -2088,6 +2124,12 @@ export const make = Effect.gen(function* () {
         last_changed_action = 'deleted'
         WHERE id = ${patchId}`;
     yield* announce(patchId);
+    yield* report({
+      name: "patch.deleted",
+      principalId: actor.userId,
+      companyId: row.companyId,
+      properties: changed(row, actor)
+    });
     return yield* afterChange(patchId);
   }, withLifecycleTransaction);
   const restore = Effect.fn("Patches.restore")(function* (
@@ -2131,6 +2173,12 @@ export const make = Effect.gen(function* () {
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'restored' WHERE id = ${patchId}`;
     yield* announce(patchId);
+    yield* report({
+      name: "patch.restored",
+      principalId: actor.userId,
+      companyId: row.companyId,
+      properties: changed(row, actor)
+    });
     return yield* afterChange(patchId);
   }, withLifecycleTransaction);
   const rollback = Effect.fn("Patches.rollback")(function* (
@@ -2154,6 +2202,24 @@ export const make = Effect.gen(function* () {
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = ${`rolled back to v${versionNumber}`} WHERE id = ${patchId}`;
     yield* announce(patchId);
+    if (version.value.id !== row.currentVersionId) {
+      const from =
+        row.currentVersionId === null
+          ? Option.none()
+          : yield* findVersionById({ patchId, versionId: row.currentVersionId }).pipe(
+              Effect.catchTags(dieOnSchemaError)
+            );
+      yield* report({
+        name: "patch.rolled_back",
+        principalId: actor.userId,
+        companyId: row.companyId,
+        properties: {
+          ...changed(row, actor),
+          versionNumber,
+          fromVersionNumber: Option.getOrNull(Option.map(from, (current) => current.versionNumber))
+        }
+      });
+    }
     return { patch: yield* afterChange(patchId), currentVersion: versionNumber };
   }, withLifecycleTransaction);
   const reassign = Effect.fn("Patches.reassign")(function* (
@@ -2176,8 +2242,14 @@ export const make = Effect.gen(function* () {
         reassigned_at = ${at}, reassigned_by = ${actor.userId}, updated_at = ${at},
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'reassigned' WHERE id = ${patchId}`;
+    yield* report({
+      name: "patch.reassigned",
+      principalId: actor.userId,
+      companyId: row.companyId,
+      properties: { patchId, ownerUserId: newOwnerUserId, fromUserId: row.ownerUserId }
+    });
     return yield* afterChange(patchId);
-  }, sql.withTransaction);
+  }, withLifecycleTransaction);
   const setDescription = Effect.fn("Patches.setDescription")(function* (
     patchId: string,
     actor: Actor,

@@ -33,6 +33,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@patchy/analytics": "workspace:*",
     "patchy": "workspace:*",
     "vitest": "^5.0.3"
   }

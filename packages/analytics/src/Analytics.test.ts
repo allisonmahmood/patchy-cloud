@@ -15,7 +15,7 @@ const event: Analytics.AnalyticsEvent = {
   name: "patch.deleted",
   principalId: "usr_1",
   companyId: "cmp_1",
-  properties: { patchId: "pch_1", ownerUserId: "usr_1" }
+  properties: { patchId: "pch_1", ownerUserId: "usr_1", byAdmin: false }
 };
 
 /** A client that keeps every message and answers shutdown at once. */
@@ -66,6 +66,7 @@ it.effect("reports an event on its principal and company without a person profil
         properties: {
           patchId: "pch_1",
           ownerUserId: "usr_1",
+          byAdmin: false,
           companyId: "cmp_1",
           $process_person_profile: false
         }

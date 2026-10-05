@@ -26,6 +26,12 @@ type PatchSubject = {
   readonly ownerUserId: string;
 };
 
+/** A lifecycle change someone made to a patch. */
+type PatchChange = PatchSubject & {
+  /** The actor used a company admin's rights, which the portal grants admins and the CLI never does. */
+  readonly byAdmin: boolean;
+};
+
 /** What a publish reports about the version it recorded. */
 type Publication = PatchSubject & {
   readonly machineTokenId: string;
@@ -64,11 +70,39 @@ export type AnalyticsCatalogue = Catalogue<{
   readonly "patch.updated": Publication;
 
   /** A patch entered its recovery window. Principal: the user who deleted it. */
-  readonly "patch.deleted": PatchSubject;
+  readonly "patch.deleted": PatchChange;
 
   /** The deletion sweep removed a patch whose recovery window ended. Principal: the instance. */
   readonly "patch.purged": PatchSubject & {
     readonly versionsRemoved: number;
+  };
+
+  /** A live patch's audience changed. Principal: the user who shared it. */
+  readonly "patch.shared": PatchChange & {
+    readonly scope: string;
+    readonly previousScope: string;
+  };
+
+  /** A live patch was taken out of service. Principal: the user who retired it. */
+  readonly "patch.retired": PatchChange;
+
+  /** A retired or deleted patch went back into service. Principal: the user who restored it. */
+  readonly "patch.restored": PatchChange;
+
+  /** A live patch now serves an earlier version. Principal: the user who rolled it back. */
+  readonly "patch.rolled_back": PatchChange & {
+    /** The version now current. */
+    readonly versionNumber: number;
+    /** The version current before, absent only for a patch that never had one. */
+    readonly fromVersionNumber: number | null;
+  };
+
+  /**
+   * An admin gave a patch a new owner, who is `ownerUserId`. Principal: the admin.
+   * Only admins reassign, so it carries no `byAdmin`.
+   */
+  readonly "patch.reassigned": PatchSubject & {
+    readonly fromUserId: string;
   };
 }>;
 
