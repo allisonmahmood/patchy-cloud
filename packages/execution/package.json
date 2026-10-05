@@ -81,7 +81,7 @@
     "effect": "catalog:",
     "es-module-lexer": "3.0.2",
     "esbuild": "0.28.2",
-    "workerd": "1.20260924.1"
+    "workerd": "1.20261002.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
