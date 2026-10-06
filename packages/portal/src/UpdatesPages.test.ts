@@ -135,3 +135,25 @@ it("escapes notes and keeps native expandable entries", () => {
   assert.include(html, "&lt;script&gt;");
   assert.include(html, '<details class="update-entry" id="update-1"><summary>');
 });
+
+it.effect("accepts a Deploy Action source and rejects a non-GitHub source link", () =>
+  Effect.gen(function* () {
+    const deployment = {
+      runId: 37378674715,
+      attempt: 1,
+      commit: "a".repeat(40),
+      url: "https://github.com/allisonmahmood/patchy-cloud/actions/runs/37378674715/attempts/1"
+    };
+    const history = (url: string) =>
+      JSON.stringify({
+        version: 1,
+        entries: [{ ...entry(1), deployment: { ...deployment, url } }]
+      });
+    const decoded = yield* updates.decodeHistory(history(deployment.url));
+    assert.include(updates.render(decoded.entries), `href="${deployment.url}"`);
+    assert.strictEqual(
+      (yield* updates.decodeHistory(history("javascript:alert(1)")).pipe(Effect.flip))._tag,
+      "SchemaError"
+    );
+  })
+);

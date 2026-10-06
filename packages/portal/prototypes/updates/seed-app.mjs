@@ -33,6 +33,10 @@ try {
   };
 }
 if (args.includes("--deploy")) {
+  if (history.source?.kind === "github-actions-deploy")
+    throw new Error(
+      "This history follows real Deploy Actions. Use prototype:updates:sync; do not append sample deployments."
+    );
   const sequence = Math.max(0, ...history.entries.map((entry) => entry.sequence)) + 1;
   const payload = prepareActionPayload(sequence);
   history.entries.push({ sequence, publishedAt: payload.completedAt, ...payload.notes });
