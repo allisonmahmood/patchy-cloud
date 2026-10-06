@@ -24,6 +24,7 @@
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
+    "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/integrations": "workspace:*",
     "@patchy/patches": "workspace:*",

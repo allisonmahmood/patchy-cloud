@@ -619,6 +619,9 @@ importers:
       '@patchy/companies':
         specifier: workspace:*
         version: link:../companies
+      '@patchy/content-store':
+        specifier: workspace:*
+        version: link:../content-store
       '@patchy/core':
         specifier: workspace:*
         version: link:../core

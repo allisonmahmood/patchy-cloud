@@ -41,6 +41,7 @@ Three page kinds:
 - Pills: `pill`, `pill-progress`, `pill-done` and `pill-failed` (failed and refused outcomes).
 - Confirmation forms: `confirmation-form`, `confirmation-consequence`, `confirmation-list`, `confirmation-acknowledgement` and `confirmation-actions`; compose the shared fields and buttons for acknowledgement, submit and cancel. Ordinary action groups use `actions`.
 - Shell page state: `shell-bottom`, `shell-scrim`, `glyph-sm`, `supporting-text`, `note-float`, `note-info`, `note-collapse`, `status-chip`, `status-chip-detail`, `status-chip-warn`, `status-chip-info`, `note-inline` and `note-inline-text`. The served shell imports this subset from core, not the full app shell stylesheet.
+- App updates: `updates-bell`, `updates-dot`, the native `updates-popover`, `latest-update`, `updates-caught-up`, and expandable `update-entry` rows compose the shared app shell. Keep notes escaped and the browser script external.
 - Shell downloads: `shell-corner` and `shell-downloads`, composed with `note-float`, `note-info`, `glyph-sm`, `status-chip`, `code` and the shared buttons. Core owns this subset too, including the base `code` style.
 
 ## Served patches

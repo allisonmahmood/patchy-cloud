@@ -1,4 +1,30 @@
-# Local updates prototype
+# Deployment updates local prototypes
+
+## Integrated app preview
+
+Run these commands in a dedicated worktree so the preview has its own dev data:
+
+```sh
+pnpm install
+pnpm dev
+pnpm prototype:updates:seed
+```
+
+Open the printed dev URL and sign in as **Dev Machine**. The real app header has the bell on Patches, Company, Connections and Your machines. Open **View all updates** for the newest-first, expandable history. Merely opening the bell does not mark anything read; visiting the visible history marks the snapshot shown there.
+
+The sample release-notes document lives once at `.local/dev/storage/platform-updates/history.json`, read through the existing content store. It is shared across all people and companies, outside patch-owned stores and the app database. Each signed-in person's browser stores only a read-through sequence in localStorage. It survives closing tabs, synchronizes between tabs on the same origin, and does not sync across devices. If browser storage is disabled, the marker lasts for the page only.
+
+To simulate the next successful deployment:
+
+```sh
+pnpm prototype:updates:seed --deploy
+```
+
+Return to the app tab or open the bell to pick it up. Rerunning the seed without `--deploy` preserves the history. Restarting the local server preserves both the document and browser marker. The seeder refuses non-loopback instances and Clerk mode. It publishes sample content directly to local disk; it never runs a GitHub Action or contacts production. The app provides read-only session routes, not a publication endpoint.
+
+The production workflow writer, useful notes from the deployed commit range, retry/rollback semantics and publication recovery are deferred. Sequence numbers identify ordered publication events and must never be reused for a different event; they are not commit hashes or GitHub run ids.
+
+## Original standalone interaction sketch
 
 Throwaway preview of the chosen interaction: a bell shows the newest deployment;
 **View all updates** opens newest-first history, with an expandable entry per
@@ -32,4 +58,4 @@ notes from real commits or call an AI model.
 The preview imports Patchy's existing HTML shell and uses sample portal content.
 It listens only on loopback, has no production credentials, and does not change
 the separately running dev instance. The other navigation sections are context
-only. No production routes, APIs, schemas, migrations, or package exports change.
+only. This standalone sketch does not install routes in the real app. The integrated preview above does.
