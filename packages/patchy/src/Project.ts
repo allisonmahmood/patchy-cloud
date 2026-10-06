@@ -360,7 +360,7 @@ const recordIntegrity = Effect.fn("Project.recordIntegrity")(function* (
     yield* replaceFile(cwd, "pnpm-lock.yaml", recorded, "Could not write pnpm-lock.yaml.");
 });
 
-/** A failure relays pnpm's first error line; a success leaves the patchy pin verifiable. */
+/** A failure relays why pnpm failed; a success leaves the patchy pin verifiable. */
 const install = Effect.fn("Project.install")(function* (cwd: string, pin: Release["package"]) {
   const result = yield* processResult(cwd, "pnpm", [
     "install",

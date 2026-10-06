@@ -626,7 +626,8 @@ Managed generation writes are exactly the `patchy` package pin and tier 2's
 stubs, the lockfile through install, and one `uses` edit for add/remove. pnpm 11
 locks a tarball already in its store without an integrity and later refuses that
 entry, so init and refresh write the release's integrity from `GET /api/release`
-into the `patchy` entry. A failed install reports pnpm's first error line.
+into the `patchy` entry. A failed install relays pnpm's reason: pnpm 11's first
+`ERR_PNPM_` line, or pnpm 12's error code and causes.
 Refresh alone updates the pins and generated server module list after init;
 dev and publish do not repair them. It removes stale generated context files.
 The CLI writes `manifest.json` from local config execution; the server never

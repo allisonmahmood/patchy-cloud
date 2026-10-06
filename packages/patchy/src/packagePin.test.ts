@@ -78,3 +78,44 @@ it("relays pnpm's error line without URL credentials, queries or fragments", () 
   expect(installFailureReason("")).toBeUndefined();
   expect(installFailureReason(`ERR_PNPM_X ${"y".repeat(400)}`)).toHaveLength(300);
 });
+
+it("relays pnpm 12's code and causes, rejoined across its wrapped lines", () => {
+  const notFound = [
+    "Error: ERR_PNPM_FETCH_404",
+    "",
+    "  × installing dependencies",
+    "  ╰─▶ Failed to resolve dependency tree: GET http://127.0.0.1:4100/zz-",
+    "      missing-pkg: Not Found - 404",
+    "  help: zz-missing-pkg is not in the npm registry, or you have no",
+    "        permission to fetch it."
+  ].join("\n");
+  expect(installFailureReason(notFound)).toBe(
+    "ERR_PNPM_FETCH_404: Failed to resolve dependency tree: GET http://127.0.0.1:4100/zz-missing-pkg: Not Found - 404"
+  );
+  const tarball = [
+    "Error:   × installing dependencies",
+    "  ╰─▶ Failed to resolve dependency tree: Failed to resolve dependency: Tarball",
+    "      server returned HTTP 404 for http://127.0.0.1:4100/sdk/patchy-0.0.1.tgz"
+  ].join("\n");
+  expect(installFailureReason(tarball)).toBe(
+    "Failed to resolve dependency tree: Failed to resolve dependency: Tarball server returned HTTP 404 for http://127.0.0.1:4100/sdk/patchy-0.0.1.tgz"
+  );
+});
+
+it("keeps a query wrapped across pnpm 12's lines out of the relayed causes", () => {
+  const output = [
+    "Error:   × installing dependencies",
+    "  ├─▶ Failed to resolve dependency: error",
+    "  │   sending request for url (https://registry.example/patchy-",
+    "  │   0.0.1.tgz?",
+    "  │   token=secretsecretsecret#fra",
+    "  │   g)",
+    "  ├─▶ client error (Connect)",
+    "  ╰─▶ Connection refused (os error 111)"
+  ].join("\n");
+  const reason = installFailureReason(output);
+  expect(reason).toBe(
+    "Failed to resolve dependency: error sending request for url (https://registry.example/patchy-0.0.1.tgz: client error (Connect): Connection refused (os error 111)"
+  );
+  expect(reason).not.toContain("secret");
+});

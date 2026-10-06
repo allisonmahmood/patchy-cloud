@@ -35,25 +35,58 @@ export function withTarballIntegrity(lockfile: string, tarball: string, integrit
     .join("\n");
 }
 
+/** Control characters go; URLs lose credentials, queries and fragments, which can carry a token. */
+const redact = (text: string) =>
+  text
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(
+      /\b(https?:\/\/)([^\s'"<>]+)/g,
+      (_, scheme: string, rest: string) =>
+        scheme + rest.replace(/^[^/@]*@/, "").replace(/[?#].*$/, "")
+    );
+
 /**
- * The line of a failed pnpm install worth relaying: its first `ERR_PNPM_` line, or its first line.
- * URLs lose credentials, queries and fragments, and the line is bounded, because a registry or
- * tarball URL can carry a token.
+ * pnpm 12 reports `× <context>` and then one `├─▶`/`╰─▶` line per cause, wrapping long causes onto
+ * following lines. Returns the causes rejoined (or the context when there are none), or undefined
+ * for pnpm 11 output. A wrap inside a URL is closed up, so its query cannot escape redaction.
+ */
+function diagnosticCauses(lines: readonly string[]) {
+  const start = lines.findIndex((line) => /^(?:Error:\s*)?×/.test(line));
+  if (start === -1) return undefined;
+  const parts: string[] = [];
+  for (const line of lines.slice(start)) {
+    if (line.startsWith("help:")) break;
+    const head = /^(?:Error:\s*)?(?:×|├─▶|╰─▶)\s*(.*)$/.exec(line);
+    if (head) {
+      parts.push(head[1] ?? "");
+      continue;
+    }
+    const previous = parts.at(-1) ?? "";
+    const rest = line.replace(/^│\s*/, "");
+    parts[parts.length - 1] = /:\/\/\S*$/.test(previous) ? previous + rest : `${previous} ${rest}`;
+  }
+  const [context, ...causes] = parts;
+  return causes.length > 0 ? causes : [context];
+}
+
+/**
+ * Why a failed pnpm install failed, worth relaying: pnpm 11's first `ERR_PNPM_` line, pnpm 12's
+ * error code and causes, or else the first line. Each part is redacted, and the reason is bounded.
  */
 export function installFailureReason(output: string) {
   const lines = output
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
-  const reason = lines.find((line) => line.includes("ERR_PNPM_")) ?? lines[0];
-  return reason
-    ?.replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(
-      /\b(https?:\/\/)([^\s'"<>]+)/g,
-      (_, scheme: string, rest: string) =>
-        scheme + rest.replace(/^[^/@]*@/, "").replace(/[?#].*$/, "")
-    )
-    .slice(0, 300);
+  const code = lines.find((line) => line.includes("ERR_PNPM_"));
+  const causes = diagnosticCauses(lines);
+  const parts =
+    causes === undefined ? [code ?? lines[0]] : [code?.replace(/^Error:\s*/, ""), ...causes];
+  const reason = parts
+    .filter((part) => part !== undefined)
+    .map(redact)
+    .join(": ");
+  return reason === "" ? undefined : reason.slice(0, 300);
 }
 
 /** Edit one managed dependency without rewriting author-owned fields or formatting. */

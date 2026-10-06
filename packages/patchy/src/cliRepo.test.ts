@@ -523,7 +523,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     }
   );
 
-  it("relays pnpm's first error line when refresh cannot install the release", async () => {
+  it("relays why pnpm could not install the release when refresh fails", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);
     const originalPin = `${instance.url}/sdk/patchy-${CURRENT_RELEASE}-${"0".repeat(64)}.tgz`;
@@ -544,7 +544,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       ok: false,
       kind: "local",
       error: expect.stringMatching(
-        /^Dependency installation failed; the previous project set is preserved\.\npnpm: .*ERR_PNPM_FETCH_404/
+        /^Dependency installation failed; the previous project set is preserved\.\npnpm: .*404/
       )
     });
     expect(readFileSync(path.join(dir, "package.json"), "utf8")).toBe(originalPackage);
