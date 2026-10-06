@@ -22,7 +22,7 @@ import {
   sharedStoreId
 } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
-import { RequireSession, Session } from "@patchy/auth";
+import { MachineTokens, RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "@patchy/core";
@@ -60,7 +60,8 @@ const services = Layer.mergeAll(
   Session.layer,
   Companies.layer,
   Users.layer,
-  InvocationLog.layer
+  InvocationLog.layer,
+  MachineTokens.layer
 ).pipe(
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(
@@ -348,6 +349,14 @@ const readUser = Effect.fn("PortalPagesTest.readUser")(function* (person: Person
   return user!;
 });
 const cardPath = (name: string) => `/patches/${name}`;
+const portalIndex = (html: string) => html.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1] ?? "";
+/** The guide's steps as `[state, title]`, in order. */
+const steps = (html: string) =>
+  [
+    ...html.matchAll(
+      /<li class="step(?: step-(done|current))?"[^>]*>[\s\S]*?<h2 class="step-title">([\s\S]*?)<\/h2>/g
+    )
+  ].map((match) => [match[1] ?? "upcoming", text(match[2]!)]);
 const cardLinks = (html: string) =>
   links(html.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1] ?? "").filter(
     (link) =>
@@ -469,28 +478,91 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect("distinguishes an empty company from a company with only off patches", () =>
+  it.effect("guides a person with no patch from the setup line to their first patch", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      const empty = yield* request("/", workspace.owner);
-      assert.strictEqual(empty.status, 200);
-      const emptyHtml = yield* empty.text;
-      assert.include(text(emptyHtml), "No patches yet");
-      // The setup line selects as a whole, so a person can copy it into their agent.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.owner.id}`;
+      const fresh = yield* request("/", workspace.owner);
+      assert.strictEqual(fresh.status, 200);
+      const html = yield* fresh.text;
+      assert.strictEqual(heading(html), "Ship your first patch");
+      assert.include(text(html), "Get started · a few minutes");
+      assert.deepStrictEqual(steps(html), [
+        ["current", "Give your agent this line"],
+        ["upcoming", "Confirm it’s you"],
+        ["upcoming", "Ask for your first patch"]
+      ]);
+      // The setup line selects as a whole; the copy script reveals the button that copies it.
+      const setup = `Set up Patchy using ${PUBLIC_BASE_URL}/llms.txt`;
+      assert.include(html, `<code aria-label="Setup line, select to copy">${setup}</code>`);
+      assert.include(html, `data-copy="${setup}"`);
+      assert.include(html, '<script defer src="/assets/copy.js"></script>');
       assert.include(
-        emptyHtml,
-        `<code class="copy-address" aria-label="Setup line, select to copy">Set up Patchy using ${PUBLIC_BASE_URL}/llms.txt</code>`
+        html,
+        '<a class="list-link list-link-placeholder" href="/" aria-current="page">'
       );
-      for (const step of [
-        "Paste this to your agent.",
-        "Confirm the code it shows you.",
-        "Ask for a page or a tool."
-      ])
-        assert.include(text(emptyHtml), step);
+      assert.include(text(portalIndex(html)), "Your first patch Start here");
+
+      // A machine logged in as the person finishes the first two steps.
+      const connected = yield* (yield* request("/", workspace.member)).text;
+      assert.include(text(connected), "Get started · 2 of 3 done");
+      assert.deepStrictEqual(steps(connected), [
+        ["done", "Agent connected"],
+        ["current", "Ask for your first patch"]
+      ]);
+      assert.include(text(connected), "“Portal test machine” can publish as you");
+      assert.include(connected, 'data-copy="Build us a lead tracker with Patchy"');
+      assert.notInclude(connected, "llms.txt");
+      assert.include(text(portalIndex(connected)), "Your first patch 1 step left");
+    })
+  );
+
+  it.effect("keeps the guide beside a busy company's patches until the person owns one", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const theirs = yield* publish(workspace.admin, "crm");
+      const root = yield* (yield* request("/", workspace.member)).text;
+      assert.strictEqual(heading(root), "Ship your first patch");
+      assert.deepStrictEqual(
+        cardLinks(root).map((link) => link.href),
+        [cardPath(theirs.name)]
+      );
+      // Opening a colleague's patch moves the guide aside; its row is the way back.
+      const card = yield* (yield* request(cardPath(theirs.name), workspace.member)).text;
+      assert.strictEqual(heading(card), theirs.name);
+      assert.include(card, '<a class="list-link list-link-placeholder" href="/">');
+      assert.include(
+        yield* (yield* request(`${cardPath(theirs.name)}?all=1`, workspace.member)).text,
+        '<a class="list-link list-link-placeholder" href="/?all=1">'
+      );
+
+      // The first patch ends the guide and is celebrated for a day.
+      const mine = yield* publish(workspace.member, "lead-tracker");
+      const shipped = yield* (yield* request("/", workspace.member)).text;
+      assert.strictEqual(heading(shipped), mine.name);
+      assert.notInclude(portalIndex(shipped), "Your first patch");
+      assert.include(text(shipped), "Your first patch is live Everyone at Northwind can open it.");
+      assert.notInclude(
+        text(yield* (yield* request(cardPath(theirs.name), workspace.member)).text),
+        "Your first patch is live"
+      );
+      yield* TestClock.adjust(DAY);
+      assert.notInclude(
+        text(yield* (yield* request("/", workspace.member)).text),
+        "Your first patch is live"
+      );
+    })
+  );
+
+  it.effect("ends the guide for an owner whose only patches are off", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
       const patch = yield* publish(workspace.owner, "shelved-tool");
       yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.owner));
       const offOnly = yield* (yield* request("/", workspace.owner)).text;
-      assert.notInclude(text(offOnly), "No patches yet");
+      assert.strictEqual(heading(offOnly), "No live patches");
+      assert.notInclude(portalIndex(offOnly), "Your first patch");
       assert.include(text(offOnly), "Show retired and deleted");
       assert.deepStrictEqual(cardLinks(offOnly), []);
       const all = yield* (yield* request("/?all=1", workspace.owner)).text;
@@ -499,6 +571,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
         cardLinks(all).map((link) => link.href),
         `${cardPath(patch.name)}?all=1`
       );
+    })
+  );
+
+  it.effect("serves the copy script that reveals copy buttons", () =>
+    Effect.gen(function* () {
+      const response = yield* request("/assets/copy.js", null);
+      assert.strictEqual(response.status, 200);
+      assert.include(response.headers["content-type"] ?? "", "text/javascript");
+      assert.include(yield* response.text, "button[data-copy]");
     })
   );
 
@@ -562,7 +643,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         );
         assert.strictEqual(
           heading(yield* (yield* request("/", workspace.member)).text),
-          "alpha-mine"
+          "Ship your first patch"
         );
         const inactive = yield* (yield* request("/patches/charlie-deactivated", workspace.owner))
           .text;

@@ -142,7 +142,7 @@ const postDevice = Effect.gen(function* () {
         form.action === "confirm"
           ? message(
               "Confirmed.",
-              "<p>Your terminal finishes logging in on its own within a few seconds. You can close this tab.</p>"
+              '<p>Your terminal finishes logging in on its own within a few seconds. You can close this tab.</p><p><a href="/">Back to your patches</a></p>'
             )
           : message(
               "Nothing was logged in.",

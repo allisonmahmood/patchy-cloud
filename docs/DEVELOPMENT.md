@@ -147,7 +147,7 @@ only in development on a loopback origin, and the server then listens on
 For `curl` or `psql`, load the env in a separate shell:
 `set -a; . .local/dev/env; set +a`.
 
-The seed holds identity rows only; a fresh portal shows **No patches yet**.
+The seed holds identity rows only; a fresh portal shows the guide to a first patch.
 `pnpm seed:dev` publishes the accepted HTML fixtures as live tier 0 patches.
 
 ### Seeing what a person sees

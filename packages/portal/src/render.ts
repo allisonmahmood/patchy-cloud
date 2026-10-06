@@ -9,6 +9,8 @@ export const styles = `
   .portal { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 36px; align-items: start; }
   .portal-index, .portal-card { min-width: 0; }
   .portal-card { position: sticky; top: 24px; }
+  /* The guide is taller than a screen, so it scrolls with the page rather than pinning beside a long index. */
+  .portal-guide { position: static; }
   .portal-index-line { display: block; }
   .portal-stop-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .portal-stop-actions > div { display: grid; align-content: start; }
@@ -24,6 +26,7 @@ export const styles = `
   @media (max-width: 860px) {
     .portal { grid-template-columns: minmax(0, 1fr); }
     .portal-card { position: static; }
+    .portal-guide { order: -1; }
   }
   @media (max-width: 760px) {
     .log-filters { grid-template-columns: minmax(0, 1fr); }
@@ -83,9 +86,10 @@ const indexGroup = (
   rows: readonly Patches.ReadPatch[],
   card: Patches.PortalCard | null,
   all: boolean,
-  now: number
+  now: number,
+  lead = ""
 ): string => {
-  if (rows.length === 0) return "";
+  if (rows.length === 0 && lead === "") return "";
   const items = rows.map((row) => {
     const { patch } = row;
     const state =
@@ -97,7 +101,7 @@ const indexGroup = (
     const clause = firstClause(patch.description);
     return `<li class="list-row"><a class="list-link" href="${escapeAttribute(cardPath(patch, all))}"${card?.patch.id === patch.id ? ' aria-current="page"' : ""}><span class="portal-index-line">${escapeHtml(patch.name)}</span><span class="supporting-text portal-index-line">${escapeHtml(clause || "No description")}</span>${state ? `<span class="pill">${escapeHtml(state)}</span>` : ""}${row.owner.deactivated ? '<span class="pill">owner deactivated</span>' : ""}</a></li>`;
   });
-  return `<section class="section"><h2 class="section-heading">${escapeHtml(title)}</h2><ul class="list list-compact">${items.join("")}</ul></section>`;
+  return `<section class="section"><h2 class="section-heading">${escapeHtml(title)}</h2><ul class="list list-compact">${lead}${items.join("")}</ul></section>`;
 };
 
 const renderIndex = (input: {
@@ -106,6 +110,7 @@ const renderIndex = (input: {
   readonly viewer: RequireSession.Viewer["Service"];
   readonly all: boolean;
   readonly now: number;
+  readonly guide?: { readonly row: string };
 }): string => {
   const yours: Patches.ReadPatch[] = [];
   const company: Patches.ReadPatch[] = [];
@@ -128,7 +133,7 @@ const renderIndex = (input: {
     off.length === 0
       ? ""
       : `<p><a href="${escapeAttribute(togglePath)}">${input.all ? "Hide" : "Show"} retired and deleted</a></p>`;
-  return `<aside class="portal-index" aria-label="Patch index"><p class="supporting-text">${escapeHtml(count)} ${count === 1 ? "patch" : "patches"}</p>${toggle}${liveCount === 0 ? '<p class="supporting-text">No live patches.</p>' : ""}${indexGroup("Yours", yours, input.card, input.all, input.now)}${indexGroup("Company", company, input.card, input.all, input.now)}${input.all ? indexGroup("Retired and deleted", off, input.card, input.all, input.now) : ""}</aside>`;
+  return `<aside class="portal-index" aria-label="Patch index"><p class="supporting-text">${escapeHtml(count)} ${count === 1 ? "patch" : "patches"}</p>${toggle}${liveCount === 0 && input.guide === undefined ? '<p class="supporting-text">No live patches.</p>' : ""}${indexGroup("Yours", yours, input.card, input.all, input.now, input.guide?.row)}${indexGroup("Company", company, input.card, input.all, input.now)}${input.all ? indexGroup("Retired and deleted", off, input.card, input.all, input.now) : ""}</aside>`;
 };
 
 const titleLine = (patch: Patches.Patch): string => {
@@ -331,18 +336,17 @@ export const renderPortal = (input: {
   readonly notice?: string;
   readonly submittedDescription?: string;
   readonly descriptionError?: string;
+  /** The guide while the viewer owns no patch: its index row, and its card when no patch is selected. */
+  readonly guide?: { readonly row: string; readonly card: string };
+  /** A status note above the index and card, such as the first patch's. */
+  readonly note?: string;
 }): string => {
-  if (input.rows.length === 0 && input.card === null) {
-    // Many first publishers have never signed in a CLI, so the way in is three plain steps.
-    const company = escapeHtml(input.viewer.company.name);
-    const setup = `Set up Patchy using ${input.publicBaseUrl.replace(/\/+$/u, "")}/llms.txt`;
-    return `${refusal(input.notice)}<article><h1 class="page-heading">No patches yet</h1><p>Anything published lists here for everyone at ${company}. Getting your agent ready takes three steps.</p><ol class="list"><li class="list-row"><p><strong>Paste this to your agent.</strong></p><code class="copy-address" aria-label="Setup line, select to copy">${escapeHtml(setup)}</code></li><li class="list-row"><p><strong>Confirm the code it shows you.</strong></p><p class="supporting-text">Your agent opens nothing. It gives you a link and a code; sign in and confirm that this machine can publish as you.</p></li><li class="list-row"><p><strong>Ask for a page or a tool.</strong></p><p class="supporting-text">"Publish this plan with Patchy" or "Build us a tool for tracking leads with Patchy".</p></li></ol></article>`;
-  }
   const card =
-    input.card === null
-      ? `<article class="portal-card"><h1 class="page-heading">No live patches</h1><p>${input.all ? "Choose a patch from Retired and deleted to see its card." : "Show retired and deleted to see the company's patches."}</p></article>`
-      : renderCard({ ...input, card: input.card });
-  return `${refusal(input.notice)}<div class="portal">${renderIndex(input)}${card}</div>`;
+    input.card !== null
+      ? renderCard({ ...input, card: input.card })
+      : (input.guide?.card ??
+        `<article class="portal-card"><h1 class="page-heading">No live patches</h1><p>${input.all ? "Choose a patch from Retired and deleted to see its card." : "Show retired and deleted to see the company's patches."}</p></article>`);
+  return `${refusal(input.notice)}${input.note ?? ""}<div class="portal">${renderIndex(input)}${card}</div>`;
 };
 
 export const renderVersions = (input: {
