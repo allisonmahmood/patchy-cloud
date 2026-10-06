@@ -105,10 +105,22 @@ it("relays pnpm 12's code and causes, one per line under NO_GRAPHICS", () => {
 });
 
 it("redacts URLs whatever their scheme's case or path characters", () => {
-  expect(
-    installFailureReason("ERR_PNPM_FETCH_404 GET HTTPS://user:pass@registry.example/pkg?token=s")
-  ).toBe("ERR_PNPM_FETCH_404 GET HTTPS://registry.example/pkg");
-  expect(
-    installFailureReason("ERR_PNPM_FETCH_404 GET https://registry.example/a'b.tgz?token=s")
-  ).toBe("ERR_PNPM_FETCH_404 GET https://registry.example/a'b.tgz");
+  const relay = (url: string) => installFailureReason(`ERR_PNPM_X GET ${url} failed`);
+  expect(relay("HTTPS://user:pass@registry.example/pkg?token=s")).toBe(
+    "ERR_PNPM_X GET HTTPS://registry.example/pkg failed"
+  );
+  expect(relay("https://user:p@ss@registry.example/pkg")).toBe(
+    "ERR_PNPM_X GET https://registry.example/pkg failed"
+  );
+  for (const inner of ["'", '"', "\u00a0"])
+    expect(relay(`https://registry.example/a${inner}b.tgz?token=s#f`)).toBe(
+      `ERR_PNPM_X GET https://registry.example/a${inner}b.tgz failed`
+    );
+});
+
+it("reads causes only from pnpm 12's narrated report", () => {
+  const legacy = 'ERR_PNPM_BAD Tarball "https://registry.example/p.tgz" is bad\nCaused by: detail';
+  expect(installFailureReason(legacy)).toBe(
+    'ERR_PNPM_BAD Tarball "https://registry.example/p.tgz" is bad'
+  );
 });

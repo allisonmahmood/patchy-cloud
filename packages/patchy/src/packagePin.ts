@@ -35,30 +35,35 @@ export function withTarballIntegrity(lockfile: string, tarball: string, integrit
     .join("\n");
 }
 
-/** Control characters go; URLs lose credentials, queries and fragments, which can carry a token. */
+/**
+ * Control characters go; URLs lose credentials, queries and fragments, which can carry a token. A
+ * URL runs to the next ASCII whitespace, so quotes or other spaces inside one cannot end it early.
+ */
 const redact = (text: string) =>
   text
     .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(
-      /\b(https?:\/\/)([^\s"<>]+)/gi,
+      /\b(https?:\/\/)([^ \t\n\r\f\v]+)/gi,
       (_, scheme: string, rest: string) =>
-        scheme + rest.replace(/^[^/@]*@/, "").replace(/[?#].*$/, "")
+        scheme + rest.replace(/^[^/?#]*@/, "").replace(/[?#].*$/, "")
     );
 
 /**
  * Why a failed pnpm install failed, worth relaying. pnpm 11 prints an `ERR_PNPM_` line; pnpm 12,
- * run with `NO_GRAPHICS`, prints one unwrapped `Caused by:` line per cause and its code on a
- * `diagnostic code:` line. Falls back to the first line. Each part is redacted, the whole bounded.
+ * run with `NO_GRAPHICS`, narrates a report: `Diagnostic severity:`, a `Caused by:` line per cause,
+ * unwrapped, and its code on a `diagnostic code:` line. Falls back to the first line. Each part is
+ * redacted, the whole bounded.
  */
 export function installFailureReason(output: string) {
   const lines = output
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
+  const narrated = lines.some((line) => line.startsWith("Diagnostic severity:"));
   const causes = lines.flatMap((line) => /^Caused by:\s*(.+)$/.exec(line)?.slice(1) ?? []);
   const code = lines.flatMap((line) => /^diagnostic code:\s*(\S+)/.exec(line)?.slice(1) ?? []);
   const parts =
-    causes.length > 0
+    narrated && causes.length > 0
       ? [...code.slice(0, 1), ...causes]
       : [lines.find((line) => line.includes("ERR_PNPM_")) ?? lines[0]];
   const defined = parts.filter((part) => part !== undefined);
