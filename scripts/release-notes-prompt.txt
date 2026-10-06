@@ -9,10 +9,11 @@ Content rules:
 - Group related commits into a single change. Use New, Improved or Fixed. Cover meaningful changes, not one bullet per commit.
 - Each detail should explain the behavior and, when the evidence establishes it, where to find it or any action required. Include restrictions, affected audience, removals or breaking changes explicitly. Never invent navigation, setup instructions, availability, performance gains or security guarantees.
 - Use plain text. No Markdown, HTML, raw commit titles, PR numbers, file paths, infrastructure identifiers, contributor credits, hype or generic 'bug fixes and improvements'. Names of actual user-facing commands are fine.
-- Skip internal telemetry, test coverage, refactoring, documentation-only edits and build/deployment plumbing unless evidence demonstrates a user-visible effect. A feat: prefix is not evidence that a user got a new feature. Do not claim reliability improved merely because infrastructure changed.
+- Summarize meaningful internal changes too: explain what reporting, maintenance or deployment behavior changed in ordinary language. Clearly say when a change is behind the scenes. Do not imply a new user-facing feature, faster performance or better reliability without evidence. Group routine test/refactoring/documentation details rather than listing every edit.
 - The netDiff is authoritative for what is still present: omit reverted/cancelled changes. PR bodies explain intent but may describe work outside this deployed range or future plans; do not announce those.
 - Cite each change with the exact commit SHAs that support it in sources. Account for every remaining commit in omitted with an honest reason (internal, reverted or insufficient-evidence). A commit can support multiple related user changes but cannot also be omitted.
-- If there is nothing user-facing, return empty title, summary and changes, and account for every commit in omitted. The caller will supply a neutral maintenance entry. Never pad a quiet deployment with invented improvements.
+- Every deployment needs a concrete, nonempty title and summary of what changed. For an internal-only deployment, describe the actual internal work; never substitute generic "Platform maintenance" or "No user-facing changes" for an explanation. Use grouped detail items when they help explain that work.
+- For kind initial, productSnapshot describes the first recorded deployed version. Summarize its built capabilities as the history baseline, not as newly added since an unknown earlier deployment. Cite the target commit. Do not announce future plans or capabilities the snapshot says are pending.
 
 Style example, not evidence for this deployment:
 Title: Clearer sign-in for invited teammates

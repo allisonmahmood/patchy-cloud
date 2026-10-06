@@ -25,6 +25,11 @@ beforeAll(() => {
   git("config", "user.name", "Notes test");
   git("config", "user.email", "notes@patchy.local");
   mkdirSync(join(cwd, "packages"));
+  mkdirSync(join(cwd, "docs"));
+  writeFileSync(
+    join(cwd, "docs/product.md"),
+    "People can open company tools and invite teammates."
+  );
   base = commit("baseline", "Old sign-in");
   feature = commit("fix(ui): show the waitlist", "Join the waitlist");
   internal = commit("chore: internal metadata", "Join the waitlist\ninternal");
@@ -123,18 +128,19 @@ describe("draft validation", () => {
       expect(() => validateResponse(value, evidence())).toThrow();
     }
   );
-  it("uses honest maintenance notes when everything is internal, and neutral first/rollback copy", () => {
+  it("preserves concrete internal-work summaries and neutral repeat/rollback copy", () => {
     const value = {
-      title: "",
-      summary: "",
+      title: "More complete activity reporting",
+      summary: "Patchy now records company membership changes in its internal usage reports.",
       changes: [],
       omitted: [feature, internal].map((commit) => ({ commit, reason: "internal" }))
     };
     expect(makeDraft(evidence(), value).notes).toMatchObject({
-      title: "Platform maintenance",
+      title: value.title,
+      summary: value.summary,
       changes: []
     });
-    for (const kind of ["initial", "unchanged", "rollback"]) {
+    for (const kind of ["unchanged", "rollback"]) {
       expect(makeDraft({ ...evidence(), kind }, null).notes.changes).toEqual([]);
     }
   });
@@ -250,4 +256,31 @@ it("removes a stale draft even when collecting the next range fails", () => {
     )
   ).toThrow();
   expect(existsSync(join(out, "draft.json"))).toBe(false);
+});
+
+it("requires an explanation even when a deployment has only internal changes", () => {
+  expect(() =>
+    makeDraft(evidence(), {
+      title: "",
+      summary: "",
+      changes: [],
+      omitted: [feature, internal].map((commit) => ({ commit, reason: "internal" }))
+    })
+  ).toThrow("concrete title and summary");
+});
+
+it("summarizes the first confirmed version from that version's product snapshot", async () => {
+  writeFileSync(join(cwd, "docs/product.md"), "Unreleased feature that must not appear");
+  const first = await collectEvidence({ cwd, from: null, to: base, repository: "patchy/cloud" });
+  expect(first.productSnapshot).toBe("People can open company tools and invite teammates.");
+  expect(first.commits.map((commit) => commit.sha)).toEqual([base]);
+  const notes = {
+    title: "Tools and teammates",
+    summary: "Open company tools and invite your team.",
+    changes: [
+      { kind: "New", title: "Company tools", detail: "Open your company’s tools.", sources: [base] }
+    ],
+    omitted: []
+  };
+  expect(makeDraft(first, notes).notes.summary).toBe(notes.summary);
 });

@@ -137,7 +137,7 @@ async function atomicJson(file, value) {
 }
 
 /** Preserve event sequences and existing notes. Note failures never invent maintenance claims. */
-export async function reconcile(events, previous, createNotes) {
+export async function reconcile(events, previous, createNotes, refreshNotes = false) {
   let sequence = Math.max(0, ...previous.entries.map((entry) => entry.sequence));
   const entries = [];
   for (const event of events) {
@@ -146,7 +146,9 @@ export async function reconcile(events, previous, createNotes) {
     if (entries.length && assignedSequence <= entries.at(-1).sequence)
       throw new Error("Deployment ordering changed; refusing to move a read marker's baseline.");
     const saved =
-      old?.deployment.previousCommit === event.previousCommit && !old?.notesPending ? old : null;
+      !refreshNotes && old?.deployment.previousCommit === event.previousCommit && !old?.notesPending
+        ? old
+        : null;
     let notes = saved && { title: saved.title, summary: saved.summary, changes: saved.changes };
     let notesPending = false;
     let notesSource = saved?.deployment.notesSource;
@@ -156,6 +158,10 @@ export async function reconcile(events, previous, createNotes) {
         notes = result.notes;
         notesSource = result.source;
       } catch (error) {
+        if (refreshNotes)
+          throw new Error("Refreshing notes failed; existing history was preserved.", {
+            cause: error
+          });
         notesPending = true;
         notesSource = "pending";
         notes = {
@@ -207,7 +213,7 @@ const github = {
   }
 };
 
-export async function sync(worktree) {
+export async function sync(worktree, { refreshNotes = false } = {}) {
   const target = await localTarget(worktree);
   await mkdir(target.stateDirectory, { recursive: true });
   const lock = resolve(target.stateDirectory, "sync.lock");
@@ -220,46 +226,60 @@ export async function sync(worktree) {
     const previous = await optionalJson(target.historyFile, { version: 1, entries: [] });
     if (previous.entries.length && previous.source?.kind !== source)
       await atomicJson(resolve(target.stateDirectory, "sample-history-backup.json"), previous);
-    const history = await reconcile(deploymentEvents(proofs), previous, async (event) => {
-      for (const sha of [event.previousCommit, event.commit].filter(Boolean)) {
-        try {
-          execFileSync("git", ["cat-file", "-e", `${sha}^{commit}`], {
-            cwd: root,
-            stdio: "ignore"
-          });
-        } catch {
-          execFileSync("git", ["fetch", "--no-tags", `https://github.com/${repository}.git`, sha], {
-            cwd: root,
-            stdio: "pipe",
-            timeout: 120_000
-          });
+    const history = await reconcile(
+      deploymentEvents(proofs),
+      previous,
+      async (event) => {
+        for (const sha of [event.previousCommit, event.commit].filter(Boolean)) {
+          try {
+            execFileSync("git", ["cat-file", "-e", `${sha}^{commit}`], {
+              cwd: root,
+              stdio: "ignore"
+            });
+          } catch {
+            execFileSync(
+              "git",
+              ["fetch", "--no-tags", `https://github.com/${repository}.git`, sha],
+              {
+                cwd: root,
+                stdio: "pipe",
+                timeout: 120_000
+              }
+            );
+          }
         }
-      }
-      const evidence = await collectEvidence({
-        cwd: root,
-        from: event.previousCommit,
-        to: event.commit,
-        repository,
-        // No PR or branch listing determines entries or their ranges.
-        loadPullRequests: async () => []
-      });
-      await atomicJson(resolve(target.stateDirectory, "evidence", `${key(event)}.json`), evidence);
-      const reviewed = await optionalJson(
-        resolve(target.stateDirectory, "responses", `${key(event)}.json`),
-        null
-      );
-      const model = process.env.RELEASE_NOTES_MODEL || "gpt-4.1-mini";
-      const response =
-        evidence.kind !== "forward"
+        const evidence = await collectEvidence({
+          cwd: root,
+          from: event.previousCommit,
+          to: event.commit,
+          repository,
+          // No PR or branch listing determines entries or their ranges.
+          loadPullRequests: async () => []
+        });
+        await atomicJson(
+          resolve(target.stateDirectory, "evidence", `${key(event)}.json`),
+          evidence
+        );
+        const reviewed = await optionalJson(
+          resolve(target.stateDirectory, "responses", `${key(event)}.json`),
+          null
+        );
+        const model = process.env.RELEASE_NOTES_MODEL || "gpt-4.1-mini";
+        const response = !["forward", "initial"].includes(evidence.kind)
           ? null
           : (reviewed ??
             (await requestNotes(evidence, { apiKey: process.env.RELEASE_NOTES_API_KEY, model })));
-      const origin =
-        evidence.kind !== "forward" ? "deployment-facts" : reviewed ? "reviewed-local" : model;
-      const draft = makeDraft(evidence, response, origin);
-      await atomicJson(resolve(target.stateDirectory, "drafts", `${key(event)}.json`), draft);
-      return { notes: draft.notes, source: origin };
-    });
+        const origin = !["forward", "initial"].includes(evidence.kind)
+          ? "deployment-facts"
+          : reviewed
+            ? "reviewed-local"
+            : model;
+        const draft = makeDraft(evidence, response, origin);
+        await atomicJson(resolve(target.stateDirectory, "drafts", `${key(event)}.json`), draft);
+        return { notes: draft.notes, source: origin };
+      },
+      refreshNotes
+    );
     await atomicJson(target.historyFile, history);
     console.log(
       `${history.entries.length} confirmed Deploy entries; ${history.entries.filter((entry) => entry.notesPending).length} awaiting notes. ${target.apiUrl}/updates`
@@ -274,12 +294,15 @@ async function main() {
   const { values } = parseArgs({
     options: {
       worktree: { type: "string", default: root },
-      watch: { type: "boolean", default: false }
+      watch: { type: "boolean", default: false },
+      "refresh-notes": { type: "boolean", default: false }
     }
   });
+  if (values.watch && values["refresh-notes"])
+    throw new Error("Use --refresh-notes for a single import, then restart --watch.");
   do {
     try {
-      await sync(values.worktree);
+      await sync(values.worktree, { refreshNotes: values["refresh-notes"] });
     } catch (error) {
       if (!values.watch) throw error;
       console.error(error.message);

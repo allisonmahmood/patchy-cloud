@@ -87,7 +87,6 @@ export const render = (entries: ReadonlyArray<Entry>) => `
         )
         .join("")}
         <p class="supporting-text update-published">Available since ${date(entry.publishedAt)}.</p>
-        ${entry.deployment ? `<p class="supporting-text update-published"><a href="${escapeHtml(entry.deployment.url)}" target="_blank" rel="noopener noreferrer">View Deploy run on GitHub</a></p>` : ""}
       </div></details>`
       )
       .join("")}</div>

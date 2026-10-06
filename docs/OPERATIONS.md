@@ -960,9 +960,10 @@ malformed output, missing credentials, rate limits and incomplete responses fail
 without producing a draft; they never become maintenance notes. This validation
 checks structure and coverage, not the factual truth of model-written prose.
 
-Internal-only changes produce a neutral maintenance entry. First deployment,
-same-commit maintenance and rollbacks use explicit neutral copy without asking a
-model to invent features. A rollback is never described as adding the changes it
+Internal-only changes receive concrete summaries of the work, clearly described
+as internal where appropriate. The first recorded deployment uses the product
+snapshot at its deployed commit to summarize available capabilities. Same-commit
+maintenance and rollbacks use explicit neutral copy without inventing features. A rollback is never described as adding the changes it
 removed. Reverts in a forward range are checked against the net diff by the model.
 
 ## Local history from the Deploy Action
@@ -998,7 +999,7 @@ range between actual confirmed deployments; the importer does not query PRs.
 
 The importer writes one document at
 `.local/dev/storage/platform-updates/history.json` using atomic replacement.
-Every expanded entry links to its source Deploy attempt. A per-worktree lock
+Deployment run references remain internal and are not rendered to readers. A per-worktree lock
 prevents concurrent writers. Failed writes preserve the old document; rerunning
 reconciles the same events without allocating duplicate notifications. If a
 process is forcibly killed and leaves `.local/dev/deployment-updates/sync.lock`,
@@ -1015,9 +1016,12 @@ Set `RELEASE_NOTES_API_KEY` in the watcher's environment to generate plain-langu
 notes automatically (`RELEASE_NOTES_MODEL` is optional). For local review without
 a model call, place a response matching the generator's schema at
 `.local/dev/deployment-updates/responses/<run-id>-<attempt>.json`. The importer
-records this as `reviewed-local`, not live model output. First-deployment,
+records this as `reviewed-local`, not live model output. First-deployment notes describe the product snapshot at the confirmed commit;
 same-code and rollback copy comes from deployment facts. Other generation failures
 publish an honest pending-details entry, then retry on the next poll. Completing
 those notes updates the existing entry without another unread notification.
-Already completed notes are reused. Generated prose still needs review for factual
+Already completed notes are reused. To apply revised reviewed responses, stop the
+watcher and run the same command with `--refresh-notes` instead of `--watch`,
+then restart the watcher. This replaces content while retaining event sequences
+and read markers. Do not combine both flags. Generated prose still needs review for factual
 accuracy and understandable user impact; schema validation alone cannot prove it.

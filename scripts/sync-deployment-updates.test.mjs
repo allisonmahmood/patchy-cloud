@@ -216,3 +216,36 @@ it("writes only to a matching loopback dev-personas worktree", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it("refreshes completed summaries without duplicating events or changing read markers", async () => {
+  const events = deploymentEvents([proof(10, 1, a, "10")]);
+  const notes = (title) => async () => ({
+    notes: { title, summary: "Details", changes: [] },
+    source: "reviewed-local"
+  });
+  const first = await reconcile(events, { entries: [] }, notes("Old summary"));
+  const refreshed = await reconcile(events, first, notes("Specific deployment summary"), true);
+  expect(refreshed.entries).toHaveLength(1);
+  expect(refreshed.entries[0].sequence).toBe(first.entries[0].sequence);
+  expect(refreshed.entries[0].title).toBe("Specific deployment summary");
+  expect(refreshed.entries[0].deployment).toEqual(first.entries[0].deployment);
+});
+
+it("preserves completed notes when a requested refresh fails", async () => {
+  const events = deploymentEvents([proof(10, 1, a, "10")]);
+  const first = await reconcile(events, { entries: [] }, async () => ({
+    notes: { title: "Existing summary", summary: "Details", changes: [] },
+    source: "reviewed-local"
+  }));
+  await expect(
+    reconcile(
+      events,
+      first,
+      async () => {
+        throw new Error("Provider unavailable");
+      },
+      true
+    )
+  ).rejects.toThrow("existing history was preserved");
+  expect(first.entries[0].title).toBe("Existing summary");
+});
