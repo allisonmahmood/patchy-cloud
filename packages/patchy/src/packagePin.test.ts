@@ -79,43 +79,36 @@ it("relays pnpm's error line without URL credentials, queries or fragments", () 
   expect(installFailureReason(`ERR_PNPM_X ${"y".repeat(400)}`)).toHaveLength(300);
 });
 
-it("relays pnpm 12's code and causes, rejoined across its wrapped lines", () => {
+it("relays pnpm 12's code and causes, one per line under NO_GRAPHICS", () => {
   const notFound = [
-    "Error: ERR_PNPM_FETCH_404",
+    "Error: installing dependencies",
+    "    Diagnostic severity: error",
+    "    Caused by: Failed to resolve dependency tree: GET http://127.0.0.1:4100/zz-missing-pkg: Not Found - 404",
+    "diagnostic help: zz-missing-pkg is not in the npm registry. ERR_PNPM_NOT_THIS_ONE",
     "",
-    "  × installing dependencies",
-    "  ╰─▶ Failed to resolve dependency tree: GET http://127.0.0.1:4100/zz-",
-    "      missing-pkg: Not Found - 404",
-    "  help: zz-missing-pkg is not in the npm registry, or you have no",
-    "        permission to fetch it."
+    "No authorization header was set for the request.",
+    "diagnostic code: ERR_PNPM_FETCH_404"
   ].join("\n");
   expect(installFailureReason(notFound)).toBe(
     "ERR_PNPM_FETCH_404: Failed to resolve dependency tree: GET http://127.0.0.1:4100/zz-missing-pkg: Not Found - 404"
   );
-  const tarball = [
-    "Error:   × installing dependencies",
-    "  ╰─▶ Failed to resolve dependency tree: Failed to resolve dependency: Tarball",
-    "      server returned HTTP 404 for http://127.0.0.1:4100/sdk/patchy-0.0.1.tgz"
+  const refused = [
+    "Error: installing dependencies",
+    "    Diagnostic severity: error",
+    "    Caused by: Failed to resolve dependency: error sending request for url (https://registry.example/patchy-0.0.1.tgz?token=secret#frag)",
+    "    Caused by: client error (Connect)",
+    "    Caused by: Connection refused (os error 111)"
   ].join("\n");
-  expect(installFailureReason(tarball)).toBe(
-    "Failed to resolve dependency tree: Failed to resolve dependency: Tarball server returned HTTP 404 for http://127.0.0.1:4100/sdk/patchy-0.0.1.tgz"
+  expect(installFailureReason(refused)).toBe(
+    "Failed to resolve dependency: error sending request for url (https://registry.example/patchy-0.0.1.tgz: client error (Connect): Connection refused (os error 111)"
   );
 });
 
-it("keeps a query wrapped across pnpm 12's lines out of the relayed causes", () => {
-  const output = [
-    "Error:   × installing dependencies",
-    "  ├─▶ Failed to resolve dependency: error",
-    "  │   sending request for url (https://registry.example/patchy-",
-    "  │   0.0.1.tgz?",
-    "  │   token=secretsecretsecret#fra",
-    "  │   g)",
-    "  ├─▶ client error (Connect)",
-    "  ╰─▶ Connection refused (os error 111)"
-  ].join("\n");
-  const reason = installFailureReason(output);
-  expect(reason).toBe(
-    "Failed to resolve dependency: error sending request for url (https://registry.example/patchy-0.0.1.tgz: client error (Connect): Connection refused (os error 111)"
-  );
-  expect(reason).not.toContain("secret");
+it("redacts URLs whatever their scheme's case or path characters", () => {
+  expect(
+    installFailureReason("ERR_PNPM_FETCH_404 GET HTTPS://user:pass@registry.example/pkg?token=s")
+  ).toBe("ERR_PNPM_FETCH_404 GET HTTPS://registry.example/pkg");
+  expect(
+    installFailureReason("ERR_PNPM_FETCH_404 GET https://registry.example/a'b.tgz?token=s")
+  ).toBe("ERR_PNPM_FETCH_404 GET https://registry.example/a'b.tgz");
 });

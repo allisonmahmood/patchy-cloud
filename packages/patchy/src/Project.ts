@@ -360,15 +360,23 @@ const recordIntegrity = Effect.fn("Project.recordIntegrity")(function* (
     yield* replaceFile(cwd, "pnpm-lock.yaml", recorded, "Could not write pnpm-lock.yaml.");
 });
 
-/** A failure relays why pnpm failed; a success leaves the patchy pin verifiable. */
+/**
+ * A failure relays why pnpm failed; a success leaves the patchy pin verifiable. `NO_GRAPHICS` makes
+ * pnpm 12 print its causes one per line instead of wrapped; pnpm 11 ignores it.
+ */
 const install = Effect.fn("Project.install")(function* (cwd: string, pin: Release["package"]) {
-  const result = yield* processResult(cwd, "pnpm", [
-    "install",
-    "--ignore-workspace",
-    "--ignore-scripts",
-    "--no-frozen-lockfile",
-    "--loglevel=error"
-  ]);
+  const result = yield* processResult(
+    cwd,
+    "pnpm",
+    [
+      "install",
+      "--ignore-workspace",
+      "--ignore-scripts",
+      "--no-frozen-lockfile",
+      "--loglevel=error"
+    ],
+    { NO_GRAPHICS: "1" }
+  );
   if (result.code !== 0) {
     const reason = installFailureReason(`${result.stderr}\n${result.stdout}`);
     return yield* new LocalError({
