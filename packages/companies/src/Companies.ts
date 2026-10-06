@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { newInternalId } from "@patchy/core";
+import { newInternalId, WhatsNew } from "@patchy/core";
 import { AlreadyInCompany, Role, User, type Claims } from "./Users.js";
 
 /** Fixed once created: handles are not normalized into a different address. */
@@ -36,7 +36,8 @@ export const RESERVED_HANDLES: ReadonlyArray<string> = [
   "static",
   "invite",
   "signup",
-  "signin"
+  "signin",
+  "whats-new"
 ];
 
 export class Company extends Schema.Class<Company>("Company")({
@@ -155,7 +156,8 @@ export const make = Effect.gen(function* () {
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
   const companyColumns = sql`id, handle, name, created_at AS "createdAt"`;
   const userColumns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
-    email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt"`;
+    email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
+    whats_new_seen AS "whatsNewSeen"`;
   const inviteColumns = sql`id, company_id AS "companyId", email, role, invited_by AS "invitedBy",
     clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt", expires_at AS "expiresAt",
     revoked_at AS "revokedAt", consumed_at AS "consumedAt"`;
@@ -193,9 +195,11 @@ export const make = Effect.gen(function* () {
       now: Schema.Number
     }),
     Result: User,
+    // A new member starts caught up on What's new; the history is still one click away.
     execute: ({ id, companyId, clerkUserId, email, name, role, now }) => sql`
-      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at)
-      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${name}, ${role}, to_timestamp(${now / 1_000}))
+      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at, whats_new_seen)
+      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${name}, ${role}, to_timestamp(${now / 1_000}),
+        ${WhatsNew.latestRelease})
       ON CONFLICT DO NOTHING RETURNING ${userColumns}`
   });
   const existingUser = SqlSchema.findOneOption({

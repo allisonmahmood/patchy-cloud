@@ -1,3 +1,5 @@
+import { changesSince, type ChangeKind, latestRelease, tally } from "./whatsNew.js";
+
 /** Shared component subset for first-party pages and the served document's state notices. */
 export const shellStyles = `
     :root {
@@ -275,14 +277,47 @@ export interface AppShell {
   readonly viewer: {
     readonly user: { readonly name: string };
     readonly company: { readonly name: string };
+    /** The newest What's new release the person has seen. */
+    readonly whatsNewSeen: number;
   };
-  readonly section: "patches" | "company" | "connections" | "machines";
+  /** `whats-new` is reached from the bell, not a section link, so no link is current. */
+  readonly section: "patches" | "company" | "connections" | "machines" | "whats-new";
+}
+
+/** A change's kind as a pill: New green, Improved blue, Fixed plain. */
+export const whatsNewKind = (kind: ChangeKind): string =>
+  `<span class="pill${kind === "New" ? " pill-done" : kind === "Improved" ? " pill-progress" : ""}">${kind}</span>`;
+
+const plural = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
+
+/**
+ * The bell beside the viewer's name opens a panel of what shipped since their last visit, or
+ * the latest few once they are caught up. Opening it clears the dot through `/whats-new/seen`;
+ * the page loads that script only while there is a dot to clear.
+ */
+function whatsNewBell(seen: number): string {
+  const unseen = changesSince(seen);
+  const shown = unseen.length > 0 ? unseen.slice(0, 6) : changesSince(0).slice(0, 3);
+  const label =
+    unseen.length > 0 ? `What’s new: ${plural(unseen.length)} since your last visit` : "What’s new";
+  const summary =
+    unseen.length > 0
+      ? `${plural(unseen.length)} since your last visit · ${tally(unseen)}`
+      : "You’re all caught up. The latest:";
+  const list = shown.length
+    ? `<ul class="list list-compact">${shown.map((change) => `<li class="list-row whats-new-change">${whatsNewKind(change.kind)}<span>${escapeHtml(change.title)}</span></li>`).join("")}</ul>`
+    : "";
+  const more =
+    unseen.length > shown.length
+      ? `<p class="supporting-text">and ${unseen.length - shown.length} more</p>`
+      : "";
+  return `<button type="button" class="btn btn-quiet whats-new-bell" popovertarget="whats-new" aria-label="${label}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z" stroke-linejoin="round"/><path d="M10 21h4" stroke-linecap="round"/></svg>${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="whats-new-panel" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><h2 class="section-heading" id="whats-new-heading">What’s new</h2><p class="supporting-text">${summary}</p>${list}${more}<a class="btn btn-primary" href="/whats-new">See all changes</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
 }
 
 function appBody(app: AppShell, body: string): string {
   const link = (href: string, label: string, section: AppShell["section"]) =>
     `<a href="${href}"${section === app.section ? ' aria-current="page"' : ""}>${label}</a>`;
-  return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who"><span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
+  return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
 }
 
 /** First-party HTML shell. Served patch documents remain separate in Serving. */
@@ -666,7 +701,33 @@ export function htmlPage(options: {
     .app-nav a[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
     .app-who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: .88rem; font-weight: 650; overflow-wrap: anywhere; }
     .app-page { min-width: 0; padding: 30px 34px 40px; overflow-wrap: anywhere; }
+    /* What's new: the bell, its panel, and a change the viewer has not seen yet. */
+    .whats-new-bell { position: relative; width: 44px; padding: 0; anchor-name: --whats-new; }
+    .whats-new-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--blue); }
+    .whats-new-panel { position: fixed; inset: 76px 12px auto auto; width: min(400px, calc(100vw - 24px)); max-height: calc(100dvh - 96px); margin: 0; padding: 18px 20px 20px; overflow-y: auto; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); box-shadow: var(--shadow-hard); }
+    @supports (position-area: bottom) {
+      .whats-new-panel { inset: auto; margin-top: 8px; position-anchor: --whats-new; position-area: bottom span-left; position-try-fallbacks: flip-inline; }
+      @media (max-width: 480px) {
+        .whats-new-panel { position-area: bottom span-all; justify-self: center; }
+      }
+    }
+    .whats-new-panel > .supporting-text { margin: 0 0 4px; }
+    .whats-new-panel .btn-primary { width: 100%; margin-top: 12px; }
+    .whats-new-change { display: grid; grid-template-columns: 6.75rem minmax(0, 1fr); gap: 12px; align-items: start; }
+    .list-row.whats-new-change { padding-block: 14px; }
+    .whats-new-change > .pill { justify-self: start; }
+    .whats-new-change p { margin: 0; }
+    .whats-new-change p + p { margin-top: 4px; }
+    .whats-new-change strong { color: var(--ink); }
+    .whats-new-panel .whats-new-change { align-items: center; padding-block: 6px; color: var(--ink); font-weight: 650; line-height: 1.35; }
+    .whats-new-unseen { margin-inline: -14px; padding-inline: 14px; background: var(--paper-blue); box-shadow: inset 4px 0 0 var(--blue); }
+    .whats-new-day-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
+    .whats-new-day-head .section-heading { margin: 0; }
+    .whats-new-seen { display: flex; align-items: center; gap: 12px; max-width: none; margin: 32px 0 0; }
+    li.whats-new-seen { margin: 18px 0; }
+    .whats-new-seen::before, .whats-new-seen::after { content: ""; flex: 1; border-top: 1px solid var(--line-strong); }
     @media (max-width: 480px) {
+      .whats-new-day .whats-new-change { grid-template-columns: minmax(0, 1fr); gap: 6px; }
       .auth-card { padding: 24px; }
       .app-bar { padding: 14px; }
       .app-page { padding: 24px 18px; }

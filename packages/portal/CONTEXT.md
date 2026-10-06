@@ -41,9 +41,13 @@ An act posted from a page whose patch has since changed in the way the act depen
 _Avoid_: conflict, optimistic lock, revision mismatch
 
 **App shell**:
-The shared frame for the portal, Company, Connections and Your machines: the header bar with sections, viewer and sign-out, over the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
+The shared frame for the portal, Company, Connections and Your machines: the header bar with sections, the What's new bell, viewer and sign-out, over the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
 _Avoid_: layout, template, theme
 
 **Component set**:
 The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists and trees, version tables and expandable table rows, copyable addresses, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
 _Avoid_: design system (there is one theme and no library), component library, utility classes
+
+**What's new**:
+Patchy's changelog for the people using it, at `/whats-new` and behind the app shell's bell: one **release** per deploy, written before it from the PRs merged since the last, each holding **changes** tagged New, Improved or Fixed and a few behind-the-scenes lines. A person's **seen marker** is the newest release they have looked at; opening the bell or the page raises it, and a new member starts at the newest. The list ships with the server in `@patchy/core`, so a rollback shows the older one.
+_Avoid_: notifications (nothing is addressed to one person), release notes (the notes are what the deploying agent writes, not the page), updates

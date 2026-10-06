@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
+import { WhatsNew } from "@patchy/core";
 import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
@@ -381,6 +382,25 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         assert.deepStrictEqual(
           yield* sql`SELECT revoked_at IS NULL AS live FROM machine_tokens WHERE id = 'tok_deactivation_atomic'`,
           [{ live: true }]
+        );
+      })
+    );
+
+    it.effect("starts new members caught up on What's new and only ever raises the marker", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const { admin, member } = yield* companyWithMember("whats-new-marker");
+        assert.strictEqual(admin.whatsNewSeen, WhatsNew.latestRelease);
+        assert.strictEqual(member.whatsNewSeen, WhatsNew.latestRelease);
+        yield* users.markWhatsNewSeen({ userId: member.id, through: WhatsNew.latestRelease + 2 });
+        yield* users.markWhatsNewSeen({ userId: member.id, through: WhatsNew.latestRelease + 1 });
+        assert.strictEqual(
+          (yield* users.findByClerkId(member.clerkUserId))?.whatsNewSeen,
+          WhatsNew.latestRelease + 2
+        );
+        assert.strictEqual(
+          (yield* users.findByClerkId(admin.clerkUserId))?.whatsNewSeen,
+          WhatsNew.latestRelease
         );
       })
     );
