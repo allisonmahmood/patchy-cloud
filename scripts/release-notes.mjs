@@ -188,6 +188,7 @@ export function validateResponse(value, evidence) {
   return value;
 }
 
+/** @param {string | null} [model] */
 export function makeDraft(evidence, response, model = null) {
   const defaults = {
     initial: {

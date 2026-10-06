@@ -1,5 +1,7 @@
 # Deployment updates local prototypes
 
+This work is a local simulation. Deploying it to `https://cloud.patchyhq.com/` or connecting its production deployment workflow is outside scope.
+
 ## Integrated app preview
 
 Run these commands in a dedicated worktree so the preview has its own dev data:
@@ -22,7 +24,7 @@ pnpm prototype:updates:seed --deploy
 
 Return to the app tab or open the bell to pick it up. Rerunning the seed without `--deploy` preserves the history. Restarting the local server preserves both the document and browser marker. The seeder refuses non-loopback instances and Clerk mode. It publishes sample content directly to local disk; it never runs a GitHub Action or contacts production. The app provides read-only session routes, not a publication endpoint.
 
-The notes generator is available through `pnpm release-notes` and the manual **Preview deployment notes** Action; see [Operations](../../../../docs/OPERATIONS.md#drafting-deployment-notes). Production publication, retry deduplication and publication recovery remain deferred. Sequence numbers identify ordered publication events and must never be reused for a different event; they are not commit hashes or GitHub run ids.
+The notes generator is available through `pnpm release-notes` and the manual **Preview deployment notes** Action; see [Operations](../../../../docs/OPERATIONS.md#drafting-deployment-notes). The preview Action produces a draft artifact only. Any further publication, retry or recovery work belongs in local simulation. Sequence numbers identify ordered publication events and must never be reused for a different event; they are not commit hashes or GitHub run ids.
 
 ### Browser behavior checks
 
@@ -31,6 +33,8 @@ pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium updat
 ```
 
 These checks start disposable local servers and exercise the real authenticated pages, browser script and content-store reader. They cover the newest-only bell, reading history, closing/reopening tabs, cross-tab read markers, a newer deployment arriving on an older history snapshot, blocked/full storage, unavailable history and switching people. Publication is simulated by replacing the instance's shared document. Focus and visibility events are controlled for deterministic headless checks; tab closure and storage events use real browser behavior. Screenshots land in `.local/tier1-results/`. Existing dev instances and production are untouched.
+
+Compatibility checks pass real generator drafts through the shared document reader into the bell and expanded history. Plain-language sample notes cover New, Improved and Fixed changes; neutral drafts cover first deployment, same-version maintenance, rollback and internal-only work. The checks verify that display copy survives intact and internal provenance stays out of the notes. Samples are hand-authored: these checks do not prove the factual accuracy or readability of future AI output. Review that output locally for a clear user benefit, concrete behavior and any necessary action before using it in a simulation.
 
 ## Original standalone interaction sketch
 
