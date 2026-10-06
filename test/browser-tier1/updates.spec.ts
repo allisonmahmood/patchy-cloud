@@ -196,42 +196,61 @@ test("deployment summaries retain concrete internal-work and initial-release cop
   await caughtUp(page);
 });
 
-test("the bell shows only the newest unread deployment; reading history survives closing the tab", async ({
+test("updates arrive while browsing, survive closing an unread tab, and clear when the bell opens", async ({
   page,
   context,
   instance
 }) => {
-  await publish(instance, [1, 3, 2]);
+  await publish(instance, [1, 2]);
+  await page.goto(instance.origin + "/updates");
   await page.goto(instance.origin);
+  await caughtUp(page);
+  await publish(instance, [1, 2, 3]);
+  // No focus, navigation or click: the visible page discovers the simulated deployment.
   await unread(page, 3);
-  await openBell(page);
-  await expect(page.locator("#updates-popover")).not.toContainText("Deployment 2");
-  expect(await marker(page)).toBeNull();
-  await capture(page, "unread-bell");
-
+  expect(await marker(page)).toBe("2");
   await page.close();
   const returned = await context.newPage();
   await returned.goto(instance.origin);
   await unread(returned, 3);
+  expect(await marker(returned)).toBe("2");
   await openBell(returned);
+  await expect.poll(() => marker(returned)).toBe("3");
+  await expect(returned.locator("#updates-dot")).toHaveAttribute("hidden");
+  await expect(returned.locator(".latest-update h3")).toHaveText("Deployment 3");
+  await capture(returned, "read-on-opening-bell");
+  await returned.locator("#updates-bell").click();
+  await caughtUp(returned);
+  await openBell(returned);
+  await caughtUp(returned);
   await returned.getByRole("link", { name: "View all updates" }).click();
   await expect(returned.locator(".update-title")).toHaveText([
     "Deployment 3",
     "Deployment 2",
     "Deployment 1"
   ]);
-  await returned.locator("#update-2 summary").click();
-  await expect(returned.getByText("Details 2", { exact: true })).toBeVisible();
-  await caughtUp(returned);
-  expect(await marker(returned)).toBe("3");
   await returned.close();
-
   const reopened = await context.newPage();
   await reopened.goto(instance.origin);
   await caughtUp(reopened);
-  await openBell(reopened);
-  await expect(reopened.getByRole("link", { name: "View all updates" })).toBeVisible();
-  await capture(reopened, "caught-up-bell");
+});
+
+test("a deployment arriving while the bell is open stays unread until the bell is reopened", async ({
+  page,
+  instance
+}) => {
+  await publish(instance, [1]);
+  await page.goto(instance.origin);
+  await openBell(page);
+  await expect.poll(() => marker(page)).toBe("1");
+  await publish(instance, [1, 2]);
+  await expect(page.locator("#updates-dot")).not.toHaveAttribute("hidden", { timeout: 10_000 });
+  expect(await marker(page)).toBe("1");
+  await expect(page.locator(".latest-update h3")).toHaveText("Deployment 1");
+  await page.locator("#updates-bell").click();
+  await openBell(page);
+  await expect.poll(() => marker(page)).toBe("2");
+  await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
 });
 
 test("returning to an older history snapshot leaves a newer deployment unread until its link loads it", async ({
@@ -336,7 +355,8 @@ for (const failure of ["access denied", "quota exceeded"] as const) {
     await caughtUp(page);
     await publish(instance, [1, 2, 3, 4]);
     await openBell(page);
-    await unread(page, 4);
+    await expect(page.locator(".latest-update h3")).toHaveText("Deployment 4");
+    await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
     await page.locator(".latest-update").click();
     await caughtUp(page);
     // The documented fallback lasts for this page, not across navigation.
@@ -365,8 +385,8 @@ test("missing history is empty, corrupt history is unavailable, and recovery doe
   await page.locator("#updates-bell").click();
   await publish(instance, [1, 2, 3]);
   await openBell(page);
-  await unread(page, 3);
-  expect(await marker(page)).toBeNull();
+  await expect.poll(() => marker(page)).toBe("3");
+  await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
 });
 
 test("switching people refuses a stale tab's feed and keeps each person's read marker separate", async ({
