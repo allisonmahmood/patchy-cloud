@@ -901,3 +901,61 @@ protocol. `down` stops run-owned tasks, removes run databases, published objects
 task definitions and image tags, and restores the snapshotted network settings.
 It stops controllers before inventorying exec tasks so they cannot replenish
 during teardown. Keep the private state until teardown succeeds.
+
+## Drafting deployment notes
+
+`pnpm release-notes` generates content for the shared update history. It does not
+publish notes, assign a sequence/date, deploy the app or modify the live history.
+The reusable `.github/actions/deployment-notes` action runs the same generator;
+**Preview deployment notes** is a manual workflow that uploads only `draft.json`.
+It needs a repository secret `RELEASE_NOTES_API_KEY` containing an OpenAI API key.
+`RELEASE_NOTES_MODEL` is an optional repository variable (default `gpt-4.1-mini`).
+The draft action gets only read access to source and pull requests, with no AWS
+credentials. It sends the selected source evidence to the OpenAI Responses API
+with storage disabled and no tools.
+
+Supply full commit SHAs for the previous **successful deployment** and the actual
+target `COMMIT`, including an explicitly selected rollback revision. Do not infer
+the range from main merges, the workflow's `head_sha`, or the fleet's
+`PREVIOUS_REVISION`: those can mean different things. Omit `--from` only for the
+first deployment. The production Deploy workflow is not connected yet; its
+publication step must provide the confirmed baseline and target after the final
+live check. Retry deduplication, publication recovery and event ordering belong
+to that publisher, tracked in [#548](https://github.com/allisonmahmood/patchy-cloud/issues/548).
+
+Inspect evidence locally without a model key (requires an authenticated `gh`):
+
+```sh
+pnpm release-notes --from <previous-full-sha> --to <target-full-sha> \
+  --repo allisonmahmood/patchy-cloud --out /tmp/patchy-notes --prepare-only
+```
+
+Remove `--prepare-only` to generate using `RELEASE_NOTES_API_KEY` in the environment.
+For offline output validation, pass `--response-file /path/to/response.json`
+instead. That file must follow the schema exported by `scripts/release-notes.mjs`;
+its provenance is marked `local-response-file`, never a claimed live model run.
+The output directory holds evidence for inspection and, only on success, a draft.
+Reuse clears any old draft before gathering evidence, so an error cannot leave a
+stale publication candidate. Keep these artifacts outside the worktree.
+
+Notes use a short benefit-led title, a one-sentence summary and specific
+**New**, **Improved** and **Fixed** items. They explain where to find a feature or
+what action to take only when the evidence supports it. The style follows
+[Linear's changelog](https://linear.app/changelog/page/2) and
+[Keep a Changelog](https://keepachangelog.com/en/2.0.0/): write for people, group
+related changes and describe recognizable behavior rather than copying git logs.
+The writing instructions live in `scripts/release-notes-prompt.txt`.
+
+The generator gathers first-parent change units, merged PR descriptions and the
+net source diff. Direct commits remain eligible. PR metadata from another repo
+or a different merge is excluded. It bounds evidence to 100 commits and 180 KB,
+failing explicitly instead of silently cutting off changes. Model output must
+cite in-range commits and account for omissions. Unsupported/uncertain evidence,
+malformed output, missing credentials, rate limits and incomplete responses fail
+without producing a draft; they never become maintenance notes. This validation
+checks structure and coverage, not the factual truth of model-written prose.
+
+Internal-only changes produce a neutral maintenance entry. First deployment,
+same-commit maintenance and rollbacks use explicit neutral copy without asking a
+model to invent features. A rollback is never described as adding the changes it
+removed. Reverts in a forward range are checked against the net diff by the model.

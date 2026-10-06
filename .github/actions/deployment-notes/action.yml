@@ -1,0 +1,42 @@
+name: Draft deployment notes
+description: Generate user-facing notes for an explicit confirmed deployment range; never publish them.
+inputs:
+  from:
+    description: Full SHA of the previous successful deployment; empty only for the first deployment.
+    required: false
+    default: ""
+  to:
+    description: Full SHA actually deployed (COMMIT, not the workflow head SHA).
+    required: true
+  api-key:
+    description: OpenAI API key, supplied through a GitHub Actions secret.
+    required: true
+  model:
+    description: Structured-output model used to write notes.
+    default: gpt-4.1-mini
+  github-token:
+    description: Read-only token for associated PR metadata.
+    required: true
+outputs:
+  draft:
+    description: Path to validated draft JSON (not a published history entry).
+    value: ${{ steps.generate.outputs.draft }}
+runs:
+  using: composite
+  steps:
+    - name: Generate deployment notes
+      id: generate
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        RELEASE_NOTES_API_KEY: ${{ inputs.api-key }}
+        RELEASE_NOTES_MODEL: ${{ inputs.model }}
+        NOTES_FROM: ${{ inputs.from }}
+        NOTES_TO: ${{ inputs.to }}
+        NOTES_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        out=$(mktemp -d "$RUNNER_TEMP/deployment-notes.XXXXXX")
+        node "$NOTES_ACTION_PATH/../../../scripts/release-notes.mjs" \
+          --from "$NOTES_FROM" --to "$NOTES_TO" \
+          --repo "$GITHUB_REPOSITORY" --out "$out"
+        echo "draft=$out/draft.json" >> "$GITHUB_OUTPUT"

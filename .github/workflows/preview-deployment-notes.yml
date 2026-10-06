@@ -1,0 +1,44 @@
+name: Preview deployment notes
+
+# Content generation only. This does not deploy Patchy or publish notifications.
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Full SHA of the previous successful deployment (empty for first deployment)
+        required: false
+      to:
+        description: Full SHA to describe, as selected for deployment
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Keep the generator at the workflow revision; the evidence reads the explicit range.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+      - uses: ./.github/actions/deployment-notes
+        id: notes
+        with:
+          from: ${{ inputs.from }}
+          to: ${{ inputs.to }}
+          github-token: ${{ github.token }}
+          api-key: ${{ secrets.RELEASE_NOTES_API_KEY }}
+          model: ${{ vars.RELEASE_NOTES_MODEL || 'gpt-4.1-mini' }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deployment-notes-draft
+          path: ${{ steps.notes.outputs.draft }}
+          if-no-files-found: error
+          retention-days: 14

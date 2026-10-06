@@ -22,7 +22,7 @@ pnpm prototype:updates:seed --deploy
 
 Return to the app tab or open the bell to pick it up. Rerunning the seed without `--deploy` preserves the history. Restarting the local server preserves both the document and browser marker. The seeder refuses non-loopback instances and Clerk mode. It publishes sample content directly to local disk; it never runs a GitHub Action or contacts production. The app provides read-only session routes, not a publication endpoint.
 
-The production workflow writer, useful notes from the deployed commit range, retry/rollback semantics and publication recovery are deferred. Sequence numbers identify ordered publication events and must never be reused for a different event; they are not commit hashes or GitHub run ids.
+The notes generator is available through `pnpm release-notes` and the manual **Preview deployment notes** Action; see [Operations](../../../../docs/OPERATIONS.md#drafting-deployment-notes). Production publication, retry deduplication and publication recovery remain deferred. Sequence numbers identify ordered publication events and must never be reused for a different event; they are not commit hashes or GitHub run ids.
 
 ## Original standalone interaction sketch
 
