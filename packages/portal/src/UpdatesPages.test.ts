@@ -136,7 +136,7 @@ it("escapes notes and keeps native expandable entries", () => {
   assert.include(html, '<details class="update-entry" id="update-1"><summary>');
 });
 
-it.effect("accepts a Deploy Action source and rejects a non-GitHub source link", () =>
+it.effect("keeps Deploy Action provenance internal and rejects a non-GitHub source link", () =>
   Effect.gen(function* () {
     const deployment = {
       runId: 37378674715,
@@ -150,7 +150,8 @@ it.effect("accepts a Deploy Action source and rejects a non-GitHub source link",
         entries: [{ ...entry(1), deployment: { ...deployment, url } }]
       });
     const decoded = yield* updates.decodeHistory(history(deployment.url));
-    assert.include(updates.render(decoded.entries), `href="${deployment.url}"`);
+    assert.notInclude(updates.render(decoded.entries), deployment.url);
+    assert.notInclude(updates.render(decoded.entries), "GitHub");
     assert.strictEqual(
       (yield* updates.decodeHistory(history("javascript:alert(1)")).pipe(Effect.flip))._tag,
       "SchemaError"

@@ -127,10 +127,7 @@ test("draft notes keep understandable copy through shared history, the bell and 
   await expect(page.locator(".latest-update p")).toHaveText(response.summary);
   await page.locator(".latest-update").click();
   await expect(page.locator("#update-1")).toHaveAttribute("open");
-  await expect(page.getByRole("link", { name: "View Deploy run on GitHub" })).toHaveAttribute(
-    "href",
-    deployment.url
-  );
+  await expect(page.locator('a[href*="github.com"]')).toHaveCount(0);
   await expect(page.locator(".update-title")).toHaveText(response.title);
   await expect(page.locator(".update-summary")).toHaveText(response.summary);
   await expect(page.locator(".update-change .pill")).toHaveText(["New", "Improved", "Fixed"]);
@@ -154,7 +151,7 @@ test("draft notes keep understandable copy through shared history, the bell and 
   await capture(page, "readable-draft-notes");
 });
 
-test("neutral generator drafts remain readable history entries without invented feature bullets", async ({
+test("deployment summaries retain concrete internal-work and initial-release copy", async ({
   page,
   instance
 }) => {
@@ -168,23 +165,32 @@ test("neutral generator drafts remain readable history entries without invented 
         to: commit,
         commits: [{ sha: commit }]
       },
-      { title: "", summary: "", changes: [], omitted: [{ commit, reason: "internal" }] }
+      {
+        title:
+          kind === "initial" ? "Company tools and sharing" : "More complete activity reporting",
+        summary:
+          kind === "initial"
+            ? "Open your company’s tools and choose who can use them."
+            : "Patchy now records company membership changes in its internal usage reports.",
+        changes: [],
+        omitted: [{ commit, reason: "internal" }]
+      }
     );
     return { ...entry(index + 1), ...draft.notes };
   });
   await writeHistory(instance, entries);
   await page.goto(instance.origin + "/updates");
   await expect(page.locator(".update-title")).toHaveText([
-    "Platform maintenance",
+    "More complete activity reporting",
     "An earlier version has been restored",
     "Platform maintenance",
-    "Patchy is live"
+    "Company tools and sharing"
   ]);
   await expect(page.locator(".update-summary")).toHaveText([
-    "No user-facing changes to announce in this deployment.",
+    "Patchy now records company membership changes in its internal usage reports.",
     "Patchy has returned to an earlier release. Recent changes may no longer be available.",
     "This deployment uses the same application version.",
-    "This deployment starts Patchy’s update history."
+    "Open your company’s tools and choose who can use them."
   ]);
   await expect(page.locator(".update-change")).toHaveCount(0);
   await caughtUp(page);

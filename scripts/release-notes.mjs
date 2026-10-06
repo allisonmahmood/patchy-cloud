@@ -71,6 +71,25 @@ export function deploymentRange(cwd, from, to) {
 export async function collectEvidence({ cwd, from, to, repository, loadPullRequests }) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error("Expected an owner/repository name.");
   const range = deploymentRange(cwd, from, to);
+  if (range.kind === "initial") {
+    // Describe the first recorded release from its own product snapshot, never current HEAD.
+    const productSnapshot = git(cwd, "show", `${to}:docs/product.md`);
+    if (Buffer.byteLength(productSnapshot) > 180_000)
+      throw new Error("Initial deployment evidence exceeds 180 KB.");
+    return {
+      ...range,
+      repository,
+      commits: [
+        {
+          sha: to,
+          message:
+            "First recorded deployment: summarize available capabilities, not changes from an unknown earlier release."
+        }
+      ],
+      netDiff: "",
+      productSnapshot
+    };
+  }
   if (range.kind !== "forward") return { ...range, repository, commits: [], netDiff: "" };
   if (range.commits.length > 100)
     throw new Error(
@@ -143,12 +162,8 @@ export function validateResponse(value, evidence) {
     value.changes.length > 20
   )
     throw new Error("Invalid release-note response shape.");
-  if (
-    value.changes.length
-      ? !prose(value.title, 100) || !prose(value.summary, 280)
-      : value.title !== "" || value.summary !== ""
-  )
-    throw new Error("Expected a short title/summary, or empty text for a maintenance deployment.");
+  if (!prose(value.title, 100) || !prose(value.summary, 280))
+    throw new Error("Every deployment needs a concrete title and summary, including maintenance.");
   const allowed = new Set(evidence.commits.map((commit) => commit.sha));
   const included = new Set();
   for (const change of value.changes) {
@@ -191,11 +206,6 @@ export function validateResponse(value, evidence) {
 /** @param {string | null} [model] */
 export function makeDraft(evidence, response, model = null) {
   const defaults = {
-    initial: {
-      title: "Patchy is live",
-      summary: "This deployment starts Patchy’s update history.",
-      changes: []
-    },
     unchanged: {
       title: "Platform maintenance",
       summary: "This deployment uses the same application version.",
@@ -206,15 +216,12 @@ export function makeDraft(evidence, response, model = null) {
       summary:
         "Patchy has returned to an earlier release. Recent changes may no longer be available.",
       changes: []
-    },
-    forward: {
-      title: "Platform maintenance",
-      summary: "No user-facing changes to announce in this deployment.",
-      changes: []
     }
   };
-  const checked = evidence.kind === "forward" ? validateResponse(response, evidence) : null;
-  const notes = checked?.changes.length
+  const checked = ["forward", "initial"].includes(evidence.kind)
+    ? validateResponse(response, evidence)
+    : null;
+  const notes = checked
     ? {
         title: checked.title,
         summary: checked.summary,
@@ -324,16 +331,19 @@ async function main() {
     return;
   }
   const model = process.env.RELEASE_NOTES_MODEL || "gpt-4.1-mini";
-  const response =
-    evidence.kind !== "forward"
-      ? null
-      : values["response-file"]
-        ? JSON.parse(await readFile(values["response-file"], "utf8"))
-        : await requestNotes(evidence, { apiKey: process.env.RELEASE_NOTES_API_KEY, model });
+  const response = !["forward", "initial"].includes(evidence.kind)
+    ? null
+    : values["response-file"]
+      ? JSON.parse(await readFile(values["response-file"], "utf8"))
+      : await requestNotes(evidence, { apiKey: process.env.RELEASE_NOTES_API_KEY, model });
   const draft = makeDraft(
     evidence,
     response,
-    evidence.kind !== "forward" ? null : values["response-file"] ? "local-response-file" : model
+    !["forward", "initial"].includes(evidence.kind)
+      ? null
+      : values["response-file"]
+        ? "local-response-file"
+        : model
   );
   await writeFile(resolve(out, "draft.json.tmp"), JSON.stringify(draft, null, 2));
   await rename(resolve(out, "draft.json.tmp"), resolve(out, "draft.json"));
