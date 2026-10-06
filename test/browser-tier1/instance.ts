@@ -54,6 +54,8 @@ export interface Published {
 }
 export interface Instance {
   origin: string;
+  /** Real content-store directory, scoped to this test instance. */
+  storageDirectory: string;
   foreignOrigin: string;
   wire: number;
   html: string;
@@ -673,6 +675,7 @@ export async function startInstance(options: {
     const html = `<!doctype html><html><head><title>Tier one acceptance</title><style>body{margin:0}</style></head><body><h1>Tier one acceptance</h1><p id="identity">waiting</p><p id="route"></p><button id="route-next">Next route</button><button id="download">Download file</button><img id="own-image" alt="Own file"><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
     return {
       origin,
+      storageDirectory: path.join(directory, "storage"),
       foreignOrigin,
       wire: WIRE_VERSION,
       html,
