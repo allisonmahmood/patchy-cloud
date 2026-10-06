@@ -918,10 +918,10 @@ Supply full commit SHAs for the previous **successful deployment** and the actua
 target `COMMIT`, including an explicitly selected rollback revision. Do not infer
 the range from main merges, the workflow's `head_sha`, or the fleet's
 `PREVIOUS_REVISION`: those can mean different things. Omit `--from` only for the
-first deployment. The production Deploy workflow is not connected yet; its
-publication step must provide the confirmed baseline and target after the final
-live check. Retry deduplication, publication recovery and event ordering belong
-to that publisher, tracked in [#548](https://github.com/allisonmahmood/patchy-cloud/issues/548).
+first deployment. This prototype is a local simulation: deployment to
+`https://cloud.patchyhq.com/` and wiring into the production Deploy workflow are
+outside scope. Further publication, retry, recovery and event-ordering checks
+stay local, tracked in [#548](https://github.com/allisonmahmood/patchy-cloud/issues/548).
 
 Inspect evidence locally without a model key (requires an authenticated `gh`):
 
@@ -944,7 +944,12 @@ what action to take only when the evidence supports it. The style follows
 [Linear's changelog](https://linear.app/changelog/page/2) and
 [Keep a Changelog](https://keepachangelog.com/en/2.0.0/): write for people, group
 related changes and describe recognizable behavior rather than copying git logs.
-The writing instructions live in `scripts/release-notes-prompt.txt`.
+The writing instructions live in `scripts/release-notes-prompt.txt`: use everyday
+words, short sentences and explain the effect on a colleague's work. Browser
+compatibility tests pass hand-authored sample responses through the real draft
+generator, stored-history reader, bell and expandable details. They verify the
+content handoff and hidden provenance, not the quality of future AI writing;
+review generated notes locally against their evidence before using them.
 
 The generator gathers first-parent change units, merged PR descriptions and the
 net source diff. Direct commits remain eligible. PR metadata from another repo

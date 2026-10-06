@@ -2,11 +2,12 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Page } from "@playwright/test";
 import { objectKey, type Entry } from "../../packages/portal/src/updates.js";
+import { makeDraft } from "../../scripts/release-notes.mjs";
 import { test, expect } from "./fixtures.js";
 import type { Instance } from "./instance.js";
 
 // Exercise the real authenticated pages, external script and content-store reader.
-// Only publication is simulated: production publication is not built yet.
+// Publication is simulated locally; production deployment is outside this prototype's scope.
 const entry = (sequence: number): Entry => ({
   sequence,
   publishedAt: "2026-10-05T12:00:00.000Z",
@@ -15,9 +16,12 @@ const entry = (sequence: number): Entry => ({
   changes: [{ kind: "Improved", title: `Change ${sequence}`, detail: `Details ${sequence}` }]
 });
 async function publish(instance: Instance, sequences: number[]) {
+  await writeHistory(instance, sequences.map(entry));
+}
+async function writeHistory(instance: Instance, entries: ReadonlyArray<Entry>) {
   const file = join(instance.storageDirectory, objectKey);
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file + ".tmp", JSON.stringify({ version: 1, entries: sequences.map(entry) }));
+  await writeFile(file + ".tmp", JSON.stringify({ version: 1, entries }));
   await rename(file + ".tmp", file);
 }
 const marker = (page: Page) =>
@@ -55,6 +59,125 @@ async function caughtUp(page: Page) {
 }
 test.afterEach(async ({ context }) => {
   for (const page of context.pages()) expect(await page.pageErrors()).toEqual([]);
+});
+
+test("draft notes keep understandable copy through shared history, the bell and expanded details", async ({
+  page,
+  instance
+}) => {
+  const feature = "b".repeat(40);
+  const internal = "c".repeat(40);
+  // Hand-authored sample output for contract verification, not a live model-quality evaluation.
+  const response = {
+    title: "Catch up on what’s new in Patchy",
+    summary: "See the latest update from the bell and browse earlier updates in one place.",
+    changes: [
+      {
+        kind: "New",
+        title: "Find recent changes",
+        detail:
+          "Open the bell for a quick summary. Choose View all updates to read the full history.",
+        sources: [feature]
+      },
+      {
+        kind: "Improved",
+        title: "Read updates at your own pace",
+        detail: "Updates appear newest first. Expand any update to see what changed.",
+        sources: [feature]
+      },
+      {
+        kind: "Fixed",
+        title: "Keep newer updates unread",
+        detail:
+          "If a new update arrives while you’re reading an older page, it stays in the bell until you open the newer history.",
+        sources: [feature]
+      }
+    ],
+    omitted: [{ commit: internal, reason: "internal" }]
+  };
+  const draft = makeDraft(
+    {
+      kind: "forward",
+      repository: "patchy/local-notes-test",
+      from: "a".repeat(40),
+      to: internal,
+      commits: [
+        { sha: feature, message: "feat(portal): notification implementation" },
+        { sha: internal, message: "chore: internal telemetry" }
+      ]
+    },
+    response,
+    "local-response-file"
+  );
+  // Serialize the real generator output before the local publication step adds
+  // its own sequence/date. No assertion-only copy of the reader schema is used.
+  const serialized = JSON.parse(JSON.stringify(draft)) as {
+    notes: Pick<Entry, "title" | "summary" | "changes">;
+  };
+  await writeHistory(instance, [{ ...entry(1), ...serialized.notes }]);
+  await page.goto(instance.origin);
+  await openBell(page);
+  await expect(page.locator(".latest-update h3")).toHaveText(response.title);
+  await expect(page.locator(".latest-update p")).toHaveText(response.summary);
+  await page.locator(".latest-update").click();
+  await expect(page.locator("#update-1")).toHaveAttribute("open");
+  await expect(page.locator(".update-title")).toHaveText(response.title);
+  await expect(page.locator(".update-summary")).toHaveText(response.summary);
+  await expect(page.locator(".update-change .pill")).toHaveText(["New", "Improved", "Fixed"]);
+  await expect(page.locator(".update-change h2")).toHaveText(
+    response.changes.map((change) => change.title)
+  );
+  await expect(page.locator(".update-change p")).toHaveText(
+    response.changes.map((change) => change.detail)
+  );
+  for (const hidden of [
+    feature,
+    internal,
+    "local-response-file",
+    "provenance",
+    "internal telemetry",
+    "feat(portal)"
+  ]) {
+    await expect(page.locator(".updates-page")).not.toContainText(hidden);
+  }
+  await caughtUp(page);
+  await capture(page, "readable-draft-notes");
+});
+
+test("neutral generator drafts remain readable history entries without invented feature bullets", async ({
+  page,
+  instance
+}) => {
+  const commit = "b".repeat(40);
+  const entries = ["initial", "unchanged", "rollback", "forward"].map((kind, index) => {
+    const draft = makeDraft(
+      {
+        kind,
+        repository: "patchy/local-notes-test",
+        from: "a".repeat(40),
+        to: commit,
+        commits: [{ sha: commit }]
+      },
+      { title: "", summary: "", changes: [], omitted: [{ commit, reason: "internal" }] }
+    );
+    return { ...entry(index + 1), ...draft.notes };
+  });
+  await writeHistory(instance, entries);
+  await page.goto(instance.origin + "/updates");
+  await expect(page.locator(".update-title")).toHaveText([
+    "Platform maintenance",
+    "An earlier version has been restored",
+    "Platform maintenance",
+    "Patchy is live"
+  ]);
+  await expect(page.locator(".update-summary")).toHaveText([
+    "No user-facing changes to announce in this deployment.",
+    "Patchy has returned to an earlier release. Recent changes may no longer be available.",
+    "This deployment uses the same application version.",
+    "This deployment starts Patchy’s update history."
+  ]);
+  await expect(page.locator(".update-change")).toHaveCount(0);
+  await caughtUp(page);
 });
 
 test("the bell shows only the newest unread deployment; reading history survives closing the tab", async ({
