@@ -1,6 +1,6 @@
 # Deployment updates local prototypes
 
-This work is a local simulation. Deploying it to `https://cloud.patchyhq.com/` or connecting its production deployment workflow is outside scope.
+The integrated local preview reads the real **Deploy** GitHub Action history in `allisonmahmood/patchy-cloud`. Only successful attempts with a successful **Confirm the release is live** step create entries. The destination is local dev storage; this does not deploy Patchy or change the production workflow.
 
 ## Integrated app preview
 
@@ -9,22 +9,20 @@ Run these commands in a dedicated worktree so the preview has its own dev data:
 ```sh
 pnpm install
 pnpm dev
-pnpm prototype:updates:seed
+pnpm prototype:updates:sync --watch
 ```
 
 Open the printed dev URL and sign in as **Dev Machine**. The real app header has the bell on Patches, Company, Connections and Your machines. Open **View all updates** for the newest-first, expandable history. Merely opening the bell does not mark anything read; visiting the visible history marks the snapshot shown there.
 
-The sample release-notes document lives once at `.local/dev/storage/platform-updates/history.json`, read through the existing content store. It is shared across all people and companies, outside patch-owned stores and the app database. Each signed-in person's browser stores only a read-through sequence in localStorage. It survives closing tabs, synchronizes between tabs on the same origin, and does not sync across devices. If browser storage is disabled, the marker lasts for the page only.
+The shared release-notes document lives once at `.local/dev/storage/platform-updates/history.json`, read through the existing content store. It is shared across all people and companies, outside patch-owned stores and the app database. Each signed-in person's browser stores only a read-through sequence in localStorage. It survives closing tabs, synchronizes between tabs on the same origin, and does not sync across devices. If browser storage is disabled, the marker lasts for the page only.
 
-To simulate the next successful deployment:
+The watcher checks GitHub every 30 seconds using your authenticated `gh` CLI. Stop it with Ctrl-C; omit `--watch` for one import. Use `--worktree /absolute/path/to/preview` to write into another running local worktree. Return to the app tab or open the bell to pick up a newer deployment. Each expanded entry links to its actual Deploy attempt on GitHub.
 
-```sh
-pnpm prototype:updates:seed --deploy
-```
+GitHub Action runs determine both entries and their deployed commit ranges. Main updates, pull requests, CI and Server image runs cannot create entries. The importer reads the resolved `COMMIT` and `DEPLOYMENT_REVISION` from the confirmed deploy job, including explicit rollback targets. It preserves chronological rollback events, collapses retries of the same release, and keeps read-marker sequences stable on repeated imports. Successful confirmations are cached locally before GitHub logs expire.
 
-Return to the app tab or open the bell to pick it up. Rerunning the seed without `--deploy` preserves the history. Restarting the local server preserves both the document and browser marker. The seeder refuses non-loopback instances and Clerk mode. It publishes sample content directly to local disk; it never runs a GitHub Action or contacts production. The app provides read-only session routes, not a publication endpoint.
+Notes are generated from those deployed ranges using `RELEASE_NOTES_API_KEY`, or a reviewed local response file. A generation failure leaves an honest “details are being prepared” entry and retries later; it never invents feature or maintenance claims. See [Operations](../../../../docs/OPERATIONS.md#local-history-from-the-deploy-action) for setup and recovery. Live model output still needs quality evaluation.
 
-The notes generator is available through `pnpm release-notes` and the manual **Preview deployment notes** Action; see [Operations](../../../../docs/OPERATIONS.md#drafting-deployment-notes). The preview Action produces a draft artifact only. Any further publication, retry or recovery work belongs in local simulation. Sequence numbers identify ordered publication events and must never be reused for a different event; they are not commit hashes or GitHub run ids.
+Sample mode remains available in a separate local instance with `pnpm prototype:updates:seed`, then `pnpm prototype:updates:seed --deploy`. The seeder refuses to append invented entries to Action-backed history. The original standalone sketch below also remains sample-only.
 
 ### Browser behavior checks
 

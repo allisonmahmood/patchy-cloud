@@ -13,6 +13,7 @@
     "build": "turbo run build",
     "dev": "node --import tsx --conditions=development scripts/dev/src/main.ts",
     "release-notes": "node scripts/release-notes.mjs",
+    "prototype:updates:sync": "node scripts/sync-deployment-updates.mjs",
     "prototype:updates:seed": "node packages/portal/prototypes/updates/seed-app.mjs",
     "prototype:updates": "node --import tsx packages/portal/prototypes/updates/server.mjs",
     "patchy": "node --import tsx --conditions=development packages/patchy/src/index.ts",

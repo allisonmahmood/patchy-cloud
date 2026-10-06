@@ -20,6 +20,18 @@ export const Entry = Schema.Struct({
   ),
   title: Schema.String,
   summary: Schema.String,
+  deployment: Schema.optional(
+    Schema.Struct({
+      runId: Schema.Int.check(Schema.isGreaterThan(0)),
+      attempt: Schema.Int.check(Schema.isGreaterThan(0)),
+      commit: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/)),
+      url: Schema.String.check(
+        Schema.isPattern(
+          /^https:\/\/github\.com\/allisonmahmood\/patchy-cloud\/actions\/runs\/[0-9]+\/attempts\/[0-9]+$/
+        )
+      )
+    })
+  ),
   changes: Schema.Array(
     Schema.Struct({
       kind: Schema.Literals(["New", "Improved", "Fixed"]),
@@ -75,6 +87,7 @@ export const render = (entries: ReadonlyArray<Entry>) => `
         )
         .join("")}
         <p class="supporting-text update-published">Available since ${date(entry.publishedAt)}.</p>
+        ${entry.deployment ? `<p class="supporting-text update-published"><a href="${escapeHtml(entry.deployment.url)}" target="_blank" rel="noopener noreferrer">View Deploy run on GitHub</a></p>` : ""}
       </div></details>`
       )
       .join("")}</div>

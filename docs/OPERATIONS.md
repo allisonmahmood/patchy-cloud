@@ -918,10 +918,10 @@ Supply full commit SHAs for the previous **successful deployment** and the actua
 target `COMMIT`, including an explicitly selected rollback revision. Do not infer
 the range from main merges, the workflow's `head_sha`, or the fleet's
 `PREVIOUS_REVISION`: those can mean different things. Omit `--from` only for the
-first deployment. This prototype is a local simulation: deployment to
-`https://cloud.patchyhq.com/` and wiring into the production Deploy workflow are
-outside scope. Further publication, retry, recovery and event-ordering checks
-stay local, tracked in [#548](https://github.com/allisonmahmood/patchy-cloud/issues/548).
+first deployment. The local importer below derives this range from actual Deploy
+Action confirmations. Deploying the prototype or modifying the production
+workflow remains outside scope. Work is tracked in
+[#548](https://github.com/allisonmahmood/patchy-cloud/issues/548).
 
 Inspect evidence locally without a model key (requires an authenticated `gh`):
 
@@ -964,3 +964,60 @@ Internal-only changes produce a neutral maintenance entry. First deployment,
 same-commit maintenance and rollbacks use explicit neutral copy without asking a
 model to invent features. A rollback is never described as adding the changes it
 removed. Reverts in a forward range are checked against the net diff by the model.
+
+## Local history from the Deploy Action
+
+The local preview imports real production deployment events using read-only GitHub
+Actions APIs. Run `pnpm dev` in the preview worktree, authenticate `gh` with Actions
+read access, then run:
+
+```sh
+pnpm prototype:updates:sync --worktree /absolute/path/to/preview --watch
+```
+
+Omit `--watch` for one import. The watcher polls every 30 seconds and stops with
+Ctrl-C. It refuses destinations other than a matching worktree's loopback,
+dev-personas instance. It never dispatches a workflow, writes production storage,
+or deploys the app. The existing production `Deploy` workflow is unchanged.
+
+The source is `.github/workflows/deploy.yml` in `allisonmahmood/patchy-cloud`,
+identified through GitHub's workflow API. Only completed successful manual
+attempts whose `deploy` job successfully completed **Confirm the release is live**
+qualify. An earlier successful attempt survives a later failed retry. Job logs
+establish the actual `COMMIT` and `DEPLOYMENT_REVISION`; `head_sha` is never a
+fallback. Missing proof fails the import and preserves existing history. Runs,
+attempts and jobs are paginated, and an incomplete result fails explicitly.
+
+Consecutive successful retries of the same run/revision collapse to one entry.
+Replaying an old run after another deployment creates a new rollback event.
+Different runs and secret rotations remain separate deployment events. Entries
+retain stable increasing sequences across imports; a newly discovered older event
+that would reorder existing read markers fails explicitly. Main updates, PRs,
+CI and Server image runs do not produce entries. Source diffs only describe the
+range between actual confirmed deployments; the importer does not query PRs.
+
+The importer writes one document at
+`.local/dev/storage/platform-updates/history.json` using atomic replacement.
+Every expanded entry links to its source Deploy attempt. A per-worktree lock
+prevents concurrent writers. Failed writes preserve the old document; rerunning
+reconciles the same events without allocating duplicate notifications. If a
+process is forcibly killed and leaves `.local/dev/deployment-updates/sync.lock`,
+first confirm that no importer is running, then remove that empty directory.
+
+`.local/dev/deployment-updates/confirmations.json` caches verified event metadata
+before GitHub expires its logs. Evidence and drafts are stored in sibling
+`evidence/` and `drafts/` directories by `<run-id>-<attempt>.json`. When replacing
+sample history, the importer saves `sample-history-backup.json` and allocates
+sequences above the sample baseline so old read markers cannot hide real events.
+The sample seeder refuses to append to imported history.
+
+Set `RELEASE_NOTES_API_KEY` in the watcher's environment to generate plain-language
+notes automatically (`RELEASE_NOTES_MODEL` is optional). For local review without
+a model call, place a response matching the generator's schema at
+`.local/dev/deployment-updates/responses/<run-id>-<attempt>.json`. The importer
+records this as `reviewed-local`, not live model output. First-deployment,
+same-code and rollback copy comes from deployment facts. Other generation failures
+publish an honest pending-details entry, then retry on the next poll. Completing
+those notes updates the existing entry without another unread notification.
+Already completed notes are reused. Generated prose still needs review for factual
+accuracy and understandable user impact; schema validation alone cannot prove it.

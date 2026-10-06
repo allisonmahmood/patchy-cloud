@@ -114,13 +114,23 @@ test("draft notes keep understandable copy through shared history, the bell and 
   const serialized = JSON.parse(JSON.stringify(draft)) as {
     notes: Pick<Entry, "title" | "summary" | "changes">;
   };
-  await writeHistory(instance, [{ ...entry(1), ...serialized.notes }]);
+  const deployment = {
+    runId: 123,
+    attempt: 1,
+    commit: feature,
+    url: "https://github.com/allisonmahmood/patchy-cloud/actions/runs/123/attempts/1"
+  };
+  await writeHistory(instance, [{ ...entry(1), ...serialized.notes, deployment }]);
   await page.goto(instance.origin);
   await openBell(page);
   await expect(page.locator(".latest-update h3")).toHaveText(response.title);
   await expect(page.locator(".latest-update p")).toHaveText(response.summary);
   await page.locator(".latest-update").click();
   await expect(page.locator("#update-1")).toHaveAttribute("open");
+  await expect(page.getByRole("link", { name: "View Deploy run on GitHub" })).toHaveAttribute(
+    "href",
+    deployment.url
+  );
   await expect(page.locator(".update-title")).toHaveText(response.title);
   await expect(page.locator(".update-summary")).toHaveText(response.summary);
   await expect(page.locator(".update-change .pill")).toHaveText(["New", "Improved", "Fixed"]);
