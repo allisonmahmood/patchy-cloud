@@ -133,6 +133,8 @@ export class Companies extends Context.Service<
       InvalidHandle | ReservedHandle | HandleTaken | AlreadyInCompany | SqlError
     >;
     readonly findById: (companyId: string) => Effect.Effect<Company | null, SqlError>;
+    /** Whether a company already holds this handle; create still settles a race by its unique insert. */
+    readonly isHandleTaken: (handle: string) => Effect.Effect<boolean, SqlError>;
     readonly createInvite: (
       input: InviteInput
     ) => Effect.Effect<Invite, CompanyNotFound | AlreadyInCompany | AlreadyInvited | SqlError>;
@@ -161,6 +163,11 @@ export const make = Effect.gen(function* () {
     Request: Schema.String,
     Result: Company,
     execute: (id) => sql`SELECT ${companyColumns} FROM companies WHERE id = ${id}`
+  });
+  const companyByHandle = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Company,
+    execute: (handle) => sql`SELECT ${companyColumns} FROM companies WHERE handle = ${handle}`
   });
   const insertCompany = SqlSchema.findOneOption({
     Request: Schema.Struct({
@@ -252,6 +259,9 @@ export const make = Effect.gen(function* () {
 
   const findById = Effect.fn("Companies.findById")((companyId: string) =>
     companyById(companyId).pipe(Effect.catchTags(dieOnSchemaError), Effect.map(Option.getOrNull))
+  );
+  const isHandleTaken = Effect.fn("Companies.isHandleTaken")((handle: string) =>
+    companyByHandle(handle).pipe(Effect.catchTags(dieOnSchemaError), Effect.map(Option.isSome))
   );
   const create = Effect.fn("Companies.create")((input: CreateInput) =>
     sql.withTransaction(
@@ -358,6 +368,7 @@ export const make = Effect.gen(function* () {
   return Companies.of({
     create,
     findById,
+    isHandleTaken,
     createInvite,
     listInvites,
     findInvitesByEmail,

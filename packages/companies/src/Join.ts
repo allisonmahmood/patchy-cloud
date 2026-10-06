@@ -61,14 +61,16 @@ type FieldRefusal = {
 /** A refusal sits under the field at fault, or above the form when no field is. */
 type Refusal = { readonly status: number; readonly message: string } | FieldRefusal;
 
-/** Names the first rule a refused handle breaks; the order mirrors `Companies.Handle`. */
-const handleRefusal = (handle: string): FieldRefusal => {
-  const suggestion = suggestedHandle(handle);
+/** Names the first rule a refused handle breaks, in `Companies.Handle`'s order, and offers a fix only if it is free. */
+const handleRefusal = Effect.fn("Join.handleRefusal")(function* (handle: string) {
+  const companies = yield* Companies.Companies;
+  const fix = suggestedHandle(handle);
   const offer =
-    Companies.isHandle(suggestion) &&
-    !Companies.RESERVED_HANDLES.includes(suggestion) &&
-    suggestion !== handle
-      ? { suggestion }
+    fix !== handle &&
+    Companies.isHandle(fix) &&
+    !Companies.RESERVED_HANDLES.includes(fix) &&
+    !(yield* companies.isHandleTaken(fix))
+      ? { suggestion: fix }
       : {};
   const title =
     handle.length === 0
@@ -82,8 +84,8 @@ const handleRefusal = (handle: string): FieldRefusal => {
             : handle.length > 32
               ? "Use at most 32 characters"
               : "Start and end with a letter or digit";
-  return { status: 422, field: "handle", title, ...offer };
-};
+  return { status: 422, field: "handle", title, ...offer } satisfies FieldRefusal;
+});
 
 const nameRefusal = (name: string): FieldRefusal | undefined =>
   name.length === 0
@@ -224,7 +226,10 @@ export const handle = Effect.fn("Join.handle")(function* (
             status: 422
           }
         ),
-      InvalidHandle: () => render(claims, door, entered, handleRefusal(entered.handle)),
+      InvalidHandle: () =>
+        Effect.flatMap(handleRefusal(entered.handle), (refusal) =>
+          render(claims, door, entered, refusal)
+        ),
       ReservedHandle: () =>
         render(claims, door, entered, {
           status: 422,

@@ -291,13 +291,17 @@ it.layer(services)("first-party pages in memory", (it) => {
     })
   );
 
-  it.effect("offers the handle it would accept when one is refused", () =>
+  it.effect("offers the handle it would accept when one is refused, unless it is taken", () =>
     Effect.gen(function* () {
-      const response = yield* send(
-        "/join",
-        post({ action: "create", name: "Acme", handle: "Acme" }, cookie("user_bad_case"))
-      );
-      assert.include(yield* Effect.promise(() => response.text()), "Try <strong>acme</strong>.");
+      const refused = (handle: string) =>
+        send(
+          "/join",
+          post({ action: "create", name: "Acme", handle }, cookie("user_bad_case"))
+        ).pipe(Effect.flatMap((response) => Effect.promise(() => response.text())));
+      assert.include(yield* refused("Acme"), "Try <strong>acme</strong>.");
+      const taken = yield* refused(DEV_SEED.companyHandle.toUpperCase());
+      assert.include(taken, "Handles are lowercase");
+      assert.notInclude(taken, "Try <strong>");
     })
   );
 
