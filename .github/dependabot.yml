@@ -44,6 +44,11 @@ updates:
       # typechecking against newer node types would undermine that claim.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # Wire 1 pins workerd exactly (GuestProtocol.workerdVersion, ADR-0011), and
+      # every tier 2 patch repo pins the same version. A bump is a release
+      # decision that moves the protocol constant and asks patches to refresh,
+      # so a version change here alone always fails.
+      - dependency-name: workerd
   - package-ecosystem: github-actions
     directory: /
     schedule:
