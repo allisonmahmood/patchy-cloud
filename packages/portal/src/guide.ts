@@ -123,19 +123,26 @@ export const renderGuideRow = (input: {
 }): string =>
   `<li class="list-row"><a class="list-link list-link-placeholder" href="${input.all ? "/?all=1" : "/"}"${input.selected ? ' aria-current="page"' : ""}><span class="portal-index-line">Your first patch</span><span class="supporting-text portal-index-line">${input.guide.machine === null ? "Start here" : "1 step left"}</span></a></li>`;
 
-/** The day after a person's first patch: their only patch, live, made less than a day ago. */
+/** A person's earliest patch, for the day after it was made and while it is live. */
 export const firstPatch = (
   rows: ReadonlyArray<Patches.ReadPatch>,
   userId: string,
   now: number
 ): Patches.ReadPatch | undefined => {
-  const owned = rows.filter((row) => row.owner.id === userId);
-  const [only] = owned;
-  return owned.length === 1 &&
-    only !== undefined &&
-    only.patch.state === "live" &&
-    now - Date.parse(only.patch.createdAt) < firstPatchWindow
-    ? only
+  const first = rows
+    .filter((row) => row.owner.id === userId)
+    .reduce<Patches.ReadPatch | undefined>(
+      (earliest, row) =>
+        earliest === undefined ||
+        Date.parse(row.patch.createdAt) < Date.parse(earliest.patch.createdAt)
+          ? row
+          : earliest,
+      undefined
+    );
+  return first !== undefined &&
+    first.patch.state === "live" &&
+    now - Date.parse(first.patch.createdAt) < firstPatchWindow
+    ? first
     : undefined;
 };
 

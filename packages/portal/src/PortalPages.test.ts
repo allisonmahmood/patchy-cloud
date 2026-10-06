@@ -547,9 +547,20 @@ it.layer(layer)("portal pages on a socket", (it) => {
         text(yield* (yield* request(cardPath(theirs.name), workspace.member)).text),
         "Your first patch is live"
       );
+      // A second patch the same day keeps the note on the first one, and only there.
+      yield* TestClock.adjust(60_000);
+      const second = yield* publish(workspace.member, "standup-notes");
+      assert.include(
+        text(yield* (yield* request(cardPath(mine.name), workspace.member)).text),
+        "Your first patch is live"
+      );
+      assert.notInclude(
+        text(yield* (yield* request(cardPath(second.name), workspace.member)).text),
+        "Your first patch is live"
+      );
       yield* TestClock.adjust(DAY);
       assert.notInclude(
-        text(yield* (yield* request("/", workspace.member)).text),
+        text(yield* (yield* request(cardPath(mine.name), workspace.member)).text),
         "Your first patch is live"
       );
     })

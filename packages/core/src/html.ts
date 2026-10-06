@@ -736,11 +736,21 @@ export function htmlPage(options: {
     .step-title { margin: 8px 0 4px; color: var(--muted); font-size: 1.2rem; }
     .step-done, .step-current { color: var(--ink-soft); }
     .step-done .step-title, .step-current .step-title { color: var(--ink); }
-    .step p { margin: 0; }
+    .step-title + p { margin: 0; }
     .step-card { margin-top: 12px; padding: 18px 20px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow-hard); }
+    .step-card > * { margin: 0; }
     .step-card > * + * { margin-top: 12px; }
+    .step-card > * + .agent-preview { margin-top: 8px; }
     .step-card summary { color: var(--blue-dark); font-weight: 750; cursor: pointer; }
-    .step-card details p { margin-top: 6px; }
+    .step-card details p { margin: 6px 0 0; }
+    @media (max-width: 480px) {
+      .step { grid-template-columns: 36px minmax(0, 1fr); gap: 0 12px; }
+      .step-marker { width: 36px; height: 36px; }
+      .step:not(:last-child)::before { top: 40px; left: 17px; }
+      .step-card { padding: 14px; }
+      .copy-line { flex-wrap: wrap; padding: 10px 12px; }
+      .copy-line > code { flex-basis: 100%; }
+    }
     .actions, .confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
     .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 24px; margin: 20px 0; font-size: .9rem; overflow-wrap: anywhere; }
     .facts dt { color: var(--muted); font-weight: 750; }
