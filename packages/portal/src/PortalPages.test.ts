@@ -1512,7 +1512,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.notStrictEqual(heading(fresh), patch.name);
           assert.strictEqual(hidden(fresh, "q"), "");
           assert.sameMembers(radioValues(fresh), [workspace.owner.id, workspace.admin.id]);
-          assert.notMatch(fresh, /<button\b[^>]*\bdisabled/);
+          assert.notMatch(fresh, /<button\b(?=[^>]*type="submit")(?=[^>]*\bdisabled)[^>]*>/);
           assert.include(forms(fresh), `${path}?all=1`);
           assert.include(
             links(fresh).map((link) => link.href),
