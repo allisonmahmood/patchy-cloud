@@ -608,6 +608,24 @@ export function htmlPage(options: {
     .field-hint { margin: 8px 0 20px; color: var(--muted); font-size: .85rem; }
     .field-error { margin: 8px 0 20px; color: var(--danger); font-size: .85rem; font-weight: 750; }
     .field[aria-invalid="true"] { border-color: var(--danger); }
+    /* field-group: a fixed field-prefix, such as the address a handle opens, before the editable input. The group
+       draws the field and its focus ring; the prefix is a second label, so clicking it focuses the input. */
+    .field-group { display: flex; align-items: stretch; padding-block: 0; cursor: text; }
+    .field-group > input { flex: 1; min-width: 0; padding: 9px 0; border: 0; background: transparent; color: inherit; font: inherit; }
+    .field-group > input:focus-visible { outline: none; }
+    .field-group:has(> input:focus-visible) { outline: 3px solid var(--blue); outline-offset: 3px; }
+    .field-group:has(> [aria-invalid="true"]) { border-color: var(--danger); }
+    .field-prefix { display: flex; align-items: center; flex: none; color: var(--muted); font-family: var(--font-mono); font-size: .85rem; cursor: text; }
+    /* field-rule: a hint stating its field's rule, which turns into the warning while the value breaks the field's
+       own constraints (pattern, length, required). CSS only; Patchy names the exact problem on submit. */
+    .field:is(:invalid, :has(:invalid)):has(+ .field-rule) { border-color: var(--danger); }
+    .field:is(:invalid, :has(:invalid)) + .field-rule { color: var(--danger); font-weight: 750; }
+    /* field-callout: a refusal attached under its field after a submit, in place of the hint. Compose with note
+       note-refused and role="alert"; the field carries aria-invalid and aria-describedby pointing at it. */
+    .field-callout { position: relative; margin: 14px 0 20px; font-size: .9rem; }
+    .field-callout::before { content: ""; position: absolute; top: -9px; left: 22px; width: 14px; height: 14px; border-top: 1.5px solid var(--line-strong); border-left: 1.5px solid var(--line-strong); background: var(--paper-amber); transform: rotate(45deg); }
+    .field-callout .note-title { display: flex; align-items: center; gap: 8px; }
+    .field-callout .note-title::before { content: "!"; content: "!" / ""; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; border: 2px solid var(--ink); border-radius: 6px; background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); font-size: .75rem; font-weight: 900; }
     .field-choice, .confirmation-acknowledgement { display: flex; align-items: baseline; gap: 10px; min-height: 44px; padding: 8px 0; cursor: pointer; }
     .field-checkbox, .field-radio { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--blue); cursor: pointer; }
     .field:disabled, .field-checkbox:disabled, .field-radio:disabled { opacity: .55; cursor: not-allowed; }

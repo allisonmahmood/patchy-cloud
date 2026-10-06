@@ -131,6 +131,9 @@ it.layer(services)("first-party pages in memory", (it) => {
       const html = yield* Effect.promise(() => page.text());
       assert.include(html, "user_enroll@example.com");
       assert.include(html, 'name="handle" value="alex-s-company"');
+      // Patchy, not the browser, refuses a handle, under the address it opens.
+      assert.include(html, " novalidate>");
+      assert.include(html, `for="company-handle">${new URL(base).host}/</label>`);
       assert.include(html, 'action="/logout"');
       assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
       // A no-referrer policy nulls a browser form's Origin and breaks the CSRF check.
@@ -251,27 +254,50 @@ it.layer(services)("first-party pages in memory", (it) => {
     })
   );
 
-  it.effect("keeps entered values when a handle is taken, reserved or malformed", () =>
+  it.effect("refuses a name or handle beside its field and keeps what was entered", () =>
     Effect.gen(function* () {
       const reported = events.length;
-      for (const [handle, status] of [
-        [DEV_SEED.companyHandle, 409],
-        ["admin", 422],
-        ["-invalid", 422]
+      for (const [name, handle, status, field, title] of [
+        [
+          'Keep "this"',
+          DEV_SEED.companyHandle,
+          409,
+          "handle",
+          `${DEV_SEED.companyHandle} is taken`
+        ],
+        ['Keep "this"', "admin", 422, "handle", "admin is reserved"],
+        ['Keep "this"', "-invalid", 422, "handle", "Start and end with a letter or digit"],
+        ['Keep "this"', "Acme", 422, "handle", "Handles are lowercase"],
+        ["   ", "fine-handle", 422, "name", "Enter a company name"]
       ] as const) {
         const response = yield* send(
           "/join",
-          post(
-            { action: "create", name: 'Keep "this"', handle },
-            cookie(`user_bad_${status}_${handle}`)
-          )
+          post({ action: "create", name, handle }, cookie(`user_bad_${status}_${handle}`))
         );
         assert.strictEqual(response.status, status);
         const html = yield* Effect.promise(() => response.text());
-        assert.include(html, "Keep &quot;this&quot;");
-        assert.include(html, 'role="alert"');
+        if (field === "handle") assert.include(html, "Keep &quot;this&quot;");
+        assert.include(html, `name="handle" value="${handle}"`);
+        assert.include(
+          html,
+          `aria-describedby="company-${field}-error" aria-invalid="true" autofocus`
+        );
+        assert.include(
+          html,
+          `id="company-${field}-error" role="alert"><strong class="note-title">${title}</strong>`
+        );
       }
       assert.strictEqual(events.length, reported);
+    })
+  );
+
+  it.effect("offers the handle it would accept when one is refused", () =>
+    Effect.gen(function* () {
+      const response = yield* send(
+        "/join",
+        post({ action: "create", name: "Acme", handle: "Acme" }, cookie("user_bad_case"))
+      );
+      assert.include(yield* Effect.promise(() => response.text()), "Try <strong>acme</strong>.");
     })
   );
 
