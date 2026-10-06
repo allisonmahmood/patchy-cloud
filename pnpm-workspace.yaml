@@ -15,6 +15,12 @@ catalog:
   "@effect/language-service": 0.87.3
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440
+# When pnpm manages its own version it records itself as a first lockfile
+# document, and GitHub's dependency graph reads only that document
+# (dependabot/dependabot-core#15904), hiding every dependency from security
+# alerts. mise, CI and corepack install the packageManager version, and
+# engines.pnpm refuses pnpm 11, so pnpm need not switch versions itself.
+pmOnFail: ignore
 # Two copies of `effect` in the tree break Context/Layer identity, so every
 # transitive `effect` resolves to the catalog version. The @effect/* packages we
 # depend on are pinned alongside it. pnpm overrides match exact names, not
