@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isManagedOutputPath } from "@patchy/api";
 import * as Schema from "effect/Schema";
+import { prototypeLookFiles } from "./prototypeLook.js";
 
 export const ConfigEdit = Schema.Struct({ before: Schema.String, after: Schema.String });
 
@@ -56,7 +57,10 @@ async function noLinks(target: string): Promise<void> {
 export async function presentSkills(root: string): Promise<string[]> {
   const dir = await safePath(root, ".agents/skills");
   if (!(await info(dir))) return [];
-  const names = (await fs.readdir(dir)).filter((name) => name.startsWith("patchy-"));
+  // PROTOTYPE for #563: the release doesn't offer patchy-look; the CLI lays it down itself.
+  const names = (await fs.readdir(dir)).filter(
+    (name) => name.startsWith("patchy-") && name !== "patchy-look"
+  );
   for (const name of names) await noLinks(path.join(dir, name));
   return names.sort();
 }
@@ -200,11 +204,13 @@ export class ManagedProject {
   }
 
   async activate(
-    files: readonly ManagedFile[],
+    generatedFiles: readonly ManagedFile[],
     manifest: string,
     removedSkills: readonly string[] = [],
     configEdit?: typeof ConfigEdit.Type
   ) {
+    // PROTOTYPE for #563: the look rides along with every generation.
+    const files = [...generatedFiles, ...(await prototypeLookFiles())];
     const names = new Set<string>();
     for (const name of removedSkills)
       if (!/^patchy-[a-z0-9-]+$/.test(name)) throw new Error(`Invalid removed skill: ${name}`);

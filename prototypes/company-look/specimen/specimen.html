@@ -1,0 +1,280 @@
+<!doctype html>
+<!-- PROTOTYPE for #563: the look specimen. Patchy owns this page; a look styles it. The
+     specimen's own CSS is layout plus token-only structure for the card, badges, empty
+     state and swatches; every colour, font, radius and space comes from the look.
+     scripts/specimen.mjs inlines a look's look.css and logo where the markers are. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>/*COMPANY*/ look specimen</title>
+    <style>
+      /*LOOK_CSS*/
+    </style>
+    <style>
+      .specimen {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: calc(var(--look-space) * 6) calc(var(--look-space) * 4);
+      }
+      .masthead {
+        display: flex;
+        align-items: center;
+        gap: calc(var(--look-space) * 2);
+        padding-bottom: calc(var(--look-space) * 3);
+        margin-bottom: calc(var(--look-space) * 6);
+        border-bottom: 1px solid var(--look-border);
+      }
+      .masthead img {
+        height: 28px;
+      }
+      .masthead small {
+        margin-left: auto;
+        color: var(--look-muted);
+      }
+      section {
+        margin-bottom: calc(var(--look-space) * 8);
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: calc(var(--look-space) * 2);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: calc(var(--look-space) * 4);
+      }
+      .muted {
+        color: var(--look-muted);
+      }
+      .card {
+        background: var(--look-surface);
+        border: 1px solid var(--look-border);
+        border-radius: var(--look-radius);
+        padding: calc(var(--look-space) * 4);
+      }
+      .stat {
+        font-family: var(--look-font-display);
+        font-size: 2rem;
+        line-height: 1.1;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0 calc(var(--look-space) * 1.5);
+        border-radius: var(--look-radius);
+        background: color-mix(in srgb, var(--look-accent) 14%, var(--look-bg));
+        color: var(--look-fg);
+        font-size: 0.8125rem;
+      }
+      .badge.danger {
+        background: color-mix(in srgb, var(--look-danger) 14%, var(--look-bg));
+      }
+      .error {
+        color: var(--look-danger);
+      }
+      .stack {
+        display: grid;
+        gap: calc(var(--look-space) * 3);
+        max-width: 420px;
+      }
+      .stack label {
+        display: grid;
+        gap: var(--look-space);
+      }
+      .empty {
+        text-align: center;
+        padding: calc(var(--look-space) * 10) calc(var(--look-space) * 4);
+        border: 1px dashed var(--look-border);
+        border-radius: var(--look-radius);
+      }
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: calc(var(--look-space) * 2);
+      }
+      .swatch {
+        border: 1px solid var(--look-border);
+        border-radius: var(--look-radius);
+        overflow: hidden;
+        font-size: 0.8125rem;
+      }
+      .swatch div {
+        height: 48px;
+      }
+      .swatch code {
+        display: block;
+        padding: var(--look-space) calc(var(--look-space) * 1.5);
+      }
+      .num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="specimen">
+      <header class="masthead">
+        <img src="/*LOGO_URL*/" alt="" />
+        <small>Look specimen</small>
+      </header>
+
+      <section>
+        <h1>Vendor spend, third quarter</h1>
+        <p>
+          Every vendor above $1,000 this quarter, with who owns the relationship. Totals update when
+          finance closes the month. Read the <a href="#policy">spending policy</a> before adding a
+          vendor.
+        </p>
+        <p><small class="muted">Updated 6 October by Maya Chen</small></p>
+        <h2>Second-level heading</h2>
+        <h3>Third-level heading</h3>
+        <h4>Fourth-level heading</h4>
+        <p>
+          Body text runs at the brand's reading size. <strong>Strong text</strong> sits inside it,
+          and so does a <a href="#link">link to another page</a>.
+        </p>
+      </section>
+
+      <section>
+        <div class="row">
+          <button type="button">Approve request</button>
+          <button type="button" disabled>Disabled</button>
+          <a href="#more">See all vendors</a>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <small class="muted">Pending</small>
+          <div class="stat">4 · $3,792</div>
+          <p class="muted">Waiting on a decision.</p>
+          <span class="badge">Pending</span>
+        </div>
+        <div class="card">
+          <small class="muted">Approved this month</small>
+          <div class="stat">$3,759</div>
+          <p class="muted">Three requests.</p>
+          <span class="badge danger">1 rejected</span>
+        </div>
+        <div class="card">
+          <h3>Figma seats renewal</h3>
+          <p class="muted">Maya Chen asked 2 days ago · Software</p>
+          <div class="row">
+            <button type="button">Approve</button>
+            <a href="#reject">Reject</a>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Vendors</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Vendor</th>
+              <th>Owner</th>
+              <th>Category</th>
+              <th class="num">This quarter</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Harbor Hall</td>
+              <td>Priya Nair</td>
+              <td>Events</td>
+              <td class="num">$3,200</td>
+            </tr>
+            <tr>
+              <td>Fully</td>
+              <td>Jordan Lee</td>
+              <td>Equipment</td>
+              <td class="num">$2,150</td>
+            </tr>
+            <tr>
+              <td>Figma</td>
+              <td>Maya Chen</td>
+              <td>Software</td>
+              <td class="num">$1,440</td>
+            </tr>
+            <tr>
+              <td>React Summit</td>
+              <td>Priya Nair</td>
+              <td>Events</td>
+              <td class="num">$1,180</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="grid">
+        <form class="stack" onsubmit="return false;">
+          <h3>New request</h3>
+          <label>What it's for <input value="Conference tickets" /></label>
+          <label
+            >Category
+            <select>
+              <option>Events</option>
+              <option>Software</option>
+            </select>
+          </label>
+          <label>Amount <input placeholder="0.00" inputmode="decimal" /></label>
+          <p class="error" role="alert">Enter an amount in dollars.</p>
+          <label>Reason <textarea rows="3">Two seats for the design team.</textarea></label>
+          <div class="row">
+            <button type="submit">Submit request</button>
+            <a href="#cancel">Cancel</a>
+          </div>
+        </form>
+        <div class="empty">
+          <h3>No requests yet</h3>
+          <p class="muted">When someone asks to spend money, it shows up here.</p>
+          <button type="button">New request</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Tokens</h2>
+        <div class="swatches">
+          <div class="swatch">
+            <div style="background: var(--look-bg)"></div>
+            <code>bg</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-fg)"></div>
+            <code>fg</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-muted)"></div>
+            <code>muted</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-surface)"></div>
+            <code>surface</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-border)"></div>
+            <code>border</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-accent)"></div>
+            <code>accent</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-accent-fg)"></div>
+            <code>accent-fg</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-link)"></div>
+            <code>link</code>
+          </div>
+          <div class="swatch">
+            <div style="background: var(--look-danger)"></div>
+            <code>danger</code>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

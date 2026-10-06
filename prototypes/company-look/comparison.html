@@ -1,0 +1,560 @@
+<!-- PROTOTYPE for #563: the comparison page. Build with scripts/comparison.mjs. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>
+      Company look prototype: does a dozen tokens and a brief make a tool look like its company?
+    </title>
+    <style>
+      :root {
+        --ink: #16181d;
+        --soft: #5b616e;
+        --line: #e3e5ea;
+        --wash: #f6f7f9;
+        --mark: #2557d6;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #fff;
+        color: var(--ink);
+        font:
+          16px/1.6 system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+      }
+      main {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 48px 28px 96px;
+      }
+      h1 {
+        font-size: 2.1rem;
+        line-height: 1.15;
+        margin: 0 0 12px;
+        letter-spacing: -0.02em;
+      }
+      h2 {
+        font-size: 1.45rem;
+        margin: 64px 0 8px;
+        letter-spacing: -0.01em;
+      }
+      h3 {
+        font-size: 1.1rem;
+        margin: 28px 0 6px;
+      }
+      p,
+      li {
+        max-width: 78ch;
+      }
+      .lede {
+        font-size: 1.1rem;
+        color: var(--soft);
+      }
+      .eyebrow {
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--soft);
+        margin: 0 0 8px;
+      }
+      .ask {
+        border: 2px solid var(--ink);
+        border-radius: 10px;
+        padding: 18px 22px;
+        margin: 28px 0;
+        background: var(--wash);
+      }
+      .ask p {
+        margin: 6px 0;
+      }
+      .pair {
+        display: grid;
+        grid-template-columns: 2fr 3fr;
+        gap: 20px;
+        align-items: start;
+        margin-top: 14px;
+      }
+      .duo {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        align-items: start;
+        margin-top: 14px;
+      }
+      figure {
+        margin: 0;
+      }
+      figure img {
+        display: block;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      figcaption {
+        font-size: 0.85rem;
+        color: var(--soft);
+        margin-top: 6px;
+      }
+      .read {
+        font-style: italic;
+        color: var(--soft);
+        margin: 0;
+      }
+      .look {
+        border-top: 1px solid var(--line);
+        padding-top: 8px;
+        margin-top: 40px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.92rem;
+        margin: 14px 0;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        font-weight: 600;
+        background: var(--wash);
+      }
+      td.n,
+      th.n {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .grid4 {
+        display: grid;
+        grid-template-columns: 110px repeat(4, 1fr);
+        gap: 8px;
+        align-items: center;
+        margin-top: 14px;
+      }
+      .grid4 .h {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--soft);
+      }
+      .grid4 img {
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        object-fit: cover;
+        object-position: top;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        display: block;
+      }
+      .grid4 .self {
+        outline: 3px solid var(--mark);
+        outline-offset: 1px;
+      }
+      .verdict li {
+        margin-bottom: 10px;
+      }
+      code {
+        font-size: 0.9em;
+        background: var(--wash);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      .small {
+        font-size: 0.88rem;
+        color: var(--soft);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Patchy Cloud · prototype for issue #563, part of #547 · 7 October 2026</p>
+      <h1>Does a dozen tokens and a brief make a tool look like its company?</h1>
+      <p class="lede">
+        Four looks were captured and six fresh agents each built a small tool. Every look-built tool
+        was then restarted under every other look with no code change. This page shows all of it
+        side by side.
+      </p>
+
+      <div class="ask">
+        <p>
+          <strong>What to judge.</strong> For each of the four rows below, does the tool on the
+          right read as the company on the left?
+        </p>
+        <p>
+          The agents were never told about the look. Each got the same prompt for a tier 1
+          spend-request tracker, in a repo where generation had laid down <code>look.css</code>, the
+          logo and a <code>patchy-look</code> skill holding the brief. The look capture used
+          fallback font stacks and a placeholder logo, because brand fonts and logos can't go into
+          the public repo. Screenshots were taken on Linux, the worst case for fallback fonts.
+        </p>
+      </div>
+
+      <h2>The four looks and the tools built in them</h2>
+      <p>
+        Left: the specimen, a fixed page Patchy owns that only the look styles. Right: the tool a
+        fresh agent built, after pressing <em>Load sample data</em>.
+      </p>
+
+      <section class="look">
+        <h3>Linear · minimal SaaS</h3>
+        <p class="read">
+          Near-black and grey with one rationed indigo, Inter at medium weights with tight tracking,
+          dense left-aligned lists divided by hairlines rather than boxes.
+        </p>
+        <div class="pair">
+          <figure>
+            <img src="shot:specimen-linear" alt="Linear specimen" />
+            <figcaption>Specimen</figcaption>
+          </figure>
+          <figure>
+            <img src="shot:spend-linear-loaded" alt="Spend requests in Linear's look" />
+            <figcaption>
+              Tool: 154 lines of CSS, 100 token references, 2 colour literals (both status colours),
+              built in 3.5 minutes
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="look">
+        <h3>Duolingo · bold consumer brand</h3>
+        <p class="read">
+          A white page, warm grey text and one loud green; everything you can press is chunky,
+          rounded and uppercase, sitting on a hard 4px lip.
+        </p>
+        <div class="pair">
+          <figure>
+            <img src="shot:specimen-duolingo" alt="Duolingo specimen" />
+            <figcaption>Specimen</figcaption>
+          </figure>
+          <figure>
+            <img src="shot:spend-duolingo-loaded" alt="Spend requests in Duolingo's look" />
+            <figcaption>
+              Tool: 159 lines, 93 token references, no colour literals, 3.8 minutes
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="look">
+        <h3>Vanguard · conservative finance</h3>
+        <p class="read">
+          Calm and plain-spoken: white with near-black text and heavy headlines, black pill buttons
+          over square fields and hairline tables, red saved for the logo and the one action that
+          moves money.
+        </p>
+        <div class="pair">
+          <figure>
+            <img src="shot:specimen-finance" alt="Vanguard specimen" />
+            <figcaption>Specimen</figcaption>
+          </figure>
+          <figure>
+            <img src="shot:spend-finance-loaded" alt="Spend requests in Vanguard's look" />
+            <figcaption>
+              Tool: 145 lines, 85 token references, 2 colour literals (the Approved badge), 5
+              minutes
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="look">
+        <h3>Patchy · the default for a company with no look</h3>
+        <p class="read">
+          Converted from the existing plan-doc style: warm cream paper on a faint grid, near-black
+          ink, 2px borders, hard offset shadows, pill badges, system fonts.
+        </p>
+        <div class="pair">
+          <figure>
+            <img src="shot:specimen-patchy" alt="Patchy specimen" />
+            <figcaption>Specimen</figcaption>
+          </figure>
+          <figure>
+            <img src="shot:spend-patchy-loaded" alt="Spend requests in the Patchy look" />
+            <figcaption>
+              Tool: 366 lines, 99 token references, 5 colour literals (all status colours), 4
+              minutes
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <h2>The control and the override</h2>
+      <div class="duo">
+        <figure>
+          <img src="shot:spend-none-loaded" alt="Spend requests with no look" />
+          <figcaption>
+            <strong>No look (today).</strong> The agent found the global skill's plan-doc style
+            inside <code>node_modules/patchy</code> and rebuilt it by hand: 672 lines, 21 colour
+            literals, 25 custom properties of its own, no company in sight.
+          </figcaption>
+        </figure>
+        <figure>
+          <img
+            src="shot:halloween-finance-loaded"
+            alt="Halloween contest in a repo with Vanguard's look"
+          />
+          <figcaption>
+            <strong>Halloween, in a repo with Vanguard's look.</strong> The agent removed the look
+            import, left the generated files alone and said once that the page is "styled for
+            Halloween rather than the company look". Nothing of Vanguard leaked.
+          </figcaption>
+        </figure>
+      </div>
+
+      <h2>Empty states</h2>
+      <div class="grid4" style="grid-template-columns: repeat(4, 1fr)">
+        <img src="shot:spend-linear-empty" alt="Linear empty state" />
+        <img src="shot:spend-duolingo-empty" alt="Duolingo empty state" />
+        <img src="shot:spend-finance-empty" alt="Vanguard empty state" />
+        <img src="shot:spend-patchy-empty" alt="Patchy empty state" />
+      </div>
+
+      <h2>A new look revision, no code change</h2>
+      <p>
+        Each row is one tool; each column is the look it was restarted under, the way a new revision
+        arrives at dev start. The outlined cell is the look it was built in. Colours, fonts, radius,
+        logo and light or dark follow in all 12 swaps. Structure and voice don't: Patchy's hard
+        shadows survive in Duolingo's colours, and Vanguard's eyebrow and red rule stay put. Two
+        things broke: hard-coded status colours (light pills stay light on Linear's dark ground),
+        and density, because Linear's spacing unit is 4px where the others use 8px, so its tool
+        grows about 50% taller under any other look.
+      </p>
+      <div class="grid4">
+        <span></span><span class="h">as Linear</span><span class="h">as Duolingo</span
+        ><span class="h">as Vanguard</span><span class="h">as Patchy</span>
+        <span class="h">built for Linear</span>
+        <img class="self" src="shot:spend-linear-loaded" alt="" /><img
+          src="shot:reskin-linear-as-duolingo"
+          alt=""
+        /><img src="shot:reskin-linear-as-finance" alt="" /><img
+          src="shot:reskin-linear-as-patchy"
+          alt=""
+        />
+        <span class="h">built for Duolingo</span>
+        <img src="shot:reskin-duolingo-as-linear" alt="" /><img
+          class="self"
+          src="shot:spend-duolingo-loaded"
+          alt=""
+        /><img src="shot:reskin-duolingo-as-finance" alt="" /><img
+          src="shot:reskin-duolingo-as-patchy"
+          alt=""
+        />
+        <span class="h">built for Vanguard</span>
+        <img src="shot:reskin-finance-as-linear" alt="" /><img
+          src="shot:reskin-finance-as-duolingo"
+          alt=""
+        /><img class="self" src="shot:spend-finance-loaded" alt="" /><img
+          src="shot:reskin-finance-as-patchy"
+          alt=""
+        />
+        <span class="h">built for Patchy</span>
+        <img src="shot:reskin-patchy-as-linear" alt="" /><img
+          src="shot:reskin-patchy-as-duolingo"
+          alt=""
+        /><img src="shot:reskin-patchy-as-finance" alt="" /><img
+          class="self"
+          src="shot:spend-patchy-loaded"
+          alt=""
+        />
+      </div>
+
+      <h2>Fonts</h2>
+      <div class="duo">
+        <figure>
+          <img src="shot:font-fallback-vs-inter" alt="Fallback stack above, embedded Inter below" />
+        </figure>
+        <div>
+          <p>
+            Top: Linear's look on its fallback stack (Liberation Sans on Linux). Bottom: the same
+            tool with three Inter weights embedded in <code>look.css</code> as
+            <code>data:</code> fonts. All three weights loaded inside the tier 1 frame with no
+            platform change.
+          </p>
+          <p>
+            The fallback still reads as Linear, but the real font is visibly tighter. Embedding is
+            worth it whenever the company may self-host its font. Three full weights made
+            <code>look.css</code> 418 KB; Latin subsets are about a quarter of that.
+          </p>
+        </div>
+      </div>
+
+      <h2>The numbers</h2>
+      <h3>The looks</h3>
+      <table>
+        <tr>
+          <th>Look</th>
+          <th class="n">fg/bg</th>
+          <th class="n">muted/bg</th>
+          <th class="n">accent-fg/accent</th>
+          <th class="n">link/bg</th>
+          <th class="n">danger/bg</th>
+          <th class="n">muted/surface</th>
+          <th class="n">look.css</th>
+          <th class="n">LOOK.md</th>
+          <th class="n">Capture</th>
+        </tr>
+        <tr>
+          <td>Linear</td>
+          <td class="n">18.73</td>
+          <td class="n">6.13</td>
+          <td class="n">4.70</td>
+          <td class="n">6.95</td>
+          <td class="n">5.73</td>
+          <td class="n">5.63</td>
+          <td class="n">3.3 KB</td>
+          <td class="n">10.5 KB</td>
+          <td class="n">8 min</td>
+        </tr>
+        <tr>
+          <td>Duolingo</td>
+          <td class="n">8.72</td>
+          <td class="n">4.54</td>
+          <td class="n">8.05</td>
+          <td class="n">4.93</td>
+          <td class="n">4.30</td>
+          <td class="n">4.24</td>
+          <td class="n">4.1 KB</td>
+          <td class="n">10.2 KB</td>
+          <td class="n">14 min</td>
+        </tr>
+        <tr>
+          <td>Vanguard</td>
+          <td class="n">20.41</td>
+          <td class="n">4.56</td>
+          <td class="n">6.31</td>
+          <td class="n">5.29</td>
+          <td class="n">5.56</td>
+          <td class="n">4.21</td>
+          <td class="n">3.4 KB</td>
+          <td class="n">10.3 KB</td>
+          <td class="n">10 min</td>
+        </tr>
+        <tr>
+          <td>Patchy</td>
+          <td class="n">18.52</td>
+          <td class="n">5.77</td>
+          <td class="n">5.26</td>
+          <td class="n">10.04</td>
+          <td class="n">6.49</td>
+          <td class="n">5.83</td>
+          <td class="n">4.9 KB</td>
+          <td class="n">12.1 KB</td>
+          <td class="n">8 min</td>
+        </tr>
+      </table>
+      <p class="small">
+        The first four pairs are the required ones; all pass. Duolingo passes only because the
+        capture changed its button text to dark ink (white on its green is 2.09:1) and moved links
+        to a darker blue. No capture hit a bot wall. Logos are 0.4 to 0.6 KB.
+      </p>
+
+      <h3>The tools</h3>
+      <table>
+        <tr>
+          <th>Run</th>
+          <th class="n">CSS lines</th>
+          <th class="n">Token refs</th>
+          <th class="n">Colour literals</th>
+          <th class="n">Own variables</th>
+          <th class="n">Minutes</th>
+          <th class="n">Cost</th>
+        </tr>
+        <tr>
+          <td>Linear</td>
+          <td class="n">154</td>
+          <td class="n">100</td>
+          <td class="n">2</td>
+          <td class="n">0</td>
+          <td class="n">3.5</td>
+          <td class="n">$1.23</td>
+        </tr>
+        <tr>
+          <td>Duolingo</td>
+          <td class="n">159</td>
+          <td class="n">93</td>
+          <td class="n">0</td>
+          <td class="n">0</td>
+          <td class="n">3.8</td>
+          <td class="n">$1.34</td>
+        </tr>
+        <tr>
+          <td>Vanguard</td>
+          <td class="n">145</td>
+          <td class="n">85</td>
+          <td class="n">2</td>
+          <td class="n">0</td>
+          <td class="n">5.0</td>
+          <td class="n">$1.53</td>
+        </tr>
+        <tr>
+          <td>Patchy</td>
+          <td class="n">366</td>
+          <td class="n">99</td>
+          <td class="n">5</td>
+          <td class="n">0</td>
+          <td class="n">4.0</td>
+          <td class="n">$1.40</td>
+        </tr>
+        <tr>
+          <td>No look</td>
+          <td class="n">672</td>
+          <td class="n">0</td>
+          <td class="n">21</td>
+          <td class="n">25</td>
+          <td class="n">5.4</td>
+          <td class="n">$1.77</td>
+        </tr>
+        <tr>
+          <td>Halloween (Vanguard repo)</td>
+          <td class="n">204</td>
+          <td class="n">0</td>
+          <td class="n">16</td>
+          <td class="n">13</td>
+          <td class="n">4.8</td>
+          <td class="n">$1.32</td>
+        </tr>
+      </table>
+      <p class="small">
+        Every look agent found the look through one line in <code>AGENTS.md</code>, read the
+        <code>patchy-look</code> skill before writing CSS, read <code>look.css</code> to avoid
+        restyling plain elements, used the logo, never edited generated files, and lifted the
+        brief's component recipes nearly verbatim. Their only colour literals are status colours.
+      </p>
+
+      <h2>Proposed verdict</h2>
+      <!--VERDICT-->
+
+      <h2>Also found</h2>
+      <ul>
+        <li>
+          <strong>The dev environment's agent isn't fresh.</strong> <code>pnpm dev up</code> puts
+          the agent workspace under <code>$HOME</code>, so Claude Code loads
+          <code>~/.claude/CLAUDE.md</code> as an ancestor file even with
+          <code>--setting-sources project</code>. These runs used a workspace under
+          <code>/tmp</code>.
+        </li>
+        <li>
+          <strong>Agents read the global skill from <code>node_modules</code>.</strong> With no
+          look, the agent found <code>patchy/skills/patchy/references/patchy-plan-style.md</code> in
+          the installed package and followed it. Retiring <code>style.md</code> (#569) should
+          account for that path.
+        </li>
+        <li>
+          <strong>A plain <code>button</code> as the primary button works</strong>, but every other
+          button needs a recipe class, and one agent had to reset the primary style on its filter
+          buttons.
+        </li>
+      </ul>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,86 @@
+[
+  {
+    "look": "duolingo",
+    "ok": true,
+    "problems": [],
+    "required": ["fg/bg 8.72", "muted/bg 4.54", "accent-fg/accent 8.05", "link/bg 4.93"],
+    "extra": [
+      "fg/surface 8.14",
+      "muted/surface 4.24",
+      "accent/bg 2.09",
+      "danger/bg 4.30",
+      "border/bg 1.26"
+    ],
+    "sizes": {
+      "LOOK.md": 10230,
+      "logo.svg": 580,
+      "look.css": 4053,
+      "notes.md": 10769
+    },
+    "colourLiteralsOutsideTokens": 0,
+    "scheme": null
+  },
+  {
+    "look": "finance",
+    "ok": true,
+    "problems": [],
+    "required": ["fg/bg 20.41", "muted/bg 4.56", "accent-fg/accent 6.31", "link/bg 5.29"],
+    "extra": [
+      "fg/surface 18.85",
+      "muted/surface 4.21",
+      "accent/bg 6.31",
+      "danger/bg 5.56",
+      "border/bg 1.58"
+    ],
+    "sizes": {
+      "LOOK.md": 10302,
+      "logo.svg": 461,
+      "look.css": 3433,
+      "notes.md": 10924
+    },
+    "colourLiteralsOutsideTokens": 0,
+    "scheme": null
+  },
+  {
+    "look": "linear",
+    "ok": true,
+    "problems": [],
+    "required": ["fg/bg 18.73", "muted/bg 6.13", "accent-fg/accent 4.70", "link/bg 6.95"],
+    "extra": [
+      "fg/surface 17.18",
+      "muted/surface 5.63",
+      "accent/bg 4.24",
+      "danger/bg 5.73",
+      "border/bg 1.30"
+    ],
+    "sizes": {
+      "LOOK.md": 10524,
+      "logo.svg": 441,
+      "look.css": 3280,
+      "notes.md": 14684
+    },
+    "colourLiteralsOutsideTokens": 0,
+    "scheme": "dark"
+  },
+  {
+    "look": "patchy",
+    "ok": true,
+    "problems": [],
+    "required": ["fg/bg 18.52", "muted/bg 5.77", "accent-fg/accent 5.26", "link/bg 10.04"],
+    "extra": [
+      "fg/surface 18.70",
+      "muted/surface 5.83",
+      "accent/bg 5.21",
+      "danger/bg 6.49",
+      "border/bg 18.52"
+    ],
+    "sizes": {
+      "LOOK.md": 12087,
+      "logo.svg": 602,
+      "look.css": 4915,
+      "notes.md": 10539
+    },
+    "colourLiteralsOutsideTokens": 0,
+    "scheme": null
+  }
+]

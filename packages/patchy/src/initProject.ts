@@ -5,6 +5,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isManagedOutputPath } from "@patchy/api";
 import { safePath } from "./ManagedProject.js";
+import { prototypeLookFiles, withPrototypeLookStarter } from "./prototypeLook.js";
 import type { ReleaseToolchain } from "@patchy/api";
 import toolchain from "./toolchain.json" with { type: "json" };
 
@@ -19,7 +20,8 @@ export function starterFiles(options: {
 }): Record<string, string> {
   const { instance, name, tier, purpose, tarball, toolchain: versions = toolchain } = options;
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-  return {
+  // PROTOTYPE for #563: the scaffold imports the look when one is set.
+  return withPrototypeLookStarter({
     "patchy.json": json({ instance, description: purpose }),
     "fixtures/.gitkeep": "",
     "helpers/.gitkeep": "",
@@ -200,15 +202,17 @@ export const create = mutation({
     "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands. Read the release-bound \`.agents/skills/patchy-loop/SKILL.md\` for how to exercise the tier configured in \`patchy.config.ts\`.\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: the tier, owned tables and file stores with their descriptions, and declared connections/shared tables/shared stores.\n- \`src/\`, \`index.html\`: the page UI. Browser code runs at tier 1 or above; \`vite.config.ts\` builds one HTML file. Tier 1 calls declared resources directly; tier 2 calls generated \`patchy.server.*\` handlers.\n- \`server/\`: hosted handlers when tier 2 is declared. Import bound builders from \`patchy/_generated/server.ts\`. Keep server implementation out of the page; page imports from here must be type-only.\n- \`helpers/\`: company-owned code shared by the page or server. Keep each helper's imports compatible with where it runs.\n- \`fixtures/\`: invented local rows and files, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop and moving tiers.\n- On tiers 1 and 2, read \`.agents/skills/patchy-preact/SKILL.md\` before building a Preact page.\n- On tier 2, read \`.agents/skills/patchy-server/SKILL.md\` before writing handlers.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n- Read declaration skills when using their resources: \`.agents/skills/patchy-postgres/SKILL.md\`, \`.agents/skills/patchy-shared-tables/SKILL.md\`, or \`.agents/skills/patchy-shared-stores/SKILL.md\`.\n\nRun \`pnpm typecheck\` and, when \`package.json\` declares it, \`pnpm lint\` before publishing. Run \`pnpm patchy refresh\` after editing declarations, changing tier or adding, removing or renaming server modules. Refresh never edits \`src/\`, \`server/\` or \`helpers/\`. Deleting \`.patchy/\` destroys local rows and files.\n`,
     "CLAUDE.md": "@AGENTS.md\n",
     ".gitignore": ".patchy/\nnode_modules/\ndist/\n"
-  };
+  });
 }
 
 /** The caller discards the entire init stage on failure; no nested transaction is needed. */
 export async function writeInitialGeneration(
   staging: string,
-  files: readonly { path: string; contents: string }[],
+  generatedFiles: readonly { path: string; contents: string }[],
   manifest: string
 ): Promise<{ generated: string[]; skills: string[]; fixtures: string[] }> {
+  // PROTOTYPE for #563: the look rides along with the first generation.
+  const files = [...generatedFiles, ...(await prototypeLookFiles())];
   const names = new Set<string>();
   for (const file of files) {
     if (!isManagedOutputPath(file.path) || names.has(file.path))

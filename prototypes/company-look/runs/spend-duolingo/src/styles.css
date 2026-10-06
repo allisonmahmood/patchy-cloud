@@ -1,0 +1,394 @@
+/* Spend requests on Duolingo's look. Unlayered, so it wins over @layer look. */
+
+/* Header, from the look brief. */
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--look-space) * 3);
+  height: 72px;
+  padding: 0 calc(var(--look-space) * 3);
+  border-bottom: 2px solid var(--look-border);
+  background: var(--look-bg);
+}
+.page-header img {
+  height: 32px;
+  width: auto;
+}
+.header-title {
+  margin-left: auto;
+  color: var(--look-muted);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: calc(var(--look-space) * 5) calc(var(--look-space) * 3) calc(var(--look-space) * 8);
+  display: grid;
+  gap: calc(var(--look-space) * 5);
+}
+.page-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: calc(var(--look-space) * 3);
+}
+.page-intro h1 {
+  margin-bottom: var(--look-space);
+}
+.lede {
+  margin: 0;
+  color: var(--look-muted);
+}
+.muted {
+  color: var(--look-muted);
+  margin: 0;
+}
+
+.flash {
+  margin: 0;
+  padding: calc(var(--look-space) * 1.5) calc(var(--look-space) * 2);
+  border-radius: var(--look-radius);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--look-accent) 15%, var(--look-bg));
+}
+.error {
+  margin: 0;
+  color: var(--look-danger);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* Buttons beyond the green primary. */
+.button-secondary {
+  background: var(--look-bg);
+  color: var(--look-link);
+  border: 2px solid var(--look-border);
+  box-shadow: 0 4px 0 var(--look-border);
+}
+.button-secondary:hover {
+  filter: none;
+  background: var(--look-surface);
+}
+.button-danger {
+  background: var(--look-danger);
+  color: var(--look-bg);
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--look-danger), black 22%);
+}
+.button-text {
+  background: none;
+  box-shadow: none;
+  min-height: auto;
+  padding: 0;
+  margin: 0;
+  color: var(--look-muted);
+}
+.button-text:hover {
+  filter: none;
+  color: var(--look-fg);
+}
+.button-text:active {
+  transform: none;
+}
+.button-small {
+  min-height: 36px;
+  padding: 0 calc(var(--look-space) * 1.5);
+  font-size: 13px;
+  border-radius: 12px;
+}
+
+/* Stat tiles. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: calc(var(--look-space) * 2);
+}
+.stats .error {
+  grid-column: 1 / -1;
+}
+.stat {
+  border: 2px solid var(--look-border);
+  border-bottom-width: 4px;
+  border-radius: var(--look-radius);
+  padding: calc(var(--look-space) * 2) calc(var(--look-space) * 3);
+}
+.stat-value {
+  font: 700 32px/1.1 var(--look-font-display);
+  color: var(--look-fg);
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  margin-top: 4px;
+  color: var(--look-muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Request list. */
+.requests {
+  display: grid;
+  gap: calc(var(--look-space) * 2);
+}
+.requests-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--look-space) * 2);
+  flex-wrap: wrap;
+}
+.requests-bar h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.tabs {
+  display: flex;
+  gap: calc(var(--look-space) * 3);
+  border-bottom: 2px solid var(--look-border);
+}
+.tab {
+  min-height: 40px;
+  margin: 0 0 -2px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--look-muted);
+  border-bottom: 3px solid transparent;
+}
+.tab:hover {
+  filter: none;
+  color: var(--look-fg);
+}
+.tab:active {
+  transform: none;
+}
+.tab[aria-pressed="true"] {
+  color: var(--look-link);
+  border-bottom-color: var(--look-link);
+}
+
+.table-panel {
+  border: 2px solid var(--look-border);
+  border-radius: var(--look-radius);
+  overflow: hidden;
+}
+.table-panel table {
+  border: 0;
+  border-radius: 0;
+}
+.table-panel td {
+  padding: calc(var(--look-space) * 2);
+  vertical-align: top;
+}
+.table-panel tbody tr:hover {
+  background: color-mix(in srgb, var(--look-surface) 60%, var(--look-bg));
+}
+.num {
+  text-align: right;
+}
+th.num {
+  text-align: right;
+}
+.amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.what strong {
+  display: block;
+  font-weight: 700;
+}
+.who {
+  display: block;
+  white-space: nowrap;
+}
+.sub {
+  display: block;
+  color: var(--look-muted);
+  font-size: 15px;
+}
+.status {
+  min-width: 150px;
+}
+.status .badge {
+  display: flex;
+  width: fit-content;
+  margin-bottom: 4px;
+}
+.status .button-small {
+  display: block;
+  margin-top: var(--look-space);
+}
+.note {
+  display: block;
+  margin-top: 4px;
+  font-size: 15px;
+  font-style: italic;
+}
+.panel-empty {
+  padding: calc(var(--look-space) * 4);
+  text-align: center;
+  border: 2px solid var(--look-border);
+  border-radius: var(--look-radius);
+}
+.more {
+  display: flex;
+  justify-content: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  font: 700 13px/1.4 var(--look-font-body);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.badge-pending {
+  background: color-mix(in srgb, var(--look-link) 12%, var(--look-bg));
+  color: color-mix(in srgb, var(--look-link), black 20%);
+}
+.badge-approved {
+  background: color-mix(in srgb, var(--look-accent) 20%, var(--look-bg));
+  color: var(--look-fg);
+}
+.badge-rejected {
+  background: color-mix(in srgb, var(--look-danger) 12%, var(--look-bg));
+  color: color-mix(in srgb, var(--look-danger), black 25%);
+}
+
+/* Inline decision panel under a pending row. */
+.table-panel tr.is-open > td {
+  border-bottom: 0;
+  background: var(--look-surface);
+}
+.table-panel tr.decide-row:hover {
+  background: none;
+}
+.table-panel tr.decide-row > td {
+  background: var(--look-surface);
+  padding-top: 0;
+}
+.decide {
+  display: grid;
+  gap: calc(var(--look-space) * 1.5);
+  max-width: 560px;
+  margin-left: auto;
+  padding: calc(var(--look-space) * 2) calc(var(--look-space) * 3);
+  background: var(--look-bg);
+  border: 2px solid var(--look-border);
+  border-bottom-width: 4px;
+  border-radius: var(--look-radius);
+}
+.decide-title {
+  margin: 0;
+}
+.decide label {
+  margin: 0;
+}
+.decide input {
+  margin-top: var(--look-space);
+  background: var(--look-bg);
+}
+.decide-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: calc(var(--look-space) * 2);
+}
+.optional {
+  color: var(--look-muted);
+  font-weight: 500;
+}
+
+/* New request form: a card holding the narrow centred form. */
+.card {
+  background: var(--look-bg);
+  border: 2px solid var(--look-border);
+  border-bottom-width: 4px;
+  border-radius: var(--look-radius);
+  padding: calc(var(--look-space) * 4) calc(var(--look-space) * 3);
+}
+.compose h2 {
+  text-align: center;
+  font-size: 24px;
+}
+.form {
+  display: grid;
+  gap: calc(var(--look-space) * 1.5);
+  max-width: 420px;
+  margin: 0 auto;
+}
+.form label {
+  margin: 0;
+}
+.form input,
+.form select,
+.form textarea {
+  margin-top: var(--look-space);
+}
+.form textarea {
+  resize: vertical;
+}
+.form button {
+  width: 100%;
+}
+.form .button-text {
+  justify-self: center;
+  width: auto;
+}
+.form .hint {
+  margin: 0;
+  color: var(--look-muted);
+  font-size: 15px;
+}
+.form-pair {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: calc(var(--look-space) * 1.5);
+}
+
+/* Empty state. */
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: calc(var(--look-space) * 2);
+  padding: calc(var(--look-space) * 8) calc(var(--look-space) * 3);
+  text-align: center;
+}
+.empty-state .mark {
+  width: 96px;
+  height: 96px;
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--look-accent) 20%, var(--look-bg));
+}
+.empty-state h2 {
+  margin: 0;
+  font-size: 24px;
+}
+.empty-state p {
+  margin: 0;
+  color: var(--look-muted);
+  max-width: 40ch;
+}
+
+@media (max-width: 720px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+  .page-intro {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .table-panel {
+    overflow-x: auto;
+  }
+}
