@@ -5,30 +5,41 @@ export const updatesScript = String.raw`(() => {
   const popover = document.getElementById("updates-popover");
   const content = document.getElementById("updates-popover-content");
   const dot = document.getElementById("updates-dot");
-  const key = "patchy:updates:read-through:" + bell.dataset.viewerId;
-  let latest = null;
+  const count = document.getElementById("updates-unread-count");
+  const prefix = "patchy:updates:read:" + bell.dataset.viewerId + ":";
+  const legacyKey = "patchy:updates:read-through:" + bell.dataset.viewerId;
+  let legacyThrough = 0;
+  try {
+    const value = Number(localStorage.getItem(legacyKey));
+    if (Number.isSafeInteger(value) && value >= 0) legacyThrough = value;
+  } catch { /* Storage is optional. */ }
+  const memory = new Map();
+  const acknowledged = new WeakSet();
+  const rows = [...document.querySelectorAll(".update-entry[data-update-sequence]")];
+  let entries = [];
   let status = "loading";
-  let memory = 0;
-  let pending = false;
-  let open = false;
-  let captured = false;
-  let openedEntry = null;
-  const stored = () => {
+  let pending = null;
+  let signature = "";
+  function isRead(sequence) {
+    if (memory.has(sequence)) return memory.get(sequence);
     try {
-      const value = Number(localStorage.getItem(key));
-      return Number.isSafeInteger(value) && value >= 0 ? Math.max(memory, value) : memory;
-    } catch { return memory; }
-  };
-  const markThrough = (through) => {
-    if (document.visibilityState !== "visible" || !Number.isSafeInteger(through) || through <= stored()) return;
-    memory = through;
-    try { localStorage.setItem(key, String(through)); } catch { /* Keep this tab usable. */ }
-  };
-  function captureOpenedEntry() {
-    if (!open || captured || status !== "ready" || document.visibilityState !== "visible") return;
-    captured = true;
-    openedEntry = latest && latest.sequence > stored() ? latest : null;
-    if (openedEntry) markThrough(openedEntry.sequence);
+      const value = localStorage.getItem(prefix + sequence);
+      if (value === "1" || value === "0") return value === "1";
+    } catch { /* Use the in-page fallback and legacy baseline. */ }
+    return sequence <= legacyThrough;
+  }
+  function mark(sequence, read) {
+    if (document.visibilityState !== "visible" || status !== "ready" || !entries.some(entry => entry.sequence === sequence)) return false;
+    // One key per update avoids unrelated reads in two tabs overwriting each other.
+    memory.set(sequence, read);
+    try { localStorage.setItem(prefix + sequence, read ? "1" : "0"); } catch { /* Keep this page usable. */ }
+    return true;
+  }
+  function readOpenRows() {
+    if (document.visibilityState !== "visible") return;
+    for (const row of rows) {
+      if (row.open && !acknowledged.has(row) && mark(Number(row.dataset.updateSequence), true)) acknowledged.add(row);
+    }
   }
   const element = (tag, className, text) => {
     const el = document.createElement(tag);
@@ -37,59 +48,109 @@ export const updatesScript = String.raw`(() => {
     return el;
   };
   function render() {
-    const unread = status === "ready" && latest && latest.sequence > stored();
-    dot.hidden = !unread;
-    bell.setAttribute("aria-label", "Updates — " + (status === "loading" ? "loading" : status === "error" ? "unavailable" : unread ? "new deployment" : "all caught up"));
-    const displayed = open ? openedEntry : unread ? latest : null;
-    const block = element(displayed ? "a" : "div", displayed ? "latest-update" : "updates-caught-up");
-    if (displayed) {
-      // The query forces a new document when a newer update arrives on /updates.
-      block.href = "/updates?release=" + displayed.sequence + "#update-" + displayed.sequence;
-      const time = element("time", "", new Date(displayed.publishedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }));
-      time.dateTime = displayed.publishedAt;
-      block.append(time, element("h3", "", displayed.title), element("p", "", displayed.summary));
-    } else {
-      block.append(element("h3", "", status === "loading" ? "Checking for updates…" : status === "error" ? "Updates unavailable" : "All caught up"));
-      block.append(element("p", "", status === "error" ? "Please try again in a moment." : status === "loading" ? "" : "You’ve seen the latest updates."));
+    const unread = status === "ready" ? entries.filter(entry => !isRead(entry.sequence)) : [];
+    dot.hidden = unread.length === 0;
+    bell.setAttribute("aria-label", "Updates — " + (status === "loading" ? "loading" : status === "error" ? "unavailable" : unread.length ? unread.length + " unread update" + (unread.length === 1 ? "" : "s") : "all caught up"));
+    count.textContent = status === "ready" ? unread.length + " unread" : "";
+    for (const button of document.querySelectorAll(".updates-mark-all")) button.disabled = status !== "ready" || unread.length === 0;
+    for (const row of rows) {
+      const read = isRead(Number(row.dataset.updateSequence));
+      row.dataset.read = String(read);
+      const badge = row.querySelector(".update-read-state");
+      badge.textContent = read ? "Read" : "Unread";
+      badge.className = "pill update-read-state" + (read ? "" : " pill-progress");
+      badge.hidden = false;
+      const toggle = row.querySelector(".update-read-toggle");
+      toggle.textContent = read ? "Mark unread" : "Mark read";
+      toggle.hidden = false;
+      toggle.disabled = status !== "ready";
     }
-    content.replaceChildren(block);
+    // Avoid replacing focused links and resetting scroll on every poll.
+    const next = JSON.stringify([status, unread]);
+    if (next === signature) return;
+    signature = next;
+    const scroll = content.scrollTop;
+    const focused = document.activeElement?.dataset.updateLink;
+    if (unread.length) {
+      const links = unread.map(entry => {
+        const link = element("a", "latest-update");
+        link.dataset.updateLink = String(entry.sequence);
+        link.href = "/updates?release=" + entry.sequence + "#update-" + entry.sequence;
+        const time = element("time", "", new Date(entry.publishedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }));
+        time.dateTime = entry.publishedAt;
+        link.append(time, element("h3", "", entry.title), element("p", "", entry.summary));
+        return link;
+      });
+      content.replaceChildren(...links);
+    } else {
+      const block = element("div", "updates-caught-up");
+      block.append(element("h3", "", status === "loading" ? "Checking for updates…" : status === "error" ? "Updates unavailable" : "All caught up"));
+      block.append(element("p", "", status === "error" ? "Please try again in a moment." : status === "loading" ? "" : "You’ve read all the updates."));
+      content.replaceChildren(block);
+    }
+    if (focused) content.querySelector('[data-update-link="' + focused + '"]')?.focus({ preventScroll: true });
+    content.scrollTop = scroll;
   }
   function position() {
     const rect = bell.getBoundingClientRect();
-    popover.style.top = Math.min(rect.bottom + 10, innerHeight - 160) + "px";
+    const top = Math.max(12, Math.min(rect.bottom + 10, innerHeight - 160));
+    popover.style.top = top + "px";
     popover.style.left = Math.max(12, Math.min(rect.right - 350, innerWidth - 362)) + "px";
+    popover.style.maxHeight = Math.max(0, innerHeight - top - 12) + "px";
   }
   async function refresh() {
-    if (pending || document.visibilityState !== "visible") return;
-    pending = true;
-    try {
-      const response = await fetch("/updates/latest", { cache: "no-store", headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error("Unavailable");
-      const data = await response.json();
-      if (data.viewerId !== bell.dataset.viewerId) throw new Error("Session changed");
-      latest = data.latest;
-      status = "ready";
-    } catch { status = "error"; openedEntry = null; }
-    finally { pending = false; captureOpenedEntry(); render(); }
+    if (document.visibilityState !== "visible") return;
+    if (pending) return pending;
+    pending = (async () => {
+      try {
+        const response = await fetch("/updates/feed", { cache: "no-store", headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("Unavailable");
+        const data = await response.json();
+        if (data.viewerId !== bell.dataset.viewerId) throw new Error("Session changed");
+        entries = data.entries;
+        status = "ready";
+        readOpenRows();
+      } catch { status = "error"; }
+      finally { render(); }
+    })();
+    try { await pending; } finally { pending = null; }
   }
-  function enter() {
-    render();
-    void refresh();
+  for (const row of rows) {
+    row.addEventListener("toggle", () => {
+      if (!row.open) acknowledged.delete(row);
+      else void refresh();
+      render();
+    });
+    row.querySelector(".update-read-toggle").addEventListener("click", async () => {
+      await refresh();
+      const sequence = Number(row.dataset.updateSequence);
+      if (mark(sequence, !isRead(sequence))) acknowledged.add(row);
+      render();
+    });
   }
-  popover.addEventListener("beforetoggle", (event) => {
-    open = event.newState === "open";
-    captured = false;
-    openedEntry = null;
-    if (open) { position(); openedEntry = status === "ready" && latest && latest.sequence > stored() ? latest : null; }
-    render();
-    if (open) void refresh();
+  for (const button of document.querySelectorAll(".updates-mark-all")) {
+    button.addEventListener("click", async () => {
+      // Capture exactly the updates offered when clicked; later arrivals stay unread.
+      const snapshot = entries.filter(entry => !isRead(entry.sequence)).map(entry => entry.sequence);
+      await refresh();
+      for (const sequence of snapshot) mark(sequence, true);
+      render();
+    });
+  }
+  function enter() { render(); void refresh(); }
+  popover.addEventListener("beforetoggle", event => {
+    if (event.newState === "open") { position(); void refresh(); }
   });
   window.addEventListener("resize", position);
-  window.addEventListener("storage", (event) => { if (event.key === key || event.key === null) render(); });
+  window.addEventListener("storage", event => {
+    if (event.key === null) memory.clear();
+    else if (event.key.startsWith(prefix)) memory.delete(Number(event.key.slice(prefix.length)));
+    else return;
+    render();
+  });
   window.addEventListener("pageshow", enter);
   window.addEventListener("focus", enter);
   document.addEventListener("visibilitychange", enter);
-  // A link from the bell opens the named deployment without changing older rows.
   if (/^#update-[0-9]+$/.test(location.hash)) {
     const target = document.getElementById(location.hash.slice(1));
     if (target instanceof HTMLDetailsElement) target.open = true;

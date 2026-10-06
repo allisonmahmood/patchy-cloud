@@ -72,9 +72,24 @@ it.layer(services)("shared deployment updates", (it) => {
           yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES (${id}, ${id}, ${id}, ${`${id}@patchy.local`}, ${id}, 'member')`;
         }
         const store = yield* ContentStore.ContentStore;
-        const document = JSON.stringify({ version: 1, entries: [entry(1), entry(3), entry(2)] });
+        const document = JSON.stringify({
+          version: 1,
+          entries: [
+            {
+              ...entry(1),
+              deployment: {
+                runId: 123,
+                attempt: 1,
+                commit: "a".repeat(40),
+                url: "https://github.com/allisonmahmood/patchy-cloud/actions/runs/123/attempts/1"
+              }
+            },
+            entry(3),
+            entry(2)
+          ]
+        });
         yield* store.put(updates.objectKey, document);
-        for (const path of ["/updates", "/updates/latest"]) {
+        for (const path of ["/updates", "/updates/latest", "/updates/feed"]) {
           assert.strictEqual((yield* request(path)).status, 401);
         }
         for (const user of ["updates_a", "updates_b"]) {
@@ -84,6 +99,16 @@ it.layer(services)("shared deployment updates", (it) => {
           assert.deepStrictEqual(yield* Effect.promise(() => latest.json()), {
             viewerId: user,
             latest: entry(3)
+          });
+          const feed = yield* request("/updates/feed", user);
+          assert.strictEqual(feed.status, 200);
+          assert.strictEqual(feed.headers.get("cache-control"), "private, no-store");
+          assert.deepStrictEqual(yield* Effect.promise(() => feed.json()), {
+            viewerId: user,
+            entries: [3, 2, 1].map((sequence) => {
+              const { publishedAt, title, summary } = entry(sequence);
+              return { sequence, publishedAt, title, summary };
+            })
           });
           const page = yield* request("/updates", user);
           const html = yield* Effect.promise(() => page.text());
@@ -113,6 +138,7 @@ it.layer(services)("shared deployment updates", (it) => {
       assert.include(html, "Updates are unavailable");
       assert.notInclude(html, "data-updates-through");
       assert.strictEqual((yield* request("/updates/latest", "updates_empty")).status, 503);
+      assert.strictEqual((yield* request("/updates/feed", "updates_empty")).status, 503);
       yield* store.put(
         updates.objectKey,
         JSON.stringify({ version: 1, entries: [entry(1), entry(1)] })
@@ -133,7 +159,10 @@ it("escapes notes and keeps native expandable entries", () => {
   ]);
   assert.notMatch(html, /<(script|img|b)\b/);
   assert.include(html, "&lt;script&gt;");
-  assert.include(html, '<details class="update-entry" id="update-1"><summary>');
+  assert.include(
+    html,
+    '<details class="update-entry" id="update-1" data-update-sequence="1"><summary>'
+  );
 });
 
 it.effect("keeps Deploy Action provenance internal and rejects a non-GitHub source link", () =>

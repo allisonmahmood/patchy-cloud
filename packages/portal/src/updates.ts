@@ -118,11 +118,12 @@ export const render = (
   <div class="updates-page" data-updates-through="${entries[0]?.sequence ?? 0}">
     <h1 class="page-heading">What’s new in Patchy</h1>
     <p class="supporting-text">The latest improvements, all in one place.</p>
+    <div class="actions updates-history-actions"><button type="button" class="btn btn-quiet updates-mark-all" disabled>Mark all as read</button></div>
     <div class="updates-list" aria-label="Deployment updates">${selected.entries
       .map(
         (entry) => `
-      <details class="update-entry" id="update-${entry.sequence}"><summary>
-        <span class="update-date"><time datetime="${escapeHtml(entry.publishedAt)}">${date(entry.publishedAt)}</time>${entry.sequence === entries[0]?.sequence ? '<span class="pill">Latest</span>' : ""}</span>
+      <details class="update-entry" id="update-${entry.sequence}" data-update-sequence="${entry.sequence}"><summary>
+        <span class="update-date"><time datetime="${escapeHtml(entry.publishedAt)}">${date(entry.publishedAt)}</time>${entry.sequence === entries[0]?.sequence ? '<span class="pill">Latest</span>' : ""}<span class="pill update-read-state" hidden></span></span>
         <span class="update-title">${escapeHtml(entry.title)}</span><span class="update-summary">${escapeHtml(entry.summary)}</span>
         <span class="update-chevron" aria-hidden="true">⌄</span>
       </summary><div class="update-content">${entry.changes
@@ -132,6 +133,7 @@ export const render = (
         )
         .join("")}
         <p class="supporting-text update-published">Available since ${date(entry.publishedAt)}.</p>
+        <div class="actions"><button type="button" class="btn btn-quiet update-read-toggle" hidden>Mark read</button></div>
       </div></details>`
       )
       .join("")}</div>
