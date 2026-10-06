@@ -158,3 +158,27 @@ it.effect("keeps Deploy Action provenance internal and rejects a non-GitHub sour
     );
   })
 );
+
+it("pages history ten entries at a time and locates older bell links", () => {
+  const entries = Array.from({ length: 23 }, (_, index) => entry(23 - index));
+  assert.deepStrictEqual(
+    updates.paginate(entries).entries.map((entry) => entry.sequence),
+    [23, 22, 21, 20, 19, 18, 17, 16, 15, 14]
+  );
+  assert.deepStrictEqual(
+    updates.paginate(entries, { page: "2" }).entries.map((entry) => entry.sequence),
+    [13, 12, 11, 10, 9, 8, 7, 6, 5, 4]
+  );
+  assert.deepStrictEqual(
+    updates.paginate(entries, { page: "999" }).entries.map((entry) => entry.sequence),
+    [3, 2, 1]
+  );
+  for (const page of ["0", "-1", "1.5", "NaN", "9007199254740992"])
+    assert.strictEqual(updates.paginate(entries, { page }).page, 1);
+  assert.strictEqual(updates.paginate(entries, { page: "3", release: "13" }).page, 2);
+  assert.strictEqual(updates.paginate([], { page: "2" }).page, 1);
+  assert.notInclude(updates.render(entries, { page: "2" }), ">Latest</span>");
+  assert.include(updates.render(entries, { page: "2" }), 'aria-current="page" aria-label="Page 2"');
+  assert.notInclude(updates.render(entries.slice(0, 10)), 'aria-label="Update history pages"');
+  assert.include(updates.render([]), "No updates published yet.");
+});
