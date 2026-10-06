@@ -47,15 +47,30 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 4,
+    date: "2026-10-06",
+    through: "86974632738a3fcc19935ee4b28e7b87fc494a9a",
+    changes: [
+      {
+        kind: "New",
+        title: "See what’s new in Patchy",
+        detail:
+          "A bell beside your name shows a dot when something has shipped since you last looked. Open it for the latest changes, or choose See all changes for the full history.",
+        prs: [555]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 3,
     date: "2026-10-06",
     through: "4a928f7b3c821b4d6941c4ea9968d43773897526",
     changes: [
       {
         kind: "Fixed",
-        title: "Clearer company handle errors",
+        title: "Creating a company explains a handle it can’t use",
         detail:
-          "When you create a company, Patchy explains a handle it can’t use right beside the field, with a fix to try when there is one. Before, some mistakes stopped the form without saying why.",
+          "If Patchy can’t use the company handle you typed, it now says why beside the field and suggests one that works when it can. Before, some mistakes, like a capital letter, stopped the form without saying why.",
         prs: [553]
       }
     ],
@@ -67,9 +82,8 @@ export const releases: ReadonlyArray<Release> = [
     through: "aed1454ba2b67a0df52f2017ff7ea7350af6d3ba",
     changes: [],
     behindTheScenes: [
-      "We can see where people get stuck while setting up, so we can smooth it out.",
-      "Changes to patches are recorded the same way whether they come from the portal or an agent.",
-      "The patchy command tells us its version and which coding agent runs it, so we can fix problems faster."
+      "We now record key moments, like creating a company, inviting a colleague or retiring a patch, so we can see where people get stuck. They identify people by id, never by name or email address.",
+      "The patchy command now tells us its version, which command ran and which coding agent ran it, so we can fix problems faster."
     ]
   },
   {
@@ -77,7 +91,7 @@ export const releases: ReadonlyArray<Release> = [
     date: "2026-10-05",
     through: "48153dc8ba948d6903f735be1f5598b6386e6e60",
     changes: [],
-    behindTheScenes: ["Patchy Cloud’s first release on its production servers."]
+    behindTheScenes: ["Patchy Cloud’s first release went live on its own production servers."]
   }
 ];
 
