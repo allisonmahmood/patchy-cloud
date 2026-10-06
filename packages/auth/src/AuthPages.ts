@@ -32,7 +32,7 @@ const join = Effect.gen(function* () {
       name: claims.name
     },
     membership,
-    target
+    { returnTo: target, publicBaseUrl: session.publicBaseUrl }
   );
   return page.redirect
     ? HttpServerResponse.redirect(page.redirect, { status: 303 })

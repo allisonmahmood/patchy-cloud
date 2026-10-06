@@ -33,7 +33,7 @@ export const styles = `
     .join-invite { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
 `;
 
-/** Server-side suggestion: plain forms need no client code to create a company. */
+/** Server-side suggestion, for the first render and for a refused handle: plain forms run no client code. */
 const suggestedHandle = (name: string) =>
   name
     .toLowerCase()
@@ -44,17 +44,81 @@ const suggestedHandle = (name: string) =>
     .slice(0, 32)
     .replace(/-+$/, "");
 
+/** Where the form posts back to, and the instance whose address the handle opens. */
+export interface Door {
+  readonly returnTo: string | null;
+  readonly publicBaseUrl: string;
+}
+
+type FieldRefusal = {
+  readonly status: number;
+  readonly field: "name" | "handle";
+  readonly title: string;
+  readonly detail?: string;
+  readonly suggestion?: string;
+};
+
+/** A refusal sits under the field at fault, or above the form when no field is. */
+type Refusal = { readonly status: number; readonly message: string } | FieldRefusal;
+
+/** Names the first rule a refused handle breaks, in `Companies.Handle`'s order, and offers a fix only if it is free. */
+const handleRefusal = Effect.fn("Join.handleRefusal")(function* (handle: string) {
+  const companies = yield* Companies.Companies;
+  const fix = suggestedHandle(handle);
+  const offer =
+    fix !== handle &&
+    Companies.isHandle(fix) &&
+    !Companies.RESERVED_HANDLES.includes(fix) &&
+    !(yield* companies.isHandleTaken(fix))
+      ? { suggestion: fix }
+      : {};
+  const title =
+    handle.length === 0
+      ? "Choose a handle"
+      : /[A-Z]/.test(handle) && !/[^A-Za-z0-9-]/.test(handle)
+        ? "Handles are lowercase"
+        : /[^a-z0-9-]/.test(handle)
+          ? "Use only lowercase letters, digits and hyphens"
+          : handle.length < 3
+            ? "Use at least 3 characters"
+            : handle.length > 32
+              ? "Use at most 32 characters"
+              : "Start and end with a letter or digit";
+  return { status: 422, field: "handle", title, ...offer } satisfies FieldRefusal;
+});
+
+const nameRefusal = (name: string): FieldRefusal | undefined =>
+  name.length === 0
+    ? { status: 422, field: "name", title: "Enter a company name" }
+    : name.length > 200
+      ? { status: 422, field: "name", title: "Use at most 200 characters" }
+      : undefined;
+
+const callout = (id: string, refusal: FieldRefusal) => {
+  const detail = [
+    refusal.detail === undefined ? "" : escapeHtml(refusal.detail),
+    refusal.suggestion === undefined
+      ? ""
+      : `Try <strong>${escapeHtml(refusal.suggestion)}</strong>.`
+  ].filter(Boolean);
+  return `<div class="note note-refused field-callout" id="${id}" role="alert"><strong class="note-title">${escapeHtml(refusal.title)}</strong>${detail.join(" ")}</div>`;
+};
+
+/** The attributes that mark a field as the one at fault, and land the cursor in it. */
+const faulted = (id: string) => ` aria-describedby="${id}-error" aria-invalid="true" autofocus`;
+
 const render = Effect.fn("Join.render")(function* (
   claims: Claims,
-  returnTo: string | null,
+  door: Door,
   fields?: { readonly name: string; readonly handle: string },
-  refusal?: { readonly message: string; readonly status: number }
+  refusal?: Refusal
 ): Effect.fn.Return<JoinPage, SqlError, Companies.Companies> {
   const companies = yield* Companies.Companies;
   const invites = yield* companies.findInvitesByEmail(claims.email);
-  const action = `/join${returnTo ? `?return=${encodeURIComponent(returnTo)}` : ""}`;
+  const action = `/join${door.returnTo ? `?return=${encodeURIComponent(door.returnTo)}` : ""}`;
+  const fieldRefusal = refusal !== undefined && "field" in refusal ? refusal : undefined;
   const notice = refusal
-    ? `<div class="note note-warn" role="alert">${escapeHtml(refusal.message)}</div>`
+    ? `<div class="note note-warn" role="alert">${escapeHtml("message" in refusal ? refusal.message : refusal.title)}</div>`
     : "";
   if (invites.length > 0) {
     const rows = yield* Effect.forEach(
@@ -73,9 +137,14 @@ const render = Effect.fn("Join.render")(function* (
   }
   const name = fields?.name ?? `${claims.name}'s company`;
   const handle = fields?.handle ?? suggestedHandle(name);
+  const nameAt = fieldRefusal?.field === "name" ? fieldRefusal : undefined;
+  const handleAt = fieldRefusal?.field === "handle" ? fieldRefusal : undefined;
+  // The handle sits under the address it opens. The browser flags a broken rule while it is typed (field-rule);
+  // Patchy names the rule on submit, so the form is novalidate and never blocked by the browser's bubble.
+  const address = `${new URL(door.publicBaseUrl).host}/`;
   return {
     title: "Create your company",
-    body: `<p>There is no invite for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}<form method="post" action="${escapeAttribute(action)}"><input type="hidden" name="action" value="create"><label class="field-label" for="company-name">Company name</label><input class="field" id="company-name" name="name" value="${escapeAttribute(name)}" required maxlength="200" autocomplete="organization"><label class="field-label" for="company-handle">Company handle</label><input class="field" id="company-handle" name="handle" value="${escapeAttribute(handle)}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" aria-describedby="handle-hint" autocapitalize="none" spellcheck="false"><p id="handle-hint" class="field-hint">Pre-filled from the company name and editable. 3–32 lowercase letters, digits or hyphens; no hyphen at either end. Fixed once created.</p><div class="actions"><button class="btn btn-primary" type="submit">Create company</button></div></form>`,
+    body: `<p>There is no invite for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${fieldRefusal ? "" : notice}<form method="post" action="${escapeAttribute(action)}" novalidate><input type="hidden" name="action" value="create"><label class="field-label" for="company-name">Company name</label><input class="field" id="company-name" name="name" value="${escapeAttribute(name)}" required maxlength="200" autocomplete="organization"${nameAt ? faulted("company-name") : ""}>${nameAt ? callout("company-name-error", nameAt) : ""}<label class="field-label" for="company-handle">Company handle</label><div class="field field-group"><label class="field-prefix" for="company-handle">${escapeHtml(address)}</label><input id="company-handle" name="handle" value="${escapeAttribute(handle)}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocapitalize="none" autocomplete="off" spellcheck="false"${handleAt ? faulted("company-handle") : ' aria-describedby="company-handle-hint"'}></div>${handleAt ? callout("company-handle-error", handleAt) : `<p id="company-handle-hint" class="field-hint field-rule">Lowercase letters, digits and hyphens, 3–32 characters. Can't be changed later.</p>`}<div class="actions"><button class="btn btn-primary" type="submit">Create company</button></div></form>`,
     status: refusal?.status
   };
 });
@@ -84,7 +153,7 @@ const render = Effect.fn("Join.render")(function* (
 export const handle = Effect.fn("Join.handle")(function* (
   claims: Claims,
   membership: { readonly company: { readonly name: string } } | null,
-  returnTo: string | null
+  door: Door
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (membership) {
@@ -92,10 +161,10 @@ export const handle = Effect.fn("Join.handle")(function* (
       title: `You are in ${membership.company.name}`,
       body: `${request.method === "POST" ? '<div class="note note-warn" role="alert">Already in a company.</div>' : ""}<p>Signed in as <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>`,
       status: request.method === "POST" ? 409 : 200,
-      ...(request.method !== "POST" ? { redirect: returnTo ?? "/company" } : {})
+      ...(request.method !== "POST" ? { redirect: door.returnTo ?? "/company" } : {})
     } satisfies JoinPage;
   }
-  if (request.method !== "POST") return yield* render(claims, returnTo);
+  if (request.method !== "POST") return yield* render(claims, door);
   const fields = Object.fromEntries(yield* request.urlParamsBody);
   const entered = { name: (fields.name ?? "").trim(), handle: fields.handle ?? "" };
   const companies = yield* Companies.Companies;
@@ -116,7 +185,7 @@ export const handle = Effect.fn("Join.handle")(function* (
       );
     } else {
       if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
-        return yield* render(claims, returnTo, entered, {
+        return yield* render(claims, door, entered, {
           message: "You have an invitation. Choose a company to join below.",
           status: 409
         });
@@ -143,34 +212,42 @@ export const handle = Effect.fn("Join.handle")(function* (
     return {
       title: "Company joined",
       body: "",
-      redirect: returnTo ?? "/company"
+      redirect: door.returnTo ?? "/company"
     } satisfies JoinPage;
   }).pipe(
     Effect.catchTags({
       SchemaError: () =>
-        render(claims, returnTo, entered, {
-          message: "Enter a company name and a valid handle, or choose an invitation.",
-          status: 422
-        }),
+        render(
+          claims,
+          door,
+          entered,
+          (fields.action === "create" ? nameRefusal(entered.name) : undefined) ?? {
+            message: "Enter a company name and a valid handle, or choose an invitation.",
+            status: 422
+          }
+        ),
       InvalidHandle: () =>
-        render(claims, returnTo, entered, {
-          message: "Use 3–32 lowercase letters, digits or hyphens, with no hyphen at either end.",
-          status: 422
-        }),
+        Effect.flatMap(handleRefusal(entered.handle), (refusal) =>
+          render(claims, door, entered, refusal)
+        ),
       ReservedHandle: () =>
-        render(claims, returnTo, entered, {
-          message: "This handle is reserved. Choose another.",
-          status: 422
+        render(claims, door, entered, {
+          status: 422,
+          field: "handle",
+          title: `${entered.handle} is reserved`,
+          detail: "Patchy uses this name. Choose another."
         }),
       HandleTaken: () =>
-        render(claims, returnTo, entered, {
-          message: "This handle is taken. Choose another.",
-          status: 409
+        render(claims, door, entered, {
+          status: 409,
+          field: "handle",
+          title: `${entered.handle} is taken`,
+          detail: "Another company already has it. Choose another."
         }),
       AlreadyInCompany: () =>
-        render(claims, returnTo, entered, { message: "Already in a company.", status: 409 }),
+        render(claims, door, entered, { message: "Already in a company.", status: 409 }),
       InviteUnavailable: () =>
-        render(claims, returnTo, entered, {
+        render(claims, door, entered, {
           message: "This invitation is no longer available.",
           status: 409
         })

@@ -31,6 +31,7 @@ Three page kinds:
 
 - Buttons: `btn`, with `btn-primary`, `btn-quiet` or `btn-danger`; links that act as buttons use the same classes.
 - Fields: `field` for input, select and textarea; `field-label`, `field-hint`, `field-error`, `field-choice`, `field-checkbox` and `field-radio`. Keep labels, hint/error associations and native disabled and keyboard behavior.
+- `field field-group` holds a fixed `field-prefix` label, such as the address a handle opens, before a bare input; only the input is editable, and the group draws the border and focus ring. A `field-hint field-rule` turns into the warning, in CSS only, while its field breaks its own constraints. After a refused submit, a `note note-refused field-callout` with `role="alert"` replaces the hint under the field at fault, and the field carries `aria-invalid`, `aria-describedby` and `autofocus`. A form that names its refusals this way sets `novalidate`, so the browser never blocks a submit with its own bubble.
 - Supporting text: `supporting-text` for metadata and page-level guidance; reserve `field-hint` for a field's hint.
 - Fact lists: `facts` on a `dl` with `dt`/`dd`; item lists: `list` and `list-row`, with `list-compact` for dense rows and `list-link` for selectable linked rows. `aria-current="page"` marks the selected row.
 - Code panels: `code-panel` on `pre` preserves wrapping and caps long content at a scrollable height. Expandable list rows use the shell's `summary` spacing and pointer.
