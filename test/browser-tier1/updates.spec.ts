@@ -34,6 +34,16 @@ async function openBell(page: Page) {
   await page.locator("#updates-bell").click();
   await expect(page.locator("#updates-popover")).toBeVisible();
 }
+async function readBell(page: Page) {
+  await openBell(page);
+  await expect(page.locator(".latest-update")).toBeVisible();
+  await expect(page.locator("#updates-bell")).toHaveAttribute(
+    "aria-label",
+    "Updates — all caught up"
+  );
+  await page.locator("#updates-bell").click();
+  await caughtUp(page);
+}
 async function capture(page: Page, name: string) {
   const path = test.info().outputPath(`${name}.png`);
   await page.screenshot({ path });
@@ -193,7 +203,7 @@ test("deployment summaries retain concrete internal-work and initial-release cop
     "Open your company’s tools and choose who can use them."
   ]);
   await expect(page.locator(".update-change")).toHaveCount(0);
-  await caughtUp(page);
+  await readBell(page);
 });
 
 test("updates arrive while browsing, survive closing an unread tab, and clear when the bell opens", async ({
@@ -203,6 +213,7 @@ test("updates arrive while browsing, survive closing an unread tab, and clear wh
 }) => {
   await publish(instance, [1, 2]);
   await page.goto(instance.origin + "/updates");
+  await readBell(page);
   await page.goto(instance.origin);
   await caughtUp(page);
   await publish(instance, [1, 2, 3]);
@@ -259,7 +270,7 @@ test("returning to an older history snapshot leaves a newer deployment unread un
 }) => {
   await publish(instance, [1, 2, 3]);
   await page.goto(instance.origin + "/updates");
-  await caughtUp(page);
+  await readBell(page);
   await publish(instance, [1, 2, 3, 4]);
   // Deliver the tab-return event without depending on headless window-manager focus.
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -287,13 +298,15 @@ test("reading in another tab clears the bell and an older tab cannot move the ma
   await unread(page, 3);
   const history = await context.newPage();
   await history.goto(instance.origin + "/updates");
-  await caughtUp(history);
+  await unread(history, 3);
+  await unread(page, 3);
+  await readBell(history);
   await caughtUp(page); // The real browser storage event updates this untouched tab.
 
   await publish(instance, [1, 2, 3, 4]);
   const newer = await context.newPage();
   await newer.goto(instance.origin + "/updates");
-  await caughtUp(newer);
+  await readBell(newer);
   await expect.poll(() => marker(history)).toBe("4");
   await history.evaluate(() => window.dispatchEvent(new Event("focus")));
   await caughtUp(history);
@@ -301,7 +314,7 @@ test("reading in another tab clears the bell and an older tab cannot move the ma
   await expect(history.locator("#update-4")).toHaveCount(0);
 });
 
-test("hidden history is not read; becoming visible marks only its rendered snapshot", async ({
+test("hidden history and returning to a visible history never mark updates read", async ({
   page,
   instance
 }) => {
@@ -328,7 +341,7 @@ test("hidden history is not read; becoming visible marks only its rendered snaps
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await unread(page, 4);
-  expect(await marker(page)).toBe("3");
+  expect(await marker(page)).toBeNull();
   await expect(page.locator("#update-4")).toHaveCount(0);
 });
 
@@ -352,13 +365,14 @@ for (const failure of ["access denied", "quota exceeded"] as const) {
       }
     }, failure);
     await page.goto(instance.origin + "/updates");
-    await caughtUp(page);
+    await readBell(page);
     await publish(instance, [1, 2, 3, 4]);
     await openBell(page);
     await expect(page.locator(".latest-update h3")).toHaveText("Deployment 4");
     await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
     await page.locator(".latest-update").click();
-    await caughtUp(page);
+    await unread(page, 4);
+    await readBell(page);
     // The documented fallback lasts for this page, not across navigation.
     await page.goto(instance.origin);
     await unread(page, 4);
@@ -396,7 +410,7 @@ test("switching people refuses a stale tab's feed and keeps each person's read m
 }) => {
   await publish(instance, [1, 2, 3]);
   await page.goto(instance.origin + "/updates");
-  await caughtUp(page);
+  await readBell(page);
   expect(await marker(page)).toBe("3");
   await instance.session(context, "colleague");
   await openBell(page);
@@ -411,4 +425,34 @@ test("switching people refuses a stale tab's feed and keeps each person's read m
   await instance.session(context, "owner");
   await page.reload();
   await caughtUp(page);
+});
+
+test("reopening or reloading update history stays unread until the bell is opened", async ({
+  page,
+  context,
+  instance
+}) => {
+  await publish(instance, [1, 2, 3]);
+  await page.goto(instance.origin + "/updates");
+  await unread(page, 3);
+  expect(await marker(page)).toBeNull();
+  await page.reload();
+  await unread(page, 3);
+  expect(await marker(page)).toBeNull();
+  await page.close();
+  const returned = await context.newPage();
+  await returned.goto(instance.origin + "/updates");
+  await unread(returned, 3);
+  await returned.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("pageshow"));
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await unread(returned, 3);
+  expect(await marker(returned)).toBeNull();
+  await capture(returned, "history-reopened-still-unread");
+  await readBell(returned);
+  expect(await marker(returned)).toBe("3");
+  await returned.reload();
+  await caughtUp(returned);
 });

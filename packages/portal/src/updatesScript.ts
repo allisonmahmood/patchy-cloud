@@ -24,10 +24,6 @@ export const updatesScript = String.raw`(() => {
     memory = through;
     try { localStorage.setItem(key, String(through)); } catch { /* Keep this tab usable. */ }
   };
-  const seen = () => {
-    const page = document.querySelector("[data-updates-through]");
-    if (page) markThrough(Number(page.dataset.updatesThrough));
-  };
   function captureOpenedEntry() {
     if (!open || captured || status !== "ready" || document.visibilityState !== "visible") return;
     captured = true;
@@ -77,7 +73,6 @@ export const updatesScript = String.raw`(() => {
     finally { pending = false; captureOpenedEntry(); render(); }
   }
   function enter() {
-    seen();
     render();
     void refresh();
   }
