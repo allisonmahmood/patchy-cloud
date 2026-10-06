@@ -112,6 +112,9 @@ it("redacts URLs whatever their scheme's case or path characters", () => {
   expect(relay("https://user:p@ss@registry.example/pkg")).toBe(
     "ERR_PNPM_X GET https://registry.example/pkg failed"
   );
+  expect(relay("https://registry.example/pkg?x=\u2028token=s")).toBe(
+    "ERR_PNPM_X GET https://registry.example/pkg failed"
+  );
   for (const inner of ["'", '"', "\u00a0"])
     expect(relay(`https://registry.example/a${inner}b.tgz?token=s#f`)).toBe(
       `ERR_PNPM_X GET https://registry.example/a${inner}b.tgz failed`

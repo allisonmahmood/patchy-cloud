@@ -45,7 +45,7 @@ const redact = (text: string) =>
     .replace(
       /\b(https?:\/\/)([^ \t\n\r\f\v]+)/gi,
       (_, scheme: string, rest: string) =>
-        scheme + rest.replace(/^[^/?#]*@/, "").replace(/[?#].*$/, "")
+        scheme + rest.replace(/^[^/?#]*@/, "").replace(/[?#].*$/s, "")
     );
 
 /**
