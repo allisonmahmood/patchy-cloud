@@ -29,7 +29,7 @@ Three page kinds:
 
 `packages/core/src/html.ts` owns these classes and their tokens:
 
-- Buttons: `btn`, with `btn-primary`, `btn-quiet` or `btn-danger`; links that act as buttons use the same classes.
+- Buttons: `btn`, with `btn-primary`, `btn-quiet` or `btn-danger`; links that act as buttons use the same classes. A framed button lifts on hover with a hard shadow; `btn-quiet` has no frame, so it hovers with a blue tint instead.
 - Fields: `field` for input, select and textarea; `field-label`, `field-hint`, `field-error`, `field-choice`, `field-checkbox` and `field-radio`. Keep labels, hint/error associations and native disabled and keyboard behavior.
 - `field field-group` holds a fixed `field-prefix` label, such as the address a handle opens, before a bare input; only the input is editable, and the group draws the border and focus ring. A `field-hint field-rule` turns into the warning, in CSS only, while its field breaks its own constraints. After a refused submit, a `note note-refused field-callout` with `role="alert"` replaces the hint under the field at fault, and the field carries `aria-invalid`, `aria-describedby` and `autofocus`. A form that names its refusals this way sets `novalidate`, so the browser never blocks a submit with its own bubble.
 - Supporting text: `supporting-text` for metadata and page-level guidance; reserve `field-hint` for a field's hint.
@@ -42,7 +42,7 @@ Three page kinds:
 - Pills: `pill`, `pill-progress`, `pill-done` and `pill-failed` (failed and refused outcomes).
 - Confirmation forms: `confirmation-form`, `confirmation-consequence`, `confirmation-list`, `confirmation-acknowledgement` and `confirmation-actions`; compose the shared fields and buttons for acknowledgement, submit and cancel. Ordinary action groups use `actions`.
 - Shell page state: `shell-bottom`, `shell-scrim`, `glyph-sm`, `supporting-text`, `note-float`, `note-info`, `note-collapse`, `status-chip`, `status-chip-detail`, `status-chip-warn`, `status-chip-info`, `note-inline` and `note-inline-text`. The served shell imports this subset from core, not the full app shell stylesheet.
-- What's new: `whats-new-bell` with its `whats-new-dot`, the native-popover `whats-new-panel`, `whats-new-change` rows (a kind pill from `whatsNewKind`, then the text), `whats-new-unseen` for a change the viewer has not seen, `whats-new-day-head` over each day's rows and the `whats-new-seen` rule where seen changes begin. The panel and `/whats-new` compose these with the shared list, heading and button classes.
+- What's new: `whats-new-bell` with its `whats-new-dot`, a quiet button that takes the nav's current-section treatment while its panel is open; the native-popover `whats-new-panel`, `whats-new-change` rows (a kind pill from `whatsNewKind`, then the text), `whats-new-unseen` for a change the viewer has not seen, `whats-new-day-head` over each day's rows and the `whats-new-seen` rule where seen changes begin. The panel and `/whats-new` compose these with the shared list, heading and button classes.
 - Shell downloads: `shell-corner` and `shell-downloads`, composed with `note-float`, `note-info`, `glyph-sm`, `status-chip`, `code` and the shared buttons. Core owns this subset too, including the base `code` style.
 
 ## Served patches
