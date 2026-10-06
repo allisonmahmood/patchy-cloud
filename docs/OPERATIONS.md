@@ -906,22 +906,16 @@ during teardown. Keep the private state until teardown succeeds.
 
 `pnpm release-notes` generates content for the shared update history. It does not
 publish notes, assign a sequence/date, deploy the app or modify the live history.
-The reusable `.github/actions/deployment-notes` action runs the same generator;
-**Preview deployment notes** is a manual workflow that uploads only `draft.json`.
-It needs a repository secret `RELEASE_NOTES_API_KEY` containing an OpenAI API key.
-`RELEASE_NOTES_MODEL` is an optional repository variable (default `gpt-4.1-mini`).
-The draft action gets only read access to source and pull requests, with no AWS
-credentials. It sends the selected source evidence to the OpenAI Responses API
-with storage disabled and no tools.
+It needs `RELEASE_NOTES_API_KEY` containing an OpenAI API key.
+`RELEASE_NOTES_MODEL` is an optional environment variable (default `gpt-4.1-mini`).
 
 Supply full commit SHAs for the previous **successful deployment** and the actual
 target `COMMIT`, including an explicitly selected rollback revision. Do not infer
 the range from main merges, the workflow's `head_sha`, or the fleet's
 `PREVIOUS_REVISION`: those can mean different things. Omit `--from` only for the
 first deployment. The local importer below derives this range from actual Deploy
-Action confirmations. Deploying the prototype or modifying the production
-workflow remains outside scope. Work is tracked in
-[#548](https://github.com/allisonmahmood/patchy-cloud/issues/548).
+Action confirmations. Publishing production history remains future work. Work
+is tracked in [#548](https://github.com/allisonmahmood/patchy-cloud/issues/548).
 
 Inspect evidence locally without a model key (requires an authenticated `gh`):
 
@@ -973,7 +967,7 @@ Actions APIs. Run `pnpm dev` in the preview worktree, authenticate `gh` with Act
 read access, then run:
 
 ```sh
-pnpm prototype:updates:sync --worktree /absolute/path/to/preview --watch
+pnpm updates:sync --worktree /absolute/path/to/preview --watch
 ```
 
 Omit `--watch` for one import. The watcher polls every 30 seconds and stops with
