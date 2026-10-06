@@ -47,6 +47,21 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 5,
+    date: "2026-10-06",
+    through: "5b1a62de21d43e3a06cde0571bb601ee4260f422",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "The bell and text buttons no longer leave a stray shadow",
+        detail:
+          "Pointing at or tapping the bell, Sign out, Cancel, or Hide and Not now on a patch’s notices used to draw a black shadow with no box around it. They now turn light blue instead, and the bell turns yellow while its panel is open.",
+        prs: [559]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 4,
     date: "2026-10-06",
     through: "86974632738a3fcc19935ee4b28e7b87fc494a9a",
