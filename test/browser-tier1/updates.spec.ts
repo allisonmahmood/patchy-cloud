@@ -24,39 +24,38 @@ async function writeHistory(instance: Instance, entries: ReadonlyArray<Entry>) {
   await writeFile(file + ".tmp", JSON.stringify({ version: 1, entries }));
   await rename(file + ".tmp", file);
 }
-const marker = (page: Page) =>
-  page.evaluate(() =>
-    localStorage.getItem(
-      "patchy:updates:read-through:" + document.getElementById("updates-bell")!.dataset.viewerId
-    )
+const marker = (page: Page, sequence: number) =>
+  page.evaluate(
+    (sequence) =>
+      localStorage.getItem(
+        "patchy:updates:read:" +
+          document.getElementById("updates-bell")!.dataset.viewerId +
+          ":" +
+          sequence
+      ),
+    sequence
   );
 async function openBell(page: Page) {
   await page.locator("#updates-bell").click();
   await expect(page.locator("#updates-popover")).toBeVisible();
 }
-async function readBell(page: Page) {
-  await openBell(page);
-  await expect(page.locator(".latest-update")).toBeVisible();
-  await expect(page.locator("#updates-bell")).toHaveAttribute(
-    "aria-label",
-    "Updates — all caught up"
-  );
-  await page.locator("#updates-bell").click();
-  await caughtUp(page);
-}
 async function capture(page: Page, name: string) {
-  const path = test.info().outputPath(`${name}.png`);
+  const path = test.info().outputPath(name + ".png");
   await page.screenshot({ path });
   await test.info().attach(name, { path, contentType: "image/png" });
 }
-async function unread(page: Page, sequence: number) {
+async function unread(page: Page, sequences: number[]) {
   await expect(page.locator("#updates-bell")).toHaveAttribute(
     "aria-label",
-    "Updates — new deployment"
+    "Updates — " + sequences.length + " unread update" + (sequences.length === 1 ? "" : "s")
   );
   await expect(page.locator("#updates-dot")).not.toHaveAttribute("hidden");
-  await expect(page.locator("#updates-popover-content .latest-update")).toHaveCount(1);
-  await expect(page.locator("#updates-popover-content h3")).toHaveText(`Deployment ${sequence}`);
+  await expect(page.locator("#updates-popover-content .latest-update")).toHaveCount(
+    sequences.length
+  );
+  await expect(page.locator("#updates-popover-content h3")).toHaveText(
+    sequences.map((sequence) => "Deployment " + sequence)
+  );
 }
 async function caughtUp(page: Page) {
   await expect(page.locator("#updates-bell")).toHaveAttribute(
@@ -66,6 +65,10 @@ async function caughtUp(page: Page) {
   await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
   await expect(page.locator("#updates-popover-content h3")).toHaveText("All caught up");
   await expect(page.locator("#updates-popover-content .latest-update")).toHaveCount(0);
+}
+async function readUpdate(page: Page, sequence: number) {
+  await page.locator("#update-" + sequence + " summary").click();
+  await expect(page.locator("#update-" + sequence + " .update-read-state")).toHaveText("Read");
 }
 test.afterEach(async ({ context }) => {
   for (const page of context.pages()) expect(await page.pageErrors()).toEqual([]);
@@ -203,136 +206,191 @@ test("deployment summaries retain concrete internal-work and initial-release cop
     "Open your company’s tools and choose who can use them."
   ]);
   await expect(page.locator(".update-change")).toHaveCount(0);
-  await readBell(page);
+  await expect(page.locator("#updates-bell")).toHaveAttribute(
+    "aria-label",
+    "Updates — 4 unread updates"
+  );
+  await expect(page.locator(".update-read-state")).toHaveText(Array(4).fill("Unread"));
 });
 
-test("updates arrive while browsing, survive closing an unread tab, and clear when the bell opens", async ({
+test("the bell lists every unread update; reading one changes only that row and survives reopening", async ({
   page,
   context,
   instance
 }) => {
-  await publish(instance, [1, 2]);
-  await page.goto(instance.origin + "/updates");
-  await readBell(page);
-  await page.goto(instance.origin);
-  await caughtUp(page);
   await publish(instance, [1, 2, 3]);
-  // No focus, navigation or click: the visible page discovers the simulated deployment.
-  await unread(page, 3);
-  expect(await marker(page)).toBe("2");
+  await page.goto(instance.origin);
+  await unread(page, [3, 2, 1]);
+  await openBell(page);
+  await unread(page, [3, 2, 1]);
+  expect(await marker(page, 3)).toBeNull();
+  await page.locator('[data-update-link="2"]').click();
+  await expect(page.locator("#update-2")).toHaveAttribute("open");
+  await expect(page.locator("#update-2 .update-read-state")).toHaveText("Read");
+  await expect(page.locator("#update-3 .update-read-state")).toHaveText("Unread");
+  await expect(page.locator("#update-1 .update-read-state")).toHaveText("Unread");
+  await unread(page, [3, 1]);
+  expect(await marker(page, 2)).toBe("1");
+  expect(await marker(page, 1)).toBeNull();
   await page.close();
   const returned = await context.newPage();
-  await returned.goto(instance.origin);
-  await unread(returned, 3);
-  expect(await marker(returned)).toBe("2");
-  await openBell(returned);
-  await expect.poll(() => marker(returned)).toBe("3");
-  await expect(returned.locator("#updates-dot")).toHaveAttribute("hidden");
-  await expect(returned.locator(".latest-update h3")).toHaveText("Deployment 3");
-  await capture(returned, "read-on-opening-bell");
-  await returned.locator("#updates-bell").click();
-  await caughtUp(returned);
-  await openBell(returned);
-  await caughtUp(returned);
-  await returned.getByRole("link", { name: "View all updates" }).click();
-  await expect(returned.locator(".update-title")).toHaveText([
-    "Deployment 3",
-    "Deployment 2",
-    "Deployment 1"
-  ]);
-  await returned.close();
-  const reopened = await context.newPage();
-  await reopened.goto(instance.origin);
-  await caughtUp(reopened);
+  await returned.goto(instance.origin + "/updates");
+  await unread(returned, [3, 1]);
+  await returned.reload();
+  await unread(returned, [3, 1]);
+  await expect(returned.locator("#update-2 .update-read-state")).toHaveText("Read");
+  await readUpdate(returned, 1);
+  await unread(returned, [3]);
+  await capture(returned, "individual-read-state");
 });
 
-test("a deployment arriving while the bell is open stays unread until the bell is reopened", async ({
-  page,
-  instance
-}) => {
-  await publish(instance, [1]);
-  await page.goto(instance.origin);
-  await openBell(page);
-  await expect.poll(() => marker(page)).toBe("1");
-  await publish(instance, [1, 2]);
-  await expect(page.locator("#updates-dot")).not.toHaveAttribute("hidden", { timeout: 10_000 });
-  expect(await marker(page)).toBe("1");
-  await expect(page.locator(".latest-update h3")).toHaveText("Deployment 1");
-  await page.locator("#updates-bell").click();
-  await openBell(page);
-  await expect.poll(() => marker(page)).toBe("2");
-  await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
-});
-
-test("returning to an older history snapshot leaves a newer deployment unread until its link loads it", async ({
+test("mark unread restores an individual update and stays unread through polls while its details remain open", async ({
   page,
   instance
 }) => {
   await publish(instance, [1, 2, 3]);
   await page.goto(instance.origin + "/updates");
-  await readBell(page);
+  await readUpdate(page, 2);
+  await page.locator("#update-2 .update-read-toggle").click();
+  await expect(page.locator("#update-2 .update-read-state")).toHaveText("Unread");
+  await unread(page, [3, 2, 1]);
   await publish(instance, [1, 2, 3, 4]);
-  // Deliver the tab-return event without depending on headless window-manager focus.
-  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await unread(page, 4);
-  expect(await marker(page)).toBe("3");
-  await expect(page.locator("#update-4")).toHaveCount(0);
-  await expect(page.locator("[data-updates-through]")).toHaveAttribute("data-updates-through", "3");
-  await openBell(page);
-  await capture(page, "new-deployment-on-old-history");
-  await page.locator(".latest-update").click();
-  await expect(page).toHaveURL(instance.origin + "/updates?release=4#update-4");
-  await expect(page.locator("#update-4")).toHaveAttribute("open");
-  await expect(page.getByText("Details 4", { exact: true })).toBeVisible();
-  await caughtUp(page);
-  expect(await marker(page)).toBe("4");
+  await unread(page, [4, 3, 2, 1]);
+  expect(await marker(page, 2)).toBe("0");
+  await page.locator("#update-2 .update-read-toggle").click();
+  await unread(page, [4, 3, 1]);
 });
 
-test("reading in another tab clears the bell and an older tab cannot move the marker backwards", async ({
+test("mark all from the bell clears every page, and the history button handles future updates", async ({
+  page,
+  instance
+}) => {
+  const sequences = Array.from({ length: 24 }, (_, index) => index + 1);
+  await publish(instance, sequences);
+  await page.goto(instance.origin + "/updates?page=2");
+  await unread(page, [...sequences].reverse());
+  await openBell(page);
+  await capture(page, "all-unread-in-bell");
+  await page.locator("#updates-popover .updates-mark-all").click();
+  await caughtUp(page);
+  await expect(page.locator(".update-read-state")).toHaveText(Array(10).fill("Read"));
+  await expect(page.locator("#updates-popover .updates-mark-all")).toBeDisabled();
+  await page.locator("#updates-bell").click();
+  await page.reload();
+  await caughtUp(page);
+  await publish(instance, [...sequences, 25, 26]);
+  await unread(page, [26, 25]);
+  await page.locator(".updates-history-actions .updates-mark-all").click();
+  await caughtUp(page);
+  expect(await marker(page, 26)).toBe("1");
+});
+
+test("mark all leaves updates arriving after the click unread", async ({ page, instance }) => {
+  await publish(instance, [1, 2]);
+  await page.goto(instance.origin);
+  await unread(page, [2, 1]);
+  await openBell(page);
+  let requested!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    requested = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/updates/feed", async (route) => {
+    requested();
+    await gate;
+    await route.continue();
+  });
+  await page.locator("#updates-popover .updates-mark-all").click();
+  await started;
+  await publish(instance, [1, 2, 3]);
+  release();
+  await unread(page, [3]);
+  expect(await marker(page, 1)).toBe("1");
+  expect(await marker(page, 2)).toBe("1");
+  expect(await marker(page, 3)).toBeNull();
+});
+
+test("tabs synchronize independent reads and unread reversals without overwriting another update", async ({
   page,
   context,
   instance
 }) => {
   await publish(instance, [1, 2, 3]);
-  await page.goto(instance.origin);
-  await unread(page, 3);
-  const history = await context.newPage();
-  await history.goto(instance.origin + "/updates");
-  await unread(history, 3);
-  await unread(page, 3);
-  await readBell(history);
-  await caughtUp(page); // The real browser storage event updates this untouched tab.
-
-  await publish(instance, [1, 2, 3, 4]);
-  const newer = await context.newPage();
-  await newer.goto(instance.origin + "/updates");
-  await readBell(newer);
-  await expect.poll(() => marker(history)).toBe("4");
-  await history.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await caughtUp(history);
-  expect(await marker(history)).toBe("4");
-  await expect(history.locator("#update-4")).toHaveCount(0);
+  await page.goto(instance.origin + "/updates");
+  const other = await context.newPage();
+  await other.goto(instance.origin + "/updates");
+  await readUpdate(page, 1);
+  await readUpdate(other, 2);
+  await unread(page, [3]);
+  await unread(other, [3]);
+  await expect(other.locator("#update-1 .update-read-state")).toHaveText("Read");
+  await page.locator("#update-1 .update-read-toggle").click();
+  await unread(other, [3, 1]);
+  await expect(other.locator("#update-1 .update-read-state")).toHaveText("Unread");
 });
 
-test("hidden history and returning to a visible history never mark updates read", async ({
+test("migrates the old read-through baseline and allows one older update to become unread", async ({
+  page,
+  instance
+}) => {
+  await publish(instance, [1, 2, 3, 4]);
+  await page.goto(instance.origin + "/updates");
+  await page.evaluate(() => {
+    const viewer = document.getElementById("updates-bell")!.dataset.viewerId;
+    localStorage.setItem("patchy:updates:read-through:" + viewer, "3");
+  });
+  await page.reload();
+  await unread(page, [4]);
+  await page.locator("#update-2 summary").click();
+  await page.locator("#update-2 .update-read-toggle").click();
+  await unread(page, [4, 2]);
+  await page.reload();
+  await unread(page, [4, 2]);
+});
+
+for (const failure of ["access denied", "quota exceeded"] as const) {
+  test(`storage ${failure}: individual read state works in memory`, async ({ page, instance }) => {
+    await publish(instance, [1, 2, 3]);
+    await page.addInitScript((failure) => {
+      if (failure === "access denied")
+        Object.defineProperty(window, "localStorage", {
+          get() {
+            throw new DOMException("Blocked", "SecurityError");
+          }
+        });
+      else
+        Storage.prototype.setItem = () => {
+          throw new DOMException("Full", "QuotaExceededError");
+        };
+    }, failure);
+    await page.goto(instance.origin + "/updates");
+    await readUpdate(page, 2);
+    await unread(page, [3, 1]);
+    await page.locator("#update-2 .update-read-toggle").click();
+    await unread(page, [3, 2, 1]);
+    await page.locator(".updates-history-actions .updates-mark-all").click();
+    await caughtUp(page);
+    await publish(instance, [1, 2, 3, 4]);
+    await unread(page, [4]);
+    await page.reload();
+    await unread(page, [4, 3, 2, 1]);
+  });
+}
+
+test("hidden details stay unread until visible; history and bell opening alone do not read entries", async ({
   page,
   instance
 }) => {
   await publish(instance, [1, 2, 3]);
-  // Headless Chromium does not consistently hide background tabs. Substitute only
-  // browser visibility; the served script and its event listeners stay unchanged.
-  await page.addInitScript(() => {
-    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
-  });
-  const latestRequests: string[] = [];
-  page.on("request", (request) => {
-    if (request.url().endsWith("/updates/latest")) latestRequests.push(request.url());
-  });
-  await page.goto(instance.origin + "/updates");
-  expect(await marker(page)).toBeNull();
+  await page.addInitScript(() =>
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" })
+  );
+  await page.goto(instance.origin + "/updates?release=2#update-2");
+  expect(await marker(page, 2)).toBeNull();
   await expect(page.locator("#updates-bell")).toHaveAttribute("aria-label", "Updates — loading");
-  expect(latestRequests).toEqual([]);
-  await publish(instance, [1, 2, 3, 4]);
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
@@ -340,173 +398,98 @@ test("hidden history and returning to a visible history never mark updates read"
     });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  await unread(page, 4);
-  expect(await marker(page)).toBeNull();
-  await expect(page.locator("#update-4")).toHaveCount(0);
+  await unread(page, [3, 1]);
+  expect(await marker(page, 2)).toBe("1");
+  await openBell(page);
+  await unread(page, [3, 1]);
 });
 
-for (const failure of ["access denied", "quota exceeded"] as const) {
-  test(`storage ${failure}: reading works within the page and new deployments remain unread`, async ({
-    page,
-    instance
-  }) => {
-    await publish(instance, [1, 2, 3]);
-    await page.addInitScript((failure) => {
-      if (failure === "access denied") {
-        Object.defineProperty(window, "localStorage", {
-          get() {
-            throw new DOMException("Storage blocked", "SecurityError");
-          }
-        });
-      } else {
-        Storage.prototype.setItem = () => {
-          throw new DOMException("Storage full", "QuotaExceededError");
-        };
-      }
-    }, failure);
-    await page.goto(instance.origin + "/updates");
-    await readBell(page);
-    await publish(instance, [1, 2, 3, 4]);
-    await openBell(page);
-    await expect(page.locator(".latest-update h3")).toHaveText("Deployment 4");
-    await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
-    await page.locator(".latest-update").click();
-    await unread(page, 4);
-    await readBell(page);
-    // The documented fallback lasts for this page, not across navigation.
-    await page.goto(instance.origin);
-    await unread(page, 4);
-  });
-}
-
-test("missing history is empty, corrupt history is unavailable, and recovery does not mark notes read", async ({
+test("unavailable feed cannot mark updates read and recovers without clearing them", async ({
   page,
   instance
 }) => {
-  await page.goto(instance.origin);
-  await caughtUp(page);
   await publish(instance, [1, 2, 3]);
-  await writeFile(join(instance.storageDirectory, objectKey), "broken history");
-  expect((await page.goto(instance.origin + "/updates"))?.status()).toBe(503);
+  await page.route("**/updates/feed", (route) =>
+    route.fulfill({ status: 503, body: "unavailable" })
+  );
+  await page.goto(instance.origin + "/updates");
   await expect(page.locator("#updates-bell")).toHaveAttribute(
     "aria-label",
     "Updates — unavailable"
   );
-  await expect(page.locator("[data-updates-through]")).toHaveCount(0);
-  expect(await marker(page)).toBeNull();
+  await expect(page.locator(".updates-history-actions .updates-mark-all")).toBeDisabled();
   await openBell(page);
-  await expect(page.locator("#updates-popover-content h3")).toHaveText("Updates unavailable");
-  await page.locator("#updates-bell").click();
-  await publish(instance, [1, 2, 3]);
-  await openBell(page);
-  await expect.poll(() => marker(page)).toBe("3");
-  await expect(page.locator("#updates-dot")).toHaveAttribute("hidden");
+  expect(await marker(page, 3)).toBeNull();
+  await page.unroute("**/updates/feed");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await unread(page, [3, 2, 1]);
 });
 
-test("switching people refuses a stale tab's feed and keeps each person's read marker separate", async ({
+test("account changes reject a stale feed and keep personal read state separate", async ({
   page,
   context,
   instance
 }) => {
   await publish(instance, [1, 2, 3]);
   await page.goto(instance.origin + "/updates");
-  await readBell(page);
-  expect(await marker(page)).toBe("3");
+  await readUpdate(page, 2);
   await instance.session(context, "colleague");
   await openBell(page);
   await expect(page.locator("#updates-bell")).toHaveAttribute(
     "aria-label",
     "Updates — unavailable"
   );
-  await expect(page.locator("#updates-popover-content .latest-update")).toHaveCount(0);
-  await page.goto(instance.origin);
-  await unread(page, 3);
-  expect(await marker(page)).toBeNull();
+  await expect(page.locator("#updates-popover .latest-update")).toHaveCount(0);
+  await page.goto(instance.origin + "/updates");
+  await unread(page, [3, 2, 1]);
+  await readUpdate(page, 1);
   await instance.session(context, "owner");
   await page.reload();
-  await caughtUp(page);
+  await unread(page, [3, 1]);
 });
 
-test("reopening or reloading update history stays unread until the bell is opened", async ({
-  page,
-  context,
-  instance
-}) => {
-  await publish(instance, [1, 2, 3]);
-  await page.goto(instance.origin + "/updates");
-  await unread(page, 3);
-  expect(await marker(page)).toBeNull();
-  await page.reload();
-  await unread(page, 3);
-  expect(await marker(page)).toBeNull();
-  await page.close();
-  const returned = await context.newPage();
-  await returned.goto(instance.origin + "/updates");
-  await unread(returned, 3);
-  await returned.evaluate(() => {
-    window.dispatchEvent(new Event("focus"));
-    window.dispatchEvent(new Event("pageshow"));
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  await unread(returned, 3);
-  expect(await marker(returned)).toBeNull();
-  await capture(returned, "history-reopened-still-unread");
-  await readBell(returned);
-  expect(await marker(returned)).toBe("3");
-  await returned.reload();
-  await caughtUp(returned);
-});
-
-test("history has ten rows per page with numbered navigation, expandable details and unchanged unread state", async ({
+test("24 updates paginate 10/10/4 while all unread entries are in the bell, including mobile", async ({
   page,
   instance
 }) => {
-  await publish(
-    instance,
-    Array.from({ length: 23 }, (_, index) => index + 1)
-  );
+  const sequences = Array.from({ length: 24 }, (_, index) => index + 1);
+  await publish(instance, sequences);
   await page.goto(instance.origin + "/updates");
+  await unread(page, [...sequences].reverse());
   await expect(page.locator(".update-entry")).toHaveCount(10);
-  await expect(page.locator(".update-title").first()).toHaveText("Deployment 23");
-  await expect(page.locator(".update-title").last()).toHaveText("Deployment 14");
   const navigation = page.getByRole("navigation", { name: "Update history pages" });
-  await expect(navigation.locator('[aria-current="page"]')).toHaveText("1");
-  await expect(navigation.getByRole("link", { name: "Previous" })).toHaveCount(0);
   await navigation.getByRole("link", { name: "Page 2", exact: true }).click();
-  await expect(page).toHaveURL(instance.origin + "/updates?page=2");
   await expect(page.locator(".update-entry")).toHaveCount(10);
-  await expect(page.locator(".update-title").first()).toHaveText("Deployment 13");
-  await expect(page.locator(".update-title").last()).toHaveText("Deployment 4");
-  await expect(navigation.locator('[aria-current="page"]')).toHaveText("2");
-  await expect(page.locator(".update-date .pill")).toHaveCount(0);
-  await page.locator("#update-13 summary").click();
-  await expect(page.getByText("Details 13", { exact: true })).toBeVisible();
-  await unread(page, 23);
-  expect(await marker(page)).toBeNull();
-  await navigation.scrollIntoViewIfNeeded();
-  await capture(page, "history-page-two");
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(navigation.getByRole("link", { name: "Next" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await navigation.scrollIntoViewIfNeeded();
-  await capture(page, "history-pagination-mobile");
+  await expect(page.locator(".update-title").first()).toHaveText("Deployment 14");
+  await readUpdate(page, 12);
+  await unread(
+    page,
+    [...sequences].reverse().filter((n) => n !== 12)
+  );
   await navigation.getByRole("link", { name: "Next" }).click();
-  await expect(page.locator(".update-entry")).toHaveCount(3);
+  await expect(page.locator(".update-entry")).toHaveCount(4);
   await expect(page.locator(".update-title")).toHaveText([
+    "Deployment 4",
     "Deployment 3",
     "Deployment 2",
     "Deployment 1"
   ]);
-  await expect(navigation.getByRole("link", { name: "Next" })).toHaveCount(0);
-  await navigation.getByRole("link", { name: "Previous" }).click();
-  await expect(page.locator(".update-entry")).toHaveCount(10);
-  await page.goto(instance.origin + "/updates?release=13#update-13");
-  await expect(navigation.locator('[aria-current="page"]')).toHaveText("2");
-  await expect(page.locator("#update-13")).toHaveAttribute("open");
-  expect(await marker(page)).toBeNull();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
   await openBell(page);
-  await page.locator(".latest-update").click();
-  await expect(page.locator("#update-23")).toHaveAttribute("open");
-  await expect(navigation.locator('[aria-current="page"]')).toHaveText("1");
-  await caughtUp(page);
+  await expect(page.locator("#updates-popover .latest-update")).toHaveCount(23);
+  const overflow = await page
+    .locator("#updates-popover-content")
+    .evaluate((el) => el.scrollHeight > el.clientHeight);
+  expect(overflow).toBe(true);
+  await expect(page.getByRole("link", { name: "View all updates" })).toBeVisible();
+  await page.locator('[data-update-link="1"]').scrollIntoViewIfNeeded();
+  await capture(page, "all-unread-mobile");
+  await page.locator('[data-update-link="1"]').click();
+  await expect(page.locator("#update-1")).toHaveAttribute("open");
+  await expect(page.locator("#update-1 .update-read-state")).toHaveText("Read");
+  await expect(navigation.locator('[aria-current="page"]')).toHaveText("3");
+  await page.reload();
+  await expect(page.locator("#update-1 .update-read-state")).toHaveText("Read");
+  expect(await marker(page, 12)).toBe("1");
 });

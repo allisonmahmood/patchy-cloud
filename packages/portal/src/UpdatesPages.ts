@@ -49,6 +49,29 @@ const latest = Effect.gen(function* () {
   );
 });
 
+/** Only display summaries cross the browser boundary; deployment provenance stays internal. */
+const feed = Effect.gen(function* () {
+  const viewer = yield* RequireSession.Viewer;
+  const result = yield* Effect.result(updates.read);
+  return HttpServerResponse.jsonUnsafe(
+    result._tag === "Failure"
+      ? { error: "Updates unavailable" }
+      : {
+          viewerId: viewer.user.id,
+          entries: result.success.map(({ sequence, publishedAt, title, summary }) => ({
+            sequence,
+            publishedAt,
+            title,
+            summary
+          }))
+        },
+    {
+      status: result._tag === "Failure" ? 503 : 200,
+      headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" }
+    }
+  );
+});
+
 export const layer: Layer.Layer<
   never,
   never,
@@ -65,6 +88,7 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     yield* router.add("GET", "/updates", errors(RequireSession.withViewer(page)));
     yield* router.add("GET", "/updates/latest", errors(RequireSession.withViewer(latest)));
+    yield* router.add("GET", "/updates/feed", errors(RequireSession.withViewer(feed)));
     yield* router.add(
       "GET",
       "/updates/client.js",

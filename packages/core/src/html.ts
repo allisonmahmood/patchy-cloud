@@ -287,7 +287,7 @@ function appBody(app: AppShell, body: string): string {
       ? ""
       : `<button type="button" class="btn btn-quiet updates-bell" id="updates-bell" data-viewer-id="${escapeAttribute(app.viewer.user.id)}" popovertarget="updates-popover" aria-label="Updates">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z" stroke-linejoin="round"/><path d="M10 21h4" stroke-linecap="round"/></svg><span class="updates-dot" id="updates-dot" hidden></span>
-    </button><aside id="updates-popover" popover aria-label="Latest Patchy update"><div class="updates-popover-top"><h2 class="section-heading">What’s new</h2></div><div id="updates-popover-content" aria-live="polite"><p class="updates-caught-up">Open the update history to see what’s new.</p></div><div class="updates-popover-footer"><a class="btn btn-primary" href="/updates">View all updates <span aria-hidden="true">→</span></a></div></aside>`;
+    </button><aside id="updates-popover" popover aria-label="Unread Patchy updates"><div class="updates-popover-top"><h2 class="section-heading">What’s new</h2><span id="updates-unread-count" class="supporting-text"></span></div><div class="updates-popover-actions"><button type="button" class="btn btn-quiet updates-mark-all" disabled>Mark all as read</button></div><div id="updates-popover-content" aria-live="polite"><p class="updates-caught-up">Open the update history to see what’s new.</p></div><div class="updates-popover-footer"><a class="btn btn-primary" href="/updates">View all updates <span aria-hidden="true">→</span></a></div></aside>`;
   return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${updates}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
 }
 
@@ -739,6 +739,7 @@ export function htmlPage(options: {
   margin-inline: auto;
   padding: 0 4px 15px;
 }
+.updates-history-actions { margin-bottom: 20px; }
 .updates-pagination {
   justify-content: center;
   flex-wrap: wrap;
@@ -831,7 +832,13 @@ export function htmlPage(options: {
   font-size: 0.8rem;
 }
 
-#updates-popover { max-height: calc(100dvh - 24px); overflow: auto; }
+#updates-popover { max-height: calc(100dvh - 24px); overflow: hidden; }
+#updates-popover:popover-open { display: flex; flex-direction: column; }
+.updates-popover-top, .updates-popover-actions, .updates-popover-footer { flex-shrink: 0; }
+.updates-popover-actions { padding: 0 20px 12px; }
+#updates-popover-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.latest-update + .latest-update { border-top: 1px solid var(--line); }
+.update-read-state[hidden], .update-read-toggle[hidden] { display: none; }
 @media (max-width: 760px) { .update-change { grid-template-columns: minmax(0, 1fr); gap: 8px; } .update-published { margin-left: 0; } .update-content { padding-right: 0; } }
 
     .app-who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: .88rem; font-weight: 650; overflow-wrap: anywhere; }
