@@ -138,7 +138,10 @@ async function atomicJson(file, value) {
 
 /** Preserve event sequences and existing notes. Note failures never invent maintenance claims. */
 export async function reconcile(events, previous, createNotes, refreshNotes = false) {
-  let sequence = Math.max(0, ...previous.entries.map((entry) => entry.sequence));
+  const lastSequence = previous.lastSequence ?? 0;
+  if (!Number.isSafeInteger(lastSequence) || lastSequence < 0)
+    throw new Error("Invalid update sequence watermark.");
+  let sequence = Math.max(lastSequence, ...previous.entries.map((entry) => entry.sequence));
   const entries = [];
   for (const event of events) {
     const old = previous.entries.find((entry) => entry.deployment?.eventId === key(event));
@@ -182,7 +185,12 @@ export async function reconcile(events, previous, createNotes, refreshNotes = fa
       deployment: { ...event, eventId: key(event), notesSource }
     });
   }
-  return { version: 1, source: { kind: source, repository, workflow: workflowPath }, entries };
+  return {
+    version: 1,
+    source: { kind: source, repository, workflow: workflowPath },
+    lastSequence: sequence,
+    entries
+  };
 }
 
 function gh(args) {

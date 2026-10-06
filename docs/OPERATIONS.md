@@ -992,7 +992,9 @@ attempts and jobs are paginated, and an incomplete result fails explicitly.
 Consecutive successful retries of the same run/revision collapse to one entry.
 Replaying an old run after another deployment creates a new rollback event.
 Different runs and secret rotations remain separate deployment events. Entries
-retain stable increasing sequences across imports; a newly discovered older event
+retain stable increasing sequences across imports; the document retains the
+highest allocated sequence even after local simulation entries are removed, so a
+future deployment cannot reuse an already-read sequence. A newly discovered older event
 that would reorder existing read markers fails explicitly. Main updates, PRs,
 CI and Server image runs do not produce entries. Source diffs only describe the
 range between actual confirmed deployments; the importer does not query PRs.

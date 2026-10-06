@@ -758,6 +758,10 @@ export function htmlPage(options: {
   margin-inline: auto;
   padding: 0 4px 15px;
 }
+.updates-pagination {
+  justify-content: center;
+  flex-wrap: wrap;
+}
 .updates-list {
   border-top: 2px solid var(--ink);
 }

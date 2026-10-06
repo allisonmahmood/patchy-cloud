@@ -4,6 +4,7 @@ import type { Companies, Users } from "@patchy/companies";
 import type { ContentStore } from "@patchy/content-store";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { errors } from "./PortalPages.js";
@@ -13,6 +14,8 @@ import { updatesScript } from "./updatesScript.js";
 const page = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const query = new URL(request.url, session.publicBaseUrl).searchParams;
   const result = yield* Effect.result(updates.read);
   return pageResponse(
     {
@@ -23,7 +26,10 @@ const page = Effect.gen(function* () {
       body:
         result._tag === "Failure"
           ? '<p class="note note-warn" role="alert">Updates are unavailable. Please try again.</p>'
-          : updates.render(result.success)
+          : updates.render(result.success, {
+              page: query.get("page"),
+              release: query.get("release")
+            })
     },
     session
   );

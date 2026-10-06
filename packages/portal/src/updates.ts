@@ -69,15 +69,60 @@ const date = (value: string) =>
     year: "numeric"
   });
 
-export const render = (entries: ReadonlyArray<Entry>) => `
+/** Entries arrive newest first. A bell link still locates its update after newer pages arrive. */
+export const paginate = (
+  entries: ReadonlyArray<Entry>,
+  query: { page?: string | null; release?: string | null } = {}
+) => {
+  const size = 10;
+  const pages = Math.max(1, Math.ceil(entries.length / size));
+  const requested = Number(query.page);
+  const release = Number(query.release);
+  const index =
+    Number.isSafeInteger(release) && release > 0
+      ? entries.findIndex((entry) => entry.sequence === release)
+      : -1;
+  const page =
+    index >= 0
+      ? Math.floor(index / size) + 1
+      : Number.isSafeInteger(requested) && requested > 0
+        ? Math.min(requested, pages)
+        : 1;
+  const start = (page - 1) * size;
+  return { page, pages, start, entries: entries.slice(start, start + size) };
+};
+
+const navigation = (page: number, pages: number) => {
+  if (pages === 1) return "";
+  const numbers =
+    pages <= 7
+      ? Array.from({ length: pages }, (_, index) => index + 1)
+      : [
+          ...new Set(
+            [1, pages, page - 1, page, page + 1].filter((value) => value >= 1 && value <= pages)
+          )
+        ].sort((a, b) => a - b);
+  return `<nav class="actions updates-pagination" aria-label="Update history pages">
+    ${page > 1 ? `<a class="btn btn-quiet" rel="prev" href="/updates?page=${page - 1}">Previous</a>` : ""}
+    ${numbers.map((number, index) => `${index > 0 && number > numbers[index - 1]! + 1 ? '<span aria-hidden="true">…</span>' : ""}${number === page ? `<span class="btn btn-primary" aria-current="page" aria-label="Page ${number}">${number}</span>` : `<a class="btn btn-quiet" href="/updates?page=${number}" aria-label="Page ${number}">${number}</a>`}`).join("")}
+    ${page < pages ? `<a class="btn btn-quiet" rel="next" href="/updates?page=${page + 1}">Next</a>` : ""}
+  </nav>`;
+};
+
+export const render = (
+  entries: ReadonlyArray<Entry>,
+  query: { page?: string | null; release?: string | null } = {}
+) => {
+  const selected = paginate(entries, query);
+  return `
   <div class="updates-page" data-updates-through="${entries[0]?.sequence ?? 0}">
     <h1 class="page-heading">What’s new in Patchy</h1>
     <p class="supporting-text">The latest improvements, all in one place.</p>
-    <div class="updates-list" aria-label="Deployment updates">${entries
+    <div class="updates-list" aria-label="Deployment updates">${selected.entries
       .map(
-        (entry, index) => `
+        (entry) => `
       <details class="update-entry" id="update-${entry.sequence}"><summary>
-        <span class="update-date"><time datetime="${escapeHtml(entry.publishedAt)}">${date(entry.publishedAt)}</time>${index === 0 ? '<span class="pill">Latest</span>' : ""}</span>
+        <span class="update-date"><time datetime="${escapeHtml(entry.publishedAt)}">${date(entry.publishedAt)}</time>${entry.sequence === entries[0]?.sequence ? '<span class="pill">Latest</span>' : ""}</span>
         <span class="update-title">${escapeHtml(entry.title)}</span><span class="update-summary">${escapeHtml(entry.summary)}</span>
         <span class="update-chevron" aria-hidden="true">⌄</span>
       </summary><div class="update-content">${entry.changes
@@ -90,5 +135,7 @@ export const render = (entries: ReadonlyArray<Entry>) => `
       </div></details>`
       )
       .join("")}</div>
-    <p class="supporting-text updates-end">${entries.length ? "You’ve reached the beginning." : "No updates published yet."}</p>
+    <p class="supporting-text updates-end">${entries.length ? `Showing ${selected.start + 1}–${selected.start + selected.entries.length} of ${entries.length} updates` : "No updates published yet."}</p>
+    ${navigation(selected.page, selected.pages)}
   </div>`;
+};

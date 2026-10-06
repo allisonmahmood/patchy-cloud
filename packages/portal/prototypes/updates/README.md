@@ -12,7 +12,7 @@ pnpm dev
 pnpm prototype:updates:sync --watch
 ```
 
-Open the printed dev URL and sign in as **Dev Machine**. The real app header has the bell on Patches, Company, Connections and Your machines. Open **View all updates** for the newest-first, expandable history. Opening the bell marks its displayed update read and clears the dot; the summary stays visible until the bell closes. Reopening it shows All caught up. A visible page checks for updates every five seconds. Closing a tab without opening the bell leaves the update unread. Loading, reloading or returning to the history does not mark anything read; only opening the bell does.
+Open the printed dev URL and sign in as **Dev Machine**. The real app header has the bell on Patches, Company, Connections and Your machines. Open **View all updates** for the newest-first, expandable history, with ten entries per page and numbered navigation. Opening the bell marks its displayed update read and clears the dot; the summary stays visible until the bell closes. Reopening it shows All caught up. A visible page checks for updates every five seconds. Closing a tab without opening the bell leaves the update unread. Loading, reloading or returning to the history does not mark anything read; only opening the bell does.
 
 The shared release-notes document lives once at `.local/dev/storage/platform-updates/history.json`, read through the existing content store. It is shared across all people and companies, outside patch-owned stores and the app database. Each signed-in person's browser stores only a read-through sequence in localStorage. It survives closing tabs, synchronizes between tabs on the same origin, and does not sync across devices. If browser storage is disabled, the marker lasts for the page only.
 

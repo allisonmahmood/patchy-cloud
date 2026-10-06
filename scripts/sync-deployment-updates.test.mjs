@@ -249,3 +249,22 @@ it("preserves completed notes when a requested refresh fails", async () => {
   ).rejects.toThrow("existing history was preserved");
   expect(first.entries[0].title).toBe("Existing summary");
 });
+
+it("removes simulated entries without reusing their read-marker sequences on future imports", async () => {
+  const notes = async () => ({
+    notes: { title: "Update", summary: "Details", changes: [] },
+    source: "test"
+  });
+  const first = await reconcile(deploymentEvents([proof(10, 1, a, "10")]), { entries: [] }, notes);
+  const simulated = { ...first, entries: [...first.entries, { sequence: 12, simulation: true }] };
+  const clean = await reconcile(deploymentEvents([proof(10, 1, a, "10")]), simulated, notes);
+  expect(clean.entries.map((entry) => entry.sequence)).toEqual([1]);
+  expect(clean.lastSequence).toBe(12);
+  const repeated = await reconcile(deploymentEvents([proof(10, 1, a, "10")]), clean, notes);
+  const next = await reconcile(
+    deploymentEvents([proof(10, 1, a, "10"), proof(20, 1, b, "12")]),
+    repeated,
+    notes
+  );
+  expect(next.entries.map((entry) => entry.sequence)).toEqual([1, 13]);
+});

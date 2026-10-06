@@ -456,3 +456,57 @@ test("reopening or reloading update history stays unread until the bell is opene
   await returned.reload();
   await caughtUp(returned);
 });
+
+test("history has ten rows per page with numbered navigation, expandable details and unchanged unread state", async ({
+  page,
+  instance
+}) => {
+  await publish(
+    instance,
+    Array.from({ length: 23 }, (_, index) => index + 1)
+  );
+  await page.goto(instance.origin + "/updates");
+  await expect(page.locator(".update-entry")).toHaveCount(10);
+  await expect(page.locator(".update-title").first()).toHaveText("Deployment 23");
+  await expect(page.locator(".update-title").last()).toHaveText("Deployment 14");
+  const navigation = page.getByRole("navigation", { name: "Update history pages" });
+  await expect(navigation.locator('[aria-current="page"]')).toHaveText("1");
+  await expect(navigation.getByRole("link", { name: "Previous" })).toHaveCount(0);
+  await navigation.getByRole("link", { name: "Page 2", exact: true }).click();
+  await expect(page).toHaveURL(instance.origin + "/updates?page=2");
+  await expect(page.locator(".update-entry")).toHaveCount(10);
+  await expect(page.locator(".update-title").first()).toHaveText("Deployment 13");
+  await expect(page.locator(".update-title").last()).toHaveText("Deployment 4");
+  await expect(navigation.locator('[aria-current="page"]')).toHaveText("2");
+  await expect(page.locator(".update-date .pill")).toHaveCount(0);
+  await page.locator("#update-13 summary").click();
+  await expect(page.getByText("Details 13", { exact: true })).toBeVisible();
+  await unread(page, 23);
+  expect(await marker(page)).toBeNull();
+  await navigation.scrollIntoViewIfNeeded();
+  await capture(page, "history-page-two");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(navigation.getByRole("link", { name: "Next" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await navigation.scrollIntoViewIfNeeded();
+  await capture(page, "history-pagination-mobile");
+  await navigation.getByRole("link", { name: "Next" }).click();
+  await expect(page.locator(".update-entry")).toHaveCount(3);
+  await expect(page.locator(".update-title")).toHaveText([
+    "Deployment 3",
+    "Deployment 2",
+    "Deployment 1"
+  ]);
+  await expect(navigation.getByRole("link", { name: "Next" })).toHaveCount(0);
+  await navigation.getByRole("link", { name: "Previous" }).click();
+  await expect(page.locator(".update-entry")).toHaveCount(10);
+  await page.goto(instance.origin + "/updates?release=13#update-13");
+  await expect(navigation.locator('[aria-current="page"]')).toHaveText("2");
+  await expect(page.locator("#update-13")).toHaveAttribute("open");
+  expect(await marker(page)).toBeNull();
+  await openBell(page);
+  await page.locator(".latest-update").click();
+  await expect(page.locator("#update-23")).toHaveAttribute("open");
+  await expect(navigation.locator('[aria-current="page"]')).toHaveText("1");
+  await caughtUp(page);
+});
