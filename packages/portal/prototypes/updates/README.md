@@ -24,6 +24,14 @@ Return to the app tab or open the bell to pick it up. Rerunning the seed without
 
 The notes generator is available through `pnpm release-notes` and the manual **Preview deployment notes** Action; see [Operations](../../../../docs/OPERATIONS.md#drafting-deployment-notes). Production publication, retry deduplication and publication recovery remain deferred. Sequence numbers identify ordered publication events and must never be reused for a different event; they are not commit hashes or GitHub run ids.
 
+### Browser behavior checks
+
+```sh
+pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium updates.spec.ts
+```
+
+These checks start disposable local servers and exercise the real authenticated pages, browser script and content-store reader. They cover the newest-only bell, reading history, closing/reopening tabs, cross-tab read markers, a newer deployment arriving on an older history snapshot, blocked/full storage, unavailable history and switching people. Publication is simulated by replacing the instance's shared document. Focus and visibility events are controlled for deterministic headless checks; tab closure and storage events use real browser behavior. Screenshots land in `.local/tier1-results/`. Existing dev instances and production are untouched.
+
 ## Original standalone interaction sketch
 
 Throwaway preview of the chosen interaction: a bell shows the newest deployment;
