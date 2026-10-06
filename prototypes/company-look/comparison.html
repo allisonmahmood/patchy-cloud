@@ -531,8 +531,75 @@
         brief's component recipes nearly verbatim. Their only colour literals are status colours.
       </p>
 
-      <h2>Proposed verdict</h2>
-      <!--VERDICT-->
+      <h2>Proposed verdict (Allison decides)</h2>
+      <ol class="verdict">
+        <li>
+          <strong
+            >Fifteen tokens: the 13 plus <code>--look-success</code> and
+            <code>--look-warning</code>.</strong
+          >
+          Colour tokens are hex.
+          <ul>
+            <li>
+              Status colours were the one gap every capture and three of the four tools hit, and the
+              only thing that broke in a re-skin.
+            </li>
+            <li>
+              <code>--look-link</code> earns its place. All four looks set it apart from the accent;
+              Duolingo's green links would be 2.09:1.
+            </li>
+          </ul>
+        </li>
+        <li>
+          <strong><code>--look-accent</code> is the brand colour, not the primary button.</strong>
+          Three of the four brands don't fill their primary button with it: Vanguard's are black,
+          linear.app's is off-white, and Duolingo splits green and blue. How a plain
+          <code>button</code> looks is the look's call.
+        </li>
+        <li>
+          <strong><code>--look-space</code> is the standard gap</strong> (label to field, items in a
+          row), not a base unit. That keeps values near 8px, so a new look doesn't double a tool's
+          density.
+        </li>
+        <li>
+          <strong>Not added:</strong>
+          <ul>
+            <li>
+              a mono font, a second radius, a border width, surface levels, a danger foreground,
+              type-scale tokens;
+            </li>
+            <li>
+              a dark variant. One look is one colour scheme, and <code>color-scheme</code> may sit
+              in <code>:root</code>.
+            </li>
+          </ul>
+          <p>Recipes carry literals for sizes, weights, shadows and pills.</p>
+        </li>
+        <li>
+          <strong>Five required contrast pairs:</strong> fg/bg, muted/bg, accent-fg/accent, link/bg
+          and danger/bg. muted/surface only warns, because two real brands fail it at 4.2.
+        </li>
+        <li>
+          <strong>The brief keeps its nine sections.</strong> Components must include a badge per
+          status, tabs or a segmented filter, a select and a small button; agents asked for each.
+          The reference allows pseudo-classes in element styles, and literal sizes.
+        </li>
+        <li>
+          <strong>The specimen keeps</strong> headings, text with a link, muted meta, primary and
+          disabled buttons, stats, a table, a form with an error, an empty state and swatches. It
+          adds a badge per status: its accent-tinted badge made Vanguard's "Pending" look like an
+          error.
+        </li>
+        <li>
+          <strong>Size cap:</strong> the look folder is at most 512 KiB, which leaves room for three
+          embedded font weights. <code>LOOK.md</code> is at most 32 KiB.
+        </li>
+        <li>
+          <strong>A company with no look gets the Patchy look,</strong> generated as a look folder
+          rather than nothing. Today's "nothing" has agents rebuild the plan-doc style by hand from
+          <code>node_modules</code>.
+        </li>
+      </ol>
 
       <h2>Also found</h2>
       <ul>
