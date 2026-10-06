@@ -48,7 +48,7 @@ import {
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
-import { PortalPages } from "@patchy/portal";
+import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
@@ -271,6 +271,7 @@ const app = Layer.mergeAll(
     FrontDoor.layer,
     Pages.layer,
     PortalPages.layer,
+    WhatsNewPages.layer,
     landing,
     AuthPages.layer,
     Layer.unwrap(

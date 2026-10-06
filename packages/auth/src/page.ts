@@ -89,15 +89,18 @@ export function pageResponse(
           "base-uri 'none'",
           "form-action 'self'",
           "frame-ancestors 'none'",
+          // App pages run the shell's own What's new script, which posts back here.
           ...(clerk
             ? [
                 `script-src 'self' https://${clerk.frontendApiHost}`,
-                `connect-src https://${clerk.frontendApiHost}`,
+                `connect-src ${page.app ? "'self' " : ""}https://${clerk.frontendApiHost}`,
                 // Clerk's session poller runs on a blob worker; without it the 60s
                 // session cookie goes stale and the page's next form POST is signed out.
                 "worker-src blob:"
               ]
-            : [])
+            : page.app
+              ? ["script-src 'self'", "connect-src 'self'"]
+              : [])
         ].join("; ")
       }
     }

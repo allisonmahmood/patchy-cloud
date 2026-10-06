@@ -10,11 +10,11 @@ metadata:
 
 Review changed page-rendering code and directly affected call sites against the rules below. Apply them when a change creates, moves, or modifies markup or styling on a served page. Do not demand unrelated repository-wide cleanup.
 
-First-party pages compose the server-rendered shell and inline `<style>` block in `packages/core/src/html.ts`; the served-patch renderer stays in `packages/serving/src/shell.ts`. The shell owns one named component set, not a client-side library or a second theme. Auth and Companies pages use plain forms. Company shells load Clerk's headless script and Patchy's external session initializer; tier 1 shells also load Patchy's external broker. Never inline shell script or analytics.
+First-party pages compose the server-rendered shell and inline `<style>` block in `packages/core/src/html.ts`; the served-patch renderer stays in `packages/serving/src/shell.ts`. The shell owns one named component set, not a client-side library or a second theme. Auth and Companies pages use plain forms. Company shells load Clerk's headless script and Patchy's external session initializer; tier 1 shells also load Patchy's external broker. App shells load the external What's new script only while the bell has a dot to clear. Never inline shell script or analytics.
 
 Three page kinds:
 
-- **App shell**: the portal, Company, Connections and Your machines pages. `htmlPage` renders the shared header with brand, Patches, Company, Connections, Your machines, viewer and sign-out, marks the current section, and places the content in a wide card. Auth's `pageResponse` takes the viewer and section in app mode. Portal not-found pages also keep this shell.
+- **App shell**: the portal, Company, Connections and Your machines pages. `htmlPage` renders the shared header with brand, Patches, Company, Connections, Your machines, the What's new bell, viewer and sign-out, marks the current section, and places the content in a wide card. Auth's `pageResponse` takes the viewer and section in app mode. Portal not-found pages also keep this shell.
 - **First-party doors and static pages**: sign-in, create-or-join, device-login confirmation, deactivated and error doors keep the card rather than app navigation. The signed-out root is a sign-in door. All compose `htmlPage`.
 - **Served patches**: `renderPatchWrapper` is user content and deliberately does not compose `htmlPage`.
 
@@ -42,6 +42,7 @@ Three page kinds:
 - Pills: `pill`, `pill-progress`, `pill-done` and `pill-failed` (failed and refused outcomes).
 - Confirmation forms: `confirmation-form`, `confirmation-consequence`, `confirmation-list`, `confirmation-acknowledgement` and `confirmation-actions`; compose the shared fields and buttons for acknowledgement, submit and cancel. Ordinary action groups use `actions`.
 - Shell page state: `shell-bottom`, `shell-scrim`, `glyph-sm`, `supporting-text`, `note-float`, `note-info`, `note-collapse`, `status-chip`, `status-chip-detail`, `status-chip-warn`, `status-chip-info`, `note-inline` and `note-inline-text`. The served shell imports this subset from core, not the full app shell stylesheet.
+- What's new: `whats-new-bell` with its `whats-new-dot`, the native-popover `whats-new-panel`, `whats-new-change` rows (a kind pill from `whatsNewKind`, then the text), `whats-new-unseen` for a change the viewer has not seen, `whats-new-day-head` over each day's rows and the `whats-new-seen` rule where seen changes begin. The panel and `/whats-new` compose these with the shared list, heading and button classes.
 - Shell downloads: `shell-corner` and `shell-downloads`, composed with `note-float`, `note-info`, `glyph-sm`, `status-chip`, `code` and the shared buttons. Core owns this subset too, including the base `code` style.
 
 ## Served patches

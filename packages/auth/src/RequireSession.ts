@@ -14,6 +14,8 @@ export class Viewer extends Context.Service<
     readonly user: { readonly id: string; readonly email: string; readonly name: string };
     readonly company: { readonly id: string; readonly handle: string; readonly name: string };
     readonly role: Users.Role;
+    /** The newest What's new release this person has seen; not part of who they are. */
+    readonly whatsNewSeen: number;
   }
 >()("@patchy/auth/RequireSession/Viewer") {}
 
@@ -159,7 +161,8 @@ export const resolveViewer = Effect.gen(function* () {
   return Viewer.of({
     user: { id: user.id, email: user.email, name: user.name },
     company: { id: company.id, handle: company.handle, name: company.name },
-    role: user.role
+    role: user.role,
+    whatsNewSeen: user.whatsNewSeen
   });
 });
 

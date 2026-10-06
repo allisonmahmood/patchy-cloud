@@ -95,7 +95,8 @@ describe("patch pages", () => {
       viewer: {
         user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
         company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
-        role: "member"
+        role: "member",
+        whatsNewSeen: 0
       },
       now: Date.UTC(2026, 0, 1)
     });
@@ -113,7 +114,8 @@ describe("patch pages", () => {
       viewer: {
         user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
         company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
-        role: "member"
+        role: "member",
+        whatsNewSeen: 0
       },
       now: Date.UTC(2026, 8, 1, 2)
     });
@@ -134,7 +136,8 @@ describe("patch pages", () => {
       viewer: {
         user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
         company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
-        role: "member" as const
+        role: "member" as const,
+        whatsNewSeen: 0
       }
     };
     const before = renderAddressNotice({ ...input, now: Date.parse(purgeAt) - 1 });

@@ -124,6 +124,17 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - One concern per PR. If the description says "also", split it.
 
+## Deploying
+
+Production releases only through the Deploy workflow (`docs/OPERATIONS.md` › Deploying). When you are asked to deploy, every release first gets its What's new entry, so the people using Patchy hear what changed:
+
+1. **Gather.** `git fetch origin`, take the newest release's `through` in `packages/core/src/whatsNew.ts`, and list what merged since: `git log --first-parent --format='%h %s' <through>..origin/main`. The previous release's own `docs(whats-new)` PR is always first; leave it out. Read each other PR with `gh pr view`. Done when you know what every PR in the range changes for someone using Patchy.
+2. **Write** the next release at the top of `releases`, following the rules in that file's header comment. Done when every PR in the range lands in a change, a behind-the-scenes line, or is test and tooling churn. When it is all churn, write no release and skip to step 4; the next release picks up from the same `through`.
+3. **Land it.** Being asked to deploy is asking for this PR: `docs(whats-new): <what the release says, briefly>`, its body listing each change beside its PRs. Merge it once checks are green.
+4. **Release.** `gh workflow run deploy.yml --ref main`, then hand the person the run link to approve in the `production` environment, with the release's changes. Done when the run succeeds.
+
+Anything merged after `through` ships with this deploy unannounced and goes in the next release. A rollback needs no entry: the older commit carries its own list.
+
 ## Plans and work artifacts
 
 - Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree. `.plans/` is gitignored only as a safety net for legacy tooling.

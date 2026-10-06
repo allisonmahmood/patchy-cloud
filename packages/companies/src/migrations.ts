@@ -1,7 +1,8 @@
 /**
  * The companies capability's schema, id 1 in the global migration sequence
  * (`packages/sql/CONTEXT.md`): companies, users, invites and the member
- * directory's revision counter. Squashed into one baseline before launch.
+ * directory's revision counter. Squashed into one baseline before launch;
+ * id 9 adds each person's What's new marker.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -79,5 +80,10 @@ export const migrations: Migrations = {
     `CREATE TRIGGER companies_directory_changed
       AFTER INSERT OR UPDATE OR DELETE ON users
       FOR EACH ROW EXECUTE FUNCTION companies_directory_changed()`
+  ),
+  // The newest What's new release each person has seen. Existing people start at 0, so the
+  // releases so far are new to them; new members start at the latest (Companies.insertUser).
+  "0009_whats_new_seen": ddl(
+    `ALTER TABLE users ADD COLUMN whats_new_seen INTEGER NOT NULL DEFAULT 0`
   )
 };

@@ -10,8 +10,8 @@ import type { Migrations } from "@patchy/sql";
 
 /**
  * Each capability's own migrations, in id order: one baseline each, squashed
- * before launch, ordered so foreign keys resolve. A new capability with
- * migrations joins this list.
+ * before launch and ordered so foreign keys resolve, then the steps added
+ * since. A new capability with migrations joins this list.
  */
 export const capabilityMigrations: ReadonlyArray<Migrations> = [
   companies,

@@ -19,7 +19,9 @@ export class User extends Schema.Class<User>("User")({
   name: Schema.String,
   role: Role,
   createdAt: Schema.Date,
-  deactivatedAt: Schema.NullOr(Schema.Date)
+  deactivatedAt: Schema.NullOr(Schema.Date),
+  /** The newest What's new release this person has seen. */
+  whatsNewSeen: Schema.Int
 }) {}
 
 export class AlreadyInCompany extends Schema.TaggedError<AlreadyInCompany>()("AlreadyInCompany", {
@@ -82,13 +84,19 @@ export class Users extends Context.Service<
       input: UserRef
     ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
     readonly reactivate: (input: UserRef) => Effect.Effect<User, UserNotFound | SqlError>;
+    /** Raises the person's What's new marker to `through`; it never moves back. */
+    readonly markWhatsNewSeen: (input: {
+      readonly userId: string;
+      readonly through: number;
+    }) => Effect.Effect<void, SqlError>;
   }
 >()("@patchy/companies/Users") {}
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
-    email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt"`;
+    email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
+    whats_new_seen AS "whatsNewSeen"`;
   const ref = Schema.Struct({ companyId: Schema.String, userId: Schema.String });
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
 
@@ -224,6 +232,15 @@ export const make = Effect.gen(function* () {
     )
   );
 
+  const markWhatsNewSeen = Effect.fn("Users.markWhatsNewSeen")(function* (input: {
+    readonly userId: string;
+    readonly through: number;
+  }) {
+    yield* sql`
+      UPDATE users SET whats_new_seen = ${input.through}
+      WHERE id = ${input.userId} AND whats_new_seen < ${input.through}`;
+  });
+
   return Users.of({
     findByClerkId,
     findByEmail,
@@ -232,7 +249,8 @@ export const make = Effect.gen(function* () {
     setRole,
     checkDeactivation,
     deactivate,
-    reactivate
+    reactivate,
+    markWhatsNewSeen
   });
 });
 

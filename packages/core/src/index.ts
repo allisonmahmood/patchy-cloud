@@ -3,6 +3,7 @@ export { DEFAULT_MAX_HTML_BYTES, validateHtml } from "./html-policy.js";
 export type { ValidateHtmlOptions } from "./html-policy.js";
 export * from "./ids.js";
 export * from "./types.js";
-export { escapeAttribute, escapeHtml, htmlPage } from "./html.js";
+export { escapeAttribute, escapeHtml, htmlPage, whatsNewKind } from "./html.js";
 export type { AppShell } from "./html.js";
 export { dateLabel, daysLeft, renderOffPatch } from "./patch-presentation.js";
+export * as WhatsNew from "./whatsNew.js";
