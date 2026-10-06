@@ -100,6 +100,8 @@ export const shellStyles = `
     .btn-quiet { border-color: transparent; background: transparent; text-decoration: underline; }
     .btn-danger { background: var(--paper-amber); color: var(--danger); }
     .btn:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--ink); }
+    /* A quiet button has no frame to lift, so it hovers with a light blue tint, translucent so it still shows on tinted notes. */
+    .btn-quiet:hover:not(:disabled) { box-shadow: none; background: color-mix(in srgb, var(--blue) 10%, transparent); }
     .btn:disabled { opacity: .55; cursor: not-allowed; }
     code {
       padding: .12em .4em;
@@ -703,6 +705,8 @@ export function htmlPage(options: {
     .app-page { min-width: 0; padding: 30px 34px 40px; overflow-wrap: anywhere; }
     /* What's new: the bell, its panel, and a change the viewer has not seen yet. */
     .whats-new-bell { position: relative; width: 44px; padding: 0; anchor-name: --whats-new; }
+    /* While its panel is open, the bell takes the nav's current-section look. */
+    .whats-new-bell:has(+ .whats-new-panel:popover-open) { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
     .whats-new-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--blue); }
     .whats-new-panel { position: fixed; inset: 76px 12px auto auto; width: min(400px, calc(100vw - 24px)); max-height: calc(100dvh - 96px); margin: 0; padding: 18px 20px 20px; overflow-y: auto; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); box-shadow: var(--shadow-hard); }
     @supports (position-area: bottom) {
