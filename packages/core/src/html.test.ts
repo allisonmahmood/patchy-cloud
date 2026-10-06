@@ -49,3 +49,23 @@ describe("htmlPage app body", () => {
     expect(html).toContain('<a href="/company" aria-current="page">');
   });
 });
+
+// Session doors and old standalone sketches omit the viewer id and get no bell.
+it("escapes the signed-in viewer id and keeps the bell accessible without inline script", () => {
+  const html = htmlPage({
+    title: "Updates",
+    app: {
+      viewer: {
+        user: { name: "Sam", id: '" onclick="alert(1)' },
+        company: { name: "Northwind" }
+      },
+      section: "updates"
+    },
+    body: "<p>History</p>"
+  });
+  expect(html).toContain('data-viewer-id="&quot; onclick=&quot;alert(1)"');
+  expect(html).toContain('popovertarget="updates-popover" aria-label="Updates"');
+  expect(html).toContain('href="/updates">View all updates');
+  expect(html.slice(html.indexOf("<body>"))).not.toContain('aria-current="page"');
+  expect(html).not.toMatch(/<script\b/);
+});

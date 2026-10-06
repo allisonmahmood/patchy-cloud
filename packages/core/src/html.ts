@@ -273,16 +273,22 @@ export const shellStyles = `
 
 export interface AppShell {
   readonly viewer: {
-    readonly user: { readonly name: string };
+    readonly user: { readonly name: string; readonly id?: string };
     readonly company: { readonly name: string };
   };
-  readonly section: "patches" | "company" | "connections" | "machines";
+  readonly section: "patches" | "company" | "connections" | "machines" | "updates";
 }
 
 function appBody(app: AppShell, body: string): string {
   const link = (href: string, label: string, section: AppShell["section"]) =>
     `<a href="${href}"${section === app.section ? ' aria-current="page"' : ""}>${label}</a>`;
-  return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who"><span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
+  const updates =
+    app.viewer.user.id === undefined
+      ? ""
+      : `<button type="button" class="btn btn-quiet updates-bell" id="updates-bell" data-viewer-id="${escapeAttribute(app.viewer.user.id)}" popovertarget="updates-popover" aria-label="Updates">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z" stroke-linejoin="round"/><path d="M10 21h4" stroke-linecap="round"/></svg><span class="updates-dot" id="updates-dot" hidden></span>
+    </button><aside id="updates-popover" popover aria-label="Latest Patchy update"><div class="updates-popover-top"><h2 class="section-heading">What’s new</h2></div><div id="updates-popover-content" aria-live="polite"><p class="updates-caught-up">Open the update history to see what’s new.</p></div><div class="updates-popover-footer"><a class="btn btn-primary" href="/updates">View all updates <span aria-hidden="true">→</span></a></div></aside>`;
+  return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${updates}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
 }
 
 /** First-party HTML shell. Served patch documents remain separate in Serving. */
@@ -664,6 +670,185 @@ export function htmlPage(options: {
     .app-nav { display: flex; flex-wrap: wrap; gap: 4px; }
     .app-nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 12px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; font-size: .95rem; }
     .app-nav a[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
+.updates-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.updates-dot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--blue);
+  outline: 2px solid var(--white);
+}
+.updates-dot[hidden] {
+  display: none;
+}
+#updates-popover {
+  position: fixed;
+  margin: 0;
+  width: 350px;
+  max-width: calc(100vw - 24px);
+  padding: 0;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: var(--shadow-hard);
+}
+.updates-popover-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 20px 12px;
+}
+.updates-popover-top h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.updates-popover-top .supporting-text {
+  font-size: 0.75rem;
+}
+.latest-update {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  padding: 8px 20px 20px;
+}
+.latest-update:hover {
+  background: var(--paper-blue);
+}
+.latest-update time {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.latest-update h3,
+.updates-caught-up h3 {
+  margin: 10px 0 8px;
+  font-size: 1.15rem;
+  line-height: 1.4;
+}
+.latest-update p,
+.updates-caught-up p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.updates-caught-up {
+  padding: 8px 20px 24px;
+}
+.updates-popover-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--line-strong);
+}
+.updates-popover-footer .btn {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+}
+.updates-page {
+  max-width: 800px;
+  margin-inline: auto;
+  padding: 0 4px 15px;
+}
+.updates-list {
+  border-top: 2px solid var(--ink);
+}
+.update-entry {
+  border-bottom: 1px solid var(--line-strong);
+}
+.update-entry > summary {
+  display: grid;
+  position: relative;
+  gap: 10px;
+  padding: 26px 40px 26px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.update-entry > summary::-webkit-details-marker {
+  display: none;
+}
+.update-entry > summary:hover .update-title {
+  color: var(--blue);
+}
+.update-date {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.update-date .pill {
+  font-size: 0.65rem;
+}
+.update-title {
+  display: block;
+  font-size: 1.25rem;
+  line-height: 1.4;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+}
+.update-summary {
+  display: block;
+  color: var(--muted);
+  font-size: 0.93rem;
+  line-height: 1.6;
+}
+.update-chevron {
+  position: absolute;
+  right: 4px;
+  top: 54px;
+}
+.update-entry[open] .update-chevron {
+  transform: rotate(180deg);
+}
+.update-content {
+  padding: 0 35px 26px 0;
+}
+.update-change {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding-top: 20px;
+}
+.update-change > .pill {
+  justify-self: start;
+  margin-top: 2px;
+  font-size: 0.65rem;
+}
+.update-change h2 {
+  margin: 0 0 7px;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+.update-change p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.75;
+}
+.update-published {
+  margin: 24px 0 0 124px;
+  font-size: 0.75rem;
+}
+.updates-end {
+  text-align: center;
+  margin: 28px 0 0;
+  font-size: 0.8rem;
+}
+
+#updates-popover { max-height: calc(100dvh - 24px); overflow: auto; }
+@media (max-width: 760px) { .update-change { grid-template-columns: minmax(0, 1fr); gap: 8px; } .update-published { margin-left: 0; } .update-content { padding-right: 0; } }
+
     .app-who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: .88rem; font-weight: 650; overflow-wrap: anywhere; }
     .app-page { min-width: 0; padding: 30px 34px 40px; overflow-wrap: anywhere; }
     @media (max-width: 480px) {

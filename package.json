@@ -12,6 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "node --import tsx --conditions=development scripts/dev/src/main.ts",
+    "prototype:updates:seed": "node packages/portal/prototypes/updates/seed-app.mjs",
     "prototype:updates": "node --import tsx packages/portal/prototypes/updates/server.mjs",
     "patchy": "node --import tsx --conditions=development packages/patchy/src/index.ts",
     "seed:dev": "node scripts/seed-dev.mjs",

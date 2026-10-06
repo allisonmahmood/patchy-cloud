@@ -349,7 +349,9 @@ const readUser = Effect.fn("PortalPagesTest.readUser")(function* (person: Person
 });
 const cardPath = (name: string) => `/patches/${name}`;
 const cardLinks = (html: string) =>
-  links(html.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1] ?? "").filter(
+  links(
+    html.match(/<aside\b[^>]*aria-label="Patch index"[^>]*>([\s\S]*?)<\/aside>/)?.[1] ?? ""
+  ).filter(
     (link) =>
       /^\/patches\/[^/?]+(?:\?all=1)?$/.test(link.href) &&
       !/^(Show|Hide) retired and deleted$/.test(link.text)

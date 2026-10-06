@@ -62,7 +62,10 @@ export function pageResponse(
   shell?: SessionShell
 ): HttpServerResponse.HttpServerResponse {
   const clerk = shell?.clerk;
-  const head = shell && clerk ? sessionScripts(shell) : undefined;
+  const hasUpdates = page.app?.viewer.user.id !== undefined;
+  const head =
+    (shell && clerk ? sessionScripts(shell) : "") +
+    (hasUpdates ? '<script defer src="/updates/client.js"></script>' : "");
   const heading = page.heading ?? `<h1 class="page-heading">${escapeHtml(page.title)}</h1>`;
   return HttpServerResponse.text(
     htmlPage({
@@ -92,12 +95,14 @@ export function pageResponse(
           ...(clerk
             ? [
                 `script-src 'self' https://${clerk.frontendApiHost}`,
-                `connect-src https://${clerk.frontendApiHost}`,
+                `connect-src ${hasUpdates ? "'self' " : ""}https://${clerk.frontendApiHost}`,
                 // Clerk's session poller runs on a blob worker; without it the 60s
                 // session cookie goes stale and the page's next form POST is signed out.
                 "worker-src blob:"
               ]
-            : [])
+            : hasUpdates
+              ? ["script-src 'self'", "connect-src 'self'"]
+              : [])
         ].join("; ")
       }
     }

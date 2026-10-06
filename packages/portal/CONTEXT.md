@@ -47,3 +47,7 @@ _Avoid_: layout, template, theme
 **Component set**:
 The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists and trees, version tables and expandable table rows, copyable addresses, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
 _Avoid_: design system (there is one theme and no library), component library, utility classes
+
+**Update history**:
+The shared release-notes document at `/updates`, with the newest deployment first and expandable notes. The app-shell bell shows only the newest unread deployment, or **All caught up**, and always links to the full history. Opening the visible history marks its displayed snapshot seen in this browser, keyed by the signed-in person's id; closing the tab preserves it, but other devices do not share it. Everyone reads the same generated document from `platform-updates/history.json` in the content store. It has no company or user partition and does not use a patch's file primitive or the platform database. The local prototype supplies sample notes; publication by the production Deploy workflow remains pending.
+_Avoid_: patch log (runtime invocations), activity feed, per-user release notes
