@@ -47,6 +47,51 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 8,
+    date: "2026-10-07",
+    through: "f11604cde938a7115b16ff385b93f2f73fffd55c",
+    changes: [
+      {
+        kind: "New",
+        title: "Your tools can look like your company",
+        detail:
+          "An admin's agent can now publish a company look: your colours, type, spacing and a short brief on how your brand reads. Every new patch starts in it, so the first page your agent builds already looks like you, and your agent sees the brief before it styles anything. Patchy never enforces it: a Halloween page or a page for a client can look however you ask. Admins can publish a new revision or go back to an earlier one, and anyone can ask their agent what the company look is.",
+        prs: [577, 579]
+      },
+      {
+        kind: "New",
+        title: "Preview a look before you publish it",
+        detail:
+          "Your agent can render any candidate look on a fixed sample page, headings, buttons, a table, a form, badges and colour swatches, and show it beside the current look, so you judge a picture rather than a stylesheet. The same checks that publishing runs are listed with the preview, so problems get fixed before anything changes for your colleagues.",
+        prs: [578]
+      },
+      {
+        kind: "New",
+        title: "Setting up Patchy sets up your look",
+        detail:
+          "When you create a company, your agent guesses your website from your email address and asks whether your tools should look like it. If you say yes, it captures the look, shows you the sample page, and publishes it, so your welcome page and every tool after it start in your company's look. People who join later are told their tools will use it, with nothing to set up.",
+        prs: [598]
+      },
+      {
+        kind: "Improved",
+        title: "Patches hear when the look changes",
+        detail:
+          "When an admin publishes or restores a look, each patch picks it up the next time its agent starts or refreshes it, and says what changed and who changed it. Publishing a patch that is behind warns you and ships the look it was built with, so nothing goes live in a look nobody has checked.",
+        prs: [581]
+      },
+      {
+        kind: "Improved",
+        title: "Static pages can use embedded fonts",
+        detail:
+          "A static page can now carry its own font inside the page, so a company look's typeface shows on every tier. Fonts fetched from other sites stay blocked.",
+        prs: [576]
+      }
+    ],
+    behindTheScenes: [
+      "Your agent no longer keeps a personal style file on your computer; the company look replaces it."
+    ]
+  },
+  {
     id: 7,
     date: "2026-10-07",
     through: "48704b0e786e380cff38819aab1b422bd3c1219a",
