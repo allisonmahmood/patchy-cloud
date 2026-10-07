@@ -6,9 +6,19 @@ import type { LookFiles } from "../packages/core/src/look.js";
 export const LOOK_FIXTURES = ["duolingo", "finance", "linear", "patchy"] as const;
 export type LookFixture = (typeof LOOK_FIXTURES)[number];
 
-/** A fixture look's folder, as `patchy look publish` reads it. Only `patchy` has a logo. */
+/**
+ * A fixture look's folder, as `patchy look publish` reads it. Only `patchy` has a logo. Patchy's
+ * own look ships with the SDK, which generates it for a company with no look, never its logo.
+ */
 export const lookFixtureDir = (name: LookFixture): string =>
-  fileURLToPath(new URL(`../packages/core/fixtures/looks/${name}/`, import.meta.url));
+  fileURLToPath(
+    new URL(
+      name === "patchy"
+        ? "../packages/sdk/looks/patchy/"
+        : `../packages/core/fixtures/looks/${name}/`,
+      import.meta.url
+    )
+  );
 
 export const readLookFixture = (name: LookFixture): LookFiles => {
   const dir = lookFixtureDir(name);
