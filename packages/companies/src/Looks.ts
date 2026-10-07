@@ -12,7 +12,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { checkLook, type LookFiles } from "@patchy/core/look";
+import { LookFiles } from "@patchy/api";
+import { checkLook } from "@patchy/core/look";
 import { CompanyNotFound } from "./Companies.js";
 
 export class InvalidLook extends Schema.TaggedError<InvalidLook>()("InvalidLook", {
@@ -40,14 +41,8 @@ export class Revision extends Schema.Class<Revision>("LookRevision")({
   note: Schema.String
 }) {}
 
-const Files = Schema.Struct({
-  "look.css": Schema.String,
-  "LOOK.md": Schema.String,
-  "logo.svg": Schema.optionalKey(Schema.String)
-});
-
 /** The current revision, with the files a patch takes its look from. */
-export class Current extends Revision.extend<Current>("CurrentLook")({ files: Files }) {}
+export class Current extends Revision.extend<Current>("CurrentLook")({ files: LookFiles }) {}
 
 export interface Look {
   /** Null when the company has no look, the starting state. */
@@ -60,7 +55,7 @@ export interface PublishInput {
   readonly companyId: string;
   readonly authorId: string;
   readonly note: string;
-  readonly files: LookFiles;
+  readonly files: typeof LookFiles.Type;
 }
 
 /** A change to the pointer, with the revision it moved from, null for no look. */
@@ -68,25 +63,6 @@ export interface Moved {
   readonly current: Revision | null;
   readonly from: number | null;
 }
-
-export class Looks extends Context.Service<
-  Looks,
-  {
-    readonly read: (companyId: string) => Effect.Effect<Look, SqlError>;
-    /** Checks the files, stores them as the next revision and makes it current. */
-    readonly publish: (
-      input: PublishInput
-    ) => Effect.Effect<
-      Moved & { readonly current: Revision },
-      InvalidLook | CompanyNotFound | SqlError
-    >;
-    /** Points the company at one of its revisions, or at none. Copies nothing. */
-    readonly restore: (input: {
-      readonly companyId: string;
-      readonly revision: number | null;
-    }) => Effect.Effect<Moved, RevisionUnavailable | CompanyNotFound | SqlError>;
-  }
->()("@patchy/companies/Looks") {}
 
 const Row = Schema.Struct({
   revision: Schema.Int,
@@ -106,6 +82,25 @@ const revision = (row: typeof Row.Type) =>
     createdAt: row.createdAt,
     note: row.note
   });
+
+export class Looks extends Context.Service<
+  Looks,
+  {
+    readonly read: (companyId: string) => Effect.Effect<Look, SqlError>;
+    /** Checks the files, stores them as the next revision and makes it current. */
+    readonly publish: (
+      input: PublishInput
+    ) => Effect.Effect<
+      Moved & { readonly current: Revision },
+      InvalidLook | CompanyNotFound | SqlError
+    >;
+    /** Points the company at one of its revisions, or at none. Copies nothing. */
+    readonly restore: (input: {
+      readonly companyId: string;
+      readonly revision: number | null;
+    }) => Effect.Effect<Moved, RevisionUnavailable | CompanyNotFound | SqlError>;
+  }
+>()("@patchy/companies/Looks") {}
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
