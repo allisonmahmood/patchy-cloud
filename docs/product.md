@@ -647,7 +647,9 @@ A company has numbered revisions, each recording its author, time and note, and 
 
 Before publishing, an agent shows the person the **specimen**: a fixed page Patchy owns, styled only by a look, with text, buttons, stat cards, a badge per status, a table, a form with an invalid field, an empty state, hover, focus, disabled and busy states and the colour swatches. `patchy look preview <dir>` writes it as one local HTML file that works offline, and lists anything publish would refuse without refusing to render; `--compare` puts the candidate beside the current look. It checks `look.css`, not the brief's recipes, and can't show how a look meets a patch's own components.
 
-Generation writing the look into patch repos, change notices, onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
+A new patch repo starts in the look. Generation writes the current revision's `look.css` and logo into the repo as managed files, with a `patchy-look` project skill holding the brief and the order to style by, and the starter page imports `look.css`, so the first `patchy dev` page already looks like the company. Refresh and dev start rewrite those files; they never touch the page's source. With no company look, the repo gets the **Patchy look**, Patchy's own: it is no company's revision and carries no logo, and the skill says the company has none yet. A page that shouldn't look like the company drops the import or overrides it, and the agent says so once.
+
+Change notices, onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
 
 ### Addresses
 

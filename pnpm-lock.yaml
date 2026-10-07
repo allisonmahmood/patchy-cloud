@@ -755,6 +755,9 @@ importers:
       '@patchy/api':
         specifier: workspace:*
         version: link:../api
+      '@patchy/companies':
+        specifier: workspace:*
+        version: link:../companies
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database

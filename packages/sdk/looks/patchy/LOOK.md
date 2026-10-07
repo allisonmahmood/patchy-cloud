@@ -1,10 +1,10 @@
 # Patchy's look
 
-Captured on 2026-10-06 from Patchy's plan-doc brief (`skills/patchy/references/patchy-plan-style.md`) and its applied example (`welcome-patch.html`), with the app translations checked against Patchy's own app pages (`packages/core/src/html.ts`). This is the look a company gets until it captures its own.
+Captured on 2026-10-06 from Patchy's own plan documents and app pages. This is the look a company gets until it captures its own.
 
 ## The read
 
-Patchy feels hand-built: warm cream paper, a faint engineering grid, and everything that matters drawn in near-black ink. Friendly on the surface, serious underneath. Three habits make it recognisable: **2px ink frames with hard offset shadows** (no blur, ever), **heavy system-font headings**, and **flat colour used in small, deliberate doses** (a blue button, a yellow selected tab, a green or amber pill). It is a workbench, not a dark AI dashboard.
+Patchy feels hand-built: warm cream paper, a faint engineering grid, and everything that matters drawn in near-black ink. Friendly on the surface, serious underneath. Three habits make it recognisable: **2px ink frames with hard offset shadows** (no blur, ever), **heavy system-font headings**, and **flat colour used in small, deliberate doses** (a blue button, a blue-washed selected tab, a green or amber pill). It is a workbench, not a dark AI dashboard.
 
 ## Type
 
@@ -22,11 +22,7 @@ Patchy feels hand-built: warm cream paper, a faint engineering grid, and everyth
 - Links are the darker blue (`--look-link`), bold and underlined.
 - Red (`--look-danger`) is for destructive actions and errors only. Danger buttons are a red tint with red text inside the usual ink frame, not a solid red slab.
 - Hairlines are ink mixed toward transparent: `color-mix(in srgb, var(--look-border) 30%, transparent)` for row rules and dashed dividers, 14% for the faintest lines.
-- Tints come from the tokens: `color-mix(in srgb, var(--look-accent) 10%, var(--look-surface))` for an info wash, the same with `--look-danger` at 8% for an error wash.
-- **Colours the tokens could not hold.** Patchy's palette has a flat green, yellow and amber that no token carries. They are literals in the recipes below and will not follow a token change:
-  - success: text `#2f6a17` on `#eff9e8`
-  - warning: text `#8a5a00` on `#fff7e4`
-  - highlight yellow `#ffbf35`, with ink text, marks the selected tab or nav item
+- Tints come from the tokens: `color-mix(in srgb, var(--look-accent) 10%, var(--look-surface))` for an info wash, the same with `--look-danger` at 8% for an error wash and `--look-success` or `--look-warning` at 10% for their badges. The selected tab or nav item is an accent wash at 14% in an ink frame.
 - **Dropped from the brief:** the blue-to-green paper wash behind the page and the noise overlay. Both read as documents, not tools; the grid stays.
 
 ## Layout
@@ -100,12 +96,12 @@ Lift these as they are. The plain `button` in `look.css` is already the primary 
   color: var(--look-danger);
 }
 .badge-success {
-  background: #eff9e8; /* literal: no success token */
-  color: #2f6a17;
+  background: color-mix(in srgb, var(--look-success) 10%, var(--look-surface));
+  color: var(--look-success);
 }
 .badge-warning {
-  background: #fff7e4; /* literal: no warning token */
-  color: #8a5a00;
+  background: color-mix(in srgb, var(--look-warning) 10%, var(--look-surface));
+  color: var(--look-warning);
 }
 
 /* Card or panel: the full ink frame with a hard shadow. One level only. */
@@ -182,7 +178,7 @@ Lift these as they are. The plain `button` in `look.css` is already the primary 
   color: var(--look-muted);
 }
 
-/* Nav or tabs: the selected item is highlight yellow in an ink frame. */
+/* Nav or tabs: the selected item is an accent wash in an ink frame. */
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -197,7 +193,7 @@ Lift these as they are. The plain `button` in `look.css` is already the primary 
 }
 .tabs a[aria-current="page"] {
   border-color: var(--look-border);
-  background: #ffbf35; /* literal: no highlight token */
+  background: color-mix(in srgb, var(--look-accent) 14%, var(--look-surface));
   box-shadow: 2px 2px 0 var(--look-border);
 }
 

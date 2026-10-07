@@ -48,6 +48,7 @@ import { generateServer } from "../../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
+import { readLookFixture } from "../../../../test/look-fixtures.js";
 import { sdkCapabilities } from "../../../sdk/src/sdkCapabilities.js";
 
 // Every case launches the bundled CLI; pure in-process tests belong in their module suites.
@@ -308,7 +309,13 @@ export const decodePackageFixture = Schema.decodeUnknownSync(
     [Schema.Record(Schema.String, Schema.Unknown)]
   )
 );
-export const coreProjectSkills = ["patchy-files", "patchy-loop", "patchy-preact", "patchy-tables"];
+export const coreProjectSkills = [
+  "patchy-files",
+  "patchy-look",
+  "patchy-loop",
+  "patchy-preact",
+  "patchy-tables"
+];
 export const projectConfig =
   'import { defineConfig, table, t } from "patchy/config";\n\n' +
   'export default defineConfig({ name: "cli-project", tier: 1,\n' +
@@ -359,8 +366,28 @@ export const projectSource = {
   reads: []
 };
 
-/** Only the instance metadata is stubbed: these are the shipped client generators. */
-export const generateProjectResponse = (body: unknown): typeof Generated.Type => {
+/** Patchy's look as generation writes it for a company with no look: no logo. */
+export const patchyLookFiles = { "look.css": readLookFixture("patchy")["look.css"] };
+
+/** A company look carrying its font as a captured look does: #564's Inter subset, embedded. */
+export const embeddedFontLook = (() => {
+  const fixture = readFileSync(
+    path.join(packageDir, "../core/fixtures/accept/embedded-font.html"),
+    "utf8"
+  );
+  const fontFace = /@font-face\s*{[^}]*}/.exec(fixture)![0];
+  const font = /url\("(data:font\/woff2;base64,[^"]+)"\)/.exec(fontFace)![1]!;
+  return { "look.css": `${fontFace}\n${readLookFixture("linear")["look.css"]}`, font };
+})();
+
+/**
+ * Only the instance metadata is stubbed: these are the shipped client generators. `look` stands
+ * in for the company's current look; skills are served as their release templates.
+ */
+export const generateProjectResponse = (
+  body: unknown,
+  look: { readonly "look.css": string; readonly "logo.svg"?: string } = patchyLookFiles
+): typeof Generated.Type => {
   const { manifest, serverModules } = decodeGenerateRequest(body);
   const files: Array<{ path: string; contents: string }> = [];
   const uses: Array<{
@@ -437,6 +464,9 @@ export const generateProjectResponse = (body: unknown): typeof Generated.Type =>
       })
     }
   );
+  files.push({ path: "patchy/_generated/look.css", contents: look["look.css"] });
+  if (look["logo.svg"] !== undefined)
+    files.push({ path: "patchy/_generated/logo.svg", contents: look["logo.svg"] });
   if (manifest.tier === 2)
     files.push({
       path: "patchy/_generated/server.ts",

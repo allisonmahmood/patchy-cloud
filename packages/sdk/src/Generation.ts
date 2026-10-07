@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off — Node's file-URL conversion locates packaged release skills.
+// @effect-diagnostics nodeBuiltinImport:off — Node's file-URL conversion locates packaged release skills and the Patchy look.
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -11,8 +11,11 @@ import {
   GenerateRequest,
   MANIFEST_VERSION,
   isManagedOutputPath,
+  type LookFiles,
+  type LookRevision,
   type TableDefinition
 } from "@patchy/api";
+import { Looks } from "@patchy/companies";
 import { ConnectionStore, Postgres } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
@@ -98,7 +101,8 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
       "shared-table",
       "shared-store",
       "release-skill",
-      "release-skill-template"
+      "release-skill-template",
+      "patchy-look"
     ]),
     resource: Schema.String.check(Schema.isMaxLength(256)),
     cause: Schema.optional(Schema.Defect())
@@ -137,7 +141,7 @@ const sharedSourceErrors = (
   };
 };
 
-const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
+const coreSkills = ["patchy-loop", "patchy-look", "patchy-tables", "patchy-files"];
 const knownSkills = [
   ...coreSkills,
   "patchy-preact",
@@ -148,6 +152,17 @@ const knownSkills = [
   "patchy-members"
 ];
 const root = "patchy/_generated";
+const templateMarker = /<!-- [a-z-]+ -->/g;
+const shipped = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
+
+/**
+ * What the `patchy-look` skill says the repo's look is: the company's current revision, or the
+ * Patchy look as Patchy's default, which is no company's and carries no logo.
+ */
+const lookState = (look: Looks.Current | null) =>
+  look === null
+    ? "The company has no look yet, so pages start in the Patchy look, Patchy's default, whose brief is below. It isn't the company's: it comes without a logo, so leave out the logo wherever the brief shows one, its recipes included, because Patchy's mark is not the company's. `patchy refresh` or the next `patchy dev` brings in the company's own look once an admin publishes one."
+    : `This is the company's look, revision ${look.revision}, published by ${look.author.name}: ${look.note}. Pages start in it, and its brief is below. ${look.files["logo.svg"] === undefined ? "It has no logo." : "Its logo is `patchy/_generated/logo.svg`."}`;
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const columnType = (
@@ -199,10 +214,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
 ): Effect.fn.Return<
   typeof Generated.Type,
   GenerationRefused | CompanyDatabases.Busy | GenerationUnavailable,
-  ConnectionStore.ConnectionStore | Patches.Patches | FileSystem.FileSystem
+  ConnectionStore.ConnectionStore | Patches.Patches | Looks.Looks | FileSystem.FileSystem
 > {
   const connections = yield* ConnectionStore.ConnectionStore;
   const patches = yield* Patches.Patches;
+  const looks = yield* Looks.Looks;
   const fs = yield* FileSystem.FileSystem;
   if (request.release !== CURRENT_RELEASE || request.manifest.release !== CURRENT_RELEASE)
     return yield* new ReleaseMismatch({
@@ -405,23 +421,55 @@ export const generate = Effect.fn("Generation.generate")(function* (
       context
     });
   }
+  // The look's three managed files ride every generation, so refresh and dev start pick up a new
+  // revision. With no company look, the Patchy look stands in without a logo or a stamp.
+  const { current: look } = yield* looks
+    .read(companyId)
+    .pipe(Effect.catchTags({ SqlError: Effect.die }));
+  const lookFiles: typeof LookFiles.Type =
+    look?.files ??
+    (yield* Effect.all({
+      "look.css": fs.readFileString(shipped("looks/patchy/look.css")),
+      "LOOK.md": fs.readFileString(shipped("looks/patchy/LOOK.md"))
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GenerationUnavailable({ stage: "patchy-look", resource: "looks/patchy", cause })
+      )
+    ));
+  files.set(`${root}/look.css`, lookFiles["look.css"]);
+  if (lookFiles["logo.svg"] !== undefined) files.set(`${root}/logo.svg`, lookFiles["logo.svg"]);
+  // Each template's marked sections and what fills them; a missing marker is a broken release.
+  const templates = new Map<string, ReadonlyMap<string, () => string>>([
+    ["patchy-loop", new Map([["<!-- sdk-capabilities -->", () => sdkCapabilitiesMarkdown]])],
+    [
+      "patchy-look",
+      new Map([
+        ["<!-- look-state -->", () => lookState(look)],
+        ["<!-- look-brief -->", () => lookFiles["LOOK.md"].trim()]
+      ])
+    ]
+  ]);
   const skillFiles = [];
   for (const name of [...skills].sort()) {
     const path = `.agents/skills/${name}/SKILL.md`;
     const contents = yield* fs
-      .readFileString(fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)))
+      .readFileString(shipped(`skills/${name}/SKILL.md`))
       .pipe(
         Effect.mapError(
           (cause) => new GenerationUnavailable({ stage: "release-skill", resource: path, cause })
         )
       );
-    if (name === "patchy-loop" && !contents.includes("<!-- sdk-capabilities -->"))
+    const sections = templates.get(name);
+    if (sections !== undefined && [...sections.keys()].some((marker) => !contents.includes(marker)))
       return yield* new GenerationUnavailable({ stage: "release-skill-template", resource: path });
+    // One pass over the template: a filled note or brief is never searched for markers, and a
+    // replacer function keeps a brief's `$&` or `$1` as text.
     files.set(
       path,
-      name === "patchy-loop"
-        ? contents.replace("<!-- sdk-capabilities -->", sdkCapabilitiesMarkdown)
-        : contents
+      sections === undefined
+        ? contents
+        : contents.replace(templateMarker, (marker) => sections.get(marker)?.() ?? marker)
     );
     skillFiles.push({ name, path });
   }
@@ -445,7 +493,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   }
   files.set(
     `${root}/README.md`,
-    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills, contexts and release capabilities. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
+    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills, contexts and release capabilities. look.css, and logo.svg when the look has one, are the look a page starts in: the company's, or the Patchy look when it has none. .agents/skills/patchy-look/SKILL.md explains them; index.json's look names their revision, null for the Patchy look. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
   );
   files.set(
     `${root}/index.json`,
@@ -456,7 +504,17 @@ export const generate = Effect.fn("Generation.generate")(function* (
       declarations,
       uses,
       skills: skillFiles,
-      capabilities: sdkCapabilities
+      capabilities: sdkCapabilities,
+      // The revision look.css came from, as `patchy look --json` shows it; null for the Patchy look.
+      look:
+        look === null
+          ? null
+          : ({
+              revision: look.revision,
+              author: look.author,
+              createdAt: look.createdAt.toISOString(),
+              note: look.note
+            } satisfies typeof LookRevision.Encoded)
     })
   );
   for (const path of files.keys()) {

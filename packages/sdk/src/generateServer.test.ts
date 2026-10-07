@@ -7,6 +7,7 @@ import { it } from "@effect/vitest";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { CURRENT_RELEASE, GenerateRequest, MANIFEST_VERSION } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
+import { Looks } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { CompanyDatabases } from "@patchy/company-database";
 import * as Effect from "effect/Effect";
@@ -19,7 +20,7 @@ import * as Generation from "./Generation.js";
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const decodeGenerate = Schema.decodeUnknownSync(GenerateRequest);
-const generationLayer = Patches.layer.pipe(
+const generationLayer = Layer.mergeAll(Patches.layer, Looks.layer).pipe(
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database),
   Layer.provideMerge(NodeFileSystem.layer)
