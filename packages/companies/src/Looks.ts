@@ -34,15 +34,17 @@ export class RevisionUnavailable extends Schema.TaggedError<RevisionUnavailable>
 }
 
 /** One revision without its files: number, author, time and note. */
-export class Revision extends Schema.Class<Revision>("LookRevision")({
-  revision: Schema.Int,
-  author: Schema.Struct({ id: Schema.String, name: Schema.String }),
-  createdAt: Schema.Date,
-  note: Schema.String
-}) {}
+export interface Revision {
+  readonly revision: number;
+  readonly author: { readonly id: string; readonly name: string };
+  readonly createdAt: Date;
+  readonly note: string;
+}
 
 /** The current revision, with the files a patch takes its look from. */
-export class Current extends Revision.extend<Current>("CurrentLook")({ files: LookFiles }) {}
+export interface Current extends Revision {
+  readonly files: typeof LookFiles.Type;
+}
 
 export interface Look {
   /** Null when the company has no look, the starting state. */
@@ -75,13 +77,14 @@ const Row = Schema.Struct({
   brief: Schema.NullOr(Schema.String),
   logo: Schema.NullOr(Schema.String)
 });
-const revision = (row: typeof Row.Type) =>
-  new Revision({
-    revision: row.revision,
-    author: { id: row.authorId, name: row.authorName },
-    createdAt: row.createdAt,
-    note: row.note
-  });
+const revision = (row: typeof Row.Type): Revision => ({
+  revision: row.revision,
+  author: { id: row.authorId, name: row.authorName },
+  createdAt: row.createdAt,
+  note: row.note
+});
+/** Revisions are Postgres integers; a larger number names none. */
+const MAX_REVISION = 2_147_483_647;
 
 export class Looks extends Context.Service<
   Looks,
@@ -156,6 +159,7 @@ export const make = Effect.gen(function* () {
     return company.value.current;
   });
   const one = Effect.fn("Looks.one")(function* (companyId: string, number: number) {
+    if (number > MAX_REVISION) return null;
     const [row] = yield* rows({ companyId, only: number }).pipe(Effect.catchTags(dieOnSchemaError));
     return row === undefined ? null : revision(row);
   });
@@ -169,14 +173,14 @@ export const make = Effect.gen(function* () {
       current:
         current === undefined || current.css === null || current.brief === null
           ? null
-          : new Current({
+          : {
               ...revision(current),
               files: {
                 "look.css": current.css,
                 "LOOK.md": current.brief,
                 ...(current.logo === null ? {} : { "logo.svg": current.logo })
               }
-            }),
+            },
       revisions: found.map(revision)
     } satisfies Look;
   });

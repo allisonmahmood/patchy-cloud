@@ -258,6 +258,15 @@ it.layer(layer)("look group", (it) => {
           error: "Acme Co has no look revision 1."
         }
       );
+      // Larger than any Postgres integer: no such revision, rather than a database error.
+      assert.deepStrictEqual<unknown>(
+        yield* home.ada.api.restoreLook(restore(2_147_483_648)).pipe(Effect.flip),
+        {
+          ok: false,
+          code: "revision_unavailable",
+          error: "Acme Co has no look revision 2147483648."
+        }
+      );
     })
   );
 
