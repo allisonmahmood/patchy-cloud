@@ -216,7 +216,10 @@ describe("patch-repo commands", () => {
     // A repo from before the look: its page has its own style and never imported look.css.
     const dir = publishTree(instance.url);
     const main = path.join(dir, "src/main.tsx");
-    writeFileSync(main, readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, ""));
+    writeFileSync(
+      main,
+      readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, 'import "./styles.css";\n')
+    );
     writeFileSync(path.join(dir, "src/styles.css"), "body { background: #fff0f5; }\n");
     const page = () => ({
       src: treeBytes(path.join(dir, "src")),
