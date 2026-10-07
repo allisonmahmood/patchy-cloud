@@ -29,3 +29,11 @@ export const readLookFixture = (name: LookFixture): LookFiles => {
     ...(existsSync(`${dir}logo.svg`) ? { "logo.svg": read("logo.svg") } : {})
   };
 };
+
+/** A look revision's stamp as `index.json` and `GET /api/look` carry it, by Sam. */
+export const lookRevision = (revision: number, note: string) => ({
+  revision,
+  author: { id: "usr_sam", name: "Sam" },
+  createdAt: "2026-10-07T09:00:00.000Z",
+  note
+});

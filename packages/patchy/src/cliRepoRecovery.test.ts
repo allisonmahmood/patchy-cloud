@@ -225,6 +225,7 @@ describe("repo publish recovery", () => {
           );
         if (request.url === "/api/sdk/generate")
           return respond(200, generateProjectResponse(request.body));
+        if (request.url === "/api/look") return respond(200, { current: null, revisions: [] });
         if (request.url === "/api/publish") {
           if (phase === "lost") return disconnect();
           if (phase === "blocked-write") {

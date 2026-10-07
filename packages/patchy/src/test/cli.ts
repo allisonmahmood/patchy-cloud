@@ -48,7 +48,7 @@ import { generateServer } from "../../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
-import { readLookFixture } from "../../../../test/look-fixtures.js";
+import { lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
 import { sdkCapabilities } from "../../../sdk/src/sdkCapabilities.js";
 
 // Every case launches the bundled CLI; pure in-process tests belong in their module suites.
@@ -382,11 +382,16 @@ export const embeddedFontLook = (() => {
 
 /**
  * Only the instance metadata is stubbed: these are the shipped client generators. `look` stands
- * in for the company's current look; skills are served as their release templates.
+ * in for the company's current look, `revision` its stamp, absent for the Patchy look; skills
+ * are served as their release templates.
  */
 export const generateProjectResponse = (
   body: unknown,
-  look: { readonly "look.css": string; readonly "logo.svg"?: string } = patchyLookFiles
+  look: {
+    readonly "look.css": string;
+    readonly "logo.svg"?: string;
+    readonly revision?: ReturnType<typeof lookRevision>;
+  } = patchyLookFiles
 ): typeof Generated.Type => {
   const { manifest, serverModules } = decodeGenerateRequest(body);
   const files: Array<{ path: string; contents: string }> = [];
@@ -460,7 +465,8 @@ export const generateProjectResponse = (
         manifestVersion: MANIFEST_VERSION,
         capabilities: sdkCapabilities,
         uses,
-        skills: [...skills].sort()
+        skills: [...skills].sort(),
+        look: look.revision ?? null
       })
     }
   );
@@ -493,6 +499,7 @@ export const projectHandler: Handler = (request, respond) => {
     return respond(200, projectSource);
   if (request.url === "/api/sdk/generate")
     return respond(200, generateProjectResponse(request.body));
+  if (request.url === "/api/look") return respond(200, { current: null, revisions: [] });
   respond(404, { ok: false, error: "Unexpected fixture route." });
 };
 

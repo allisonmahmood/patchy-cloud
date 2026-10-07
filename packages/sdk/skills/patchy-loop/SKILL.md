@@ -135,7 +135,7 @@ after the handoff.
 The catalogue states which generation and formatting helpers the SDK does
 not yet offer; those gaps are not prohibitions on company code.
 
-## Description notices
+## Description and look notices
 
 `patchy.json.description` is the patch's published description; front-load what
 the tool does. The purpose in `AGENTS.md` stays independent, and table/store
@@ -158,6 +158,17 @@ not, check the reminder against what one row or object means, its keys and units
 Update its config description if needed. These notices do not stop commands;
 under `--json` they are entries in `warnings`, including when a later step
 fails. Relay them even on failure; a publish retry retains the saved notices.
+
+A page uses the look when its source names `patchy/_generated/look.css` or
+`logo.svg` on a line that isn't a comment; aliases and files nothing imports are
+outside that rule. When refresh, add, remove or a new dev start brings in another
+company look revision, such a page gets a notice: "Acme's look changed, rev 7 → 8
+by Sam: darker green. Colours and fonts follow; to restyle this tool's
+components, ask your agent to update it to the current look." Relay it, and
+restyle components only when the person asks you to update the tool to the
+current look. Publish never pulls a revision: it ships the repo's own and warns
+when that isn't the company's current one. Run `pnpm patchy refresh` first if
+the person wants the current look published.
 
 ## Discover before declaring
 
