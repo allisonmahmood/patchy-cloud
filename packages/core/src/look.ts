@@ -82,7 +82,13 @@ const utf8Bytes = (text: string) => new TextEncoder().encode(text).byteLength;
 const kib = (bytes: number) => `${(bytes / 1024).toFixed(1)} KiB`;
 const isData = (target: string) => /^data:/i.test(target.trim());
 
-/** What a stylesheet points outside itself at: each `@import` target, and every other `url()`. */
+/** Functions whose string arguments are image addresses, like a `url()`. */
+const STRING_URL_FUNCTIONS = new Set(["image-set", "-webkit-image-set", "src"]);
+
+/**
+ * What a stylesheet points outside itself at: each `@import` target, every other `url()`, and
+ * the string addresses inside `image-set()` and `src()`.
+ */
 const cssReferences = (ast: CssTree.CssNode) => {
   const found: Array<{
     readonly line?: number;
@@ -100,6 +106,15 @@ const cssReferences = (ast: CssTree.CssNode) => {
       });
     } else if (node.type === "Url" && this.atrule?.name.toLowerCase() !== "import") {
       found.push({ ...(line === undefined ? {} : { line }), target: node.value, imported: false });
+    } else if (node.type === "Function" && STRING_URL_FUNCTIONS.has(node.name.toLowerCase())) {
+      node.children.forEach((child) => {
+        if (child.type === "String")
+          found.push({
+            ...(child.loc === undefined ? {} : { line: child.loc.start.line }),
+            target: child.value,
+            imported: false
+          });
+      });
     }
   });
   return found;
@@ -107,7 +122,11 @@ const cssReferences = (ast: CssTree.CssNode) => {
 
 type Declared = { readonly line: number; readonly value: string };
 
-/** The checks over `look.css`: syntax, the layer, references, `!important` and the tokens. */
+/**
+ * The checks over `look.css`: syntax, the layer, escapes, references, `!important` and the
+ * tokens. Only a token declared in a `:root` rule directly inside `@layer look` counts, so no
+ * media query, class or registration can change what a token is.
+ */
 const checkCss = (css: string): string[] => {
   const errors: string[] = [];
   const at = (line: number | undefined) => `look.css${line === undefined ? "" : `:${line}`}`;
@@ -120,18 +139,21 @@ const checkCss = (css: string): string[] => {
   });
 
   // Unlayered CSS beats every layer, so the look stays in its own and a patch's own CSS wins.
+  const effective = new Set<CssTree.CssNode>();
   if (ast.type === "StyleSheet") {
     ast.children.forEach((node) => {
       if (node.type === "Atrule") {
         const name = node.name.toLowerCase();
         const prelude = node.prelude === null ? "" : CssTree.generate(node.prelude);
-        // An @import is refused below, for what it imports.
-        if (
-          (name === "layer" && node.block !== null && prelude === "look") ||
-          name === "font-face" ||
-          name === "import"
-        )
+        if (name === "layer" && prelude === "look") {
+          node.block?.children.forEach((rule) => {
+            if (rule.type === "Rule" && CssTree.generate(rule.prelude) === ":root")
+              rule.block.children.forEach((declaration) => effective.add(declaration));
+          });
           return;
+        }
+        // An @import is refused below, for what it imports.
+        if (name === "font-face" || name === "charset" || name === "import") return;
         errors.push(
           `${at(node.loc?.start.line)} has @${name}${name === "layer" ? ` ${prelude}` : ""} outside @layer look; only @font-face may sit outside it.`
         );
@@ -143,11 +165,35 @@ const checkCss = (css: string): string[] => {
     });
   }
 
+  // Escaped names would slip past every check by name; honest CSS never escapes one.
+  CssTree.walk(ast, (node) => {
+    const line = node.loc?.start.line;
+    const name =
+      node.type === "Declaration"
+        ? node.property
+        : node.type === "Function"
+          ? node.name
+          : node.type === "Atrule"
+            ? `@${node.name}`
+            : "";
+    if (name.includes("\\"))
+      errors.push(`${at(line)} escapes ${name} with a backslash; write names plainly.`);
+    if (
+      node.type === "Atrule" &&
+      node.name.toLowerCase() === "property" &&
+      node.prelude !== null &&
+      CssTree.generate(node.prelude).startsWith(TOKEN_PREFIX)
+    )
+      errors.push(
+        `${at(line)} registers @property ${CssTree.generate(node.prelude)}; tokens are plain custom properties.`
+      );
+  });
+
   for (const { line, target, imported } of cssReferences(ast)) {
     if (imported)
       errors.push(`${at(line)} imports "${target}"; a look is one self-contained file.`);
     else if (!isData(target))
-      errors.push(`${at(line)} references ${target}; every url() must be a data: URL.`);
+      errors.push(`${at(line)} references ${target}; every URL must be a data: URL.`);
   }
 
   const declared = new Map<LookToken, Declared[]>();
@@ -161,12 +207,16 @@ const checkCss = (css: string): string[] => {
         );
       if (!node.property.startsWith(TOKEN_PREFIX)) return;
       const token = node.property.slice(TOKEN_PREFIX.length);
-      if (!isToken(token)) {
+      if (!isToken(token))
         errors.push(`${at(line)} declares ${node.property}, which is not a look token.`);
-        return;
+      else if (!effective.has(node))
+        errors.push(
+          `${at(line)} declares ${node.property} outside :root in @layer look; declare tokens only there.`
+        );
+      else {
+        const value = CssTree.generate(node.value).trim();
+        declared.set(token, [...(declared.get(token) ?? []), { line, value }]);
       }
-      const value = CssTree.generate(node.value).trim();
-      declared.set(token, [...(declared.get(token) ?? []), { line, value }]);
     }
   });
 
@@ -212,18 +262,26 @@ const checkLogo = (svg: string): string[] => {
   const [root] = roots;
   if (roots.length !== 1 || root?.nodeName !== "svg")
     return ["logo.svg must be one <svg> element."];
+  const errors: string[] = [];
   const targets: string[] = [];
   const css = (text: string, context: string) => {
     for (const { target } of cssReferences(CssTree.parse(text, { context }))) targets.push(target);
   };
   const visit = (node: parse5.DefaultTreeAdapterMap["childNode"]) => {
     if (!("tagName" in node)) return;
+    const tag = node.tagName.toLowerCase();
     for (const { name, value } of node.attrs) {
-      if (name === "href" || name === "src") targets.push(value);
+      if (/^on/i.test(name))
+        errors.push(`logo.svg has an ${name} attribute; a logo is a picture, not a program.`);
+      else if (name === "href" || name === "src") targets.push(value);
       else if (name === "style") css(value, "declarationList");
       else if (/url\(/i.test(value)) css(value, "value");
     }
-    if (node.tagName === "style")
+    if (tag === "script")
+      errors.push("logo.svg has a <script>; a logo is a picture, not a program.");
+    if (tag === "foreignobject")
+      errors.push("logo.svg has a <foreignObject>; draw the logo in SVG.");
+    if (tag === "style")
       css(
         node.childNodes
           .map((child: parse5.DefaultTreeAdapterMap["childNode"]) =>
@@ -235,9 +293,12 @@ const checkLogo = (svg: string): string[] => {
     node.childNodes.forEach(visit);
   };
   visit(root);
-  return targets
-    .filter((target) => !isData(target) && !target.trim().startsWith("#"))
-    .map((target) => `logo.svg references ${target}; embed it as a data: URL.`);
+  return [
+    ...errors,
+    ...targets
+      .filter((target) => !isData(target) && !target.trim().startsWith("#"))
+      .map((target) => `logo.svg references ${target}; embed it as a data: URL.`)
+  ];
 };
 
 /**
@@ -246,6 +307,11 @@ const checkLogo = (svg: string): string[] => {
  * self-containment and the limits registry's sizes.
  */
 export const checkLook = (files: LookFiles): ReadonlyArray<string> => {
+  // Postgres text cannot hold NUL, and no stylesheet, brief or logo needs one.
+  const nul = Object.entries(files)
+    .filter(([, text]) => text.includes("\u0000"))
+    .map(([name]) => `${name} contains a NUL character.`);
+  if (nul.length > 0) return nul;
   const errors = checkCss(files["look.css"]);
   if (files["logo.svg"] !== undefined) errors.push(...checkLogo(files["logo.svg"]));
   const briefBytes = utf8Bytes(files["LOOK.md"]);
