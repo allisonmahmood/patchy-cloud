@@ -7,11 +7,11 @@ catalog:
   # Effect packages share one version; Dependabot bumps these together
   # (see .github/dependabot.yml). Only the language service has its own
   # release line.
-  effect: 4.0.0
-  "@effect/platform-node": 4.0.0
-  "@effect/sql-pg": 4.0.0
-  "@effect/sql-pglite": 4.0.0
-  "@effect/vitest": 4.0.0
+  effect: 4.0.1
+  "@effect/platform-node": 4.0.1
+  "@effect/sql-pg": 4.0.1
+  "@effect/sql-pglite": 4.0.1
+  "@effect/vitest": 4.0.1
   "@effect/language-service": 0.87.3
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440

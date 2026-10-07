@@ -70,7 +70,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-ecs": "^3.1144.0",
+    "@aws-sdk/client-ecs": "^3.1146.0",
     "@effect/platform-node": "catalog:",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
@@ -79,7 +79,7 @@
     "@patchy/runtime": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:",
-    "es-module-lexer": "3.0.2",
+    "es-module-lexer": "3.0.3",
     "esbuild": "0.28.2",
     "workerd": "1.20260924.1"
   },

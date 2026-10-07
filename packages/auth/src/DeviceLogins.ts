@@ -64,8 +64,7 @@ export class DeviceLoginLookupLimited extends Schema.TaggedError<DeviceLoginLook
   }
 }
 
-const AnswerError = Schema.Union([DeviceLoginExpired, DeviceLoginAnswered, DeviceLoginUnknown]);
-type AnswerError = typeof AnswerError.Type;
+type AnswerError = DeviceLoginExpired | DeviceLoginAnswered | DeviceLoginUnknown;
 
 const LoginRow = Schema.Struct({
   userCode: Schema.String,
