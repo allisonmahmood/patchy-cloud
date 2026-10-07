@@ -637,6 +637,16 @@ members read its handles, descriptions, status and discovery/test timestamps.
 Connections are company-wide, not per patch. Personal connections and group
 grants remain future work.
 
+### The company look
+
+A company owns its **look**, so a new patch looks like the company without anyone asking. It is where a patch's style starts, never a rule: what the person asked for comes first, then the patch's own style, then the company's look, then the Patchy look.
+
+A **look revision** is three text files. `look.css` sets the 15 tokens Patchy names — `--look-bg` and `--look-surface`, the text colours `--look-fg`, `--look-muted`, `--look-link`, `--look-success`, `--look-warning` and `--look-danger`, `--look-accent` with `--look-accent-fg`, `--look-border`, the `--look-font-body` and `--look-font-display` stacks, `--look-radius` and `--look-space` — and styles plain elements, all inside `@layer look` so a patch's own CSS wins. `LOOK.md` is the brief, with the component recipes a patch copies. An optional `logo.svg` completes it. Fonts are embedded in `look.css` as `data:` URLs, so a revision stays three text files.
+
+A company has numbered revisions, each recording its author, time and note, and a pointer to the current one. Having no look is the starting state. Any member's agent reads the look with `patchy look`. Only admins publish (`patchy look publish <dir> --note`) or restore (`patchy look restore <n|none>`); a member who tries is told who the admins are. Restoring moves the pointer and copies nothing. Publishing refuses a look whose tokens are missing, repeated or not opaque `#RRGGBB`, that uses `!important` or styles outside `@layer look`, whose text colours fall below 4.5:1 on either ground (or accent-fg on accent), that references anything outside itself, or that exceeds 32 KiB of `LOOK.md` or 512 KiB in all. The CLI and the instance run the same checks.
+
+Generation writing the look into patch repos, the local preview, change notices, onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
+
 ### Addresses
 
 Every patch has an address at `/<company>/<patch>`, for every tier and sharing scope. A numbered version opens at `/<company>/<patch>/~v/<n>`. A trailing route belongs to the patch at tier 1 and above and is ignored at tier 0; every segment starting with `~` belongs to Patchy. A company handle alone is not a page. The former `/d/*` routes are gone, not redirects; `d` remains a reserved company handle.
