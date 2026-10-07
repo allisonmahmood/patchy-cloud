@@ -2,8 +2,8 @@
  * The state dir: everything the CLI remembers between runs, filed per
  * instance. `credentials.json` holds one token per instance, `device-login.json`
  * its pending login, `patches.json` one cache entry per instance and file,
- * `config.json` the saved instance URL; `style.md` is only checked for existence.
- * `look-preview.html` is the latest `patchy look preview`, replaced by each one.
+ * `config.json` the saved instance URL, and `look-preview.html` the latest `patchy look preview`,
+ * replaced by each one.
  *
  * Host-keyed files are read without interpreting the other instances'
  * entries, so a write is a real merge — an entry this command neither reads
@@ -140,7 +140,6 @@ export class State extends Context.Service<
     readonly credentialsPath: string;
     /** Replaces `look-preview.html` with this page and returns its path. */
     readonly writeLookPreview: (html: string) => Effect.Effect<string, LocalError>;
-    readonly hasDefaultStyle: Effect.Effect<boolean>;
     readonly readConfigUrl: Effect.Effect<Option.Option<string>>;
     readonly saveConfigUrl: (apiUrl: string) => Effect.Effect<void, LocalError>;
     /** The token stored for one instance; a neighbouring instance's entry is never parsed. */
@@ -224,7 +223,6 @@ export const make = Effect.gen(function* () {
   // The cache under its old name. Never read: forgetting it would create a
   // new patch at a new URL instead of updating the one it remembers.
   const retiredPatchesPath = path.join(dir, "drafts.json");
-  const stylePath = path.join(dir, "style.md");
   const lookPreviewPath = path.join(dir, "look-preview.html");
   const publishPath = (apiUrl: string, repo?: string) =>
     path.join(
@@ -461,7 +459,6 @@ export const make = Effect.gen(function* () {
     dir,
     credentialsPath,
     writeLookPreview: (html) => writeText(lookPreviewPath, html).pipe(Effect.as(lookPreviewPath)),
-    hasDefaultStyle: fs.exists(stylePath).pipe(Effect.orElseSucceed(() => false)),
     readConfigUrl: readConfig.pipe(
       Effect.map((config) =>
         Option.fromUndefinedOr(config.apiUrl).pipe(Option.filter((url) => url !== ""))

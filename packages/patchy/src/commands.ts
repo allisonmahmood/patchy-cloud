@@ -337,7 +337,6 @@ const status = Command.make("status", {}, () =>
           // and an entry written before `source` existed both report null.
           tokenSource: Option.getOrNull(Option.map(credential, (c) => c.source)),
           stateDir: state.dir,
-          hasDefaultStyle: yield* state.hasDefaultStyle,
           cliVersion: RELEASE
         })
       );
