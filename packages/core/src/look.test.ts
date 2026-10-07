@@ -74,12 +74,14 @@ describe("checkLook", () => {
             "  }",
             "  .theme { --look-fg: #ffffff; }",
             '  @property --look-link { syntax: "<color>"; inherits: true; initial-value: #000000; }',
+            '  @property --\\6c ook-fg { syntax: "<color>"; inherits: true; initial-value: #fffdf4; }',
             "}"
           ].join("\n")
         )
       )
     ).toEqual([
-      "look.css:25 registers @property --look-link; tokens are plain custom properties.",
+      "look.css:25 registers @property --look-link; a look uses plain custom properties only.",
+      "look.css:26 registers @property --\\6c ook-fg; a look uses plain custom properties only.",
       "look.css:22 declares --look-bg outside :root in @layer look; declare tokens only there.",
       "look.css:24 declares --look-fg outside :root in @layer look; declare tokens only there."
     ]);
