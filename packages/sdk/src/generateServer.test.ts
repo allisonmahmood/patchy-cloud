@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { it } from "@effect/vitest";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { CURRENT_RELEASE, GenerateRequest, MANIFEST_VERSION } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { Looks } from "@patchy/companies";
@@ -23,7 +24,7 @@ const decodeGenerate = Schema.decodeUnknownSync(GenerateRequest);
 const generationLayer = Layer.mergeAll(Patches.layer, Looks.layer).pipe(
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database),
-  Layer.provideMerge(NodeFileSystem.layer)
+  Layer.provideMerge([NodeFileSystem.layer, NodePath.layer])
 );
 
 it.effect(

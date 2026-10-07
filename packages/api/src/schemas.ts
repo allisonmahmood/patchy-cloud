@@ -969,6 +969,12 @@ export class LookRevision extends Schema.Class<LookRevision>("LookRevision")({
   note: Schema.String
 }) {}
 
+/** The Patchy look's files as the look read carries them: never a logo, which is Patchy's mark. */
+export const PatchyLookFiles = Schema.Struct({
+  "look.css": Schema.String,
+  "LOOK.md": Schema.String
+});
+
 /** Who can change a company's look: its active admins. */
 const LookAdmins = Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String }));
 
@@ -980,7 +986,7 @@ const LookAdmins = Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.
 export class CompanyLook extends Schema.Class<CompanyLook>("CompanyLook")({
   current: Schema.NullOr(Schema.Struct({ ...LookRevision.fields, files: LookFiles })),
   revisions: Schema.Array(LookRevision),
-  patchyLook: Schema.NullOr(LookFiles),
+  patchyLook: Schema.NullOr(PatchyLookFiles),
   admins: LookAdmins
 }) {}
 

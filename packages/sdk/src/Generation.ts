@@ -11,6 +11,7 @@ import {
   GenerateRequest,
   MANIFEST_VERSION,
   isManagedOutputPath,
+  type LookFiles,
   type LookRevision,
   type TableDefinition
 } from "@patchy/api";
@@ -424,7 +425,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const { current: look } = yield* looks
     .read(companyId)
     .pipe(Effect.catchTags({ SqlError: Effect.die }));
-  const lookFiles = look?.files ?? looks.patchyLook;
+  const lookFiles: typeof LookFiles.Type = look?.files ?? looks.patchyLook;
   files.set(`${root}/look.css`, lookFiles["look.css"]);
   if (lookFiles["logo.svg"] !== undefined) files.set(`${root}/logo.svg`, lookFiles["logo.svg"]);
   // Each template's marked sections and what fills them; a missing marker is a broken release.
