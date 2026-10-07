@@ -1,9 +1,10 @@
 /**
  * The look specimen: one fixed page Patchy owns, styled only by a look, and the file
- * `patchy look preview` writes from it. The specimen's own CSS sits in a layer beneath the
- * look's and only lays the page out from tokens, so every element style shown is the look's.
- * The page carries everything it needs, fonts and logo included, and its CSP refuses any other
- * request, so it renders offline exactly as a patch would.
+ * `patchy look preview` writes from it. The specimen's own CSS follows the look's and styles
+ * only its own classes, laying the page out from tokens, so every plain element shows the
+ * look's styles. The page carries everything it needs, fonts and logo included, and its CSP
+ * refuses any other request, so it renders offline exactly as a patch would. The single-look
+ * page passes tier 0 validation, so an agent can publish it to show someone.
  */
 import * as CssTree from "css-tree";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
@@ -21,41 +22,32 @@ export interface Pane {
 // The page's only requests are its own data: URLs; a look that points elsewhere renders as a patch would.
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
 
-/** Pseudo-classes the states row shows at rest, by the class standing in for each. */
+/** Each pseudo-class the states row shows at rest, and what replaces it. */
 const FORCED: Readonly<Record<string, string>> = {
-  hover: "specimen-hover",
-  focus: "specimen-focus",
-  "focus-visible": "specimen-focus"
+  hover: ":is(:hover, .specimen-hover)",
+  focus: ":is(:focus, .specimen-focus)",
+  "focus-visible": ":is(:focus-visible, .specimen-focus)"
 };
 
 /**
- * `look.css` with every selector that uses `:hover`, `:focus` or `:focus-visible` directly
- * also matching a stand-in class, so the states row shows those styles without a pointer or a
- * keyboard. A class weighs the same as a pseudo-class and the alias joins the same rule, so the
- * cascade is unchanged; the rest of the text is left as written.
+ * `look.css` with every `:hover`, `:focus` and `:focus-visible`, wherever it sits in a selector,
+ * replaced by `:is()` of itself and a stand-in class, so the states row shows those styles
+ * without a pointer or a keyboard. A class weighs the same as a pseudo-class, so specificity is
+ * unchanged. `.specimen-focus` means keyboard focus, which matches both focus pseudo-classes,
+ * so `:focus:not(:focus-visible)` can't match it. The rest of the text is left as written.
  */
 export const forceStates = (css: string): string => {
-  const inserts: Array<{ readonly at: number; readonly text: string }> = [];
+  const swaps: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
   CssTree.walk(CssTree.parse(css, { positions: true }), {
-    visit: "Rule",
-    enter: (rule) => {
-      if (rule.prelude.type !== "SelectorList" || rule.prelude.loc === undefined) return;
-      const aliases = rule.prelude.children.toArray().flatMap((selector) => {
-        if (selector.type !== "Selector") return [];
-        const parts = selector.children.toArray();
-        const forced = (node: CssTree.CssNode) =>
-          node.type === "PseudoClassSelector" ? FORCED[node.name.toLowerCase()] : undefined;
-        if (!parts.some(forced)) return [];
-        return [
-          parts.map((node) => (forced(node) ? `.${forced(node)}` : CssTree.generate(node))).join("")
-        ];
-      });
-      if (aliases.length > 0)
-        inserts.push({ at: rule.prelude.loc.end.offset, text: `, ${aliases.join(", ")}` });
+    visit: "PseudoClassSelector",
+    enter: (node) => {
+      const text = FORCED[node.name.toLowerCase()];
+      if (text !== undefined && node.loc !== undefined)
+        swaps.push({ start: node.loc.start.offset, end: node.loc.end.offset, text });
     }
   });
-  return inserts.reduceRight(
-    (text, { at, text: alias }) => text.slice(0, at) + alias + text.slice(at),
+  return swaps.reduceRight(
+    (out, { start, end, text }) => out.slice(0, start) + text + out.slice(end),
     css
   );
 };
@@ -86,11 +78,10 @@ const specimen = ({ files, label, note }: Pane) => {
 ${head(
   `${title}: ${label}`,
   `<style>
-@layer specimen, look;
-${SPECIMEN_CSS}
+${styleText(forceStates(files["look.css"]))}
 </style>
 <style>
-${styleText(forceStates(files["look.css"]))}
+${SPECIMEN_CSS}
 </style>`
 )}
 </head>
@@ -131,7 +122,7 @@ ${head(
   `Look preview: ${panes.map(({ label }) => label).join(" beside ")}`,
   `<style>
 body { margin: 0; display: grid; grid-template-columns: 1fr 1fr; }
-iframe { display: block; width: 100%; height: 100vh; border: 0; }
+iframe { display: block; box-sizing: border-box; width: 100%; height: 100vh; border: 0; }
 iframe + iframe { border-left: 1px solid #8888; }
 @media (max-width: 900px) {
   body { grid-template-columns: 1fr; }
@@ -147,65 +138,63 @@ ${frames}
 `;
 };
 
-// The specimen's own layout. Beneath `@layer look`, so the look wins wherever both speak; it
-// styles only its own classes, from tokens.
-const SPECIMEN_CSS = `@layer specimen {
-  .specimen {
-    box-sizing: border-box;
-    max-width: 960px;
-    margin: 0 auto;
-    padding: calc(var(--look-space) * 6) calc(var(--look-space) * 4);
-  }
-  .masthead {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: calc(var(--look-space) * 2);
-    padding-bottom: calc(var(--look-space) * 3);
-    border-bottom: 1px solid var(--look-border);
-  }
-  .logo { display: block; height: 32px; width: auto; max-width: 100%; }
-  .wordmark { font-family: var(--look-font-display); font-size: 1.25rem; font-weight: 700; color: var(--look-fg); }
-  .pane-label { display: grid; margin-left: auto; text-align: right; color: var(--look-muted); }
-  .pane-label strong { color: var(--look-fg); }
-  .about { margin: calc(var(--look-space) * 2) 0 calc(var(--look-space) * 6); color: var(--look-muted); font-size: 0.875rem; }
-  .specimen > section { margin-bottom: calc(var(--look-space) * 8); }
-  .row { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--look-space) * 2); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: calc(var(--look-space) * 4); align-items: start; }
-  .muted { color: var(--look-muted); }
-  .card { background: var(--look-surface); border: 1px solid var(--look-border); border-radius: var(--look-radius); padding: calc(var(--look-space) * 3); }
-  .stat { font-family: var(--look-font-display); font-size: 2rem; line-height: 1.1; color: var(--look-fg); }
-  .badge {
-    --tone: var(--look-muted);
-    display: inline-block;
-    padding: 0 var(--look-space);
-    border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
-    border-radius: var(--look-radius);
-    background: color-mix(in srgb, var(--tone) 10%, transparent);
-    color: var(--tone);
-    font-size: 0.8125rem;
-    white-space: nowrap;
-  }
-  .badge.success { --tone: var(--look-success); }
-  .badge.warning { --tone: var(--look-warning); }
-  .badge.danger { --tone: var(--look-danger); }
-  .scroll { overflow-x: auto; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .stack { display: grid; gap: calc(var(--look-space) * 3); }
-  .field { display: grid; gap: calc(var(--look-space) / 2); }
-  .error { margin: 0; color: var(--look-danger); }
-  .empty { text-align: center; padding: calc(var(--look-space) * 8) calc(var(--look-space) * 3); border: 1px dashed var(--look-border); border-radius: var(--look-radius); }
-  .states { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: calc(var(--look-space) * 3); align-items: end; }
-  .state { display: grid; gap: var(--look-space); justify-items: start; }
-  .state > small { color: var(--look-muted); }
-  .state.wide { grid-column: 1 / -1; }
-  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: calc(var(--look-space) * 2); }
-  .swatch { border: 1px solid var(--look-border); border-radius: var(--look-radius); overflow: hidden; font-size: 0.8125rem; }
-  .swatch > div { height: 48px; }
-  .swatch > code { display: block; padding: var(--look-space); }
-  @media (max-width: 600px) {
-    .specimen { padding: calc(var(--look-space) * 3) calc(var(--look-space) * 2); }
-  }
+// The specimen's own layout, from tokens. Unlayered and after the look, so it wins for its own
+// classes; it never styles a plain element, so those show only the look. Its only grounds are
+// bg and surface, where the checks verify every text colour, so badges carry status in a border.
+const SPECIMEN_CSS = `.specimen {
+  box-sizing: border-box;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: calc(var(--look-space) * 6) calc(var(--look-space) * 4);
+}
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--look-space) * 2);
+  padding-bottom: calc(var(--look-space) * 3);
+  border-bottom: 1px solid var(--look-border);
+}
+.logo { display: block; height: 32px; width: auto; max-width: 100%; }
+.wordmark { font-family: var(--look-font-display); font-size: 1.25rem; font-weight: 700; color: var(--look-fg); }
+.pane-label { display: grid; margin-left: auto; text-align: right; color: var(--look-muted); }
+.pane-label strong { color: var(--look-fg); }
+.about { margin: calc(var(--look-space) * 2) 0 calc(var(--look-space) * 6); color: var(--look-muted); font-size: 0.875rem; }
+.specimen > section { margin-bottom: calc(var(--look-space) * 8); }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--look-space) * 2); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: calc(var(--look-space) * 4); align-items: start; }
+.muted { color: var(--look-muted); }
+.card { background: var(--look-surface); border: 1px solid var(--look-border); border-radius: var(--look-radius); padding: calc(var(--look-space) * 3); }
+.stat { font-family: var(--look-font-display); font-size: 2rem; line-height: 1.1; color: var(--look-fg); }
+.badge {
+  --tone: var(--look-muted);
+  display: inline-block;
+  padding: 0 var(--look-space);
+  border: 1px solid var(--tone);
+  border-radius: var(--look-radius);
+  color: var(--tone);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+.badge.success { --tone: var(--look-success); }
+.badge.warning { --tone: var(--look-warning); }
+.badge.danger { --tone: var(--look-danger); }
+.scroll { overflow-x: auto; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.stack { display: grid; gap: calc(var(--look-space) * 3); }
+.field { display: grid; gap: calc(var(--look-space) / 2); }
+.error { margin: 0; color: var(--look-danger); }
+.empty { text-align: center; padding: calc(var(--look-space) * 8) calc(var(--look-space) * 3); border: 1px dashed var(--look-border); border-radius: var(--look-radius); }
+.states { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: calc(var(--look-space) * 3); align-items: end; }
+.state { display: grid; gap: var(--look-space); justify-items: start; }
+.state > small { color: var(--look-muted); }
+.state.wide { grid-column: 1 / -1; }
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: calc(var(--look-space) * 2); }
+.swatch { border: 1px solid var(--look-border); border-radius: var(--look-radius); overflow: hidden; font-size: 0.8125rem; }
+.swatch > div { height: 48px; }
+.swatch > code { display: block; padding: var(--look-space); }
+@media (max-width: 600px) {
+  .specimen { padding: calc(var(--look-space) * 3) calc(var(--look-space) * 2); }
 }`;
 
 // What the specimen shows, from #547: headings, text with a link and muted meta, primary and
@@ -273,7 +262,7 @@ const SPECIMEN_BODY = `  <section>
   </section>
 
   <section class="grid">
-    <form class="stack" action="#">
+    <div class="stack">
       <h3>New request</h3>
       <div class="field">
         <label for="purpose">What it's for, in words someone in finance will understand</label>
@@ -294,10 +283,10 @@ const SPECIMEN_BODY = `  <section>
       </div>
       <label><input type="checkbox" checked /> Tell the budget owner</label>
       <div class="row">
-        <button type="submit">Submit request</button>
+        <button type="button">Submit request</button>
         <a href="#cancel">Cancel</a>
       </div>
-    </form>
+    </div>
     <div class="empty">
       <h3>No requests yet</h3>
       <p class="muted">When someone asks to spend money, it shows up here.</p>
