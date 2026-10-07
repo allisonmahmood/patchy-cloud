@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -21,6 +20,7 @@ import {
 } from "@patchy/api";
 import * as Testing from "@patchy/sql/testing";
 import { readLookFixture } from "../../../test/look-fixtures.js";
+import * as Companies from "./Companies.js";
 import * as LookApi from "./LookApi.js";
 import * as Looks from "./Looks.js";
 import * as Users from "./Users.js";
@@ -31,40 +31,30 @@ const recording = Layer.succeed(
   Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
 );
 
-/** Bearer `<user id>` acts as that active user. Machine tokens are Auth's to test. */
+/** Bearer `<email>` acts as that active user. Machine tokens are Auth's to test. */
 const bearer = Layer.effect(
   Authorization,
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const users = yield* Users.Users;
+    const companies = yield* Companies.Companies;
     return Authorization.of({
       bearer: (httpEffect) =>
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          const userId = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
-          const rows = yield* sql<{
-            id: string;
-            email: string;
-            name: string;
-            role: "member" | "admin";
-            companyId: string;
-            handle: string;
-            companyName: string;
-          }>`SELECT u.id, u.email, u.name, u.role, c.id AS "companyId", c.handle,
-              c.name AS "companyName"
-            FROM users u JOIN companies c ON c.id = u.company_id
-            WHERE u.id = ${userId} AND u.deactivated_at IS NULL`.pipe(Effect.orDie);
-          const row = Option.fromNullishOr(rows[0]);
-          if (Option.isNone(row))
+          const email = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
+          const user = yield* users.findByEmail(email).pipe(Effect.orDie);
+          const company =
+            user === null ? null : yield* companies.findById(user.companyId).pipe(Effect.orDie);
+          if (user === null || user.deactivatedAt !== null || company === null)
             return refuse(Unauthorized, { ok: false, error: "Missing or invalid API token." });
-          const { id, email, name, role, companyId, handle, companyName } = row.value;
           return yield* Effect.provideService(
             httpEffect,
             CurrentIdentity,
             new Identity({
-              user: { id, email, name },
-              company: { id: companyId, handle, name: companyName },
-              role,
-              machine: { id: `mch_${id}`, name: "Laptop" }
+              user: { id: user.id, email: user.email, name: user.name },
+              company: { id: company.id, handle: company.handle, name: company.name },
+              role: user.role,
+              machine: { id: `mch_${user.id}`, name: "Laptop" }
             })
           );
         })
@@ -74,7 +64,7 @@ const bearer = Layer.effect(
 
 const layer = Layer.mergeAll(LookApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(bearer),
-  Layer.provideMerge(Layer.mergeAll(Looks.layer, Users.layer, recording)),
+  Layer.provideMerge(Layer.mergeAll(Looks.layer, Users.layer, Companies.layer, recording)),
   Layer.provideMerge(Testing.layer())
 );
 
@@ -96,7 +86,7 @@ const company = Effect.fn("company")(function* (handle: string) {
   }
   const client = (key: keyof typeof people) =>
     HttpApiTest.groups(PatchyApi, ["look"]).pipe(
-      Effect.provide(authorizationClient(Redacted.make(`usr_${handle}_${key}`)))
+      Effect.provide(authorizationClient(Redacted.make(`${key}@${handle}.example`)))
     );
   return {
     ada: { id: `usr_${handle}_ada`, api: yield* client("ada") },
@@ -210,7 +200,7 @@ it.layer(layer)("look group", (it) => {
         yield* ben.api.publishLook(publish("mine now")).pipe(Effect.flip),
         yield* ben.api.restoreLook(restore(null)).pipe(Effect.flip)
       ]) {
-        assert.deepStrictEqual(refused, {
+        assert.deepStrictEqual<unknown>(refused, {
           ok: false,
           code: "admin_required",
           error: "Only an admin can change Acme Co's look. Ask Ada Lovelace or Cleo Park.",
@@ -260,10 +250,14 @@ it.layer(layer)("look group", (it) => {
         { ...(yield* home.ben.api.getLook()) },
         { current: null, revisions: [] }
       );
-      assert.deepInclude(yield* home.ada.api.restoreLook(restore(1)).pipe(Effect.flip), {
-        code: "revision_unavailable",
-        error: "Acme Co has no look revision 1."
-      });
+      assert.deepStrictEqual<unknown>(
+        yield* home.ada.api.restoreLook(restore(1)).pipe(Effect.flip),
+        {
+          ok: false,
+          code: "revision_unavailable",
+          error: "Acme Co has no look revision 1."
+        }
+      );
     })
   );
 

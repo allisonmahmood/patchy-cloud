@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import {
   AdminRequired,
@@ -60,6 +61,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
     const looks = yield* Looks.Looks;
     const users = yield* Users.Users;
     const analytics = yield* Analytics.Analytics;
+    const sql = yield* SqlClient.SqlClient;
+    /** Commits a change, then reports it; a change inside an outer transaction reports nothing here. */
+    const reported = <A, E>(
+      change: Effect.Effect<A, E>,
+      report: (value: A) => Effect.Effect<void>
+    ) => withReportedCommit(change, report).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     /** The refusal a member gets, or null for an admin. */
     const adminOnly = Effect.fn("LookApi.adminOnly")(function* () {
@@ -105,7 +112,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
             Effect.catchTags(bodyFailures)
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          const published = yield* withReportedCommit(
+          const published = yield* reported(
             looks.publish({
               companyId: identity.company.id,
               authorId: identity.user.id,
@@ -157,7 +164,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
             Effect.catchTags(bodyFailures)
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          const restored = yield* withReportedCommit(
+          const restored = yield* reported(
             looks.restore({ companyId: identity.company.id, revision: payload.revision }),
             ({ current, from }) =>
               Effect.gen(function* () {
