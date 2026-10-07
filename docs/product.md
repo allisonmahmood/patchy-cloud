@@ -651,7 +651,9 @@ A new patch repo starts in the look. Generation writes the current revision's `l
 
 A repo picks up a new revision only at its next refresh or dev start, so a bad revision spreads one patch at a time. When one brings in a different revision and the page uses the look, by naming `look.css` or the logo, the CLI says so: "Acme's look changed, rev 7 → 8 by Sam: darker green. Colours and fonts follow; to restyle this tool's components, ask your agent to update it to the current look." Publish never pulls a revision, so no patch ships a look nobody has checked: a repo behind the company's look publishes with its own and is told to refresh.
 
-Onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
+Onboarding sets the look up. Right after create-or-join, the agent of an admin whose company has no look guesses the company's site from their email domain, never a webmail one, and asks: "You're at acme.com. Want your tools to look like Acme?" It captures the site on the person's machine, shows the specimen, sums the look up in one line and publishes revision 1. Everyone else is asked nothing: someone joining a company with a look is told their tools will use it. Static pages, the welcome page included, start from the look `patchy look --json` names, in the same order as patches; with no company look it hands out the Patchy look.
+
+The look changes only when someone asks for that. An admin's agent captures again and shows the new look beside the current one before publishing it with a note. A member's agent says who the admins are; it can still draft a look and publish the draft's specimen as an ordinary page to show them. A portal page for the look is not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
 
 ### Addresses
 

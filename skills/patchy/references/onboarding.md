@@ -1,9 +1,9 @@
 # Onboarding
 
-Agent-led first-time setup: capture how the user's pages should look, log the machine
-in if it has no publishing key, then publish their welcome patch.
+Agent-led first-time setup: log this machine in if it has no publishing key, set up
+or announce the company's look, then publish the person's welcome patch.
 
-The user's own words for it are "my welcome page" — that is what to say out loud.
+The person's own words for it are "my welcome page" — that is what to say out loud.
 _Welcome patch_ is the term for it here.
 
 Onboarding is always optional. It makes later publishing nicer; publishing works fine
@@ -11,19 +11,23 @@ without it.
 
 ## When to run
 
-**Primary trigger — the user asks for it.** Some wording of
+- **The person asks for it**, in some wording of
 
-> Walk me through Patchy Cloud's onboarding: set up how my pages should look and publish
-> my welcome page.
+  > Walk me through Patchy Cloud's onboarding: set up how my pages should look and
+  > publish my welcome page.
 
-Those are the skill's onboarding triggers; nothing else starts this conversation on its
-own. Installing or wiring up the skill runs nothing.
+  Run the whole conversation below.
 
-**On request.** "Redo my Patchy setup" re-runs the conversation. It overwrites
-`style.md` with the new answers and reuses a working publishing key.
+- **The person gives the portal's setup line**, `Set up Patchy using <instance>/llms.txt`.
+  Once the machine is logged in, run [step 3, the company look](#3-the-company-look),
+  then hand back: the portal's guide has the person ask for their first patch next.
+- **"Redo my Patchy setup"** runs the whole conversation again. It reuses a working
+  publishing key, updates the cached welcome page, and leaves an existing company
+  look alone: changing it is its own request (see the main skill's
+  [Changing the look](../SKILL.md#changing-the-look)).
 
-Those are the only triggers. There is no per-session first-run check: if neither fires,
-onboarding never happens, and that is the correct outcome.
+Those are the only triggers. Installing or wiring up the skill runs nothing, and there
+is no per-session first-run check.
 
 ## Probe before asking
 
@@ -33,18 +37,17 @@ Run the onboarding probe at the start; repeat it only if the instance choice cha
 patchy status --json
 ```
 
-It is local-only and answers rather than passes or fails. All seven keys, and what each one
+It is local-only and answers rather than passes or fails. All six keys, and what each one
 settles:
 
-| Key               | Values                                                | Use it to                                                                                                                                                                                                                                                                                                                                    |
-| ----------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instanceUrl`     | the resolved instance URL                             | Know where the welcome patch would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                                                                                                                 |
-| `instanceSource`  | `flag` \| `dev-env` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `dev-env` is this checkout's own `pnpm dev` instance, chosen for as long as it runs. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
-| `hasToken`        | boolean                                               | `true` means a key is available; verify who it acts as with `whoami`. If false, step 3 logs this machine in before publishing.                                                                                                                                                                                                               |
-| `tokenSource`     | `login` \| `auth-set` \| `null`                       | `login` is a saved device-login key; `auth-set` is a saved existing key. `null` with a key means environment, dev env or an older entry without provenance.                                                                                                                                                                                  |
-| `stateDir`        | absolute path                                         | Locate `style.md` — it goes in this directory.                                                                                                                                                                                                                                                                                               |
-| `hasDefaultStyle` | boolean                                               | `true` means `style.md` exists. Read it, say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                                                                                                   |
-| `cliVersion`      | version string                                        | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                                                                                                         |
+| Key              | Values                                                | Use it to                                                                                                                                                                                                                                                                                                                                    |
+| ---------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instanceUrl`    | the resolved instance URL                             | Know where the welcome patch would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                                                                                                                 |
+| `instanceSource` | `flag` \| `dev-env` \| `env` \| `config` \| `default` | Settle step 1. `config` is a saved choice — confirm it, do not ask. `dev-env` is this checkout's own `pnpm dev` instance, chosen for as long as it runs. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
+| `hasToken`       | boolean                                               | `true` means a key is available; verify who it acts as with `whoami`. If false, step 2 logs this machine in.                                                                                                                                                                                                                                 |
+| `tokenSource`    | `login` \| `auth-set` \| `null`                       | `login` is a saved device-login key; `auth-set` is a saved existing key. `null` with a key means environment, dev env or an older entry without provenance.                                                                                                                                                                                  |
+| `stateDir`       | absolute path                                         | Locate the CLI's state, including the `look-preview.html` that `patchy look preview` writes.                                                                                                                                                                                                                                                 |
+| `cliVersion`     | version string                                        | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                                                                                                         |
 
 `hasToken` and `tokenSource` follow the publishing credential chain:
 `PATCHY_API_TOKEN`, then the stored key for this instance, then the dev env's
@@ -60,22 +63,7 @@ One question at a time. Call the machine token the user's **publishing key**.
 Say **sign in** for the person's browser session and **log this machine in**
 for the step that lets it publish as them.
 
-### 1. Style
-
-Offer exactly two options:
-
-1. **The Patchy look** (the default): warm paper, bold ink, hand-built and friendly.
-   Describe it in one sentence.
-2. **Match my website**: ask for the URL, then capture it by the method in
-   `style-file.md`. Play the read back in one line before saving ("deep forest green,
-   cream, serif headings, plain-spoken — sound right?") and fold in corrections until
-   they agree.
-
-Either answer writes `style.md` into the state dir, in the shape `style-file.md`
-specifies. Writing it for the default answer too is what stops every later session from
-re-asking. A project's own house style still overrides it.
-
-### 2. Where pages live — settled from the probe, asked only if it must be
+### 1. Where pages live — settled from the probe, asked only if it must be
 
 Pages go to the selected Patchy Cloud instance, or to the dev instance of a checkout.
 The CLI's fallback is localhost, not a deployed destination. The probe already
@@ -86,21 +74,21 @@ answered the choice in most cases:
 - `instanceSource` is `dev-env` — the local dev instance of this checkout, not a deployed
   company instance; say so and move on. The publish's scope still determines readership.
 - `instanceSource` is `env` or `flag` — chosen for this session only. Say so, and offer to
-  save that choice with `login --api-url <url>` if step 3 needs a login.
+  save that choice with `login --api-url <url>` if step 2 needs a login.
 - `instanceSource` is `default` — nothing has been chosen. Ask, once: which address should
   their pages be published to? The local fallback works only with a running server
   and, before publishing, a completed login or an available publishing key.
 
 Use the actual URL, never a placeholder. Carry an explicit `--api-url` choice
-on login, completion, `whoami`, publish, share and logout. Login saves that choice
+on login, completion, `whoami`, `look`, publish, share and logout. Login saves that choice
 and retains the flag in `next`; keep using the flag when overriding a worktree
 or environment-selected instance, since either outranks saved config. The dev
 seed is available only with `instanceSource: "dev-env"`, not through an explicit
 `--api-url` flag, even when the URL is the same.
 
-### 3. Log in, then publish the welcome patch
+### 2. Log in
 
-If step 2 chose a different instance, run `patchy status --api-url <url> --json`
+If step 1 chose a different instance, run `patchy status --api-url <url> --json`
 for that choice first; a key found for the old instance says nothing about it.
 Follow the main skill's [publishing identity check](../SKILL.md#publishing)
 before deciding to reuse a key or log in. In particular, a working dev seed
@@ -135,8 +123,49 @@ the user, company, role and machine before publishing. Describe the key as
 saved on this machine only for `tokenSource: "login"` or `"auth-set"`;
 environment and dev-env keys do not imply a saved credential file.
 
-Write `welcome.html` from `welcome-patch.html` in this directory, restyled to the chosen
-look — the structure and copy are the deliverable, the styling is theirs — then:
+### 3. The company look
+
+This is the first moment after create-or-join. Run `patchy look --json` and take the
+person's role, email and company name from `whoami --json`:
+
+- **The company has a look** (`current` is set): nothing to ask. Say once that their
+  tools will use the company's look: "Your tools will use Acme's look."
+- **No look, and the person is a member**: nothing to ask or say. Their tools start
+  in the Patchy look until an admin publishes one.
+- **No look, and the person is an admin**: guess the company's site from their email
+  domain and ask, with the company's name from `whoami`:
+
+  > You're at acme.com. Want your tools to look like Acme?
+
+  Guess the registrable domain (`eng.acme.com` gives `acme.com`) and fetch it first:
+  a mail-only domain or a redirect to another site is worth saying, so their answer
+  can correct it. A webmail address (gmail.com, googlemail.com, outlook.com,
+  hotmail.com, live.com, yahoo.com, icloud.com, me.com, aol.com, proton.me, gmx.com
+  and other personal mail services) gets no guess: ask once for the company's website,
+  and with none, move on.
+
+  On yes, say it takes about ten minutes, then capture the site into a new folder by
+  `look-capture.md` in this directory. Show the specimen with
+  `patchy look preview <dir>`, sum the look up in one line and fold in corrections
+  until they agree. Then publish revision 1:
+
+  ```bash
+  patchy look publish <dir> --note "captured from acme.com" --json
+  ```
+
+  Say: "Acme's look is published as revision 1. New tools start in it, and only
+  admins can change it." On no, their tools use the Patchy look until an admin
+  publishes one; "make our tools look like acme.com" starts that any time.
+
+### 4. Publish the welcome patch
+
+Write `welcome.html` from `welcome-patch.html` in this directory. The structure and copy
+are the deliverable; the look is the company's. Its own CSS uses only the look's tokens,
+so it takes whichever look `patchy look --json` names: put that look's `look.css`
+verbatim into the page's first `<style>` block, and into the masthead its logo
+(`<img src="data:image/svg+xml;base64,…" alt="<company>">`) or, with no logo, the
+company's name. Follow the brief where it fits: its voice, and its badge and card
+recipes. Then:
 
 ```bash
 patchy validate './welcome.html' && patchy publish './welcome.html' --json
@@ -176,56 +205,56 @@ local logout succeeded. A worktree can still publish with its seeded key, and
 `PATCHY_API_TOKEN` is not the CLI's to remove. This does not sign the browser
 out; **Sign out** on **Your machines** does that.
 
-### 4. Sign-off
+### 5. Sign-off
 
 Close with what to say next time, in their words: "publish this with patchy", "publish
 this plan", "update my page", "take that page down". One line, not a manual.
 
 ## Sample transcripts
 
-Hosts below are placeholders. Use whatever address the probe or the user actually gives
-you; never invent one, and never carry these into a real session.
+Hosts and companies below are placeholders. Use whatever address the probe or the user
+actually gives you; never invent one, and never carry these into a real session.
 
-### Fast path — an instance and working key are already available
+### A new company's admin, with a work email
 
-> **Agent**: One quick question and I'll publish your welcome page. Looks:
-> pages can use the Patchy look — warm paper, bold ink, friendly — or I can match your own
-> website's style. Which would you like?
+> **Agent**: Your pages go to `pages.example.com`. To publish as you, this machine needs
+> to be logged in. Open `https://pages.example.com/login/device?code=BCDF-GHJK` in your
+> own browser and check that it shows `BCDF-GHJK`. Sign in if needed, check the company
+> and email, name this machine, then confirm. I'll finish logging it in here.
 >
-> **User**: default is fine
->
-> **Agent**: Done. Your pages go to `pages.example.com`, which is already set up here.
-> You're publishing as alex@example.com at Acme, from "Work laptop".
-> Publishing your welcome page now… Here it is: `https://pages.example.com/acme/welcome` —
-> signed-in colleagues in your company can open it. It was published
-> with your configured publishing key. Next time you want a page, just say
-> "publish this with patchy".
-
-### Custom path — style from a website, and nowhere to publish yet
-
-> **Agent**: One quick question — looks. The Patchy look, or match your website?
->
-> **User**: match my site, it's greenfieldpottery.com
->
-> **Agent**: Reading your site… I see deep forest green on cream, serif headings, generous
-> space, and plain-spoken copy. I'll use that as your default look — sound right?
->
-> **User**: yes but the green should be darker, like the footer
->
-> **Agent**: Got it — footer green it is. Saved. Last thing: nothing here says where your
-> pages should be published. What's the Patchy Cloud address you were given?
->
-> **User**: pages.greenfield.internal
->
-> **Agent**: To publish as you, this machine needs to be logged in. Open
-> `https://pages.greenfield.internal/login/device?code=BCDF-GHJK` in your own browser
-> and check that it shows `BCDF-GHJK`. Sign in if needed, check the company and
-> email, name this machine, then confirm. I'll finish logging it in here.
->
-> **User**: confirmed
+> **User**: done
 >
 > **Agent**: This machine is logged in to Greenfield Pottery as
-> alex@greenfieldpottery.com, named "Studio laptop". Its publishing key is saved
-> here. Publishing your welcome page now… Here it is:
-> `https://pages.greenfield.internal/greenfield/welcome` — signed-in colleagues in your
-> company can open it. Next time, just say "publish this with patchy".
+> alex@greenfieldpottery.com, named "Studio laptop". You're at greenfieldpottery.com.
+> Want your tools to look like Greenfield Pottery?
+>
+> **User**: yes
+>
+> **Agent**: That takes about ten minutes… Here's the specimen: deep forest green on
+> warm cream, serif headings, generous space, plain-spoken copy. Sound right?
+>
+> **User**: the green should be darker, like the footer
+>
+> **Agent**: Footer green it is. Greenfield Pottery's look is published as revision 1.
+> New tools start in it, and only admins can change it. Publishing your welcome page
+> now… Here it is: `https://pages.example.com/greenfield/welcome` — signed-in
+> colleagues in your company can open it. Next time, just say "publish this with
+> patchy".
+
+### Joining a company that has a look
+
+> **Agent**: You're publishing as sam@acme.example at Acme, from "Work laptop". Your
+> tools will use Acme's look. Publishing your welcome page now… Here it is:
+> `https://pages.example.com/acme/welcome` — signed-in colleagues in your company can
+> open it. Next time you want a page, just say "publish this with patchy".
+
+### A webmail address
+
+> **Agent**: This machine is logged in to Riverside Bakes as riversidebakes@gmail.com.
+> Want your tools to look like Riverside Bakes? Tell me its website, or skip and
+> they'll use the Patchy look.
+>
+> **User**: skip for now
+>
+> **Agent**: They'll use the Patchy look; say "make our tools look like our site" any
+> time. Publishing your welcome page now…
