@@ -47,6 +47,21 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 6,
+    date: "2026-10-07",
+    through: "b765183b91b6335fffec5b70b33ad1f2b8b235f4",
+    changes: [
+      {
+        kind: "New",
+        title: "A guide to your first patch",
+        detail:
+          "Until you have a patch of your own, Patches opens on a short guide: what Patchy is, the line to give your AI agent, and what to ask it for, each with a Copy button. It moves on as you go and steps aside once your first patch is live.",
+        prs: [571]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 5,
     date: "2026-10-06",
     through: "5b1a62de21d43e3a06cde0571bb601ee4260f422",
