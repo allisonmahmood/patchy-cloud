@@ -842,7 +842,7 @@ RuntimeSuccess | HandlerFailure
 {
   current: { revision: integer, author: { id: string, name: string }, createdAt: string, note: string, files: { look.css: string, LOOK.md: string, logo.svg?: string } } | null,
   revisions: LookRevision[],
-  patchyLook: { look.css: string, LOOK.md: string, logo.svg?: string } | null,
+  patchyLook: { look.css: string, LOOK.md: string } | null,
   admins: { id: string, name: string }[]
 }
 ```

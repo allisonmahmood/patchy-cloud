@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as Redacted from "effect/Redacted";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -66,7 +67,7 @@ const bearer = Layer.effect(
 const layer = Layer.mergeAll(LookApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(bearer),
   Layer.provideMerge(Layer.mergeAll(Looks.layer, Users.layer, Companies.layer, recording)),
-  Layer.provideMerge(Layer.mergeAll(Testing.layer(), NodeFileSystem.layer))
+  Layer.provideMerge(Layer.mergeAll(Testing.layer(), NodeFileSystem.layer, NodePath.layer))
 );
 
 /** A company with admins Ada and Cleo, a member Ben and a deactivated admin Dot. */
