@@ -47,6 +47,24 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 7,
+    date: "2026-10-07",
+    through: "48704b0e786e380cff38819aab1b422bd3c1219a",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "A patch that fails to set up says why",
+        detail:
+          "When your AI agent starts or refreshes a patch and its packages fail to install, the patchy command now gives the reason, like a download that wasn’t found. With the newest pnpm, the tool that installs those packages, it used to say only that installing failed.",
+        prs: [561]
+      }
+    ],
+    behindTheScenes: [
+      "We updated the libraries Patchy is built on to their latest fixes.",
+      "We now build Patchy with the newest version of its package manager."
+    ]
+  },
+  {
     id: 6,
     date: "2026-10-07",
     through: "b765183b91b6335fffec5b70b33ad1f2b8b235f4",
