@@ -1241,6 +1241,20 @@ or `null` for the Patchy look. A new repo's tier 1 and 2 `src/main.tsx` imports
 the look; the single-file build inlines it, embedded fonts included. A page that
 doesn't import it keeps its own style, and refresh never edits page source.
 
+A page uses the look when its source (`index.html`, `src/` or `helpers/`) names
+`patchy/_generated/look.css` or `logo.svg`. When `refresh` or a new `dev` start
+brings in a revision other than the one `index.json` had, such a page hears it
+in text and in JSON `warnings`: "Acme's look changed, rev 7 → 8 by Sam: darker
+green. Colours and fonts follow; to restyle this tool's components, ask your
+agent to update it to the current look." A restore reads `rev 8 → 7`, a first
+look `none → rev 1`, and a return to no look `rev 1 → none, so the Patchy look
+stands in`. When the new look has no logo and the page names `logo.svg`, the
+notice adds that the reference must go, since the next build fails on it.
+Repo `publish` never pulls a revision. When such a page's revision isn't the
+company's current one (one `GET /api/look`), it publishes the repo's own
+revision unchanged, exits 0 and warns, naming `patchy refresh`. A page that
+names neither file hears nothing and publish sends no look request.
+
 ## Exit codes
 
 The code says who has to act, so an agent can branch on it without reading the message:
