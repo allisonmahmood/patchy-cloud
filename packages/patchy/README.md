@@ -1161,15 +1161,16 @@ serve for up to 60 seconds; downloaded copies cannot be recalled.
 ### The company look
 
 A company has numbered look revisions and a pointer to the current one. Having
-no look is the starting state. Any member's agent reads the look; only admins
-publish or restore it. These commands run anywhere with the saved login and
-accept `--json`.
+no look is the starting state. Any member's agent reads and previews the look;
+only admins publish or restore it. These commands run anywhere with the saved
+login and accept `--json`.
 
 | command                                     | behaviour                                                                                                                                                                                                | `--json` success                                                                                                    |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `patchy look`                               | Prints the current revision's number, author, date, note and file sizes, then every revision newest first.                                                                                               | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions }`, files' contents included. |
 | `patchy look publish <dir> --note "<text>"` | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent; a warning names them. | `{ ok, current, warnings? }`                                                                                        |
 | `patchy look restore <n\|none>`             | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer and adds no revision.                                                                          | `{ ok, current }`, with `current` null for `none`                                                                   |
+| `patchy look preview [<dir>] [--compare]`   | Writes the specimen as one HTML file and prints its path: in the look in `<dir>`, in the company's look without one, or with `--compare` the folder beside the company's look.                           | `{ ok, path, failures, warnings? }`                                                                                 |
 
 `look publish` checks the folder before sending anything, and the instance runs
 the same checks again. A failing look is `invalid_look`, its message one line per
@@ -1199,6 +1200,32 @@ The note is required, one line of 1–200 characters. A member's publish or
 restore is `admin_required`, exit 2; the failure document carries `admins`, each
 `{ id, name }`, so the agent can say who to ask. A revision the company does not
 have is `revision_unavailable`, exit 2.
+
+The specimen is a fixed page that ships with the CLI, so every agent shows the
+same one: headings, text with a link and muted meta, buttons, stat cards, a badge
+per status, a table, a form with an invalid field, an empty state, hover, focus,
+disabled and busy states, and the colour swatches. Only the look styles it. It
+shows `look.css`, not the brief's recipes, and can't show how a look meets a
+patch's own components; the page says so.
+
+`look preview` writes `look-preview.html` in the state directory
+(`PATCHY_STATE_DIR`, default `~/.patchy`), the one place every working CLI can
+write, and each preview replaces the last, so a browser tab that reloads shows
+the latest. The file embeds the look's fonts and logo and its content security
+policy refuses every other request, so it works offline and never loads what a
+patch couldn't. Show it to the person, or open it for them. A folder alone needs
+no login and sends nothing; the company's look is read with `patchy look`'s
+request. `--compare` frames each look separately, labelled, so neither's element
+styles reach the other; when the company has no look it shows the folder alone
+and says so.
+
+Preview never refuses a look it can read. `failures` lists every reason `look
+publish` would refuse the folder, each line exactly as publish words it, and is
+empty when it would publish; the company's look is never checked. Text mode
+prints them after the path. A folder missing `look.css` or `LOOK.md` is a local
+refusal, exit 1, as for publish, and `warnings` names any other file in it.
+`look preview` with no folder when the company has no look, or `--compare` with
+no folder, is local, exit 1.
 
 ## Exit codes
 
@@ -1276,6 +1303,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--all` includes offered integrations and their state on `list connections` only, not connection detail.
 - `--foreground` — on `dev`, wait and stream logs after readiness; interruption stops only a session this invocation started.
 - `--note <text>` — on `look publish`, required: why this revision exists, such as `darker green`.
+- `--compare` — on `look preview`: the folder's look beside the company's.
 
 ## Environment variables
 
@@ -1311,8 +1339,8 @@ Every request a command sends to the instance names the CLI in one header,
 `Patchy-Cli: <release> <command> <agent>`, such as
 `Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records
 and nothing else depends on it. The command is the one you ran (`auth set`,
-`status`, `setup` and `validate` send no requests; `look publish` and
-`look restore` send `look`). The agent is the first of
+`status`, `setup` and `validate` send no requests; `look publish`,
+`look restore` and `look preview` send `look`). The agent is the first of
 these whose variable is set in the CLI's environment (`GROK_AGENT` only at
 `1`), or `unknown`:
 
