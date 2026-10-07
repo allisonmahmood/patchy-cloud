@@ -125,8 +125,9 @@ environment and dev-env keys do not imply a saved credential file.
 
 ### 3. The company look
 
-This is the first moment after create-or-join. Run `patchy look --json` and take the
-person's role, email and company name from `whoami --json`:
+This is the first moment after create-or-join. Read the look with `patchy look --json`
+into a file, as the main skill's [company look](../SKILL.md#the-company-look) says, and
+take the person's role, email and company name from `whoami --json`:
 
 - **The company has a look** (`current` is set): nothing to ask. Say once that their
   tools will use the company's look: "Your tools will use Acme's look."
@@ -160,12 +161,14 @@ person's role, email and company name from `whoami --json`:
 ### 4. Publish the welcome patch
 
 Write `welcome.html` from `welcome-patch.html` in this directory. The structure and copy
-are the deliverable; the look is the company's. Its own CSS uses only the look's tokens,
-so it takes whichever look `patchy look --json` names: put that look's `look.css`
-verbatim into the page's first `<style>` block, and into the masthead its logo
-(`<img src="data:image/svg+xml;base64,…" alt="<company>">`) or, with no logo, the
-company's name. Follow the brief where it fits: its voice, and its badge and card
-recipes. Then:
+are the deliverable. Settle its style by the main skill's
+[order](../SKILL.md#styling-a-static-page): what the person asked for in this
+conversation, then on a redo the published welcome page's own style, then the company
+look, then the Patchy look. The template's own CSS uses only the look's tokens, so in a
+look it needs that look's `look.css` verbatim in its first `<style>` block, and in the
+masthead the look's logo (`<img src="data:image/svg+xml;base64,…" alt="<company>">`) or,
+with no logo, the company's name. Follow the brief where it fits, its voice and recipes
+included. Then:
 
 ```bash
 patchy validate './welcome.html' && patchy publish './welcome.html' --json

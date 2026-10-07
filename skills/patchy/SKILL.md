@@ -530,6 +530,13 @@ with the brand's read, voice and component recipes; and an optional `logo.svg`.
 company's look. With none, `current` is null and `patchyLook` holds the Patchy look,
 Patchy's own, which stands in. `admins` names who can change it.
 
+Embedded fonts can make the read half a megabyte, so write it to a file
+(`patchy look --json > look.json`). Read the brief, the revision and `admins` from that
+file, and copy `look.css` and the logo into a page or folder with a script, never
+through your context. When the read fails, follow its error: log
+in again, or retry a rate-limited or busy answer. With the instance unreachable, say
+so and write the page in a plain style of its own rather than an invented look.
+
 ### Styling a static page
 
 Before writing a page, settle its style; the first of these that applies wins:

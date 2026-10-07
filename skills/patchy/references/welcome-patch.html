@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Welcome — this page is yours</title>
     <style>
-      /* The look's look.css, verbatim: the company's look from `patchy look --json`,
-         or the Patchy look (`patchyLook`) while the company has none. */
+      /* A look's look.css, verbatim, when the page's style settles on a look: the company's
+         look from `patchy look --json`, or the Patchy look (`patchyLook`) while it has none. */
     </style>
     <style>
       /* The page's own CSS. It lays the page out from the look's tokens and styles only its
@@ -36,12 +36,6 @@
       }
       .kicker {
         margin-left: auto;
-        padding: 2px calc(var(--look-space) * 1.5);
-        border-radius: 999px;
-        background: color-mix(in srgb, var(--look-accent) 14%, var(--look-bg));
-        color: var(--look-fg);
-        font-size: 0.8rem;
-        font-weight: 700;
       }
       .lede {
         color: var(--look-muted);
@@ -74,29 +68,32 @@
         margin: 0;
         font-size: 0.95rem;
       }
+      /* Badges sit on bg or surface, where the look's checks verify every text colour, so
+         a badge carries its colour in its text and border, never in a tinted fill. */
       .tag {
+        --tone: var(--look-muted);
         display: inline-block;
-        margin-bottom: var(--look-space);
-        padding: 2px var(--look-space);
+        padding: 1px var(--look-space);
+        border: 1px solid var(--tone);
         border-radius: 999px;
+        color: var(--tone);
         font-size: 0.75rem;
         font-weight: 700;
       }
+      .card .tag {
+        margin-bottom: var(--look-space);
+      }
       .tag-link {
-        background: color-mix(in srgb, var(--look-link) 12%, var(--look-surface));
-        color: var(--look-link);
+        --tone: var(--look-link);
       }
       .tag-success {
-        background: color-mix(in srgb, var(--look-success) 12%, var(--look-surface));
-        color: var(--look-success);
+        --tone: var(--look-success);
       }
       .tag-warning {
-        background: color-mix(in srgb, var(--look-warning) 12%, var(--look-surface));
-        color: var(--look-warning);
+        --tone: var(--look-warning);
       }
       .tag-danger {
-        background: color-mix(in srgb, var(--look-danger) 12%, var(--look-surface));
-        color: var(--look-danger);
+        --tone: var(--look-danger);
       }
       .note {
         margin: calc(var(--look-space) * 3) 0;
@@ -137,7 +134,7 @@
                <img src="data:image/svg+xml;base64,…" alt="Company name">,
                or the company's name when the look has no logo. -->
           <span class="brand">Company name</span>
-          <span class="kicker">Your first page</span>
+          <span class="tag kicker">Your first page</span>
         </div>
         <h1>Welcome — this page is yours.</h1>
         <p class="lede">
