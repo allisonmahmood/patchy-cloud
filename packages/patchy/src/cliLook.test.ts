@@ -2,6 +2,7 @@
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { validateHtml } from "@patchy/core";
 import { lookFixtureDir, readLookFixture } from "../../../test/look-fixtures.js";
 import { runCli, stubInstance, tempDir } from "./test/cli.js";
 
@@ -214,6 +215,8 @@ describe("patchy look preview", () => {
     const logo = readLookFixture("patchy")["logo.svg"] ?? "";
     expect(page).toContain(`data:image/svg+xml;base64,${Buffer.from(logo).toString("base64")}`);
     expect(page).not.toContain("<iframe");
+    // A member's agent can publish it as a tier 0 page to show an admin.
+    expect(validateHtml(page)).toMatchObject({ ok: true });
 
     const text = await runCli(["look", "preview", dir], { env: env(instance.url) });
     expect(text, text.stderr).toMatchObject({ status: 0, stderr: "" });
