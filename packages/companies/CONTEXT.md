@@ -36,6 +36,10 @@ _Avoid_: brand, theme, design system, style (the personal `style.md` the look re
 One published look, numbered in order within its company with its author, time and note; its files never change. The company points at one revision as current, or at none, and restoring moves that pointer to an earlier revision without copying it.
 _Avoid_: look version (patches have versions), theme update
 
+**Specimen**:
+The fixed page Patchy owns that shows a look on plain elements: text, buttons, cards, a badge per status, a table, a form, an empty state, their states and the colour swatches, styled only by `look.css`. It checks the tokens and element styles, not the brief's recipes, and ships with the release so every agent shows the same page.
+_Avoid_: sample page, style guide, preview (the file `patchy look preview` writes from it)
+
 **Group**:
 A named set of users used to grant access, never a container that owns patches or connections. Its future access model is recorded in [the product](../../docs/product.md#users-admins-groups).
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
