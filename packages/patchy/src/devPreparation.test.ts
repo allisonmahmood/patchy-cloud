@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import { GenerateRequest, Identity } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -34,6 +34,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   tier = 1,
   uses = "{}",
   generatedServer,
+  generatedFiles = [],
   metadata = { postgres: {}, shared: {} },
   duringGeneration = () => Effect.void
 }: {
@@ -41,6 +42,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   readonly tier?: 0 | 1 | 2;
   readonly uses?: string;
   readonly generatedServer?: string;
+  readonly generatedFiles?: ReadonlyArray<{ readonly path: string; readonly contents: string }>;
   readonly metadata?: unknown;
   readonly duringGeneration?: (root: string) => Effect.Effect<void, unknown, FileSystem.FileSystem>;
 }) {
@@ -73,6 +75,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
         metadata,
         files: [
           { path: "patchy/_generated/index.json", contents: JSON.stringify(index) },
+          ...generatedFiles,
           ...(generatedServer === undefined
             ? []
             : [{ path: "patchy/_generated/server.ts", contents: generatedServer }])
@@ -261,4 +264,81 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
       );
     })
   );
+
+  describe("look notices", () => {
+    const revision = (revision: number, note: string) => ({
+      revision,
+      author: { id: "usr_sam", name: "Sam" },
+      createdAt: "2026-10-07T09:00:00.000Z",
+      note
+    });
+    const follow =
+      "Colours and fonts follow; to restyle this tool's components, ask your agent to update it to the current look.";
+    const page = Effect.fn("test.preparation.page")(function* (root: string, source: string) {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${root}/src`, { recursive: true });
+      yield* fs.writeFileString(`${root}/src/main.tsx`, source);
+    });
+
+    it.effect(
+      "tells a page that imports the look each time dev start brings in another revision",
+      () =>
+        Effect.gen(function* () {
+          const index: { look: ReturnType<typeof revision> | null } = {
+            ...currentIndex,
+            look: revision(7, "first green")
+          };
+          const { root, prepare } = yield* harness({ index });
+          yield* page(root, 'import "../patchy/_generated/look.css";\n');
+          const notices = Effect.map(prepare, ({ warnings }) => warnings);
+          assert.deepStrictEqual(yield* notices, [
+            `Preparation's look changed, none → rev 7 by Sam: first green. ${follow}`
+          ]);
+          index.look = revision(8, "darker green");
+          assert.deepStrictEqual(yield* notices, [
+            `Preparation's look changed, rev 7 → 8 by Sam: darker green. ${follow}`
+          ]);
+          assert.deepStrictEqual(yield* notices, []);
+          index.look = revision(7, "first green");
+          assert.deepStrictEqual(yield* notices, [
+            `Preparation's look changed, rev 8 → 7 by Sam: first green. ${follow}`
+          ]);
+          index.look = null;
+          assert.deepStrictEqual(yield* notices, [
+            `Preparation's look changed, rev 7 → none, so the Patchy look stands in. ${follow}`
+          ]);
+        }),
+      { timeout: 30_000 }
+    );
+
+    it.effect("says nothing to a page that keeps its own style", () =>
+      Effect.gen(function* () {
+        const index = { ...currentIndex, look: revision(7, "first green") };
+        const { root, prepare } = yield* harness({ index });
+        yield* page(root, 'import "./styles.css";\n');
+        yield* prepare;
+        index.look = revision(8, "darker green");
+        assert.deepStrictEqual((yield* prepare).warnings, []);
+      })
+    );
+
+    it.effect("tells a page using the logo when the new look has none", () =>
+      Effect.gen(function* () {
+        const logo = { path: "patchy/_generated/logo.svg", contents: "<svg/>" };
+        const generatedFiles = [logo];
+        const index = { ...currentIndex, look: revision(7, "first green") };
+        const { root, prepare } = yield* harness({ index, generatedFiles });
+        yield* page(
+          root,
+          'import "../patchy/_generated/look.css";\nimport logo from "../patchy/_generated/logo.svg";\n'
+        );
+        yield* prepare;
+        index.look = revision(8, "darker green");
+        generatedFiles.pop();
+        assert.deepStrictEqual((yield* prepare).warnings, [
+          `Preparation's look changed, rev 7 → 8 by Sam: darker green. ${follow} The new look has no logo, so remove the page's reference to patchy/_generated/logo.svg; the next build fails on it.`
+        ]);
+      })
+    );
+  });
 });
