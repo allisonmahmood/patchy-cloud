@@ -1,0 +1,452 @@
+/* Page styles on top of the company look (patchy/_generated/look.css). Unlayered, so they win. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Page header: logo left, title, viewer right, hairline under. */
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--look-space) * 3);
+  height: 64px;
+  padding: 0 calc(var(--look-space) * 6);
+  border-bottom: 1px solid var(--look-border);
+  background: color-mix(in srgb, var(--look-bg) 85%, transparent);
+  backdrop-filter: blur(20px);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.page-header img {
+  height: 24px;
+}
+.header-title {
+  font-size: 13px;
+  font-weight: 510;
+}
+.page-header .actions {
+  margin-left: auto;
+  display: flex;
+  gap: calc(var(--look-space) * 2);
+}
+.viewer {
+  color: var(--look-muted);
+  font-size: 13px;
+}
+
+.page {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: calc(var(--look-space) * 12) calc(var(--look-space) * 6) calc(var(--look-space) * 16);
+}
+.title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--look-space) * 6);
+  margin-bottom: calc(var(--look-space) * 8);
+}
+.lede {
+  color: var(--look-muted);
+  font-size: 15px;
+  margin: 0;
+}
+.muted {
+  color: var(--look-muted);
+  font-size: 13px;
+}
+.error {
+  color: var(--look-danger);
+  font-size: 13px;
+  margin: calc(var(--look-space) * 2) 0;
+}
+
+/* Buttons from the look brief. */
+.button-secondary {
+  height: 32px;
+  padding: 0 calc(var(--look-space) * 3);
+  border: 1px solid var(--look-border);
+  border-radius: var(--look-radius);
+  background: var(--look-surface);
+  color: var(--look-fg);
+  font: 510 13px/30px var(--look-font-body);
+  cursor: pointer;
+}
+.button-secondary:hover {
+  background: color-mix(in srgb, var(--look-fg) 8%, var(--look-bg));
+  filter: none;
+}
+.button-ghost {
+  height: 28px;
+  padding: 0 calc(var(--look-space) * 2);
+  border: 0;
+  border-radius: calc(var(--look-radius) - 2px);
+  background: transparent;
+  color: var(--look-muted);
+  font: 510 13px/28px var(--look-font-body);
+  cursor: pointer;
+}
+.button-ghost:hover {
+  background: var(--look-surface);
+  color: var(--look-fg);
+  filter: none;
+}
+.button-danger {
+  height: 32px;
+  padding: 0 calc(var(--look-space) * 3);
+  border: 1px solid color-mix(in srgb, var(--look-danger) 35%, var(--look-bg));
+  border-radius: var(--look-radius);
+  background: color-mix(in srgb, var(--look-danger) 12%, var(--look-bg));
+  color: var(--look-danger);
+  font: 510 13px/30px var(--look-font-body);
+  cursor: pointer;
+}
+
+/* Stats: a grid of equal cards. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: calc(var(--look-space) * 4);
+  margin-bottom: calc(var(--look-space) * 10);
+}
+.card {
+  padding: calc(var(--look-space) * 5);
+  border: 1px solid var(--look-border);
+  border-radius: var(--look-radius);
+  background: var(--look-surface);
+}
+.stat {
+  display: grid;
+  gap: var(--look-space);
+}
+.stat-label {
+  color: var(--look-muted);
+  font-size: 13px;
+  font-weight: 510;
+}
+.stat-value {
+  font: 590 2rem/1.1 var(--look-font-display);
+  letter-spacing: -0.022em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-sub {
+  color: var(--look-muted);
+  font-size: 12px;
+}
+
+/* New request form. */
+.compose {
+  margin-bottom: calc(var(--look-space) * 10);
+}
+.compose h2 {
+  font-size: 15px;
+  font-weight: 590;
+  margin-bottom: calc(var(--look-space) * 4);
+}
+.form {
+  display: grid;
+  gap: calc(var(--look-space) * 4);
+  max-width: 624px;
+}
+.form label {
+  margin: 0;
+}
+.form input,
+.form select,
+.form textarea {
+  margin-top: calc(var(--look-space) * 1.5);
+  background: var(--look-bg);
+}
+.form textarea {
+  resize: vertical;
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: calc(var(--look-space) * 3);
+}
+.form .actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--look-space) * 2);
+}
+.form .hint {
+  margin-right: auto;
+  color: var(--look-muted);
+  font-size: 12px;
+}
+
+/* Status filter: quiet tabs, the selected one carries a brand tint. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--look-space);
+  padding-bottom: calc(var(--look-space) * 3);
+  border-bottom: 1px solid var(--look-border);
+}
+.tab {
+  height: 28px;
+  padding: 0 calc(var(--look-space) * 3);
+  border: 1px solid transparent;
+  border-radius: calc(var(--look-radius) - 2px);
+  background: transparent;
+  color: var(--look-muted);
+  font: 510 13px/26px var(--look-font-body);
+}
+.tab:hover {
+  color: var(--look-fg);
+  background: var(--look-surface);
+  filter: none;
+}
+.tab-selected,
+.tab-selected:hover {
+  color: var(--look-fg);
+  background: color-mix(in srgb, var(--look-accent) 14%, var(--look-bg));
+  border-color: color-mix(in srgb, var(--look-accent) 35%, var(--look-bg));
+}
+.toolbar-meta {
+  margin-left: auto;
+  color: var(--look-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.toolbar-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 var(--look-space);
+  background: var(--look-border);
+}
+/* Keep the look's chunky button (48px, lip, uppercase) off these quiet controls. */
+.tab,
+.button-ghost {
+  min-height: 0;
+  margin-bottom: 0;
+  box-shadow: none;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.tab:active,
+.button-ghost:active {
+  transform: none;
+  box-shadow: none;
+}
+.tab:disabled,
+.button-ghost:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+}
+
+/* Approved this month by category: one quiet panel, single-hue bars, values as text. */
+.breakdown {
+  margin: calc(var(--look-space) * -6) 0 calc(var(--look-space) * 10);
+  padding-block: calc(var(--look-space) * 4);
+}
+.breakdown-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: calc(var(--look-space) * 2);
+}
+.breakdown .muted {
+  margin: 0;
+}
+.breakdown-table {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+.breakdown-table th,
+.breakdown-table td {
+  padding: calc(var(--look-space) * 0.75) 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.breakdown-table th {
+  width: 96px;
+  color: var(--look-fg);
+  font-weight: 510;
+}
+.breakdown-bar-cell {
+  padding-right: calc(var(--look-space) * 3) !important;
+}
+.breakdown-bar {
+  display: block;
+  height: 8px;
+  min-width: 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--look-accent) 70%, var(--look-fg));
+}
+.breakdown-count {
+  width: 96px;
+  color: var(--look-muted);
+  white-space: nowrap;
+}
+.breakdown-table .num {
+  width: 88px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 510;
+}
+.breakdown-zero th,
+.breakdown-zero .num {
+  color: var(--look-muted);
+  font-weight: 400;
+}
+.breakdown-zero .breakdown-bar {
+  background: var(--look-border);
+}
+
+/* Request list: the look's list table. */
+.table-list th {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.table-list td {
+  height: 44px;
+  padding-block: calc(var(--look-space) * 2.5);
+  vertical-align: top;
+}
+.table-list tbody tr:hover td {
+  background: color-mix(in srgb, var(--look-fg) 4%, var(--look-bg));
+}
+.table-list .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.table-list .nowrap {
+  white-space: nowrap;
+}
+.muted-cell {
+  color: var(--look-muted);
+}
+.cell-title {
+  font-weight: 510;
+}
+.cell-meta {
+  color: var(--look-muted);
+  font-size: 12px;
+}
+.sep {
+  color: color-mix(in srgb, var(--look-muted) 70%, var(--look-bg));
+}
+.cell-decision {
+  margin-top: var(--look-space);
+  font-size: 12px;
+  color: color-mix(in srgb, var(--look-fg) 68%, var(--look-muted));
+}
+.cell-decision q {
+  color: var(--look-muted);
+}
+.row-actions {
+  white-space: nowrap;
+  text-align: right;
+  width: 1%;
+}
+.row-open td,
+.decision-row td {
+  background: color-mix(in srgb, var(--look-fg) 4%, var(--look-bg));
+}
+.table-list tr.row-open td {
+  border-bottom: 0;
+}
+.decision {
+  display: flex;
+  align-items: flex-end;
+  gap: calc(var(--look-space) * 3);
+}
+.decision label {
+  flex: 1;
+  margin: 0;
+  color: var(--look-muted);
+}
+.decision input {
+  margin-top: calc(var(--look-space) * 1.5);
+}
+.decision-actions {
+  display: flex;
+  gap: calc(var(--look-space) * 2);
+  align-items: center;
+}
+
+/* Status badge: outlined pill with a coloured dot. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--look-border);
+  border-radius: 9999px;
+  color: var(--look-muted);
+  font: 510 12px/1 var(--look-font-body);
+  white-space: nowrap;
+}
+.badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--look-muted);
+}
+.badge-pending::before {
+  background: #f0bf00;
+}
+.badge-approved::before {
+  background: #27a644;
+}
+.badge-rejected::before {
+  background: var(--look-danger);
+}
+
+.more {
+  display: flex;
+  justify-content: center;
+  padding-top: calc(var(--look-space) * 4);
+}
+
+/* Empty state: centred, quiet, one primary action. */
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: calc(var(--look-space) * 2);
+  padding: calc(var(--look-space) * 16) calc(var(--look-space) * 6);
+  text-align: center;
+  color: var(--look-muted);
+  font-size: 13px;
+}
+.empty strong {
+  color: var(--look-fg);
+  font-size: 15px;
+  font-weight: 510;
+}
+.empty-actions {
+  display: flex;
+  gap: calc(var(--look-space) * 2);
+  margin-top: calc(var(--look-space) * 2);
+}
+
+@media (max-width: 720px) {
+  .stats,
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+  .decision {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+  }
+}

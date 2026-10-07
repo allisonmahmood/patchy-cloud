@@ -179,9 +179,10 @@
       <p class="eyebrow">Patchy Cloud · prototype for issue #563, part of #547 · 7 October 2026</p>
       <h1>Does a dozen tokens and a brief make a tool look like its company?</h1>
       <p class="lede">
-        Four looks were captured and six fresh agents each built a small tool. Every look-built tool
-        was then restarted under every other look with no code change. This page shows all of it
-        side by side.
+        Four looks were captured and fresh agents built the same small tool in each of them. Every
+        tool built in a look was then restarted under every other look with no code change, and two
+        more agents changed a tool after its look was revised. This page shows all of it side by
+        side.
       </p>
 
       <div class="ask">
@@ -368,6 +369,39 @@
         />
       </div>
 
+      <h2>Changing a tool that already exists</h2>
+      <p>
+        The Linear tool, after Duolingo's look arrived as a new revision. Left: no change at all.
+        Middle: a fresh agent asked to add a Mine filter, a CSV download and a category breakdown.
+        It followed the tool's own style, as the precedence rule says, and had to reset Duolingo's
+        lipped, uppercase plain-button style, which had leaked onto the tool's own tabs and row
+        buttons. Right: a fresh agent told only "update this tool to our current company look". It
+        rebuilt the tool in Duolingo's style in under 4 minutes.
+      </p>
+      <div class="grid4" style="grid-template-columns: repeat(3, 1fr)">
+        <span class="h">Revision only</span><span class="h">Then extended</span
+        ><span class="h">Then "update to our current look"</span>
+        <img src="shot:reskin-linear-as-duolingo" alt="" /><img
+          src="shot:linear-to-duolingo-extend-loaded"
+          alt=""
+        /><img src="shot:linear-to-duolingo-restyle-loaded" alt="" />
+      </div>
+
+      <h2>Without the logos</h2>
+      <p>
+        The same four tools, cropped below the header. A placeholder logo still carries the company
+        name, so judge these too.
+      </p>
+      <div class="grid4" style="grid-template-columns: repeat(4, 1fr)">
+        <img src="shot:nologo-spend-linear" alt="" /><img
+          src="shot:nologo-spend-duolingo"
+          alt=""
+        /><img src="shot:nologo-spend-finance" alt="" /><img
+          src="shot:nologo-spend-patchy"
+          alt=""
+        />
+      </div>
+
       <h2>Fonts</h2>
       <div class="duo">
         <figure>
@@ -536,30 +570,46 @@
         <li>
           <strong
             >Fifteen tokens: the 13 plus <code>--look-success</code> and
-            <code>--look-warning</code>.</strong
+            <code>--look-warning</code>. Colour tokens are opaque <code>#RRGGBB</code>.</strong
           >
-          Colour tokens are hex.
           <ul>
             <li>
               Status colours were the one gap every capture and three of the four tools hit, and the
               only thing that broke in a re-skin.
             </li>
+            <li>Pending is neutral, shown in fg or muted, not warning.</li>
+            <li><code>--look-link</code> stays: all four looks set it apart from the accent.</li>
+          </ul>
+        </li>
+        <li>
+          <strong>Tighter definitions, since the names are a permanent contract:</strong>
+          <ul>
             <li>
-              <code>--look-link</code> earns its place. All four looks set it apart from the accent;
-              Duolingo's green links would be 2.09:1.
+              <strong><code>--look-accent</code>:</strong> the principal brand emphasis fill. Text
+              on it uses <code>--look-accent-fg</code>. It doesn't mean the primary button,
+              selection or status; three of the four brands don't fill their primary button with it.
+              A plain <code>button</code> is the look's call.
+            </li>
+            <li>
+              <strong><code>--look-space</code>:</strong> the reference layout gap, nominally 8px,
+              not the smallest grid step. A label gap is half of it, related controls one, panel
+              padding three. Linear's 4px made re-skins change density by about 50%.
+            </li>
+            <li>
+              <strong><code>--look-surface</code>:</strong> an alternate ground that carries the
+              same foregrounds as <code>bg</code>.
+            </li>
+            <li>
+              <strong><code>--look-border</code>:</strong> decorative separators and frames. Control
+              outlines are the look's call.
             </li>
           </ul>
         </li>
         <li>
-          <strong><code>--look-accent</code> is the brand colour, not the primary button.</strong>
-          Three of the four brands don't fill their primary button with it: Vanguard's are black,
-          linear.app's is off-white, and Duolingo splits green and blue. How a plain
-          <code>button</code> looks is the look's call.
-        </li>
-        <li>
-          <strong><code>--look-space</code> is the standard gap</strong> (label to field, items in a
-          row), not a base unit. That keeps values near 8px, so a new look doesn't double a tool's
-          density.
+          <strong>One contrast rule.</strong> Every foreground (fg, muted, link, danger, success,
+          warning) reaches 4.5:1 on both bg and surface, and accent-fg reaches it on accent. Today's
+          looks would need three small fixes: Duolingo's danger (4.30) and muted on surface (4.24),
+          and Vanguard's muted on surface (4.21).
         </li>
         <li>
           <strong>Not added:</strong>
@@ -576,30 +626,74 @@
           <p>Recipes carry literals for sizes, weights, shadows and pills.</p>
         </li>
         <li>
-          <strong>Five required contrast pairs:</strong> fg/bg, muted/bg, accent-fg/accent, link/bg
-          and danger/bg. muted/surface only warns, because two real brands fail it at 4.2.
+          <strong
+            >The brief keeps its nine sections, and recipes ship markup with their CSS.</strong
+          >
+          One agent had to rebuild the tabs recipe on buttons because it styled links. Components
+          must include a badge per status (neutral too), tabs or a segmented filter, a select and a
+          small button. The reference allows pseudo-classes in element styles, and literal sizes.
         </li>
         <li>
-          <strong>The brief keeps its nine sections.</strong> Components must include a badge per
-          status, tabs or a segmented filter, a select and a small button; agents asked for each.
-          The reference allows pseudo-classes in element styles, and literal sizes.
+          <strong>The specimen keeps</strong> its current contents and adds a badge per status, plus
+          focus, hover, invalid, disabled and busy states. It checks <code>look.css</code> and the
+          tokens, not the brief's recipes, and it says so.
         </li>
         <li>
-          <strong>The specimen keeps</strong> headings, text with a link, muted meta, primary and
-          disabled buttons, stats, a table, a form with an error, an empty state and swatches. It
-          adds a badge per status: its accent-tinted badge made Vanguard's "Pending" look like an
-          error.
+          <strong>Size cap:</strong> the folder is at most 512 KiB of published bytes, embedded
+          fonts included. <code>LOOK.md</code> is at most 32 KiB.
         </li>
         <li>
-          <strong>Size cap:</strong> the look folder is at most 512 KiB, which leaves room for three
-          embedded font weights. <code>LOOK.md</code> is at most 32 KiB.
+          <strong>"No company look" stays a state.</strong> Generation writes the Patchy look as
+          Patchy's default, with no company logo and never as a company revision.
+          <code>look restore none</code> returns to it.
         </li>
         <li>
-          <strong>A company with no look gets the Patchy look,</strong> generated as a look folder
-          rather than nothing. Today's "nothing" has agents rebuild the plan-doc style by hand from
-          <code>node_modules</code>.
+          <strong>A new revision recolours existing tools; it doesn't restructure them.</strong> In
+          the revision runs, an agent extending the Linear tool under Duolingo's look kept the
+          tool's own style, as the precedence rule says. An agent told "update this tool to our
+          current look" rebuilt it in Duolingo's style in under 4 minutes. Change notices say this,
+          and the way to match a new look is that one line, pasted to the owner's agent.
+        </li>
+        <li>
+          <strong>Plain-element styles carry no signature effects.</strong> Duolingo's plain
+          <code>button</code> (lip shadow, press transform, uppercase) leaked into the Linear tool's
+          own tab and ghost buttons after the revision, and the agent had to reset it. In
+          <code>look.css</code>, element styles set colours, fonts, borders, radius and spacing
+          only. Shadows, transforms, text-transform and letter-spacing go in the brief's recipes,
+          which patches copy and own.
         </li>
       </ol>
+
+      <h2>What the build tickets still have to test</h2>
+      <p class="small">
+        From Astra's review of this prototype (GPT-6 Astra, a different model family). None of these
+        needed another prototype round; each belongs to the ticket named.
+      </p>
+      <ul>
+        <li>
+          <strong>#565 revisions and checks:</strong> conflicting token declarations, transparent
+          colours, and <code>!important</code> breaking the override promise. Check the effective
+          values, not just that each token is present.
+        </li>
+        <li>
+          <strong>#566 preview:</strong> keyboard use, narrow screens, zoom, long labels and
+          non-Latin text, plus the same tool compared across two revisions.
+        </li>
+        <li>
+          <strong>#567 generation:</strong> the Patchy look, then a company look, a restored
+          revision and none, in that order. Also interrupted generation, an existing styled repo and
+          real tier 0 font publishing.
+        </li>
+        <li>
+          <strong>#568 change notices:</strong> a brief-only revision, then an agent extending an
+          existing patch. The notice says the look changed and existing components were not
+          restyled.
+        </li>
+        <li>
+          <strong>#569 onboarding:</strong> ambiguous email domains, product pages behind a login,
+          and an owner who rejects a faithful capture of their marketing site.
+        </li>
+      </ul>
 
       <h2>Also found</h2>
       <ul>

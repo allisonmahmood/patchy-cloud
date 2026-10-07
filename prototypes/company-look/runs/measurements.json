@@ -5,7 +5,13 @@
     "importsLook": true,
     "generatedLookUntouched": true,
     "usesLogo": true,
-    "cssFiles": [{ "file": "src/app.css", "lines": 154, "bytes": 7415 }],
+    "cssFiles": [
+      {
+        "file": "src/app.css",
+        "lines": 154,
+        "bytes": 7415
+      }
+    ],
     "inlineStyleProps": 0,
     "tokenUse": {
       "bg": 10,
@@ -27,7 +33,10 @@
     "colourLiterals": ["#f0bf00", "#27a644"],
     "ownCustomProperties": [],
     "layers": [],
-    "fonts": { "fontFace": false, "importRule": false },
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
     "report": true,
     "minutes": 3.5,
     "turns": 32,
@@ -40,7 +49,13 @@
     "importsLook": true,
     "generatedLookUntouched": true,
     "usesLogo": true,
-    "cssFiles": [{ "file": "src/styles.css", "lines": 159, "bytes": 7487 }],
+    "cssFiles": [
+      {
+        "file": "src/styles.css",
+        "lines": 159,
+        "bytes": 7487
+      }
+    ],
     "inlineStyleProps": 0,
     "tokenUse": {
       "bg": 12,
@@ -62,7 +77,10 @@
     "colourLiterals": [],
     "ownCustomProperties": [],
     "layers": ["look"],
-    "fonts": { "fontFace": false, "importRule": false },
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
     "report": true,
     "minutes": 3.8,
     "turns": 35,
@@ -75,7 +93,13 @@
     "importsLook": true,
     "generatedLookUntouched": true,
     "usesLogo": true,
-    "cssFiles": [{ "file": "src/app.css", "lines": 145, "bytes": 6623 }],
+    "cssFiles": [
+      {
+        "file": "src/app.css",
+        "lines": 145,
+        "bytes": 6623
+      }
+    ],
     "inlineStyleProps": 0,
     "tokenUse": {
       "bg": 10,
@@ -97,7 +121,10 @@
     "colourLiterals": ["#def5f0", "#007873"],
     "ownCustomProperties": [],
     "layers": ["look"],
-    "fonts": { "fontFace": false, "importRule": false },
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
     "report": true,
     "minutes": 5,
     "turns": 42,
@@ -110,7 +137,13 @@
     "importsLook": true,
     "generatedLookUntouched": true,
     "usesLogo": true,
-    "cssFiles": [{ "file": "src/app.css", "lines": 366, "bytes": 8125 }],
+    "cssFiles": [
+      {
+        "file": "src/app.css",
+        "lines": 366,
+        "bytes": 8125
+      }
+    ],
     "inlineStyleProps": 0,
     "tokenUse": {
       "bg": 0,
@@ -132,7 +165,10 @@
     "colourLiterals": ["#2f6a17", "#ffbf35", "#eff9e8", "#fff7e4", "#8a5a00"],
     "ownCustomProperties": [],
     "layers": ["look"],
-    "fonts": { "fontFace": false, "importRule": false },
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
     "report": true,
     "minutes": 4,
     "turns": 41,
@@ -145,7 +181,13 @@
     "importsLook": false,
     "generatedLookUntouched": null,
     "usesLogo": false,
-    "cssFiles": [{ "file": "src/styles.css", "lines": 672, "bytes": 10814 }],
+    "cssFiles": [
+      {
+        "file": "src/styles.css",
+        "lines": 672,
+        "bytes": 10814
+      }
+    ],
     "inlineStyleProps": 0,
     "tokenUse": {
       "bg": 0,
@@ -215,7 +257,10 @@
       "--font-mono"
     ],
     "layers": [],
-    "fonts": { "fontFace": false, "importRule": false },
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
     "report": true,
     "minutes": 5.4,
     "turns": 55,
@@ -228,7 +273,13 @@
     "importsLook": false,
     "generatedLookUntouched": true,
     "usesLogo": false,
-    "cssFiles": [{ "file": "src/spooky.css", "lines": 204, "bytes": 10743 }],
+    "cssFiles": [
+      {
+        "file": "src/spooky.css",
+        "lines": 204,
+        "bytes": 10743
+      }
+    ],
     "inlineStyleProps": 0,
     "tokenUse": {
       "bg": 0,
@@ -281,11 +332,102 @@
       "--space"
     ],
     "layers": [],
-    "fonts": { "fontFace": false, "importRule": false },
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
     "report": true,
     "minutes": 4.8,
     "turns": 45,
     "costUsd": 1.32,
     "lookReads": 8
+  },
+  {
+    "run": "linear-to-duolingo-extend",
+    "look": "duolingo",
+    "importsLook": true,
+    "generatedLookUntouched": true,
+    "usesLogo": true,
+    "cssFiles": [
+      {
+        "file": "src/app.css",
+        "lines": 183,
+        "bytes": 9230
+      }
+    ],
+    "inlineStyleProps": 1,
+    "tokenUse": {
+      "bg": 10,
+      "fg": 11,
+      "muted": 20,
+      "surface": 4,
+      "border": 7,
+      "accent": 3,
+      "accent-fg": 0,
+      "link": 0,
+      "danger": 5,
+      "font-body": 5,
+      "font-display": 1,
+      "radius": 5,
+      "space": 43
+    },
+    "tokenUseTotal": 114,
+    "colorMix": 11,
+    "colourLiterals": ["#f0bf00", "#27a644"],
+    "ownCustomProperties": [],
+    "layers": [],
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
+    "report": true,
+    "minutes": 4.7,
+    "turns": 55,
+    "costUsd": 1.71,
+    "lookReads": 4
+  },
+  {
+    "run": "linear-to-duolingo-restyle",
+    "look": "duolingo",
+    "importsLook": true,
+    "generatedLookUntouched": true,
+    "usesLogo": true,
+    "cssFiles": [
+      {
+        "file": "src/app.css",
+        "lines": 196,
+        "bytes": 8951
+      }
+    ],
+    "inlineStyleProps": 0,
+    "tokenUse": {
+      "bg": 10,
+      "fg": 5,
+      "muted": 16,
+      "surface": 3,
+      "border": 10,
+      "accent": 2,
+      "accent-fg": 0,
+      "link": 6,
+      "danger": 6,
+      "font-body": 1,
+      "font-display": 1,
+      "radius": 1,
+      "space": 44
+    },
+    "tokenUseTotal": 105,
+    "colorMix": 10,
+    "colourLiterals": [],
+    "ownCustomProperties": [],
+    "layers": [],
+    "fonts": {
+      "fontFace": false,
+      "importRule": false
+    },
+    "report": true,
+    "minutes": 3.7,
+    "turns": 35,
+    "costUsd": 1.3,
+    "lookReads": 3
   }
 ]
