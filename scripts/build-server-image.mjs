@@ -108,6 +108,8 @@ async function stageRuntime(destination) {
       "--legacy",
       "--ignore-scripts",
       "--config.package-import-method=copy",
+      // Workspace patches for test-only dependencies go unused in a production deploy.
+      "--config.allow-unused-patches=true",
       app
     ],
     { env: buildEnv }

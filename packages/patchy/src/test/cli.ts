@@ -563,9 +563,11 @@ export const localPackageRegistry = async () => {
     seen.add(file);
     const manifest = decodePackageFixture(readJson(file));
     const tarball = path.join(dir, `${seen.size}.tgz`);
+    // pnpm links identical store files to one inode; registry tarballs never carry hard links.
     await exec("tar", [
       "-czf",
       tarball,
+      "--hard-dereference",
       "--exclude=node_modules",
       "--transform=s,^\\.,package,",
       "-C",
