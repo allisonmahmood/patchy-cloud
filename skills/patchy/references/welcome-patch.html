@@ -5,149 +5,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Welcome — this page is yours</title>
     <style>
-      * {
-        box-sizing: border-box;
-      }
-      :root {
-        --paper: #fffdf4;
-        --paper-blue: #eaf5ff;
-        --paper-green: #eff9e8;
-        --paper-amber: #fff7e4;
-        --white: #fffefa;
-        --ink: #12110f;
-        --ink-soft: #36332d;
-        --muted: #69645a;
-        --line: rgba(18, 17, 15, 0.14);
-        --line-strong: rgba(18, 17, 15, 0.3);
-        --blue: #1263e6;
-        --blue-dark: #093b92;
-        --green: #64c83f;
-        --green-ink: #2f6a17;
-        --yellow: #ffbf35;
-        --amber-ink: #8a5a00;
-        --red: #e94b35;
-        --red-ink: #b4220f;
-        --shadow-hard: 4px 4px 0 var(--ink);
-        --radius: 8px;
-        --radius-pill: 999px;
-        --font-sans:
-          system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans",
-          sans-serif;
-        --font-mono:
-          ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
-          "Liberation Mono", monospace;
-      }
-      html {
-        background: var(--paper-blue);
-      }
-      body {
-        margin: 0;
-        background:
-          linear-gradient(rgba(18, 17, 15, 0.035) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(18, 17, 15, 0.035) 1px, transparent 1px),
-          linear-gradient(
-            180deg,
-            var(--paper-blue) 0%,
-            var(--paper) 34%,
-            var(--paper-green) 78%,
-            #fef7ef 100%
-          );
-        background-size:
-          32px 32px,
-          32px 32px,
-          auto;
-        color: var(--ink-soft);
-        font-family: var(--font-sans);
-        font-size: 17px;
-        font-weight: 450;
-        line-height: 1.65;
-      }
-      body::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        z-index: -1;
-        pointer-events: none;
-        opacity: 0.22;
-        mix-blend-mode: multiply;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.36'/%3E%3C/svg%3E");
-      }
+      /* The look's look.css, verbatim: the company's look from `patchy look --json`,
+         or the Patchy look (`patchyLook`) while the company has none. */
+    </style>
+    <style>
+      /* The page's own CSS. It lays the page out from the look's tokens and styles only its
+         own classes, so the headings, text and links show the look's element styles. */
       .wrap {
-        width: min(760px, calc(100% - 40px));
+        width: min(760px, calc(100% - var(--look-space) * 5));
         margin: 0 auto;
-        padding: 42px 0 96px;
+        padding: calc(var(--look-space) * 5) 0 calc(var(--look-space) * 12);
       }
-      h1,
-      h2 {
-        margin: 0 0 0.5em;
-        color: var(--ink);
-        font-weight: 850;
-        line-height: 1.04;
-        text-wrap: balance;
-      }
-      h1 {
-        font-size: 2.9rem;
-        font-weight: 900;
-        line-height: 0.98;
-      }
-      h2 {
-        font-size: 1.5rem;
-        margin-top: 2.4rem;
-      }
-      p {
-        max-width: 62ch;
-        margin: 0 0 1rem;
-      }
-      a {
-        color: var(--blue-dark);
-        font-weight: 750;
-        text-decoration: underline;
-        text-underline-offset: 2px;
-      }
-
       .head-line {
         display: flex;
         align-items: center;
-        gap: 12px;
-        margin-bottom: 26px;
+        gap: calc(var(--look-space) * 1.5);
+        margin-bottom: calc(var(--look-space) * 3);
       }
       .brand {
         display: inline-flex;
         align-items: center;
-        gap: 9px;
-        font-weight: 850;
-        color: var(--ink);
+        color: var(--look-fg);
+        font-family: var(--look-font-display);
+        font-weight: 700;
       }
-      .glyph {
-        width: 20px;
-        height: 20px;
-        border: 2px solid var(--ink);
-        border-radius: 5px;
-        background: linear-gradient(135deg, var(--yellow) 0 50%, var(--green) 50% 100%);
-        box-shadow: 2px 2px 0 var(--ink);
+      .brand img {
+        display: block;
+        height: 28px;
+        width: auto;
       }
       .kicker {
         margin-left: auto;
-        padding: 4px 14px;
-        border: 2px solid var(--ink);
-        border-radius: var(--radius-pill);
-        background: var(--paper-amber);
-        color: var(--amber-ink);
-        font-size: 0.82rem;
-        font-weight: 800;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
+        padding: 2px calc(var(--look-space) * 1.5);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--look-accent) 14%, var(--look-bg));
+        color: var(--look-fg);
+        font-size: 0.8rem;
+        font-weight: 700;
       }
       .lede {
-        font-size: 1.18rem;
-        color: var(--ink-soft);
+        color: var(--look-muted);
+        font-size: 1.15rem;
       }
-
       .cards {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 18px;
-        margin: 26px 0 8px;
+        gap: calc(var(--look-space) * 2);
+        margin: calc(var(--look-space) * 3) 0;
         padding: 0;
         list-style: none;
       }
@@ -157,15 +61,14 @@
         }
       }
       .card {
-        border: 2px solid var(--ink);
-        border-radius: var(--radius);
-        background: var(--white);
-        box-shadow: var(--shadow-hard);
-        padding: 18px 20px;
+        padding: calc(var(--look-space) * 3);
+        border: 1px solid var(--look-border);
+        border-radius: var(--look-radius);
+        background: var(--look-surface);
       }
       .card h2 {
-        margin: 0 0 0.35em;
-        font-size: 1.08rem;
+        margin: 0 0 var(--look-space);
+        font-size: 1.05rem;
       }
       .card p {
         margin: 0;
@@ -173,60 +76,56 @@
       }
       .tag {
         display: inline-block;
-        margin-bottom: 10px;
-        padding: 2px 12px;
-        border: 2px solid var(--ink);
-        border-radius: var(--radius-pill);
-        font-size: 0.74rem;
-        font-weight: 800;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
+        margin-bottom: var(--look-space);
+        padding: 2px var(--look-space);
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 700;
       }
-      .tag-blue {
-        background: var(--paper-blue);
-        color: var(--blue-dark);
+      .tag-link {
+        background: color-mix(in srgb, var(--look-link) 12%, var(--look-surface));
+        color: var(--look-link);
       }
-      .tag-green {
-        background: var(--paper-green);
-        color: var(--green-ink);
+      .tag-success {
+        background: color-mix(in srgb, var(--look-success) 12%, var(--look-surface));
+        color: var(--look-success);
       }
-      .tag-amber {
-        background: var(--paper-amber);
-        color: var(--amber-ink);
+      .tag-warning {
+        background: color-mix(in srgb, var(--look-warning) 12%, var(--look-surface));
+        color: var(--look-warning);
       }
-      .tag-red {
-        background: #fdece8;
-        color: var(--red-ink);
+      .tag-danger {
+        background: color-mix(in srgb, var(--look-danger) 12%, var(--look-surface));
+        color: var(--look-danger);
       }
-
       .note {
-        margin: 26px 0;
-        padding: 16px 20px;
-        border: 2px solid var(--ink);
-        border-left: 8px solid var(--blue);
-        border-radius: var(--radius);
-        background: var(--white);
-        box-shadow: var(--shadow-hard);
+        margin: calc(var(--look-space) * 3) 0;
+        padding: calc(var(--look-space) * 2) calc(var(--look-space) * 2.5);
+        border: 1px solid var(--look-border);
+        border-left: 4px solid var(--look-accent);
+        border-radius: var(--look-radius);
+        background: var(--look-surface);
       }
       .note p {
         margin: 0;
       }
       .say {
-        display: inline-block;
-        padding: 2px 10px;
-        border: 1.5px solid var(--line-strong);
-        border-radius: 6px;
-        background: var(--paper);
-        font-family: var(--font-mono);
+        padding: 1px var(--look-space);
+        border: 1px solid var(--look-border);
+        border-radius: calc(var(--look-radius) / 2);
+        background: var(--look-bg);
+        font-family:
+          ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
         font-size: 0.88em;
         white-space: nowrap;
       }
       footer {
-        margin-top: 56px;
-        padding-top: 18px;
-        border-top: 2px dashed var(--line-strong);
+        margin-top: calc(var(--look-space) * 6);
+        padding-top: calc(var(--look-space) * 2);
+        border-top: 1px solid var(--look-border);
+        color: var(--look-muted);
         font-size: 0.9rem;
-        color: var(--muted);
       }
     </style>
   </head>
@@ -234,7 +133,10 @@
     <main class="wrap">
       <header>
         <div class="head-line">
-          <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
+          <!-- The company's mark: the look's logo as
+               <img src="data:image/svg+xml;base64,…" alt="Company name">,
+               or the company's name when the look has no logo. -->
+          <span class="brand">Company name</span>
           <span class="kicker">Your first page</span>
         </div>
         <h1>Welcome — this page is yours.</h1>
@@ -252,7 +154,7 @@
 
       <ul class="cards">
         <li class="card">
-          <span class="tag tag-blue">Shareable</span>
+          <span class="tag tag-link">Shareable</span>
           <h2>Send the link to a colleague</h2>
           <p>
             New pages are shared with your company by default: colleagues sign in to read them. Ask
@@ -261,7 +163,7 @@
           </p>
         </li>
         <li class="card">
-          <span class="tag tag-green">Updatable</span>
+          <span class="tag tag-success">Updatable</span>
           <h2>The link stays, the page evolves</h2>
           <p>
             Ask your assistant to change a page and it updates in place. Everyone you already sent
@@ -269,7 +171,7 @@
           </p>
         </li>
         <li class="card">
-          <span class="tag tag-amber">Long-lived</span>
+          <span class="tag tag-warning">Long-lived</span>
           <h2>Keep it live or put it away</h2>
           <p>
             Pages do not expire from inactivity. Retire a page to take it offline while keeping its
@@ -278,7 +180,7 @@
           </p>
         </li>
         <li class="card">
-          <span class="tag tag-red">Deletable</span>
+          <span class="tag tag-danger">Deletable</span>
           <h2>Delete with time to recover</h2>
           <p>
             Ask your assistant to delete a page and it goes offline. You or a company admin can

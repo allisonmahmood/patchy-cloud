@@ -1,20 +1,22 @@
 ---
 name: patchy
-description: Publish a static HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, or run onboarding.
+description: Publish a static HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, or run onboarding.
 ---
 
 # Patchy
 
 Use this global skill to publish a static page, start a tool's patch repo, discover
-company tools and data sources, manage a patch, read one, or sign the machine in.
+company tools and data sources, manage a patch, read one, change the company look, or
+sign the machine in.
 Inside a patch repo, its project skills govern building.
 
 ## Onboarding
 
 Read `references/onboarding.md` and follow it when the user asks to be walked through
-Patchy Cloud's onboarding or asks to redo their Patchy setup.
+Patchy Cloud's onboarding, gives the portal's setup line
+(`Set up Patchy using <instance>/llms.txt`) or asks to redo their Patchy setup.
 That reference owns the whole flow —
-the one style question, the welcome patch, the probe's key names, and the words to say to
+the company look, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
 
 ## Finding tools and data sources
@@ -294,9 +296,9 @@ the chosen instance and follow the handoff. Resolve an overriding
 
 1. On `status: "awaiting_confirmation"`, relay **both** `verificationUrl` and
    `userCode`, using the handoff wording in
-   [onboarding step 3](references/onboarding.md#3-log-in-then-publish-the-welcome-patch),
+   [onboarding step 2](references/onboarding.md#2-log-in),
    including its first-sign-in and wrong-account guidance. Read that wording
-   when login is needed without starting the optional style/onboarding flow.
+   when login is needed without starting onboarding.
    **Never open a browser for a login handoff.**
 2. After relaying the handoff, run the returned `next` command **with `--json`
    appended** (`patchy login --complete <userCode> --json`, retaining any returned
@@ -438,7 +440,7 @@ browser sign-out is a separate control on **Your machines**.
   The origin stops serving it immediately, but a public copy may remain cached
   for up to 60 seconds; downloaded copies cannot be recalled.
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
-  reports what this machine already holds, without touching the network; its seven keys
+  reports what this machine already holds, without touching the network; its six keys
   and their values are tabled in `references/onboarding.md`.
 - The exit code says who has to act, so branch on it before reading the message: `1` is
   yours to fix without the network (arguments, the file, validation, local state), `2`
@@ -519,18 +521,55 @@ When a page refuses access, report the refusal rather than treating its HTML as 
   belong to another company." Those cases are deliberately indistinguishable;
   do not claim which occurred or offer a request-access control that does not exist.
 
-## Style
+## The company look
 
-Before writing a page, settle which style applies, in this order:
+A company's **look** is how its tools and pages look by default: `look.css`, which sets
+15 `--look-*` tokens and styles plain elements inside `@layer look`; a brief, `LOOK.md`,
+with the brand's read, voice and component recipes; and an optional `logo.svg`.
+`patchy look --json` reads it anywhere with the saved login. `current.files` is the
+company's look. With none, `current` is null and `patchyLook` holds the Patchy look,
+Patchy's own, which stands in. `admins` names who can change it.
 
-1. The project's own house style, if it declares one. It always wins.
-2. The user's default style, `style.md` in the state dir, written during onboarding. Read
-   it and apply it as written — it carries everything needed to style a page, except that
-   it may defer to `references/patchy-plan-style.md`, which ships beside it. Its shape is
-   documented in `references/style-file.md`.
-3. The bundled plan-doc style in `references/patchy-plan-style.md`: warm paper, faint
-   grid/noise, heavy near-black ink, 2px borders, hard offset shadows, 8px cards, pill
-   badges, CSS-only glyph, builder-to-builder copy.
+### Styling a static page
+
+Before writing a page, settle its style; the first of these that applies wins:
+
+1. What the person asked for in this conversation.
+2. The page's own style, when you are updating a page that has one.
+3. The company look.
+4. The Patchy look.
+
+A page in a look carries that look's `look.css` verbatim in its first `<style>` block
+and its own CSS, outside any layer, in a second, so the page's CSS wins wherever they
+meet. Use the tokens for every colour, font, radius and gap, tints from `color-mix()`,
+and the brief's read, type, layout, voice and recipes. The logo goes in as
+`<img src="data:image/svg+xml;base64,…" alt="<company>">`; the Patchy look has none,
+so use the company's name. A page that deliberately looks like something else, such as
+a Halloween page or one in a client's brand, says so once and asks no permission. The
+page's 512 KiB cap includes `look.css`: when its embedded fonts push a page over, drop
+its `@font-face` rules and the stacks fall back to system fonts.
+
+### Changing the look
+
+The look changes only on an explicit request to change it, such as "update our look
+from acme.com" or "make our green darker"; writing or restyling a page leaves it
+alone. Read the person's role from `patchy whoami --json`.
+
+- **A member** hears that only admins can change it, named from `admins`. Offer to
+  draft it anyway: capture it into a folder, run `patchy look preview <dir>`, and
+  publish the file it writes as an ordinary page for them to show an admin
+  (`patchy publish <path> --name look-draft --json`); the single-look preview passes
+  `validate`.
+- **An admin's** new look is captured by `references/look-capture.md`, or for a small
+  change, `current.files` copied into a folder and edited. Before publishing,
+  `patchy look preview <dir> --compare` writes it beside the current look. Its two
+  frames scroll on their own, so open it for the person, or screenshot each look alone
+  (`patchy look preview <dir>`, then `patchy look preview`). Publish once they agree:
+  `patchy look publish <dir> --note "<why>" --json`. `patchy look restore <n>` brings
+  back an earlier revision, and `restore none` leaves the company with no look.
+
+A patch repo picks up a new revision at its next `refresh` or `dev` start. A static
+page keeps the look it was published with until someone updates it.
 
 ## HTML safety rules
 
@@ -539,10 +578,10 @@ Produce one complete static HTML file.
 Allowed:
 
 - semantic HTML
-- inline CSS in one `<style>` block
+- inline CSS in `<style>` blocks: a look's `look.css` first, the page's own after
 - normal metadata: charset, viewport, title
 - HTTPS links when useful
-- data images only when needed for tiny CSS textures
+- `data:` URLs for a look's embedded fonts and logo, and for tiny CSS textures
 
 Blocked or unsafe:
 
@@ -558,8 +597,9 @@ Blocked or unsafe:
 
 ## Output pattern
 
-1. Settle the style by the order above, so you know which one you are writing to before
-   you write.
+1. Settle the style by [the order above](#styling-a-static-page), reading
+   `patchy look --json` when a look applies, so you know which one you are writing to
+   before you write.
 2. Write the artifact locally as one `.html` file, complete and self-contained. For a
    restrained technical report, that means clear sections, tables, and diagrams where
    they clarify the work.
