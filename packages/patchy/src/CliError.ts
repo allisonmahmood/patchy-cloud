@@ -9,6 +9,7 @@
  */
 import * as Schema from "effect/Schema";
 import {
+  AdminRequired,
   HasDependants,
   NotOwner,
   PatchDeleted,
@@ -41,10 +42,12 @@ export const refusalFields = {
   dependants: Schema.optionalKey(HasDependants.fields.dependants),
   sources: Schema.optionalKey(SourcesOff.fields.sources),
   state: Schema.optionalKey(PatchState),
-  purgeAt: Schema.optionalKey(PatchDeleted.fields.purgeAt)
+  purgeAt: Schema.optionalKey(PatchDeleted.fields.purgeAt),
+  admins: Schema.optionalKey(AdminRequired.fields.admins)
 };
 
 const refusal = Schema.Union([
+  AdminRequired,
   NotOwner,
   PatchRetired,
   PatchDeleted,
