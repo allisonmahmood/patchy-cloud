@@ -607,7 +607,8 @@ it.layer(layer)("SDK company generation", (it) => {
         const logo =
           '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>';
         const linear = { ...readLookFixture("linear"), "logo.svg": logo };
-        // A brief is the company's text: `$&` is a price, not a replacement pattern.
+        // A brief and a note are the company's text: `$&` is a price, a marker is just words.
+        const note = "darker green <!-- look-brief -->";
         const duolingo = {
           ...readLookFixture("duolingo"),
           "LOOK.md": `${readLookFixture("duolingo")["LOOK.md"]}\nPlans cost $& more on $1.\n`
@@ -623,7 +624,7 @@ it.layer(layer)("SDK company generation", (it) => {
         const second = yield* looks.publish({
           companyId,
           authorId,
-          note: "darker green",
+          note,
           files: duolingo
         });
         const current = yield* generate();
@@ -633,9 +634,10 @@ it.layer(layer)("SDK company generation", (it) => {
           revision: second.current.revision,
           author: { id: identity.user.id, name: identity.user.name },
           createdAt: second.current.createdAt.toISOString(),
-          note: "darker green"
+          note
         });
-        assert.include(current.skill, duolingo["LOOK.md"].trim());
+        assert.include(current.skill, note);
+        assert.lengthOf(current.skill.split(duolingo["LOOK.md"].trim()), 2);
         assert.notInclude(current.skill, "no look yet");
 
         yield* looks.restore({ companyId, revision: first.current.revision });
