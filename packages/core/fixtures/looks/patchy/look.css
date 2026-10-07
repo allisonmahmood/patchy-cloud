@@ -167,10 +167,19 @@
     min-height: calc(var(--look-space) * 14);
     resize: vertical;
   }
+  /* An invalid field takes the danger colour; a disabled one fades to muted in a dashed frame. */
   input[aria-invalid="true"],
   select[aria-invalid="true"],
   textarea[aria-invalid="true"] {
     border-color: var(--look-danger);
+  }
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    border-color: var(--look-muted);
+    border-style: dashed;
+    color: var(--look-muted);
+    cursor: not-allowed;
   }
 
   label {
