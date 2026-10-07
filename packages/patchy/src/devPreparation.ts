@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Api from "./Api.js";
 import { LocalError } from "./CliError.js";
 import { configFailure, executeConfig, resolveStamps } from "./executeConfig.js";
+import { lookNotices } from "./lookNotices.js";
 import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./ManagedProject.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
@@ -144,7 +145,11 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               message: `Generation returned inconsistent metadata for ${alias}.`
             });
         }
-        const warnings = [...syncWarnings, ...(yield* primitiveReminders(root, manifest))];
+        const warnings = [
+          ...syncWarnings,
+          ...(yield* primitiveReminders(root, manifest)),
+          ...(yield* lookNotices(root, generated.files, Effect.succeed(identity.company.name)))
+        ];
         // Dev refreshes declarations, but only refresh owns the server module type list.
         const serverFile = "patchy/_generated/server.ts";
         const serverPath = yield* io("Read server module list path", () =>

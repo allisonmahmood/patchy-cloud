@@ -42,6 +42,7 @@ import {
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
 import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
+import { lookNotices } from "./lookNotices.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
 import { installFailureReason, releaseFromPin, withTarballIntegrity } from "./packagePin.js";
@@ -703,7 +704,15 @@ export const refresh = Effect.fn("Project.refresh")(function* (
           const warnings = [
             ...syncWarnings,
             ...toolchainWarnings,
-            ...(yield* primitiveReminders(cwd, result.manifest))
+            ...(yield* primitiveReminders(cwd, result.manifest)),
+            ...(yield* lookNotices(
+              cwd,
+              result.generated.files,
+              client.me().pipe(
+                Effect.map((identity) => identity.company.name),
+                Effect.catch((error) => Api.classify(error, "Authentication failed."))
+              )
+            ))
           ];
           const changed = yield* localIO("Activate generated files", () =>
             transaction.activate(

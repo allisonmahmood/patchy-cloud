@@ -9,6 +9,7 @@ import {
   exec,
   generateProjectResponse,
   localPackageRegistry,
+  lookRevision,
   packageDir,
   patchyLookFiles,
   projectConfig,
@@ -260,6 +261,54 @@ describe("patch-repo commands", () => {
     expect(existsSync(generated("logo.svg"))).toBe(false);
     expect(page()).toEqual(before);
   });
+
+  it("tells a page that imports the look about each revision refresh brings in, in warnings", async () => {
+    const follow =
+      "Colours and fonts follow; to restyle this tool's components, ask your agent to update it to the current look.";
+    let look: Parameters<typeof generateProjectResponse>[1] = {
+      ...patchyLookFiles,
+      revision: lookRevision(7, "first green")
+    };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/sdk/generate")
+        return respond(200, generateProjectResponse(request.body, look));
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, env, stateDir: tempDir() };
+    const refresh = async (args: string[] = []) => {
+      const result = await runCli(["refresh", ...args], options);
+      expect(result, result.stderr).toMatchObject({ status: 0 });
+      return result.stdout;
+    };
+    const warnings = async () => JSON.parse(await refresh(["--json"])).warnings;
+
+    expect(await warnings()).toEqual([
+      `Patchy Dev's look changed, none → rev 7 by Sam: first green. ${follow}`
+    ]);
+    look = { ...patchyLookFiles, revision: lookRevision(8, "darker green") };
+    expect(await warnings()).toEqual([
+      `Patchy Dev's look changed, rev 7 → 8 by Sam: darker green. ${follow}`
+    ]);
+    look = { ...patchyLookFiles, revision: lookRevision(7, "first green") };
+    expect((await refresh()).split("\n")[0]).toBe(
+      `Patchy Dev's look changed, rev 8 → 7 by Sam: first green. ${follow}`
+    );
+    look = patchyLookFiles;
+    expect(await warnings()).toEqual([
+      `Patchy Dev's look changed, rev 7 → none, so the Patchy look stands in. ${follow}`
+    ]);
+
+    // A page that swapped the import for its own stylesheet hears nothing.
+    const main = path.join(dir, "src/main.tsx");
+    writeFileSync(
+      main,
+      readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, 'import "./styles.css";\n')
+    );
+    writeFileSync(path.join(dir, "src/styles.css"), "body { background: #fff0f5; }\n");
+    look = { ...patchyLookFiles, revision: lookRevision(9, "rebrand") };
+    expect(await warnings()).toEqual([]);
+  }, 60_000);
 
   it("announces newly available capabilities once without rewriting company source", async () => {
     const instance = await stubInstance(projectHandler);

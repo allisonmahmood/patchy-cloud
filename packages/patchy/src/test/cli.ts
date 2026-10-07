@@ -380,13 +380,26 @@ export const embeddedFontLook = (() => {
   return { "look.css": `${fontFace}\n${readLookFixture("linear")["look.css"]}`, font };
 })();
 
+/** A look revision as `index.json` and `GET /api/look` carry it. */
+export const lookRevision = (revision: number, note: string) => ({
+  revision,
+  author: { id: "usr_sam", name: "Sam" },
+  createdAt: "2026-10-07T09:00:00.000Z",
+  note
+});
+
 /**
  * Only the instance metadata is stubbed: these are the shipped client generators. `look` stands
- * in for the company's current look; skills are served as their release templates.
+ * in for the company's current look, `revision` its stamp, absent for the Patchy look; skills
+ * are served as their release templates.
  */
 export const generateProjectResponse = (
   body: unknown,
-  look: { readonly "look.css": string; readonly "logo.svg"?: string } = patchyLookFiles
+  look: {
+    readonly "look.css": string;
+    readonly "logo.svg"?: string;
+    readonly revision?: ReturnType<typeof lookRevision>;
+  } = patchyLookFiles
 ): typeof Generated.Type => {
   const { manifest, serverModules } = decodeGenerateRequest(body);
   const files: Array<{ path: string; contents: string }> = [];
@@ -460,7 +473,8 @@ export const generateProjectResponse = (
         manifestVersion: MANIFEST_VERSION,
         capabilities: sdkCapabilities,
         uses,
-        skills: [...skills].sort()
+        skills: [...skills].sort(),
+        look: look.revision ?? null
       })
     }
   );
