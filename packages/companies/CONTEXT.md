@@ -32,6 +32,10 @@ _Avoid_: roster version, membership timestamp
 A company's default appearance for its patches: the fifteen named tokens and element styles of `look.css`, the brief in `LOOK.md` and an optional logo. Any active member reads it and only admins change it. A patch starts from it but may ignore or override it, and a company may have none.
 _Avoid_: brand, theme, design system, style (a patch's own CSS, which may override the look)
 
+**Patchy look**:
+Patchy's own look, shipped with the release in this package, which stands in while a company has none: generation writes it into patch repos, and the look read hands it out for static pages. It is no company's revision: it carries no logo and no revision stamp.
+_Avoid_: default theme, fallback style
+
 **Look revision**:
 One published look, numbered in order within its company with its author, time and note; its files never change. The company points at one revision as current, or at none, and restoring moves that pointer to an earlier revision without copying it.
 _Avoid_: look version (patches have versions), theme update
