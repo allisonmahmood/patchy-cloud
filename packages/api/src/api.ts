@@ -518,7 +518,7 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
           "instance runs the same checks as `patchy look publish` and refuses with 422 " +
           "`invalid_look`, one line per failure in `errors`, storing nothing: the 15 `--look-*` " +
           "tokens each declared once in a `:root` rule directly inside `@layer look`, and nowhere " +
-          "else, colours opaque `#RRGGBB`, no `@property` for a token, no `!important`, nothing " +
+          "else, colours opaque `#RRGGBB`, no `@property` at all, no `!important`, nothing " +
           "but `@font-face` and a leading `@charset` outside `@layer look`, no backslash-escaped " +
           "names, 4.5:1 contrast for every text colour on bg and on surface and for accent-fg on " +
           "accent, no `@import` and only `data:` URLs (in `url()`, `image-set()` and `src()`), a " +

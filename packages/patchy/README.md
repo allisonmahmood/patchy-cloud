@@ -1180,8 +1180,8 @@ failure: exit 1 from the CLI's own check, exit 2 if the instance refuses it.
   `--look-warning`, `--look-danger`, `--look-accent`, `--look-accent-fg`,
   `--look-border`, `--look-font-body`, `--look-font-display`, `--look-radius`,
   `--look-space`) exactly once, in a `:root` rule directly inside `@layer look`
-  where it always applies, and no other `--look-*` name. No media query, class or
-  `@property` sets a token. Colours are opaque `#RRGGBB`.
+  where it always applies, and no other `--look-*` name. No media query or class
+  sets a token, and a look registers no `@property`. Colours are opaque `#RRGGBB`.
 - Every text colour (fg, muted, link, success, warning, danger) reaches 4.5:1 on
   bg and on surface, and accent-fg reaches it on accent.
 - There is no `!important`, and everything except `@font-face` and a leading
