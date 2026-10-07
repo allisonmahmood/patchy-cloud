@@ -77,7 +77,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/sdk` — current release and immutable tarball distribution, the front door's `/llms.txt` and `/install.mjs`, authenticated generation, and canonical project skills under `skills/` (`@patchy/sdk`).
 - `packages/core`: shared HTML validation, the company look's publish checks (`@patchy/core/look`), hashing, ID helpers, and the first-party card shell, app shell and component set (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
-- `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
+- `packages/companies` — companies, users, roles, invites and membership lifecycle, and the company look with the Patchy look that stands in for none (`@patchy/companies`).
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
 - `packages/patches`: user-owned patches and versions, names and addresses, replay-safe file/repo publishing, provisioning coordination, sharing, lifecycle moves and actor stamps, visits and quotas, the deletion sweep, and the `patches` API group (`@patchy/patches`).
 - `packages/portal`: the signed-in index and patch cards, versions, inline management, lifecycle and reassignment confirmations, user deactivation/reactivation pick pages, and owner/admin invocation logs with recent activity (`@patchy/portal`).
@@ -89,7 +89,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/content-store`: the object store for a patch's bytes, with filesystem and Neon Object Storage S3 layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, and the limits registry, company overrides and rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.
-- `skills/patchy` — the global agent skill for sign-in, safe static publishing, reading patches and starting a patch repo; project skills come from `packages/sdk`.
+- `skills/patchy` — the global agent skill for sign-in, onboarding, safe static publishing, the company look, reading patches and starting a patch repo; project skills come from `packages/sdk`.
 - `examples/plan.html` — a Patchy-styled starter patch.
 - `scenarios/` — companies, people and patches that `pnpm dev up` builds local environments from (`scripts/dev`).
 
