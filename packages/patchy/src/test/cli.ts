@@ -48,7 +48,7 @@ import { generateServer } from "../../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
-import { readLookFixture } from "../../../../test/look-fixtures.js";
+import { lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
 import { sdkCapabilities } from "../../../sdk/src/sdkCapabilities.js";
 
 // Every case launches the bundled CLI; pure in-process tests belong in their module suites.
@@ -379,14 +379,6 @@ export const embeddedFontLook = (() => {
   const font = /url\("(data:font\/woff2;base64,[^"]+)"\)/.exec(fontFace)![1]!;
   return { "look.css": `${fontFace}\n${readLookFixture("linear")["look.css"]}`, font };
 })();
-
-/** A look revision as `index.json` and `GET /api/look` carry it. */
-export const lookRevision = (revision: number, note: string) => ({
-  revision,
-  author: { id: "usr_sam", name: "Sam" },
-  createdAt: "2026-10-07T09:00:00.000Z",
-  note
-});
 
 /**
  * Only the instance metadata is stubbed: these are the shipped client generators. `look` stands

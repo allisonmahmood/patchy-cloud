@@ -701,18 +701,20 @@ export const refresh = Effect.fn("Project.refresh")(function* (
             path.join(path.dirname(executable), "toolchainChild.js")
           );
           yield* Output.rememberWarnings(toolchainWarnings);
+          // The notice is advisory: without an answer from /api/me it names "The company".
+          const lookWarnings = yield* lookNotices(
+            cwd,
+            result.generated.files,
+            client.me().pipe(
+              Effect.map((identity) => identity.company.name),
+              Effect.orElseSucceed(() => "The company")
+            )
+          );
           const warnings = [
             ...syncWarnings,
             ...toolchainWarnings,
             ...(yield* primitiveReminders(cwd, result.manifest)),
-            ...(yield* lookNotices(
-              cwd,
-              result.generated.files,
-              client.me().pipe(
-                Effect.map((identity) => identity.company.name),
-                Effect.catch((error) => Api.classify(error, "Authentication failed."))
-              )
-            ))
+            ...lookWarnings
           ];
           const changed = yield* localIO("Activate generated files", () =>
             transaction.activate(
@@ -722,6 +724,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
               result.configEdit
             )
           ).pipe(Effect.uninterruptible);
+          yield* Output.rememberWarnings(lookWarnings);
           return { changed, from, pinChanged, warnings, addedCapabilities };
         }),
       (transaction, exit) =>

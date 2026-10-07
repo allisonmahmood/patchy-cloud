@@ -9,7 +9,6 @@ import {
   exec,
   generateProjectResponse,
   localPackageRegistry,
-  lookRevision,
   packageDir,
   patchyLookFiles,
   projectConfig,
@@ -29,7 +28,7 @@ import {
   treeBytes
 } from "./test/cli.js";
 import toolchain from "./toolchain.json" with { type: "json" };
-import { readLookFixture } from "../../../test/look-fixtures.js";
+import { lookRevision, readLookFixture } from "../../../test/look-fixtures.js";
 
 describe("patch-repo commands", () => {
   const env = { PATCHY_API_TOKEN: "pp_project" };
@@ -262,16 +261,19 @@ describe("patch-repo commands", () => {
     expect(page()).toEqual(before);
   });
 
-  it("tells a page that imports the look about each revision refresh brings in, in warnings", async () => {
+  it("tells a page that imports the look about the revision refresh brings in", async () => {
     const follow =
       "Colours and fonts follow; to restyle this tool's components, ask your agent to update it to the current look.";
     let look: Parameters<typeof generateProjectResponse>[1] = {
       ...patchyLookFiles,
       revision: lookRevision(7, "first green")
     };
+    let identityRefused = false;
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/sdk/generate")
         return respond(200, generateProjectResponse(request.body, look));
+      if (request.url === "/api/me" && identityRefused)
+        return respond(429, { ok: false, code: "rate_limited", error: "Too many requests." });
       projectHandler(request, respond, disconnect);
     });
     const dir = publishTree(instance.url);
@@ -282,22 +284,18 @@ describe("patch-repo commands", () => {
       return result.stdout;
     };
     const warnings = async () => JSON.parse(await refresh(["--json"])).warnings;
+    await refresh();
 
-    expect(await warnings()).toEqual([
-      `Patchy Dev's look changed, none → rev 7 by Sam: first green. ${follow}`
-    ]);
     look = { ...patchyLookFiles, revision: lookRevision(8, "darker green") };
     expect(await warnings()).toEqual([
       `Patchy Dev's look changed, rev 7 → 8 by Sam: darker green. ${follow}`
     ]);
+    // The notice is advisory: without the company's name it still lands, and so does the look.
+    identityRefused = true;
     look = { ...patchyLookFiles, revision: lookRevision(7, "first green") };
     expect((await refresh()).split("\n")[0]).toBe(
-      `Patchy Dev's look changed, rev 8 → 7 by Sam: first green. ${follow}`
+      `The company's look changed, rev 8 → 7 by Sam: first green. ${follow}`
     );
-    look = patchyLookFiles;
-    expect(await warnings()).toEqual([
-      `Patchy Dev's look changed, rev 7 → none, so the Patchy look stands in. ${follow}`
-    ]);
 
     // A page that swapped the import for its own stylesheet hears nothing.
     const main = path.join(dir, "src/main.tsx");

@@ -10,7 +10,6 @@ import {
   decodePublishRequest,
   embeddedFontLook,
   generateProjectResponse,
-  lookRevision,
   patchyLookFiles,
   projectHandler,
   publish,
@@ -20,6 +19,7 @@ import {
   tarballPath,
   tempDir
 } from "./test/cli.js";
+import { lookRevision } from "../../../test/look-fixtures.js";
 
 describe("patch-repo builds", () => {
   const env = { PATCHY_API_TOKEN: "pp_project" };
@@ -93,8 +93,11 @@ describe("patch-repo builds", () => {
       ...lookRevision(8, "darker green"),
       files: { "look.css": embeddedFontLook["look.css"], "LOOK.md": "# Darker\n" }
     };
+    let lookRefused = false;
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/publish") return respond(201, response);
+      if (request.url === "/api/look" && lookRefused)
+        return respond(429, { ok: false, code: "rate_limited", error: "Too many requests." });
       if (request.url === "/api/look") return respond(200, { current, revisions: [current] });
       if (request.url === "/api/sdk/generate")
         return respond(
@@ -120,6 +123,14 @@ describe("patch-repo builds", () => {
       ).html;
     expect(sent()).toContain("--look-bg:#fffdf4");
     expect(sent()).not.toContain(embeddedFontLook.font);
+
+    // The check is advisory: an unanswered look read is a warning, and the publish goes ahead.
+    lookRefused = true;
+    const unchecked = await runCli(["publish", "--json"], options);
+    expect(unchecked, unchecked.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(unchecked.stdout).warnings).toContainEqual(
+      expect.stringMatching(/^Could not check whether this repo's look is current: .*429/)
+    );
 
     // A page with its own stylesheet instead publishes without asking for the look.
     const main = path.join(dir, "src/main.tsx");

@@ -555,15 +555,14 @@ const publish = Command.make(
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
+          // Advisory and cheap, so it runs before the build and never stops the publish.
+          const lookWarnings = yield* publishLookWarnings(repo, apiToken, identity.company.name);
           const { manifest, html, server, warnings } = yield* prepareRepoPublish(repo, apiToken);
           const project = yield* Project.readRepo(repo);
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
             target: { mode: "repo" },
-            warnings: [
-              ...warnings,
-              ...(yield* publishLookWarnings(repo, apiToken, identity.company.name))
-            ],
+            warnings: [...warnings, ...lookWarnings],
             request: new PublishRequest({
               manifest,
               html,
