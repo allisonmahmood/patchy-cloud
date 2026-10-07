@@ -6,6 +6,8 @@ import { CURRENT_RELEASE } from "@patchy/api";
 import { validateHtml } from "@patchy/core";
 import {
   decodePublishRequest,
+  embeddedFontLook,
+  generateProjectResponse,
   localPackageRegistry,
   packageDir,
   projectHandler,
@@ -72,13 +74,16 @@ describe("repo publish checks", () => {
   });
 
   // repoBuild.test.ts owns what the inspector refuses; this proves Vite's output reaches both
-  // checks, and that `patchy init --tier 0` produces a repo whose page the policy accepts.
+  // checks, and that `patchy init --tier 0` produces a repo whose page the policy accepts, in the
+  // company look with its embedded font.
   it("refuses unbundled resources and oversized tier 0 bundles before sending, then publishes the tier 0 starter", async () => {
     const registry = await localPackageRegistry();
     const instance = await stubInstance(
       (request, respond, disconnect) => {
         if (request.url === "/api/publish")
           return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 0 });
+        if (request.url === "/api/sdk/generate")
+          return respond(200, generateProjectResponse(request.body, embeddedFontLook));
         projectHandler(request, respond, disconnect);
       },
       () => CURRENT_RELEASE,
@@ -136,6 +141,7 @@ describe("repo publish checks", () => {
     );
     expect(sent.manifest.tier).toBe(0);
     expect(sent.html).toContain("<h1>My patch</h1>");
+    expect(sent.html).toContain(embeddedFontLook.font);
     expect(validateHtml(sent.html).ok).toBe(true);
   }, 120_000); // An offline install of the real release archive can exceed 30 seconds.
 });

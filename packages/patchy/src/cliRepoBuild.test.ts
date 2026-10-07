@@ -8,6 +8,8 @@ import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import {
   decodePublishRequest,
+  embeddedFontLook,
+  generateProjectResponse,
   projectHandler,
   publish,
   publishTree,
@@ -62,6 +64,26 @@ describe("patch-repo builds", () => {
       expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
     }
   );
+
+  it("builds the starter page in the company look, its embedded font included", async () => {
+    const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return respond(201, response);
+      if (request.url === "/api/sdk/generate")
+        return respond(200, generateProjectResponse(request.body, embeddedFontLook));
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, env, stateDir: tempDir() };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const result = await runCli(["publish", "--json"], options);
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const { html } = decodePublishRequest(
+      instance.requests.find((request) => request.url === "/api/publish")?.body
+    );
+    expect(html).toContain(embeddedFontLook.font);
+    expect(html).toContain("--look-bg:#08090a");
+  });
 
   it("publishes a vanilla page with default Vite module preloading", async () => {
     const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };

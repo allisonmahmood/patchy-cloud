@@ -7,8 +7,10 @@ import { workerdVersion } from "@patchy/api/guest";
 import {
   coreProjectSkills,
   exec,
+  generateProjectResponse,
   localPackageRegistry,
   packageDir,
+  patchyLookFiles,
   projectConfig,
   projectConnections,
   projectHandler,
@@ -26,6 +28,7 @@ import {
   treeBytes
 } from "./test/cli.js";
 import toolchain from "./toolchain.json" with { type: "json" };
+import { readLookFixture } from "../../../test/look-fixtures.js";
 
 describe("patch-repo commands", () => {
   const env = { PATCHY_API_TOKEN: "pp_project" };
@@ -198,6 +201,61 @@ describe("patch-repo commands", () => {
     });
     expect(existsSync(path.join(dir, "patchy/_generated/metadata.json"))).toBe(false);
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+  });
+
+  it("swaps in the company's current look at each refresh and leaves an existing styled page alone", async () => {
+    let look: Parameters<typeof generateProjectResponse>[1] = patchyLookFiles;
+    let unavailable = false;
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/sdk/generate" && unavailable)
+        return respond(503, { ok: false, code: "source_unavailable", error: "Unavailable." });
+      if (request.url === "/api/sdk/generate")
+        return respond(200, generateProjectResponse(request.body, look));
+      projectHandler(request, respond, disconnect);
+    });
+    // A repo from before the look: its page has its own style and never imported look.css.
+    const dir = publishTree(instance.url);
+    const main = path.join(dir, "src/main.tsx");
+    writeFileSync(main, readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, ""));
+    writeFileSync(path.join(dir, "src/styles.css"), "body { background: #fff0f5; }\n");
+    const page = () => ({
+      src: treeBytes(path.join(dir, "src")),
+      html: readFileSync(path.join(dir, "index.html"))
+    });
+    const before = page();
+    const generated = (name: string) => path.join(dir, "patchy/_generated", name);
+    const options = { cwd: dir, env, stateDir: tempDir() };
+
+    expect(await runCli(["refresh", "--json"], options)).toMatchObject({ status: 0 });
+    expect(readFileSync(generated("look.css"), "utf8")).toBe(patchyLookFiles["look.css"]);
+    expect(existsSync(generated("logo.svg"))).toBe(false);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-look/SKILL.md"))).toBe(true);
+
+    const logo =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>';
+    const company = { "look.css": readLookFixture("linear")["look.css"], "logo.svg": logo };
+    look = company;
+    const swapped = await runCli(["refresh", "--json"], options);
+    expect(swapped, swapped.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(swapped.stdout).changed.generated).toEqual(
+      expect.arrayContaining(["patchy/_generated/look.css", "patchy/_generated/logo.svg"])
+    );
+    expect(readFileSync(generated("look.css"), "utf8")).toBe(company["look.css"]);
+    expect(readFileSync(generated("logo.svg"), "utf8")).toBe(logo);
+
+    // An interrupted generation keeps the look the repo already had.
+    look = patchyLookFiles;
+    unavailable = true;
+    expect((await runCli(["refresh", "--json"], options)).status).not.toBe(0);
+    expect(readFileSync(generated("look.css"), "utf8")).toBe(company["look.css"]);
+    expect(readFileSync(generated("logo.svg"), "utf8")).toBe(logo);
+
+    // Back to no company look: the Patchy look returns and the company's logo goes.
+    unavailable = false;
+    expect(await runCli(["refresh", "--json"], options)).toMatchObject({ status: 0 });
+    expect(readFileSync(generated("look.css"), "utf8")).toBe(patchyLookFiles["look.css"]);
+    expect(existsSync(generated("logo.svg"))).toBe(false);
+    expect(page()).toEqual(before);
   });
 
   it("announces newly available capabilities once without rewriting company source", async () => {
