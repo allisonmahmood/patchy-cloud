@@ -58,7 +58,8 @@ skill's package copy.
 - `patchy-look` is the one project skill written per company. Its template is
   release-bound like the rest; generation fills its marked sections with the
   company's current look revision and its `LOOK.md` brief, or with the Patchy
-  look (`packages/sdk/looks/patchy/`) when the company has none. Every
+  look (`packages/companies/looks/patchy/`, which `GET /api/look` also hands
+  out) when the company has none. Every
   generation rewrites it, so refresh and dev start bring in a new revision. A
   missing marker fails generation, as `patchy-loop`'s does.
 - Page skill, generated automatically on tiers 1 and 2: `patchy-preact`.

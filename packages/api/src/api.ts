@@ -503,8 +503,10 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
         "Read the caller's company look, for any active member. `current` is the current " +
           "revision with its files' contents (`look.css`, `LOOK.md` and an optional `logo.svg`), " +
           "or null when the company has no look. `revisions` lists every revision newest first " +
-          "with its author, time and note. Another company's look is never visible. " +
-          "Responses are private, no-store."
+          "with its author, time and note. When `current` is null, `patchyLook` holds the " +
+          "Patchy look that stands in, `look.css` and `LOOK.md` from the release with no logo; " +
+          "otherwise it is null. `admins` names the active admins, who alone change the look. " +
+          "Another company's look is never visible. Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.post("publishLook", "/look/publish", {

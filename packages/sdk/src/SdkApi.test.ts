@@ -1147,12 +1147,6 @@ it.layer(layer)("SDK company generation", (it) => {
         },
         {
           payload: generateRequest(),
-          fs: FileSystem.makeNoop({ readFileString: () => Effect.fail(readFailure) }),
-          cause: readFailure,
-          unavailable: { stage: "patchy-look", resource: "looks/patchy" }
-        },
-        {
-          payload: generateRequest(),
           fs: {
             ...fs,
             readFileString: (path, encoding) =>

@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { sha256 } from "@patchy/core";
 import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
 import {
+  companyLook,
   generateProjectResponse,
   identity,
   pendingFile,
@@ -225,7 +226,7 @@ describe("repo publish recovery", () => {
           );
         if (request.url === "/api/sdk/generate")
           return respond(200, generateProjectResponse(request.body));
-        if (request.url === "/api/look") return respond(200, { current: null, revisions: [] });
+        if (request.url === "/api/look") return respond(200, companyLook(null));
         if (request.url === "/api/publish") {
           if (phase === "lost") return disconnect();
           if (phase === "blocked-write") {

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off — Node's file-URL conversion locates packaged release skills and the Patchy look.
+// @effect-diagnostics nodeBuiltinImport:off — Node's file-URL conversion locates packaged release skills.
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -11,7 +11,6 @@ import {
   GenerateRequest,
   MANIFEST_VERSION,
   isManagedOutputPath,
-  type LookFiles,
   type LookRevision,
   type TableDefinition
 } from "@patchy/api";
@@ -101,8 +100,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
       "shared-table",
       "shared-store",
       "release-skill",
-      "release-skill-template",
-      "patchy-look"
+      "release-skill-template"
     ]),
     resource: Schema.String.check(Schema.isMaxLength(256)),
     cause: Schema.optional(Schema.Defect())
@@ -426,17 +424,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const { current: look } = yield* looks
     .read(companyId)
     .pipe(Effect.catchTags({ SqlError: Effect.die }));
-  const lookFiles: typeof LookFiles.Type =
-    look?.files ??
-    (yield* Effect.all({
-      "look.css": fs.readFileString(shipped("looks/patchy/look.css")),
-      "LOOK.md": fs.readFileString(shipped("looks/patchy/LOOK.md"))
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GenerationUnavailable({ stage: "patchy-look", resource: "looks/patchy", cause })
-      )
-    ));
+  const lookFiles = look?.files ?? looks.patchyLook;
   files.set(`${root}/look.css`, lookFiles["look.css"]);
   if (lookFiles["logo.svg"] !== undefined) files.set(`${root}/logo.svg`, lookFiles["logo.svg"]);
   // Each template's marked sections and what fills them; a missing marker is a broken release.

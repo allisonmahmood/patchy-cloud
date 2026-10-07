@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateHtml } from "@patchy/core";
 import { lookFixtureDir, readLookFixture } from "../../../test/look-fixtures.js";
-import { runCli, stubInstance, tempDir } from "./test/cli.js";
+import { companyLook, runCli, stubInstance, tempDir } from "./test/cli.js";
 
 const ada = { id: "usr_ada", name: "Ada Lovelace" };
 const second = {
@@ -35,10 +35,7 @@ const lookDir = () => {
 
 describe("patchy look", () => {
   it("prints the current revision, its files and the history, with contents under --json", async () => {
-    const look = {
-      current: { ...second, files: readLookFixture("patchy") },
-      revisions: [second, first]
-    };
+    const look = companyLook({ ...second, files: readLookFixture("patchy") }, [second, first]);
     const instance = await stubInstance((request, respond) =>
       request.method === "GET" && request.url === "/api/look"
         ? respond(200, look)
@@ -55,15 +52,19 @@ describe("patchy look", () => {
     expect(text.stdout).toContain("By Ada Lovelace on 2026-10-07: darker green");
     expect(text.stdout).toMatch(/look\.css \(\d+\.\d KiB\), LOOK\.md \(\d+\.\d KiB\), logo\.svg/);
     expect(text.stdout).toContain("1  2026-10-06  Ada Lovelace  first capture");
+    expect(text.stdout).toContain("Only an admin changes it: Ada Lovelace.");
   });
 
-  it("says when the company has no look", async () => {
-    const instance = await stubInstance((_request, respond) =>
-      respond(200, { current: null, revisions: [first] })
-    );
+  it("says when the company has no look, and hands out the Patchy look that stands in", async () => {
+    const look = companyLook(null, [first]);
+    const instance = await stubInstance((_request, respond) => respond(200, look));
+    const json = await runCli(["look", "--json"], { env: env(instance.url) });
+    expect(JSON.parse(json.stdout)).toEqual(look);
     const text = await runCli(["look"], { env: env(instance.url) });
     expect(text, text.stderr).toMatchObject({ status: 0, stderr: "" });
-    expect(text.stdout).toContain("The company has no look.");
+    expect(text.stdout).toContain(
+      "The company has no look. New patches start from the Patchy look, whose files are in patchy look --json."
+    );
     expect(text.stdout).toContain("1  2026-10-06  Ada Lovelace  first capture");
   });
 });
@@ -233,7 +234,7 @@ describe("patchy look preview", () => {
     let current: unknown = { ...second, files: readLookFixture("linear") };
     const instance = await stubInstance((request, respond) =>
       request.method === "GET" && request.url === "/api/look"
-        ? respond(200, { current, revisions: [second, first] })
+        ? respond(200, companyLook(current, [second, first]))
         : respond(404, { ok: false, error: "Not found." })
     );
     const dir = lookDir();
@@ -260,7 +261,7 @@ describe("patchy look preview", () => {
   it("renders the company's look without a folder, and says when there is none", async () => {
     let current: unknown = { ...second, files: readLookFixture("linear") };
     const instance = await stubInstance((_request, respond) =>
-      respond(200, { current, revisions: [second] })
+      respond(200, companyLook(current, [second]))
     );
     const json = await runCli(["look", "preview", "--json"], { env: env(instance.url) });
     expect(json, json.stderr).toMatchObject({ status: 0, stderr: "" });

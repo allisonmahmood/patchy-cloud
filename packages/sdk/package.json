@@ -16,8 +16,6 @@
     "dist",
     "artifacts",
     "front-door",
-    "looks/patchy/look.css",
-    "looks/patchy/LOOK.md",
     "skills"
   ],
   "scripts": {

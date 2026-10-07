@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as Redacted from "effect/Redacted";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -65,7 +66,7 @@ const bearer = Layer.effect(
 const layer = Layer.mergeAll(LookApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(bearer),
   Layer.provideMerge(Layer.mergeAll(Looks.layer, Users.layer, Companies.layer, recording)),
-  Layer.provideMerge(Testing.layer())
+  Layer.provideMerge(Layer.mergeAll(Testing.layer(), NodeFileSystem.layer))
 );
 
 /** A company with admins Ada and Cleo, a member Ben and a deactivated admin Dot. */
@@ -98,6 +99,9 @@ const publish = (note: string, files = readLookFixture("patchy")) => ({
   payload: new LookPublishRequest({ note, files })
 });
 const restore = (revision: number | null) => ({ payload: new LookRestoreRequest({ revision }) });
+/** Patchy's own look as the instance hands it out: no logo, which is Patchy's mark. */
+const patchyFixture = readLookFixture("patchy");
+const patchyLook = { "look.css": patchyFixture["look.css"], "LOOK.md": patchyFixture["LOOK.md"] };
 
 it.layer(layer)("look group", (it) => {
   it.effect(
@@ -107,6 +111,19 @@ it.layer(layer)("look group", (it) => {
         events.length = 0;
         const { ada, ben } = yield* company("lifecycle");
         const author = { id: ada.id, name: "Ada Lovelace" };
+        // With no look, the read carries the Patchy look that stands in for it.
+        assert.deepStrictEqual(
+          { ...(yield* ben.api.getLook()) },
+          {
+            current: null,
+            revisions: [],
+            patchyLook,
+            admins: [
+              { id: "usr_lifecycle_ada", name: "Ada Lovelace" },
+              { id: "usr_lifecycle_cleo", name: "Cleo Park" }
+            ]
+          }
+        );
         const first = yield* ada.api.publishLook(publish("first capture"));
         assert.deepInclude(first.current, { revision: 1, author, note: "first capture" });
         const second = yield* ada.api.publishLook(
@@ -119,6 +136,7 @@ it.layer(layer)("look group", (it) => {
         const two = yield* ben.api.getLook();
         assert.deepStrictEqual(two.current?.files, readLookFixture("linear"));
         assert.deepInclude(two.current, { revision: 2, note: "darker green" });
+        assert.strictEqual(two.patchyLook, null);
         assert.deepStrictEqual(
           two.revisions.map(({ revision, author, note }) => ({ revision, author, note })),
           [
@@ -145,6 +163,7 @@ it.layer(layer)("look group", (it) => {
         );
         const none = yield* ben.api.getLook();
         assert.strictEqual(none.current, null);
+        assert.deepStrictEqual(none.patchyLook, patchyLook);
         assert.strictEqual(none.revisions.length, 2);
         // Restoring the current state changes nothing and reports nothing.
         yield* ada.api.restoreLook(restore(null));
@@ -188,7 +207,7 @@ it.layer(layer)("look group", (it) => {
       })
   );
 
-  it.effect("refuses a member's publish and restore, naming the company's active admins", () =>
+  it.effect("names the company's active admins to a member, on reading and when refused", () =>
     Effect.gen(function* () {
       const { ada, ben } = yield* company("members");
       yield* ada.api.publishLook(publish("first capture"));
@@ -210,6 +229,7 @@ it.layer(layer)("look group", (it) => {
       const look = yield* ben.api.getLook();
       assert.strictEqual(look.current?.revision, 1);
       assert.strictEqual(look.revisions.length, 1);
+      assert.deepStrictEqual(look.admins, admins);
     })
   );
 
@@ -233,7 +253,7 @@ it.layer(layer)("look group", (it) => {
           ]
         }
       );
-      assert.deepStrictEqual({ ...(yield* ada.api.getLook()) }, { current: null, revisions: [] });
+      assert.deepInclude(yield* ada.api.getLook(), { current: null, revisions: [] });
       assert.strictEqual(
         (yield* ada.api.publishLook(publish("readable", fixed))).current.revision,
         1
@@ -248,7 +268,15 @@ it.layer(layer)("look group", (it) => {
       yield* other.ada.api.publishLook(publish("theirs"));
       assert.deepStrictEqual(
         { ...(yield* home.ben.api.getLook()) },
-        { current: null, revisions: [] }
+        {
+          current: null,
+          revisions: [],
+          patchyLook,
+          admins: [
+            { id: "usr_home_ada", name: "Ada Lovelace" },
+            { id: "usr_home_cleo", name: "Cleo Park" }
+          ]
+        }
       );
       assert.deepStrictEqual<unknown>(
         yield* home.ada.api.restoreLook(restore(1)).pipe(Effect.flip),
