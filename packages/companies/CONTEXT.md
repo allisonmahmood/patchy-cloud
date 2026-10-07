@@ -1,6 +1,6 @@
 # Companies
 
-The tenant and who is in it: companies, users, roles, invitations, deactivation and reactivation. The future language of groups, verified domains, SSO and the operator is defined here; its product decisions live in [the product](../../docs/product.md#companies), while caller identity belongs to [Auth](../auth/CONTEXT.md) and patch ownership to [Patches](../patches/CONTEXT.md).
+The tenant and who is in it: companies, users, roles, invitations, deactivation and reactivation, and the company's look. The future language of groups, verified domains, SSO and the operator is defined here; its product decisions live in [the product](../../docs/product.md#companies), while caller identity belongs to [Auth](../auth/CONTEXT.md) and patch ownership to [Patches](../patches/CONTEXT.md).
 
 ## Language
 
@@ -17,16 +17,24 @@ One individual's Patchy account in exactly one company, carrying the member or a
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
-The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states, pending invites and connection metadata without management actions.
+The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states, pending invites, connection metadata and look without management actions.
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that manages the company's invitations, roles, deactivation, reactivation and [connections](../integrations/CONTEXT.md), and every [patch](../patches/CONTEXT.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
+A user with the role that manages the company's invitations, roles, deactivation, reactivation, [connections](../integrations/CONTEXT.md) and look, and every [patch](../patches/CONTEXT.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Directory revision**:
 The company's durable record that its directory has changed, advanced with each join, departure, reactivation or change to a user's name, email or role. It lets readers detect changes to [candidates and resolved users](../primitives/CONTEXT.md#language), including changes whose notification they missed.
 _Avoid_: roster version, membership timestamp
+
+**Look**:
+A company's default appearance for its patches: the fifteen named tokens and element styles of `look.css`, the brief in `LOOK.md` and an optional logo. Any active member reads it and only admins change it. A patch starts from it but may ignore or override it, and a company may have none.
+_Avoid_: brand, theme, design system, style (the retired personal style file)
+
+**Look revision**:
+One published look, numbered in order within its company with its author, time and note; its files never change. The company points at one revision as current, or at none, and restoring moves that pointer to an earlier revision without copying it.
+_Avoid_: look version (patches have versions), theme update
 
 **Group**:
 A named set of users used to grant access, never a container that owns patches or connections. Its future access model is recorded in [the product](../../docs/product.md#users-admins-groups).
