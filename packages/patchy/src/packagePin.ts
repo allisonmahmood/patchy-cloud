@@ -36,24 +36,38 @@ export function withTarballIntegrity(lockfile: string, tarball: string, integrit
 }
 
 /**
- * The line of a failed pnpm install worth relaying: its first `ERR_PNPM_` line, or its first line.
- * URLs lose credentials, queries and fragments, and the line is bounded, because a registry or
- * tarball URL can carry a token.
+ * Control characters go; URLs lose credentials, queries and fragments, which can carry a token. A
+ * URL runs to the next ASCII whitespace, so quotes or other spaces inside one cannot end it early.
+ */
+const redact = (text: string) =>
+  text
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(
+      /\b(https?:\/\/)([^ \t\n\r\f\v]+)/gi,
+      (_, scheme: string, rest: string) =>
+        scheme + rest.replace(/^[^/?#]*@/, "").replace(/[?#].*$/s, "")
+    );
+
+/**
+ * Why a failed pnpm install failed, worth relaying. pnpm 11 prints an `ERR_PNPM_` line; pnpm 12,
+ * run with `NO_GRAPHICS`, narrates a report: `Diagnostic severity:`, a `Caused by:` line per cause,
+ * unwrapped, and its code on a `diagnostic code:` line. Falls back to the first line. Each part is
+ * redacted, the whole bounded.
  */
 export function installFailureReason(output: string) {
   const lines = output
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
-  const reason = lines.find((line) => line.includes("ERR_PNPM_")) ?? lines[0];
-  return reason
-    ?.replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(
-      /\b(https?:\/\/)([^\s'"<>]+)/g,
-      (_, scheme: string, rest: string) =>
-        scheme + rest.replace(/^[^/@]*@/, "").replace(/[?#].*$/, "")
-    )
-    .slice(0, 300);
+  const narrated = lines.some((line) => line.startsWith("Diagnostic severity:"));
+  const causes = lines.flatMap((line) => /^Caused by:\s*(.+)$/.exec(line)?.slice(1) ?? []);
+  const code = lines.flatMap((line) => /^diagnostic code:\s*(\S+)/.exec(line)?.slice(1) ?? []);
+  const parts =
+    narrated && causes.length > 0
+      ? [...code.slice(0, 1), ...causes]
+      : [lines.find((line) => line.includes("ERR_PNPM_")) ?? lines[0]];
+  const defined = parts.filter((part) => part !== undefined);
+  return defined.length === 0 ? undefined : defined.map(redact).join(": ").slice(0, 300);
 }
 
 /** Edit one managed dependency without rewriting author-owned fields or formatting. */
