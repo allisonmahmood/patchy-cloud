@@ -224,6 +224,8 @@ The events, by area:
   `user.deactivated`, `user.reactivated`.
 - Invitations: `invite.sent`, `invite.resent`, `invite.revoked`.
 - Connections: `connection.connected`, `connection.deleted`.
+- Company look: `look.published`, `look.restored`, each after its change commits. Restoring
+  the revision that is already current reports nothing.
 
 ## Clerk
 

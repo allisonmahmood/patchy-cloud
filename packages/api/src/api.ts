@@ -1,5 +1,6 @@
 /**
- * The `/api/*` contract: auth, patches, connections, browser runtime and public release discovery.
+ * The `/api/*` contract: auth, patches, connections, the company look, browser runtime and
+ * public release discovery.
  * Request, success and error shapes come from the API's schema modules. The server
  * implements it and the CLI's client is derived from it; neither side
  * re-types a wire shape by hand. The route descriptions here are the text of
@@ -70,7 +71,15 @@ import {
   ConnectionDetail,
   ConnectionUnavailable,
   GenerateRequest,
-  Generated
+  Generated,
+  AdminRequired,
+  InvalidLook,
+  CompanyLook,
+  LookPublished,
+  LookPublishRequest,
+  LookRestored,
+  LookRestoreRequest,
+  LookRevisionUnavailable
 } from "./schemas.js";
 import {
   RuntimeBytes,
@@ -478,6 +487,55 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
           "including when the connection is disconnected. A missing snapshot is null, never an " +
           "empty database. Unknown handles and another company's connections answer the same 404. " +
           "Never returns credentials or business rows. Responses are private, no-store."
+      )
+    )
+  )
+  .middleware(Authorization)
+  .prefix("/api") {}
+
+export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
+  .add(
+    HttpApiEndpoint.get("getLook", "/look", {
+      success: CompanyLook,
+      error: protectedErrors
+    }).annotateMerge(
+      describe(
+        "Read the caller's company look, for any active member. `current` is the current " +
+          "revision with its files' contents (`look.css`, `LOOK.md` and an optional `logo.svg`), " +
+          "or null when the company has no look. `revisions` lists every revision newest first " +
+          "with its author, time and note. Another company's look is never visible. " +
+          "Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.post("publishLook", "/look/publish", {
+      payload: LookPublishRequest,
+      success: LookPublished,
+      error: [AdminRequired, InvalidLook, PayloadTooLarge, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "Admins only: store the files as the company's next look revision and make it current. " +
+          "A member answers 403 `admin_required` with the company's active `admins`. The " +
+          "instance runs the same checks as `patchy look publish` and refuses with 422 " +
+          "`invalid_look`, one line per failure in `errors`, storing nothing: the 15 `--look-*` " +
+          "tokens each declared once, colours opaque `#RRGGBB`, no `!important`, everything but " +
+          "`@font-face` inside `@layer look`, 4.5:1 contrast for every text colour on bg and on " +
+          "surface and for accent-fg on accent, no `@import` and only `data:` URLs, a non-empty " +
+          "LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The " +
+          "note is one line of 1–200 characters. The JSON body is limited to three times " +
+          "`look.bytes`: a declared overflow answers 413; streaming bodies are cut off at the cap."
+      )
+    ),
+    HttpApiEndpoint.post("restoreLook", "/look/restore", {
+      payload: LookRestoreRequest,
+      success: LookRestored,
+      error: [AdminRequired, LookRevisionUnavailable, PayloadTooLarge, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "Admins only: make an earlier revision current, or send `revision: null` to leave the " +
+          "company with no look. Restoring moves the pointer; it copies nothing and adds no " +
+          "revision, and restoring the current revision changes nothing. An unknown revision " +
+          "answers 422 `revision_unavailable`; a member answers 403 `admin_required` with " +
+          "`admins`. The JSON body is limited to 4096 bytes."
       )
     )
   )
@@ -965,7 +1023,15 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
   .prefix("/api") {}
 
 export class PatchyApi extends HttpApi.make("patchy")
-  .add(AuthGroup, PatchesGroup, ConnectionsGroup, SdkGroup, RuntimeGroup, RuntimeStreamGroup)
+  .add(
+    AuthGroup,
+    PatchesGroup,
+    ConnectionsGroup,
+    LookGroup,
+    SdkGroup,
+    RuntimeGroup,
+    RuntimeStreamGroup
+  )
   .annotateMerge(
     OpenApi.annotations({
       title: "Patchy Cloud API",

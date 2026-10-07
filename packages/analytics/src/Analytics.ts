@@ -165,6 +165,25 @@ export type AnalyticsCatalogue = Catalogue<{
   /** An admin reactivated a user. Principal: that admin. */
   readonly "user.reactivated": { readonly userId: string };
 
+  /** An admin published the company's next look revision and made it current. Principal: that admin. */
+  readonly "look.published": Cli & {
+    readonly revision: number;
+    /** The revision current before, or null when the company had no look. */
+    readonly fromRevision: number | null;
+    /** The revision's files together, embedded fonts included. */
+    readonly bytes: number;
+    readonly logo: boolean;
+  };
+
+  /**
+   * An admin made an earlier look revision current, or left the company with no look (null).
+   * Principal: that admin.
+   */
+  readonly "look.restored": Cli & {
+    readonly revision: number | null;
+    readonly fromRevision: number | null;
+  };
+
   /** An admin connected an integration to the company. Principal: that admin. */
   readonly "connection.connected": ConnectionSubject;
 
