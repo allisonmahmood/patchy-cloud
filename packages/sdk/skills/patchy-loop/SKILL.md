@@ -159,13 +159,16 @@ Update its config description if needed. These notices do not stop commands;
 under `--json` they are entries in `warnings`, including when a later step
 fails. Relay them even on failure; a publish retry retains the saved notices.
 
-When refresh or a new dev start brings in another company look revision and the
-page names `patchy/_generated/look.css` or `logo.svg`, a notice such as "Acme's
-look changed, rev 7 → 8 by Sam: darker green" says the tool's colours and fonts
-follow. Relay it, and restyle components only when the person asks you to update
-the tool to the current look. Publish never pulls a revision: it ships the
-repo's own and warns when that isn't the company's current one. Run
-`pnpm patchy refresh` first if the person wants the current look published.
+A page uses the look when its source names `patchy/_generated/look.css` or
+`logo.svg` on a line that isn't a comment; aliases and files nothing imports are
+outside that rule. When refresh, add, remove or a new dev start brings in another
+company look revision, such a page gets a notice: "Acme's look changed, rev 7 → 8
+by Sam: darker green. Colours and fonts follow; to restyle this tool's
+components, ask your agent to update it to the current look." Relay it, and
+restyle components only when the person asks you to update the tool to the
+current look. Publish never pulls a revision: it ships the repo's own and warns
+when that isn't the company's current one. Run `pnpm patchy refresh` first if
+the person wants the current look published.
 
 ## Discover before declaring
 
