@@ -143,3 +143,28 @@ it.layer(services)("secret state files", (it) => {
     }).pipe(Effect.scoped)
   );
 });
+
+it.layer(services)("the look preview", (it) => {
+  it.effect("replaces a link at look-preview.html rather than writing through it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-look-preview-" });
+      const dir = path.join(root, "state");
+      const state = yield* State.make.pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: dir })))
+      );
+      const preview = yield* state.writeLookPreview("<p>first</p>");
+      assert.strictEqual(preview, path.join(dir, "look-preview.html"));
+      assert.strictEqual((yield* fs.stat(dir)).mode & 0o777, 0o700);
+
+      const target = path.join(root, "credentials.json");
+      yield* fs.writeFileString(target, "secret");
+      yield* fs.remove(preview);
+      yield* fs.symlink(target, preview);
+      yield* state.writeLookPreview("<p>second</p>");
+      assert.strictEqual(yield* fs.readFileString(target), "secret");
+      assert.strictEqual(yield* fs.readFileString(preview), "<p>second</p>");
+    })
+  );
+});

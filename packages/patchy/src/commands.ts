@@ -998,8 +998,6 @@ const byline = (revision: LookRevision) =>
   `By ${revision.author.name} on ${revision.createdAt.slice(0, 10)}: ${revision.note}`;
 
 const LOOK_FILE_NAMES = new Set(["look.css", "LOOK.md", "logo.svg"]);
-/** In the state dir, the one place every working CLI can write; each preview replaces the last. */
-const LOOK_PREVIEW_FILE = "look-preview.html";
 
 /**
  * A look folder's three files, and a warning naming anything else in it, which is not sent:
@@ -1147,8 +1145,7 @@ const lookPreview = Command.make(
   (options) =>
     run(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+        // The state dir is the one place every working CLI can write.
         const state = yield* State.State;
         if (options.compare && Option.isNone(options.dir))
           return yield* new LocalError({
@@ -1177,12 +1174,8 @@ const lookPreview = Command.make(
             message: `The company has no look yet. ${NO_LOOK}\nPreview a candidate folder: patchy look preview <dir>`
           });
         const failures = candidate === undefined ? [] : checkLook(candidate.files);
-        const file = path.join(state.dir, LOOK_PREVIEW_FILE);
-        yield* fs.makeDirectory(state.dir, { recursive: true }).pipe(
-          Effect.andThen(
-            fs.writeFileString(file, previewPage(first, candidatePane && currentPane))
-          ),
-          Effect.mapError((cause) => new LocalError({ message: `Could not write ${file}.`, cause }))
+        const file = yield* state.writeLookPreview(
+          previewPage(first, candidatePane && currentPane)
         );
         const warnings = candidate?.warnings ?? [];
         yield* Output.report(

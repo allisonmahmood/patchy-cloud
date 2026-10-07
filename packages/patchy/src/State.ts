@@ -3,6 +3,7 @@
  * instance. `credentials.json` holds one token per instance, `device-login.json`
  * its pending login, `patches.json` one cache entry per instance and file,
  * `config.json` the saved instance URL; `style.md` is only checked for existence.
+ * `look-preview.html` is the latest `patchy look preview`, replaced by each one.
  *
  * Host-keyed files are read without interpreting the other instances'
  * entries, so a write is a real merge — an entry this command neither reads
@@ -137,6 +138,8 @@ export class State extends Context.Service<
   {
     readonly dir: string;
     readonly credentialsPath: string;
+    /** Replaces `look-preview.html` with this page and returns its path. */
+    readonly writeLookPreview: (html: string) => Effect.Effect<string, LocalError>;
     readonly hasDefaultStyle: Effect.Effect<boolean>;
     readonly readConfigUrl: Effect.Effect<Option.Option<string>>;
     readonly saveConfigUrl: (apiUrl: string) => Effect.Effect<void, LocalError>;
@@ -222,6 +225,7 @@ export const make = Effect.gen(function* () {
   // new patch at a new URL instead of updating the one it remembers.
   const retiredPatchesPath = path.join(dir, "drafts.json");
   const stylePath = path.join(dir, "style.md");
+  const lookPreviewPath = path.join(dir, "look-preview.html");
   const publishPath = (apiUrl: string, repo?: string) =>
     path.join(
       repo === undefined ? dir : path.join(repo, ".patchy"),
@@ -302,9 +306,10 @@ export const make = Effect.gen(function* () {
 
   /**
    * Written whole, to a sibling temp file first, and owner-only from the first
-   * byte: a token never sits on disk with wider permissions, even briefly.
+   * byte: a token never sits on disk with wider permissions, even briefly. The
+   * rename replaces whatever sits at `file`, a link included, never its target.
    */
-  const writeJson = (file: string, value: unknown) =>
+  const writeText = (file: string, text: string) =>
     Effect.gen(function* () {
       yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
       yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -312,7 +317,7 @@ export const make = Effect.gen(function* () {
         path.dirname(file),
         `.${path.basename(file)}.${newInternalId("tmp")}.tmp`
       );
-      yield* fs.writeFileString(tempFile, `${encodeJson(value)}\n`, {
+      yield* fs.writeFileString(tempFile, text, {
         flag: "wx",
         mode: 0o600
       });
@@ -325,6 +330,7 @@ export const make = Effect.gen(function* () {
         (cause) => new LocalError({ message: `Could not write ${file}. Check permissions.`, cause })
       )
     );
+  const writeJson = (file: string, value: unknown) => writeText(file, `${encodeJson(value)}\n`);
 
   const empty: typeof SavedConfig.Type = {};
   // Unreadable or invalid config is not a reason to stop: it only holds a preference.
@@ -454,6 +460,7 @@ export const make = Effect.gen(function* () {
   return State.of({
     dir,
     credentialsPath,
+    writeLookPreview: (html) => writeText(lookPreviewPath, html).pipe(Effect.as(lookPreviewPath)),
     hasDefaultStyle: fs.exists(stylePath).pipe(Effect.orElseSucceed(() => false)),
     readConfigUrl: readConfig.pipe(
       Effect.map((config) =>
