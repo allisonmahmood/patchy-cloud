@@ -30,7 +30,7 @@ _Avoid_: roster version, membership timestamp
 
 **Look**:
 A company's default appearance for its patches: the fifteen named tokens and element styles of `look.css`, the brief in `LOOK.md` and an optional logo. Any active member reads it and only admins change it. A patch starts from it but may ignore or override it, and a company may have none.
-_Avoid_: brand, theme, design system, style (the retired personal style file)
+_Avoid_: brand, theme, design system, style (the personal `style.md` the look replaces)
 
 **Look revision**:
 One published look, numbered in order within its company with its author, time and note; its files never change. The company points at one revision as current, or at none, and restoring moves that pointer to an earlier revision without copying it.
