@@ -528,13 +528,13 @@ importers:
         version: 0.5.8
       '@preact/signals':
         specifier: 2.11.3
-        version: 2.11.3(preact@10.29.8)
+        version: 2.11.3(preact@11.0.0)
       '@preact/signals-core':
         specifier: 1.14.4
         version: 1.14.4
       preact:
-        specifier: 10.29.8
-        version: 10.29.8
+        specifier: 11.0.0
+        version: 11.0.0
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.1
@@ -2567,10 +2567,10 @@ packages:
       rxjs:
         optional: true
 
-  preact@10.29.8:
-    resolution: {integrity: sha512-ej2aVZ+vZ8WO7tvlQWRM9N63A0KzF9q4mWJfDUHgYaIofWY9hu74QdnQrjoPMmZi2/nZ5gN0bJCQF49xQqx09Q==}
+  preact@11.0.0:
+    resolution: {integrity: sha512-LRTLKuSe6VYPhvBDjwFaX+nuZnpsw6IN2GSboisAvhGsncylBmrbDCERhgKDn6yP2mAwbGvsB5OVyTe33M8gBg==}
     peerDependencies:
-      preact-render-to-string: '>=5'
+      preact-render-to-string: '>=6.7.0'
     peerDependenciesMeta:
       preact-render-to-string:
         optional: true
@@ -3454,10 +3454,10 @@ snapshots:
 
   '@preact/signals-core@1.14.4': {}
 
-  '@preact/signals@2.11.3(preact@10.29.8)':
+  '@preact/signals@2.11.3(preact@11.0.0)':
     dependencies:
       '@preact/signals-core': 1.14.4
-      preact: 10.29.8
+      preact: 11.0.0
 
   '@redis/bloom@6.2.1(@redis/client@6.2.1)':
     dependencies:
@@ -4310,7 +4310,7 @@ snapshots:
     dependencies:
       '@posthog/core': 1.55.3
 
-  preact@10.29.8: {}
+  preact@11.0.0: {}
 
   prelude-ls@1.2.1: {}
 
