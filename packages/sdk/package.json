@@ -16,6 +16,8 @@
     "dist",
     "artifacts",
     "front-door",
+    "looks/patchy/look.css",
+    "looks/patchy/LOOK.md",
     "skills"
   ],
   "scripts": {
@@ -24,6 +26,7 @@
   },
   "dependencies": {
     "@patchy/api": "workspace:*",
+    "@patchy/companies": "workspace:*",
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/integrations": "workspace:*",
