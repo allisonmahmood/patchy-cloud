@@ -1241,18 +1241,29 @@ or `null` for the Patchy look. A new repo's tier 1 and 2 `src/main.tsx` imports
 the look; the single-file build inlines it, embedded fonts included. A page that
 doesn't import it keeps its own style, and refresh never edits page source.
 
-A page uses the look when its source (`index.html`, `src/` or `helpers/`) names
-`patchy/_generated/look.css` or `logo.svg`. When `refresh` or a new `dev` start
-brings in a revision other than the one `index.json` had, such a page hears it
-in text and in JSON `warnings`: "Acme's look changed, rev 7 → 8 by Sam: darker
-green. Colours and fonts follow; to restyle this tool's components, ask your
-agent to update it to the current look." A restore reads `rev 8 → 7`, a first
-look `none → rev 1`, and a return to no look `rev 1 → none, so the Patchy look
+A page uses the look when its source names `patchy/_generated/look.css` or
+`logo.svg`: any `.html`, `.css` or script file outside `node_modules/`, `dist/`,
+dot folders and `patchy/_generated/`, on a line that isn't a comment. An alias,
+or a file nothing imports, is outside that rule.
+
+When `refresh` (including `add` and `remove`) or a new `dev` start brings in a
+revision other than the one `index.json` had, such a page hears it in text and
+in JSON `warnings`: "Acme's look changed, rev 7 → 8 by Sam: darker green.
+Colours and fonts follow; to restyle this tool's components, ask your agent to
+update it to the current look." A restore reads `rev 8 → 7`, a first look
+`none → rev 1`, and a return to no look `rev 1 → none, so the Patchy look
 stands in`. When the new look has no logo and the page names `logo.svg`, the
-notice adds that the reference must go, since the next build fails on it.
-Repo `publish` never pulls a revision. When such a page's revision isn't the
-company's current one (one `GET /api/look`), it publishes the repo's own
-revision unchanged, exits 0 and warns, naming `patchy refresh`. A page that
+notice adds that the reference must go, since the next build fails on it. A dev
+start whose first build then fails keeps the notice in its failure. If
+`/api/me` doesn't answer, the notice says "The company's look changed".
+
+Repo `publish` never pulls a revision. For such a page it reads the company's
+current look (`GET /api/look`) before building, and when the repo's revision
+differs, it publishes the repo's own revision unchanged, exits 0 and warns:
+"This repo has Acme's look rev 7, but the current look is rev 8 by Sam: darker
+green. This version keeps the repo's look; run patchy refresh to bring it up to
+date." The check is advisory: a failed read is the warning "Could not check
+whether this repo's look is current: …" and the publish goes ahead. A page that
 names neither file hears nothing and publish sends no look request.
 
 ## Exit codes

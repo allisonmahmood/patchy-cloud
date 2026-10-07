@@ -351,14 +351,16 @@ its description still holds: '…'". New definitions produce no reminder.
 Omitted boolean defaults and explicit `false` have the same definition.
 Sync notices and primitive reminders are nonblocking and appear as `warnings`
 entries in JSON success documents, or failure documents if a later step fails.
-The company look rides the same path. When `refresh` or a new `dev` start
-brings in a look revision other than the one `index.json` had, and the page's
-source names `patchy/_generated/look.css` or `logo.svg`, a `warnings` entry
-reads "Acme's look changed, rev 7 → 8 by Sam: darker green. Colours and fonts
-follow; to restyle this tool's components, ask your agent to update it to the
-current look." Repo `publish` never pulls a revision: for such a page behind the
+The company look rides the same path. When `refresh` (with `add` and `remove`)
+or a new `dev` start brings in a look revision other than the one `index.json`
+had, and a non-comment line of the page's source names
+`patchy/_generated/look.css` or `logo.svg`, a `warnings` entry reads "Acme's
+look changed, rev 7 → 8 by Sam: darker green. Colours and fonts follow; to
+restyle this tool's components, ask your agent to update it to the current
+look." Repo `publish` never pulls a revision: for such a page behind the
 company's current revision it ships the repo's own, exits 0 and adds a
-`warnings` entry naming `patchy refresh`.
+`warnings` entry naming `patchy refresh`. These checks are advisory: a failed
+look or identity read becomes a warning or a nameless notice, never a failure.
 
 `patchy add postgres` chooses the sole connected Postgres connection; with
 several it lists copy-ready choices from `list connections` and stops, and with
