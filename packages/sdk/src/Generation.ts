@@ -438,6 +438,18 @@ export const generate = Effect.fn("Generation.generate")(function* (
     ));
   files.set(`${root}/look.css`, lookFiles["look.css"]);
   if (lookFiles["logo.svg"] !== undefined) files.set(`${root}/logo.svg`, lookFiles["logo.svg"]);
+  // Each template's marked sections and what fills them; a missing marker is a broken release.
+  // Replacer functions, so a brief's `$&` or `$1` stays text, not a replacement pattern.
+  const templates = new Map<string, ReadonlyArray<readonly [marker: string, fill: () => string]>>([
+    ["patchy-loop", [["<!-- sdk-capabilities -->", () => sdkCapabilitiesMarkdown]]],
+    [
+      "patchy-look",
+      [
+        ["<!-- look-state -->", () => lookState(look)],
+        ["<!-- look-brief -->", () => lookFiles["LOOK.md"].trim()]
+      ]
+    ]
+  ]);
   const skillFiles = [];
   for (const name of [...skills].sort()) {
     const path = `.agents/skills/${name}/SKILL.md`;
@@ -448,22 +460,12 @@ export const generate = Effect.fn("Generation.generate")(function* (
           (cause) => new GenerationUnavailable({ stage: "release-skill", resource: path, cause })
         )
       );
-    const markers = {
-      "patchy-loop": ["<!-- sdk-capabilities -->"],
-      "patchy-look": ["<!-- look-state -->", "<!-- look-brief -->"]
-    }[name];
-    if (markers?.some((marker) => !contents.includes(marker)))
+    const sections = templates.get(name) ?? [];
+    if (sections.some(([marker]) => !contents.includes(marker)))
       return yield* new GenerationUnavailable({ stage: "release-skill-template", resource: path });
     files.set(
       path,
-      name === "patchy-loop"
-        ? contents.replace("<!-- sdk-capabilities -->", sdkCapabilitiesMarkdown)
-        : name === "patchy-look"
-          ? // Replacer functions: a brief's `$&` or `$1` is text, not a replacement pattern.
-            contents
-              .replace("<!-- look-state -->", () => lookState(look))
-              .replace("<!-- look-brief -->", () => lookFiles["LOOK.md"].trim())
-          : contents
+      sections.reduce((text, [marker, fill]) => text.replace(marker, fill), contents)
     );
     skillFiles.push({ name, path });
   }

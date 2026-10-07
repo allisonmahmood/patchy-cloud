@@ -367,10 +367,7 @@ export const projectSource = {
 };
 
 /** Patchy's look as generation writes it for a company with no look: no logo. */
-export const patchyLookFiles = {
-  "look.css": readFileSync(path.join(packageDir, "../sdk/looks/patchy/look.css"), "utf8"),
-  "LOOK.md": readFileSync(path.join(packageDir, "../sdk/looks/patchy/LOOK.md"), "utf8")
-};
+export const patchyLookFiles = { "look.css": readLookFixture("patchy")["look.css"] };
 
 /** A company look carrying its font as a captured look does: #564's Inter subset, embedded. */
 export const embeddedFontLook = (() => {
