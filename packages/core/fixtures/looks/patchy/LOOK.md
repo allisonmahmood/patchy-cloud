@@ -40,9 +40,18 @@ Patchy feels hand-built: warm cream paper, a faint engineering grid, and everyth
 
 ## Components
 
-Lift these as they are. The plain `button` in `look.css` is already the primary button.
+Lift these as they are. The plain `button` in `look.css` is already the primary button's colours and frame. Give every button `class="button"` for the hard ink shadow, and add a variant for the others: `<button class="button button-secondary">Cancel</button>`.
 
 ```css
+/* Pressable: a hard ink shadow on hover, and the press. */
+.button:hover:not(:disabled) {
+  box-shadow: 2px 2px 0 var(--look-border);
+}
+.button:active:not(:disabled) {
+  box-shadow: none;
+  transform: translate(1px, 1px);
+}
+
 /* Secondary button: white with an ink frame. Pair with the plain button. */
 .button-secondary {
   background: var(--look-surface);
