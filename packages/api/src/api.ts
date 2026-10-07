@@ -517,10 +517,13 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
           "A member answers 403 `admin_required` with the company's active `admins`. The " +
           "instance runs the same checks as `patchy look publish` and refuses with 422 " +
           "`invalid_look`, one line per failure in `errors`, storing nothing: the 15 `--look-*` " +
-          "tokens each declared once, colours opaque `#RRGGBB`, no `!important`, everything but " +
-          "`@font-face` inside `@layer look`, 4.5:1 contrast for every text colour on bg and on " +
-          "surface and for accent-fg on accent, no `@import` and only `data:` URLs, a non-empty " +
-          "LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The " +
+          "tokens each declared once in a `:root` rule directly inside `@layer look`, and nowhere " +
+          "else, colours opaque `#RRGGBB`, no `@property` for a token, no `!important`, nothing " +
+          "but `@font-face` and a leading `@charset` outside `@layer look`, no backslash-escaped " +
+          "names, 4.5:1 contrast for every text colour on bg and on surface and for accent-fg on " +
+          "accent, no `@import` and only `data:` URLs (in `url()`, `image-set()` and `src()`), a " +
+          "logo with no `<script>`, `<foreignObject>` or `on*` handlers, no NUL characters, a " +
+          "non-empty LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The " +
           "note is one line of 1–200 characters. The JSON body is limited to three times " +
           "`look.bytes`: a declared overflow answers 413; streaming bodies are cut off at the cap."
       )
