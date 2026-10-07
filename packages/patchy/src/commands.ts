@@ -60,6 +60,7 @@ import { checkRelease } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
 import * as Setup from "./Setup.js";
 import { prepareRepoPublish } from "./repoBuild.js";
+import { publishLookWarnings } from "./lookNotices.js";
 import * as Dev from "./devLifecycle.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
@@ -559,7 +560,10 @@ const publish = Command.make(
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
             target: { mode: "repo" },
-            warnings,
+            warnings: [
+              ...warnings,
+              ...(yield* publishLookWarnings(repo, apiToken, identity.company.name))
+            ],
             request: new PublishRequest({
               manifest,
               html,
