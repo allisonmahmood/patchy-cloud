@@ -649,7 +649,9 @@ Before publishing, an agent shows the person the **specimen**: a fixed page Patc
 
 A new patch repo starts in the look. Generation writes the current revision's `look.css` and logo into the repo as managed files, with a `patchy-look` project skill holding the brief and the order to style by, and the starter page imports `look.css`, so the first `patchy dev` page already looks like the company. Refresh and dev start rewrite those files; they never touch the page's source. With no company look, the repo gets the **Patchy look**, Patchy's own: it is no company's revision and carries no logo, and the skill says the company has none yet. A page that shouldn't look like the company drops the import or overrides it, and the agent says so once.
 
-Change notices, onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
+A repo picks up a new revision only at its next refresh or dev start, so a bad revision spreads one patch at a time. When one brings in a different revision and the page uses the look, by naming `look.css` or the logo, the CLI says so: "Acme's look changed, rev 7 → 8 by Sam: darker green. Colours and fonts follow; to restyle this tool's components, ask your agent to update it to the current look." Publish never pulls a revision, so no patch ships a look nobody has checked: a repo behind the company's look publishes with its own and is told to refresh.
+
+Onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
 
 ### Addresses
 
