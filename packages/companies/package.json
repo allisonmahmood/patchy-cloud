@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Companies, users, roles and invitations, with their baseline migration.",
+  "description": "Companies, users, roles, invitations and the company look, with their migrations.",
   "exports": {
     "./Companies": {
       "development": "./src/Companies.ts",
@@ -27,7 +27,9 @@
   "dependencies": {
     "@clerk/backend": "3.23.0",
     "@patchy/analytics": "workspace:*",
+    "@patchy/api": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },

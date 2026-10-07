@@ -798,6 +798,25 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "look.bytes": {
+    kind: "contract",
+    default: 524288,
+    unit: "bytes",
+    scope: "company",
+    measure:
+      "Published bytes of a look revision's files, embedded fonts included; look publish refuses invalid_look",
+    refusal: null,
+    overridable: false
+  },
+  "look.brief.bytes": {
+    kind: "contract",
+    default: 32768,
+    unit: "bytes",
+    scope: "company",
+    measure: "A look revision's LOOK.md; look publish refuses invalid_look",
+    refusal: null,
+    overridable: false
+  },
   "rate.protectedApi.perMinute": {
     kind: "operating",
     configuration: "legacy",

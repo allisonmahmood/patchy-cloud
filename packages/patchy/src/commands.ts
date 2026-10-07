@@ -35,9 +35,17 @@ import {
   ShareRequest,
   SharingScope,
   PublishMetadata,
-  PublishRequest
+  PublishRequest,
+  CompanyLook,
+  LookNote,
+  LookPublished,
+  LookPublishRequest,
+  LookRestored,
+  LookRestoreRequest,
+  type LookRevision
 } from "@patchy/api";
 import { newInternalId, sha256, validateHtml } from "@patchy/core";
+import { checkLook, type LookFiles } from "@patchy/core/look";
 import * as Api from "./Api.js";
 import { type CliError, LocalError, RejectedError } from "./CliError.js";
 import * as Discovery from "./Discovery.js";
@@ -86,6 +94,10 @@ const encodeRetired = Schema.encodeSync(Retired);
 const encodeRestored = Schema.encodeSync(Restored);
 const encodeRolledBack = Schema.encodeSync(RolledBack);
 const encodeDescribed = Schema.encodeSync(Described);
+const encodeCompanyLook = Schema.encodeSync(CompanyLook);
+const encodeLookPublished = Schema.encodeSync(LookPublished);
+const encodeLookRestored = Schema.encodeSync(LookRestored);
+const decodeLookNote = Schema.decodeUnknownEffect(LookNote);
 const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
 const decodePublishName = Schema.decodeUnknownEffect(PatchName);
 const scopeLines = {
@@ -977,6 +989,177 @@ const describe = Command.make(
   Command.withDescription("Change a published patch's description, or remove it with --clear.")
 );
 
+// --- the company look --------------------------------------------------------
+
+const NO_LOOK = "New patches start from the Patchy look.";
+const kib = (text: string) => `${(Buffer.byteLength(text) / 1024).toFixed(1)} KiB`;
+const byline = (revision: LookRevision) =>
+  `By ${revision.author.name} on ${revision.createdAt.slice(0, 10)}: ${revision.note}`;
+
+const LOOK_FILE_NAMES = new Set(["look.css", "LOOK.md", "logo.svg"]);
+
+/**
+ * A look folder's three files, and a warning naming anything else in it, which is not sent:
+ * an agent that left a `logo.png` or a fonts folder learns the rule instead of publishing a
+ * revision without them.
+ */
+const readLookFolder = Effect.fn("readLookFolder")(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const resolved = path.resolve(dir);
+  const ignored = (yield* fs.readDirectory(resolved).pipe(Effect.orElseSucceed(() => [])))
+    .filter((name) => !LOOK_FILE_NAMES.has(name) && !name.startsWith("."))
+    .sort();
+  const read = Effect.fn("readLookFolder.read")(function* (name: string, required: boolean) {
+    const file = path.join(resolved, name);
+    if (!(yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false)))) {
+      if (!required) return undefined;
+      return yield* new LocalError({
+        message: `No ${name} in ${resolved}. A look folder holds look.css, LOOK.md and an optional logo.svg.`
+      });
+    }
+    return yield* fs
+      .readFileString(file)
+      .pipe(
+        Effect.mapError((cause) => new LocalError({ message: `Could not read ${file}.`, cause }))
+      );
+  });
+  const css = yield* read("look.css", true);
+  const brief = yield* read("LOOK.md", true);
+  const logo = yield* read("logo.svg", false);
+  return {
+    files: {
+      "look.css": css ?? "",
+      "LOOK.md": brief ?? "",
+      ...(logo === undefined ? {} : { "logo.svg": logo })
+    } satisfies LookFiles,
+    warnings:
+      ignored.length === 0
+        ? []
+        : [
+            `Not published: ${ignored.join(", ")}. A look is look.css, LOOK.md and an optional logo.svg; embed fonts and images in them as data: URLs.`
+          ]
+  };
+});
+
+const lookPublish = Command.make(
+  "publish",
+  {
+    dir: Argument.String("dir"),
+    note: Flag.String("note").pipe(Flag.withDescription("Why this revision, such as darker green"))
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        const note = yield* decodeLookNote(options.note).pipe(
+          Effect.mapError((cause) => new LocalError({ message: cause.message, cause }))
+        );
+        const { files, warnings } = yield* readLookFolder(options.dir);
+        yield* Output.rememberWarnings(warnings);
+        const errors = checkLook(files);
+        if (errors.length > 0)
+          return yield* new LocalError({
+            code: "invalid_look",
+            message: `The look failed its checks; nothing was published.\n- ${errors.join("\n- ")}`
+          });
+        const client = yield* Api.client(yield* requiredToken());
+        const published = yield* client
+          .publishLook({ payload: new LookPublishRequest({ note, files }) })
+          .pipe(Effect.catch((error) => refused(error, "Look publish failed.")));
+        yield* Output.report(
+          { ...encodeLookPublished(published), ...(warnings.length === 0 ? {} : { warnings }) },
+          [
+            `Published look revision ${published.current.revision}: ${published.current.note}`,
+            "It is now the company's look."
+          ]
+        );
+        for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Admins: publish a look folder (look.css, LOOK.md, optional logo.svg) as the company's next revision."
+  )
+);
+
+const lookRestore = Command.make(
+  "restore",
+  {
+    revision: Argument.String("revision").pipe(
+      Argument.withDescription("A revision number, or none for no look")
+    )
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        const revision =
+          options.revision === "none"
+            ? null
+            : /^[1-9]\d{0,8}$/.test(options.revision)
+              ? Number(options.revision)
+              : yield* new LocalError({
+                  message: `Pass a revision number, or none to leave the company with no look; got ${options.revision}.`
+                });
+        const client = yield* Api.client(yield* requiredToken());
+        const restored = yield* client
+          .restoreLook({ payload: new LookRestoreRequest({ revision }) })
+          .pipe(Effect.catch((error) => refused(error, "Look restore failed.")));
+        yield* Output.report(
+          encodeLookRestored(restored),
+          restored.current === null
+            ? [`The company has no look now. ${NO_LOOK}`]
+            : [
+                `Revision ${restored.current.revision} is the company's look again.`,
+                byline(restored.current)
+              ]
+        );
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Admins: make an earlier look revision current, or none to leave the company with no look."
+  )
+);
+
+const look = Command.make("look", {}, () =>
+  run(
+    Effect.gen(function* () {
+      const client = yield* Api.client(yield* requiredToken());
+      const look = yield* client
+        .getLook()
+        .pipe(Effect.catch((error) => refused(error, "Reading the look failed.")));
+      const current = look.current;
+      yield* Output.report(encodeCompanyLook(look), [
+        ...(current === null
+          ? [`The company has no look. ${NO_LOOK}`]
+          : [
+              `Revision ${current.revision} is the company's look.`,
+              byline(current),
+              `Files: ${Object.entries(current.files)
+                .map(([name, text]) => `${name} (${kib(text)})`)
+                .join(", ")}`,
+              "Their contents are in patchy look --json."
+            ]),
+        ...(look.revisions.length === 0
+          ? []
+          : [
+              "",
+              "History:",
+              ...look.revisions.map(
+                (revision) =>
+                  `  ${revision.revision}  ${revision.createdAt.slice(0, 10)}  ${revision.author.name}  ${revision.note}${revision.revision === current?.revision ? "  (current)" : ""}`
+              )
+            ])
+      ]);
+    })
+  )
+).pipe(
+  Command.withDescription(
+    "Show the company's look and its history; --json includes the files' contents."
+  ),
+  Command.withSubcommands([lookPublish, lookRestore])
+);
+
 // --- patch repos ------------------------------------------------------------
 
 const init = Command.make(
@@ -1171,6 +1354,7 @@ export const root = Command.make("patchy").pipe(
     withCommandHeader(dev),
     withCommandHeader(refresh),
     withCommandHeader(list),
+    withCommandHeader(look),
     withCommandHeader(add),
     withCommandHeader(remove),
     withCommandHeader(generateProject)

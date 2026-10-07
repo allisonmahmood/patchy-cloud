@@ -14,6 +14,11 @@
       "development": "./src/html.ts",
       "types": "./dist/html.d.ts",
       "import": "./dist/html.js"
+    },
+    "./look": {
+      "development": "./src/look.ts",
+      "types": "./dist/look.d.ts",
+      "import": "./dist/look.js"
     }
   },
   "files": [
@@ -24,7 +29,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@patchy/limits": "workspace:*",
+    "css-tree": "^3.2.1",
     "effect": "catalog:",
     "parse5": "catalog:"
+  },
+  "devDependencies": {
+    "@types/css-tree": "^3.2.0"
   }
 }

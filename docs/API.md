@@ -270,6 +270,54 @@ Responses:
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "connection_storage_failed" }
 
+## look
+
+### `GET /api/look`
+
+Read the caller's company look, for any active member. `current` is the current revision with its files' contents (`look.css`, `LOOK.md` and an optional `logo.svg`), or null when the company has no look. `revisions` lists every revision newest first with its author, time and note. Another company's look is never visible. Responses are private, no-store.
+
+Responses:
+
+- `200` [CompanyLook](#companylook)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/look/publish`
+
+Admins only: store the files as the company's next look revision and make it current. A member answers 403 `admin_required` with the company's active `admins`. The instance runs the same checks as `patchy look publish` and refuses with 422 `invalid_look`, one line per failure in `errors`, storing nothing: the 15 `--look-*` tokens each declared once in a `:root` rule directly inside `@layer look`, and nowhere else, colours opaque `#RRGGBB`, no `@property` at all, no `!important`, nothing but `@font-face` and a leading `@charset` outside `@layer look`, no backslash-escaped names, 4.5:1 contrast for every text colour on bg and on surface and for accent-fg on accent, no `@import` and only `data:` URLs (in `url()`, `image-set()` and `src()`), a logo with no `<script>`, `<foreignObject>` or `on*` handlers, no NUL characters, a non-empty LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The note is one line of 1–200 characters. The JSON body is limited to three times `look.bytes`: a declared overflow answers 413; streaming bodies are cut off at the cap.
+
+Request body: [LookPublishRequest](#lookpublishrequest)
+
+Responses:
+
+- `201` [LookPublished](#lookpublished)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "admin_required", admins: { id: string, name: string }[] }
+- `404` { ok: false, error: string }
+- `413` { ok: false, error: string }
+- `422` { ok: false, error: string, code: "invalid_look", errors: string[] }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/look/restore`
+
+Admins only: make an earlier revision current, or send `revision: null` to leave the company with no look. Restoring moves the pointer; it copies nothing and adds no revision, and restoring the current revision changes nothing. An unknown revision answers 422 `revision_unavailable`; a member answers 403 `admin_required` with `admins`. The JSON body is limited to 4096 bytes.
+
+Request body: [LookRestoreRequest](#lookrestorerequest)
+
+Responses:
+
+- `200` [LookRestored](#lookrestored)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "admin_required", admins: { id: string, name: string }[] }
+- `404` { ok: false, error: string }
+- `413` { ok: false, error: string }
+- `422` { ok: false, error: string, code: "revision_unavailable" }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ## sdk
 
 ### `GET /api/release`
@@ -732,6 +780,68 @@ RuntimeSuccess | HandlerFailure
       accepted: string
     }
   }
+}
+```
+
+### LookRestored
+
+```
+{
+  ok: true,
+  current: LookRevision | null
+}
+```
+
+### LookRevision
+
+```
+{
+  revision: integer,
+  author: {
+    id: string,
+    name: string
+  },
+  createdAt: string,
+  note: string
+}
+```
+
+### LookRestoreRequest
+
+```
+{
+  revision: integer | null
+}
+```
+
+### LookPublished
+
+```
+{
+  ok: true,
+  current: LookRevision
+}
+```
+
+### LookPublishRequest
+
+```
+{
+  note: string,
+  files: {
+    look.css: string,
+    LOOK.md: string,
+    logo.svg?: string
+  }
+}
+```
+
+### CompanyLook
+
+```
+{
+  current: { revision: integer, author: { id: string, name: string }, createdAt: string, note: string, files: { look.css: string, LOOK.md: string, logo.svg?: string } } | null,
+  revisions: LookRevision[]
 }
 ```
 

@@ -3,7 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-08-29
 - **Contexts**: Publishing (`packages/patchy`). System-wide because every agent driving the CLI and the cloud worktree's dev runner depend on this contract.
-- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15); [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135); [SDK map decisions](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [SDK spec §§7–8, 13–14](https://github.com/allisonmahmood/patchy-cloud/issues/193); [agent discovery #252](https://github.com/allisonmahmood/patchy-cloud/issues/252) and [portal spec §§7–8](https://github.com/allisonmahmood/patchy-cloud/issues/247).
+- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15); [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135); [SDK map decisions](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [SDK spec §§7–8, 13–14](https://github.com/allisonmahmood/patchy-cloud/issues/193); [agent discovery #252](https://github.com/allisonmahmood/patchy-cloud/issues/252), [portal spec §§7–8](https://github.com/allisonmahmood/patchy-cloud/issues/247) and [the company look #547](https://github.com/allisonmahmood/patchy-cloud/issues/547).
 
 ## Context
 
@@ -44,13 +44,14 @@ lists of validation failures; their line count is not the branching contract.
 - **Success:** exactly one stdout JSON document, with the command's shape below.
   Warnings are fields in that document, never JSON-mode stderr; install, build
   and generation progress do not leak into stdout. `status` always uses JSON.
-- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }`, ordinarily
+- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, admins?, warnings? }`, ordinarily
   empty stdout, and the exit code for `kind`. `code` preserves exposed wire
   refusals and identifies [local repo checks](#local-repo-refusal-codes), plus
   local dev codes such as `not_additive` and `not_running`; not every error has one.
   Discovery's `wrong_state` refusal includes the actual patch `state`.
   Lifecycle refusals retain `owner` for `not_owner`, `dependants` for
   `has_dependants`, `sources` for `sources_off` and `purgeAt` for `patch_deleted`.
+  The look's `admin_required` retains `admins`.
   Notices discovered before a later failure remain in `warnings`; text mode
   prints them before the error.
   Terminal device-login refusals currently use `kind` and `error` without a code.
@@ -58,7 +59,7 @@ lists of validation failures; their line count is not the branching contract.
   Check the exit code before parsing stdout as success. Built-ins such as help
   and the bare `--version` retain their own output, not success envelopes.
 
-`whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback` and `describe` expose their API success shapes;
+`whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `look publish` and `look restore` expose their API success shapes;
 [API reference](../API.md) owns those fields. `publicUrl` on publish/share is an
 address, not a promise of anonymous access: `scope` decides who can open it.
 
@@ -82,7 +83,8 @@ instance is `rejected` (exit 2). Not every local failure has a structured code
 
 Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
-description request is sent. Repair the text using the reported constraint.
+description request is sent. `look publish` likewise emits `invalid_look` locally
+before sending a look the instance would refuse. Repair the text using the reported constraint.
 An instance's HTTP 422 `invalid_description` is still `rejected` (exit 2).
 
 The tier 2 contract's descriptor extraction refuses a non-handler export from a
@@ -617,6 +619,24 @@ Tier 2 adds `artifacts.server: { sha256, bytes }` and
 bytes is the UTF-8 artifact size. The recovery slot retains both artifact bodies.
 The manifest records descriptors and SDK entry points; server code is one closed
 module without dynamic imports, separate from the HTML.
+
+### The company look
+
+| command                                     | behaviour                                                                                                                                                                      | `--json` success                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `patchy look`                               | Current revision's number, author, date, note and file sizes, then every revision newest first. Any member.                                                                    | Wire body `{ current \| null, revisions }`, with the files' contents, no `ok` wrapper. |
+| `patchy look publish <dir> --note "<text>"` | Admins: check the folder's `look.css`, `LOOK.md` and optional `logo.svg`, publish them as the next revision and make it current. Other files are named in a warning, not sent. | `{ ok, current, warnings? }`                                                           |
+| `patchy look restore <n\|none>`             | Admins: make revision `n` current, or leave the company with no look. Moves the pointer only.                                                                                  | `{ ok, current }`, `current` null for `none`                                           |
+
+These commands run anywhere with the saved login; they never read `patchy.json`.
+`look publish` runs `@patchy/core/look` before any request: a failing look is
+`invalid_look`, local exit 1, its message one line per failure, and an empty or
+over-long note is a local refusal too. The instance reruns the same checks, so
+`invalid_look` from it is `rejected`, exit 2. A member's publish or restore is
+`admin_required`, exit 2, with `admins` (`{ id, name }` each) in the failure
+document so the agent can say who to ask. An unknown revision is
+`revision_unavailable`, exit 2; restore accepts a positive integer or `none`,
+anything else is local exit 1. The `Patchy-Cli` command is `look` for all three.
 
 ### Publish recovery
 

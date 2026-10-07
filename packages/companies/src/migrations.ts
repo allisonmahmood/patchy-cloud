@@ -2,7 +2,7 @@
  * The companies capability's schema, id 1 in the global migration sequence
  * (`packages/sql/CONTEXT.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
- * id 9 adds each person's What's new marker.
+ * id 9 adds each person's What's new marker and id 10 the company look.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -85,5 +85,23 @@ export const migrations: Migrations = {
   // releases so far are new to them; new members start at the latest (Companies.insertUser).
   "0009_whats_new_seen": ddl(
     `ALTER TABLE users ADD COLUMN whats_new_seen INTEGER NOT NULL DEFAULT 0`
+  ),
+  // A company's look revisions keep their three files inline; they are a few KiB of text
+  // and at most 512 KiB. The pointer names a revision of the same company, or none.
+  "0010_company_look": ddl(
+    `CREATE TABLE look_revisions (
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      author_id TEXT NOT NULL REFERENCES users(id),
+      note TEXT NOT NULL,
+      look_css TEXT NOT NULL,
+      look_md TEXT NOT NULL,
+      logo_svg TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (company_id, revision)
+    )`,
+    `ALTER TABLE companies ADD COLUMN current_look_revision INTEGER`,
+    `ALTER TABLE companies ADD CONSTRAINT companies_current_look_fk
+      FOREIGN KEY (id, current_look_revision) REFERENCES look_revisions (company_id, revision)`
   )
 };

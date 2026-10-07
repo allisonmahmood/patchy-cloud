@@ -25,7 +25,7 @@ export function renderServerSkillLimits(): string {
     "",
     "PGlite dev has one connection. It does not reproduce production connection contention, serialization conflicts or containment. A watchdog kill is not proof of CPU abuse. Use bounded batches for long actions.",
     "",
-    table(entries.filter(([id]) => !id.startsWith("rate."))),
+    table(entries.filter(([id]) => !id.startsWith("rate.") && !id.startsWith("look."))),
     ""
   ].join("\n");
 }

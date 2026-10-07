@@ -75,7 +75,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `apps/infra` — production infrastructure as AWS CDK: per environment, a base stack (image registry, deploy identity, budget, secrets) and an app stack (network, load balancer, hosts, exec task definition, uptime alert). CI synthesizes it offline, and releases apply it through the deploy workflow (`@patchy/infra`).
 - `packages/patchy`: `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files, edits declarations, discovers company tools and data sources, and manages owned patches.
 - `packages/sdk` — current release and immutable tarball distribution, the front door's `/llms.txt` and `/install.mjs`, authenticated generation, and canonical project skills under `skills/` (`@patchy/sdk`).
-- `packages/core`: shared HTML validation, hashing, ID helpers, and the first-party card shell, app shell and component set (`@patchy/core`).
+- `packages/core`: shared HTML validation, the company look's publish checks (`@patchy/core/look`), hashing, ID helpers, and the first-party card shell, app shell and component set (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
