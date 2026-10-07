@@ -152,6 +152,7 @@ const knownSkills = [
   "patchy-members"
 ];
 const root = "patchy/_generated";
+const templateMarker = /<!-- [a-z-]+ -->/g;
 const shipped = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 
 /**
@@ -439,15 +440,14 @@ export const generate = Effect.fn("Generation.generate")(function* (
   files.set(`${root}/look.css`, lookFiles["look.css"]);
   if (lookFiles["logo.svg"] !== undefined) files.set(`${root}/logo.svg`, lookFiles["logo.svg"]);
   // Each template's marked sections and what fills them; a missing marker is a broken release.
-  // Replacer functions, so a brief's `$&` or `$1` stays text, not a replacement pattern.
-  const templates = new Map<string, ReadonlyArray<readonly [marker: string, fill: () => string]>>([
-    ["patchy-loop", [["<!-- sdk-capabilities -->", () => sdkCapabilitiesMarkdown]]],
+  const templates = new Map<string, ReadonlyMap<string, () => string>>([
+    ["patchy-loop", new Map([["<!-- sdk-capabilities -->", () => sdkCapabilitiesMarkdown]])],
     [
       "patchy-look",
-      [
+      new Map([
         ["<!-- look-state -->", () => lookState(look)],
         ["<!-- look-brief -->", () => lookFiles["LOOK.md"].trim()]
-      ]
+      ])
     ]
   ]);
   const skillFiles = [];
@@ -460,12 +460,16 @@ export const generate = Effect.fn("Generation.generate")(function* (
           (cause) => new GenerationUnavailable({ stage: "release-skill", resource: path, cause })
         )
       );
-    const sections = templates.get(name) ?? [];
-    if (sections.some(([marker]) => !contents.includes(marker)))
+    const sections = templates.get(name);
+    if (sections !== undefined && [...sections.keys()].some((marker) => !contents.includes(marker)))
       return yield* new GenerationUnavailable({ stage: "release-skill-template", resource: path });
+    // One pass over the template: a filled note or brief is never searched for markers, and a
+    // replacer function keeps a brief's `$&` or `$1` as text.
     files.set(
       path,
-      sections.reduce((text, [marker, fill]) => text.replace(marker, fill), contents)
+      sections === undefined
+        ? contents
+        : contents.replace(templateMarker, (marker) => sections.get(marker)?.() ?? marker)
     );
     skillFiles.push({ name, path });
   }
@@ -489,7 +493,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   }
   files.set(
     `${root}/README.md`,
-    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills, contexts and release capabilities. look.css, and logo.svg when the look has one, are the company look that .agents/skills/patchy-look/SKILL.md explains; index.json's look names their revision, null for the Patchy look. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
+    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills, contexts and release capabilities. look.css, and logo.svg when the look has one, are the look a page starts in: the company's, or the Patchy look when it has none. .agents/skills/patchy-look/SKILL.md explains them; index.json's look names their revision, null for the Patchy look. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
   );
   files.set(
     `${root}/index.json`,
