@@ -7,7 +7,7 @@ platform access. A separate subdomain would add host routing and login coordinat
 without removing the need for a trusted broker. The opaque-origin sandbox supplies
 the isolation while keeping one host and the existing address/login model.
 
-The decision implements [SDK spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/193) and [issue #205](https://github.com/allisonmahmood/patchy-cloud/issues/205), following the [frame prototype](https://github.com/allisonmahmood/patchy-cloud/pull/185). Tier 0 retains its escaped `srcdoc` and empty sandbox. Tier 1 uses `/~content/<patchId>/<versionId>?n=<nonce>` and `sandbox="allow-scripts allow-modals"`. Historical pages use their selected version's tier. Content has the same door and sharing-based cache policy as its address.
+The decision implements [SDK spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/193) and [issue #205](https://github.com/allisonmahmood/patchy-cloud/issues/205), following the [frame prototype](https://github.com/allisonmahmood/patchy-cloud/pull/185). Tier 0 retains its escaped `srcdoc` and empty sandbox; its policy admits `data:` fonts and no remote ones, so a font reaches it embedded in the page's own bytes. Tier 1 uses `/~content/<patchId>/<versionId>?n=<nonce>` and `sandbox="allow-scripts allow-modals"`. Historical pages use their selected version's tier. Content has the same door and sharing-based cache policy as its address.
 
 ## Containment and authority
 

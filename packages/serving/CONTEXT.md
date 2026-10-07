@@ -17,7 +17,7 @@ The promise made about a patch at each tier: the patch cannot watch you at tier 
 _Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing controls access), anonymous as a promise about company pages (the host admits the viewer)
 
 **Page**:
-A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Tier 0 content is script-free; tier 1 and tier 2 content runs browser code without direct network or credential access.
+A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Tier 0 content is script-free, and a font reaches it only embedded in its own bytes; tier 1 and tier 2 content runs browser code without direct network or credential access.
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
 
 **Shell**:

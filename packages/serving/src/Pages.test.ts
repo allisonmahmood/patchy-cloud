@@ -41,7 +41,7 @@ import { servingHeaders } from "./serving-headers.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
+  "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; font-src data:; " +
   "frame-src 'self' about:; base-uri 'none'; form-action 'none'";
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
