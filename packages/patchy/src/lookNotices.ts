@@ -3,7 +3,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Api from "./Api.js";
 import * as Output from "./Output.js";
 
 const INDEX = "patchy/_generated/index.json";
@@ -94,4 +96,30 @@ export const lookNotices = Effect.fn("lookNotices")(function* <E, R>(
   ].join(" ");
   yield* Output.rememberWarnings([notice]);
   return [notice];
+});
+
+/**
+ * Repo publish ships the repo's own revision and never pulls a newer one: a page using the look
+ * hears when that isn't the company's current revision, and how to catch up.
+ */
+export const publishLookWarnings = Effect.fn("publishLookWarnings")(function* (
+  root: string,
+  token: Redacted.Redacted,
+  company: string
+) {
+  if (!(yield* pageLook(root)).uses) return [];
+  const own = yield* readIndexLook(root);
+  const client = yield* Api.client(token);
+  const { current } = yield* client
+    .getLook()
+    .pipe(Effect.catch((error) => Api.classify(error, "Could not read the company's look.")));
+  if (own?.revision === current?.revision) return [];
+  const has = own === null ? "the Patchy look" : `${company}'s look rev ${own.revision}`;
+  const now =
+    current === null
+      ? `${company} has no look now.`
+      : `the current look is rev ${current.revision} by ${current.author.name}: ${sentence(current.note)}`;
+  return [
+    `This repo has ${has}, but ${now} This version keeps the repo's look; run patchy refresh to bring it up to date.`
+  ];
 });

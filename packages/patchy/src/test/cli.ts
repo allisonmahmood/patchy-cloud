@@ -507,6 +507,7 @@ export const projectHandler: Handler = (request, respond) => {
     return respond(200, projectSource);
   if (request.url === "/api/sdk/generate")
     return respond(200, generateProjectResponse(request.body));
+  if (request.url === "/api/look") return respond(200, { current: null, revisions: [] });
   respond(404, { ok: false, error: "Unexpected fixture route." });
 };
 
