@@ -1211,7 +1211,9 @@ const look = Command.make("look", {}, () =>
       const current = look.current;
       yield* Output.report(encodeCompanyLook(look), [
         ...(current === null
-          ? [`The company has no look. ${NO_LOOK}`]
+          ? [
+              "The company has no look. New patches start from the Patchy look, whose files are in patchy look --json."
+            ]
           : [
               `Revision ${current.revision} is the company's look.`,
               byline(current),
@@ -1220,6 +1222,9 @@ const look = Command.make("look", {}, () =>
                 .join(", ")}`,
               "Their contents are in patchy look --json."
             ]),
+        ...(look.admins.length === 0
+          ? []
+          : [`Only an admin changes it: ${look.admins.map(({ name }) => name).join(", ")}.`]),
         ...(look.revisions.length === 0
           ? []
           : [

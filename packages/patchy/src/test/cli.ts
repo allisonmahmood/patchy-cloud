@@ -369,6 +369,17 @@ export const projectSource = {
 /** Patchy's look as generation writes it for a company with no look: no logo. */
 export const patchyLookFiles = { "look.css": readLookFixture("patchy")["look.css"] };
 
+/** `GET /api/look`'s body for a company with Ada as its admin; with no look, the Patchy look stands in. */
+export const companyLook = (current: unknown, revisions: ReadonlyArray<unknown> = []) => ({
+  current,
+  revisions,
+  patchyLook:
+    current === null
+      ? { ...patchyLookFiles, "LOOK.md": readLookFixture("patchy")["LOOK.md"] }
+      : null,
+  admins: [{ id: "usr_ada", name: "Ada Lovelace" }]
+});
+
 /** A company look carrying its font as a captured look does: #564's Inter subset, embedded. */
 export const embeddedFontLook = (() => {
   const fixture = readFileSync(
@@ -499,7 +510,7 @@ export const projectHandler: Handler = (request, respond) => {
     return respond(200, projectSource);
   if (request.url === "/api/sdk/generate")
     return respond(200, generateProjectResponse(request.body));
-  if (request.url === "/api/look") return respond(200, { current: null, revisions: [] });
+  if (request.url === "/api/look") return respond(200, companyLook(null));
   respond(404, { ok: false, error: "Unexpected fixture route." });
 };
 

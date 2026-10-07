@@ -1,11 +1,15 @@
 /**
  * A company's look: its numbered revisions and a pointer to the current one, like a patch's
  * versions and its served version. Publishing runs the look checks whoever calls it, so no
- * stored revision fails them. Callers authorize the admin; generation reads `read(...).current`.
+ * stored revision fails them. Callers authorize the admin; generation reads `read(...).current`,
+ * and `patchyLook` when it is null.
  */
+// @effect-diagnostics nodeBuiltinImport:off -- fileURLToPath locates the shipped Patchy look beside this package.
+import { fileURLToPath } from "node:url";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -90,6 +94,12 @@ export class Looks extends Context.Service<
   Looks,
   {
     readonly read: (companyId: string) => Effect.Effect<Look, SqlError>;
+    /**
+     * The Patchy look, Patchy's own, which stands in while a company has none: `look.css` and
+     * `LOOK.md` from `looks/patchy/`, shipped with the release. It is no company's revision and
+     * never carries Patchy's logo.
+     */
+    readonly patchyLook: typeof LookFiles.Type;
     /** Checks the files, stores them as the next revision and makes it current. */
     readonly publish: (
       input: PublishInput
@@ -107,6 +117,14 @@ export class Looks extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const fs = yield* FileSystem.FileSystem;
+  // Read once: the files belong to the release, and a release without them is broken.
+  const shipped = (name: string) =>
+    fs.readFileString(fileURLToPath(new URL(`../looks/patchy/${name}`, import.meta.url)));
+  const patchyLook = yield* Effect.all({
+    "look.css": shipped("look.css"),
+    "LOOK.md": shipped("LOOK.md")
+  }).pipe(Effect.orDie);
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
   // One statement, so the history and the current files come from the same moment.
   const rows = SqlSchema.findAll({
@@ -232,7 +250,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return Looks.of({ read, publish, restore });
+  return Looks.of({ read, patchyLook, publish, restore });
 });
 
 export const layer = Layer.effect(Looks, make);

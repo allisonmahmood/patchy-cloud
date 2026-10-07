@@ -1,7 +1,8 @@
 /**
  * The `look` group of the Patchy API, over `Looks` and `Users`: any active member reads the
- * company's look, and admins publish and restore it. A refused member hears who the admins are,
- * so their agent can say who to ask. Publish and restore report business events after commit.
+ * company's look, or the Patchy look standing in for none, and admins publish and restore it.
+ * The read and a member's refusal both name the admins, so an agent can say who to ask. Publish
+ * and restore report business events after commit.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -68,13 +69,18 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
       report: (value: A) => Effect.Effect<void>
     ) => withReportedCommit(change, report).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
+    /** Who can change the company's look. */
+    const activeAdmins = Effect.fn("LookApi.activeAdmins")(function* (companyId: string) {
+      return (yield* users.list(companyId))
+        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+        .map(({ id, name }) => ({ id, name }));
+    });
+
     /** The refusal a member gets, or null for an admin. */
     const adminOnly = Effect.fn("LookApi.adminOnly")(function* () {
       const identity = yield* CurrentIdentity;
       if (identity.role === "admin") return null;
-      const admins = (yield* users.list(identity.company.id))
-        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
-        .map(({ id, name }) => ({ id, name }));
+      const admins = yield* activeAdmins(identity.company.id);
       return refuse(AdminRequired, {
         ok: false,
         code: "admin_required",
@@ -95,7 +101,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
                   look.current === null
                     ? null
                     : { ...wireRevision(look.current), files: look.current.files },
-                revisions: look.revisions.map(wireRevision)
+                revisions: look.revisions.map(wireRevision),
+                patchyLook: look.current === null ? looks.patchyLook : null,
+                admins: yield* activeAdmins(identity.company.id)
               })
             ),
             noStore

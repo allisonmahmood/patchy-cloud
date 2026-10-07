@@ -157,9 +157,9 @@ async function stageRuntime(destination) {
   );
   if (digest(sdkArchive) !== release.digest) throw new Error("Packed SDK content digest mismatch.");
   await access(path.join(sdkRoot, "front-door/install.mjs"));
-  // Generation writes the Patchy look for a company with none; it never ships Patchy's logo.
+  // The Patchy look stands in for a company with none; it never ships Patchy's logo.
   for (const file of ["look.css", "LOOK.md"])
-    await access(path.join(sdkRoot, "looks/patchy", file));
+    await access(path.join(app, "node_modules/@patchy/companies/looks/patchy", file));
 }
 
 try {
