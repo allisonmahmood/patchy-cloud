@@ -105,7 +105,7 @@ A second local dev URL at a distinct origin, bound to a fixed non-admin viewer i
 _Avoid_: impersonation, second company, second dev runtime
 
 **Managed files**:
-The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: managed pins, generated client and metadata, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
+The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: managed pins, generated client and metadata, the company's [look](../companies/CONTEXT.md) files, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
 _Avoid_: scaffold (these parts continue to be maintained), all project files
 
 **Patchy SDK**:
@@ -146,8 +146,12 @@ The agent instructions for entering Patchy: choosing an instance, signing the ma
 _Avoid_: project skill, template
 
 **Project skill**:
-A release-bound set of agent instructions for building within one patch repo, supplied by the instance for its tier, core capabilities and declared connections, shared resources or member directory.
+A release-bound set of agent instructions for building within one patch repo, supplied by the instance for its tier, core capabilities and declared connections, shared resources or member directory. `patchy-look` is written per company: a release-bound template around the current look's brief.
 _Avoid_: global skill, copied tutorial
+
+**Patchy look**:
+Patchy's own [look](../companies/CONTEXT.md), shipped with the release, which generation writes into a patch repo whose company has no look. It is no company's revision: it carries no logo and no revision stamp.
+_Avoid_: default theme, fallback style
 
 **Discovery**:
 The agent's view of its company's patches, their tables, stores and reads, and company connections. It includes only what the credential can open and identifies which sources can be declared; finding a source grants no access.

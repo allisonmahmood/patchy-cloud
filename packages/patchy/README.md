@@ -564,8 +564,8 @@ vite.config.ts, tsconfig.json  single-file build, JSX settings, typechecking
 eslint.config.js              tiers 1 and 2 import and hooks lint
 helpers/                      company-owned helpers
 AGENTS.md, CLAUDE.md            purpose, layout, skills, index; @AGENTS.md
-patchy/_generated/             README, index, client, manifest, context; server.ts on tier 2
-.agents/skills/patchy-*/       core, page, tier-driven and declaration-driven skills
+patchy/_generated/             README, index, client, manifest, context, look.css; logo.svg when the look has one; server.ts on tier 2
+.agents/skills/patchy-*/       core, look, page, tier-driven and declaration-driven skills
 fixtures/                     postgres-<handle>.sql, shared-<alias>.sql or shared-<alias>/README.md
 .gitignore                    excludes .patchy/, node_modules/, dist/
 ```
@@ -1228,6 +1228,18 @@ prints them after the path. A folder missing `look.css` or `LOOK.md` is a local
 refusal, exit 1, as for publish, and `warnings` names any other file in it.
 `look preview` with no folder when the company has no look, or `--compare` with
 no folder, is local, exit 1.
+
+Every generation, at `init`, `refresh` and `dev` start, writes the company's
+current look into the patch repo as managed files: `patchy/_generated/look.css`,
+`patchy/_generated/logo.svg` when the revision has one, and the `patchy-look`
+project skill, which holds the order to style by and the revision's brief. With
+no company look it writes the Patchy look instead, with no logo. In
+`patchy/_generated/index.json`, `look` records the revision the files came from
+as `patchy look` shows it, `{ revision, author: { id, name }, createdAt, note }`,
+or `null` for the Patchy look. A new repo's tier 1 and 2 `src/main.tsx` imports
+`look.css` and its tier 0 `index.html` links it, so the first page is already in
+the look; the single-file build inlines it, embedded fonts included. A page that
+doesn't import it keeps its own style, and refresh never edits page source.
 
 ## Exit codes
 
