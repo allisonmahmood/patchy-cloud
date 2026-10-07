@@ -7,6 +7,7 @@ import { CURRENT_RELEASE } from "@patchy/api";
 import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import {
+  companyLook,
   decodePublishRequest,
   embeddedFontLook,
   generateProjectResponse,
@@ -98,7 +99,7 @@ describe("patch-repo builds", () => {
       if (request.url === "/api/publish") return respond(201, response);
       if (request.url === "/api/look" && lookRefused)
         return respond(429, { ok: false, code: "rate_limited", error: "Too many requests." });
-      if (request.url === "/api/look") return respond(200, { current, revisions: [current] });
+      if (request.url === "/api/look") return respond(200, companyLook(current, [current]));
       if (request.url === "/api/sdk/generate")
         return respond(
           200,

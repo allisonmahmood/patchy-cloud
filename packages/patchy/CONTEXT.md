@@ -21,12 +21,8 @@ The contract an agent branches on: 0 success, 1 locally fixable, 2 refused by th
 _Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
 **State dir**:
-The user-level home for the CLI's remembered instance choice, credentials, pending login, file-mode pending publish, patch cache and default style. Repo-local state is separate and travels with its patch repo.
+The user-level home for the CLI's remembered instance choice, credentials, pending login, file-mode pending publish, patch cache and latest look preview. Repo-local state is separate and travels with its patch repo.
 _Avoid_: config directory, dotfiles
-
-**Default style**:
-The user-level style preference captured during onboarding and kept in the state dir; it applies whenever a project does not declare its own house style.
-_Avoid_: house style (a project's own style, which overrides it), theme, template
 
 **Login handoff**:
 The URL, code and next command that `patchy login` returns for an agent to relay to the person confirming the machine in their own browser. The agent never opens that browser; it completes the pending login after the person's answer.
@@ -45,7 +41,7 @@ Software acting for a user, with that user's machine token: the CLI's primary dr
 _Avoid_: bot, service account, agent identity
 
 **Onboarding**:
-The optional, user-requested first-time setup conversation — establish where to publish, capture a default style, then publish the welcome patch. With no publishing key, the login handoff comes before publishing.
+The optional, user-requested first-time setup conversation — establish where to publish and log the machine in, set up the company's [look](../companies/CONTEXT.md) when its first admin wants one, then publish the welcome patch in the look that applies. Only an admin of a company with no look is asked about it; everyone else is told which look their tools use.
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
@@ -150,7 +146,7 @@ A release-bound set of agent instructions for building within one patch repo, su
 _Avoid_: global skill, copied tutorial
 
 **Patchy look**:
-Patchy's own [look](../companies/CONTEXT.md), shipped with the release, which generation writes into a patch repo whose company has no look. It is no company's revision: it carries no logo and no revision stamp.
+See **Patchy look** in [Companies](../companies/CONTEXT.md): what a patch repo or a static page starts from while its company has no look.
 _Avoid_: default theme, fallback style
 
 **Discovery**:

@@ -18,7 +18,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "looks/patchy/look.css",
+    "looks/patchy/LOOK.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -34,6 +36,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "vitest": "^5.0.3"
   }

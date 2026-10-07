@@ -4,7 +4,7 @@ How the global `patchy` skill and release-bound project skills reach agents.
 
 `skills/patchy/SKILL.md` and its `references/` directory are the authoritative **global skill** bundle: the entry door for sign-in, static-file publishing and `patchy init`. Inside a patch repo the project skills govern building. The checkout links `.claude/skills/patchy` → `.agents/skills/patchy` → `skills/patchy`, so edits through either agent path reach the same source. Edit that source, not a generated package copy.
 
-The package build (`scripts/build-patchy-package.mjs`) copies `skills/` wholesale to `packages/patchy/skills/`. The package's `files` list includes that directory; the packed `patchy` package therefore carries the publishing skill and its onboarding, welcome-page and style references beside the executable. Both `build` and `prepack` regenerate this copy.
+The package build (`scripts/build-patchy-package.mjs`) copies `skills/` wholesale to `packages/patchy/skills/`. The package's `files` list includes that directory; the packed `patchy` package therefore carries the publishing skill and its onboarding, welcome-page and look-capture references beside the executable. Both `build` and `prepack` regenerate this copy.
 
 The checked-in root `skills-lock.json` uses the `skills` CLI's lockfile format for the repo's own wiring. Its `patchy` entry names `skills/patchy/SKILL.md`; `computedHash` is the SHA-256 of that file's bytes alone (`sha256sum skills/patchy/SKILL.md`), not a hash of the references or the generated copy. Refresh it by hand after the final `SKILL.md` edit; `packages/patchy/src/skillLock.test.ts` fails while it is stale.
 
@@ -58,7 +58,8 @@ skill's package copy.
 - `patchy-look` is the one project skill written per company. Its template is
   release-bound like the rest; generation fills its marked sections with the
   company's current look revision and its `LOOK.md` brief, or with the Patchy
-  look (`packages/sdk/looks/patchy/`) when the company has none. Every
+  look (`packages/companies/looks/patchy/`, which `GET /api/look` also hands
+  out) when the company has none. Every
   generation rewrites it, so refresh and dev start bring in a new revision. A
   missing marker fails generation, as `patchy-loop`'s does.
 - Page skill, generated automatically on tiers 1 and 2: `patchy-preact`.

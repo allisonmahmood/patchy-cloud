@@ -969,10 +969,25 @@ export class LookRevision extends Schema.Class<LookRevision>("LookRevision")({
   note: Schema.String
 }) {}
 
-/** The current revision with its files, or null for no look, and every revision newest first. */
+/** The Patchy look's files as the look read carries them: never a logo, which is Patchy's mark. */
+export const PatchyLookFiles = Schema.Struct({
+  "look.css": Schema.String,
+  "LOOK.md": Schema.String
+});
+
+/** Who can change a company's look: its active admins. */
+const LookAdmins = Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String }));
+
+/**
+ * The current revision with its files, or null for no look, and every revision newest first.
+ * `patchyLook` is the Patchy look's `look.css` and `LOOK.md`, without Patchy's logo, when the
+ * company has no look and it stands in; null otherwise. `admins` can change the look.
+ */
 export class CompanyLook extends Schema.Class<CompanyLook>("CompanyLook")({
   current: Schema.NullOr(Schema.Struct({ ...LookRevision.fields, files: LookFiles })),
-  revisions: Schema.Array(LookRevision)
+  revisions: Schema.Array(LookRevision),
+  patchyLook: Schema.NullOr(PatchyLookFiles),
+  admins: LookAdmins
 }) {}
 
 export class LookPublishRequest extends Schema.Class<LookPublishRequest>("LookPublishRequest")({
@@ -998,7 +1013,7 @@ export class LookRestored extends Schema.Class<LookRestored>("LookRestored")({
 /** Only admins change the look; `admins` names who to ask. */
 export const AdminRequired = failure(403, {
   code: Schema.Literal("admin_required"),
-  admins: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String }))
+  admins: LookAdmins
 });
 /** The look failed its checks; `errors` names each failure, and nothing was stored. */
 export const InvalidLook = failure(422, {

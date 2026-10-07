@@ -274,7 +274,7 @@ Responses:
 
 ### `GET /api/look`
 
-Read the caller's company look, for any active member. `current` is the current revision with its files' contents (`look.css`, `LOOK.md` and an optional `logo.svg`), or null when the company has no look. `revisions` lists every revision newest first with its author, time and note. Another company's look is never visible. Responses are private, no-store.
+Read the caller's company look, for any active member. `current` is the current revision with its files' contents (`look.css`, `LOOK.md` and an optional `logo.svg`), or null when the company has no look. `revisions` lists every revision newest first with its author, time and note. When `current` is null, `patchyLook` holds the Patchy look that stands in, `look.css` and `LOOK.md` from the release with no logo; otherwise it is null. `admins` names the active admins, who alone change the look. Another company's look is never visible. Responses are private, no-store.
 
 Responses:
 
@@ -841,7 +841,9 @@ RuntimeSuccess | HandlerFailure
 ```
 {
   current: { revision: integer, author: { id: string, name: string }, createdAt: string, note: string, files: { look.css: string, LOOK.md: string, logo.svg?: string } } | null,
-  revisions: LookRevision[]
+  revisions: LookRevision[],
+  patchyLook: { look.css: string, LOOK.md: string } | null,
+  admins: { id: string, name: string }[]
 }
 ```
 
