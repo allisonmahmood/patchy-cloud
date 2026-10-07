@@ -927,7 +927,6 @@ patchy status
 #   "hasToken": true,
 #   "tokenSource": "login",
 #   "stateDir": "/home/you/.patchy",
-#   "hasDefaultStyle": false,
 #   "cliVersion": "0.0.1"
 # }
 ```
@@ -1165,12 +1164,18 @@ no look is the starting state. Any member's agent reads and previews the look;
 only admins publish or restore it. These commands run anywhere with the saved
 login and accept `--json`.
 
-| command                                     | behaviour                                                                                                                                                                                                | `--json` success                                                                                                    |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `patchy look`                               | Prints the current revision's number, author, date, note and file sizes, then every revision newest first.                                                                                               | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions }`, files' contents included. |
-| `patchy look publish <dir> --note "<text>"` | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent; a warning names them. | `{ ok, current, warnings? }`                                                                                        |
-| `patchy look restore <n\|none>`             | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer and adds no revision.                                                                          | `{ ok, current }`, with `current` null for `none`                                                                   |
-| `patchy look preview [<dir>] [--compare]`   | Writes the specimen as one HTML file and prints its path: in the look in `<dir>`, in the company's look without one, or with `--compare` the folder beside the company's look.                           | `{ ok, path, failures, warnings? }`                                                                                 |
+`patchy look --json` is how an agent settles a static page's style. With a
+company look, `current.files` holds it and `patchyLook` is null. With none,
+`current` is null and `patchyLook` holds the Patchy look's `look.css` and
+`LOOK.md`, the release's own and without a logo, which stands in. `admins`,
+each `{ id, name }`, are who can change it.
+
+| command                                     | behaviour                                                                                                                                                                                                | `--json` success                                                                                                                        |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `patchy look`                               | Prints the current revision's number, author, date, note and file sizes, then every revision newest first, and who the admins are.                                                                       | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions, patchyLook, admins }`, files' contents included. |
+| `patchy look publish <dir> --note "<text>"` | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent; a warning names them. | `{ ok, current, warnings? }`                                                                                                            |
+| `patchy look restore <n\|none>`             | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer and adds no revision.                                                                          | `{ ok, current }`, with `current` null for `none`                                                                                       |
+| `patchy look preview [<dir>] [--compare]`   | Writes the specimen as one HTML file and prints its path: in the look in `<dir>`, in the company's look without one, or with `--compare` the folder beside the company's look.                           | `{ ok, path, failures, warnings? }`                                                                                                     |
 
 `look publish` checks the folder before sending anything, and the instance runs
 the same checks again. A failing look is `invalid_look`, its message one line per
@@ -1348,7 +1353,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 
 - `PATCHY_API_URL` — API base URL. Overrides saved CLI config; overridden by `--api-url` and by a dev env. An effective override must match a repo's stored instance. Default outside repo mode: `http://localhost:3000`.
 - `PATCHY_API_TOKEN`: machine token used by authenticated commands, including discovery, repo preparation, publishing and lifecycle management. It overrides every other token; `auth set` does not read it, and `logout` does not remove or revoke it. No configured key means a local error naming `patchy login`.
-- `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, pending logins, patch cache, default style and latest look preview. Default: `~/.patchy`.
+- `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, pending logins, patch cache and latest look preview. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.
 
@@ -1413,7 +1418,6 @@ The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):
 - `device-login.json` — one pending login per instance: private device code, user code, both verification URLs, polling interval and expiry. Owner-only (`0600`); cleared for that instance on completion or logout.
 - `publish/<instance-hash>/attempt/<key-hash>.json` — the pending publish request, original owner ID and application target, without a machine credential. Both hashes are SHA-256: the resolved API URL and publish key respectively. The owner-only payload (`0600`) is written with `wx` in a private directory (`0700`), then the complete directory atomically claims the attempt slot. An occupied slot is read and replayed, never overwritten. Settlement unlinks only that key's file and removes only an empty slot, so a stale response cannot clear a newer attempt. Repo mode uses the same layout under the repo's `.patchy/` without needing the global state directory.
 - `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later publishes from the same path update the same patch and `share` or `delete` can find it from the path. A successful `delete` drops every entry that pointed at the patch.
-- `style.md` — the default style, owned and written by the agent skill. The CLI never reads its contents; `status` reports only whether it exists.
 - `look-preview.html` — the latest `patchy look preview`, replaced whole by each one, never written through a link.
 
 Credentials, pending logins and the patch cache are keyed by the resolved API base URL after trimming whitespace and trailing slashes. The remaining string must match exactly: different schemes, hosts or ports are separate entries by design.
