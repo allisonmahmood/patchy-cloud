@@ -36,7 +36,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 ## Relationships
 
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
-- **Publishing (`sdk`) → Primitives, Integrations, Patches, Content store, `api`**: retains advertised release archives in the content store and composes generated clients and context from primitive definitions and integration snapshots the caller may use
+- **Publishing (`sdk`) → Primitives, Integrations, Patches, Companies, Content store, `api`**: retains advertised release archives in the content store and composes generated clients and context from primitive definitions and integration snapshots the caller may use, with the company's current look
 - **Publishing (`patchy/dev`) → Runtime, Execution/local, Execution/inspection, Primitives, Integrations, Company database, Content store, Limits**: composes the hosted handler engine and callback path over PGlite and fixtures, with the machine's user and a non-admin colleague on separate listeners. Dev bundles neither the fleet controller nor the AWS SDK.
 - **`patchy/dev` → `serving/shell`**: serves the production renderer, broker and sandbox policies through the infrastructure-free shell export
 - **Serving → Patches, Auth**: relies on Patches for content, sharing, visits and lifecycle notices with restore-source checks, and on Auth for viewer identity and session admission. Serving links to the card and restore routes without importing Portal.
