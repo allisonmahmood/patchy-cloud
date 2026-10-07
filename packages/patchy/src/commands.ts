@@ -49,6 +49,7 @@ import { checkLook, type LookFiles } from "@patchy/core/look";
 import * as Api from "./Api.js";
 import { type CliError, LocalError, RejectedError } from "./CliError.js";
 import * as Discovery from "./Discovery.js";
+import { previewPage } from "./lookPreview.js";
 import * as Git from "./Git.js";
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
@@ -997,6 +998,8 @@ const byline = (revision: LookRevision) =>
   `By ${revision.author.name} on ${revision.createdAt.slice(0, 10)}: ${revision.note}`;
 
 const LOOK_FILE_NAMES = new Set(["look.css", "LOOK.md", "logo.svg"]);
+/** In the state dir, the one place every working CLI can write; each preview replaces the last. */
+const LOOK_PREVIEW_FILE = "look-preview.html";
 
 /**
  * A look folder's three files, and a warning naming anything else in it, which is not sent:
@@ -1121,13 +1124,94 @@ const lookRestore = Command.make(
   )
 );
 
+/** The company's current look and its history, as any member reads them. */
+const readCompanyLook = Effect.gen(function* () {
+  const client = yield* Api.client(yield* requiredToken());
+  return yield* client
+    .getLook()
+    .pipe(Effect.catch((error) => refused(error, "Reading the look failed.")));
+});
+
+const lookPreview = Command.make(
+  "preview",
+  {
+    dir: Argument.String("dir").pipe(
+      Argument.withDescription("A candidate look folder; without one, the company's look"),
+      Argument.optional
+    ),
+    compare: Flag.Boolean("compare").pipe(
+      Flag.withDescription("Show the candidate beside the company's current look"),
+      Flag.withDefault(false)
+    )
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const state = yield* State.State;
+        if (options.compare && Option.isNone(options.dir))
+          return yield* new LocalError({
+            message:
+              "--compare shows a candidate beside the company's look. Pass its folder: patchy look preview <dir> --compare"
+          });
+        const candidate = Option.isSome(options.dir)
+          ? yield* readLookFolder(options.dir.value)
+          : undefined;
+        yield* Output.rememberWarnings(candidate?.warnings ?? []);
+        // Only the company's look needs the instance; a candidate alone previews offline.
+        const current =
+          candidate === undefined || options.compare ? (yield* readCompanyLook).current : null;
+        const currentPane =
+          current === null
+            ? undefined
+            : { files: current.files, label: `Revision ${current.revision}, the company's look` };
+        const candidatePane = candidate && {
+          files: candidate.files,
+          label: "Candidate",
+          ...(options.compare && current === null ? { note: "The company has no look yet." } : {})
+        };
+        const first = candidatePane ?? currentPane;
+        if (first === undefined)
+          return yield* new LocalError({
+            message: `The company has no look yet. ${NO_LOOK}\nPreview a candidate folder: patchy look preview <dir>`
+          });
+        const failures = candidate === undefined ? [] : checkLook(candidate.files);
+        const file = path.join(state.dir, LOOK_PREVIEW_FILE);
+        yield* fs.makeDirectory(state.dir, { recursive: true }).pipe(
+          Effect.andThen(
+            fs.writeFileString(file, previewPage(first, candidatePane && currentPane))
+          ),
+          Effect.mapError((cause) => new LocalError({ message: `Could not write ${file}.`, cause }))
+        );
+        const warnings = candidate?.warnings ?? [];
+        yield* Output.report(
+          { ok: true, path: file, failures, ...(warnings.length === 0 ? {} : { warnings }) },
+          [
+            `Wrote the look preview: ${file}`,
+            "Open it in a browser. The next preview replaces it, so a reload shows the latest.",
+            ...(failures.length === 0
+              ? []
+              : [
+                  "",
+                  "look publish would refuse this look:",
+                  ...failures.map((line) => `- ${line}`)
+                ])
+          ]
+        );
+        for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Write the look specimen as a local HTML file: in a candidate folder's look, the company's look, or both with --compare."
+  )
+);
+
 const look = Command.make("look", {}, () =>
   run(
     Effect.gen(function* () {
-      const client = yield* Api.client(yield* requiredToken());
-      const look = yield* client
-        .getLook()
-        .pipe(Effect.catch((error) => refused(error, "Reading the look failed.")));
+      const look = yield* readCompanyLook;
       const current = look.current;
       yield* Output.report(encodeCompanyLook(look), [
         ...(current === null
@@ -1157,7 +1241,7 @@ const look = Command.make("look", {}, () =>
   Command.withDescription(
     "Show the company's look and its history; --json includes the files' contents."
   ),
-  Command.withSubcommands([lookPublish, lookRestore])
+  Command.withSubcommands([lookPublish, lookRestore, lookPreview])
 );
 
 // --- patch repos ------------------------------------------------------------
