@@ -52,13 +52,57 @@ describe("checkLook", () => {
       checkLook(
         look(
           { warning: undefined, info: "#12110f" },
-          "@layer look { a { --look-accent: #000000; } }"
+          "@layer look { :root { --look-accent: #000000; } }"
         )
       )
     ).toEqual([
       "look.css:17 declares --look-info, which is not a look token.",
       "look.css is missing --look-warning.",
       "look.css declares --look-accent twice, on lines 10 and 20; declare each token once."
+    ]);
+  });
+
+  it("counts only tokens declared in :root directly inside @layer look, where they always apply", () => {
+    expect(
+      checkLook(
+        look(
+          {},
+          [
+            "@layer look {",
+            "  @media (prefers-color-scheme: dark) {",
+            "    :root { --look-bg: #000000; }",
+            "  }",
+            "  .theme { --look-fg: #ffffff; }",
+            '  @property --look-link { syntax: "<color>"; inherits: true; initial-value: #000000; }',
+            "}"
+          ].join("\n")
+        )
+      )
+    ).toEqual([
+      "look.css:25 registers @property --look-link; tokens are plain custom properties.",
+      "look.css:22 declares --look-bg outside :root in @layer look; declare tokens only there.",
+      "look.css:24 declares --look-fg outside :root in @layer look; declare tokens only there."
+    ]);
+  });
+
+  it("refuses names written with backslash escapes, which honest CSS never needs", () => {
+    expect(
+      checkLook(
+        look(
+          {},
+          [
+            "@layer look {",
+            "  :root { --\\6c ook-fg: #ffffff; }",
+            '  a { background: u\\72l("https://cdn.example.com/paper.png"); }',
+            '  @\\69mport "brand.css";',
+            "}"
+          ].join("\n")
+        )
+      )
+    ).toEqual([
+      "look.css:21 escapes --\\6c ook-fg with a backslash; write names plainly.",
+      "look.css:22 escapes u\\72l with a backslash; write names plainly.",
+      "look.css:23 escapes @\\69mport with a backslash; write names plainly."
     ]);
   });
 
@@ -117,6 +161,9 @@ describe("checkLook", () => {
             "  body { background: url(https://cdn.example.com/paper.png); }",
             "  h1 { background: url(//cdn.example.com/rule.svg); }",
             '  hr { border-image: url("rule.svg") 2; }',
+            '  main { background: image-set("https://cdn.example.com/a.png" 1x, url(data:image/png;base64,AA==) 2x); }',
+            '  aside { background: -webkit-image-set("b.png" 1x); }',
+            '  nav { background: image(src("c.png")); }',
             "}"
           ].join("\n"),
           {
@@ -134,9 +181,12 @@ describe("checkLook", () => {
       )
     ).toEqual([
       'look.css:21 imports "brand.css"; a look is one self-contained file.',
-      "look.css:23 references https://cdn.example.com/paper.png; every url() must be a data: URL.",
-      "look.css:24 references //cdn.example.com/rule.svg; every url() must be a data: URL.",
-      "look.css:25 references rule.svg; every url() must be a data: URL.",
+      "look.css:23 references https://cdn.example.com/paper.png; every URL must be a data: URL.",
+      "look.css:24 references //cdn.example.com/rule.svg; every URL must be a data: URL.",
+      "look.css:25 references rule.svg; every URL must be a data: URL.",
+      "look.css:26 references https://cdn.example.com/a.png; every URL must be a data: URL.",
+      "look.css:27 references b.png; every URL must be a data: URL.",
+      "look.css:28 references c.png; every URL must be a data: URL.",
       "logo.svg references https://example.com/mark.png; embed it as a data: URL.",
       "logo.svg references https://example.com/logo.css; embed it as a data: URL."
     ]);
@@ -155,6 +205,13 @@ describe("checkLook", () => {
       "look.css:21 has a rule outside @layer look; only @font-face may sit outside it.",
       "look.css:22 has @media outside @layer look; only @font-face may sit outside it."
     ]);
+  });
+
+  it("accepts a leading @charset and the @layer look; statement", () => {
+    const base = look();
+    expect(
+      checkLook({ ...base, "look.css": `@charset "utf-8";\n@layer look;\n${base["look.css"]}` })
+    ).toEqual([]);
   });
 
   it("refuses a LOOK.md over 32 KiB, an empty one, and a look over 512 KiB", () => {
@@ -176,6 +233,31 @@ describe("checkLook", () => {
     ).toEqual([
       "look.css:20 could not be parsed: Colon is expected.",
       "logo.svg must be one <svg> element."
+    ]);
+  });
+
+  it("refuses a logo that runs script or embeds HTML", () => {
+    expect(
+      checkLook(
+        look({}, "", {
+          "logo.svg": [
+            '<svg xmlns="http://www.w3.org/2000/svg" onload="go()">',
+            "  <script>go()</script>",
+            '  <foreignObject width="4" height="4"><p>Acme</p></foreignObject>',
+            "</svg>"
+          ].join("\n")
+        })
+      )
+    ).toEqual([
+      "logo.svg has an onload attribute; a logo is a picture, not a program.",
+      "logo.svg has a <script>; a logo is a picture, not a program.",
+      "logo.svg has a <foreignObject>; draw the logo in SVG."
+    ]);
+  });
+
+  it("refuses NUL characters, which no file of a look needs", () => {
+    expect(checkLook(look({}, "", { "LOOK.md": "# Acme\u0000" }))).toEqual([
+      "LOOK.md contains a NUL character."
     ]);
   });
 });
