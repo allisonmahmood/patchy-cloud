@@ -112,7 +112,7 @@
     font-weight: 750;
   }
 
-  /* A plain button is the primary: flat blue, 2px ink frame, and a hard ink shadow that appears on hover. */
+  /* A plain button is the primary: flat blue in a 2px ink frame. The hard shadow is the .button recipe's. */
   button {
     box-sizing: border-box;
     display: inline-flex;
@@ -129,11 +129,7 @@
     cursor: pointer;
   }
   button:hover:not(:disabled) {
-    box-shadow: 2px 2px 0 var(--look-border);
-  }
-  button:active:not(:disabled) {
-    box-shadow: none;
-    transform: translate(1px, 1px);
+    background: color-mix(in srgb, var(--look-accent), black 12%);
   }
   button:disabled {
     opacity: 0.55;

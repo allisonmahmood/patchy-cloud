@@ -106,41 +106,24 @@
     color: var(--look-fg);
     font-size: 13px;
     font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
   }
 
   button {
     min-height: 48px;
     padding: 0 calc(var(--look-space) * 2);
-    margin-bottom: 4px;
     border: 0;
     border-radius: var(--look-radius);
     background: var(--look-accent);
     color: var(--look-accent-fg);
-    box-shadow: 0 4px 0 color-mix(in srgb, var(--look-accent), black 18%);
     font: 700 15px/1 var(--look-font-body);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
     cursor: pointer;
-    transition:
-      filter 0.15s,
-      transform 0.1s,
-      box-shadow 0.1s;
   }
   button:hover {
-    filter: brightness(1.1);
-  }
-  button:active {
-    transform: translateY(4px);
-    box-shadow: none;
+    background: color-mix(in srgb, var(--look-accent), white 10%);
   }
   button:disabled {
     background: var(--look-border);
     color: var(--look-muted);
-    box-shadow: 0 4px 0 color-mix(in srgb, var(--look-border), black 8%);
-    filter: none;
-    transform: none;
     cursor: not-allowed;
   }
 

@@ -34,7 +34,42 @@ Bright, chunky and friendly, like a game that happens to be serious about learni
 
 ## Components
 
+The plain `button` in `look.css` is flat. Give every pressable control `class="button"` for the lip and the uppercase label, and add `button-secondary`, `button-danger` or `button-text` for the others: `<button class="button button-secondary">I already have an account</button>`. Put `class="label"` on table heads, nav items and eyebrows.
+
 ```css
+/* Pressable: the 4px lip it drops onto when pressed, and the uppercase label. */
+.button {
+  margin-bottom: 4px;
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--look-accent), black 18%);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition:
+    filter 0.15s,
+    transform 0.1s,
+    box-shadow 0.1s;
+}
+.button:hover {
+  background: var(--look-accent);
+  filter: brightness(1.1);
+}
+.button:active {
+  transform: translateY(4px);
+  box-shadow: none;
+}
+.button:disabled {
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--look-border), black 8%);
+  filter: none;
+  transform: none;
+}
+
+/* Label: table heads, nav items, eyebrows. */
+.label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 /* Secondary: the white "I already have an account" button. */
 .button-secondary {
   background: var(--look-bg);
