@@ -178,14 +178,10 @@ const checkCss = (css: string): string[] => {
             : "";
     if (name.includes("\\"))
       errors.push(`${at(line)} escapes ${name} with a backslash; write names plainly.`);
-    if (
-      node.type === "Atrule" &&
-      node.name.toLowerCase() === "property" &&
-      node.prelude !== null &&
-      CssTree.generate(node.prelude).startsWith(TOKEN_PREFIX)
-    )
+    // A registration could change what a token is, escaped or not; a look never needs one.
+    if (node.type === "Atrule" && node.name.toLowerCase() === "property")
       errors.push(
-        `${at(line)} registers @property ${CssTree.generate(node.prelude)}; tokens are plain custom properties.`
+        `${at(line)} registers @property ${node.prelude === null ? "" : CssTree.generate(node.prelude)}; a look uses plain custom properties only.`
       );
   });
 
