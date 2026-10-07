@@ -21,6 +21,7 @@ import {
   Release,
   refuse
 } from "@patchy/api";
+import type { Looks } from "@patchy/companies";
 import type { ConnectionStore } from "@patchy/integrations";
 import type { Patches } from "@patchy/patches";
 import * as Artifact from "./Artifact.js";
@@ -58,6 +59,7 @@ export const layer: Layer.Layer<
   | Authorization
   | ConnectionStore.ConnectionStore
   | Patches.Patches
+  | Looks.Looks
   | FileSystem.FileSystem
 > = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
   Effect.gen(function* () {
@@ -123,7 +125,9 @@ export const layer: Layer.Layer<
 ).pipe(
   HttpRouter.provideRequest(
     Layer.effectContext(
-      Effect.context<ConnectionStore.ConnectionStore | Patches.Patches | FileSystem.FileSystem>()
+      Effect.context<
+        ConnectionStore.ConnectionStore | Patches.Patches | Looks.Looks | FileSystem.FileSystem
+      >()
     )
   )
 );

@@ -36,6 +36,7 @@ import {
 } from "@patchy/api";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import { Analytics } from "@patchy/analytics";
+import { Looks } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
@@ -46,6 +47,7 @@ import * as Generation from "./Generation.js";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
 import * as Artifact from "./Artifact.js";
 import * as SdkApi from "./SdkApi.js";
+import { readLookFixture } from "../../../test/look-fixtures.js";
 
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
@@ -120,7 +122,7 @@ const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: 
   Layer.provideMerge(Artifact.layer),
   Layer.provideMerge(artifactStore),
   Layer.provideMerge(
-    Patches.layer.pipe(
+    Layer.mergeAll(Patches.layer, Looks.layer).pipe(
       Layer.provideMerge(Analytics.layerNoop),
       Layer.provideMerge(Fixtures.database)
     )
@@ -509,6 +511,7 @@ it.layer(layer)("SDK company generation", (it) => {
         const skillFiles = output.files.filter(({ path }) => path.startsWith(".agents/skills/"));
         assert.deepStrictEqual(skillFiles.map(({ path }) => path).sort(), [
           ".agents/skills/patchy-files/SKILL.md",
+          ".agents/skills/patchy-look/SKILL.md",
           ".agents/skills/patchy-loop/SKILL.md",
           ".agents/skills/patchy-postgres/SKILL.md",
           ".agents/skills/patchy-shared-tables/SKILL.md",
@@ -564,6 +567,89 @@ it.layer(layer)("SDK company generation", (it) => {
         assert.isFalse(
           downgraded.files.some(({ path }) => path === ".agents/skills/patchy-server/SKILL.md")
         );
+      })
+  );
+
+  it.effect(
+    "writes the Patchy look until the company has one, then its current revision with the logo",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* sdkOver(Layer.empty);
+        const looks = yield* Looks.Looks;
+        const generate = (tier: 0 | 1 | 2 = 1) =>
+          api.generate({ payload: generateRequest({ ...Fixtures.manifest, tier }) }).pipe(
+            Effect.map(({ files }) => {
+              const read = (path: string) => files.find((file) => file.path === path)?.contents;
+              return {
+                css: read("patchy/_generated/look.css"),
+                logo: read("patchy/_generated/logo.svg"),
+                skill: read(".agents/skills/patchy-look/SKILL.md") ?? "",
+                index: JSON.parse(read("patchy/_generated/index.json") ?? "{}")
+              };
+            })
+          );
+        const patchy = readLookFixture("patchy");
+        for (const tier of [0, 1, 2] as const) {
+          const none = yield* generate(tier);
+          assert.strictEqual(none.css, patchy["look.css"]);
+          // The Patchy look is Patchy's default, not a company revision: no logo, no stamp.
+          assert.isUndefined(none.logo);
+          assert.isNull(none.index.look);
+          assert.include(none.skill, "The company has no look yet");
+          assert.include(none.skill, patchy["LOOK.md"].trim());
+          assert.notInclude(none.skill, "<!--");
+          assert.deepInclude(none.index.skills, {
+            name: "patchy-look",
+            path: ".agents/skills/patchy-look/SKILL.md"
+          });
+        }
+
+        const logo =
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>';
+        const linear = { ...readLookFixture("linear"), "logo.svg": logo };
+        // A brief is the company's text: `$&` is a price, not a replacement pattern.
+        const duolingo = {
+          ...readLookFixture("duolingo"),
+          "LOOK.md": `${readLookFixture("duolingo")["LOOK.md"]}\nPlans cost $& more on $1.\n`
+        };
+        const companyId = identity.company.id;
+        const authorId = identity.user.id;
+        const first = yield* looks.publish({
+          companyId,
+          authorId,
+          note: "first capture",
+          files: linear
+        });
+        const second = yield* looks.publish({
+          companyId,
+          authorId,
+          note: "darker green",
+          files: duolingo
+        });
+        const current = yield* generate();
+        assert.strictEqual(current.css, duolingo["look.css"]);
+        assert.isUndefined(current.logo);
+        assert.deepStrictEqual(current.index.look, {
+          revision: second.current.revision,
+          author: { id: identity.user.id, name: identity.user.name },
+          createdAt: second.current.createdAt.toISOString(),
+          note: "darker green"
+        });
+        assert.include(current.skill, duolingo["LOOK.md"].trim());
+        assert.notInclude(current.skill, "no look yet");
+
+        yield* looks.restore({ companyId, revision: first.current.revision });
+        const restored = yield* generate(0);
+        assert.strictEqual(restored.css, linear["look.css"]);
+        assert.strictEqual(restored.logo, logo);
+        assert.strictEqual(restored.index.look.revision, first.current.revision);
+        assert.include(restored.skill, linear["LOOK.md"].trim());
+
+        yield* looks.restore({ companyId, revision: null });
+        const cleared = yield* generate();
+        assert.strictEqual(cleared.css, patchy["look.css"]);
+        assert.isUndefined(cleared.logo);
+        assert.isNull(cleared.index.look);
       })
   );
 
@@ -1060,6 +1146,18 @@ it.layer(layer)("SDK company generation", (it) => {
         {
           payload: generateRequest(),
           fs: FileSystem.makeNoop({ readFileString: () => Effect.fail(readFailure) }),
+          cause: readFailure,
+          unavailable: { stage: "patchy-look", resource: "looks/patchy" }
+        },
+        {
+          payload: generateRequest(),
+          fs: {
+            ...fs,
+            readFileString: (path, encoding) =>
+              path.endsWith("/SKILL.md")
+                ? Effect.fail(readFailure)
+                : fs.readFileString(path, encoding)
+          },
           cause: readFailure,
           unavailable: { stage: "release-skill", resource: ".agents/skills/patchy-files/SKILL.md" }
         },
