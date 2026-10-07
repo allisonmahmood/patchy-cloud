@@ -1165,11 +1165,11 @@ no look is the starting state. Any member's agent reads the look; only admins
 publish or restore it. These commands run anywhere with the saved login and
 accept `--json`.
 
-| command                                     | behaviour                                                                                                                                                                          | `--json` success                                                                                                    |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `patchy look`                               | Prints the current revision's number, author, date, note and file sizes, then every revision newest first.                                                                         | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions }`, files' contents included. |
-| `patchy look publish <dir> --note "<text>"` | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent. | `{ ok, current }`                                                                                                   |
-| `patchy look restore <n\|none>`             | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer and adds no revision.                                                    | `{ ok, current }`, with `current` null for `none`                                                                   |
+| command                                     | behaviour                                                                                                                                                                                                | `--json` success                                                                                                    |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `patchy look`                               | Prints the current revision's number, author, date, note and file sizes, then every revision newest first.                                                                                               | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions }`, files' contents included. |
+| `patchy look publish <dir> --note "<text>"` | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent; a warning names them. | `{ ok, current, warnings? }`                                                                                        |
+| `patchy look restore <n\|none>`             | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer and adds no revision.                                                                          | `{ ok, current }`, with `current` null for `none`                                                                   |
 
 `look publish` checks the folder before sending anything, and the instance runs
 the same checks again. A failing look is `invalid_look`, its message one line per
@@ -1179,14 +1179,19 @@ failure: exit 1 from the CLI's own check, exit 2 if the instance refuses it.
   `--look-fg`, `--look-muted`, `--look-link`, `--look-success`,
   `--look-warning`, `--look-danger`, `--look-accent`, `--look-accent-fg`,
   `--look-border`, `--look-font-body`, `--look-font-display`, `--look-radius`,
-  `--look-space`) exactly once and no other `--look-*` name. Colours are opaque `#RRGGBB`.
+  `--look-space`) exactly once, in a `:root` rule directly inside `@layer look`
+  where it always applies, and no other `--look-*` name. No media query, class or
+  `@property` sets a token. Colours are opaque `#RRGGBB`.
 - Every text colour (fg, muted, link, success, warning, danger) reaches 4.5:1 on
   bg and on surface, and accent-fg reaches it on accent.
-- There is no `!important`, and everything except `@font-face` sits inside
-  `@layer look`, so a patch's own CSS always wins.
-- The look is self-contained: no `@import`, every `url()` is a `data:` URL, and
-  the logo is one `<svg>` that embeds what it shows (`#fragment` links are fine).
-  Fonts are embedded in `look.css`.
+- There is no `!important`, and everything except `@font-face` and a leading
+  `@charset` sits inside `@layer look`, so a patch's own CSS always wins. Names
+  are written plainly, never with backslash escapes.
+- The look is self-contained: no `@import`, and every `url()` and every address
+  in `image-set()` or `src()` is a `data:` URL. Fonts are embedded in `look.css`.
+  The logo is one `<svg>` that embeds what it shows (`#fragment` links are fine),
+  with no `<script>`, `<foreignObject>` or `on*` handlers.
+- No file holds a NUL character.
 - `LOOK.md` is not empty and at most 32 KiB, and the three files together are at
   most 512 KiB (`look.brief.bytes` and `look.bytes` in [the limits](../../docs/limits.md)).
 

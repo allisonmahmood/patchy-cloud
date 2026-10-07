@@ -622,11 +622,11 @@ module without dynamic imports, separate from the HTML.
 
 ### The company look
 
-| command                                     | behaviour                                                                                                                        | `--json` success                                                                       |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `patchy look`                               | Current revision's number, author, date, note and file sizes, then every revision newest first. Any member.                      | Wire body `{ current \| null, revisions }`, with the files' contents, no `ok` wrapper. |
-| `patchy look publish <dir> --note "<text>"` | Admins: check the folder's `look.css`, `LOOK.md` and optional `logo.svg`, publish them as the next revision and make it current. | `{ ok, current }`                                                                      |
-| `patchy look restore <n\|none>`             | Admins: make revision `n` current, or leave the company with no look. Moves the pointer only.                                    | `{ ok, current }`, `current` null for `none`                                           |
+| command                                     | behaviour                                                                                                                                                                      | `--json` success                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `patchy look`                               | Current revision's number, author, date, note and file sizes, then every revision newest first. Any member.                                                                    | Wire body `{ current \| null, revisions }`, with the files' contents, no `ok` wrapper. |
+| `patchy look publish <dir> --note "<text>"` | Admins: check the folder's `look.css`, `LOOK.md` and optional `logo.svg`, publish them as the next revision and make it current. Other files are named in a warning, not sent. | `{ ok, current, warnings? }`                                                           |
+| `patchy look restore <n\|none>`             | Admins: make revision `n` current, or leave the company with no look. Moves the pointer only.                                                                                  | `{ ok, current }`, `current` null for `none`                                           |
 
 These commands run anywhere with the saved login; they never read `patchy.json`.
 `look publish` runs `@patchy/core/look` before any request: a failing look is
