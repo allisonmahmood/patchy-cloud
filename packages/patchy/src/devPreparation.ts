@@ -9,6 +9,7 @@ import { LocalError } from "./CliError.js";
 import { configFailure, executeConfig, resolveStamps } from "./executeConfig.js";
 import { lookNotices } from "./lookNotices.js";
 import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./ManagedProject.js";
+import * as Output from "./Output.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
 import { primitiveReminders } from "./primitiveReminders.js";
@@ -145,10 +146,15 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               message: `Generation returned inconsistent metadata for ${alias}.`
             });
         }
+        const lookWarnings = yield* lookNotices(
+          root,
+          generated.files,
+          Effect.succeed(identity.company.name)
+        );
         const warnings = [
           ...syncWarnings,
           ...(yield* primitiveReminders(root, manifest)),
-          ...(yield* lookNotices(root, generated.files, Effect.succeed(identity.company.name)))
+          ...lookWarnings
         ];
         // Dev refreshes declarations, but only refresh owns the server module type list.
         const serverFile = "patchy/_generated/server.ts";
@@ -170,6 +176,8 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             { before: source, after: source }
           )
         ).pipe(Effect.uninterruptible);
+        // The look landed; a failing first build still names the revision it brought.
+        yield* Output.rememberWarnings(lookWarnings);
         return {
           manifest,
           identity,
