@@ -1213,7 +1213,9 @@ patch's own components; the page says so.
 write, and each preview replaces the last, so a browser tab that reloads shows
 the latest. The file embeds the look's fonts and logo and its content security
 policy refuses every other request, so it works offline and never loads what a
-patch couldn't. Show it to the person, or open it for them. A folder alone needs
+patch couldn't. Show it to the person, or open it for them. A single-look file
+passes `patchy validate`, so a member's agent can publish it as a page to show an
+admin. A folder alone needs
 no login and sends nothing; the company's look is read with `patchy look`'s
 request. `--compare` frames each look separately, labelled, so neither's element
 styles reach the other; when the company has no look it shows the folder alone
@@ -1309,7 +1311,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 
 - `PATCHY_API_URL` — API base URL. Overrides saved CLI config; overridden by `--api-url` and by a dev env. An effective override must match a repo's stored instance. Default outside repo mode: `http://localhost:3000`.
 - `PATCHY_API_TOKEN`: machine token used by authenticated commands, including discovery, repo preparation, publishing and lifecycle management. It overrides every other token; `auth set` does not read it, and `logout` does not remove or revoke it. No configured key means a local error naming `patchy login`.
-- `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, pending logins, patch cache and default style. Default: `~/.patchy`.
+- `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, pending logins, patch cache, default style and latest look preview. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.
 
@@ -1375,6 +1377,7 @@ The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):
 - `publish/<instance-hash>/attempt/<key-hash>.json` — the pending publish request, original owner ID and application target, without a machine credential. Both hashes are SHA-256: the resolved API URL and publish key respectively. The owner-only payload (`0600`) is written with `wx` in a private directory (`0700`), then the complete directory atomically claims the attempt slot. An occupied slot is read and replayed, never overwritten. Settlement unlinks only that key's file and removes only an empty slot, so a stale response cannot clear a newer attempt. Repo mode uses the same layout under the repo's `.patchy/` without needing the global state directory.
 - `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later publishes from the same path update the same patch and `share` or `delete` can find it from the path. A successful `delete` drops every entry that pointed at the patch.
 - `style.md` — the default style, owned and written by the agent skill. The CLI never reads its contents; `status` reports only whether it exists.
+- `look-preview.html` — the latest `patchy look preview`, replaced whole by each one, never written through a link.
 
 Credentials, pending logins and the patch cache are keyed by the resolved API base URL after trimming whitespace and trailing slashes. The remaining string must match exactly: different schemes, hosts or ports are separate entries by design.
 
