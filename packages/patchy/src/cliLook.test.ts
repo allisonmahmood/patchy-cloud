@@ -75,7 +75,6 @@ describe("patchy look publish", () => {
         : respond(404, { ok: false, error: "Not found." })
     );
     const dir = lookDir();
-    writeFileSync(path.join(dir, "notes.md"), "not part of the look");
     const result = await runCli(["look", "publish", dir, "--note", "darker green", "--json"], {
       env: env(instance.url)
     });
@@ -86,6 +85,20 @@ describe("patchy look publish", () => {
       files: readLookFixture("patchy")
     });
     expect(instance.requests.at(-1)?.patchyCli).toMatch(/^\S+ look \S+$/);
+
+    // Anything else in the folder is named, not sent.
+    writeFileSync(path.join(dir, "logo.png"), "png");
+    writeFileSync(path.join(dir, ".DS_Store"), "");
+    const ignored =
+      "Not published: logo.png. A look is look.css, LOOK.md and an optional logo.svg; embed fonts and images in them as data: URLs.";
+    const json = await runCli(["look", "publish", dir, "--note", "darker green", "--json"], {
+      env: env(instance.url)
+    });
+    expect(JSON.parse(json.stdout)).toEqual({ ok: true, current: second, warnings: [ignored] });
+    const text = await runCli(["look", "publish", dir, "--note", "darker green"], {
+      env: env(instance.url)
+    });
+    expect(text, text.stderr).toMatchObject({ status: 0, stderr: `Warning: ${ignored}\n` });
   });
 
   it("refuses a look that fails its checks, an incomplete folder and an empty note before sending", async () => {
