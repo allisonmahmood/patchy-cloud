@@ -1158,6 +1158,43 @@ It keeps the repo id and reserves every name until reclamation. Restore a delete
 file patch by id because its cache entry is gone. A still-fresh public cache may
 serve for up to 60 seconds; downloaded copies cannot be recalled.
 
+### The company look
+
+A company has numbered look revisions and a pointer to the current one. Having
+no look is the starting state. Any member's agent reads the look; only admins
+publish or restore it. These commands run anywhere with the saved login and
+accept `--json`.
+
+| command                                     | behaviour                                                                                                                                                                          | `--json` success                                                                                                    |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `patchy look`                               | Prints the current revision's number, author, date, note and file sizes, then every revision newest first.                                                                         | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions }`, files' contents included. |
+| `patchy look publish <dir> --note "<text>"` | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent. | `{ ok, current }`                                                                                                   |
+| `patchy look restore <n\|none>`             | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer and adds no revision.                                                    | `{ ok, current }`, with `current` null for `none`                                                                   |
+
+`look publish` checks the folder before sending anything, and the instance runs
+the same checks again. A failing look is `invalid_look`, its message one line per
+failure: exit 1 from the CLI's own check, exit 2 if the instance refuses it.
+
+- `look.css` declares each of the 15 tokens (`--look-bg`, `--look-surface`,
+  `--look-fg`, `--look-muted`, `--look-link`, `--look-success`,
+  `--look-warning`, `--look-danger`, `--look-accent`, `--look-accent-fg`,
+  `--look-border`, `--look-font-body`, `--look-font-display`, `--look-radius`,
+  `--look-space`) exactly once and no other `--look-*` name. Colours are opaque `#RRGGBB`.
+- Every text colour (fg, muted, link, success, warning, danger) reaches 4.5:1 on
+  bg and on surface, and accent-fg reaches it on accent.
+- There is no `!important`, and everything except `@font-face` sits inside
+  `@layer look`, so a patch's own CSS always wins.
+- The look is self-contained: no `@import`, every `url()` is a `data:` URL, and
+  the logo is one `<svg>` that embeds what it shows (`#fragment` links are fine).
+  Fonts are embedded in `look.css`.
+- `LOOK.md` is not empty and at most 32 KiB, and the three files together are at
+  most 512 KiB (`look.brief.bytes` and `look.bytes` in [the limits](../../docs/limits.md)).
+
+The note is required, one line of 1–200 characters. A member's publish or
+restore is `admin_required`, exit 2; the failure document carries `admins`, each
+`{ id, name }`, so the agent can say who to ask. A revision the company does not
+have is `revision_unavailable`, exit 2.
+
 ## Exit codes
 
 The code says who has to act, so an agent can branch on it without reading the message:
@@ -1193,16 +1230,16 @@ warning after the local logout succeeds, never exit 3.
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
-- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback` and `describe` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
+- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `look`, `look publish` and `look restore` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
 
-A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }`
+A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, admins?, warnings? }`
 on stderr, ordinarily with empty stdout and the exit code for `kind`. Lifecycle
 refusals retain the affected owner, patch state, dependant/source lists or reclaim
-date. Notices discovered before a later failure remain in `warnings`; success
+date; `admin_required` retains the company's `admins`. Notices discovered before a later failure remain in `warnings`; success
 warnings stay in the stdout document. There is no separate JSON-mode warning output.
 
 Branch on `kind`/exit first, then `code`. Codes preserve wire refusals and identify
-local checks, including repo validation, `invalid_description`, and dev's
+local checks, including repo validation, `invalid_description`, `invalid_look`, and dev's
 `not_additive` and `not_running`. Local checks are exit 1, `local`; the same code
 on a wire refusal is exit 2, `rejected`. Meanings and remedies are in the
 [local-code contract](../../docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes).
@@ -1233,6 +1270,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--mine` restricts patches to yours on `list` and `list patches` only.
 - `--all` includes offered integrations and their state on `list connections` only, not connection detail.
 - `--foreground` — on `dev`, wait and stream logs after readiness; interruption stops only a session this invocation started.
+- `--note <text>` — on `look publish`, required: why this revision exists, such as `darker green`.
 
 ## Environment variables
 
@@ -1268,7 +1306,8 @@ Every request a command sends to the instance names the CLI in one header,
 `Patchy-Cli: <release> <command> <agent>`, such as
 `Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records
 and nothing else depends on it. The command is the one you ran (`auth set`,
-`status`, `setup` and `validate` send no requests). The agent is the first of
+`status`, `setup` and `validate` send no requests; `look publish` and
+`look restore` send `look`). The agent is the first of
 these whose variable is set in the CLI's environment (`GROK_AGENT` only at
 `1`), or `unknown`:
 
