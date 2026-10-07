@@ -161,7 +161,7 @@ const shipped = (path: string) => fileURLToPath(new URL(`../${path}`, import.met
  */
 const lookState = (look: Looks.Current | null) =>
   look === null
-    ? "The company has no look yet, so pages start in the Patchy look, Patchy's default, whose brief is below. It isn't the company's: it comes without a logo, so leave the brief's logo section aside, because Patchy's mark is not the company's. `patchy refresh` or the next `patchy dev` brings in the company's own look once an admin publishes one."
+    ? "The company has no look yet, so pages start in the Patchy look, Patchy's default, whose brief is below. It isn't the company's: it comes without a logo, so leave out the logo wherever the brief shows one, its recipes included, because Patchy's mark is not the company's. `patchy refresh` or the next `patchy dev` brings in the company's own look once an admin publishes one."
     : `This is the company's look, revision ${look.revision}, published by ${look.author.name}: ${look.note}. Pages start in it, and its brief is below. ${look.files["logo.svg"] === undefined ? "It has no logo." : "Its logo is `patchy/_generated/logo.svg`."}`;
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));

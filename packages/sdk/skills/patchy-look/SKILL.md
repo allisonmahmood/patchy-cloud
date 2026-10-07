@@ -20,9 +20,10 @@ Follow a request for something else, such as a Halloween page or a page for a cl
 questioning it: override the look with your own CSS, or remove the import when nothing of it
 should remain. Say once that the page doesn't use the company look; don't ask permission.
 
-The look is the company's, not this patch's. Building a patch leaves it as it is; when the
-person wants the look itself changed, tell them it belongs to the company and an admin changes
-it with `patchy look publish`.
+The look is the company's, not this patch's. Never run `patchy look publish` or
+`patchy look restore` while building a patch; only an explicit request to change the company
+look does. When the person wants the look itself changed, tell them it belongs to the company
+and that changing it is its own request, which only an admin can carry out.
 
 ## Using it
 
@@ -45,6 +46,10 @@ it with `patchy look publish`.
   reference if a later look has no logo.
 - `patchy refresh` and `patchy dev` rewrite `patchy/_generated/` to the company's current
   look. Put every change in your own CSS.
+- A tier 0 page, `look.css` included, must fit 512 KiB. When publish refuses it as `too_large`
+  and the largest contributor is an inline `<style>`, that is the look's embedded fonts: tell
+  the person. An admin can publish a revision with subset fonts or fewer weights, and tier 1
+  pages may be 10 MiB.
 
 ## The tokens
 
