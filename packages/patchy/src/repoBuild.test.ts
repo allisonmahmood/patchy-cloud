@@ -37,13 +37,15 @@ const refusal = (html: string, tier: 0 | 1 = 1) => Effect.flip(validate(html, ti
 
 it.layer(NodeServices.layer)("validateRepoBundle", (it) => {
   it.effect(
-    "accepts shared navigation fixtures but refuses unbundled resources at tiers 0 and 1",
+    "accepts shared navigation and embedded-font fixtures but refuses unbundled resources at tiers 0 and 1",
     () =>
       Effect.gen(function* () {
         const portfolio = yield* fixture("portfolio.html");
+        const embeddedFont = yield* fixture("embedded-font.html");
         const remote = yield* fixture("remote-image.html");
         for (const tier of [0, 1] as const) {
           yield* validate(portfolio, tier);
+          yield* validate(embeddedFont, tier);
           assert.include((yield* refusal(remote, tier)).message, "is not self-contained");
         }
       })
