@@ -1,7 +1,8 @@
-// `patchy look`, `look publish` and `look restore` through the bundled CLI.
-import { cpSync, rmSync, writeFileSync } from "node:fs";
+// `patchy look`, `look publish`, `look restore` and `look preview` through the bundled CLI.
+import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { validateHtml } from "@patchy/core";
 import { lookFixtureDir, readLookFixture } from "../../../test/look-fixtures.js";
 import { runCli, stubInstance, tempDir } from "./test/cli.js";
 
@@ -183,5 +184,97 @@ describe("patchy look restore", () => {
     const invalid = await runCli(["look", "restore", "latest"], { env: env(instance.url) });
     expect(invalid.status).toBe(1);
     expect(invalid.stderr).toContain("Pass a revision number, or none");
+  });
+});
+
+describe("patchy look preview", () => {
+  const preview = (stateDir: string) =>
+    readFileSync(path.join(stateDir, "look-preview.html"), "utf8");
+
+  it("renders a candidate offline with its logo, and names each failure exactly as publish would", async () => {
+    const instance = await stubInstance((_request, respond) => respond(404, {}));
+    const dir = lookDir();
+    const css = readLookFixture("patchy")["look.css"];
+    writeFileSync(
+      path.join(dir, "look.css"),
+      css.replace("--look-muted: #69645a;", "--look-muted: #7d786d;")
+    );
+    const json = await runCli(["look", "preview", dir, "--json"], { env: env(instance.url) });
+    expect(json, json.stderr).toMatchObject({ status: 0, stderr: "" });
+    const failures = [
+      "--look-muted on --look-bg is 4.31:1; text colours need 4.5:1.",
+      "--look-muted on --look-surface is 4.35:1; text colours need 4.5:1."
+    ];
+    expect(JSON.parse(json.stdout)).toEqual({
+      ok: true,
+      path: path.join(json.stateDir, "look-preview.html"),
+      failures
+    });
+    const page = preview(json.stateDir);
+    expect(page).toContain("--look-muted: #7d786d;");
+    const logo = readLookFixture("patchy")["logo.svg"] ?? "";
+    expect(page).toContain(`data:image/svg+xml;base64,${Buffer.from(logo).toString("base64")}`);
+    expect(page).not.toContain("<iframe");
+    // A member's agent can publish it as a tier 0 page to show an admin.
+    expect(validateHtml(page)).toMatchObject({ ok: true });
+
+    const text = await runCli(["look", "preview", dir], { env: env(instance.url) });
+    expect(text, text.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(text.stdout).toContain(
+      `Wrote the look preview: ${path.join(text.stateDir, "look-preview.html")}`
+    );
+    expect(text.stdout).toContain(
+      `look publish would refuse this look:\n- ${failures.join("\n- ")}`
+    );
+    expect(instance.requests).toEqual([]);
+  });
+
+  it("shows the candidate beside the current look, or alone when the company has none", async () => {
+    let current: unknown = { ...second, files: readLookFixture("linear") };
+    const instance = await stubInstance((request, respond) =>
+      request.method === "GET" && request.url === "/api/look"
+        ? respond(200, { current, revisions: [second, first] })
+        : respond(404, { ok: false, error: "Not found." })
+    );
+    const dir = lookDir();
+    const beside = await runCli(["look", "preview", dir, "--compare", "--json"], {
+      env: env(instance.url)
+    });
+    expect(beside, beside.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(beside.stdout)).toMatchObject({ ok: true, failures: [] });
+    const frames = [...preview(beside.stateDir).matchAll(/<iframe title="([^"]*)"/g)];
+    expect(frames.map(([, title]) => title)).toEqual([
+      "Candidate",
+      "Revision 2, the company&#39;s look"
+    ]);
+    expect(instance.requests.at(-1)?.patchyCli).toMatch(/^\S+ look \S+$/);
+
+    current = null;
+    const alone = await runCli(["look", "preview", dir, "--compare"], { env: env(instance.url) });
+    expect(alone, alone.stderr).toMatchObject({ status: 0, stderr: "" });
+    const page = preview(alone.stateDir);
+    expect(page).not.toContain("<iframe");
+    expect(page).toContain("The company has no look yet.");
+  });
+
+  it("renders the company's look without a folder, and says when there is none", async () => {
+    let current: unknown = { ...second, files: readLookFixture("linear") };
+    const instance = await stubInstance((_request, respond) =>
+      respond(200, { current, revisions: [second] })
+    );
+    const json = await runCli(["look", "preview", "--json"], { env: env(instance.url) });
+    expect(json, json.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(json.stdout)).toMatchObject({ ok: true, failures: [] });
+    expect(preview(json.stateDir)).toContain("<strong>Revision 2, the company's look</strong>");
+
+    current = null;
+    const none = await runCli(["look", "preview"], { env: env(instance.url) });
+    expect(none.status).toBe(1);
+    expect(none.stderr).toContain("The company has no look yet.");
+    const requests = instance.requests.length;
+    const compare = await runCli(["look", "preview", "--compare"], { env: env(instance.url) });
+    expect(compare.status).toBe(1);
+    expect(compare.stderr).toContain("patchy look preview <dir> --compare");
+    expect(instance.requests).toHaveLength(requests);
   });
 });

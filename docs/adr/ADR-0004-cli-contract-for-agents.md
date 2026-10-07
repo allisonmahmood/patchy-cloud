@@ -627,6 +627,7 @@ module without dynamic imports, separate from the HTML.
 | `patchy look`                               | Current revision's number, author, date, note and file sizes, then every revision newest first. Any member.                                                                    | Wire body `{ current \| null, revisions }`, with the files' contents, no `ok` wrapper. |
 | `patchy look publish <dir> --note "<text>"` | Admins: check the folder's `look.css`, `LOOK.md` and optional `logo.svg`, publish them as the next revision and make it current. Other files are named in a warning, not sent. | `{ ok, current, warnings? }`                                                           |
 | `patchy look restore <n\|none>`             | Admins: make revision `n` current, or leave the company with no look. Moves the pointer only.                                                                                  | `{ ok, current }`, `current` null for `none`                                           |
+| `patchy look preview [<dir>] [--compare]`   | Write the specimen as one self-contained HTML file and print its path: in the folder's look, the company's look, or the folder beside the company's with `--compare`.          | `{ ok, path, failures, warnings? }`                                                    |
 
 These commands run anywhere with the saved login; they never read `patchy.json`.
 `look publish` runs `@patchy/core/look` before any request: a failing look is
@@ -636,7 +637,17 @@ over-long note is a local refusal too. The instance reruns the same checks, so
 `admin_required`, exit 2, with `admins` (`{ id, name }` each) in the failure
 document so the agent can say who to ask. An unknown revision is
 `revision_unavailable`, exit 2; restore accepts a positive integer or `none`,
-anything else is local exit 1. The `Patchy-Cli` command is `look` for all three.
+anything else is local exit 1. The `Patchy-Cli` command is `look` for all four.
+
+`look preview` writes `look-preview.html` in the state directory, replacing the
+last preview, and never refuses a look it can read: `failures` holds every line
+publish's `invalid_look` would list for the folder, empty when it would publish,
+and the company's look is not checked. A folder alone sends no request and needs
+no login; without a folder, or with `--compare`, it reads the current look as
+`patchy look` does. `--compare` with no current look renders the folder alone
+and says the company has no look yet. No folder and no current look, or
+`--compare` without a folder, is local exit 1; a folder missing `look.css` or
+`LOOK.md` is local exit 1 as for publish, and other files are `warnings`.
 
 ### Publish recovery
 

@@ -645,7 +645,9 @@ A **look revision** is three text files. `look.css` sets the 15 tokens Patchy na
 
 A company has numbered revisions, each recording its author, time and note, and a pointer to the current one. Having no look is the starting state. Any member's agent reads the look with `patchy look`. Only admins publish (`patchy look publish <dir> --note`) or restore (`patchy look restore <n|none>`); a member who tries is told who the admins are. Restoring moves the pointer and copies nothing. Publishing refuses a look whose tokens are missing, repeated or not opaque `#RRGGBB`, that uses `!important` or styles outside `@layer look`, whose text colours fall below 4.5:1 on either ground (or accent-fg on accent), that references anything outside itself, or that exceeds 32 KiB of `LOOK.md` or 512 KiB in all. The CLI and the instance run the same checks.
 
-Generation writing the look into patch repos, the local preview, change notices, onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
+Before publishing, an agent shows the person the **specimen**: a fixed page Patchy owns, styled only by a look, with text, buttons, stat cards, a badge per status, a table, a form with an invalid field, an empty state, hover, focus, disabled and busy states and the colour swatches. `patchy look preview <dir>` writes it as one local HTML file that works offline, and lists anything publish would refuse without refusing to render; `--compare` puts the candidate beside the current look. It checks `look.css`, not the brief's recipes, and can't show how a look meets a patch's own components.
+
+Generation writing the look into patch repos, change notices, onboarding capture and a portal page for the look are not built yet ([#547](https://github.com/allisonmahmood/patchy-cloud/issues/547)).
 
 ### Addresses
 
