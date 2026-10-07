@@ -996,11 +996,20 @@ const kib = (text: string) => `${(Buffer.byteLength(text) / 1024).toFixed(1)} Ki
 const byline = (revision: LookRevision) =>
   `By ${revision.author.name} on ${revision.createdAt.slice(0, 10)}: ${revision.note}`;
 
-/** A look folder's three files; anything else in it is not part of the look. */
+const LOOK_FILE_NAMES = new Set(["look.css", "LOOK.md", "logo.svg"]);
+
+/**
+ * A look folder's three files, and a warning naming anything else in it, which is not sent:
+ * an agent that left a `logo.png` or a fonts folder learns the rule instead of publishing a
+ * revision without them.
+ */
 const readLookFolder = Effect.fn("readLookFolder")(function* (dir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const resolved = path.resolve(dir);
+  const ignored = (yield* fs.readDirectory(resolved).pipe(Effect.orElseSucceed(() => [])))
+    .filter((name) => !LOOK_FILE_NAMES.has(name) && !name.startsWith("."))
+    .sort();
   const read = Effect.fn("readLookFolder.read")(function* (name: string, required: boolean) {
     const file = path.join(resolved, name);
     if (!(yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false)))) {
@@ -1019,10 +1028,18 @@ const readLookFolder = Effect.fn("readLookFolder")(function* (dir: string) {
   const brief = yield* read("LOOK.md", true);
   const logo = yield* read("logo.svg", false);
   return {
-    "look.css": css ?? "",
-    "LOOK.md": brief ?? "",
-    ...(logo === undefined ? {} : { "logo.svg": logo })
-  } satisfies LookFiles;
+    files: {
+      "look.css": css ?? "",
+      "LOOK.md": brief ?? "",
+      ...(logo === undefined ? {} : { "logo.svg": logo })
+    } satisfies LookFiles,
+    warnings:
+      ignored.length === 0
+        ? []
+        : [
+            `Not published: ${ignored.join(", ")}. A look is look.css, LOOK.md and an optional logo.svg; embed fonts and images in them as data: URLs.`
+          ]
+  };
 });
 
 const lookPublish = Command.make(
@@ -1037,7 +1054,8 @@ const lookPublish = Command.make(
         const note = yield* decodeLookNote(options.note).pipe(
           Effect.mapError((cause) => new LocalError({ message: cause.message, cause }))
         );
-        const files = yield* readLookFolder(options.dir);
+        const { files, warnings } = yield* readLookFolder(options.dir);
+        yield* Output.rememberWarnings(warnings);
         const errors = checkLook(files);
         if (errors.length > 0)
           return yield* new LocalError({
@@ -1048,10 +1066,14 @@ const lookPublish = Command.make(
         const published = yield* client
           .publishLook({ payload: new LookPublishRequest({ note, files }) })
           .pipe(Effect.catch((error) => refused(error, "Look publish failed.")));
-        yield* Output.report(encodeLookPublished(published), [
-          `Published look revision ${published.current.revision}: ${published.current.note}`,
-          "It is now the company's look."
-        ]);
+        yield* Output.report(
+          { ...encodeLookPublished(published), ...(warnings.length === 0 ? {} : { warnings }) },
+          [
+            `Published look revision ${published.current.revision}: ${published.current.note}`,
+            "It is now the company's look."
+          ]
+        );
+        for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
       })
     )
 ).pipe(
