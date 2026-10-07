@@ -5,7 +5,7 @@ Where a signed-in person finds and manages their company's patches. The patch, i
 ## Language
 
 **Portal**:
-The signed-in landing at `/`: the company's patches on one side and one patch's card on the other. It lists only the viewer's own company, public patches included, and never another company's.
+The signed-in landing at `/`: the company's patches on one side and one patch's card, or the guide, on the other. It lists only the viewer's own company, public patches included, and never another company's.
 _Avoid_: dashboard, home page (the root is a sign-in door when signed out), directory (the index is one half of it)
 
 **Index**:
@@ -19,6 +19,10 @@ _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 **Log**:
 One patch's page at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first, each expanding into the calls it made and its `ctx.log` lines, filtered and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal only reads it.
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
+
+**Guide**:
+The card for **Your first patch**, the index row that leads Yours until the viewer owns a patch: what Patchy is, then the steps from the setup line to a first publish, each with a preview of what the agent will say. Its progress comes from the viewer's live machine tokens and owned patches, never a stored checklist, and owning any patch ends it.
+_Avoid_: onboarding (the global skill's welcome page is that), tutorial, checklist, wizard
 
 **Manage**:
 The owner or admin's controls on a card: description, who can open it, served version and uncomplicated restore stay inline. Retire, delete, restore with off sources and admin-only reassign lead to confirmation pages.
@@ -45,7 +49,7 @@ The shared frame for the portal, Company, Connections and Your machines: the hea
 _Avoid_: layout, template, theme
 
 **Component set**:
-The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists and trees, version tables and expandable table rows, copyable addresses, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
+The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists and trees, placeholder rows, version tables and expandable table rows, copyable addresses and copy lines, notices, headings, pills, confirmation forms and the guide's steps, flow and agent previews, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
 _Avoid_: design system (there is one theme and no library), component library, utility classes
 
 **What's new**:

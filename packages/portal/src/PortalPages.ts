@@ -9,12 +9,20 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { PatchName, PatchState, SharingScope } from "@patchy/api";
-import { pageResponse, RequireSession, Session } from "@patchy/auth";
+import { MachineTokens, pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
+import {
+  copyScript,
+  copyScriptPath,
+  firstPatch,
+  renderFirstPatchNote,
+  renderGuide,
+  renderGuideRow
+} from "./guide.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
   ago,
@@ -146,6 +154,17 @@ const overlongName = errorPage(
   `Patch names have at most ${maxNameLength} characters.`
 );
 
+/** The machine most recently logged in as this user, while any is live. */
+const newestMachine = Effect.fn("PortalPages.newestMachine")(function* (userId: string) {
+  const machines = yield* (yield* MachineTokens.MachineTokens).list(userId);
+  const newest = machines.reduce<(typeof machines)[number] | undefined>(
+    (latest, machine) =>
+      latest === undefined || machine.createdAt > latest.createdAt ? machine : latest,
+    undefined
+  );
+  return newest === undefined ? null : { name: newest.name, createdAt: newest.createdAt };
+});
+
 const render = Effect.fn("PortalPages.render")(function* (
   name?: string,
   options: {
@@ -162,12 +181,16 @@ const render = Effect.fn("PortalPages.render")(function* (
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
+  // Until the viewer owns a patch, the root's card is the guide to their first one.
+  const guided = !rows.some((row) => row.owner.id === viewer.user.id);
   const ordered =
     name === undefined ? [...rows].sort((a, b) => a.patch.name.localeCompare(b.patch.name)) : rows;
   const selected =
     name === undefined
-      ? (ordered.find((row) => row.patch.state === "live" && row.owner.id === viewer.user.id) ??
-        ordered.find((row) => row.patch.state === "live"))
+      ? guided
+        ? undefined
+        : (ordered.find((row) => row.patch.state === "live" && row.owner.id === viewer.user.id) ??
+          ordered.find((row) => row.patch.state === "live"))
       : rows.find((row) => row.patch.name === name);
   if (name !== undefined && selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -175,6 +198,9 @@ const render = Effect.fn("PortalPages.render")(function* (
     yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = selected ? yield* patches.portalCard(selected.patch.id, access) : null;
   const now = yield* Clock.currentTimeMillis;
+  const guide =
+    guided && !options.versions ? { machine: yield* newestMachine(viewer.user.id) } : null;
+  const first = card === null ? undefined : firstPatch(rows, viewer.user.id, now);
   const body =
     options.versions && card
       ? renderVersions({ card, viewer, all, now })
@@ -188,7 +214,18 @@ const render = Effect.fn("PortalPages.render")(function* (
           activity: card === null ? "" : yield* recentActivity(card, all, now),
           notice: options.notice,
           submittedDescription: options.submittedDescription,
-          descriptionError: options.descriptionError
+          descriptionError: options.descriptionError,
+          guide:
+            guide === null
+              ? undefined
+              : {
+                  row: renderGuideRow({ guide, selected: card === null, all }),
+                  card: renderGuide({ guide, viewer, publicBaseUrl: session.publicBaseUrl, now })
+                },
+          note:
+            first !== undefined && first.patch.id === card?.patch.id
+              ? renderFirstPatchNote(first, viewer)
+              : undefined
         });
   return pageResponse(
     {
@@ -585,12 +622,21 @@ export const layer: Layer.Layer<
       | Companies.Companies
       | Users.Users
       | Patches.Patches
+      | MachineTokens.MachineTokens
       | InvocationLog.InvocationLog
       | ConnectionStore.ConnectionStore
       | SqlClient.SqlClient
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
+    yield* router.add(
+      "GET",
+      copyScriptPath,
+      HttpServerResponse.text(copyScript, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
+      })
+    );
     for (const action of ["deactivate", "reactivate"] as const) {
       for (const method of ["GET", "POST"] as const) {
         const handler = RequireSession.withViewer(

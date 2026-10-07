@@ -111,6 +111,8 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.strictEqual(confirmed.headers.get("location"), null);
         const confirmedHtml = yield* Effect.promise(() => confirmed.text());
         assert.include(confirmedHtml, "Confirmed.");
+        // The person returns to the portal, where the guide picks up at their first patch.
+        assert.include(confirmedHtml, '<a href="/">Back to your patches</a>');
         assert.deepStrictEqual(yield* tokens.list(owner.user.id), []);
         const complete = yield* logins.poll(login.deviceCode);
         assert.strictEqual(complete.status, "complete");

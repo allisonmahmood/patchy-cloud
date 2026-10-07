@@ -22,7 +22,7 @@ import {
 } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Session } from "@patchy/auth";
+import { MachineTokens, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { CompanyDatabases } from "@patchy/company-database";
 import { newInternalId, newPatchId } from "@patchy/core";
@@ -73,7 +73,8 @@ const services = Layer.mergeAll(
   Limits.layer,
   Session.layer,
   Companies.layer,
-  Users.layer
+  Users.layer,
+  MachineTokens.layer
 ).pipe(
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database),

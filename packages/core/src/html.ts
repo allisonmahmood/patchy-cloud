@@ -680,6 +680,9 @@ export function htmlPage(options: {
     .list-link { display: block; min-height: 44px; padding: 8px 10px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; }
     .list-link:hover { background: var(--paper-blue); }
     .list-link[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
+    /* list-link-placeholder: a row standing in for something not made yet, such as the portal's "Your first patch". */
+    .list-link-placeholder { border: 2px dashed var(--line-strong); }
+    .list-link-placeholder:not([aria-current="page"]) { color: var(--muted); }
     .table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .9rem; overflow-wrap: anywhere; }
     .table th, .table td { padding: 10px 8px; border-bottom: 1px solid var(--line-strong); text-align: left; vertical-align: top; }
     .table th { color: var(--muted); font-weight: 750; }
@@ -690,6 +693,64 @@ export function htmlPage(options: {
     .table-expand summary { margin: 0 0 8px; cursor: pointer; }
     .copy-address { user-select: all; overflow-wrap: anywhere; }
     .code-panel { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    /* copy-line: one line to hand to an agent, selectable as a whole. Its Copy button starts hidden and the page's
+       copy script reveals it, so a page without script still offers the selectable line. */
+    .copy-line { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 8px 8px 16px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); }
+    .copy-line > code { flex: 1; min-width: 0; padding: 0; background: none; color: var(--ink); font-size: .95rem; font-weight: 650; user-select: all; overflow-wrap: anywhere; }
+    .copy-line > .btn { flex: none; }
+    .copy-line > [hidden] { display: none; }
+    /* agent-preview: an illustration of what an agent will say back, never a live transcript. */
+    .agent-preview { padding: 14px 16px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--ink); box-shadow: 4px 4px 0 var(--yellow); color: #f4efe2; font-family: var(--font-mono); font-size: .8rem; line-height: 1.55; overflow-wrap: anywhere; }
+    .agent-preview p { max-width: none; margin: 0; }
+    .agent-preview p + p { margin-top: 8px; }
+    .agent-preview strong { color: var(--yellow); }
+    .agent-preview-you { color: var(--yellow); font-weight: 900; }
+    .agent-preview-said { color: var(--green); }
+    /* flow: boxes joined by arrows that say how something gets made. It stacks with down arrows where a row would crowd. */
+    .flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 30px; margin: 22px 0 0; padding: 0; list-style: none; }
+    .flow-node { position: relative; display: grid; align-content: start; justify-items: start; gap: 4px; padding: 12px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 3px 3px 0 var(--ink); color: var(--muted); font-size: .85rem; line-height: 1.35; }
+    .flow-node strong { color: var(--ink); font-size: 1rem; line-height: 1.25; }
+    .flow-node:not(:last-child)::after { content: "→"; position: absolute; top: 50%; right: -25px; color: var(--ink); font-size: 1.25rem; font-weight: 900; transform: translateY(-50%); }
+    .flow-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 4px; border: 2px solid var(--ink); border-radius: 10px; background: var(--white); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); }
+    .flow-icon svg { width: 22px; height: 22px; }
+    .flow-icon-you { background: var(--yellow); transform: rotate(-4deg); }
+    .flow-icon-agent { background: var(--paper-blue); transform: rotate(3deg); }
+    .flow-icon-team { background: var(--paper-green); transform: rotate(-2deg); }
+    .flow-icon-patchy { border-color: transparent; background: none; box-shadow: none; }
+    @media (max-width: 1180px) {
+      .flow { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+      .flow-node { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 12px; }
+      .flow-icon { grid-row: span 2; margin: 0; }
+      .flow-node:not(:last-child)::after { content: "↓"; top: auto; right: auto; bottom: -24px; left: 28px; transform: none; }
+    }
+    /* steps: a numbered walk-through with one step open. A step-done or step-current step is lit; any other is still
+       to come. Its step-marker holds the number or a check, and the open step's work sits in a step-card. */
+    .steps { margin: 26px 0 0; padding: 0; list-style: none; }
+    .step { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 0 18px; padding-bottom: 24px; color: var(--muted); }
+    .step:last-child { padding-bottom: 0; }
+    .step:not(:last-child)::before { content: ""; position: absolute; top: 48px; bottom: 4px; left: 21px; border-left: 2px dashed var(--line-strong); }
+    .step-done:not(:last-child)::before { border-left: 2px solid var(--ink); }
+    .step-marker { display: grid; place-items: center; width: 44px; height: 44px; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--white); font-weight: 900; }
+    .step-done .step-marker { border-color: var(--ink); background: var(--green); color: var(--ink); }
+    .step-current .step-marker { border-color: var(--ink); background: var(--yellow); box-shadow: 3px 3px 0 var(--ink); color: var(--ink); }
+    .step-title { margin: 8px 0 4px; color: var(--muted); font-size: 1.2rem; }
+    .step-done, .step-current { color: var(--ink-soft); }
+    .step-done .step-title, .step-current .step-title { color: var(--ink); }
+    .step-title + p { margin: 0; }
+    .step-card { margin-top: 12px; padding: 18px 20px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow-hard); }
+    .step-card > * { margin: 0; }
+    .step-card > * + * { margin-top: 12px; }
+    .step-card > * + .agent-preview { margin-top: 8px; }
+    .step-card summary { color: var(--blue-dark); font-weight: 750; cursor: pointer; }
+    .step-card details p { margin: 6px 0 0; }
+    @media (max-width: 480px) {
+      .step { grid-template-columns: 36px minmax(0, 1fr); gap: 0 12px; }
+      .step-marker { width: 36px; height: 36px; }
+      .step:not(:last-child)::before { top: 40px; left: 17px; }
+      .step-card { padding: 14px; }
+      .copy-line { flex-wrap: wrap; padding: 10px 12px; }
+      .copy-line > code { flex-basis: 100%; }
+    }
     .actions, .confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
     .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 24px; margin: 20px 0; font-size: .9rem; overflow-wrap: anywhere; }
     .facts dt { color: var(--muted); font-weight: 750; }
