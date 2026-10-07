@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 136 40" width="136" height="40" role="img" aria-label="Patchy">
+  <g transform="rotate(-5 19 19)">
+    <rect x="8" y="8" width="28" height="28" rx="7" fill="#12110f"/>
+    <rect x="5" y="5" width="28" height="28" rx="7" fill="#64c83f" stroke="#12110f" stroke-width="2"/>
+    <path d="M18 13h8v8" fill="none" stroke="#12110f" stroke-width="2"/>
+  </g>
+  <text x="46" y="28" fill="#12110f" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, 'Liberation Sans', sans-serif" font-size="24" font-weight="850">Patchy</text>
+</svg>
