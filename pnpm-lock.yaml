@@ -257,9 +257,15 @@ importers:
       '@patchy/analytics':
         specifier: workspace:*
         version: link:../analytics
+      '@patchy/api':
+        specifier: workspace:*
+        version: link:../api
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
+      '@patchy/limits':
+        specifier: workspace:*
+        version: link:../limits
       '@patchy/sql':
         specifier: workspace:*
         version: link:../sql

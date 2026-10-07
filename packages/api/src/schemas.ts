@@ -930,3 +930,81 @@ export class Described extends Schema.Class<Described>("Described")({
 }) {}
 
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}
+
+// --- look -----------------------------------------------------------------
+
+/** A look revision's files by name, as `@patchy/core/look` checks them. `logo.svg` is optional. */
+export const LookFiles = Schema.Struct({
+  "look.css": Schema.String,
+  "LOOK.md": Schema.String,
+  "logo.svg": Schema.optionalKey(Schema.String)
+});
+
+/** Why a revision exists, such as "darker green": one line, whitespace runs collapsed. */
+export const LookNote = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String.check(
+      Schema.makeFilter((note) => note !== "" || "A look note must not be empty."),
+      Schema.makeFilter(
+        (note) => [...note].length <= 200 || "A look note must be at most 200 characters."
+      ),
+      Schema.makeFilter(
+        (note) =>
+          !/[\u0000-\u001f\u007f-\u009f]/u.test(note) ||
+          "A look note must not contain control characters."
+      )
+    ),
+    {
+      decode: SchemaGetter.transform(normalizeDescriptionText),
+      encode: SchemaGetter.transform((note) => note)
+    }
+  )
+);
+
+/** One revision of the company's look: its number, who published it, when and why. */
+export class LookRevision extends Schema.Class<LookRevision>("LookRevision")({
+  revision: Schema.Int,
+  author: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  createdAt: IsoTimestamp,
+  note: Schema.String
+}) {}
+
+/** The current revision with its files, or null for no look, and every revision newest first. */
+export class CompanyLook extends Schema.Class<CompanyLook>("CompanyLook")({
+  current: Schema.NullOr(Schema.Struct({ ...LookRevision.fields, files: LookFiles })),
+  revisions: Schema.Array(LookRevision)
+}) {}
+
+export class LookPublishRequest extends Schema.Class<LookPublishRequest>("LookPublishRequest")({
+  note: LookNote,
+  files: LookFiles
+}) {}
+
+export class LookPublished extends Schema.Class<LookPublished>("LookPublished")(
+  { ok: Schema.Literal(true), current: LookRevision },
+  { httpApiStatus: 201 }
+) {}
+
+/** A revision number to make current, or null to leave the company with no look. */
+export class LookRestoreRequest extends Schema.Class<LookRestoreRequest>("LookRestoreRequest")({
+  revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0)))
+}) {}
+
+export class LookRestored extends Schema.Class<LookRestored>("LookRestored")({
+  ok: Schema.Literal(true),
+  current: Schema.NullOr(LookRevision)
+}) {}
+
+/** Only admins change the look; `admins` names who to ask. */
+export const AdminRequired = failure(403, {
+  code: Schema.Literal("admin_required"),
+  admins: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String }))
+});
+/** The look failed its checks; `errors` names each failure, and nothing was stored. */
+export const InvalidLook = failure(422, {
+  code: Schema.Literal("invalid_look"),
+  errors: Schema.Array(Schema.String)
+});
+export const LookRevisionUnavailable = failure(422, {
+  code: Schema.Literal("revision_unavailable")
+});

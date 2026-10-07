@@ -7,7 +7,7 @@ import { migrations } from "./migrations.js";
 
 // The first step after launch runs on databases that already hold people.
 const launched = Object.fromEntries(
-  Object.entries(migrations).filter(([key]) => key !== "0009_whats_new_seen")
+  Object.entries(migrations).filter(([key]) => key < "0009_whats_new_seen")
 );
 
 it.layer(Testing.emptyLayer(launched))("the What's new marker upgrade", (it) => {

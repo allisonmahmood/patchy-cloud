@@ -29,6 +29,7 @@ export const CliCommand = Schema.Literals([
   "dev",
   "refresh",
   "list",
+  "look",
   "add",
   "remove",
   "__generate"

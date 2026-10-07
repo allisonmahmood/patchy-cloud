@@ -29,7 +29,7 @@ import {
   RequireSession,
   Session
 } from "@patchy/auth";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
 import {
   Inventory,
   PgCompanyDatabases,
@@ -174,6 +174,7 @@ const services = Layer.mergeAll(
       Patches.layer,
       Companies.layer,
       Users.layer,
+      Looks.layer,
       identity
     ).pipe(
       Layer.provideMerge(
@@ -227,6 +228,7 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     AuthApi.layer,
     PatchesApi.layer,
     ConnectionsApi.layer,
+    LookApi.layer,
     SdkApi.layer,
     RuntimeApi.layer,
     RuntimeStreamApi.layer
