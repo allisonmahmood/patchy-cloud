@@ -154,7 +154,8 @@ Lift these as they are. The plain `button` in `look.css` is already the primary 
   line-height: 1;
 }
 
-/* Page header: logo and a status badge on one line, then the title and one line of framing. */
+/* Page header: the company's name and a status badge on one line, then the title and one line
+   of framing. */
 .page-header {
   margin-bottom: calc(var(--look-space) * 4);
 }
@@ -164,8 +165,11 @@ Lift these as they are. The plain `button` in `look.css` is already the primary 
   gap: calc(var(--look-space) * 1.5);
   margin-bottom: calc(var(--look-space) * 3);
 }
-.page-header-line img {
-  height: 32px;
+.wordmark {
+  color: var(--look-fg);
+  font-family: var(--look-font-display);
+  font-size: 1.25rem;
+  font-weight: 850;
 }
 .page-header-line .badge {
   margin-left: auto;
@@ -276,7 +280,7 @@ Lift these as they are. The plain `button` in `look.css` is already the primary 
 ```html
 <header class="page-header">
   <div class="page-header-line">
-    <img src="logo.svg" alt="Patchy" />
+    <span class="wordmark">Acme Co</span>
     <span class="badge badge-warning">Draft</span>
   </div>
   <h1>Expense approvals</h1>
@@ -301,10 +305,10 @@ Builder to builder. Short sentences, concrete nouns, honest status. Say what hap
 - Thin grey 1px card outlines. A frame is 2px ink or it is not there.
 - Pills on buttons. Pills are for badges; buttons have the 8px radius.
 - The accent as a background for panels, headers or whole rows.
-- Grids of cards, nested cards, and oversized hero headers.
+- Dashboards tiled with cards, nested cards, and oversized hero headers.
 - Animation of any kind beyond the 1px press.
 - Emoji and exclamation marks in copy.
 
 ## The logo
 
-`logo.svg` is the green tile with its corner mark and the word "Patchy" in the display stack. It goes top left in the page header, 32px tall, never inside a coloured block. It does not repeat in the body or footer.
+This look is Patchy's own and stands in for a company with none, so it carries no logo: Patchy's mark never goes on a company's page. The company's name, set as `.wordmark` in the display stack, goes top left in the page header, never inside a coloured block, and does not repeat in the body or footer.

@@ -146,7 +146,7 @@ A release-bound set of agent instructions for building within one patch repo, su
 _Avoid_: global skill, copied tutorial
 
 **Patchy look**:
-Patchy's own [look](../companies/CONTEXT.md), shipped with the release, which stands in while a company has none: generation writes it into a patch repo, and `patchy look --json` hands it out for static pages. It is no company's revision: it carries no logo and no revision stamp.
+See **Patchy look** in [Companies](../companies/CONTEXT.md): what a patch repo or a static page starts from while its company has no look.
 _Avoid_: default theme, fallback style
 
 **Discovery**:
