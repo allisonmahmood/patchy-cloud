@@ -531,7 +531,6 @@ describe("patchy status", async () => {
       hasToken: false,
       tokenSource: null,
       stateDir: dir,
-      hasDefaultStyle: false,
       cliVersion: "0.0.1"
     });
 
@@ -544,7 +543,6 @@ describe("patchy status", async () => {
       path.join(worktree, ".local", "dev", "env"),
       `PATCHY_API_URL=http://127.0.0.1:45678\nPATCHY_API_TOKEN=${DEV_SEED.token}\n`
     );
-    writeFileSync(path.join(dir, "style.md"), "# style");
     const dev = JSON.parse(
       (
         await runCli(["status", "--json"], {
@@ -557,8 +555,7 @@ describe("patchy status", async () => {
       instanceUrl: "http://127.0.0.1:45678",
       instanceSource: "dev-env",
       hasToken: true,
-      tokenSource: null,
-      hasDefaultStyle: true
+      tokenSource: null
     });
 
     // Corrupt credentials are "no token we can vouch for", not an error.
