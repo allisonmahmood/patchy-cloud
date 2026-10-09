@@ -10,6 +10,7 @@ import { ReleaseToolchain } from "@patchy/api";
 import { Prepared } from "./devPreparation.js";
 import { Daemon, atomicJson, readRecord } from "./devState.js";
 import * as DevServer from "./devServer.js";
+import * as DirectoryWatch from "./DirectoryWatch.js";
 import { LocalError } from "./CliError.js";
 
 const decodePrepared = Schema.decodeUnknownSync(
@@ -39,7 +40,7 @@ export function run(): void {
       catch: (cause) => new LocalError({ message: "Could not read local runtime metadata.", cause })
     });
     return yield* DevServer.serve(prepared, stateDir, record, prepared.toolchain).pipe(
-      Effect.provide(DevServer.layer)
+      Effect.provide([DevServer.layer, DirectoryWatch.layer])
     );
   }).pipe(
     Effect.scoped,
