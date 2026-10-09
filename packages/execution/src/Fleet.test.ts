@@ -694,6 +694,7 @@ it.layer(services)("host fleet controller", (it) => {
           owner.ensureBinding(thirdCompany),
           pass
         );
+        assert.strictEqual(healthy.state, "active");
         yield* phase("bind attempt", Deferred.await(bindAttempted), pass);
         yield* phase("stop attempt", Deferred.await(stopAttempted), pass);
         // The wedged call's pool.wait timeout is the only timer due within 4 s; then the pass ends.
@@ -706,7 +707,11 @@ it.layer(services)("host fleet controller", (it) => {
           (yield* provider.list).find((task) => task.taskId === "isolated-stubborn")!.state,
           "running"
         );
-        assert.strictEqual((yield* owner.ensureBinding(thirdCompany)).taskId, healthy.taskId);
+        const kept = yield* phase(
+          "healthy company claims again",
+          owner.ensureBinding(thirdCompany)
+        );
+        assert.strictEqual(kept.taskId, healthy.taskId);
       }).pipe(
         Effect.scoped,
         Effect.provide(
