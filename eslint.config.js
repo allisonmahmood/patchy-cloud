@@ -100,6 +100,7 @@ export default tseslint.config(
       "apps/server/src/start.ts",
       "test/postgres.ts",
       "test/clerk.ts",
+      "scripts/flake-report.ts",
       "scripts/test-clerk.ts",
       "scripts/verify.ts"
     ],
@@ -109,14 +110,17 @@ export default tseslint.config(
   },
   {
     files: [
-      // Test entrypoints configure the environment for workers and child processes.
+      // Test entrypoints configure the environment for workers and child processes;
+      // CI tooling outside Effect reads it directly.
       "packages/serving/src/render.test.ts",
       "packages/patchy/src/cli*.test.ts",
       "packages/patchy/src/test/cli.ts",
       "vitest.clerk.config.ts",
       "test/clerk.ts",
       "scripts/test-clerk.ts",
+      "scripts/flake-report.ts",
       "playwright.clerk.config.ts",
+      "playwright.tier1.config.ts",
       "test/browser/fixtures.ts",
       "test/browser/instance.ts",
       "test/browser-tier1/instance.ts",

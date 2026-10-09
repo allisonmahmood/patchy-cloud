@@ -74,9 +74,13 @@ takes seconds.
   next test fails, so a spec closes any client it opens itself.
 - `tsconfig.test.json` keeps Effect's correctness rules and turns off the style
   rules that steer production code toward Effect services.
-- A test that fails with no code cause is flaky. Check open issues labelled
-  `flaky` before treating a red check as yours; open one for a new flake with the
-  failing run, and fix the cause rather than adding retries.
+- A test that fails with no code cause is flaky. CI does not retry, and a test
+  that only passes on rerun is still a flake: every Monday the issue labelled
+  `flake-report` lists the tests that failed in CI that week and how often they
+  passed on a rerun of the same commit (`scripts/flake-report.ts`). Check it and
+  the open issues labelled `flaky` before treating a red check as yours; open a
+  `flaky` issue for a new flake with the failing run, and fix the cause, not the
+  timeout.
 
 ### Live tiers
 
