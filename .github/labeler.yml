@@ -10,12 +10,14 @@
   - changed-files:
       - any-glob-to-any-file:
           - "apps/server/**"
+          - "apps/infra/**"
           - "packages/analytics/**"
           - "packages/api/**"
           - "packages/auth/**"
           - "packages/companies/**"
           - "packages/company-database/**"
           - "packages/content-store/**"
+          - "packages/execution/**"
           - "packages/limits/**"
           - "packages/patches/**"
           - "packages/runtime/**"
