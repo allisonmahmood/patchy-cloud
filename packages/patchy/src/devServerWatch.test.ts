@@ -8,7 +8,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import { watch } from "./devServerWatch.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
 import toolchain from "./toolchain.json" with { type: "json" };
@@ -71,20 +70,20 @@ const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: str
   });
 });
 
-const failure = (_tag: "NotFound" | "Unknown", directory: string) =>
-  PlatformError.systemError({ _tag, module: "test", method: "watch", pathOrDescriptor: directory });
-
 /** Watches that report only what a case emits; `start` runs as each one starts, to fail or hold it. */
 const scriptedWatches = (
-  start: (directory: string) => Effect.Effect<void, PlatformError.PlatformError> = () => Effect.void
+  start: (
+    directory: string
+  ) => Effect.Effect<void, DirectoryWatch.DirectoryGone | DirectoryWatch.WatchFailed> = () =>
+    Effect.void
 ) => {
   const started: Array<{
     readonly directory: string;
-    readonly listener: Parameters<DirectoryWatch.DirectoryWatch["Service"]["watch"]>[2];
+    readonly listener: Parameters<DirectoryWatch.DirectoryWatch["Service"]["watch"]>[1];
     open: boolean;
   }> = [];
   const service: DirectoryWatch.DirectoryWatch["Service"] = {
-    watch: (directory, _options, listener) =>
+    watch: (directory, listener) =>
       Effect.acquireRelease(
         start(directory).pipe(
           Effect.map(() => {
@@ -163,15 +162,14 @@ it.live(
       assert.deepStrictEqual((yield* next).modules, ["leads"]);
       const [old] = watches.of(server);
 
-      // Node 22 reports a server/ deleted during its rescan as a watch error.
       yield* fs.writeFileString(path.join(server, "people.ts"), handler("boolean"));
-      old!.listener.error(failure("NotFound", server));
+      old!.listener.error(new DirectoryWatch.DirectoryGone({ directory: server, cause: "test" }));
       assert.deepStrictEqual((yield* next).modules, ["leads", "people"]);
       const [, current] = watches.of(server);
       assert.deepStrictEqual([old!.open, current!.open], [false, true]);
 
-      const fatal = failure("Unknown", server);
-      old!.listener.error(failure("Unknown", server));
+      const fatal = new DirectoryWatch.WatchFailed({ directory: server, cause: "test" });
+      old!.listener.error(new DirectoryWatch.WatchFailed({ directory: server, cause: "test" }));
       current!.listener.error(fatal);
       const error = yield* next.pipe(Effect.flip);
       assert.strictEqual(error.message, "Could not watch server source files.");
@@ -189,7 +187,7 @@ it.live(
       const watches = scriptedWatches((directory) => {
         if (directory !== server || !gone) return Effect.void;
         gone = false;
-        return Effect.fail(failure("NotFound", server));
+        return Effect.fail(new DirectoryWatch.DirectoryGone({ directory: server, cause: "test" }));
       });
       const next = yield* inspectedChanges(root).pipe(
         Effect.provideService(DirectoryWatch.DirectoryWatch, watches.service)

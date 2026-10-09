@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -71,27 +70,24 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       Queue.offerUnsafe(changes, { _tag: "Sources" });
     }
   };
-  const watchError = (cause: PlatformError.PlatformError) =>
+  const watchError = (cause: unknown) =>
     Queue.offerUnsafe(
       changes,
       new LocalError({ message: "Could not watch server source files.", cause })
     );
   yield* Effect.addFinalizer(() => Effect.promise(async () => await builder?.close()));
-  // Directory watches discover added and removed modules; Vite watches what they import.
+  // Directory watches see modules come and go; Vite watches what they import. Modules
+  // are one level deep, so neither watch recurses.
   yield* directories
-    .watch(
-      root,
-      { recursive: false },
-      {
-        change: (filename) => {
-          if (filename === null || filename === "server") {
-            serverReplaced = true;
-            changed();
-          }
-        },
-        error: watchError
-      }
-    )
+    .watch(root, {
+      change: (filename) => {
+        if (filename === null || filename === "server") {
+          serverReplaced = true;
+          changed();
+        }
+      },
+      error: watchError
+    })
     .pipe(
       Effect.mapError(
         (cause) => new LocalError({ message: "Could not watch server source files.", cause })
@@ -100,32 +96,28 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
   const rediscover = Effect.fn("Dev.watchServer.sources")(function* () {
     if (serverReplaced) {
       // Clear the flag before any work, so a replacement reported meanwhile is
-      // handled next time. A watch that fails to start sets it again, to retry.
+      // handled next time. A failure to start, other than a missing server/,
+      // sets it again to retry.
       serverReplaced = false;
       if (sourceWatch !== undefined) yield* Scope.close(sourceWatch, Exit.void);
       const latest = yield* Scope.fork(scope);
       sourceWatch = latest;
       yield* directories
-        .watch(
-          serverDirectory,
-          { recursive: true },
-          {
-            change: changed,
-            error: (error) => {
-              // A replaced watch's late report is moot.
-              if (sourceWatch !== latest) return;
-              // Node 22 reports a server/ deleted during its rescan this way.
-              if (error.reason._tag === "NotFound") {
-                serverReplaced = true;
-                changed();
-              } else watchError(error);
-            }
+        .watch(serverDirectory, {
+          change: changed,
+          error: (error) => {
+            // A replaced watch's late report is moot.
+            if (sourceWatch !== latest) return;
+            if (error._tag === "DirectoryGone") {
+              serverReplaced = true;
+              changed();
+            } else watchError(error);
           }
-        )
+        })
         .pipe(
           Scope.provide(latest),
-          // Absent, or gone since: the root watch reports when server/ appears.
-          Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+          // Absent, or deleted since: the root watch reports when server/ appears.
+          Effect.catchTags({ DirectoryGone: () => Effect.void }),
           Effect.mapError(
             (cause) => new LocalError({ message: "Could not watch server source files.", cause })
           ),
