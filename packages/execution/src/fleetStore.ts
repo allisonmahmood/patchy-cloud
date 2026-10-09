@@ -290,6 +290,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(decodeLeases),
       Effect.map((rows) => rows[0])
     );
+  // Concurrent guards' renewals can land out of order; a late one never shortens the lease.
   const renewLease = (
     owner: string,
     revision: string,
@@ -298,7 +299,7 @@ export const make = Effect.gen(function* () {
     duration: number
   ) =>
     sql`UPDATE execution_housekeeping
-    SET expires_at = ${now + duration} WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now}
+    SET expires_at = GREATEST(expires_at, ${now + duration}) WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now}
       AND EXISTS (
         SELECT 1 FROM execution_rollout WHERE COALESCE(staged_revision, current_revision) = ${revision}
       )
