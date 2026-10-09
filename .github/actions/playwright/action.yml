@@ -1,0 +1,42 @@
+name: Install Chromium
+description: >-
+  Installs Playwright's Chromium and its system packages, restoring the browser
+  from the Actions cache when this runner image and Playwright version already
+  have it. Use after `pnpm install`.
+
+runs:
+  using: composite
+  steps:
+    - name: Key the cache on the runner image and Playwright version
+      id: key
+      shell: bash
+      run: |
+        version=$(pnpm exec playwright --version | cut -d' ' -f2)
+        echo "key=playwright-chromium-$ImageOS-$RUNNER_ARCH-$version" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Chromium
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Download Chromium and install its system packages
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: pnpm exec playwright install --with-deps chromium
+
+    # Saved now rather than at the end of the job, so a failing test still
+    # leaves the browser for the next run.
+    - name: Save Chromium
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.key.outputs.key }}
+
+    # Each job starts on a fresh VM, so a restored browser still needs these.
+    - name: Install Chromium's system packages
+      if: steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      run: pnpm exec playwright install-deps chromium
