@@ -1,6 +1,6 @@
 /**
  * The companies capability's schema, id 1 in the global migration sequence
- * (`packages/sql/CONTEXT.md`): companies, users, invites and the member
+ * (`packages/sql/GLOSSARY.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker and id 10 the company look.
  */

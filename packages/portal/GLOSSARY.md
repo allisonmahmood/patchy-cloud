@@ -1,6 +1,6 @@
 # Portal
 
-Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md).
+Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/GLOSSARY.md); the viewer to [Auth](../auth/GLOSSARY.md); users and roles to [Companies](../companies/GLOSSARY.md).
 
 ## Language
 

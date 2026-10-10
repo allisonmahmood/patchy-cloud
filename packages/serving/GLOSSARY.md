@@ -1,6 +1,6 @@
 # Serving
 
-How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content and visits belong to [Patches](../patches/CONTEXT.md), sessions and viewers to [Auth](../auth/CONTEXT.md), and document, stream, lifecycle and execution authority to [Runtime](../runtime/CONTEXT.md); only personal-connection doors remain future work here.
+How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content and visits belong to [Patches](../patches/GLOSSARY.md), sessions and viewers to [Auth](../auth/GLOSSARY.md), and document, stream, lifecycle and execution authority to [Runtime](../runtime/GLOSSARY.md); only personal-connection doors remain future work here.
 
 ## Language
 
@@ -18,7 +18,7 @@ _Avoid_: bot protection (authorized agents may open pages), unlisted as a synony
 
 **Page**:
 A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Tier 0 content is script-free, and a font reaches it only embedded in its own bytes; tier 1 and tier 2 content runs browser code without direct network or credential access.
-_Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
+_Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
 
 **Shell**:
 The trusted page surrounding one loaded patch version, owning the reader's address, broker, stream and first-party lifecycle notices on tiers 1 and 2. It keeps the session fresh for company documents and authenticated public member-directory access; a historical page uses the selected version's tier.

@@ -1,6 +1,6 @@
 /**
  * The runtime's operation log, invocation journal and query rollups, id 5 in
- * the global migration sequence (`packages/sql/CONTEXT.md`). Squashed into one
+ * the global migration sequence (`packages/sql/GLOSSARY.md`). Squashed into one
  * baseline before launch.
  */
 import { ddl, type Migrations } from "@patchy/sql";

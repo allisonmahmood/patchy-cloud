@@ -1,6 +1,6 @@
 # Limits
 
-The release's contract limits, operating defaults and company overrides, alongside the shared attempt limits used by the hosting server, device login and publishing. [Patches](../patches/CONTEXT.md) owns the separate live-patch quota.
+The release's contract limits, operating defaults and company overrides, alongside the shared attempt limits used by the hosting server, device login and publishing. [Patches](../patches/GLOSSARY.md) owns the separate live-patch quota.
 
 ## Language
 

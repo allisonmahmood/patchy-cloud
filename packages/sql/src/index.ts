@@ -2,7 +2,7 @@
  * The sql capability: a Postgres client from config, Effect's Migrator over
  * the migration records the capability packages own, and a transaction that
  * reports its change with its commit. This package owns
- * no tables; see CONTEXT.md for the migration contract and README.md for how
+ * no tables; see GLOSSARY.md for the migration contract and README.md for how
  * a capability decodes rows.
  */
 import * as PgClient from "@effect/sql-pg/PgClient";

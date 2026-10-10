@@ -1,6 +1,6 @@
 /**
  * The patches capability's schema, id 3 in the global migration sequence
- * (`packages/sql/CONTEXT.md`). Squashed into one baseline before launch.
+ * (`packages/sql/GLOSSARY.md`). Squashed into one baseline before launch.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 

@@ -1,6 +1,6 @@
 # Patchy Cloud
 
-The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `CONTEXT.md` defines its context's terms; this file describes the product.
+The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `GLOSSARY.md` defines its context's terms; this file describes the product.
 
 Built today: tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres connections.
 
@@ -345,7 +345,7 @@ this release's supported runtime.
 
 ### Tier 0 — static
 
-The published document runs no script, so **the patch cannot watch you**. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish patch content from its first-party shell: a public tier 0 shell needs no script; a public tier 1 shell starts only Patchy's broker, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer. A public tier 1 shell activates the same session maintenance when it authenticates directory access. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
+The published document runs no script, so **the patch cannot watch you**. The [serving guarantees](../packages/serving/GLOSSARY.md) distinguish patch content from its first-party shell: a public tier 0 shell needs no script; a public tier 1 shell starts only Patchy's broker, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer. A public tier 1 shell activates the same session maintenance when it authenticates directory access. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
 
 ### Tier 1 — browser
 
@@ -428,7 +428,7 @@ Default limits include 300 calls per viewer per patch per minute, 32 outstanding
 requests and 64 MiB held per frame; the data-operation limits are below.
 
 Each runtime HTTP call, including file-byte requests and refusals, also emits one
-server-side [wide event](../packages/analytics/CONTEXT.md) with its outcome,
+server-side [wide event](../packages/analytics/GLOSSARY.md) with its outcome,
 duration and attributable company, patch, version and viewer ids. Events go to
 stdout and, when configured, PostHog. They are unsampled and best effort, separate
 from the attributed runtime log and billing records. A lost process can lose its

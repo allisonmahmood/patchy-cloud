@@ -1,6 +1,6 @@
 # Primitives
 
-The resources a patch defines and owns or declares from its company, and the operations its admitted viewers use to work with them. Owned resources' cumulative existence belongs to the [company database's inventory](../company-database/CONTEXT.md); [Runtime](../runtime/CONTEXT.md) binds access to the loaded version and effective principal. Tier 1 operations act as the viewer. Tier 2 own-resource callbacks act as the patch; shared-resource and member directory callbacks require the initiating viewer's live authority.
+The resources a patch defines and owns or declares from its company, and the operations its admitted viewers use to work with them. Owned resources' cumulative existence belongs to the [company database's inventory](../company-database/GLOSSARY.md); [Runtime](../runtime/GLOSSARY.md) binds access to the loaded version and effective principal. Tier 1 operations act as the viewer. Tier 2 own-resource callbacks act as the patch; shared-resource and member directory callbacks require the initiating viewer's live authority.
 
 ## Language
 
@@ -45,7 +45,7 @@ A table column holding a user id, checked against the candidates on insertion or
 _Avoid_: user ref, owner field
 
 **Shared table**:
-A source patch's table that another patch may declare and read, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/CONTEXT.md), independent of the source's active version.
+A source patch's table that another patch may declare and read, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
 _Avoid_: public table, copied table
 
 **File store**:
@@ -53,7 +53,7 @@ A named, patch-owned collection of files available through the operations its lo
 _Avoid_: bucket, content store (the infrastructure holding bytes)
 
 **Shared file store**:
-A source patch's file store published as read-only access to every file for consumers on either tier, with the viewer's source access and the store's sharing rechecked on every read. Its immutable identity is the source patch and store; its sharing authority belongs to [Company database's Inventory](../company-database/CONTEXT.md), independent of published versions, omissions and rollbacks.
+A source patch's file store published as read-only access to every file for consumers on either tier, with the viewer's source access and the store's sharing rechecked on every read. Its immutable identity is the source patch and store; its sharing authority belongs to [Company database's Inventory](../company-database/GLOSSARY.md), independent of published versions, omissions and rollbacks.
 _Avoid_: public files, copied store, shared folder
 
 **Authorised file handle**:

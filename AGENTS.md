@@ -43,7 +43,7 @@ The rest of this document is meant to help you navigate the codebase and make ch
 One line each; only the things you would not find by reading the tree.
 
 - `docs/product.md` — the product's shape: patches, tiers, companies, identity, integrations. Read it before designing anything user-facing.
-- `CONTEXT-MAP.md` and each package's `CONTEXT.md` — the vocabulary. Use their words; see `docs/agents/domain.md`.
+- `GLOSSARY-MAP.md` and each package's `GLOSSARY.md` — the vocabulary. Use their words; see `docs/agents/domain.md`.
 - `pnpm dev`, `pnpm dev up [scenario]`, `pnpm dev shot <person> <path>`, `pnpm dev down` — this worktree's instance, where people sign in as dev personas without accounts; `up` adds a scenario's people, a logged-in CLI and an agent workspace, and `shot` captures a page as one person. `scenarios/README.md` says what each scenario holds.
 - `docs/DEVELOPMENT.md` — the checks, the local instance, seeing a page as a person, Clerk mode, and what to exercise for each kind of change. Read before starting a local instance or calling a change ready.
 - `docs/OPERATIONS.md` — running the server outside `pnpm dev`, its configuration, the execution fleet and the spike deploy.
@@ -65,7 +65,7 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 ### Domain docs
 
-Multi-context — the root `CONTEXT-MAP.md` names the product's contexts, the shared kernel and the infrastructure packages, and links their glossaries. A context's `CONTEXT.md` is written before the code where its package does not exist yet. `docs/product.md` is the product's shape. See `docs/agents/domain.md`.
+Multi-context — the root `GLOSSARY-MAP.md` names the product's contexts, the shared kernel and the infrastructure packages, and links their glossaries. A context's `GLOSSARY.md` is written before the code where its package does not exist yet. `docs/product.md` is the product's shape. See `docs/agents/domain.md`.
 
 ## Hit every surface
 
@@ -74,7 +74,7 @@ The most common defect here is a change that lands on the path you tested and is
 - **The wire contract.** A request, response or route in `packages/api` follows through to the server handler, the CLI command and its `--json` shape, and `docs/API.md` (`pnpm --filter @patchy/api render-docs`; a test fails when it is stale). Runtime operation schemas also validate the shell broker's inputs; update both shell and server consumers. The api package is the source; the rest mirror it.
 - **The CLI.** A new or changed command, flag or exit code follows through to `packages/patchy/README.md`, the contract in ADR-0004, and the global `patchy` skill for sign-in, file publishing and init. Repo workflows and capability operations follow through to the project skills under `packages/sdk/skills`, served by generation. When the global skill's `SKILL.md` changes, refresh its hash in `skills-lock.json` (`sha256sum skills/patchy/SKILL.md`); a test fails when it is stale.
 - **The dev loop.** A change to the runner under `scripts/dev`, its seed, or how the CLI finds a local instance follows through to `docs/DEVELOPMENT.md`, the `patchy-dev-loop` skill, and the vitest Postgres template that applies the same seed rows.
-- **Vocabulary and product shape.** A new or renamed concept follows through to the owning `CONTEXT.md` glossary, `CONTEXT-MAP.md` when a context gains or loses a package, and `docs/product.md` when the product's shape moved. An ADR the change contradicts is updated or deleted, never left standing.
+- **Vocabulary and product shape.** A new or renamed concept follows through to the owning `GLOSSARY.md` glossary, `GLOSSARY-MAP.md` when a context gains or loses a package, and `docs/product.md` when the product's shape moved. An ADR the change contradicts is updated or deleted, never left standing.
 - **Migrations.** A capability's migrations live in its `src/migrations.ts`; `apps/server/src/migrations.ts` composes them for the server, the dev runner and the vitest template. Allocate ids in landing order: the migrator only applies ids above its ledger's highest id and never backfills gaps, and the record's test fails on a duplicate or skipped id.
 - **Company resources.** Read [ADR-0009](docs/adr/ADR-0009-one-postgres-database-per-company.md) before adding a company-database caller. Provisioning/reclamation take the platform row lock before `withPatchLock`; keep primitive-free patches off that path. Runtime files use company-only per-name index locks, with blob I/O outside leases and liveness supplied by Runtime.
 - **Served pages.** What a reader receives, including the portal's index, cards, confirmation and user pick pages, runs through the `ui-consistency` spec. What HTML is accepted or rejected lands as fixtures under `packages/core/fixtures`, which the policy tests and `pnpm seed:dev` both read.
@@ -105,7 +105,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 ### Packages by capability
 
-`CONTEXT-MAP.md` is the map (decided on [#56](https://github.com/allisonmahmood/patchy-cloud/issues/56)). Each capability owns its migrations and its `HttpApi` group; `apps/server` is wiring plus the API guard.
+`GLOSSARY-MAP.md` is the map (decided on [#56](https://github.com/allisonmahmood/patchy-cloud/issues/56)). Each capability owns its migrations and its `HttpApi` group; `apps/server` is wiring plus the API guard.
 
 ### Tests
 

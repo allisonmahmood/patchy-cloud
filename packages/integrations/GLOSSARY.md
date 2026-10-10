@@ -1,6 +1,6 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/CONTEXT.md) owns membership, and [Runtime](../runtime/CONTEXT.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
 
 ## Language
 
@@ -65,7 +65,7 @@ The integration-specific surface patch code is handed for a declared connection,
 _Avoid_: proxy (how it is carried out, not what the code sees), driver, raw API
 
 **Call log**:
-See **Runtime log** in [Runtime](../runtime/CONTEXT.md); connection calls and admin discovery belong to that record, not a separate log.
+See **Runtime log** in [Runtime](../runtime/GLOSSARY.md); connection calls and admin discovery belong to that record, not a separate log.
 _Avoid_: audit trail, analytics event (a business moment, not a call)
 
 **Dev binding**:

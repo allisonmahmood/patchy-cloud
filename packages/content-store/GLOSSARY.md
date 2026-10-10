@@ -1,6 +1,6 @@
 # Content store
 
-Where published patch bytes, patch file objects and SDK archives live, separate from their metadata. [Patches](../patches/CONTEXT.md) owns published versions; the [company database](../company-database/CONTEXT.md) holds file-object references. SDK distribution owns release metadata. The content store owns none of these associations.
+Where published patch bytes, patch file objects and SDK archives live, separate from their metadata. [Patches](../patches/GLOSSARY.md) owns published versions; the [company database](../company-database/GLOSSARY.md) holds file-object references. SDK distribution owns release metadata. The content store owns none of these associations.
 
 ## Language
 

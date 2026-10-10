@@ -41,7 +41,7 @@ The act that puts a patch up: a new version, live at once to everyone the patch 
 _Avoid_: deploy, upload (moving bytes, not publishing), release, promote
 
 **Primitive**:
-A capability the cloud provides because a patch declared the need, belonging either to that patch or to its company. Patch-owned tables and file stores are defined in the manifest and provisioned additively at publish; their language belongs to [Primitives](../primitives/CONTEXT.md).
+A capability the cloud provides because a patch declared the need, belonging either to that patch or to its company. Patch-owned tables and file stores are defined in the manifest and provisioned additively at publish; their language belongs to [Primitives](../primitives/GLOSSARY.md).
 _Avoid_: resource, service, addon
 
 **Extension**:
@@ -73,7 +73,7 @@ A live, enabled patch that declares one of this patch's shared tables or file st
 _Avoid_: consumer (a runtime word), subscriber
 
 **Description**:
-One paragraph saying what a patch does, written by the building agent and editable by its owner or an admin. It is local-owned with [description sync](../patchy/CONTEXT.md): publish sends the repo's text, and newer cloud edits pull back into the repo with a notice.
+One paragraph saying what a patch does, written by the building agent and editable by its owner or an admin. It is local-owned with [description sync](../patchy/GLOSSARY.md): publish sends the repo's text, and newer cloud edits pull back into the repo with a notice.
 _Avoid_: purpose (the agent instruction, kept separately), title (the document's `<title>`), summary
 
 **Version**:
@@ -89,7 +89,7 @@ The serializable description of one version's name, release, tier, owned resourc
 _Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
 
 **Inventory**:
-The cumulative provisioned definitions, company-readable through the openable gate rather than ownership and preserved when a current version omits them. Unavailable inventory is unknown, not empty; see **Inventory** in [Company database](../company-database/CONTEXT.md), its owning glossary.
+The cumulative provisioned definitions, company-readable through the openable gate rather than ownership and preserved when a current version omits them. Unavailable inventory is unknown, not empty; see **Inventory** in [Company database](../company-database/GLOSSARY.md), its owning glossary.
 _Avoid_: manifest, current schema
 
 **Unused definition**:
