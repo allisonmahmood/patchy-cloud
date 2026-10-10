@@ -58,8 +58,9 @@ const listener = (handle: (request: IncomingMessage, response: ServerResponse) =
     Effect.promise(async () => {
       const server = createServer((request, response) => {
         void handle(request, response).catch(() => {
-          response.writeHead(500);
-          response.end();
+          // Once headers are out a 500 would throw and leave the response open; drop it instead.
+          if (response.headersSent) response.destroy();
+          else response.writeHead(500).end();
         });
       });
       const ready = Promise.withResolvers<void>();
@@ -582,53 +583,66 @@ it.live(
   30_000
 );
 
-it.live(
-  "enforces the tier two file callback cap in both directions with limit metadata",
-  () =>
-    Effect.gen(function* () {
-      const maxBytes = 20 * 1024 * 1024;
-      const uploads: number[] = [];
-      const host = yield* listener(async (request, response) => {
-        const data = await bodyOf(request);
-        const framed = request.headers["x-patchy-callback"];
-        if (framed !== undefined) {
-          uploads.push(data.length);
-          expect(request.headers["content-type"]).toBe("application/x-test");
-          expect([data[0], data[data.length - 1]]).toEqual([165, 165]);
-          response.end(JSON.stringify({ ok: true, value: null }));
-        } else {
+// One case per direction so a failure names it. A stalled call returns `timeout` at its 10 s
+// deadline; the host and call timeline in the failure message says where it stalled (#507).
+for (const direction of ["upload", "download"] as const) {
+  it.live(
+    `enforces the tier two file callback cap on ${direction} with limit metadata`,
+    () =>
+      Effect.gen(function* () {
+        const maxBytes = 20 * 1024 * 1024;
+        const started = Date.now();
+        const timeline: string[] = [];
+        const mark = (event: string) =>
+          timeline.push(`${String(Date.now() - started).padStart(6)} ms  ${event}`);
+        const uploads: unknown[] = [];
+        const host = yield* listener(async (request, response) => {
+          const { socket } = request;
+          mark(`host request on port ${socket.remotePort}, socket paused: ${socket.isPaused()}`);
+          response.on("finish", () => mark("host response finished"));
+          response.on("close", () => mark("host response closed"));
+          response.on("error", (error) => mark(`host response error: ${error.message}`));
+          const data = await bodyOf(request);
+          mark(`host request body ${data.length} B`);
+          if (request.headers["x-patchy-callback"] !== undefined) {
+            uploads.push({
+              length: data.length,
+              contentType: request.headers["content-type"],
+              first: data[0],
+              last: data.at(-1)
+            });
+            response.end(JSON.stringify({ ok: true, value: null }));
+            return;
+          }
           const { args } = JSON.parse(data.toString()) as { args: { name: string } };
           response.writeHead(200, {
             "x-patchy-file-body": "1",
             "content-type": "application/x-test"
           });
           response.end(Buffer.alloc(Number(args.name), 165));
-        }
-      });
-      const child = yield* startWorkerd({ callbackUrls: [host.url] });
-      const engine = yield* Engine.make({ url: child.url });
-      const { binding } = yield* engine.bind(bundle(yield* sdkBundle));
-      for (const direction of ["upload", "download"]) {
-        expect(
-          yield* engine.invoke(
-            invocation(binding, host.url, "demo.transfer", {
-              args: { direction, bytes: maxBytes }
-            })
-          )
-        ).toMatchObject({
+          mark(
+            `host response ended, ${args.name} B ${response.chunkedEncoding ? "chunked" : "fixed length"}`
+          );
+        });
+        const child = yield* startWorkerd({ callbackUrls: [host.url] });
+        const engine = yield* Engine.make({ url: child.url });
+        const { binding } = yield* engine.bind(bundle(yield* sdkBundle));
+        const transfer = Effect.fn(function* (bytes: number) {
+          mark(`invoke ${direction} of ${bytes} B`);
+          const reply = yield* engine.invoke(
+            invocation(binding, host.url, "demo.transfer", { args: { direction, bytes } })
+          );
+          mark(`invoke returned ${JSON.stringify(reply)}`);
+          return reply;
+        });
+        expect(yield* transfer(maxBytes), timeline.join("\n")).toMatchObject({
           outcome: "returned",
           reply: {
             ok: true,
             value: direction === "upload" ? null : { length: maxBytes, first: 165, last: 165 }
           }
         });
-        expect(
-          yield* engine.invoke(
-            invocation(binding, host.url, "demo.transfer", {
-              args: { direction, bytes: maxBytes + 1 }
-            })
-          )
-        ).toMatchObject({
+        expect(yield* transfer(maxBytes + 1), timeline.join("\n")).toMatchObject({
           outcome: "returned",
           reply: {
             ok: false,
@@ -639,8 +653,13 @@ it.live(
             value: maxBytes
           }
         });
-      }
-      expect(uploads).toEqual([maxBytes]);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
-  30_000
-);
+        // The over-cap upload is refused inside workerd and never reaches the host.
+        expect(uploads).toEqual(
+          direction === "upload"
+            ? [{ length: maxBytes, contentType: "application/x-test", first: 165, last: 165 }]
+            : []
+        );
+      }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    30_000
+  );
+}
