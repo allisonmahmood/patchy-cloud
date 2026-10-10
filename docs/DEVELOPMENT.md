@@ -35,9 +35,9 @@ going after a failure and prints a summary. CI also runs `pnpm test` on Node
 on pushes to `main` and same-repository PRs.
 
 CI pins every job to `ubuntu-24.04`, and every job that runs the repository's
-code to an exact Node patch. Bump the patches in `.github/workflows/ci.yml` by
-hand, like the server image: Node 24 moves with the `node:24-slim` digest in
-`apps/server/Dockerfile`, which production runs.
+code to an exact Node patch. Bump the patches by hand in every workflow under
+`.github/workflows/` that pins one, like the server image: Node 24 moves with the
+`node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
 
 Format and lint cache their results, so a repeat run rechecks only the files
 that changed. ESLint's cache cannot tell when a changed type alters an unchanged
