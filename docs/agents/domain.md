@@ -4,26 +4,26 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT-MAP.md`** at the repo root — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
+- **`GLOSSARY-MAP.md`** at the repo root — it points at one `GLOSSARY.md` per context. Read each one relevant to the topic.
 - **`docs/product.md`** — the product's shape, one section per decision. A product decision that is not built yet is recorded there and nowhere else; read the section for the area you are about to build.
 - **`docs/adr/`** — system-wide decisions. Read ADRs that touch the area you're about to work in.
-- **`<context>/docs/adr/`** — context-scoped decisions, alongside that context's `CONTEXT.md`.
+- **`<context>/docs/adr/`** — context-scoped decisions, alongside that context's `GLOSSARY.md`.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
 ## Layout
 
-This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts patches and the CLI agents run to publish them, with the hosting side cut into capability packages. `CONTEXT-MAP.md` names the product's contexts, the shared kernel, the infrastructure packages and the relationships between them, and links their glossaries.
+This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts patches and the CLI agents run to publish them, with the hosting side cut into capability packages. `GLOSSARY-MAP.md` names the product's contexts, the shared kernel, the infrastructure packages and the relationships between them, and links their glossaries.
 
-A context can exist before its code: its `CONTEXT.md` sits alone at the path the package will take (`packages/integrations/CONTEXT.md`), so the words are settled before the build and the package is born beside them. A folder with no `package.json` is invisible to pnpm and turbo.
+A context can exist before its code: its `GLOSSARY.md` sits alone at the path the package will take (`packages/integrations/GLOSSARY.md`), so the words are settled before the build and the package is born beside them. A folder with no `package.json` is invisible to pnpm and turbo.
 
 ```
 /
-├── CONTEXT-MAP.md                     ← the map
+├── GLOSSARY-MAP.md                     ← the map
 ├── docs/product.md                    ← the product's shape
 ├── docs/adr/                          ← system-wide decisions
-├── apps/server/CONTEXT.md             ← wiring terms only
-└── packages/<name>/CONTEXT.md         ← one per context and infrastructure package, code or not
+├── apps/server/GLOSSARY.md             ← wiring terms only
+└── packages/<name>/GLOSSARY.md         ← one per context and infrastructure package, code or not
     └── docs/adr/                      ← that package's decisions, once it has one
 ```
 
@@ -35,7 +35,7 @@ An ADR records a decision that is hard to reverse, surprising without context, a
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in the relevant `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in the relevant `GLOSSARY.md`. Don't drift to synonyms the glossary explicitly avoids.
 
 If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 

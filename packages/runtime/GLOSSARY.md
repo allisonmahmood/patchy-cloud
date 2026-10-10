@@ -145,7 +145,7 @@ The attributed record of mutations, integration calls, admin discovery and serve
 _Avoid_: Call log (Integrations' pointer to this record), analytics event
 
 **Request event**:
-The [request event](../analytics/CONTEXT.md) a runtime request records itself: the best-effort operational record of one runtime request, including reads and refused attempts. Its attribution is limited to the loaded version and authenticated viewer established during admission; it is not the runtime log.
+The [request event](../analytics/GLOSSARY.md) a runtime request records itself: the best-effort operational record of one runtime request, including reads and refused attempts. Its attribution is limited to the loaded version and authenticated viewer established during admission; it is not the runtime log.
 _Avoid_: Audit record, runtime-log entry
 
 **Invocation metering**:

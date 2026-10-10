@@ -61,7 +61,7 @@ const outsideProduct = [
   /^\.claude\//,
   /^\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$)/,
   /^[^/]+\.md$/,
-  /^packages\/[^/]+\/CONTEXT\.md$/,
+  /^packages\/[^/]+\/GLOSSARY\.md$/,
   /^t3\.json$/
 ];
 

@@ -1,6 +1,6 @@
 # Auth
 
-Who a caller is: Clerk sessions and viewers, user-owned machine tokens, device login and revocation. Auth draws the user and company behind each credential from [Companies](../companies/CONTEXT.md); [Patches](../patches/CONTEXT.md) uses the resulting identity without owning authentication.
+Who a caller is: Clerk sessions and viewers, user-owned machine tokens, device login and revocation. Auth draws the user and company behind each credential from [Companies](../companies/GLOSSARY.md); [Patches](../patches/GLOSSARY.md) uses the resulting identity without owning authentication.
 
 ## Language
 

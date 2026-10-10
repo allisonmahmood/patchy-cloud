@@ -1,6 +1,6 @@
 # Analytics
 
-The business moments and runtime work the instance reports about itself. [Patches](../patches/CONTEXT.md), [Auth](../auth/CONTEXT.md), [Companies](../companies/CONTEXT.md), [Portal](../portal/CONTEXT.md) and [Integrations](../integrations/CONTEXT.md) decide which business moments matter; Analytics owns their reporting vocabulary and wide events.
+The business moments and runtime work the instance reports about itself. [Patches](../patches/GLOSSARY.md), [Auth](../auth/GLOSSARY.md), [Companies](../companies/GLOSSARY.md), [Portal](../portal/GLOSSARY.md) and [Integrations](../integrations/GLOSSARY.md) decide which business moments matter; Analytics owns their reporting vocabulary and wide events.
 
 ## Language
 
@@ -17,7 +17,7 @@ One structured record of a single hop of work, emitted once at its end. It sits 
 _Avoid_: log line, metric, trace (the linkage, not the record)
 
 **Request event**:
-The wide event for one server request. Runtime requests record their own, as [Runtime](../runtime/CONTEXT.md) defines; every other request names its matched route template, never the URL, with the method and the status the client received. A `patchy` CLI request adds the CLI's release, command and coding agent from its `Patchy-Cli` header, each only when it parses. The outcome follows that status: a 4xx is refused with its body's code, a 5xx is a failure. Health probes emit none.
+The wide event for one server request. Runtime requests record their own, as [Runtime](../runtime/GLOSSARY.md) defines; every other request names its matched route template, never the URL, with the method and the status the client received. A `patchy` CLI request adds the CLI's release, command and coding agent from its `Patchy-Cli` header, each only when it parses. The outcome follows that status: a 4xx is refused with its body's code, a 5xx is a failure. Health probes emit none.
 _Avoid_: access log (it records URLs), request log
 
 **Limit peak**:
@@ -25,7 +25,7 @@ The highest observed use of a registry limit under one effective configuration r
 _Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)
 
 **Deployment revision**:
-The host build or deployment that emitted a wide event. It is distinct from the [Limits](../limits/CONTEXT.md) deployment configuration revision, which fingerprints the effective operating-limit values rather than the running code.
+The host build or deployment that emitted a wide event. It is distinct from the [Limits](../limits/GLOSSARY.md) deployment configuration revision, which fingerprints the effective operating-limit values rather than the running code.
 _Avoid_: configuration revision (the limits setting, not the host build)
 
 **Shutdown flush**:

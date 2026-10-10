@@ -7,7 +7,7 @@
  *
  * The header is read through `Bearer.parse` rather than the credential the
  * security scheme decodes: Effect's decoder takes exactly one space and keeps
- * trailing whitespace, and the contract (`CONTEXT.md`) is the parser's, so
+ * trailing whitespace, and the contract (`GLOSSARY.md`) is the parser's, so
  * every path that authenticates reads the header the same way. `identify` is
  * that path on its own, for the server's guard over the requests the router
  * never matches.

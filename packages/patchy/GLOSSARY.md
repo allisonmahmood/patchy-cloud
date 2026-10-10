@@ -1,11 +1,11 @@
 # Publishing
 
-The path agents use to build, publish and manage patches for a user through the `patchy` package and the instance's SDK distribution. This glossary owns both sides' language; the built unit is defined in [Patches](../patches/CONTEXT.md).
+The path agents use to build, publish and manage patches for a user through the `patchy` package and the instance's SDK distribution. This glossary owns both sides' language; the built unit is defined in [Patches](../patches/GLOSSARY.md).
 
 ## Language
 
 **Publishing**:
-The flow from a static file or patch repo to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
+The flow from a static file or patch repo to a live patch and a link announced with its [sharing scope](../patches/GLOSSARY.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
 _Avoid_: deployment, posting
 
 **Instance**:
@@ -29,11 +29,11 @@ The URL, code and next command that `patchy login` returns for an agent to relay
 _Avoid_: prompt, browser login
 
 **Sign-in**:
-The person's act of entering a browser [session](../auth/CONTEXT.md) with Google, Microsoft or an emailed code. It enables company-page reading and device-login confirmation, independently of whether the machine holds a publishing key.
+The person's act of entering a browser [session](../auth/GLOSSARY.md) with Google, Microsoft or an emailed code. It enables company-page reading and device-login confirmation, independently of whether the machine holds a publishing key.
 _Avoid_: authentication (in user-facing copy), publishing key (a machine's credential, not a browser session)
 
 **Driver**:
-Whoever is running the CLI — an agent first, a developer touching the cloud directly second. The word is deliberately not _operator_, which is Patchy running the platform ([Companies](../companies/CONTEXT.md)).
+Whoever is running the CLI — an agent first, a developer touching the cloud directly second. The word is deliberately not _operator_, which is Patchy running the platform ([Companies](../companies/GLOSSARY.md)).
 _Avoid_: operator, user (ambiguous with the account the driver acts as)
 
 **Agent**:
@@ -41,7 +41,7 @@ Software acting for a user, with that user's machine token: the CLI's primary dr
 _Avoid_: bot, service account, agent identity
 
 **Onboarding**:
-The optional, user-requested first-time setup conversation — establish where to publish and log the machine in, set up the company's [look](../companies/CONTEXT.md) when its first admin wants one, then publish the welcome patch in the look that applies. Only an admin of a company with no look is asked about it; everyone else is told which look their tools use.
+The optional, user-requested first-time setup conversation — establish where to publish and log the machine in, set up the company's [look](../companies/GLOSSARY.md) when its first admin wants one, then publish the welcome patch in the look that applies. Only an admin of a company with no look is asked about it; everyone else is told which look their tools use.
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
@@ -61,11 +61,11 @@ _Avoid_: bootstrapper, npm package, self-update
 _Avoid_: onboarding, install
 
 **Publishing key**:
-The user-facing name for the [machine token](../auth/CONTEXT.md), not a second kind of credential. Copy addressed to the person says publishing key; the domain and wire use machine token.
+The user-facing name for the [machine token](../auth/GLOSSARY.md), not a second kind of credential. Copy addressed to the person says publishing key; the domain and wire use machine token.
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:
-The file-mode, per-instance record linking a local HTML file to its patch for republishing, sharing and deletion. Repo identity belongs to the [Patch repo](../patches/CONTEXT.md), not this cache.
+The file-mode, per-instance record linking a local HTML file to its patch for republishing, sharing and deletion. Repo identity belongs to the [Patch repo](../patches/GLOSSARY.md), not this cache.
 _Avoid_: upload history, manifest
 
 **Pending publish**:
@@ -77,7 +77,7 @@ The reconciliation of a patch repo's description with cloud edits, using the las
 _Avoid_: last synced text, purpose sync, generated description
 
 **Publish key**:
-See **Publish key** in [Patches](../patches/CONTEXT.md), distinct from the machine's publishing key.
+See **Publish key** in [Patches](../patches/GLOSSARY.md), distinct from the machine's publishing key.
 _Avoid_: publishing key, token
 
 **Release**:
@@ -93,7 +93,7 @@ Where a patch runs: the cloud as its viewer, or the local dev runtime as the mac
 _Avoid_: instance (the target cloud), dev env (the CLI's local-instance discovery record)
 
 **Dev runtime**:
-The patch repo's local execution of real capabilities over disposable data, under the cloud's operation contract. Tier 2 uses the production handler engine and callback path with live server rebinding. Its primary viewer is the machine token's user; tiers 1 and 2 also expose a colleague mount. Its schema baseline is the published inventory once the patch exists; its declarations use synthetic [Fixtures](../integrations/CONTEXT.md), never production rows. Production scheduling, operating capacity and containment are not reproduced.
+The patch repo's local execution of real capabilities over disposable data, under the cloud's operation contract. Tier 2 uses the production handler engine and callback path with live server rebinding. Its primary viewer is the machine token's user; tiers 1 and 2 also expose a colleague mount. Its schema baseline is the published inventory once the patch exists; its declarations use synthetic [Fixtures](../integrations/GLOSSARY.md), never production rows. Production scheduling, operating capacity and containment are not reproduced.
 _Avoid_: mock backend, emulator, dev env
 
 **Colleague mount**:
@@ -101,7 +101,7 @@ A second local dev URL at a distinct origin, bound to a fixed non-admin viewer i
 _Avoid_: impersonation, second company, second dev runtime
 
 **Managed files**:
-The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: managed pins, generated client and metadata, the company's [look](../companies/CONTEXT.md) files, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
+The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: managed pins, generated client and metadata, the company's [look](../companies/GLOSSARY.md) files, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
 _Avoid_: scaffold (these parts continue to be maintained), all project files
 
 **Patchy SDK**:
@@ -146,7 +146,7 @@ A release-bound set of agent instructions for building within one patch repo, su
 _Avoid_: global skill, copied tutorial
 
 **Patchy look**:
-See **Patchy look** in [Companies](../companies/CONTEXT.md): what a patch repo or a static page starts from while its company has no look.
+See **Patchy look** in [Companies](../companies/GLOSSARY.md): what a patch repo or a static page starts from while its company has no look.
 _Avoid_: default theme, fallback style
 
 **Discovery**:

@@ -1,6 +1,6 @@
 # Hosting
 
-The vocabulary of Patchy Cloud's hosting boundaries. Capability ownership and package relationships are in the [context map](../../CONTEXT-MAP.md).
+The vocabulary of Patchy Cloud's hosting boundaries. Capability ownership and package relationships are in the [context map](../../GLOSSARY-MAP.md).
 
 ## Language
 
