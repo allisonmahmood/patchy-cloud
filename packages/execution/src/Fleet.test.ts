@@ -23,6 +23,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import * as Fleet from "./fleet.js";
+import * as FleetStore from "./fleetStore.js";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 import * as LocalTaskStore from "./localTaskStore.js";
 import * as TaskProvider from "./TaskProvider.js";
@@ -346,6 +347,25 @@ it.layer(services)("host fleet controller", (it) => {
         assert.strictEqual(spares[0]!.total, 2);
       }).pipe(Effect.scoped),
     30_000
+  );
+
+  it.effect("keeps the housekeeping lease when a renewal from an earlier clock lands late", () =>
+    Effect.gen(function* () {
+      const { sql } = yield* setupMemory("late-renewal", false);
+      const store = yield* FleetStore.make;
+      const t = yield* Clock.currentTimeMillis;
+      const lease = (yield* store.lease("late-renewal-owner", "late-renewal", t, 15_000))!;
+      const renew = (now: number) =>
+        store.renewLease("late-renewal-owner", "late-renewal", lease.leaseEpoch, now, 15_000);
+      assert.isTrue(yield* renew(t + 10_000));
+      // A guard that read the clock at t reaches Postgres after the renewal at t + 10s.
+      assert.isTrue(yield* renew(t));
+      const rows = yield* sql<{
+        expires_at: number;
+      }>`SELECT expires_at FROM execution_housekeeping`;
+      assert.strictEqual(rows[0]!.expires_at, t + 25_000);
+      assert.isTrue(yield* renew(t + 20_000));
+    }).pipe(Effect.scoped)
   );
 
   it.effect(
