@@ -47,6 +47,23 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 9,
+    date: "2026-10-10",
+    through: "7164ab47d3965e2ca432f0e9660fcfcd40e9ef45",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "Trying a patch on your computer no longer shows a false error",
+        detail:
+          "When your AI agent deletes or replaces a patch's server code while the patch runs on your computer, Patchy now picks up the change. It used to print an error saying it could not watch the server files.",
+        prs: [613]
+      }
+    ],
+    behindTheScenes: [
+      "The machines that run your tools' server code keep up their routine upkeep when the database is slow to answer, instead of stopping early and trying again later."
+    ]
+  },
+  {
     id: 8,
     date: "2026-10-07",
     through: "f11604cde938a7115b16ff385b93f2f73fffd55c",
