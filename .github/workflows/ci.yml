@@ -14,16 +14,22 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # Exercise the exact minimum required by PostHog, keeping the Node 22 check name.
+        # The labels are the required check names; each runs an exact version, bumped
+        # by hand (docs/DEVELOPMENT.md). 22.22.0 is the minimum PostHog requires and
+        # 24.20.0 is production's, the node:24-slim digest in apps/server/Dockerfile.
         node-version: [22, 24, 26]
         include:
           - node-version: 22
-            minimum-version: 22.22.0
+            exact-version: 22.22.0
+          - node-version: 24
+            exact-version: 24.20.0
+          - node-version: 26
+            exact-version: 26.11.1
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -31,13 +37,13 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.minimum-version || matrix.node-version }}
+          node-version: ${{ matrix.exact-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
   postgres-concurrency:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -54,7 +60,7 @@ jobs:
 
   clerk-live:
     if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
@@ -69,11 +75,11 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install Chromium and system dependencies
-        run: pnpm exec playwright install --with-deps chromium
+        uses: ./.github/actions/playwright
       - name: Verify live Clerk API and browser workflows
         run: pnpm test:clerk
       - name: Sweep this run's Clerk fixtures
@@ -81,7 +87,7 @@ jobs:
         run: pnpm test:clerk --cleanup
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -90,7 +96,7 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
@@ -104,12 +110,17 @@ jobs:
   cli-smoke:
     # The supported minimum keeps the original check name; Node 26 is what most new users install.
     name: ${{ matrix.node-version == 26 && 'cli-smoke (26)' || 'cli-smoke' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        node-version: ["22.22.0", 26]
+        node-version: [22, 26]
+        include:
+          - node-version: 22
+            exact-version: 22.22.0
+          - node-version: 26
+            exact-version: 26.11.1
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -117,11 +128,11 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ matrix.exact-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install Chromium and system dependencies
-        run: pnpm exec playwright install --with-deps chromium
+        uses: ./.github/actions/playwright
       - name: Check the packed CLI harness reaps orphaned processes
         run: node scripts/packed-cli-e2e.mjs --cleanup-check
       - name: Exercise the packed CLI against an isolated real server
@@ -140,7 +151,7 @@ jobs:
         run: pnpm test:packed-preact-e2e
 
   tier2-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -153,13 +164,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install Chromium and system dependencies
-        run: pnpm exec playwright install --with-deps chromium
+        uses: ./.github/actions/playwright
       - name: Exercise the packed tier 2 journey against an isolated real server
         run: pnpm test:packed-tier2-e2e
 
   # Tier 1 and 2 pages in Chromium against an isolated server; `pnpm test:browser`.
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -172,13 +183,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install Chromium and system dependencies
-        run: pnpm exec playwright install --with-deps chromium
+        uses: ./.github/actions/playwright
       - name: Exercise tier 1 and 2 pages in Chromium
         run: pnpm test:browser
 
   dependency-review:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7

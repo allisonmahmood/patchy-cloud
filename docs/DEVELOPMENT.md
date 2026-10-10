@@ -31,8 +31,13 @@ one-second check that the packed harness reaps orphaned processes, the packed CL
 end to end, and the packed Preact runtime), `tier2-smoke` (the packed tier 2
 journey) and `browser` (tier 1 and 2 pages in Chromium). It keeps
 going after a failure and prints a summary. CI also runs `pnpm test` on Node
-22.22.0, 24 and 26, `cli-smoke` again on Node 26, and `clerk-live` on pushes to
-`main` and same-repository PRs.
+22.22.0, 24.20.0 and 26.11.1, `cli-smoke` again on Node 26.11.1, and `clerk-live`
+on pushes to `main` and same-repository PRs.
+
+CI pins every job to `ubuntu-24.04`, and every job that runs the repository's
+code to an exact Node patch. Bump the patches by hand in every workflow under
+`.github/workflows/` that pins one, like the server image: Node 24 moves with the
+`node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
 
 Format and lint cache their results, so a repeat run rechecks only the files
 that changed. ESLint's cache cannot tell when a changed type alters an unchanged
