@@ -10,7 +10,8 @@ export default defineConfig({
   maxFailures: 1,
   timeout: 120_000,
   expect: { timeout: 15_000 },
-  reporter: "list",
+  // On CI, failures also become annotations, which the weekly flake report counts.
+  reporter: process.env.CI ? [["list"], ["github"]] : "list",
   outputDir: ".local/tier1-results",
   use: {
     actionTimeout: 15_000,

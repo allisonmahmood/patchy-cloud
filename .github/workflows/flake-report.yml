@@ -1,0 +1,34 @@
+name: Flake report
+
+# Every Monday, counts the tests that failed in CI over the last seven days and
+# rewrites the open issue labelled `flake-report` (scripts/flake-report.ts). The
+# token reads runs, jobs and annotations, and writes only that issue.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  issues: write
+
+# A manual run and the schedule never write the issue at once.
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+      - name: Rewrite the flake report issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/flake-report.ts --publish

@@ -12,7 +12,8 @@ export default defineConfig({
   maxFailures: 1,
   timeout: 180_000,
   expect: { timeout: 15_000 },
-  reporter: "list",
+  // On CI, failures also become annotations, which the weekly flake report counts.
+  reporter: process.env.CI ? [["list"], ["github"]] : "list",
   outputDir: ".local/clerk-results",
   use: {
     ...devices["Desktop Chrome"],
