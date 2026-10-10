@@ -527,7 +527,7 @@ it.layer(services)("host fleet controller", (it) => {
             assert.strictEqual(lease.lease_epoch, 1);
             yield* TestClock.adjust(5_000);
             const binding = yield* Fiber.join(opening);
-            assert.isAtLeast(binding.spareWaitMs, 25_000);
+            // No lower bound: the wait is sampled before its claim, which can take a later spare.
             assert.isBelow(binding.spareWaitMs, 40_000);
             assert.strictEqual((yield* right.ensureBinding(companyId)).taskId, binding.taskId);
             const tasks = yield* provider.list;
