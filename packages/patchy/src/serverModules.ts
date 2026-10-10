@@ -23,12 +23,18 @@ export const discoverServerModules = Effect.fn("discoverServerModules")(
   function* (root: string) {
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* sourcePath(root, "server");
-    if (!(yield* fs.exists(directory))) return [];
+    // A missing server/ or entry holds no module, including one deleted while this reads.
+    const entries = yield* fs
+      .readDirectory(directory)
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
     const modules: string[] = [];
-    for (const entry of yield* fs.readDirectory(directory)) {
+    for (const entry of entries) {
       const relative = `server/${entry}`;
       const target = yield* sourcePath(root, relative);
-      const info = yield* fs.stat(target);
+      const info = yield* fs
+        .stat(target)
+        .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.void));
+      if (info === undefined) continue;
       if (info.type === "Directory")
         return yield* new LocalError({
           message: `Server modules must be one level deep; move ${relative}/*.ts into server/.`,

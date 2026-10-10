@@ -24,6 +24,26 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
     })
   );
 
+  it.effect("skips a module deleted between listing server/ and reading it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-modules-" });
+      const deleted = path.join(root, "server/leads.ts");
+      yield* fs.makeDirectory(path.join(root, "server"));
+      yield* fs.writeFileString(deleted, "");
+      yield* fs.writeFileString(path.join(root, "server/people.ts"), "");
+      const modules = yield* discoverServerModules(root).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          stat: (file) =>
+            file === deleted ? fs.remove(file).pipe(Effect.andThen(fs.stat(file))) : fs.stat(file)
+        })
+      );
+      assert.deepStrictEqual(modules, ["people"]);
+    })
+  );
+
   it.effect("refuses missing, renamed and duplicate generated modules until refresh", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -16,6 +16,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpServer from "effect/http/HttpServer";
 import * as DevServer from "./devServer.js";
+import * as DirectoryWatch from "./DirectoryWatch.js";
 import { readRecord } from "./devState.js";
 import type { Prepared } from "./devPreparation.js";
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
@@ -292,7 +293,7 @@ it.live(
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttp),
       Effect.provide(NodeHttpServer.layerTest),
-      Effect.provide(NodeServices.layer)
+      Effect.provide([NodeServices.layer, DirectoryWatch.layer])
     ),
   { timeout: 30_000 }
 );
@@ -371,7 +372,7 @@ it.live(
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttp),
       Effect.provide(NodeHttpServer.layerTest),
-      Effect.provide(NodeServices.layer)
+      Effect.provide([NodeServices.layer, DirectoryWatch.layer])
     ),
   { timeout: 30_000 }
 );

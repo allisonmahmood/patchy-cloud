@@ -1,14 +1,15 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Native directory watches discover module additions; Vite owns the authored dependency graph.
-import { watch as watchDirectory, type FSWatcher } from "node:fs";
-import * as path from "node:path";
 import type { HandlerDescriptors, ReleaseToolchain } from "@patchy/api";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import { LocalError } from "./CliError.js";
+import * as DirectoryWatch from "./DirectoryWatch.js";
 import { watchServer, type BuiltServer } from "./serverBuild.js";
 import { discoverServerModules } from "./serverModules.js";
 
@@ -34,6 +35,9 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
   sharedStores: readonly string[]
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directories = yield* DirectoryWatch.DirectoryWatch;
+  const scope = yield* Effect.scope;
   const output = yield* fs
     .makeTempDirectoryScoped({ prefix: "patchy-server-watch-" })
     .pipe(
@@ -54,7 +58,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
     )
   );
   const serverDirectory = path.join(root, "server");
-  let sourceWatcher: FSWatcher | undefined;
+  let sourceWatch: Scope.Closeable | undefined;
   let builder: { close(): Promise<void> } | undefined;
   let modules: readonly string[] | undefined;
   let generation = 0;
@@ -71,77 +75,89 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       changes,
       new LocalError({ message: "Could not watch server source files.", cause })
     );
-  yield* Effect.addFinalizer(() =>
-    Effect.promise(async () => {
-      sourceWatcher?.close();
-      await builder?.close();
-    })
-  );
-  yield* Effect.acquireRelease(
-    Effect.try({
-      try: () => {
-        const watcher = watchDirectory(root, (_event, filename) => {
-          if (filename === null || filename === "server") {
-            serverReplaced = true;
-            changed();
-          }
-        });
-        watcher.on("error", watchError);
-        return watcher;
-      },
-      catch: (cause) => new LocalError({ message: "Could not watch server source files.", cause })
-    }),
-    (watcher) => Effect.sync(() => watcher.close())
-  );
-  const rediscover = Effect.fn("Dev.watchServer.sources")(
-    function* () {
-      if (serverReplaced) {
-        sourceWatcher?.close();
-        sourceWatcher = undefined;
-        if (yield* fs.exists(serverDirectory))
-          sourceWatcher = yield* Effect.try({
-            try: () =>
-              watchDirectory(serverDirectory, { recursive: true }, changed).on("error", watchError),
-            catch: (cause) =>
-              new LocalError({ message: "Could not watch server source files.", cause })
-          });
-        serverReplaced = false;
-      }
-      const discovered = yield* discoverServerModules(root);
-      if (
-        builder !== undefined &&
-        modules?.length === discovered.length &&
-        modules.every((name, index) => name === discovered[index])
-      )
-        return false;
-      if (modules !== undefined) {
-        for (const name of discovered) {
-          if (!modules.includes(name))
-            yield* Console.log(`new server module ${name}: run pnpm patchy refresh for types`);
+  yield* Effect.addFinalizer(() => Effect.promise(async () => await builder?.close()));
+  // Directory watches see modules come and go; Vite watches what they import. Modules
+  // are one level deep, so neither watch recurses.
+  yield* directories
+    .watch(root, {
+      change: (filename) => {
+        if (filename === null || filename === "server") {
+          serverReplaced = true;
+          changed();
         }
-      }
-      const previous = builder;
-      builder = undefined;
-      const current = ++generation;
-      if (previous !== undefined) yield* Effect.promise(() => previous.close());
-      modules = discovered;
-      builder = yield* Effect.tryPromise({
-        try: () =>
-          watchServer(root, discovered, toolchain, output, sharedStores, (result) => {
-            Queue.offerUnsafe(changes, { _tag: "Build", generation: current, result });
-          }),
-        catch: (cause) =>
-          isLocalError(cause)
-            ? cause
-            : new LocalError({ message: "Could not start the server build watcher.", cause })
-      });
-      return true;
-    },
-    Effect.catchTags({
-      PlatformError: (cause) =>
-        Effect.fail(new LocalError({ message: "Could not inspect server source files.", cause }))
+      },
+      error: watchError
     })
-  );
+    .pipe(
+      Effect.mapError(
+        (cause) => new LocalError({ message: "Could not watch server source files.", cause })
+      )
+    );
+  const rediscover = Effect.fn("Dev.watchServer.sources")(function* () {
+    if (serverReplaced) {
+      // Clear the flag before any work, so a replacement reported meanwhile is
+      // handled next time. A failure to start, other than a missing server/,
+      // sets it again to retry.
+      serverReplaced = false;
+      if (sourceWatch !== undefined) yield* Scope.close(sourceWatch, Exit.void);
+      const latest = yield* Scope.fork(scope);
+      sourceWatch = latest;
+      yield* directories
+        .watch(serverDirectory, {
+          change: changed,
+          error: (error) => {
+            // A replaced watch's late report is moot.
+            if (sourceWatch !== latest) return;
+            if (error._tag === "DirectoryGone") {
+              serverReplaced = true;
+              changed();
+            } else watchError(error);
+          }
+        })
+        .pipe(
+          Scope.provide(latest),
+          // Absent, or deleted since: the root watch reports when server/ appears.
+          Effect.catchTags({ DirectoryGone: () => Effect.void }),
+          Effect.mapError(
+            (cause) => new LocalError({ message: "Could not watch server source files.", cause })
+          ),
+          Effect.tapError(() =>
+            Effect.sync(() => {
+              serverReplaced = true;
+            })
+          )
+        );
+    }
+    const discovered = yield* discoverServerModules(root);
+    if (
+      builder !== undefined &&
+      modules?.length === discovered.length &&
+      modules.every((name, index) => name === discovered[index])
+    )
+      return false;
+    if (modules !== undefined) {
+      for (const name of discovered) {
+        if (!modules.includes(name))
+          yield* Console.log(`new server module ${name}: run pnpm patchy refresh for types`);
+      }
+    }
+    const previous = builder;
+    builder = undefined;
+    const current = ++generation;
+    if (previous !== undefined) yield* Effect.promise(() => previous.close());
+    modules = discovered;
+    builder = yield* Effect.tryPromise({
+      try: () =>
+        watchServer(root, discovered, toolchain, output, sharedStores, (result) => {
+          Queue.offerUnsafe(changes, { _tag: "Build", generation: current, result });
+        }),
+      catch: (cause) =>
+        isLocalError(cause)
+          ? cause
+          : new LocalError({ message: "Could not start the server build watcher.", cause })
+    });
+    return true;
+  });
   changed();
   return Effect.gen(function* (): Effect.fn.Return<ServerBuild, LocalError, FileSystem.FileSystem> {
     while (true) {
