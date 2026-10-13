@@ -50,6 +50,44 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 10,
+    date: "2026-10-13",
+    through: "64458b2207890bb9d5674ebde038a65c86ea7652",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "New pages and tools no longer get lost in a temporary folder",
+        detail:
+          "Your AI agent now keeps the pages and tools it makes in a Patchy folder in your home folder, unless you choose another, and tells you where they are. Before, they could land in a temporary folder, which made a page hard to update later and could lose the only copy of a tool. Setting up Patchy again on another computer now updates your welcome page instead of making a second one.",
+        prs: [658]
+      },
+      {
+        kind: "Fixed",
+        title: "Your agent hears when its copy of Patchy is out of date",
+        detail:
+          "Each Patchy update now has its own version number. When your AI agent publishes a page, starts a new tool or publishes the company look with an older copy of the patchy command, it is told to update first, and the update brings its newest instructions too. An older copy used to carry on without ever finding out.",
+        prs: [649, 654]
+      },
+      {
+        kind: "Improved",
+        title: "See a sample tool in your look before you approve it",
+        detail:
+          "When your agent captures your company's look, it now also builds a small sample tool in it, with your logo, a filter, a table and buttons, and shows it beside the sample page. You see how your tools will really look before you agree, and the agent fills any gaps the sample finds in the look's brief.",
+        prs: [656]
+      },
+      {
+        kind: "Improved",
+        title: "Publishing the company look says who it's for",
+        detail:
+          "When an admin's agent publishes the company look, it now says the look is for everyone at the company and that colleagues' agents use it for new pages and tools with nothing to set up. It no longer offers to keep a copy of the look's files, since Patchy already holds them.",
+        prs: [655]
+      }
+    ],
+    behindTheScenes: [
+      "Connections to your company's data now record what kind of service each one reaches."
+    ]
+  },
+  {
     id: 9,
     date: "2026-10-10",
     through: "7164ab47d3965e2ca432f0e9660fcfcd40e9ef45",
