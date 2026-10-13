@@ -10,7 +10,10 @@ one npm package, `patchy`, at one exact version: the **release**. Separate
 packages would allow a repo to execute one config language, generate another
 client and run a third runtime. One pinned devDependency makes that mismatch a
 refused state rather than a compatibility matrix. The package lives in
-`packages/patchy`; the executable is `patchy`.
+`packages/patchy`; the executable is `patchy`. The release is `0.<id>.0`, where
+`id` is the newest What's new release, so every announced deploy names a new
+release and tooling installed before it is told to upgrade. A deploy without a
+What's new release keeps the name, though its bytes may change.
 
 The package stays private until launch. An instance distributes its packed bytes
 at unauthenticated, immutable `GET /sdk/patchy-<release>-<digest>.tgz` and reports

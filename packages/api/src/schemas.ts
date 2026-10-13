@@ -19,7 +19,8 @@ import {
   type HandlerSchema
 } from "./handlers.js";
 
-export const CURRENT_RELEASE = "0.0.1";
+/** The `patchy` package version, `0.<id>.0` for the newest What's new release. */
+export const CURRENT_RELEASE = "0.9.0";
 export const MANIFEST_VERSION = 1;
 export const WIRE_VERSION = 1;
 

@@ -6,7 +6,10 @@
  * The agent that deploys writes the next release, following AGENTS.md › Deploying. Put it
  * first: `id` one above the newest, `date` today, `through` the full sha of `origin/main`
  * that it was written from. It covers what merged after the previous release's `through`.
- * Never reuse or renumber an id: each person's seen marker compares against it.
+ * Never reuse or renumber an id: each person's seen marker compares against it. Set the
+ * `patchy` version in `packages/patchy/package.json` and `CURRENT_RELEASE` in
+ * `packages/api/src/schemas.ts` to `0.<id>.0`, so CLIs and patch repos installed before this
+ * deploy are told to upgrade.
  *
  * Write for a colleague who has never read the code.
  * - One change per thing a person would notice. Combine PRs that make one change, and split

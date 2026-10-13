@@ -739,7 +739,7 @@ describe("patchy publish", async () => {
         files: {},
         uses: {}
       },
-      metadata: { cliVersion: "0.0.1", filename: "page.html" }
+      metadata: { cliVersion: CURRENT_RELEASE, filename: "page.html" }
     });
     expect(instance.requests[2]?.body).not.toHaveProperty("scope");
 
