@@ -16,6 +16,7 @@ it("compiles a named, shaped query with values and its known refusals", () => {
   const files: Readonly<Record<string, string>> = {
     "/generated.ts": generated.client,
     "/consumer.ts": `import { createClient, type QueryError } from "./generated.js";
+import { isPatchyError } from "patchy/client";
 import { t } from "patchy/config";
 const analytics = createClient("analytics", async () => ({ ok: true, rows: [] }));
 async function use(nullableFlag: boolean) {
@@ -34,11 +35,25 @@ async function use(nullableFlag: boolean) {
   analytics.query({ name: "n", query: "SELECT {x}", values: { x: { nested: 1 } }, shape: { n: { kind: "integer" } } });
   // @ts-expect-error references are not shape kinds
   analytics.query({ name: "n", query: "SELECT 1", shape: { n: { kind: "ref" } } });
+  try { await analytics.query({ name: "n", query: "SELECT 1 AS n", shape: { n: { kind: "integer" } } }); } catch (error: unknown) {
+    if (isPatchyError(error, "invalid_query", "posthog")) {
+      const message: string = error.details.message;
+      // @ts-expect-error PostHog sends no SQLSTATE
+      error.details.sqlstate;
+    }
+  }
 }
 function inspect(error: QueryError) {
-  if (error.code === "invalid_query") { const message: string = error.details.message; }
+  if (error.code === "invalid_query") {
+    const message: string = error.details.message;
+    // @ts-expect-error PostHog sends no SQLSTATE
+    error.details.sqlstate;
+  }
   if (error.code === "source_rate_limited") { const retry: number | undefined = error.retryAfter; }
-  if (error.code === "shape_mismatch" && "column" in error.details) { const column: string = error.details.column; }
+  if (error.code === "shape_mismatch") {
+    const column: string = error.details.column;
+    const type: string | undefined = error.details.type;
+  }
 }
 `
   };

@@ -410,7 +410,7 @@ export function createGuest(
         }
         if (!reply.ok) {
           const error =
-            decodeHandlerError(reply) ?? decodeError(reply) ?? new Error("Callback refused.");
+            decodeHandlerError(reply) ?? decodeError(reply, op) ?? new Error("Callback refused.");
           refusals.set(error, reply);
           throw error;
         }

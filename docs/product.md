@@ -1164,7 +1164,9 @@ while safe, even inside arrays, maps and tuples; decimals and wider integers nee
 UTC ISO; anything else fails `shape_mismatch` naming the column. A result PostHog
 cut short (`hasMore`) fails `too_large`, telling the author to add a `LIMIT` of at
 most 1,000 or aggregate. HogQL errors are `invalid_query` with PostHog's bounded
-message. PostHog's rate, query budget and concurrency refusals are one
+message and no SQLSTATE. A refusal records the operation that made it, and
+`isPatchyError(error, code, "posthog")` narrows to PostHog's details; narrowing on
+the code alone keeps Postgres's, so Postgres patches typecheck unchanged. PostHog's rate, query budget and concurrency refusals are one
 `source_rate_limited` error, with `retryAfter` only when PostHog sent one; Patchy
 never replays a call.
 

@@ -40,7 +40,7 @@ const result = await patchy.connections.analytics.query({
 ## Bounds and refusals
 
 - At most 1,000 rows and 8 MiB per call, a 256 KiB request, and a 15-second service deadline bounded by the action's remaining time. PostHog returns 100 rows unless the query has its own `LIMIT`; a result PostHog cut short fails with `too_large`, so add a `LIMIT` of at most 1,000 or aggregate.
-- `invalid_query` carries PostHog's message in `details.message`; fix the query rather than hiding the error.
+- `invalid_query` carries PostHog's message in `details.message`, with no SQLSTATE; fix the query rather than hiding the error. Narrow a caught error with `isPatchyError(error, "invalid_query", "posthog")`, imported from the relative generated `client.js`; narrowing on the code alone types Postgres's details.
 - PostHog's rate, query budget and concurrency limits fail with `source_rate_limited`, with `retryAfter` only when PostHog sent one. Patchy never retries a query; don't loop on it. `busy` means Patchy's own per-project slots stayed full and nothing was sent.
 - `source_unavailable` covers an unreachable PostHog and a key or project that stopped working; the latter needs an admin at `/company/connections`.
 - Every call, with its name and query text but never its values or rows, appears in the connection's recent calls for company admins.

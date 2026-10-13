@@ -25,7 +25,8 @@ export type { ErrorCode, ErrorDetails, Errors, ShapeMismatchDetails } from "patc
 export type Value = null | boolean | number | string | readonly (null | boolean | number | string)[];
 export type BoundaryError = ClientBoundaryError | Errors<"connection_not_declared">;
 // These unions describe known Patchy refusals, not checked or exhaustive TypeScript throws.
-export type QueryError = BoundaryError | Errors<"invalid_query" | "shape_mismatch" | "source_rate_limited">;
+// PostHog's own details: narrow a caught error with isPatchyError(error, code, "posthog").
+export type QueryError = BoundaryError | Errors<"invalid_query" | "shape_mismatch" | "source_rate_limited", "posthog.query">;
 export type Rows<Row> = { readonly ok: true; readonly rows: readonly Row[] };
 ${shapeTypes}export interface QueryRequest<S extends Shape> {
   /** Labels the call in the connection's recent calls and in PostHog's own query log. */
@@ -44,8 +45,8 @@ ${wireShape}export function createClient(connection: string, call: Call): Client
     async query<const S extends Shape>(request: QueryRequest<S>): Promise<Rows<ShapeRow<S>>> {
       const args = { connection, name: request.name, query: request.query, ...(request.values === undefined ? {} : { values: request.values }), shape: wireShape(request.shape) };
       let value: unknown;
-      try { value = await call("posthog.query", args); } catch (error) { throw decodeError(error) ?? error; }
-      const error = decodeError(value);
+      try { value = await call("posthog.query", args); } catch (error) { throw decodeError(error, "posthog.query") ?? error; }
+      const error = decodeError(value, "posthog.query");
       if (error) throw error;
       if (value === null || typeof value !== "object" || !("ok" in value) || value.ok !== true || !("rows" in value) || !Array.isArray(value.rows)) throw new PatchyError("invalid_request", "The PostHog transport returned an invalid response.", {});
       return value as Rows<ShapeRow<S>>;

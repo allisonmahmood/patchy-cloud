@@ -192,7 +192,7 @@ export function createPortTransport(
     if (value.kind === "error") {
       const error =
         (request.op === "server.call" ? decodeHandlerError(value.error) : undefined) ??
-        decodeError(value.error) ??
+        decodeError(value.error, request.op) ??
         new PatchyError("invalid_request", "The broker returned an invalid error.", {});
       request.reject(
         value.replyLost === true && error instanceof PatchyError && error.code === "unknown_outcome"
@@ -594,7 +594,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
       if (result !== null && typeof result === "object" && "ok" in result && result.ok === false) {
         const error =
           (op === "server.call" && response.ok ? decodeHandlerError(result) : undefined) ??
-          decodeError(result);
+          decodeError(result, op);
         if (error) throw error;
       }
       if (

@@ -54,8 +54,8 @@ export interface KeyedRelation<Row, Columns extends keyof Row, Key> extends Rela
 ${shapeTypes}export type Query = <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S) => Promise<Rows<ShapeRow<S>>>;
 ${wireShape}async function invoke(call: Call, op: Parameters<Call>[0], args: unknown): Promise<{ readonly ok: true; readonly rows: readonly unknown[]; readonly cursor?: string | null }> {
   let value: unknown;
-  try { value = await call(op, args); } catch (error) { throw decodeError(error) ?? error; }
-  const error = decodeError(value);
+  try { value = await call(op, args); } catch (error) { throw decodeError(error, op) ?? error; }
+  const error = decodeError(value, op);
   if (error) throw error;
   if (value === null || typeof value !== "object" || !("ok" in value) || value.ok !== true || !("rows" in value) || !Array.isArray(value.rows)) throw new PatchyError("invalid_request", "The Postgres transport returned an invalid response.", {});
   return value as { readonly ok: true; readonly rows: readonly unknown[]; readonly cursor?: string | null };

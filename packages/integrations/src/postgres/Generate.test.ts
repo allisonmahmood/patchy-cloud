@@ -108,9 +108,7 @@ async function use(nullableFlag: boolean) {
   db.query("SELECT 1", [], { n: t.ref("notes") });
   try { await db.accounts.list(); } catch (error: unknown) {
     if (isPatchyError(error, "invalid_query")) {
-      // Postgres always sends its SQLSTATE; PostHog's invalid_query carries a message only.
-      const sqlstate: string | undefined = error.details.sqlstate;
-      const message: string = error.details.message;
+      const sqlstate: string = error.details.sqlstate;
       const position: string | undefined = error.details.position;
     }
     if (isPatchyError(error, "shape_mismatch")) {
@@ -139,7 +137,7 @@ async function use(nullableFlag: boolean) {
   }
 }
 function inspect(error: ListError) {
-  if (error.code === "invalid_query") { const sqlstate: string | undefined = error.details.sqlstate; }
+  if (error.code === "invalid_query") { const sqlstate: string = error.details.sqlstate; }
   if (error.code === "shape_mismatch") {
     if (error.details.reason === "source_schema_changed") {
       const relation: string = error.details.relation.name;
