@@ -146,9 +146,9 @@ take the person's role, email and company name from `whoami --json`:
   and with none, move on.
 
   On yes, say it takes about ten minutes, then capture the site into a new folder by
-  `look-capture.md` in this directory. Show the specimen with
-  `patchy look preview <dir>`, sum the look up in one line and fold in corrections
-  until they agree. Then publish revision 1:
+  `look-capture.md` in this directory. Show the specimen and the sample tool as it
+  says, sum the look up in one line and fold in corrections until they agree. Then
+  publish revision 1:
 
   ```bash
   patchy look publish <dir> --note "captured from acme.com" --json
@@ -234,8 +234,9 @@ actually gives you; never invent one, and never carry these into a real session.
 >
 > **User**: yes
 >
-> **Agent**: That takes about ten minutes… Here's the specimen: deep forest green on
-> warm cream, serif headings, generous space, plain-spoken copy. Sound right?
+> **Agent**: That takes about ten minutes… Here's the specimen and a sample tool: deep
+> forest green on warm cream, serif headings, generous space, plain-spoken copy. Sound
+> right?
 >
 > **User**: the green should be darker, like the footer
 >

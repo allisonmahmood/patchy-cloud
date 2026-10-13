@@ -44,6 +44,10 @@ _Avoid_: look version (patches have versions), theme update
 The fixed page Patchy owns that shows a look on plain elements: text, buttons, cards, a badge per status, a table, a form, an empty state, their states and the colour swatches, styled only by `look.css`. It checks the tokens and element styles, not the brief's recipes, and ships with the release so every agent shows the same page.
 _Avoid_: sample page, style guide, preview (the file `patchy look preview` writes from it)
 
+**Sample tool**:
+A throwaway page an agent builds while capturing a look, from the candidate's `look.css`, the brief's recipes and the logo, so the person approves how their tools will look rather than only the specimen. It stays local and is never published; a gap it finds in the brief is fixed in the brief.
+_Avoid_: mockup, demo patch
+
 **Group**:
 A named set of users used to grant access, never a container that owns patches or connections. Its future access model is recorded in [the product](../../docs/product.md#users-admins-groups).
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
