@@ -89,8 +89,9 @@ and its `/install.mjs` installs that release globally; rerunning it upgrades.
 Public npm distribution remains future work. A repo pins that tarball as one
 devDependency, and `pnpm patchy …` runs the pinned copy.
 
-New file publishes require the exact-current CLI; repo publishing and new dev
-starts also check the package pin and installed runtime before executing config.
+New file and look publishes and `patchy init` require the exact-current CLI;
+repo publishing and new dev starts also check the package pin and installed
+runtime before executing config.
 A running dev session is not killed by a release. Release, manifest version,
 runtime wire version and schema revision are separate: a release upgrade does
 not invalidate a deployed bundle's stable wire. Retiring a wire contract would

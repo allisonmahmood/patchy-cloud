@@ -154,6 +154,21 @@ describe("patchy look publish", () => {
     expect(text.status).toBe(2);
     expect(text.stderr.trim()).toBe(memberRefusal.error);
   });
+
+  it("refuses a CLI behind its instance with the installer line, before sending the look", async () => {
+    const instance = await stubInstance(
+      (_request, respond) => respond(201, { ok: true, current: second }),
+      () => "9.9.9"
+    );
+    const result = await runCli(["look", "publish", lookDir(), "--note", "darker", "--json"], {
+      env: env(instance.url)
+    });
+    expect(result.status).toBe(1);
+    const failure = JSON.parse(result.stderr);
+    expect(failure).toMatchObject({ kind: "local", code: "release_mismatch" });
+    expect(failure.error).toContain(`curl -fsS '${instance.url}/install.mjs'`);
+    expect(instance.requests.map(({ url }) => url)).toEqual(["/api/release"]);
+  });
 });
 
 describe("patchy look restore", () => {
