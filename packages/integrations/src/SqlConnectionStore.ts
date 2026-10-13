@@ -120,6 +120,48 @@ export const make = Effect.gen(function* () {
         ON s.connection_id = c.id AND s.company_id = c.company_id AND s.revision = c.metadata_revision
       WHERE c.company_id = ${companyId} AND c.integration = ${integration} AND c.handle = ${handle}`
   });
+  /**
+   * Every declaration of a connection in a stored version of one company's patches: the
+   * deletion rule, so `usage` and `delete` cannot disagree about what is unused.
+   */
+  const declarations = (companyId: string) => sql`patch_versions v
+    JOIN patches p ON p.id = v.patch_id
+    CROSS JOIN LATERAL jsonb_each(v.manifest->'uses') AS declaration
+    WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(integrations)}`;
+  const usageRows = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({ connectionId: Schema.String, usedBy: Schema.Array(Schema.String) }),
+    execute: (companyId) => sql`SELECT declaration.value->>'id' AS "connectionId",
+      COALESCE(array_agg(DISTINCT p.name ORDER BY p.name) FILTER (
+        WHERE v.id = p.current_version_id
+          AND p.deleted_at IS NULL AND p.retired_at IS NULL AND p.disabled_at IS NULL
+      ), '{}') AS "usedBy"
+      FROM ${declarations(companyId)}
+      GROUP BY 1`
+  });
+  const versionRows = SqlSchema.findAll({
+    Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
+    Result: Schema.Struct({ id: Schema.String, patch: Schema.String, number: Schema.Int }),
+    execute: ({ companyId, ids }) => sql`SELECT v.id, p.name AS patch, v.version_number AS number
+      FROM patch_versions v JOIN patches p ON p.id = v.patch_id
+      WHERE p.company_id = ${companyId} AND ${sql.in("v.id", ids)}`
+  });
+  const usage = Effect.fn("ConnectionStore.usage")(
+    function* (companyId: string) {
+      const rows = yield* usageRows(companyId);
+      return new Map(
+        rows.map((row) => [row.connectionId, { usedBy: row.usedBy, declared: true }] as const)
+      );
+    },
+    Effect.catchTags(safe("usage"))
+  );
+  const versions = Effect.fn("ConnectionStore.versions")(
+    function* (companyId: string, ids: ReadonlyArray<string>) {
+      const rows = ids.length === 0 ? [] : yield* versionRows({ companyId, ids });
+      return new Map(rows.map((row) => [row.id, { patch: row.patch, number: row.number }]));
+    },
+    Effect.catchTags(safe("versions"))
+  );
   // The current revision's immutable row supplies both metadata and its timestamp.
   const detail = Effect.fn("ConnectionStore.detail")(
     function* (companyId: string, integration: Integration, handle: string) {
@@ -395,13 +437,8 @@ export const make = Effect.gen(function* () {
       reportedTransaction(
         Effect.gen(function* () {
           const connection = yield* lock(input);
-          const references =
-            yield* sql`SELECT 1 FROM patch_versions v JOIN patches p ON p.id = v.patch_id
-      WHERE p.company_id = ${input.companyId} AND EXISTS (
-        SELECT 1 FROM jsonb_each(v.manifest->'uses') AS declaration
-        WHERE declaration.value->>'kind' IN ${sql.in(integrations)}
-          AND declaration.value->>'id' = ${input.id}
-      ) LIMIT 1`;
+          const references = yield* sql`SELECT 1 FROM ${declarations(input.companyId)}
+            AND declaration.value->>'id' = ${input.id} LIMIT 1`;
           if (references.length !== 0) return yield* new ConnectionInUse({});
           yield* sql`DELETE FROM connections WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return connection;
@@ -456,6 +493,8 @@ export const make = Effect.gen(function* () {
   return ConnectionStore.ConnectionStore.of({
     list,
     get,
+    usage,
+    versions,
     detail,
     snapshot,
     connect,

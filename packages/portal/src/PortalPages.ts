@@ -10,22 +10,14 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { PatchName, PatchState, SharingScope } from "@patchy/api";
 import { MachineTokens, pageResponse, RequireSession, Session } from "@patchy/auth";
-import { escapeHtml } from "@patchy/core";
+import { ago, copyScript, copyScriptPath, escapeHtml } from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
-import {
-  copyScript,
-  copyScriptPath,
-  firstPatch,
-  renderFirstPatchNote,
-  renderGuide,
-  renderGuideRow
-} from "./guide.js";
+import { firstPatch, renderFirstPatchNote, renderGuide, renderGuideRow } from "./guide.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
-  ago,
   type ConfirmationAction,
   type PatchAction,
   renderConfirmation,

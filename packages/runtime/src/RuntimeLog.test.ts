@@ -83,6 +83,32 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
       })
   );
 
+  it.effect("reads each connection's newest call within its company", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const log = yield* RuntimeLog.RuntimeLog;
+      const call = (
+        correlationId: string,
+        connectionId: string,
+        companyId: string = DEV_SEED.companyId
+      ) => log.begin({ ...mutation(correlationId), op: "postgres.list", connectionId, companyId });
+      yield* call("latest-older", "latest-busy");
+      yield* TestClock.adjust(1_000);
+      yield* call("latest-newer", "latest-busy");
+      yield* TestClock.adjust(1_000);
+      yield* call("latest-foreign", "latest-quiet", "foreign");
+      const latest = yield* log.latest({
+        companyId: DEV_SEED.companyId,
+        connectionIds: ["latest-busy", "latest-quiet"]
+      });
+      assert.deepStrictEqual([...latest], [["latest-busy", new Date(NOW + 1_000)]]);
+      assert.strictEqual(
+        (yield* log.latest({ companyId: DEV_SEED.companyId, connectionIds: [] })).size,
+        0
+      );
+    })
+  );
+
   it.effect("retains patch and viewer callback attribution in recent connection calls", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);

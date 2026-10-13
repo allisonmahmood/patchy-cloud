@@ -8,6 +8,19 @@ export const dateLabel = (iso: string): string => {
   return `${parts.day} ${months[parts.month - 1]} ${parts.year}`;
 };
 
+/** "4 minutes ago", "just now": a reader's sense of how long since `iso`. */
+export const ago = (iso: string, now: number): string => {
+  const seconds = Math.max(
+    0,
+    Math.round((now - DateTime.toEpochMillis(DateTime.makeUnsafe(iso))) / 1000)
+  );
+  const unit = (count: number, name: string) => `${count} ${name}${count === 1 ? "" : "s"} ago`;
+  if (seconds < 45) return "just now";
+  if (seconds < 3600) return unit(Math.max(1, Math.round(seconds / 60)), "minute");
+  if (seconds < 86_400) return unit(Math.round(seconds / 3600), "hour");
+  return unit(Math.round(seconds / 86_400), "day");
+};
+
 export const daysLeft = (deadline: number, now: number): number =>
   Math.max(0, Math.ceil((deadline - now) / 86_400_000));
 

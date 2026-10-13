@@ -10,43 +10,61 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";
+import type { SqlError } from "effect/sql/SqlError";
 import * as ConnectionPage from "./ConnectionPage.js";
+import * as ConnectionsView from "./ConnectionsView.js";
 
-const page = Effect.fn("ConnectionPages.page")(function* (action: ConnectionPage.Action) {
-  const viewer = yield* RequireSession.Viewer;
-  const session = yield* Session.Session;
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const result = new URL(request.url, session.publicBaseUrl).searchParams.get("result");
-  return yield* ConnectionPage.handle(viewer, action, result).pipe(
-    Effect.map((content) =>
-      content.redirect
-        ? HttpServerResponse.redirect(content.redirect, {
-            status: 303,
-            headers: { "cache-control": "private, no-store" }
-          })
-        : pageResponse(
-            {
-              ...content,
-              styles: ConnectionPage.styles,
-              app: { viewer, section: "connections" }
-            },
-            session
-          )
-    ),
-    Effect.catch((error) =>
-      Effect.succeed(
-        pageResponse(
-          {
-            title: "Connection unavailable",
-            body: `<div class="note note-warn" role="alert">${escapeHtml(error.message)}<br><code>${escapeHtml(error.code)}</code></div><p><a href="/company/connections">Return to connections</a> and try again.</p>${signOutForm()}`,
-            status: error.status
-          },
-          session
-        )
+type Params = Readonly<Record<string, string | undefined>>;
+
+/**
+ * Renders a page in the app shell or follows a change's redirect. A connection that cannot be
+ * shown (missing, another company's, or a store that cannot answer) gets the card door.
+ */
+const serve = <R>(
+  page: (
+    viewer: RequireSession.Viewer["Service"],
+    params: Params,
+    query: URLSearchParams
+  ) => Effect.Effect<ConnectionPage.Page, ConnectionStore.ConnectionError | SqlError, R>
+) =>
+  Effect.gen(function* () {
+    const viewer = yield* RequireSession.Viewer;
+    const session = yield* Session.Session;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const query = new URL(request.url, session.publicBaseUrl).searchParams;
+    return yield* page(viewer, yield* HttpRouter.params, query).pipe(
+      Effect.map((content) =>
+        content.redirect
+          ? HttpServerResponse.redirect(content.redirect, {
+              status: 303,
+              headers: { "cache-control": "private, no-store" }
+            })
+          : pageResponse(
+              {
+                ...content,
+                heading: "",
+                styles: ConnectionsView.styles,
+                app: { viewer, section: "connections" }
+              },
+              session
+            )
+      ),
+      Effect.catch((error) =>
+        error._tag === "SqlError"
+          ? Effect.fail(error)
+          : Effect.succeed(
+              pageResponse(
+                {
+                  title: "Connection unavailable",
+                  body: `<div class="note note-refused" role="alert">${escapeHtml(error.message)}<br><code>${escapeHtml(error.code)}</code></div><p><a href="/company/connections">Return to connections</a> and try again.</p>${signOutForm()}`,
+                  status: error.status
+                },
+                session
+              )
+            )
       )
-    )
-  );
-});
+    );
+  });
 
 const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
   Effect.gen(function* () {
@@ -79,6 +97,8 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
     );
   });
 
+const confirmations = ["rotate", "retarget", "description", "disconnect", "delete"] as const;
+
 /** Integrations mounts its own pages; Auth remains independent of integrations. */
 export const layer: Layer.Layer<
   never,
@@ -96,46 +116,50 @@ export const layer: Layer.Layer<
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add(
-      "GET",
-      "/company/connections",
-      errors(RequireSession.withViewer(page({ kind: "list" })))
-    );
-    yield* router.add(
-      "GET",
-      "/company/connections/:id",
-      errors(
-        RequireSession.withViewer(
-          Effect.flatMap(HttpRouter.params, (params) => page({ kind: "view", id: params.id ?? "" }))
+    const { indexPath, cataloguePath } = ConnectionsView;
+    const get = (path: HttpRouter.PathInput, target: (params: Params) => ConnectionPage.Target) =>
+      router.add(
+        "GET",
+        path,
+        errors(
+          RequireSession.withViewer(
+            serve((viewer, params, query) => ConnectionPage.read(viewer, target(params), query))
+          )
         )
-      )
-    );
-    yield* router.add(
-      "POST",
-      "/company/connections/connect",
-      errors(RequireSession.sameOrigin(RequireSession.withViewer(page({ kind: "connect" }))))
-    );
-    for (const kind of [
-      "test",
-      "rotate",
-      "retarget",
-      "refresh",
-      "disconnect",
-      "reconnect",
-      "description",
-      "delete"
-    ] as const) {
-      yield* router.add(
+      );
+    const post = (path: HttpRouter.PathInput, change: (params: Params) => ConnectionPage.Change) =>
+      router.add(
         "POST",
-        `/company/connections/:id/${kind}`,
+        path,
         errors(
           RequireSession.sameOrigin(
             RequireSession.withViewer(
-              Effect.flatMap(HttpRouter.params, (params) => page({ kind, id: params.id ?? "" }))
+              serve((viewer, params) => ConnectionPage.submit(viewer, change(params)))
             )
           )
         )
       );
+    const integration = (params: Params) => ({
+      kind: "connect" as const,
+      integration: params.integration ?? ""
+    });
+    yield* get(indexPath, () => ({ kind: "index" }));
+    yield* get(cataloguePath, () => ({ kind: "catalogue" }));
+    yield* get(`${cataloguePath}/:integration`, integration);
+    yield* post(`${cataloguePath}/:integration`, integration);
+    yield* get(`${indexPath}/:id`, (params) => ({ kind: "view", id: params.id ?? "" }));
+    for (const kind of ["test", "refresh", "reconnect"] as const)
+      yield* post(`${indexPath}/:id/${kind}`, (params) => ({ kind, id: params.id ?? "" }));
+    for (const action of confirmations) {
+      yield* get(`${indexPath}/:id/${action}`, (params) => ({
+        kind: "confirm",
+        id: params.id ?? "",
+        action
+      }));
+      yield* post(`${indexPath}/:id/${action}`, (params) => ({
+        kind: action,
+        id: params.id ?? ""
+      }));
     }
   })
 );

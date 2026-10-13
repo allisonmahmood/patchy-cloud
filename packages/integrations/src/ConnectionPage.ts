@@ -1,27 +1,31 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
+import { Integration, integrations } from "@patchy/api";
+import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import type { RequireSession } from "@patchy/auth";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionStore from "./ConnectionStore.js";
+import * as View from "./ConnectionsView.js";
+import * as PostgresPage from "./postgres/Page.js";
 
-export type Action =
-  | { readonly kind: "list" }
-  | { readonly kind: "connect" }
+/** A page to read. */
+export type Target =
+  | { readonly kind: "index" }
+  | { readonly kind: "catalogue" }
+  | { readonly kind: "connect"; readonly integration: string }
   | { readonly kind: "view"; readonly id: string }
+  | { readonly kind: "confirm"; readonly id: string; readonly action: View.Confirmation };
+
+/** A change an admin submits. */
+export type Change =
+  | { readonly kind: "connect"; readonly integration: string }
   | {
-      readonly kind:
-        | "test"
-        | "rotate"
-        | "retarget"
-        | "refresh"
-        | "disconnect"
-        | "reconnect"
-        | "description"
-        | "delete";
+      readonly kind: "test" | "refresh" | "reconnect" | View.Confirmation;
       readonly id: string;
     };
 
@@ -32,18 +36,45 @@ export interface Page {
   readonly redirect?: string;
 }
 
-interface Notice {
-  readonly message: string;
-  readonly status?: number;
-  readonly code?: string;
+/** An integration's page for new credentials or a new destination. */
+interface CredentialsPage {
+  readonly title: (name: string) => string;
+  readonly consequence: string;
+  readonly fields: string;
 }
+
+/** What the pages say about one integration; the layout around it is the same for every one. */
+interface IntegrationPage {
+  readonly integration: View.Integration;
+  readonly offer: View.Offer;
+  readonly actions: View.Actions;
+  readonly source: (connection: ConnectionStore.Connection) => string;
+  readonly facts: (
+    connection: ConnectionStore.Connection
+  ) => ReadonlyArray<readonly [string, string]>;
+  readonly reads: (snapshot: typeof Snapshot.Type) => {
+    readonly summary: string;
+    readonly items: ReadonlyArray<string>;
+    readonly more: number;
+  };
+  readonly connectIntro: string;
+  readonly connectFields: (submitted: {
+    readonly handle?: string;
+    readonly description?: string;
+  }) => string;
+  readonly rotate: CredentialsPage;
+  readonly retarget: CredentialsPage;
+}
+const pages: { readonly [K in Integration]: IntegrationPage } = { postgres: PostgresPage };
+const offers = integrations.map((integration) => pages[integration].offer);
+const isIntegration = Schema.is(Integration);
 
 const results = {
   connect: "Database connected and schema discovered.",
   test: "Connection tested successfully.",
-  rotate: "Credentials rotated. The connection keeps its identity and schema revision.",
+  rotate: "Credentials replaced. The connection keeps its identity and what patches can read.",
   retarget:
-    "Connection retargeted and schema discovered. Existing patches keep their pinned schema.",
+    "Pointed elsewhere and its schema discovered. Existing patches keep the schema they were published with.",
   refresh:
     "Schema refreshed. Existing patches keep their pinned schema; regenerate before publishing against the new schema.",
   disconnect: "Connection disconnected. Patches cannot use it until an admin reconnects it.",
@@ -53,106 +84,262 @@ const results = {
 } as const;
 const isResult = Schema.is(Schema.Literals(Object.keys(results) as Array<keyof typeof results>));
 
-export const styles = `
-    .connection-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-    .connection-meta time { white-space: nowrap; }
-`;
+const forbidden: View.Notice = {
+  message: "Only an admin can manage company connections.",
+  code: "access_denied",
+  status: 403
+};
 
-const pathFor = (id: string) => `/company/connections/${encodeURIComponent(id)}`;
-/** A refusal is an alert on amber; a completed action is a status on green. */
-const noticeHtml = (notice?: Notice) =>
-  notice
-    ? `<div class="note ${notice.status ? "note-warn" : "note-ok"}" role="${notice.status ? "alert" : "status"}">${escapeHtml(notice.message)}${notice.code ? `<br><code>${escapeHtml(notice.code)}</code>` : ""}</div>`
-    : "";
-/** Stored timestamps are ISO in UTC; readers get the minute, the machine keeps the instant. */
-const time = (value: string | null) =>
-  value === null
-    ? "Never"
-    : `<time datetime="${escapeAttribute(value)}">${escapeHtml(`${value.slice(0, 10)} ${value.slice(11, 16)} UTC`)}</time>`;
-const statusPill = (connection: ConnectionStore.Connection) =>
-  connection.status === "connected"
-    ? '<span class="pill pill-done">Connected</span>'
-    : '<span class="pill">Disconnected</span>';
-const description = (connection: ConnectionStore.Connection) =>
-  `<p>${escapeHtml(connection.description || "No description.")}</p>`;
-const actionForm = (path: string, label: string, destructive = false) =>
-  `<form method="post" action="${escapeAttribute(path)}"><button class="btn${destructive ? " btn-danger" : ""}" type="submit">${escapeHtml(label)}</button></form>`;
-/** The access note sits with the credentials field: it is about the role inside that string. */
-const promise = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member can query this database through any patch that declares it, as the role you supply.</p><p>Patchy sends constrained reads through the role you supplied, but a SELECT can still invoke functions and extensions, so this is not a promise that arbitrary SQL is harmless. Supply a dedicated, least-privileged role.</p></div>`;
-const credentialsField = (id: string, note = "") =>
-  `${note}<label class="field-label" for="${id}">Connection string</label><input class="field" id="${id}" type="password" name="credentials" required autocomplete="new-password" spellcheck="false" aria-describedby="${id}-hint"><p id="${id}-hint" class="field-hint">A Postgres connection string with a password and sslmode=verify-full. Only host, port, database, user, password and sslmode are accepted. Credentials are encrypted and never shown again.</p>`;
-const connectForm = `<section class="section" aria-labelledby="connection-connect"><h2 class="section-heading" id="connection-connect">Connect Postgres</h2><p>Patchy tests the connection and discovers its schema before saving anything. The database must be reachable from the internet over TLS with a verified certificate and hostname; superusers and roles with CREATEDB or CREATEROLE are refused.</p><form method="post" action="/company/connections/connect"><label class="field-label" for="connection-handle">Handle</label><input class="field" id="connection-handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-handle-hint"><p id="connection-handle-hint" class="field-hint">3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. Patches declare this connection by its handle.</p><label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" aria-describedby="connection-description-hint"><p id="connection-description-hint" class="field-hint">One line explaining what this database is for.</p>${credentialsField("connection-credentials", promise)}<div class="actions"><button class="btn btn-primary" type="submit">Test and connect</button></div></form></section>`;
+/** The index's filters from its query string. */
+const filters = (query: URLSearchParams): View.Filters => {
+  const view = query.get("view");
+  return {
+    q: (query.get("q") ?? "").trim().toLowerCase().slice(0, 100),
+    source: query.get("source") || undefined,
+    view: view === "attention" || view === "unused" ? view : "all"
+  };
+};
 
-const recentCalls = (calls: ReadonlyArray<RuntimeLog.Call>) =>
-  `<section class="section" aria-labelledby="connection-calls"><h2 class="section-heading" id="connection-calls">Recent calls</h2><p class="supporting-text">Visible only to company admins. Query text is limited to its first 8 KiB; parameters and returned rows are never logged. Pending calls past their deadline have an unknown outcome.</p>${
-    calls.length === 0
-      ? "<p>No calls yet.</p>"
-      : `<ol class="list">${calls
-          .map((call) => {
-            const outcome =
-              call.outcome === "failure" || call.outcome === "handler_error"
-                ? "Failed"
-                : call.outcome === "success"
-                  ? "Succeeded"
-                  : call.outcome === "unknown"
-                    ? "Unknown"
-                    : "Pending";
-            return `<li class="list-row"><p class="connection-status"><strong>${escapeHtml(call.op)}</strong><span class="pill${call.outcome === "success" ? " pill-done" : ""}">${outcome}</span>${call.outcomeCode === null ? "" : `<code>${escapeHtml(call.outcomeCode)}</code>`}</p><p class="supporting-text connection-meta">${time(call.at.toISOString())} · ${call.durationMs === null ? "Duration unknown" : `${call.durationMs} ms`} · ${call.rowCount === null ? "Row count unknown" : `${call.rowCount} rows`}</p><dl class="facts"><dt>Patch / version</dt><dd>${call.patchId === null ? "Connection administration" : `<code>${escapeHtml(call.patchId)}</code> / <code>${escapeHtml(call.versionId ?? "Unknown")}</code>`}</dd><dt>Effective principal</dt><dd><code>${escapeHtml(call.effectivePrincipal)}</code></dd><dt>Credential kind</dt><dd>${escapeHtml(call.credentialKind)}</dd>${call.resource === null ? "" : `<dt>Resource</dt><dd><code>${escapeHtml(call.resource)}</code></dd>`}<dt>Correlation ID</dt><dd><code>${escapeHtml(call.correlationId)}</code></dd></dl>${call.sql !== null ? `<details><summary>SQL query</summary><pre class="code-panel"><code>${escapeHtml(call.sql)}</code></pre></details>` : ""}</li>`;
-          })
-          .join("")}</ol>`
-  }</section>`;
+const row = (
+  connection: ConnectionStore.Connection,
+  usage: ReadonlyMap<string, ConnectionStore.Usage>
+): View.Row => {
+  const page = pages[connection.integration];
+  return {
+    id: connection.id,
+    integration: page.integration,
+    handle: connection.handle,
+    description: connection.description,
+    source: page.source(connection),
+    status: connection.status,
+    ...(usage.get(connection.id) ?? ConnectionStore.unused)
+  };
+};
 
-const render = Effect.fn("ConnectionPage.render")(function* (
+const index = Effect.fn("ConnectionPage.index")(function* (
   viewer: RequireSession.Viewer["Service"],
-  id: string | undefined,
-  notice?: Notice
-): Effect.fn.Return<
-  Page,
-  ConnectionStore.ConnectionError,
-  ConnectionStore.ConnectionStore | RuntimeLog.RuntimeLog
-> {
+  query: URLSearchParams,
+  notice?: View.Notice
+) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "admin";
-  const company = `<a href="/company">${escapeHtml(viewer.company.name)}</a>`;
-  if (id === undefined) {
-    const connections = yield* store.list(viewer.company.id);
-    const rows = connections.map(
-      (connection) =>
-        `<li class="list-row"><p class="connection-status"><a href="${escapeAttribute(pathFor(connection.id))}"><strong>${escapeHtml(connection.handle)}</strong></a>${statusPill(connection)}</p>${description(connection)}<p class="supporting-text connection-meta">Postgres · Last tested ${time(connection.lastTestedAt)} · Schema discovered ${time(connection.lastDiscoveredAt)}</p></li>`
-    );
-    return {
-      title: "Connections",
-      body: `<p>${company} · Connections</p>${noticeHtml(notice)}<section class="section" aria-labelledby="connection-list"><h2 class="section-heading" id="connection-list">Company connections</h2>${connections.length ? `<ul class="list">${rows.join("")}</ul>` : "<p>No databases connected yet.</p>"}</section>${admin ? connectForm : '<p class="supporting-text">An admin can connect and manage databases for your company.</p>'}`,
-      status: notice?.status
-    };
-  }
-  const connection = yield* store.get(viewer.company.id, id);
-  const path = pathFor(connection.id);
-  const display = connection.display;
-  // Members can see safe connection metadata, but must never fetch the call log.
-  const calls = admin
-    ? yield* Effect.gen(function* () {
-        const log = yield* RuntimeLog.RuntimeLog;
-        return recentCalls(
-          yield* log.recent({ companyId: viewer.company.id, connectionId: connection.id })
-        );
-      }).pipe(
-        Effect.catchTags({
-          SqlError: () =>
-            Effect.succeed(
-              '<section class="section" aria-labelledby="connection-calls"><h2 class="section-heading" id="connection-calls">Recent calls</h2><div class="note note-warn" role="alert">Recent calls could not be loaded. Reload the page to try again.</div></section>'
-            )
+  const connections = yield* store.list(viewer.company.id);
+  const usage = yield* store.usage(viewer.company.id);
+  // Members can see connection status, but must never read the call log.
+  const lastCalls: View.LastCalls | undefined = admin
+    ? yield* (yield* RuntimeLog.RuntimeLog)
+        .latest({
+          companyId: viewer.company.id,
+          connectionIds: connections.map((connection) => connection.id)
         })
-      )
-    : "";
-  const management = admin
-    ? `<section class="section" aria-labelledby="connection-access"><h2 class="section-heading" id="connection-access">Access</h2><p>${connection.status === "connected" ? "Disconnect to revoke this connection for every patch. Reconnecting tests the stored credentials before restoring access." : "This connection is disconnected. Reconnecting tests the stored credentials before restoring access, without changing the schema revision."}</p><div class="actions">${actionForm(`${path}/test`, "Test connection")}${connection.status === "connected" ? actionForm(`${path}/disconnect`, "Disconnect", true) : actionForm(`${path}/reconnect`, "Reconnect")}</div></section><section class="section" aria-labelledby="connection-schema"><h2 class="section-heading" id="connection-schema">Schema</h2><p>Refresh discovers a new immutable schema revision. If discovery fails, the previous revision stays available. Existing patches keep their pinned schema.</p>${connection.status === "connected" ? `<div class="actions">${actionForm(`${path}/refresh`, "Refresh schema")}</div>` : "<p>Reconnect before refreshing the schema.</p>"}</section><section class="section" aria-labelledby="connection-rotate"><h2 class="section-heading" id="connection-rotate">Rotate credentials</h2><p>Replace the credentials for the same database without changing the connection id or schema revision. A new role changes the access every declaring patch has. To change the destination, use Retarget.</p><form method="post" action="${escapeAttribute(`${path}/rotate`)}">${credentialsField("rotate-credentials")}<div class="actions"><button class="btn" type="submit">Rotate credentials</button></div></form></section><section class="section" aria-labelledby="connection-retarget"><h2 class="section-heading" id="connection-retarget">Retarget</h2><p>Point this connection at another database or role, keeping its id. Patchy tests and discovers the destination before replacing it. Every declaring patch will use the new destination, through its pinned schema. A disconnected connection stays disconnected.</p><form method="post" action="${escapeAttribute(`${path}/retarget`)}">${credentialsField("retarget-credentials", promise)}<div class="actions"><button class="btn" type="submit">Retarget connection</button></div></form></section><section class="section" aria-labelledby="connection-description-title"><h2 class="section-heading" id="connection-description-title">Edit description</h2><form method="post" action="${escapeAttribute(`${path}/description`)}"><label class="field-label" for="edit-description">Description</label><input class="field" id="edit-description" name="description" maxlength="500" value="${escapeAttribute(connection.description)}"><div class="actions"><button class="btn" type="submit">Save description</button></div></form></section><section class="section" aria-labelledby="connection-delete"><h2 class="section-heading" id="connection-delete">Delete connection</h2><p>Delete only when no stored patch version declares this connection. Disconnect instead to revoke access while keeping those declarations. Deletion cannot be undone; schema snapshots are kept.</p><div class="actions">${actionForm(`${path}/delete`, "Delete connection", true)}</div></section>`
-    : '<p class="supporting-text">Only admins can change this connection.</p>';
+        .pipe(
+          Effect.map(
+            (latest) => new Map([...latest].map(([id, at]) => [id, at.toISOString()] as const))
+          ),
+          Effect.catchTags({ SqlError: () => Effect.succeed("unavailable" as const) })
+        )
+    : undefined;
+  const admins =
+    !admin && connections.length === 0
+      ? (yield* (yield* Users.Users).list(viewer.company.id))
+          .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+          .map((user) => user.name)
+      : [];
   return {
-    title: connection.handle,
-    body: `<p>${company} · <a href="/company/connections">Connections</a></p>${noticeHtml(notice)}<p class="connection-status">${statusPill(connection)}<span class="supporting-text">Postgres · Company-wide</span></p>${description(connection)}<dl class="facts"><dt>Connection ID</dt><dd><code>${escapeHtml(connection.id)}</code></dd><dt>Host</dt><dd>${escapeHtml(display.host)}:${escapeHtml(display.port)}</dd><dt>Database</dt><dd>${escapeHtml(display.database)}</dd><dt>Role</dt><dd>${escapeHtml(display.role)}</dd><dt>Last tested</dt><dd>${time(connection.lastTestedAt)}</dd><dt>Schema discovered</dt><dd>${time(connection.lastDiscoveredAt)}</dd><dt>Credential revision</dt><dd>${connection.credentialRevision}</dd><dt>Schema revision</dt><dd>${connection.metadataRevision}</dd></dl>${calls}${management}`,
+    title: "Connections",
+    body: View.renderIndex({
+      admin,
+      company: viewer.company.name,
+      admins,
+      rows: connections.map((connection) => row(connection, usage)),
+      lastCalls,
+      offers,
+      filters: filters(query),
+      now: yield* Clock.currentTimeMillis,
+      notice
+    }),
+    status: notice?.status
+  } satisfies Page;
+});
+
+const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
+  viewer: RequireSession.Viewer["Service"]
+) {
+  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
+  return {
+    title: "Connect a source",
+    body: View.renderCatalogue({
+      admin: viewer.role === "admin",
+      rows: connections.map((connection) => row(connection, new Map())),
+      offers
+    })
+  } satisfies Page;
+});
+
+const connectForm = (
+  integration: Integration,
+  submitted: { readonly handle?: string; readonly description?: string } = {},
+  notice?: View.Notice
+): Page => {
+  const page = pages[integration];
+  return {
+    title: `Connect ${page.integration.label}`,
+    body: View.renderConnect({
+      integration: page.integration,
+      intro: page.connectIntro,
+      fields: page.connectFields(submitted),
+      notice
+    }),
     status: notice?.status
   };
+};
+
+/** One connection in the pages' words: its integration's facts, usage and who added it. */
+const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  id: string
+) {
+  const store = yield* ConnectionStore.ConnectionStore;
+  const connection = yield* store.get(viewer.company.id, id);
+  const page = pages[connection.integration];
+  const usage = (yield* store.usage(viewer.company.id)).get(id) ?? ConnectionStore.unused;
+  // Deactivated people keep their names: they still added connections and made calls.
+  const people = new Map(
+    (yield* (yield* Users.Users).list(viewer.company.id)).map((user) => [user.id, user.name])
+  );
+  return {
+    connection,
+    page,
+    people,
+    view: {
+      id: connection.id,
+      integration: page.integration,
+      handle: connection.handle,
+      description: connection.description,
+      status: connection.status,
+      mode: page.offer.mode,
+      testedAt: connection.lastTestedAt,
+      addedBy: people.get(connection.createdBy) ?? "Someone no longer in the company",
+      facts: page.facts(connection),
+      ...usage
+    } satisfies View.Connection
+  };
+});
+
+const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  id: string,
+  notice?: View.Notice
+) {
+  const store = yield* ConnectionStore.ConnectionStore;
+  const admin = viewer.role === "admin";
+  const { connection, page, people, view } = yield* connectionView(viewer, id);
+  const reads = yield* store.snapshot(viewer.company.id, id, connection.metadataRevision).pipe(
+    Effect.map((snapshot) => ({
+      ...page.reads(snapshot),
+      revision: connection.metadataRevision,
+      foundAt: connection.lastDiscoveredAt
+    })),
+    Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(null) })
+  );
+  // Members can see safe connection metadata, but must never read the call log. A log or its
+  // names that cannot be read leave administration working.
+  const calls = admin
+    ? yield* Effect.gen(function* () {
+        const list = yield* (yield* RuntimeLog.RuntimeLog).recent({
+          companyId: viewer.company.id,
+          connectionId: id,
+          limit: View.RECENT_CALLS
+        });
+        const versions = yield* store.versions(
+          viewer.company.id,
+          list.flatMap((call) => (call.versionId === null ? [] : [call.versionId]))
+        );
+        return { list, names: { people, versions } };
+      }).pipe(
+        Effect.catch(() =>
+          Effect.succeed({
+            list: "unavailable" as const,
+            names: { people, versions: new Map() }
+          })
+        )
+      )
+    : undefined;
+  return {
+    title: `${connection.integration}/${connection.handle}`,
+    body: View.renderConnection({
+      connection: view,
+      reads,
+      actions: page.actions,
+      calls,
+      admin,
+      now: yield* Clock.currentTimeMillis,
+      notice
+    }),
+    status: notice?.status
+  } satisfies Page;
+});
+
+const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  id: string,
+  action: View.Confirmation,
+  form: { readonly description?: string; readonly notice?: View.Notice } = {}
+) {
+  const { page, view } = yield* connectionView(viewer, id);
+  // Delete is offered only while nothing declares the connection; a stale link says why.
+  if (action === "delete" && view.declared) return yield* connectionPage(viewer, id, inUse(id));
+  const credentials = action === "rotate" || action === "retarget" ? page[action] : undefined;
+  const name = `${view.integration.key}/${view.handle}`;
+  return {
+    title: name,
+    body: View.renderConfirmation({
+      connection: view,
+      action,
+      actions: page.actions,
+      form: credentials && { ...credentials, title: credentials.title(name) },
+      description: form.description,
+      notice: form.notice
+    }),
+    status: form.notice?.status
+  } satisfies Page;
+});
+
+const inUse = (id: string): View.Notice => ({
+  message: new ConnectionStore.ConnectionInUse({}).message,
+  code: "connection_in_use",
+  status: 409,
+  next: { href: View.connectionPath(id, "disconnect"), label: "Disconnect it instead" }
+});
+
+/** Renders a page; Auth supplies a live viewer, and no query parameter selects authority. */
+export const read = Effect.fn("ConnectionPage.read")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  target: Target,
+  query: URLSearchParams
+) {
+  const result = query.get("result");
+  const done = result && isResult(result) ? { message: results[result] } : undefined;
+  const admin = viewer.role === "admin";
+  switch (target.kind) {
+    case "index":
+      return yield* index(viewer, query, done);
+    case "catalogue":
+      return yield* catalogue(viewer);
+    case "connect":
+      if (!isIntegration(target.integration))
+        return yield* new ConnectionStore.ConnectionNotFound({
+          companyId: viewer.company.id,
+          lookup: { integration: target.integration, handle: "" }
+        });
+      if (!admin) return yield* index(viewer, new URLSearchParams(), forbidden);
+      return connectForm(target.integration);
+    case "view":
+      return yield* connectionPage(viewer, target.id, done);
+    case "confirm":
+      if (!admin) return yield* connectionPage(viewer, target.id, forbidden);
+      return yield* confirmationPage(viewer, target.id, target.action);
+  }
 });
 
 const decodeConnect = Schema.decodeUnknownEffect(
@@ -160,93 +347,160 @@ const decodeConnect = Schema.decodeUnknownEffect(
 );
 const decodeCredentials = Schema.decodeUnknownEffect(Schema.Struct({ credentials: Schema.String }));
 const decodeDescription = Schema.decodeUnknownEffect(Schema.Struct({ description: Schema.String }));
+const text = (value: unknown) => (typeof value === "string" ? value : undefined);
 
-/** Auth supplies a live viewer; no submitted company or user id can select authority. */
-export const handle = Effect.fn("ConnectionPage.handle")(function* (
+const unreadable: View.Notice = {
+  message: "The form could not be read. Submit it again.",
+  code: "invalid_request",
+  status: 400
+};
+const incomplete: View.Notice = {
+  message: "Complete the form and submit it again. Connection strings are never redisplayed.",
+  code: "invalid_request",
+  status: 422
+};
+/** A store refusal as the page shows it. */
+const refusal = (error: ConnectionStore.ConnectionError): View.Notice => ({
+  message: error.message,
+  code: error.code,
+  status: error.status
+});
+
+/** The submitted form, or null when its body cannot be read. */
+const formBody = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  return yield* request.urlParamsBody.pipe(
+    Effect.map((params): Readonly<Record<string, unknown>> => Object.fromEntries(params)),
+    Effect.catchTags({ HttpServerError: () => Effect.succeed(null) })
+  );
+});
+
+/** The store reports each change with its commit; a refusal or rollback reports nothing. */
+const reporter = Effect.fn("ConnectionPage.reporter")(function* (
   viewer: RequireSession.Viewer["Service"],
-  action: Action,
-  result?: string | null
+  name: "connection.connected" | "connection.deleted"
 ) {
-  const id = "id" in action ? action.id : undefined;
-  if (action.kind === "list" || action.kind === "view") {
-    return yield* render(
-      viewer,
-      id,
-      result && isResult(result) ? { message: results[result] } : undefined
-    );
-  }
-  if (viewer.role !== "admin") {
-    return yield* render(viewer, id, {
-      message: "Only an admin can manage company connections.",
-      code: "access_denied",
-      status: 403
+  const analytics = yield* Analytics.Analytics;
+  return (connection: ConnectionStore.Connection) =>
+    analytics.track({
+      name,
+      principalId: viewer.user.id,
+      companyId: viewer.company.id,
+      properties: { connectionId: connection.id, integration: connection.integration }
     });
-  }
+});
+
+const connect = Effect.fn("ConnectionPage.connect")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  integration: Integration
+) {
+  const form = yield* formBody;
+  // A refused connect keeps what was typed, except the credentials.
+  const refused = (notice: View.Notice) =>
+    connectForm(
+      integration,
+      { handle: text(form?.handle), description: text(form?.description) },
+      notice
+    );
+  if (form === null) return refused(unreadable);
+  return yield* Effect.gen(function* () {
+    const fields = yield* decodeConnect(form);
+    const connection = yield* (yield* ConnectionStore.ConnectionStore).connect(
+      {
+        companyId: viewer.company.id,
+        userId: viewer.user.id,
+        handle: fields.handle,
+        description: fields.description,
+        credentials: Redacted.make(fields.credentials)
+      },
+      yield* reporter(viewer, "connection.connected")
+    );
+    return {
+      title: "Connections",
+      body: "",
+      redirect: `${View.connectionPath(connection.id)}?result=connect`
+    } satisfies Page;
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.succeed(refused(error._tag === "SchemaError" ? incomplete : refusal(error)))
+    )
+  );
+});
+
+const act = Effect.fn("ConnectionPage.act")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  id: string,
+  kind: Exclude<Change["kind"], "connect">
+) {
+  const form = yield* formBody;
+  /** The page the change came from, with its refusal and a typed description kept. */
+  const refused = (notice: View.Notice) => {
+    switch (kind) {
+      case "rotate":
+      case "retarget":
+      case "description":
+        return confirmationPage(viewer, id, kind, { description: text(form?.description), notice });
+      case "delete":
+        return connectionPage(viewer, id, notice.code === "connection_in_use" ? inUse(id) : notice);
+      default:
+        return connectionPage(viewer, id, notice);
+    }
+  };
+  if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {
     const store = yield* ConnectionStore.ConnectionStore;
-    const analytics = yield* Analytics.Analytics;
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const identity = { companyId: viewer.company.id, userId: viewer.user.id };
-    // The store reports each change with its commit; a refusal or rollback reports nothing.
-    const report =
-      (name: "connection.connected" | "connection.deleted") =>
-      (connection: ConnectionStore.Connection) =>
-        analytics.track({
-          name,
-          principalId: viewer.user.id,
-          companyId: viewer.company.id,
-          properties: { connectionId: connection.id, integration: connection.integration }
-        });
-    let target: string;
-    if (action.kind === "connect") {
-      const form = yield* decodeConnect(Object.fromEntries(yield* request.urlParamsBody));
-      const connection = yield* store.connect(
-        {
-          ...identity,
-          handle: form.handle,
-          description: form.description,
-          credentials: Redacted.make(form.credentials)
-        },
-        report("connection.connected")
-      );
-      target = pathFor(connection.id);
+    const input = { companyId: viewer.company.id, userId: viewer.user.id, id };
+    if (kind === "rotate" || kind === "retarget") {
+      const fields = yield* decodeCredentials(form);
+      yield* store[kind]({ ...input, credentials: Redacted.make(fields.credentials) });
+    } else if (kind === "description") {
+      const fields = yield* decodeDescription(form);
+      yield* store.describe({ ...input, description: fields.description });
+    } else if (kind === "delete") {
+      yield* store.delete(input, yield* reporter(viewer, "connection.deleted"));
     } else {
-      const input = { ...identity, id: action.id };
-      target = pathFor(action.id);
-      if (action.kind === "rotate" || action.kind === "retarget") {
-        const form = yield* decodeCredentials(Object.fromEntries(yield* request.urlParamsBody));
-        yield* store[action.kind]({ ...input, credentials: Redacted.make(form.credentials) });
-      } else if (action.kind === "description") {
-        const form = yield* decodeDescription(Object.fromEntries(yield* request.urlParamsBody));
-        yield* store.describe({ ...input, description: form.description });
-      } else if (action.kind === "delete") {
-        yield* store.delete(input, report("connection.deleted"));
-        target = "/company/connections";
-      } else {
-        yield* store[action.kind](input);
-      }
+      yield* store[kind](input);
     }
     return {
       title: "Connections",
       body: "",
-      redirect: `${target}?result=${action.kind}`
+      redirect: `${kind === "delete" ? View.indexPath : View.connectionPath(id)}?result=${kind}`
     } satisfies Page;
   }).pipe(
-    Effect.catchTags({
-      SchemaError: () =>
-        render(viewer, id, {
-          message:
-            "Complete the form and submit it again. Connection strings are never redisplayed.",
-          code: "invalid_request",
-          status: 422
-        }),
-      HttpServerError: () =>
-        render(viewer, id, {
-          message: "The form could not be read. Submit it again.",
-          code: "invalid_request",
-          status: 400
-        })
-    }),
-    Effect.catch((error) => render(viewer, id, error))
+    Effect.catch((error) =>
+      refused(
+        error._tag === "SchemaError"
+          ? incomplete
+          : error._tag === "ConnectionRetargetRequired"
+            ? // Credentials for another database belong to Point elsewhere; say so where refused.
+              {
+                ...refusal(error),
+                next: {
+                  href: View.connectionPath(id, "retarget"),
+                  label: "Point it elsewhere instead"
+                }
+              }
+            : refusal(error)
+      )
+    )
   );
+});
+
+/** Runs an admin's change; a refusal re-renders the page it came from. */
+export const submit = Effect.fn("ConnectionPage.submit")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  change: Change
+) {
+  // Refused before the body is read: a member's form never reaches the store.
+  if (viewer.role !== "admin") {
+    if (change.kind === "connect") return yield* index(viewer, new URLSearchParams(), forbidden);
+    return yield* connectionPage(viewer, change.id, forbidden);
+  }
+  if (change.kind !== "connect") return yield* act(viewer, change.id, change.kind);
+  if (!isIntegration(change.integration))
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId: viewer.company.id,
+      lookup: { integration: change.integration, handle: "" }
+    });
+  return yield* connect(viewer, change.integration);
 });

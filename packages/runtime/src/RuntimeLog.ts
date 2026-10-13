@@ -73,6 +73,11 @@ export class RuntimeLog extends Context.Service<
       readonly connectionId: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<Call>, SqlError>;
+    /** When each connection's newest call began; connections never called have no entry. */
+    readonly latest: (input: {
+      readonly companyId: string;
+      readonly connectionIds: ReadonlyArray<string>;
+    }) => Effect.Effect<ReadonlyMap<string, Date>, SqlError>;
   }
 >()("@patchy/runtime/RuntimeLog") {}
 
@@ -113,6 +118,26 @@ export const make = Effect.gen(function* () {
       FROM runtime_calls
       WHERE company_id = ${companyId} AND connection_id = ${connectionId}
       ORDER BY at DESC, id DESC LIMIT ${limit}`
+  });
+
+  // One index probe per connection, so a busy connection's history is never scanned.
+  const latestCalls = SqlSchema.findAll({
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      connectionIds: Schema.Array(Schema.String)
+    }),
+    Result: Schema.Struct({ connectionId: Schema.String, at: Schema.Date }),
+    execute: ({ companyId, connectionIds }) =>
+      sql.unsafe(
+        `SELECT connection.id AS "connectionId", newest.at
+          FROM unnest($2::text[]) AS connection(id)
+          CROSS JOIN LATERAL (
+            SELECT at FROM runtime_calls
+            WHERE company_id = $1 AND connection_id = connection.id
+            ORDER BY at DESC, id DESC LIMIT 1
+          ) AS newest`,
+        [companyId, connectionIds]
+      )
   });
 
   const begin = Effect.fn("RuntimeLog.begin")(function* (input: Begin) {
@@ -168,7 +193,15 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
   });
 
-  return RuntimeLog.of({ begin, finish, find, recent });
+  const latest = Effect.fn("RuntimeLog.latest")(function* (
+    input: Parameters<RuntimeLog["Service"]["latest"]>[0]
+  ) {
+    if (input.connectionIds.length === 0) return new Map<string, Date>();
+    const rows = yield* latestCalls(input).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    return new Map(rows.map((row) => [row.connectionId, row.at]));
+  });
+
+  return RuntimeLog.of({ begin, finish, find, recent, latest });
 });
 
 export const layer = Layer.effect(RuntimeLog, make);

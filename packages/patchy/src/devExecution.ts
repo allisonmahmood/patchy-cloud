@@ -43,7 +43,8 @@ const journals = Layer.mergeAll(
     begin: (input) => Effect.succeed(input.correlationId),
     finish: () => Effect.void,
     find: () => Effect.succeed(null),
-    recent: () => Effect.succeed([])
+    recent: () => Effect.succeed([]),
+    latest: () => Effect.succeed(new Map())
   })
 );
 

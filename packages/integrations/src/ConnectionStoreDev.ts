@@ -33,6 +33,9 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           ? Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, lookup: { id } }))
           : Effect.succeed(item.connection);
       },
+      // Dev holds no stored patch versions, so it cannot say who declares a connection.
+      usage: unavailable,
+      versions: unavailable,
       detail: (companyId, integration, handle) => {
         const item = metadata.find(
           (item) =>

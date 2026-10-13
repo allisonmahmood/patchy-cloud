@@ -2,7 +2,14 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
-import { dateLabel, daysLeft, escapeAttribute, escapeHtml, renderOffPatch } from "@patchy/core";
+import {
+  ago,
+  dateLabel,
+  daysLeft,
+  escapeAttribute,
+  escapeHtml,
+  renderOffPatch
+} from "@patchy/core";
 import { Patches } from "@patchy/patches";
 
 export const styles = `
@@ -38,15 +45,6 @@ export const styles = `
 `;
 
 const epochMillis = (iso: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
-
-export const ago = (iso: string, now: number): string => {
-  const seconds = Math.max(0, Math.round((now - epochMillis(iso)) / 1000));
-  const unit = (count: number, name: string) => `${count} ${name}${count === 1 ? "" : "s"} ago`;
-  if (seconds < 45) return "just now";
-  if (seconds < 3600) return unit(Math.max(1, Math.round(seconds / 60)), "minute");
-  if (seconds < 86_400) return unit(Math.round(seconds / 3600), "hour");
-  return unit(Math.round(seconds / 86_400), "day");
-};
 
 // The index line: text up to the first sentence-ending period or ellipsis, semicolon or spaced
 // en dash, bounded to 80 code points. A period inside a token (".NET", "1.2") is not a boundary.
