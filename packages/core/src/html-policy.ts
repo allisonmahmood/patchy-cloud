@@ -60,9 +60,7 @@ export function validateHtml(
     return { ok: false, errors, warnings, title: null };
   }
 
-  let title: string | null = null;
-
-  function walk(node: parse5.DefaultTreeAdapterMap["node"]): void {
+  function walk(node: HtmlNode): void {
     if ("tagName" in node && node.tagName) {
       const tagName = node.tagName.toLowerCase();
 
@@ -107,10 +105,6 @@ export function validateHtml(
       }
     }
 
-    if ("tagName" in node && node.tagName === "title" && !title) {
-      title = collectText(node).trim().slice(0, 140) || null;
-    }
-
     if ("childNodes" in node) {
       for (const child of node.childNodes || []) {
         walk(child);
@@ -120,6 +114,7 @@ export function validateHtml(
 
   walk(document);
 
+  const title = firstTitle(document, false);
   if (!title) {
     warnings.push("No <title> found; Patchy Cloud will use a generic title.");
   }
@@ -132,7 +127,49 @@ export function validateHtml(
   };
 }
 
-function collectText(node: parse5.DefaultTreeAdapterMap["node"]): string {
+type HtmlNode = parse5.DefaultTreeAdapterMap["node"];
+
+/** A scripted bundle's title comes before its inline code, which runs to megabytes. */
+const TITLE_SEARCH_CHARACTERS = 64 * 1024;
+
+/**
+ * A scripted page's title, for publish and `patchy dev`; tier 0's comes from `validateHtml`. Only
+ * the start of the bundle is read, which also bounds parse5, whose cost grows with the square of
+ * nesting depth. A title past that limit, or cut by it, gives null.
+ */
+export function documentTitle(html: string): string | null {
+  const cut = html.length > TITLE_SEARCH_CHARACTERS;
+  const document = parse5.parse(html.slice(0, TITLE_SEARCH_CHARACTERS), {
+    sourceCodeLocationInfo: cut
+  });
+  return firstTitle(document, cut);
+}
+
+/**
+ * The title as a browser picks it: the first HTML `<title>`, trimmed and bounded, or null when
+ * it is missing or empty. In a document cut short, only a title whose end tag survived counts.
+ */
+function firstTitle(document: HtmlNode, cut: boolean): string | null {
+  // parse5 builds deep trees without recursion; walking one must not recurse either.
+  const pending: HtmlNode[] = [document];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (isTitle(node)) {
+      if (cut && !node.sourceCodeLocation?.endTag) return null;
+      return collectText(node).trim().slice(0, 140) || null;
+    }
+    if ("childNodes" in node)
+      for (let index = node.childNodes.length - 1; index >= 0; index--)
+        pending.push(node.childNodes[index]!);
+  }
+  return null;
+}
+
+/** An SVG's `<title>` labels the drawing, not the document. */
+function isTitle(node: HtmlNode): node is parse5.DefaultTreeAdapterMap["element"] {
+  return "tagName" in node && node.tagName === "title" && node.namespaceURI === parse5.html.NS.HTML;
+}
+
+function collectText(node: HtmlNode): string {
   let value = "";
   if ("childNodes" in node) {
     for (const child of node.childNodes || []) {

@@ -63,7 +63,7 @@ import {
   MANIFEST_VERSION,
   WIRE_VERSION
 } from "@patchy/api";
-import { contentHash, validateHtml } from "@patchy/core";
+import { contentHash, documentTitle, validateHtml } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
@@ -442,6 +442,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 ok: false,
                 error: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes.`
               });
+            title = documentTitle(payload.html) ?? title;
           }
           if (manifest.tier === 2 && Object.keys(manifest.handlers ?? {}).length === 0)
             warnings.push("Tier 2 has no handlers.");

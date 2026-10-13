@@ -2216,7 +2216,10 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(version)) return yield* new VersionUnavailable({ versionNumber });
     if (row.scope === "public" && version.value.tier === 2) return yield* new Tier2NotPublic();
     const at = yield* now;
+    // The tab shows the title that version published with.
     yield* sql`UPDATE patches SET current_version_id = ${version.value.id}, updated_at = ${at},
+        title = COALESCE((SELECT publish_response->>'title' FROM patch_versions
+          WHERE id = ${version.value.id}), title),
         lifecycle_revision = lifecycle_revision + 1,
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = ${`rolled back to v${versionNumber}`} WHERE id = ${patchId}`;

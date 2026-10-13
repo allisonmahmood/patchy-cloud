@@ -316,9 +316,11 @@ it.live(
         path.join(process.cwd(), "packages/patchy"),
         path.join(root, "node_modules/patchy")
       );
+      // A tier 0 page is read whole for its title, past the scripted bundle's read limit.
+      const font = `<style>@font-face{font-family:F;src:url(data:font/woff2;base64,${"A".repeat(70_000)})}</style>`;
       yield* fs.writeFileString(
         path.join(root, "index.html"),
-        "<!doctype html><html><head><title>Static patch</title></head><body>Static content</body></html>"
+        `<!doctype html><html><head>${font}<title>Static patch</title></head><body>Static content</body></html>`
       );
       const prepared: Prepared = {
         patchId: "localdev0000",
@@ -362,6 +364,7 @@ it.live(
         `${shellContentSecurityPolicy(0)}; script-src ${origin}/~dev/reload.js; connect-src ${origin}/~dev/build`
       );
       const html = yield* response.text;
+      assert.include(html, "<title>Static patch</title>");
       assert.include(html, 'sandbox=""');
       assert.include(html, "srcdoc=");
       assert.notInclude(html, "/~shell/broker.js");

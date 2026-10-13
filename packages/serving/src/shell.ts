@@ -1,4 +1,4 @@
-import { escapeAttribute, escapeHtml, htmlPage, shellStyles } from "@patchy/core/html";
+import { escapeAttribute, escapeHtml, faviconLink, htmlPage, shellStyles } from "@patchy/core/html";
 import type { HandlerKind } from "@patchy/api";
 
 export { brokerScript } from "./generated/broker-script.js";
@@ -39,6 +39,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title}</title>
+  ${faviconLink}
   ${options.head ?? ""}
   ${scripted ? '<script defer src="/~shell/broker.js"></script>' : ""}
   <style>

@@ -1769,6 +1769,31 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
+  it.effect("titles a scripted patch from its page, its name, or the version rolled back to", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const manifest = { ...Fixtures.manifest, tier: 1 as const, name: "titled-script" };
+      const created = yield* api.publish({
+        payload: publishRequest({
+          html: "<!doctype html><title>Launch queue</title><div id=root></div><script>1</script>",
+          manifest
+        })
+      });
+      assert.strictEqual(created.title, "Launch queue");
+      const params = { patchId: created.patchId };
+      const untitled = yield* api.publish({
+        payload: publishRequest({ ...params, html: "<!doctype html><script>2</script>", manifest })
+      });
+      assert.strictEqual(untitled.title, "titled-script");
+      yield* api.rollback({ params, payload: new RollbackRequest({ versionNumber: 1 }) });
+      const patches = yield* Patches.Patches;
+      assert.strictEqual(
+        Option.getOrThrow(yield* patches.find(created.patchId)).patch.title,
+        "Launch queue"
+      );
+    })
+  );
+
   it.effect("publishes tier-one scripts without changing their bytes and replays the attempt", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));

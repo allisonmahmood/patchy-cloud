@@ -50,6 +50,8 @@ keep the same patch id and its data. The typecheck must pass before publishing.
 ## Source and import boundaries
 
 For scripted pages, `src/` owns the page; tier 0 keeps static HTML in `index.html`.
+On every tier, `index.html`'s `<title>` names the patch's browser tab; init starts
+it from the patch's name, so give it the tool's name as people say it.
 Put reusable company code in `helpers/`; page-only helpers
 may stay under `src/`. `server/` contains tier 2 handler modules.
 Importing a helper at runtime also imports its dependency

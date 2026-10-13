@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFixtureCorpus } from "../../../test/html-fixtures.mjs";
-import { BLOCKED_PROTOCOLS, BLOCKED_TAGS, validateHtml } from "./html-policy.js";
+import { BLOCKED_PROTOCOLS, BLOCKED_TAGS, documentTitle, validateHtml } from "./html-policy.js";
 
 type BlockedTag = (typeof BLOCKED_TAGS)[number];
 type Scheme<Protocol> = Protocol extends `${infer Name}:` ? Name : never;
@@ -59,5 +59,21 @@ describe("validateHtml", () => {
 
     expect(result.ok).toBe(true);
     expect(result.warnings).toContain("No <title> found; Patchy Cloud will use a generic title.");
+  });
+
+  it("reads the title a browser shows: the first HTML one, at any depth", () => {
+    expect(
+      documentTitle("<svg><title>Icon</title></svg><title> Launch queue </title><script>1</script>")
+    ).toBe("Launch queue");
+    expect(documentTitle("<svg><title>Icon</title></svg><script>1</script>")).toBeNull();
+    expect(documentTitle("<title> </title><title>Second</title>")).toBeNull();
+    expect(documentTitle(`${"<b>".repeat(20_000)}<title>Deep</title>`)).toBe("Deep");
+  });
+
+  it("reads a long bundle's title only when the read limit leaves it whole", () => {
+    const limit = 64 * 1024;
+    const title = "<title>Fish &amp; chips</title>";
+    expect(documentTitle(`${title}<script>${" ".repeat(limit)}</script>`)).toBe("Fish & chips");
+    expect(documentTitle(`${" ".repeat(limit - 15)}${title}`)).toBeNull();
   });
 });
