@@ -287,16 +287,6 @@ it.effect("refuses discovery past its bounds instead of keeping part of it", () 
     );
     assert.deepInclude(overflow, { limitId: "posthog.discovery.entries" });
 
-    const long = "d".repeat(registry["posthog.discovery.description"].default + 1);
-    const described = yield* source(
-      PostHogDouble.project({ ...product, events: [{ name: "verbose", description: long }] })
-    ).pipe(
-      Effect.flatMap(({ source }) => source.inspect(PostHogDouble.credentials(product))),
-      Effect.flip
-    );
-    assert.instanceOf(described, Source.DescriptionTooLong);
-    assert.include(described.message, "verbose");
-
     const endless = yield* source((request) =>
       request.url.pathname.endsWith("/query/")
         ? PostHogDouble.rows([["1", "UInt8"]], [[1]])
@@ -309,6 +299,34 @@ it.effect("refuses discovery past its bounds instead of keeping part of it", () 
       Effect.flip
     );
     assert.deepInclude(endless, { limitId: "posthog.discovery.pages" });
+  })
+);
+
+it.effect("cuts a description past the bound and marks it, keeping surrogate pairs whole", () =>
+  Effect.gen(function* () {
+    const limit = registry["posthog.discovery.description"].default;
+    const exact = "e".repeat(limit);
+    const long = "d".repeat(limit + 1);
+    // The cut lands inside an emoji, which must not be split.
+    const emoji = `${"d".repeat(limit - " [truncated]".length - 1)}${"😀".repeat(10)}`;
+    const { source: posthog } = yield* source(
+      PostHogDouble.project({
+        ...product,
+        events: [
+          { name: "a.exact", description: exact },
+          { name: "b.long", description: long },
+          { name: "c.emoji", description: emoji }
+        ]
+      })
+    );
+    const { snapshot } = yield* posthog.inspect(PostHogDouble.credentials(product));
+    const [kept, cut, pair] = snapshot.events.map((event) => event.description!);
+    assert.strictEqual(kept, exact);
+    assert.strictEqual(cut, `${"d".repeat(limit - " [truncated]".length)} [truncated]`);
+    assert.strictEqual(cut!.length, limit);
+    assert.isAtMost(pair!.length, limit);
+    assert.isTrue(pair!.endsWith(" [truncated]"));
+    assert.notMatch(pair!, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
   })
 );
 

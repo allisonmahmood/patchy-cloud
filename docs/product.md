@@ -1145,9 +1145,10 @@ refuses every redirect. Response bodies, refusals included, are read under the
 Discovery pages through event definitions and event and person property
 definitions, keeping names, types and descriptions, never events. Pagination is
 followed only within the region's host and the project's own list. At most 100
-pages, 10,000 definitions, 4 MiB of snapshot and 1,000-character descriptions are
-kept; anything over refuses discovery before anything is saved, so a partial
-snapshot is never stored as complete. Snapshots, revisions, `stale_generated` and
+pages, 10,000 definitions and 4 MiB of snapshot are kept; anything over refuses
+discovery before anything is saved, so a partial snapshot is never stored as
+complete. A description over 1,000 characters is cut and marked `[truncated]`,
+since it is only a hint. Snapshots, revisions, `stale_generated` and
 deletion protection work exactly as for Postgres; new events don't move the
 revision until someone refreshes.
 

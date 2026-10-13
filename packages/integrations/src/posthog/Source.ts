@@ -145,21 +145,6 @@ export class DiscoveryTooLarge extends Schema.TaggedError<DiscoveryTooLarge>()(
   }
 }
 
-export class DescriptionTooLong extends Schema.TaggedError<DescriptionTooLong>()(
-  "PostHogDescriptionTooLong",
-  { definition: Schema.String.check(Schema.isMaxLength(200)) }
-) {
-  readonly code = "posthog_description_too_long";
-  readonly status = 422;
-  readonly limitId = "posthog.discovery.description" as const;
-  get value() {
-    return registry[this.limitId].default;
-  }
-  override get message() {
-    return `The description of ${this.definition} is longer than Patchy keeps (at most ${this.value} characters). Shorten it in PostHog, then try again. Nothing was saved.`;
-  }
-}
-
 /** What reading a project's events can refuse, as connect, test and refresh show it. */
 export type SourceError =
   | InvalidCredentials
@@ -172,13 +157,9 @@ export type SourceError =
   | InvalidQuery
   | TooLarge
   | Busy
-  | DiscoveryTooLarge
-  | DescriptionTooLong;
+  | DiscoveryTooLarge;
 /** What one query can refuse once it has a slot. */
-export type QueryError = Exclude<
-  SourceError,
-  InvalidCredentials | Busy | DiscoveryTooLarge | DescriptionTooLong
->;
+export type QueryError = Exclude<SourceError, InvalidCredentials | Busy | DiscoveryTooLarge>;
 
 export const Region = Schema.Literals(["us", "eu"]);
 export type Region = typeof Region.Type;
@@ -525,12 +506,18 @@ export const make = Effect.gen(function* () {
     return found;
   });
 
-  /** A missing description is left out; one too long refuses discovery rather than shortening it. */
-  const description = (definition: string, value: string | null | undefined) => {
-    if (value === undefined || value === null || value.trim() === "") return Effect.succeed({});
-    return value.length > registry["posthog.discovery.description"].default
-      ? Effect.fail(new DescriptionTooLong({ definition: definition.slice(0, 200) }))
-      : Effect.succeed({ description: value });
+  /**
+   * A missing description is left out. One past the bound is cut, as other text agents read is,
+   * at a code-unit boundary that keeps surrogate pairs whole, and marked ` [truncated]`.
+   */
+  const description = (value: string | null | undefined) => {
+    if (value === undefined || value === null || value.trim() === "") return {};
+    const limit = registry["posthog.discovery.description"].default;
+    if (value.length <= limit) return { description: value };
+    const marker = " [truncated]";
+    const last = value.charCodeAt(limit - marker.length - 1);
+    const end = limit - marker.length - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+    return { description: `${value.slice(0, end)}${marker}` };
   };
   const byName = <A extends { readonly name: string }>(items: ReadonlyArray<A>) =>
     [...new Map(items.map((item) => [item.name, item])).values()].sort((a, b) =>
@@ -572,22 +559,19 @@ export const make = Effect.gen(function* () {
         registry["posthog.discovery.entries"].default
       )
         return yield* new DiscoveryTooLarge({ limitId: "posthog.discovery.entries" });
-      const property = (item: typeof Definition.Type) =>
-        Effect.map(description(item.name, item.description), (described) => ({
-          name: item.name,
-          type: item.property_type?.slice(0, 64) ?? null,
-          ...described
-        }));
+      const property = (item: typeof Definition.Type) => ({
+        name: item.name,
+        type: item.property_type?.slice(0, 64) ?? null,
+        ...description(item.description)
+      });
       const snapshot: PostHogSnapshot = {
         version: 1,
-        events: yield* Effect.forEach(byName(events), (item) =>
-          Effect.map(description(item.name, item.description), (described) => ({
-            name: item.name,
-            ...described
-          }))
-        ),
-        eventProperties: yield* Effect.forEach(byName(eventProperties), property),
-        personProperties: yield* Effect.forEach(byName(personProperties), property)
+        events: byName(events).map((item) => ({
+          name: item.name,
+          ...description(item.description)
+        })),
+        eventProperties: byName(eventProperties).map(property),
+        personProperties: byName(personProperties).map(property)
       };
       if (
         encoder.encode(encodeSnapshot(snapshot)).byteLength >

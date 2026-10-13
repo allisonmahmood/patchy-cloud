@@ -177,7 +177,8 @@ export const registry = {
     default: 1000,
     unit: "characters",
     scope: "company",
-    measure: "One definition's description in a PostHog snapshot",
+    measure:
+      "One definition's description in a PostHog snapshot; a longer one is cut and marked [truncated]",
     refusal: null,
     overridable: false
   },

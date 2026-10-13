@@ -345,7 +345,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `posthog.discovery.pages` | contract | 100 | pages | company | Definition pages one PostHog discovery reads, across events and both property kinds | None | No | release |
 | `posthog.discovery.entries` | contract | 10000 | definitions | company | Event and property definitions one PostHog snapshot keeps | None | No | release |
 | `posthog.discovery.bytes` | contract | 4194304 | bytes | company | Encoded PostHog snapshot | None | No | release |
-| `posthog.discovery.description` | contract | 1000 | characters | company | One definition's description in a PostHog snapshot | None | No | release |
+| `posthog.discovery.description` | contract | 1000 | characters | company | One definition's description in a PostHog snapshot; a longer one is cut and marked [truncated] | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
 | `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
 | `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |
