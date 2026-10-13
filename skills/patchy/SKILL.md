@@ -337,10 +337,11 @@ the chosen instance and follow the handoff. Resolve an overriding
    Name the user, company and machine it reports. A successful login does not
    override `PATCHY_API_TOKEN`; completion reports that override in `warnings`.
    Relay any warning and resolve an unintended identity before publishing.
-   Then resume the requested operation: `init` for a tool, or validate and publish a static page:
+   Then resume the requested operation with the file and flags it chose: `init` for
+   a tool, or validate and publish a static page, adding `--new` on its first publish:
 
 ```bash
-patchy validate './plan.html' && patchy publish './plan.html' --json
+patchy validate ~/Patchy/plan.html && patchy publish ~/Patchy/plan.html --new --json
 ```
 
 Skip login only when `whoami` already identifies the intended publisher, then
@@ -586,8 +587,8 @@ alone. Read the person's role from `patchy whoami --json`.
   draft it anyway: capture it into a folder, run `patchy look preview <dir>`, copy
   the file it writes into `~/Patchy` under a file name not already there, since the
   next preview overwrites it, and publish that copy as an ordinary page for them to
-  show an admin (`patchy publish ~/Patchy/look-draft.html --new --json`); the
-  single-look preview passes `validate`.
+  show an admin (`patchy publish <copy> --new --json`); the single-look preview
+  passes `validate`.
 - **An admin's** new look is captured by `references/look-capture.md`, or for a small
   change, `current.files` copied into a folder and edited. Before publishing,
   `patchy look preview <dir> --compare` writes it beside the current look. Its two

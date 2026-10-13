@@ -172,20 +172,20 @@ masthead the look's logo (`<img src="data:image/svg+xml;base64,…" alt="<compan
 with no logo, the company's name. Follow the brief where it fits, its voice and recipes
 included.
 
-Then publish it as the person's one welcome page. The file cache is per machine, so
-look for an existing one first: `patchy list --mine --json`, a patch named `welcome`
-or `welcome-` with a suffix. With none, create it:
+Then publish it as the person's one welcome page, never a second one. Before writing,
+see whether `~/Patchy/welcome.html` is already there:
 
-```bash
-patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --new --json
-```
+- **It is**: this machine published it before, and republishing updates that patch:
 
-When one exists, as on a redo or a new machine, update it by its id, never as a
-second page:
+  ```bash
+  patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --json
+  ```
 
-```bash
-patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --patch <id> --json
-```
+- **It isn't**: the file cache is per machine, so look for one published elsewhere
+  with `patchy list --mine --state all --json`, named `welcome` or `welcome-<n>`. Ask
+  the person when unsure which it is. Update a live one by adding `--patch <id>`; a
+  retired or deleted one is theirs to restore or leave. With none, create it by
+  adding `--new`.
 
 Publishing never starts a login or creates a key. If it says `Run: patchy login`,
 finish the handoff above and retry this publish.
