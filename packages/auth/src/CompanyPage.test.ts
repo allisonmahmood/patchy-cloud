@@ -12,10 +12,11 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, CompanyPage, InviteMail, Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthApi from "./AuthApi.js";
 import * as AuthPages from "./AuthPages.js";
@@ -85,6 +86,8 @@ const addUser = Effect.fn(function* (
     name
   });
 });
+/** A management form; the page's search is a GET and changes nothing. */
+const companyAction = /<form\b[^>]*method="post"[^>]*action="\/company(?:\/|")/;
 const redirected = (response: Response) => {
   assert.strictEqual(response.status, 303);
   assert.strictEqual(response.headers.get("location"), "/company");
@@ -197,7 +200,7 @@ it.layer(services)("company page and actions", (it) => {
             }
             assert.notInclude(html, `href="/company/users/${owner.user.id}/deactivate"`);
           } else {
-            assert.notMatch(html, /<form\b[^>]*action="\/company(?:\/|")/);
+            assert.notMatch(html, companyAction);
             assert.notMatch(
               html,
               /<a\b[^>]*href="\/company\/users\/[^"]+\/(?:deactivate|reactivate)"/
@@ -223,7 +226,7 @@ it.layer(services)("company page and actions", (it) => {
       assert.strictEqual(response.status, 200);
       const html = yield* Effect.promise(() => response.text());
       assert.include(html, invite.email);
-      assert.include(html, "Member · Expired");
+      assert.include(html, '<span class="pill">Expired</span>');
       assert.include(html, `action="/company/invites/${invite.id}/resend"`);
       assert.include(html, `action="/company/invites/${invite.id}/revoke"`);
     })
@@ -422,6 +425,197 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(
         reported(owner.company.id).map((event) => event.name),
         ["invite.sent"]
+      );
+    })
+  );
+
+  it.effect("sends one invitation per address in a pasted list and names the ones it skipped", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-batch");
+      const member = yield* addUser(owner, "member");
+      const companies = yield* Companies.Companies;
+      const recording = yield* InviteMail.Recording;
+      yield* companies.createInvite({
+        companyId: owner.company.id,
+        invitedBy: owner.user.id,
+        email: "waiting@example.com"
+      });
+      const start = (yield* recording.events).length;
+      const response = yield* send(
+        "/company/invites",
+        post(owner.user, {
+          email: `first@example.com, FIRST@example.com\nsecond@example.com;${member.email}  waiting@example.com`,
+          role: "admin"
+        })
+      );
+      assert.strictEqual(response.status, 409);
+      const html = yield* Effect.promise(() => response.text());
+      assert.include(html, 'role="alert"');
+      assert.include(html, "Invited first@example.com and second@example.com.");
+      assert.include(html, `${member.email} is already in`);
+      assert.include(html, "waiting@example.com already has an invite.");
+      const invites = yield* companies.listInvites(owner.company.id);
+      assert.deepStrictEqual(
+        invites
+          .map(({ email, role }) => ({ email, role }))
+          .sort((a, b) => a.email.localeCompare(b.email)),
+        [
+          { email: "first@example.com", role: "admin" },
+          { email: "second@example.com", role: "admin" },
+          { email: "waiting@example.com", role: "member" }
+        ]
+      );
+      assert.deepStrictEqual(
+        (yield* recording.events)
+          .slice(start)
+          .flatMap((event) => (event.operation === "create" ? [event.email] : []))
+          .sort(),
+        ["first@example.com", "second@example.com"]
+      );
+      assert.deepStrictEqual(
+        reported(owner.company.id).map((event) => event.name),
+        ["invite.sent", "invite.sent"]
+      );
+      redirected(
+        yield* send(
+          "/company/invites",
+          post(owner.user, { email: "third@example.com fourth@example.com", role: "member" })
+        )
+      );
+    })
+  );
+
+  it.effect("keeps going past an address it cannot save and leaves that one in the box", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-batch-fault");
+      const companies = yield* Companies.Companies;
+      const offline = new SqlError({
+        reason: new ConnectionError({ cause: new Error("database offline") })
+      });
+      const response = yield* send(
+        "/company/invites",
+        post(owner.user, {
+          email: "before@example.com broken@example.com after@example.com",
+          role: "member"
+        })
+      ).pipe(
+        Effect.provideService(
+          Companies.Companies,
+          Companies.Companies.of({
+            ...companies,
+            createInvite: (input) =>
+              input.email === "broken@example.com"
+                ? Effect.fail(offline)
+                : companies.createInvite(input)
+          })
+        )
+      );
+      assert.strictEqual(response.status, 503);
+      const html = yield* Effect.promise(() => response.text());
+      assert.include(html, "Invited before@example.com and after@example.com.");
+      assert.include(html, "Could not save the invite for broken@example.com.");
+      assert.include(html, ">broken@example.com</textarea>");
+      assert.deepStrictEqual(
+        (yield* companies.listInvites(owner.company.id)).map(({ email }) => email).sort(),
+        ["after@example.com", "before@example.com"]
+      );
+      assert.deepStrictEqual(
+        reported(owner.company.id).map((event) => event.name),
+        ["invite.sent", "invite.sent"]
+      );
+    })
+  );
+
+  it.effect(
+    "refuses a bad, empty or oversized list before sending any, keeping what was typed",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("company-batch-refused");
+        const recording = yield* InviteMail.Recording;
+        const before = yield* recording.events;
+        const tooMany = Array.from({ length: 51 }, (_, index) => `person-${index}@example.com`);
+        for (const [email, problem] of [
+          ["ok@example.com <b>bad</b>", "&lt;b&gt;bad&lt;/b&gt; is not an email address"],
+          [" \n ", "Enter at least one email address."],
+          [tooMany.join("\n"), "That is 51 addresses. Send up to 50 at a time."]
+        ] as const) {
+          const response = yield* send(
+            "/company/invites",
+            post(owner.user, { email, role: "admin" })
+          );
+          assert.strictEqual(response.status, 422);
+          const html = yield* Effect.promise(() => response.text());
+          assert.match(html, /class="note note-refused field-callout"[^>]*role="alert"/);
+          assert.include(html, problem);
+          assert.include(html, 'aria-invalid="true" autofocus');
+          assert.include(html, '<option value="admin" selected>');
+          if (email.startsWith("ok@"))
+            assert.include(html, ">ok@example.com &lt;b&gt;bad&lt;/b&gt;</textarea>");
+        }
+        assert.deepStrictEqual(
+          yield* (yield* Companies.Companies).listInvites(owner.company.id),
+          []
+        );
+        assert.deepStrictEqual(yield* recording.events, before);
+        assert.deepStrictEqual(reported(owner.company.id), []);
+      })
+  );
+
+  it.effect("narrows the list to a tab and a search, and keeps both in its links", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-filter");
+      const member = yield* addUser(owner, "zed", "member", "Zed Quill");
+      const gone = yield* addUser(owner, "gone");
+      yield* (yield* Users.Users).deactivate({ companyId: owner.company.id, userId: gone.id });
+      const invited = "invited-filter@example.com";
+      yield* (yield* Companies.Companies).createInvite({
+        companyId: owner.company.id,
+        invitedBy: owner.user.id,
+        email: invited
+      });
+      const page = Effect.fn(function* (path: string) {
+        const response = yield* send(path, { headers: { cookie: cookie(owner.user) } });
+        assert.strictEqual(response.status, 200, path);
+        return yield* Effect.promise(() => response.text());
+      });
+      const everyone = [invited, owner.user.email, gone.email, member.email];
+      const shown = (html: string) => everyone.filter((email) => html.includes(email)).sort();
+      assert.deepStrictEqual(shown(yield* page("/company")), [...everyone].sort());
+      assert.deepStrictEqual(shown(yield* page("/company?show=nonsense")), [...everyone].sort());
+      assert.deepStrictEqual(shown(yield* page("/company?show=admins")), [owner.user.email]);
+      assert.deepStrictEqual(shown(yield* page("/company?show=invited")), [invited]);
+      assert.deepStrictEqual(shown(yield* page("/company?show=deactivated")), [gone.email]);
+      const searched = yield* page("/company?q=+QUILL+");
+      assert.deepStrictEqual(shown(searched), [member.email]);
+      assert.include(searched, "1 match for “QUILL”");
+      assert.include(searched, 'href="/company?show=admins&amp;q=QUILL"');
+      assert.include(searched, 'name="q" value="QUILL"');
+      assert.include(yield* page("/company?show=admins&q=nobody"), "No one matches “nobody”.");
+    })
+  );
+
+  it.effect("adds a Patches column when the server supplies owned patch counts", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-owned");
+      const member = yield* addUser(owner, "builder");
+      const page = (response: Response) => Effect.promise(() => response.text());
+      const request = { headers: { cookie: cookie(owner.user) } };
+      assert.notInclude(yield* page(yield* send("/company", request)), ">Patches</th>");
+      const asked: Array<{ readonly companyId: string; readonly userId: string }> = [];
+      const html = yield* page(
+        yield* send("/company", request).pipe(
+          Effect.provideService(CompanyPage.OwnedPatches, (viewer) => {
+            asked.push(viewer);
+            return Effect.succeed(new Map([[member.id, 3]]));
+          })
+        )
+      );
+      assert.deepStrictEqual(asked, [{ companyId: owner.company.id, userId: owner.user.id }]);
+      assert.include(html, '<th scope="col">Patches</th>');
+      assert.match(html, new RegExp(`${member.email}[\\s\\S]*?<td>Member</td><td>3</td>`));
+      assert.match(
+        html,
+        new RegExp(`${owner.user.email}[\\s\\S]*?<td><strong>Admin</strong></td><td>0</td>`)
       );
     })
   );
@@ -676,7 +870,7 @@ it.layer(services)("company page and actions", (it) => {
         assert.match(deniedHtml, /deactivated/i);
         assert.include(deniedHtml, owner.company.name);
         assert.include(deniedHtml, 'action="/logout"');
-        assert.notMatch(deniedHtml, /<form\b[^>]*action="\/company(?:\/|")/);
+        assert.notMatch(deniedHtml, companyAction);
         const manage = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
         assert.include(
           yield* Effect.promise(() => manage.text()),
@@ -698,7 +892,7 @@ it.layer(services)("company page and actions", (it) => {
         assert.strictEqual(restored.status, 200);
         const restoredHtml = yield* Effect.promise(() => restored.text());
         assert.include(restoredHtml, member.email);
-        assert.notMatch(restoredHtml, /<form\b[^>]*action="\/company(?:\/|")/);
+        assert.notMatch(restoredHtml, companyAction);
         const fresh = yield* tokens.mint({ userId: member.id, name: "Reauthenticated laptop" });
         const identity = yield* me(fresh.token);
         assert.strictEqual(identity.status, 200);

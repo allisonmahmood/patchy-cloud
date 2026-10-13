@@ -199,6 +199,21 @@ it.layer(
         assert.include(body, 'action="/logout"');
         assert.notInclude(body, "<iframe");
 
+        // The Company page counts the patch just published among its owner's live ones.
+        const sql = yield* SqlClient.SqlClient;
+        const [live] = yield* sql<{ count: number }>`
+          SELECT count(*)::int AS count FROM patches WHERE owner_user_id = ${DEV_SEED.userId}
+            AND retired_at IS NULL AND deleted_at IS NULL AND disabled_at IS NULL`;
+        assert.isAbove(live?.count ?? 0, 0);
+        const company = yield* send(signedRequest("/company"));
+        assert.strictEqual(company.status, 200);
+        const owned = (yield* company.text).match(
+          new RegExp(
+            `${DEV_SEED.email}[\\s\\S]*?</td><td>(?:<strong>)?(?:Admin|Member)(?:</strong>)?</td><td>(\\d+)</td>`
+          )
+        )?.[1];
+        assert.strictEqual(Number(owned), live?.count);
+
         for (const headers of [{}, { cookie: sessionCookie() }]) {
           const head = yield* send(
             HttpClientRequest.head("/").pipe(HttpClientRequest.setHeaders(headers))

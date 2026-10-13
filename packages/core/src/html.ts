@@ -651,6 +651,10 @@ export function htmlPage(options: {
       font-size: .95rem;
     }
     textarea.field { min-height: 110px; resize: vertical; }
+    /* field-grow: a textarea that starts one line tall and grows with what is typed or pasted, such as a list of
+       addresses. Where field-sizing is unsupported it stays one line and resizes by hand. */
+    textarea.field-grow { min-height: 44px; max-height: 12rem; }
+    @supports (field-sizing: content) { textarea.field-grow { field-sizing: content; resize: none; } }
     .field-hint { margin: 8px 0 20px; color: var(--muted); font-size: .85rem; }
     .field-error { margin: 8px 0 20px; color: var(--danger); font-size: .85rem; font-weight: 750; }
     .field[aria-invalid="true"] { border-color: var(--danger); }
@@ -700,6 +704,39 @@ export function htmlPage(options: {
     .table tr:has(+ .table-expand) > * { border-bottom: 0; }
     .table-expand > td { padding-top: 0; }
     .table-expand summary { margin: 0 0 8px; cursor: pointer; }
+    /* avatar: a person's initials beside their name, so a list of people scans by face. avatar-green and avatar-amber
+       vary the tint; avatar-waiting dashes an invitation with no person yet; avatar-off mutes a deactivated user. */
+    .avatar { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper-blue); color: var(--ink); font-size: .74rem; font-weight: 850; letter-spacing: .03em; line-height: 1; }
+    .avatar-green { background: var(--paper-green); }
+    .avatar-amber { background: var(--paper-amber); }
+    .avatar-waiting { border-style: dashed; border-color: var(--line-strong); background: transparent; color: var(--muted); }
+    .avatar-off { border-color: var(--line-strong); background: transparent; color: var(--muted); }
+    /* tag: a small label after a name, such as You. */
+    .tag { display: inline-flex; align-items: center; min-height: 20px; margin-left: 6px; padding: 1px 7px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--ink-soft); font-size: .7rem; font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; vertical-align: 2px; }
+    /* tabs: links that narrow one list, the current one marked like the app nav, each label followed by its count. */
+    .tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tabs a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); font-size: .9rem; font-weight: 750; text-decoration: none; }
+    .tabs a:hover { background: var(--paper-blue); }
+    .tabs a[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
+    .count { color: var(--muted); font-weight: 650; font-variant-numeric: tabular-nums; }
+    .tabs a[aria-current="page"] .count { color: var(--ink); }
+    /* btn-icon: a square button holding one icon, named by its aria-label. */
+    .btn-icon { width: 44px; padding: 0; }
+    .btn-icon svg { width: 18px; height: 18px; }
+    .btn-quiet:has(+ .menu:popover-open) { background: color-mix(in srgb, var(--blue) 10%, transparent); }
+    /* menu: a native popover of one row's actions, right after the button whose popovertarget opens it. Where the
+       browser anchors a popover to its invoker the menu drops under the button; elsewhere it opens centred, so its
+       menu-head names whose actions they are. Items are links or buttons in their own forms. */
+    .menu { min-width: 220px; margin: auto; padding: 6px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); color: var(--ink); box-shadow: var(--shadow-hard); text-align: left; white-space: normal; }
+    @supports (position-area: bottom) {
+      .menu { inset: auto; margin: 6px 0; position-area: bottom span-left; position-try-fallbacks: flip-block; }
+    }
+    .menu form { margin: 0; }
+    .menu-head { max-width: none; margin: 0; padding: 6px 12px 4px; color: var(--muted); font-size: .8rem; font-weight: 750; overflow-wrap: anywhere; }
+    .menu-item { display: flex; align-items: center; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--field-radius); background: transparent; color: var(--ink); font: inherit; font-size: .9rem; font-weight: 750; line-height: 1.3; text-align: left; text-decoration: none; cursor: pointer; }
+    .menu-item:hover { background: var(--paper-blue); }
+    .menu-item-danger { color: var(--danger); }
+    .menu-rule { margin: 4px 0; border: 0; border-top: 1px solid var(--line-strong); }
     .copy-address { user-select: all; overflow-wrap: anywhere; }
     .code-panel { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }
     /* copy-line: one line to hand to an agent, selectable as a whole. Its Copy button starts hidden and the page's

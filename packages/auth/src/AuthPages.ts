@@ -51,7 +51,10 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
         status: 303,
         headers: { "cache-control": "private, no-store" }
       })
-    : pageResponse({ ...page, app: { viewer, section: "company" } }, session);
+    : pageResponse(
+        { ...page, styles: CompanyPage.styles, app: { viewer, section: "company" } },
+        session
+      );
 });
 
 const logout = Effect.gen(function* () {

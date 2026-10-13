@@ -817,6 +817,16 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "invites.batch": {
+    kind: "contract",
+    default: 50,
+    unit: "addresses",
+    scope: "company",
+    measure:
+      "Addresses in one invite from the Company page; more are refused before any email goes out",
+    refusal: null,
+    overridable: false
+  },
   "rate.protectedApi.perMinute": {
     kind: "operating",
     configuration: "legacy",

@@ -29,7 +29,7 @@ import {
   RequireSession,
   Session
 } from "@patchy/auth";
-import { Companies, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
+import { Companies, CompanyPage, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
 import {
   Inventory,
   PgCompanyDatabases,
@@ -125,6 +125,26 @@ const identity = Layer.unwrap(
 const resourceChanges = Layer.effect(
   ResourceChanges.ResourceChanges,
   Effect.map(Wakes.Wakes, (wakes) => ResourceChanges.ResourceChanges.of({ publish: wakes.publish }))
+);
+
+/** The Company page's Patches column comes from Patches, which Companies cannot depend on. */
+const ownedPatches = Layer.effect(
+  CompanyPage.OwnedPatches,
+  Effect.map(
+    Patches.Patches,
+    (patches) => (viewer: { readonly companyId: string; readonly userId: string }) =>
+      Effect.gen(function* () {
+        const canOpen = yield* Patches.Openability;
+        const rows = yield* patches.read({
+          ...viewer,
+          state: "live",
+          canOpen: (patch) => canOpen(patch, viewer.userId)
+        });
+        const counts = new Map<string, number>();
+        for (const { owner } of rows) counts.set(owner.id, (counts.get(owner.id) ?? 0) + 1);
+        return counts;
+      }).pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die }))
+  )
 );
 
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
@@ -286,7 +306,9 @@ const app = Layer.mergeAll(
 
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(
-  HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }),
+  HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
+    Layer.provide(ownedPatches)
+  ),
   sweeper,
   Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
 ).pipe(Layer.provide(services));

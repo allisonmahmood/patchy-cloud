@@ -609,9 +609,14 @@ A **user** is one individual with one account, in exactly one company. They sign
 
 An **admin** runs the company's invitations, roles, deactivation, reactivation and Postgres connections. Admins manage descriptions, sharing, served versions, retire, delete, restore and reassignment from the portal. Publish stays owner-only. Groups and group permissions remain future work.
 
-Today `/company` lists users, roles, active/deactivated state and pending invites.
-Admins manage invitations, roles, deactivation and reactivation there; members
-read the same page without actions. The last active admin cannot be demoted or
+Today `/company` lists users, roles, active/deactivated state and pending invites
+in one table, with how many live patches each person owns among those the reader
+can open. Tabs narrow it to admins, invites or deactivated users, and a search
+matches names and emails. Invites that need an admin, because their email did
+not go out or they expired, come first with Resend beside them. Admins invite
+from the top of the page, pasting up to `invites.batch` addresses at once, and
+manage roles, deactivation and reactivation from each row's menu; members read
+the same page without actions. The last active admin cannot be demoted or
 deactivated. Reactivation restores sign-in to the same company and data, but
 machine tokens revoked by deactivation remain revoked.
 

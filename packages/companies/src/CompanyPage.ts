@@ -1,10 +1,12 @@
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { dateLabel, escapeAttribute, escapeHtml } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";
@@ -22,93 +24,397 @@ export type Action =
       readonly id: string;
     };
 
-const decodeInvite = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    email: Schema.String.check(
-      Schema.isMaxLength(254),
-      Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)
-    ),
-    role: Users.Role
-  })
-);
-
 export interface Page {
   readonly title: string;
   readonly body: string;
   readonly status?: number;
   readonly redirect?: string;
 }
+
+/**
+ * How many live patches each user owns, among those the viewer can open. Patches depends on
+ * Companies, so the server supplies this from Patches; left unset, the page has no Patches column.
+ */
+export const OwnedPatches = Context.Reference<
+  | ((viewer: {
+      readonly companyId: string;
+      readonly userId: string;
+    }) => Effect.Effect<ReadonlyMap<string, number>, SqlError>)
+  | undefined
+>("@patchy/companies/CompanyPage/OwnedPatches", { defaultValue: () => undefined });
+
+/** The page's layout; components come from the shell. */
+export const styles = `
+    .company-invite-row { display: grid; grid-template-columns: minmax(0, 1fr) 10rem auto; gap: 10px; align-items: start; }
+    .company-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; }
+    .company-search { width: min(100%, 300px); }
+    .company-search .field-prefix { margin-right: 8px; }
+    .company-matches { margin-top: 12px; }
+    .company-table { overflow-x: auto; }
+    /* Cells keep words whole, so on a phone the table scrolls here rather than splitting "Member". */
+    .company-table .table { min-width: 760px; overflow-wrap: break-word; }
+    .company-table :is(th, td) { vertical-align: middle; }
+    .company-table .company-row-actions { text-align: right; white-space: nowrap; }
+    .company-person { display: flex; align-items: center; gap: 12px; }
+    .company-actions { display: inline-flex; align-items: center; gap: 6px; }
+    @media (max-width: 640px) {
+      .company-invite-row { grid-template-columns: minmax(0, 1fr) auto; }
+      .company-invite-row > textarea { grid-column: 1 / -1; }
+    }
+`;
+
+const shows = ["all", "admins", "invited", "deactivated"] as const;
+type Show = (typeof shows)[number];
+const showLabels: Record<Show, string> = {
+  all: "All",
+  admins: "Admins",
+  invited: "Invited",
+  deactivated: "Deactivated"
+};
+
+/** What a GET of the page narrows its list to. */
+interface Filter {
+  readonly show: Show;
+  readonly query: string;
+}
+
+/** The invite field as submitted, kept after a refusal so a pasted list is not lost. */
+interface Draft {
+  readonly text: string;
+  readonly role: Users.Role;
+  /** Why the addresses were refused, shown under the field. */
+  readonly problem?: string;
+}
+
+interface View {
+  readonly filter?: Filter;
+  /** The message is HTML: whoever builds it escapes what it interpolates. */
+  readonly notice?: { readonly message: string; readonly status: number };
+  readonly draft?: Draft;
+}
+
+const inviteBatch = registry["invites.batch"].default;
+const lifetimeDays = Companies.INVITATION_LIFETIME_MS / 86_400_000;
+const isEmail = Schema.is(
+  Schema.String.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/))
+);
 const decodeRole = Schema.decodeUnknownEffect(Schema.Struct({ role: Users.Role }));
 
-const actionForm = (path: string, label: string, fields = "", danger = false) =>
-  `<form method="post" action="${escapeAttribute(path)}">${fields}<button class="btn${danger ? " btn-danger" : ""}" type="submit">${escapeHtml(label)}</button></form>`;
+/** A pasted list: commas, semicolons and whitespace separate addresses; repeats count once. */
+const addresses = (text: string) => {
+  const seen = new Set<string>();
+  return text.split(/[\s,;]+/).filter((entry) => {
+    const key = entry.toLowerCase();
+    if (entry === "" || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+/** What became of one address in an invite: emailed, saved without its email, skipped, or not saved. */
+interface Delivery {
+  readonly email: string;
+  readonly outcome: "sent" | "unsent" | "member" | "invited" | "failed";
+}
+
+/** "a, b and c", escaped. */
+const sentenceList = (items: readonly string[]) => {
+  const escaped = items.map(escapeHtml);
+  return escaped.length < 2
+    ? escaped.join("")
+    : `${escaped.slice(0, -1).join(", ")} and ${escaped.at(-1)}`;
+};
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+const tints = ["", " avatar-green", " avatar-amber"] as const;
+const avatar = (key: string, label: string, variant?: "waiting" | "off") => {
+  const words = label.trim().split(/\s+/);
+  const picked = words.length > 1 ? [words[0], words.at(-1)] : [words[0]];
+  const letters = picked.map((word) => Array.from(word ?? "")[0]?.toUpperCase() ?? "").join("");
+  const tint =
+    variant === undefined
+      ? tints[Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0) % tints.length]
+      : ` avatar-${variant}`;
+  return `<span class="avatar${tint}" aria-hidden="true">${escapeHtml(letters)}</span>`;
+};
+
+const dots =
+  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
+const searchIcon =
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>';
+
+const postItem = (path: string, label: string, fields = "", danger = false) =>
+  `<form method="post" action="${escapeAttribute(path)}">${fields}<button class="menu-item${danger ? " menu-item-danger" : ""}" type="submit">${escapeHtml(label)}</button></form>`;
+const linkItem = (path: string, label: string, danger = false) =>
+  `<a class="menu-item${danger ? " menu-item-danger" : ""}" href="${escapeAttribute(path)}">${escapeHtml(label)}</a>`;
+/** One row's actions behind a quiet button; the popover's id is the row's own. */
+const menu = (id: string, label: string, items: readonly string[]) =>
+  `<button class="btn btn-quiet btn-icon" type="button" popovertarget="${escapeAttribute(`menu-${id}`)}" aria-label="${escapeAttribute(`Actions for ${label}`)}">${dots}</button><div class="menu" id="${escapeAttribute(`menu-${id}`)}" popover aria-label="${escapeAttribute(label)}"><p class="menu-head">${escapeHtml(label)}</p>${items.join("")}</div>`;
+const time = (date: Date) => {
+  const iso = date.toISOString();
+  return `<time datetime="${iso}">${escapeHtml(dateLabel(iso))}</time>`;
+};
+
+const filterHref = (show: Show, query: string) => {
+  const params = new URLSearchParams();
+  if (show !== "all") params.set("show", show);
+  if (query) params.set("q", query);
+  const search = params.toString();
+  return search ? `/company?${search}` : "/company";
+};
 
 const render = Effect.fn("CompanyPage.render")(function* (
   viewer: Viewer,
-  refusal?: { readonly message: string; readonly status: number }
+  view: View = {}
 ): Effect.fn.Return<Page, SqlError, Users.Users | Companies.Companies> {
   const users = yield* (yield* Users.Users).list(viewer.company.id);
   const invites = yield* (yield* Companies.Companies).listInvites(viewer.company.id);
+  const ownedPatches = yield* OwnedPatches;
+  const owned =
+    ownedPatches === undefined
+      ? undefined
+      : yield* ownedPatches({ companyId: viewer.company.id, userId: viewer.user.id });
   const now = yield* Clock.currentTimeMillis;
   const admin = viewer.role === "admin";
-  const userRows = users.map((user) => {
+  const { show, query } = view.filter ?? { show: "all", query: "" };
+
+  const byName = (a: Users.User, b: Users.User) =>
+    a.name.localeCompare(b.name) || a.email.localeCompare(b.email);
+  const active = users.filter((user) => user.deactivatedAt === null).sort(byName);
+  const deactivated = users.filter((user) => user.deactivatedAt !== null).sort(byName);
+  const names = new Map(users.map((user) => [user.id, user.name.trim() || user.email]));
+  const inviteState = (invite: Companies.Invite) =>
+    invite.expiresAt.getTime() <= now
+      ? "expired"
+      : invite.clerkInvitationId === null
+        ? "unsent"
+        : "waiting";
+  // Invites that need an admin come first: their email never went out, or they ran out.
+  const openInvites = [...invites].sort(
+    (a, b) => Number(inviteState(a) === "waiting") - Number(inviteState(b) === "waiting")
+  );
+  type Entry =
+    | { readonly kind: "invite"; readonly invite: Companies.Invite }
+    | { readonly kind: "user"; readonly user: Users.User };
+  const people = (list: readonly Users.User[]) =>
+    list.map((user): Entry => ({ kind: "user", user }));
+  const lists: Record<Show, readonly Entry[]> = {
+    all: [
+      ...openInvites.map((invite): Entry => ({ kind: "invite", invite })),
+      ...people(active),
+      ...people(deactivated)
+    ],
+    admins: people(active.filter((user) => user.role === "admin")),
+    invited: openInvites.map((invite): Entry => ({ kind: "invite", invite })),
+    deactivated: people(deactivated)
+  };
+  const needle = query.toLowerCase();
+  const entries = lists[show].filter((entry) =>
+    entry.kind === "invite"
+      ? entry.invite.email.toLowerCase().includes(needle)
+      : `${entry.user.name}\n${entry.user.email}`.toLowerCase().includes(needle)
+  );
+
+  const userRow = (user: Users.User) => {
     const path = `/company/users/${encodeURIComponent(user.id)}`;
-    const role = user.role === "admin" ? "member" : "admin";
-    const actions = admin
-      ? `<div class="actions">${actionForm(`${path}/role`, role === "admin" ? "Promote to admin" : "Demote to member", `<input type="hidden" name="role" value="${role}">`)}${user.deactivatedAt ? `<a class="btn" href="${escapeAttribute(`${path}/reactivate`)}">Reactivate</a>` : user.id !== viewer.user.id ? `<a class="btn btn-danger" href="${escapeAttribute(`${path}/deactivate`)}">Deactivate</a>` : ""}</div>`
+    const label = user.name.trim() || user.email;
+    const you = user.id === viewer.user.id ? '<span class="tag">You</span>' : "";
+    const second = user.name.trim()
+      ? `<br><span class="supporting-text">${escapeHtml(user.email)}</span>`
       : "";
-    return `<li class="list-row"><p><strong>${escapeHtml(user.name)}</strong><br><span class="auth-email">${escapeHtml(user.email)}</span></p><p>${user.role === "admin" ? "Admin" : "Member"} · ${user.deactivatedAt ? "Deactivated" : "Active"}${user.id === viewer.user.id ? " · You" : ""}</p>${actions}</li>`;
-  });
-  const inviteRows = invites.map((invite) => {
+    const status = user.deactivatedAt
+      ? `<span class="pill">Deactivated ${escapeHtml(dateLabel(user.deactivatedAt.toISOString()))}</span>`
+      : `<span class="supporting-text">Joined ${time(user.createdAt)}</span>`;
+    const role = user.role === "admin" ? "member" : "admin";
+    const lifecycle = user.deactivatedAt
+      ? linkItem(`${path}/reactivate`, "Reactivate…")
+      : user.id === viewer.user.id
+        ? ""
+        : linkItem(`${path}/deactivate`, "Deactivate…", true);
+    const actions = admin
+      ? `<td class="company-row-actions">${menu(user.id, label, [
+          postItem(
+            `${path}/role`,
+            role === "admin" ? "Make admin" : "Make member",
+            `<input type="hidden" name="role" value="${role}">`
+          ),
+          ...(lifecycle ? ['<hr class="menu-rule">', lifecycle] : [])
+        ])}</td>`
+      : "";
+    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "admin" ? "<strong>Admin</strong>" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
+  };
+  const inviteRow = (invite: Companies.Invite) => {
     const path = `/company/invites/${encodeURIComponent(invite.id)}`;
-    return `<li class="list-row"><p><span class="auth-email">${escapeHtml(invite.email)}</span><br>${invite.role === "admin" ? "Admin" : "Member"} · ${invite.expiresAt.getTime() <= now ? "Expired" : "Pending"}</p>${invite.clerkInvitationId === null ? '<div class="note note-warn">Invitation saved, but the email did not go out. An admin can resend it.</div>' : ""}${admin ? `<div class="actions">${actionForm(`${path}/resend`, "Resend invite")}${actionForm(`${path}/revoke`, "Revoke invite", "", true)}</div>` : ""}</li>`;
-  });
-  const notice = refusal
-    ? `<div class="note note-warn" role="alert">${escapeHtml(refusal.message)}</div>`
+    const state = inviteState(invite);
+    const inviter = names.get(invite.invitedBy);
+    const sent = `Invited${inviter ? ` by ${escapeHtml(inviter)}` : ""} · ${time(invite.createdAt)}${state === "waiting" ? ` · expires ${time(invite.expiresAt)}` : ""}`;
+    const status =
+      state === "expired"
+        ? '<span class="pill">Expired</span>'
+        : state === "unsent"
+          ? '<span class="pill pill-failed">Email didn’t send</span>'
+          : '<span class="pill pill-progress">Invited</span>';
+    const stuck = state !== "waiting";
+    const actions = admin
+      ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit">Resend</button></form>` : ""}${menu(
+          invite.id,
+          invite.email,
+          [
+            ...(stuck
+              ? []
+              : [postItem(`${path}/resend`, "Resend invite"), '<hr class="menu-rule">']),
+            postItem(`${path}/revoke`, "Revoke invite", "", true)
+          ]
+        )}</div></td>`
+      : "";
+    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "admin" ? "<strong>Admin</strong>" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
+  };
+
+  const counts: Record<Show, number> = {
+    all: invites.length + users.length,
+    admins: lists.admins.length,
+    invited: invites.length,
+    deactivated: deactivated.length
+  };
+  // Invited and Deactivated appear once there is something in them.
+  const tabs = shows
+    .filter((tab) => tab === "all" || tab === "admins" || counts[tab] > 0 || tab === show)
+    .map(
+      (tab) =>
+        `<a href="${escapeAttribute(filterHref(tab, query))}"${tab === show ? ' aria-current="page"' : ""}>${showLabels[tab]} <span class="count">${counts[tab]}</span></a>`
+    )
+    .join("");
+  const search = `<form class="company-search" method="get" action="/company" role="search">${show === "all" ? "" : `<input type="hidden" name="show" value="${show}">`}<div class="field field-group"><label class="field-prefix" for="company-search">${searchIcon}</label><input id="company-search" type="search" name="q" value="${escapeAttribute(query)}" maxlength="200" placeholder="Search name or email" aria-label="Search people"></div></form>`;
+  const matches = query
+    ? `<p class="supporting-text company-matches">${plural(entries.length, "match", "matches")} for “${escapeHtml(query)}” · <a href="${escapeAttribute(filterHref(show, ""))}">Clear search</a></p>`
     : "";
+  const empty = query
+    ? `<p>No one matches “${escapeHtml(query)}”.</p>`
+    : show === "invited"
+      ? "<p>No open invites.</p>"
+      : "<p>No one is deactivated.</p>";
+  const table = entries.length
+    ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Person</th><th scope="col">Role</th>${owned ? '<th scope="col">Patches</th>' : ""}<th scope="col">Status</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}</tr></thead><tbody>${entries.map((entry) => (entry.kind === "invite" ? inviteRow(entry.invite) : userRow(entry.user))).join("")}</tbody></table></div>`
+    : empty;
+
+  const draft = view.draft;
+  const inviteForm = admin
+    ? `<form method="post" action="/company/invites" novalidate><label class="field-label" for="invite-email">Invite people</label><div class="company-invite-row"><textarea class="field field-grow" id="invite-email" name="email" rows="1" required placeholder="Emails, separated by commas or new lines" aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea><select class="field" name="role" aria-label="Role"><option value="member">Member</option><option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option></select><button class="btn btn-primary" type="submit">Send invites</button></div>${draft?.problem ? `<div class="note note-refused field-callout" id="invite-email-note" role="alert">${escapeHtml(draft.problem)}</div>` : `<p class="field-hint" id="invite-email-note">Paste up to ${inviteBatch} at once. Each address gets its own email and has ${lifetimeDays} days to join.</p>`}</form>`
+    : "";
+  const notice = view.notice
+    ? `<div class="note note-warn" role="alert">${view.notice.message}</div>`
+    : "";
+  const admins = active.filter((user) => user.role === "admin").length;
   return {
     title: viewer.company.name,
-    body: `<p>Company · ${escapeHtml(viewer.company.handle)}</p>${notice}<section class="section" aria-labelledby="company-users"><h2 class="section-heading" id="company-users">Users</h2><ul class="list">${userRows.join("")}</ul></section><section class="section" aria-labelledby="company-invites"><h2 class="section-heading" id="company-invites">Pending invites</h2>${invites.length ? `<ul class="list">${inviteRows.join("")}</ul>` : "<p>No pending invites.</p>"}</section>${admin ? '<section class="section" aria-labelledby="company-invite"><h2 class="section-heading" id="company-invite">Invite a user</h2><form method="post" action="/company/invites"><label class="field-label" for="invite-email">Email</label><input class="field" id="invite-email" type="email" name="email" required maxlength="254" autocomplete="email"><label class="field-label" for="invite-role">Role</label><select class="field" id="invite-role" name="role"><option value="member">Member</option><option value="admin">Admin</option></select><div class="actions"><button class="btn btn-primary" type="submit">Send invite</button></div></form></section>' : ""}`,
-    status: refusal?.status
+    body: `<p class="supporting-text">${escapeHtml(viewer.company.handle)} · ${plural(active.length, "person", "people")} · ${plural(admins, "admin", "admins")}</p>${notice}${inviteForm}<div class="company-tools"><nav class="tabs" aria-label="Show">${tabs}</nav>${search}</div>${matches}${table}`,
+    status: view.notice?.status ?? (draft?.problem ? 422 : undefined)
   };
 });
 
+/** Re-renders the page with a plain-text refusal above it. */
+const refuse = (viewer: Viewer, message: string, status: number, draft?: Draft) =>
+  render(viewer, { notice: { message: escapeHtml(message), status }, draft });
+
 /** Auth supplies the viewer; Companies owns the forms and their company-scoped actions. */
 export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer, action: Action) {
-  if (action.kind === "view") return yield* render(viewer);
-  if (viewer.role !== "admin") {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  if (action.kind === "view") {
+    // Only the query matters here; the base never reaches a link.
+    const params = new URL(request.url, "http://company.invalid").searchParams;
+    const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
     return yield* render(viewer, {
-      message: "Only an admin can manage this company.",
-      status: 403
+      filter: { show, query: (params.get("q") ?? "").trim().slice(0, 200) }
     });
   }
+  if (viewer.role !== "admin")
+    return yield* refuse(viewer, "Only an admin can manage this company.", 403);
   return yield* Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
     const users = yield* Users.Users;
     const analytics = yield* Analytics.Analytics;
     // A refused action fails before its event. Invitations deliver uninterruptibly,
     // so each reports in the same region; the role change reports with its commit.
     const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
-    let mailFailed = false;
     if (action.kind === "invite") {
       const fields = Object.fromEntries(yield* request.urlParamsBody);
-      const form = yield* decodeInvite({ ...fields, email: fields.email?.trim() });
-      const result = yield* Invitations.create({
-        ...form,
-        companyId: viewer.company.id,
-        invitedBy: viewer.user.id
-      }).pipe(
-        Effect.tap(({ invite, mailFailed }) =>
-          analytics.track({
-            name: "invite.sent",
-            ...admin,
-            properties: { inviteId: invite.id, role: invite.role, emailed: !mailFailed }
-          })
-        ),
-        Effect.uninterruptible
+      const text = fields.email ?? "";
+      const role = yield* decodeRole(fields).pipe(
+        Effect.map(({ role }) => role),
+        Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
       );
-      mailFailed = result.mailFailed;
-    } else if (action.kind === "revoke") {
+      if (role === null)
+        return yield* refuse(viewer, "Choose Member or Admin.", 422, { text, role: "member" });
+      const list = addresses(text);
+      const invalid = list.filter((entry) => !isEmail(entry));
+      const problem =
+        list.length === 0
+          ? "Enter at least one email address."
+          : invalid.length > 0
+            ? `${invalid.join(", ")} ${invalid.length === 1 ? "is not an email address" : "are not email addresses"}. Fix ${invalid.length === 1 ? "it" : "them"} and send again.`
+            : list.length > inviteBatch
+              ? `That is ${list.length} addresses. Send up to ${inviteBatch} at a time.`
+              : undefined;
+      if (problem) return yield* render(viewer, { draft: { text, role, problem } });
+      // Each address is its own invitation: a refusal or a failed save stops that address only.
+      const outcomes = yield* Effect.forEach(list, (email) =>
+        Invitations.create({
+          email,
+          role,
+          companyId: viewer.company.id,
+          invitedBy: viewer.user.id
+        }).pipe(
+          Effect.tap(({ invite, mailFailed }) =>
+            analytics.track({
+              name: "invite.sent",
+              ...admin,
+              properties: { inviteId: invite.id, role: invite.role, emailed: !mailFailed }
+            })
+          ),
+          Effect.uninterruptible,
+          Effect.map(({ mailFailed }): Delivery => ({
+            email,
+            outcome: mailFailed ? "unsent" : "sent"
+          })),
+          Effect.catchTags({
+            AlreadyInCompany: () => Effect.succeed<Delivery>({ email, outcome: "member" }),
+            AlreadyInvited: () => Effect.succeed<Delivery>({ email, outcome: "invited" }),
+            SqlError: () => Effect.succeed<Delivery>({ email, outcome: "failed" })
+          })
+        )
+      );
+      const emails = (kind: Delivery["outcome"]) =>
+        outcomes.filter((entry) => entry.outcome === kind).map((entry) => entry.email);
+      const sent = emails("sent");
+      const unsent = emails("unsent");
+      const members = emails("member");
+      const invited = emails("invited");
+      const failed = emails("failed");
+      if (sent.length === outcomes.length)
+        return { title: viewer.company.name, body: "", redirect: "/company" };
+      const lines = [
+        sent.length ? `Invited ${sentenceList(sent)}.` : "",
+        unsent.length
+          ? `Saved the invite for ${sentenceList(unsent)}, but the email did not go out. Resend it from the list.`
+          : "",
+        members.length
+          ? `${sentenceList(members)} ${members.length === 1 ? "is" : "are"} already in a company.`
+          : "",
+        invited.length
+          ? `${sentenceList(invited)} already ${invited.length === 1 ? "has an invite" : "have invites"}. Resend from the list instead.`
+          : "",
+        failed.length
+          ? `Could not save the invite for ${sentenceList(failed)}. ${failed.length === 1 ? "It is" : "They are"} still in the box; send again.`
+          : ""
+      ];
+      return yield* render(viewer, {
+        notice: {
+          message: lines.filter(Boolean).join(" "),
+          status: failed.length ? 503 : unsent.length ? 502 : 409
+        },
+        draft: failed.length ? { text: failed.join("\n"), role } : undefined
+      });
+    }
+    if (action.kind === "revoke") {
       const result = yield* Invitations.revoke({
         companyId: viewer.company.id,
         inviteId: action.id
@@ -119,7 +425,12 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
         Effect.uninterruptible
       );
       // Here mail failure means Clerk kept the emailed link; Patchy revoked the invitation.
-      mailFailed = result.mailFailed;
+      if (result.mailFailed)
+        return yield* refuse(
+          viewer,
+          "Invitation revoked in Patchy, but Clerk could not revoke the emailed link. It can no longer be used to join this company.",
+          502
+        );
     } else if (action.kind === "resend") {
       const result = yield* Invitations.resend({
         companyId: viewer.company.id,
@@ -134,7 +445,12 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
         ),
         Effect.uninterruptible
       );
-      mailFailed = result.mailFailed;
+      if (result.mailFailed)
+        return yield* refuse(
+          viewer,
+          "Invitation saved, but the email did not go out. Resend it to try again.",
+          502
+        );
     } else if (action.kind === "role") {
       const form = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
       const change = users.setRole({
@@ -152,26 +468,14 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           : Effect.void
       );
     }
-    if (mailFailed) {
-      return yield* render(viewer, {
-        message:
-          action.kind === "revoke"
-            ? "Invitation revoked in Patchy, but Clerk could not revoke the emailed link. It can no longer be used to join this company."
-            : "Invitation saved, but the email did not go out. Resend it to try again.",
-        status: 502
-      });
-    }
     return { title: viewer.company.name, body: "", redirect: "/company" };
   }).pipe(
     Effect.catchTags({
-      SchemaError: () =>
-        render(viewer, { message: "Enter a valid email and choose Member or Admin.", status: 422 }),
-      AlreadyInCompany: (error) => render(viewer, { message: error.message, status: 409 }),
-      AlreadyInvited: (error) => render(viewer, { message: error.message, status: 409 }),
-      InviteUnavailable: (error) => render(viewer, { message: error.message, status: 404 }),
-      CompanyNotFound: (error) => render(viewer, { message: error.message, status: 404 }),
-      UserNotFound: (error) => render(viewer, { message: error.message, status: 404 }),
-      LastAdmin: (error) => render(viewer, { message: error.message, status: 409 })
+      SchemaError: () => refuse(viewer, "Choose Member or Admin.", 422),
+      InviteUnavailable: (error) => refuse(viewer, error.message, 404),
+      CompanyNotFound: (error) => refuse(viewer, error.message, 404),
+      UserNotFound: (error) => refuse(viewer, error.message, 404),
+      LastAdmin: (error) => refuse(viewer, error.message, 409)
     })
   );
 });
