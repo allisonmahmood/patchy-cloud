@@ -21,7 +21,7 @@ The integrations Patchy offers a company, each with what it reads, how it connec
 _Avoid_: marketplace, app directory, integrations page
 
 **Unused**:
-A connection no stored version of any company patch declares, which is exactly when it can be deleted. A connection only retired patches or older versions declare is used by no live patch, but is not unused.
+A connection no stored version of any company patch declares, which is exactly when it can be deleted. A connection only older versions or retired, deleted or disabled patches declare is used by no live patch, but is not unused; its row reads "None live" with how many.
 _Avoid_: idle (a statement about calls), orphaned
 
 **Personal connection**:

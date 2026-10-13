@@ -60,6 +60,11 @@ const thirty: ReadonlyArray<View.Row> = [
     source: `${handle}.example.com`,
     status: status as View.Row["status"],
     usedBy: Array.from({ length: Number(used) }, (_, patch) => `${handle}-patch-${patch}`),
+    // Declared with no live user: one retired patch still declares it.
+    olderVersions: 0,
+    retired: Number(used) === 0 && declared ? 1 : 0,
+    deleted: 0,
+    disabled: 0,
     declared: Boolean(declared) || Number(used) > 0
   };
 });
@@ -168,7 +173,9 @@ describe("the connections index", () => {
     expect(row("postgres/warehouse")).toContain("<td>14 patches</td>");
     expect(row("greenhouse/hiring")).toContain("<td>1 patch</td>");
     expect(row("postgres/legacy-crm")).toContain('<span class="pill">Disconnected</span>');
-    expect(row("postgres/legacy-crm")).toContain("None now; older versions declare it");
+    expect(row("postgres/legacy-crm")).toContain(
+      'None live <span class="supporting-text">· 1 retired</span>'
+    );
     expect(row("linear/product")).toContain('<span class="supporting-text">None</span>');
     expect(row("posthog/main-app")).toContain("1 minute ago");
     expect(row("linear/product")).toContain(">Never<");

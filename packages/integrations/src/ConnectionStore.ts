@@ -179,10 +179,23 @@ export type ConnectionError =
 export interface Usage {
   /** Live patches whose current version declares it, by name. */
   readonly usedBy: ReadonlyArray<string>;
+  /** Declaring versions of live patches that are not their current version. */
+  readonly olderVersions: number;
+  /** Retired, deleted (not yet reclaimed) and disabled patches with a declaring version. */
+  readonly retired: number;
+  readonly deleted: number;
+  readonly disabled: number;
   /** Some stored version of a company patch declares it, so it cannot be deleted. */
   readonly declared: boolean;
 }
-export const unused: Usage = { usedBy: [], declared: false };
+export const unused: Usage = {
+  usedBy: [],
+  olderVersions: 0,
+  retired: 0,
+  deleted: 0,
+  disabled: 0,
+  declared: false
+};
 
 export interface Identity {
   readonly companyId: string;

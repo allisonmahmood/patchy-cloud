@@ -145,10 +145,24 @@ export const styles = `
 
 // ---------- the index ----------
 
+/**
+ * A connection no live patch uses: "None", or while stored versions still declare it, which ones
+ * in Patchy's words: "None live · 3 retired · 2 older versions".
+ */
+const unusedNow = (usage: Usage) => {
+  const kept = [
+    usage.retired > 0 ? `${usage.retired} retired` : null,
+    usage.deleted > 0 ? `${usage.deleted} deleted` : null,
+    usage.disabled > 0 ? `${usage.disabled} disabled` : null,
+    usage.olderVersions > 0 ? plural(usage.olderVersions, "older version") : null
+  ].filter((part) => part !== null);
+  return usage.declared ? `None live ${muted(`· ${kept.join(" · ")}`)}` : muted("None");
+};
+
 const usedByCell = (usage: Usage) =>
   usage.usedBy.length > 0
     ? escapeHtml(plural(usage.usedBy.length, "patch", "patches"))
-    : muted(usage.declared ? "None now; older versions declare it" : "None");
+    : unusedNow(usage);
 
 const lastCallCell = (lastCalls: LastCalls, id: string, now: number) => {
   if (lastCalls === "unavailable") return muted("Unknown");
@@ -174,8 +188,9 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows: ReadonlyArray<Row>, admin
       return `<li class="list-row connections-offer"><div><p><strong>${escapeHtml(offer.integration.label)}</strong>${count > 0 ? ` ${muted(`· ${plural(count, "connection")}`)}` : ""}</p><p class="supporting-text">${escapeHtml(offer.reads)}</p><p class="supporting-text">${escapeHtml(offer.mode)}</p></div>${admin ? `<a class="btn" href="${escapeAttribute(connectPath(offer.integration.key))}">Connect ${escapeHtml(offer.integration.label)}</a>` : ""}</li>`;
     })
     .join("")}</ul>`;
-const onRequest =
-  '<p class="supporting-text">Need another source? Patchy builds integrations on request.</p>';
+/** Where a company tells Patchy what it would use; the company's contact for now. */
+const contact = "mailto:allison@patchyhq.com";
+const onRequest = `<p class="supporting-text">Need a source we don't connect yet? <a href="${contact}">Tell us</a> what you'd use.</p>`;
 
 const lead =
   "Sources your company's patches can read. An admin connects one once; any patch can then declare it, and Patchy keeps the credentials.";
@@ -391,8 +406,7 @@ const patchLink = (patch: string) =>
   `<a href="/patches/${encodeURIComponent(patch)}">${escapeHtml(patch)}</a>`;
 /** The first five live patches, then the rest behind a disclosure. */
 const usedByFact = (usage: Usage) => {
-  if (usage.usedBy.length === 0)
-    return escapeHtml(usage.declared ? "None now; older versions declare it" : "None");
+  if (usage.usedBy.length === 0) return unusedNow(usage);
   const first = usage.usedBy.slice(0, 5).map(patchLink);
   const rest = usage.usedBy.slice(5).map(patchLink);
   return rest.length === 0

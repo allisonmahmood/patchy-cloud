@@ -128,14 +128,28 @@ export const make = Effect.gen(function* () {
     JOIN patches p ON p.id = v.patch_id
     CROSS JOIN LATERAL jsonb_each(v.manifest->'uses') AS declaration
     WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(integrations)}`;
+  // A patch is in one state: deleted, then disabled, then retired, else live.
+  const live = sql`p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.retired_at IS NULL`;
   const usageRows = SqlSchema.findAll({
     Request: Schema.String,
-    Result: Schema.Struct({ connectionId: Schema.String, usedBy: Schema.Array(Schema.String) }),
+    Result: Schema.Struct({
+      connectionId: Schema.String,
+      usedBy: Schema.Array(Schema.String),
+      olderVersions: Schema.Int,
+      retired: Schema.Int,
+      deleted: Schema.Int,
+      disabled: Schema.Int
+    }),
     execute: (companyId) => sql`SELECT declaration.value->>'id' AS "connectionId",
-      COALESCE(array_agg(DISTINCT p.name ORDER BY p.name) FILTER (
-        WHERE v.id = p.current_version_id
-          AND p.deleted_at IS NULL AND p.retired_at IS NULL AND p.disabled_at IS NULL
-      ), '{}') AS "usedBy"
+      COALESCE(array_agg(DISTINCT p.name ORDER BY p.name)
+        FILTER (WHERE ${live} AND v.id = p.current_version_id), '{}') AS "usedBy",
+      (count(DISTINCT v.id)
+        FILTER (WHERE ${live} AND v.id IS DISTINCT FROM p.current_version_id))::int AS "olderVersions",
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL AND p.disabled_at IS NULL
+        AND p.retired_at IS NOT NULL))::int AS retired,
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NOT NULL))::int AS deleted,
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL
+        AND p.disabled_at IS NOT NULL))::int AS disabled
       FROM ${declarations(companyId)}
       GROUP BY 1`
   });
@@ -150,7 +164,9 @@ export const make = Effect.gen(function* () {
     function* (companyId: string) {
       const rows = yield* usageRows(companyId);
       return new Map(
-        rows.map((row) => [row.connectionId, { usedBy: row.usedBy, declared: true }] as const)
+        rows.map(
+          ({ connectionId, ...usage }) => [connectionId, { ...usage, declared: true }] as const
+        )
       );
     },
     Effect.catchTags(safe("usage"))

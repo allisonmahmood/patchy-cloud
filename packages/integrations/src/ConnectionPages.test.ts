@@ -789,7 +789,7 @@ it.layer(services)("company connection pages", (it) => {
         });
         assert.include(
           yield* Effect.promise(() => index.text()),
-          "None now; older versions declare it"
+          'None live <span class="supporting-text">· 1 older version</span>'
         );
         assert.strictEqual(
           (yield* send(path, { headers: { cookie: cookie(owner.user) } })).status,
@@ -810,6 +810,7 @@ it.layer(services)("company connection pages", (it) => {
         const warehouse = yield* connect(owner.user, "warehouse");
         const archive = yield* connect(owner.user, "archive");
         const spare = yield* connect(owner.user, "spare");
+        const ledger = yield* connect(owner.user, "ledger");
         // Two aliases in one served version count its patch once.
         yield* storeVersion(owner, "revenue", 1, [warehouse.connection, warehouse.connection], {
           current: true
@@ -822,14 +823,30 @@ it.layer(services)("company connection pages", (it) => {
           current: true,
           retired: true
         });
+        // Only a retired patch declares ledger.
+        yield* storeVersion(owner, "old-ledger", 1, [ledger.connection], {
+          current: true,
+          retired: true
+        });
         // Another company's version naming spare's id declares nothing here.
         yield* storeVersion(foreign, "copycat", 1, [spare.connection], { current: true });
         const usage = yield* (yield* ConnectionStore.ConnectionStore).usage(owner.company.id);
+        const declared = { olderVersions: 0, retired: 0, deleted: 0, disabled: 0, declared: true };
         assert.deepStrictEqual(usage.get(warehouse.connection.id), {
+          ...declared,
           usedBy: ["reports", "revenue"],
-          declared: true
+          retired: 1
         });
-        assert.deepStrictEqual(usage.get(archive.connection.id), { usedBy: [], declared: true });
+        assert.deepStrictEqual(usage.get(archive.connection.id), {
+          ...declared,
+          usedBy: [],
+          olderVersions: 1
+        });
+        assert.deepStrictEqual(usage.get(ledger.connection.id), {
+          ...declared,
+          usedBy: [],
+          retired: 1
+        });
         assert.isUndefined(usage.get(spare.connection.id));
 
         const read = Effect.fn(function* (path: string) {
@@ -840,7 +857,15 @@ it.layer(services)("company connection pages", (it) => {
         const row = (path: string) =>
           index.split("<tr><td>").find((item) => item.includes(`href="${path}"`))!;
         assert.include(row(warehouse.path), "<td>2 patches</td>");
-        assert.include(row(archive.path), "None now; older versions declare it");
+        // No sentence in a row: who still declares it, in Patchy's words.
+        assert.include(
+          row(archive.path),
+          '<td>None live <span class="supporting-text">· 1 older version</span></td>'
+        );
+        assert.include(
+          row(ledger.path),
+          '<td>None live <span class="supporting-text">· 1 retired</span></td>'
+        );
         assert.include(row(spare.path), '<span class="supporting-text">None</span>');
         const detail = yield* read(warehouse.path);
         assert.include(
@@ -849,6 +874,10 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.notInclude(detail, `href="${warehouse.path}/delete"`);
         assert.include(yield* read(spare.path), `href="${spare.path}/delete"`);
+        assert.include(
+          yield* read(ledger.path),
+          '<dt>Used by</dt><dd>None live <span class="supporting-text">· 1 retired</span></dd>'
+        );
         const disconnecting = yield* read(`${warehouse.path}/disconnect`);
         assert.include(disconnecting, "These patches lose access on their next call:");
         assert.include(disconnecting, '<li><a href="/patches/revenue">revenue</a></li>');

@@ -234,7 +234,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   // directory that cannot be read leaves the page and its actions working, without names.
   const people = yield* (yield* Users.Users).list(viewer.company.id).pipe(
     Effect.map((users) => new Map(users.map((user) => [user.id, user.name]))),
-    Effect.catchTags({ SqlError: () => Effect.succeed(undefined) })
+    Effect.catchTags({ SqlError: () => Effect.succeed(null) })
   );
   return {
     connection,
@@ -249,7 +249,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
       mode: page.offer.mode,
       testedAt: connection.lastTestedAt,
       addedBy:
-        people === undefined
+        people === null
           ? "Unknown"
           : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
       facts: page.facts(connection),

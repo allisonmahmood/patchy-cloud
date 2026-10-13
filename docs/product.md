@@ -645,9 +645,10 @@ Healthy rows read Connected; only a problem gets a pill, and admins see
 disconnected sources named above the table. From nine connections the page adds
 search over names and descriptions, a source filter, Needs attention and, for
 admins, Unused; they are plain links and a GET form, and combine. **Used by**
-counts live patches whose served version declares the connection; **Unused** means
-no stored version of any company patch declares it, which is exactly when Delete is
-offered. One "Connect a source" button leads admins to the **catalogue**, which says
+counts live patches whose served version declares the connection, and reads "None
+live · 3 retired" or "None live · 2 older versions" when only those still declare
+it; **Unused** means no stored version of any company patch declares it, which is
+exactly when Delete is offered. One "Connect a source" button leads admins to the **catalogue**, which says
 what each offered integration reads, how it connects and how many the company
 already has. With nothing connected, admins get the catalogue inline and members
 are told which admins can connect a source.
@@ -1212,7 +1213,7 @@ after an admin refreshes discovery. Live credentials and access are checked
 separately; a dropped or incompatible column fails the old call rather than
 silently changing its contract.
 
-There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company that needs an integration Patchy has not shipped requests it, and Patchy builds it. Admitting third-party integration authors would be a separate later decision; today's `patchy list connections --all` discovers the capabilities Patchy already offers.
+There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company can tell Patchy which integration it needs, and Patchy decides what to build. Admitting third-party integration authors would be a separate later decision; today's `patchy list connections --all` discovers the capabilities Patchy already offers.
 
 ### Development
 
