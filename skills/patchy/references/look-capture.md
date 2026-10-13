@@ -151,9 +151,20 @@ way.
 ## Showing it
 
 Render the specimen with `patchy look preview <dir>` and show it to the person:
-open the file it prints for them, or screenshot it. It shows `look.css` on plain
-elements, not the brief's recipes. Play the read back in one line ("deep forest
-green on cream, serif headings, plain-spoken — sound right?") and fold in
-corrections until they agree. When they reject a faithful capture of their
-marketing site, ask where the brand looks right to them, such as their product or
-a brand book, and capture from there.
+open the file it prints for them, or screenshot it. It shows `look.css` on Patchy's
+fixed page, not the brief's recipes.
+
+So build a sample tool too: what the person is really approving is how their tools
+will look. It is one self-contained HTML file made straight from the candidate
+`look.css`, the brief's recipes and `logo.svg` (or the company's name), not a patch
+repo, which would read the published look instead. Give it invented content from the
+company's kind of work: a page header with the logo, a filter, a table with status
+badges, primary and secondary buttons and an empty state. Its controls do nothing.
+Keep it outside the capture folder; it is for approval and never published. When the
+sample needs something the brief lacks, add it to the brief: a building agent would
+hit the same gap. Show it beside the specimen.
+
+Play the read back in one line ("deep forest green on cream, serif headings,
+plain-spoken — sound right?") and fold in corrections until they agree. When they
+reject a faithful capture of their marketing site, ask where the brand looks right
+to them, such as their product or a brand book, and capture from there.
