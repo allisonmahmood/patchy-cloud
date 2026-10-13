@@ -584,9 +584,9 @@ alone. Read the person's role from `patchy whoami --json`.
 
 - **A member** hears that only admins can change it, named from `admins`. Offer to
   draft it anyway: capture it into a folder, run `patchy look preview <dir>`, copy
-  the file it writes to `~/Patchy/look-draft.html`, since the next preview overwrites
-  it, and publish that copy as an ordinary page for them to show an admin
-  (`patchy publish ~/Patchy/look-draft.html --name look-draft --json`); the
+  the file it writes into `~/Patchy` under a file name not already there, since the
+  next preview overwrites it, and publish that copy as an ordinary page for them to
+  show an admin (`patchy publish ~/Patchy/look-draft.html --new --json`); the
   single-look preview passes `validate`.
 - **An admin's** new look is captured by `references/look-capture.md`, or for a small
   change, `current.files` copied into a folder and edited. Before publishing,

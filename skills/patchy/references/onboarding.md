@@ -170,18 +170,27 @@ look, then the Patchy look. The template's own CSS uses only the look's tokens, 
 look it needs that look's `look.css` verbatim in its first `<style>` block, and in the
 masthead the look's logo (`<img src="data:image/svg+xml;base64,…" alt="<company>">`) or,
 with no logo, the company's name. Follow the brief where it fits, its voice and recipes
-included. Then:
+included.
+
+Then publish it as the person's one welcome page. The file cache is per machine, so
+look for an existing one first: `patchy list --mine --json`, a patch named `welcome`
+or `welcome-` with a suffix. With none, create it:
 
 ```bash
-patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --json
+patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --new --json
+```
+
+When one exists, as on a redo or a new machine, update it by its id, never as a
+second page:
+
+```bash
+patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --patch <id> --json
 ```
 
 Publishing never starts a login or creates a key. If it says `Run: patchy login`,
 finish the handoff above and retry this publish.
 
-A new welcome patch defaults to `company`. A redo updates the welcome page already
-published, never a second one: find it with `patchy list --mine --json` and add
-`--patch <id>` to the publish, which preserves its current scope. Pass
+A new welcome patch defaults to `company`, and a redo preserves its current scope. Pass
 `--share company` or `--share public` only when the user explicitly chooses that
 audience. The welcome page's copy explains the company default and the owner's public
 option, rather than assuming its current scope.
