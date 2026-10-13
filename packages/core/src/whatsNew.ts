@@ -50,6 +50,51 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 11,
+    date: "2026-10-13",
+    through: "a253cb2df4da03fbbac3f4dad9ec376a95115aad",
+    changes: [
+      {
+        kind: "New",
+        title: "Tools can show your PostHog data",
+        detail:
+          "An admin can now connect your company's PostHog project on the Connections page. Your AI agent can then build dashboards and tools that read its events and numbers. They only read: nothing a tool does changes your PostHog data. While your agent builds, it works from the real data, so what you try is what your team will see.",
+        prs: [662, 664]
+      },
+      {
+        kind: "Improved",
+        title: "The Connections page stays clear with one connection or thirty",
+        detail:
+          "Each of your company's data connections is now one row in a table that shows what it reaches, whether it's working and which tools use it. New ones start from Connect a source, and each connection's own page keeps its actions together. If you need a source Patchy doesn't connect yet, the page tells you how to ask.",
+        prs: [657]
+      },
+      {
+        kind: "Improved",
+        title: "Find anyone on the Company page",
+        detail:
+          "The Company page is now one table of people and invites, with a search box and tabs for admins, invites and deactivated people. Invites that need you, because the email didn't go out or the invite expired, come first with a Resend button beside them. Each row keeps its actions in one menu.",
+        prs: [661]
+      },
+      {
+        kind: "New",
+        title: "Invite many people at once",
+        detail:
+          "Paste up to 50 email addresses into the invite box, separated by commas or new lines, and each person gets their own invitation. If any address is wrong, nothing is sent and your list stays in the box so you can fix it.",
+        prs: [661]
+      },
+      {
+        kind: "Fixed",
+        title: "Browser tabs show Patchy's icon and your tool's name",
+        detail:
+          "Patchy's pages and your tools now show Patchy's icon in the browser tab instead of a blank square. A tool's tab shows the title its page gives it rather than its web address. Existing tools pick up their title the next time they are published.",
+        prs: [660]
+      }
+    ],
+    behindTheScenes: [
+      "Each version of Patchy now skips kinds of connection it doesn't know, so going back to an earlier version stays safe."
+    ]
+  },
+  {
     id: 10,
     date: "2026-10-13",
     through: "64458b2207890bb9d5674ebde038a65c86ea7652",
