@@ -38,6 +38,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
 - **Publishing (`sdk`) → Primitives, Integrations, Patches, Companies, Content store, `api`**: retains advertised release archives in the content store and composes generated clients and context from primitive definitions and integration snapshots the caller may use, with the company's current look
 - **Publishing (`patchy/dev`) → Runtime, Execution/local, Execution/inspection, Primitives, Integrations, Company database, Content store, Limits**: composes the hosted handler engine and callback path over PGlite and fixtures, with the machine's user and a non-admin colleague on separate listeners. Dev bundles neither the fleet controller nor the AWS SDK.
+- **Publishing (`patchy/dev`) → Integrations (on the instance)**: an integration that reads the real connection in dev sends each call to Integrations' dev read door with the machine token; the door runs it as the token's person under Runtime's bounds and log ([ADR-0013](./docs/adr/ADR-0013-dev-bindings-per-integration.md)).
 - **`patchy/dev` → `serving/shell`**: serves the production renderer, broker and sandbox policies through the infrastructure-free shell export
 - **Serving → Patches, Auth**: relies on Patches for content, sharing, visits and lifecycle notices with restore-source checks, and on Auth for viewer identity and session admission. Serving links to the card and restore routes without importing Portal.
 - **Portal → Patches, Companies, Auth, Runtime, Integrations, `core`**: reads the company inventory and manages patches through Patches, coordinates Companies' user deactivation/reactivation with selected patch changes in one transaction, admits browser sessions through Auth, reads a patch's runtime log for its owner and admins through Runtime, naming the connections its calls went to through Integrations, and composes the shared app shell and components.
@@ -51,7 +52,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Companies → Hosting → Runtime**: Companies commits directory revisions and exposes after-commit change facts without importing Runtime or Primitives. Hosting publishes those resource wakes to Runtime. Dev instead supplies the two mount identities.
 - **Patches → Primitives, Integrations, Company database**: resolves declarations, diffs before storing bytes, then provisions under the platform patch-row lock and returns cumulative inventory metadata
 - **Patches → Companies**: joins company users for owner names and deactivation status in discovery, cards and lifecycle warnings.
-- **Integrations → Runtime, Auth**: supplies Postgres and PostHog handlers under loaded-version binding, records discovery with the acting admin, and mounts connection pages and the admin-only recent-calls reader behind the existing session and company-role boundary
+- **Integrations → Runtime, Auth**: supplies Postgres and PostHog handlers under loaded-version binding, records discovery with the acting admin, and mounts connection pages and the admin-only recent-calls reader behind the existing session and company-role boundary. Its dev read door authenticates machine tokens through Auth, records machine calls in Runtime's log and drains with Runtime
 - **Companies, Auth, Patches, Integrations → SQL**: persist their own domain data in the platform Postgres database
 - **Company database → SQL, Content store**: keeps placements in the platform database, inventories in each company database, and reclaims unreferenced file objects
 - **Auth, Companies, Patches, Integrations → Analytics**: report business events. Portal's deactivation and reactivation report through Patches' dependency-lock transaction, after its commit
@@ -73,3 +74,5 @@ The sandboxed browser, document-bound broker and tier-scoped serving guarantees 
 One package, exact-current tooling and stable deployed wire contracts are recorded in [ADR-0011](./docs/adr/ADR-0011-one-package-one-release.md).
 
 The credential-free handler engine, private guest wire and hosting contracts are recorded in [ADR-0012](./docs/adr/ADR-0012-credential-free-execution-service.md).
+
+Each integration's choice of dev binding, fixtures by default or live reads through the instance, is recorded in [ADR-0013](./docs/adr/ADR-0013-dev-bindings-per-integration.md).

@@ -13,7 +13,7 @@ Read `../patchy-loop/SKILL.md` first. A PostHog connection reads one PostHog Clo
 2. Run `pnpm patchy add posthog/<handle> --as analytics`. For `product`, it inserts `analytics: { kind: "posthog", handle: "product" }` into `uses` and generates the client, context and this skill. When hand-editing config, you may instead import `posthog` from `patchy/config` and write `analytics: posthog("product")`; run `pnpm patchy refresh` afterwards.
 3. Read `patchy/_generated/index.json`, then the context path for `analytics`. Its events and properties are hints from the last discovery, not a fence: a query may name anything the project has, and new events appear in the context after an admin refreshes the connection and you run `pnpm patchy refresh`.
 
-There is no fixture. This release's `patchy dev` refuses PostHog calls with `source_unavailable`; build the query against the context, then check it in the published patch.
+There is no fixture. `patchy dev` reads the real project through Patchy, as the person your publishing key belongs to, from either local viewer: the colleague mount reads as you too. Nothing is written, and each read appears in the connection's recent calls marked Dev, naming your machine. Rows are real company data, including anything events carry; keep them out of commits, fixtures and transcripts beyond what the task needs.
 
 ## Querying
 
@@ -44,5 +44,6 @@ const result = await patchy.connections.analytics.query({
 - PostHog's rate, query budget and concurrency limits fail with `source_rate_limited`, with `retryAfter` only when PostHog sent one. Patchy never retries a query; don't loop on it. `busy` means Patchy's own per-project slots stayed full and nothing was sent.
 - `source_unavailable` covers an unreachable PostHog and a key or project that stopped working; the latter needs an admin at `/company/connections`.
 - Every call, with its name and query text but never its values or rows, appears in the connection's recent calls for company admins.
+- In `patchy dev`, a key that expired or was revoked, or a deactivated account, fails `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`, since a running session keeps the key it started with. A disconnected connection also fails `access_denied`; an admin reconnects it. An unreachable instance fails `source_unavailable` while the rest of dev keeps working. Dev reads share each project's slots with published patches, and the instance limits them per person and per address with `rate_limited`.
 
 `connection_not_connected` needs the admin's connection page. `stale_generated` needs `pnpm patchy refresh`, never a hand-edited revision. `pnpm patchy remove analytics` drops the declaration and its generated surface.

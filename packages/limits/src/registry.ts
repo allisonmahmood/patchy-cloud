@@ -32,7 +32,8 @@ export const registry = {
     default: 300,
     unit: "calls/minute",
     scope: "viewer",
-    measure: "Calls per viewer per patch, excluding callbacks and subscription re-runs",
+    measure:
+      "Calls per viewer per patch, excluding callbacks and subscription re-runs; patchy dev reads per person across every repo",
     refusal: "rate_limited",
     overridable: false
   },

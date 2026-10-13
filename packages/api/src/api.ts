@@ -92,6 +92,7 @@ import {
   RuntimeSubscriptionRequest,
   RuntimeSubscriptionAccepted
 } from "./runtime.js";
+import { DEV_READ_PATH, DevRead } from "./devRead.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
 export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
@@ -679,6 +680,38 @@ const runtimeFileContract =
   "writes a fresh immutable object and changes the index only after the byte write succeeds. " +
   "Files belong to the patch and store, never a version; rollback and version cleanup preserve them. ";
 
+export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: true })
+  .add(
+    HttpApiEndpoint.post("devRead", DEV_READ_PATH, {
+      payload: DevRead,
+      success: RuntimeSuccess,
+      error: [...runtimeErrors, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "`patchy dev` reads a connection whose integration reads live in development, today " +
+          "PostHog's `posthog.query`, as the bearer. The machine token is the only authority: " +
+          "its person, company and machine are read from the token on every call and again " +
+          "after any wait for one of the project's query slots, which answers 401 when the token " +
+          "stopped working meanwhile. `connection` only selects: it must name a connected PostHog " +
+          "connection of the token's company, which any active member reads through. Other " +
+          "operations, including every Postgres one, answer `invalid_request`. `args` are the " +
+          "runtime operation's without its `connection` alias. The runtime's bounds apply: a " +
+          "body over `runtime.posthog.bytes` answers 413 `too_large`, each call has the " +
+          "15-second `integration.deadline` (`timeout`, 504), results keep the operation's row " +
+          "and `runtime.result.bytes` bounds, and published patches share the process's slots " +
+          "per PostHog project (`busy`). Calls are limited to `runtime.calls.perMinute` per " +
+          "person across every repo (`rate_limited`, 429), after the per-address " +
+          "protected-API limit. A draining host answers `busy`. Every call with a valid token " +
+          "and envelope, refused or not, is recorded in recent calls as a machine call with no " +
+          "patch or version; its failures carry the row's `correlationId`, and a live operation's " +
+          "refusals name it in `operation`, as a published patch's do. Success is " +
+          "`{ ok: true, value: { ok: true, rows } }`; refusals are runtime failures. Responses are no-store."
+      )
+    )
+  )
+  .middleware(Authorization)
+  .prefix("/api") {}
+
 export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true })
   .add(
     HttpApiEndpoint.post("call", "/runtime/call", {
@@ -1056,6 +1089,7 @@ export class PatchyApi extends HttpApi.make("patchy")
     AuthGroup,
     PatchesGroup,
     ConnectionsGroup,
+    DevReadsGroup,
     LookGroup,
     SdkGroup,
     RuntimeGroup,

@@ -40,6 +40,7 @@ import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
   ConnectionsApi,
+  DevReads,
   SqlConnectionStore,
   CredentialKeys,
   PostgresSource,
@@ -255,6 +256,7 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     AuthApi.layer,
     PatchesApi.layer,
     ConnectionsApi.layer,
+    DevReads.layer,
     LookApi.layer,
     SdkApi.layer,
     RuntimeApi.layer,

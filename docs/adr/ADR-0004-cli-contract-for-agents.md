@@ -463,7 +463,14 @@ authenticates `/api/me`; pulls published inventory and declaration metadata;
 regenerates; provisions local PGlite; and starts Vite build-watch with the
 production shell, CSP, sandbox, broker and dispatcher. It uses fixtures and local
 files, never production rows/bytes, Clerk, a connection keyring or the production
-runtime log store. Each call logs viewer, handler, outcome and milliseconds, plus
+runtime log store. The exception is an integration whose dev binding reads the
+real connection ([ADR-0013](ADR-0013-dev-bindings-per-integration.md)), today
+PostHog: the daemon sends those calls to the instance's dev read door with the
+key, which it receives on stdin only when such a declaration exists and keeps out
+of argv, the environment, state files, `dev.log` and workerd. Both mounts read as
+the key's person; the instance logs each read as a machine call. A refused key
+fails the read `access_denied`, naming `patchy login` then a dev restart; an
+unreachable instance fails it `source_unavailable`; other dev work continues. Each call logs viewer, handler, outcome and milliseconds, plus
 `ctx.log` output and dev-only failure message/stack, without PostHog delivery.
 A daemon started with `--json` writes full wide events and invocation JSON to
 `dev.log`; `dev logs --json` still returns `{ ok, log, text }`.

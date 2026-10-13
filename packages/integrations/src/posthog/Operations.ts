@@ -1,4 +1,4 @@
-import { PostgresRows, PostHogQuery } from "@patchy/api";
+import { PostgresRows, PostHogDevQuery, PostHogQuery } from "@patchy/api";
 import { registry } from "@patchy/limits/registry";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Clock from "effect/Clock";
@@ -102,53 +102,67 @@ const isJson = Schema.is(Schema.Json);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const encoder = new TextEncoder();
 
-/** The declared connection, its live state and its credentials, for this viewer only. */
-const resolve = Effect.fn("PostHogOperations.resolve")(function* (alias: string) {
-  const binding = yield* Binding.Binding;
-  const declaration = binding.manifest.uses[alias];
-  if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "posthog")
-    return yield* new ConnectionNotDeclared({});
-  if (
-    binding.scope !== "company" ||
-    binding.identity === null ||
-    binding.principal === null ||
-    binding.identity.company.id !== binding.companyId ||
-    binding.identity.user.id !== binding.principal.userId
-  )
-    return yield* new Runtime.AccessDenied({});
+/**
+ * The company's connected PostHog connection by this id and handle, and its credentials now.
+ * Production refuses either domain error as `access_denied`; the dev door says which it was.
+ */
+const connect = Effect.fn("PostHogOperations.connect")(function* (
+  companyId: string,
+  declared: Target["connection"]
+) {
   const connections = yield* ConnectionStore.ConnectionStore;
   const connection = yield* connections
-    .get(binding.companyId, declaration.id)
+    .get(companyId, declared.id)
     .pipe(
       Effect.mapError((cause) =>
-        cause._tag === "ConnectionNotFound"
-          ? new Runtime.AccessDenied({ cause })
-          : new Runtime.SourceUnavailable({ cause })
+        cause._tag === "ConnectionNotFound" ? cause : new Runtime.SourceUnavailable({ cause })
       )
     );
   if (
-    connection.companyId !== binding.companyId ||
-    connection.id !== declaration.id ||
+    connection.companyId !== companyId ||
+    connection.id !== declared.id ||
     connection.integration !== "posthog" ||
     connection.mode !== "company" ||
-    connection.handle !== declaration.handle ||
-    connection.status !== "connected"
+    connection.handle !== declared.handle
   )
-    return yield* new Runtime.AccessDenied({});
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId,
+      lookup: { id: declared.id }
+    });
+  if (connection.status !== "connected")
+    return yield* new ConnectionStore.ConnectionNotConnected({});
   const secret = yield* connections
-    .poolCredentials(binding.companyId, declaration, connection.credentialRevision)
+    .poolCredentials(
+      companyId,
+      {
+        kind: "posthog",
+        id: connection.id,
+        handle: connection.handle,
+        revision: connection.metadataRevision
+      },
+      connection.credentialRevision
+    )
     .pipe(
       Effect.mapError((cause) =>
         cause._tag === "ConnectionNotConnected" || cause._tag === "ConnectionNotFound"
-          ? new Runtime.AccessDenied({ cause })
+          ? cause
           : new Runtime.SourceUnavailable({ cause })
       )
     );
-  const credentials = yield* Source.parseCredentials(secret).pipe(
+  return yield* Source.parseCredentials(secret).pipe(
     Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
   );
-  return { binding, credentials };
 });
+
+/** Which connection a read goes to and until when, for a caller its door already admitted. */
+export interface Target<E = never> {
+  readonly companyId: string;
+  readonly connection: { readonly id: string; readonly handle: string };
+  /** When the caller stops waiting, in epoch milliseconds; a queued read gives up before it. */
+  readonly deadline: number;
+  /** The caller, checked again once the read holds a slot and before anything is sent. */
+  readonly recheck: Effect.Effect<void, E>;
+}
 
 /** PostHog's columns, types and rows through the declared shape; anything else is refused. */
 export const shaped = Effect.fn("PostHogOperations.shaped")(function* (
@@ -223,46 +237,72 @@ export const shaped = Effect.fn("PostHogOperations.shaped")(function* (
   return result;
 });
 
+/** One read: wait for the project's slot, check the caller and the connection again, send, shape. */
+const read = Effect.fn("PostHogOperations.read")(function* <E>(
+  target: Target<E>,
+  args: typeof PostHogDevQuery.Type
+) {
+  const credentials = yield* connect(target.companyId, target.connection);
+  const source = yield* Source.Source;
+  const response = yield* source.withSlot(
+    credentials,
+    target.deadline
+  )(
+    Effect.gen(function* () {
+      // The caller or the connection may have changed while this call waited: send only as they
+      // stand now, and never to a project the connection left.
+      yield* target.recheck;
+      const current = yield* connect(target.companyId, target.connection);
+      if (current.region !== credentials.region || current.projectId !== credentials.projectId)
+        return yield* new Runtime.SourceUnavailable({
+          cause: new ConnectionStore.ConnectionChanged({})
+        });
+      return yield* source
+        .query(current, {
+          name: args.name,
+          query: args.query,
+          ...(args.values === undefined ? {} : { values: args.values })
+        })
+        .pipe(
+          Effect.catchTags({
+            PostHogKeyRejected: (cause) => Effect.fail(new ConnectionRefused({ cause })),
+            PostHogAccessDenied: (cause) => Effect.fail(new ConnectionRefused({ cause })),
+            PostHogProjectNotFound: (cause) => Effect.fail(new ConnectionRefused({ cause }))
+          })
+        );
+    })
+  );
+  return yield* shaped(response, args.shape);
+});
+
 const query = operation({
   input: PostHogQuery,
   output: PostgresRows,
   errors: Errors,
   run: Effect.fn("PostHogOperations.query")(function* (args: typeof PostHogQuery.Type) {
-    const { binding, credentials } = yield* resolve(args.connection);
-    const source = yield* Source.Source;
+    const binding = yield* Binding.Binding;
+    const declaration = binding.manifest.uses[args.connection];
+    if (!Object.hasOwn(binding.manifest.uses, args.connection) || declaration?.kind !== "posthog")
+      return yield* new ConnectionNotDeclared({});
+    if (
+      binding.scope !== "company" ||
+      binding.identity === null ||
+      binding.principal === null ||
+      binding.identity.company.id !== binding.companyId ||
+      binding.identity.user.id !== binding.principal.userId
+    )
+      return yield* new Runtime.AccessDenied({});
     // The caller's own deadline bounds the wait for a slot, so a refused wait is never a timeout.
     const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
-    const response = yield* source
-      .withSlot(
-        credentials,
-        deadline
-      )(
-        Effect.gen(function* () {
-          // The connection may have been disconnected, rotated or pointed elsewhere while this
-          // call waited: send only with what it holds now, and never to a project it left.
-          const current = yield* resolve(args.connection);
-          if (
-            current.credentials.region !== credentials.region ||
-            current.credentials.projectId !== credentials.projectId
-          )
-            return yield* new Runtime.SourceUnavailable({
-              cause: new ConnectionStore.ConnectionChanged({})
-            });
-          return yield* source.query(current.credentials, {
-            name: args.name,
-            query: args.query,
-            ...(args.values === undefined ? {} : { values: args.values })
-          });
-        })
-      )
-      .pipe(
-        Effect.catchTags({
-          PostHogKeyRejected: (cause) => Effect.fail(new ConnectionRefused({ cause })),
-          PostHogAccessDenied: (cause) => Effect.fail(new ConnectionRefused({ cause })),
-          PostHogProjectNotFound: (cause) => Effect.fail(new ConnectionRefused({ cause }))
-        })
-      );
-    return yield* shaped(response, args.shape);
+    return yield* read(
+      { companyId: binding.companyId, connection: declaration, deadline, recheck: Effect.void },
+      args
+    ).pipe(
+      Effect.catchTags({
+        ConnectionNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
+        ConnectionNotConnected: (cause) => Effect.fail(new Runtime.AccessDenied({ cause }))
+      })
+    );
   })
 });
 
@@ -279,26 +319,23 @@ const connectionId = (args: unknown, binding: Binding.Binding["Service"]): strin
   return declaration?.kind === "posthog" ? declaration.id : null;
 };
 
-/** Production and dev share one Source, so a project's gate spans both. */
+/** How a query reads in recent calls: by its name, where a Postgres call names its relation. */
+const recorded = {
+  resource: (args: unknown) =>
+    Predicate.isObject(args) && typeof args.name === "string" ? args.name.slice(0, 100) : null,
+  rowCount: (value: unknown) =>
+    Predicate.isObject(value) && Array.isArray(value.rows) ? value.rows.length : null,
+  sql: (args: unknown) =>
+    Predicate.isObject(args) && typeof args.query === "string" ? args.query : undefined
+};
+
+/** Published patches and the dev door share one Source, so a project's slots span both. */
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
   return {
     "posthog.query": Runtime.handler(
-      {
-        kind: "integration",
-        ...query,
-        // The query's name labels the call in recent calls, where a relation would.
-        resource: (args) =>
-          Predicate.isObject(args) && typeof args.name === "string"
-            ? args.name.slice(0, 100)
-            : null,
-        connectionId,
-        rowCount: (value) =>
-          Predicate.isObject(value) && Array.isArray(value.rows) ? value.rows.length : null,
-        sql: (args) =>
-          Predicate.isObject(args) && typeof args.query === "string" ? args.query : undefined
-      },
+      { kind: "integration", ...query, ...recorded, connectionId },
       (args) =>
         query
           .run(args)
@@ -309,3 +346,44 @@ export const makeHandlers = Effect.gen(function* () {
     )
   };
 });
+
+const decodeDevQuery = Schema.decodeUnknownEffect(PostHogDevQuery, { onExcessProperty: "error" });
+const encodeRows = Schema.encodeEffect(PostgresRows);
+
+/** A live operation as the dev door runs it: its arguments decoded here, its rows encoded. */
+export interface DevRead {
+  readonly resource: (args: unknown) => string | null;
+  readonly rowCount: (value: unknown) => number | null;
+  readonly sql: (args: unknown) => string | undefined;
+  readonly run: <E extends Runtime.RuntimeError>(
+    target: Target<E>,
+    args: unknown
+  ) => Effect.Effect<
+    unknown,
+    | Runtime.RuntimeError
+    | ConnectionStore.ConnectionNotFound
+    | ConnectionStore.ConnectionNotConnected
+    | E,
+    Source.Source | ConnectionStore.ConnectionStore
+  >;
+}
+
+/**
+ * The operations the definition's `live` names, for `patchy dev` through the instance's dev door
+ * (#647): the caller is the door's, never a loaded version's, and the alias stays in the repo.
+ */
+export const devReads: { readonly "posthog.query": DevRead } = {
+  "posthog.query": {
+    ...recorded,
+    run: (target, args) =>
+      decodeDevQuery(args).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })),
+        Effect.flatMap((decoded) => read(target, decoded)),
+        Effect.flatMap((rows) =>
+          encodeRows(rows).pipe(
+            Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+          )
+        )
+      )
+  }
+};

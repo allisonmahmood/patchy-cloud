@@ -89,11 +89,11 @@ The single closed module built from a tier 2 version's handler code and stored b
 _Avoid_: page bundle, manifest, hosted instance
 
 **Environment**:
-Where a patch runs: the cloud as its viewer, or the local dev runtime as the machine's user or a non-admin colleague. Both expose the same declared capabilities; local data comes from fixtures, never copied company rows.
+Where a patch runs: the cloud as its viewer, or the local dev runtime as the machine's user or a non-admin colleague. Both expose the same declared capabilities; local data comes from fixtures, never copied company rows, except an integration whose [dev binding](../integrations/GLOSSARY.md) reads the real connection as the machine's user.
 _Avoid_: instance (the target cloud), dev env (the CLI's local-instance discovery record)
 
 **Dev runtime**:
-The patch repo's local execution of real capabilities over disposable data, under the cloud's operation contract. Tier 2 uses the production handler engine and callback path with live server rebinding. Its primary viewer is the machine token's user; tiers 1 and 2 also expose a colleague mount. Its schema baseline is the published inventory once the patch exists; its declarations use synthetic [Fixtures](../integrations/GLOSSARY.md), never production rows. Production scheduling, operating capacity and containment are not reproduced.
+The patch repo's local execution of real capabilities over disposable data, under the cloud's operation contract. Tier 2 uses the production handler engine and callback path with live server rebinding. Its primary viewer is the machine token's user; tiers 1 and 2 also expose a colleague mount. Its schema baseline is the published inventory once the patch exists; its declarations use synthetic [Fixtures](../integrations/GLOSSARY.md), never production rows, unless an integration's [dev binding](../integrations/GLOSSARY.md) reads the real connection through the instance. Production scheduling, operating capacity and containment are not reproduced.
 _Avoid_: mock backend, emulator, dev env
 
 **Colleague mount**:

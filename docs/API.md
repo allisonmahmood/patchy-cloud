@@ -283,6 +283,27 @@ Responses:
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "connection_storage_failed" }
 
+## devReads
+
+### `POST /api/connections/dev-read`
+
+`patchy dev` reads a connection whose integration reads live in development, today PostHog's `posthog.query`, as the bearer. The machine token is the only authority: its person, company and machine are read from the token on every call and again after any wait for one of the project's query slots, which answers 401 when the token stopped working meanwhile. `connection` only selects: it must name a connected PostHog connection of the token's company, which any active member reads through. Other operations, including every Postgres one, answer `invalid_request`. `args` are the runtime operation's without its `connection` alias. The runtime's bounds apply: a body over `runtime.posthog.bytes` answers 413 `too_large`, each call has the 15-second `integration.deadline` (`timeout`, 504), results keep the operation's row and `runtime.result.bytes` bounds, and published patches share the process's slots per PostHog project (`busy`). Calls are limited to `runtime.calls.perMinute` per person across every repo (`rate_limited`, 429), after the per-address protected-API limit. A draining host answers `busy`. Every call with a valid token and envelope, refused or not, is recorded in recent calls as a machine call with no patch or version; its failures carry the row's `correlationId`, and a live operation's refusals name it in `operation`, as a published patch's do. Success is `{ ok: true, value: { ok: true, rows } }`; refusals are runtime failures. Responses are no-store.
+
+Request body: [DevRead](#devread)
+
+Responses:
+
+- `200` [RuntimeSuccess](#runtimesuccess)
+- `400` [RuntimeFailure](#runtimefailure) | { ok: false, error: string }
+- `401` [RuntimeFailure_1](#runtimefailure_1) | { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `404` [RuntimeFailure_3](#runtimefailure_3) | { ok: false, error: string }
+- `409` [RuntimeFailure_4](#runtimefailure_4)
+- `413` [RuntimeFailure_5](#runtimefailure_5)
+- `429` [RuntimeFailure_6](#runtimefailure_6) | { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` [RuntimeFailure_7](#runtimefailure_7)
+- `504` [RuntimeFailure_8](#runtimefailure_8)
+
 ## look
 
 ### `GET /api/look`
@@ -867,6 +888,12 @@ RuntimeSuccess | HandlerFailure
   patchyLook: { look.css: string, LOOK.md: string } | null,
   admins: { id: string, name: string }[]
 }
+```
+
+### DevRead
+
+```
+{ op: "posthog.query", connection: { id: string, handle: string }, args: { name: string, query: string, values?: { [key: string]: string | number | boolean | null | (string | number | boolean | null)[] }, shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } }
 ```
 
 ### Described

@@ -29,6 +29,8 @@ import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Option from "effect/Option";
+import type * as Redacted from "effect/Redacted";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -70,7 +72,9 @@ export const serve = Effect.fn("Dev.serve")(function* (
   prepared: Prepared,
   stateDir: string,
   record: Daemon,
-  toolchain: typeof ReleaseToolchain.Type
+  toolchain: typeof ReleaseToolchain.Type,
+  /** The machine token, when a declared integration reads the real connection; memory only. */
+  token: Option.Option<Redacted.Redacted>
 ) {
   // Vite sets NODE_ENV while building. Execution uses the daemon's startup environment.
   const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
@@ -99,7 +103,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
             handlers: yield* initialServer.inspect
           }
         }),
-    observe: (event) => DevLog.invocation(event, record.logJson ?? false)
+    observe: (event) => DevLog.invocation(event, record.logJson ?? false),
+    instance: { apiUrl: record.instance, token }
   }).pipe(
     Effect.provideContext(events),
     Effect.provideService(ConfigProvider.ConfigProvider, executionConfig),

@@ -150,7 +150,8 @@ there and the independent purpose into write-once `AGENTS.md`, alongside the
 `src/` page and `server/` handler split in words that hold on either tier,
 skill paths, runtime-check guidance and the generated-index pointer.
 `CLAUDE.md` imports it. The local dev runtime uses real handlers over local data,
-never a production-data shortcut.
+never a production-data shortcut, except for an integration that reads the real
+connection in dev, today PostHog ([Development](#development)).
 
 For tiers 0, 1 and 2, `patchy dev` checks the pin, CLI and runtime against the instance release, then
 authenticates a new session as the machine token's user. It refreshes declarations
@@ -177,7 +178,8 @@ the published inventory determines additive changes and refusals, not the last
 local config; compatible additions preserve rows. `dev.log` records each call's
 viewer, handler, outcome and milliseconds, `ctx.log` output and local-only failure
 message/stack. Starting with `--json` records full wide events and invocation JSON.
-There are no runtime database log rows, PostHog delivery or connection keyring.
+There are no local runtime database log rows, PostHog delivery or connection keyring;
+dev reads of a live integration are logged on the instance instead.
 
 `patchy dev` runs the same handler engine and callback path as production.
 It enforces contract limits, but does not reproduce production scheduling,
@@ -277,7 +279,7 @@ with invented local inserts, or `fixtures/shared-<alias>/` with invented files
 for the named source store. Refresh creates a missing directory and never
 overwrites an existing one. Dev loads shared fixtures at start; edit them and
 restart to change a local source. Authority changes are not simulated.
-Only metadata and inventory come from the instance.
+Only metadata and inventory come from the instance, apart from PostHog's dev reads.
 On tier 1, every readable row is available to every admitted viewer;
 UI filters do not create access control. Tier 2 enforces rules in handlers.
 A public tier 1 patch can read its declared member directory for a signed-in
@@ -1283,10 +1285,30 @@ There is no bring-your-own source: no generic REST escape hatch and no "connect 
 
 ### Development
 
-Postgres development uses local fixtures, not live source rows or production
-credentials; PostHog has no fixture, and `patchy dev` refuses its calls until dev
-reads of the real connection land.
-The **dev binding** supplies the same Postgres execution dependency without
+Each integration chooses its **dev binding**
+([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)). The default is local
+fixtures or a fake, never live source rows or production credentials. An
+integration whose shapes can't be known ahead and which can't write may read the
+real connection in dev instead, and its connect form says so. Postgres keeps
+fixtures; PostHog reads live.
+
+**PostHog dev reads.** PostHog has no fixture. `patchy dev` sends each query to
+the instance as the machine token's person, for either local viewer; the instance
+runs it with the connection's own key, which never leaves it. The instance takes
+the company, person and machine from the token on every call, and again after any
+wait for one of the project's query slots, which dev and published patches share.
+The repo's declaration only routes the call: it must name a connected PostHog
+connection of the token's company. Only operations the integration opts into run
+this way, under the runtime's argument and result bounds, its deadline, draining
+and a per-person rate limit. Each read, refused or not, is a dev call in the
+connection's recent calls, marked Dev and naming the machine, with no patch. An
+expired or revoked key, a deactivated person, a disconnected source, another
+company's connection or an unreachable instance stops the read with a clear error;
+the rest of dev keeps working. The key reaches the dev daemon privately and stays
+out of generated files, logs and workerd; after `patchy login`, restart dev to use
+the new key.
+
+The Postgres **dev binding** supplies the same Postgres execution dependency without
 loading the keyring or runtime log. One PGlite database per connection under
 `.patchy/dev/` is shared by its aliases, with source-native types: numeric filters
 and ordering remain numeric, not string comparisons. Numeric precision and scale,

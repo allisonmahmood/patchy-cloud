@@ -414,6 +414,8 @@ export class Runtime extends Context.Service<
   {
     readonly bodyLimit: (op: string) => number;
     readonly drain: Effect.Effect<void>;
+    /** True once `drain` ran; other doors into the same work refuse new calls with it. */
+    readonly draining: Effect.Effect<boolean>;
     readonly maxCallBytes: number;
     readonly maxCallLimitId: RuntimeBodyLimitId;
     readonly fileBytes: number;
@@ -799,6 +801,7 @@ export const make = (
       drain: Effect.sync(() => {
         draining = true;
       }),
+      draining: Effect.sync(() => draining),
       call: (input, byteLength) =>
         dispatch(
           input,

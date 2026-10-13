@@ -84,7 +84,9 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    runs the real company-database and capability code against local PGlite and a
    filesystem content store. Connections and shared tables bind to authored
    fixtures; only metadata, never production rows, bytes or credentials, comes
-   from the instance. PGlite serializes its one connection, so it cannot prove
+   from the instance. An integration that reads the real connection in dev
+   ([ADR-0013](ADR-0013-dev-bindings-per-integration.md)) is the one exception,
+   and its rows come through the instance, never into PGlite. PGlite serializes its one connection, so it cannot prove
    lost updates, lock waits, deadlocks or publish-versus-writer races. The
    real-Postgres concurrency CI is mandatory; see [Development](../DEVELOPMENT.md).
 
