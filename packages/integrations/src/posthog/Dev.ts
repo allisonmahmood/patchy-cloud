@@ -119,14 +119,18 @@ export const handlers = Effect.fn("PostHogDev.handlers")(function* (instance: In
             )
           )
           .pipe(Effect.mapError(failed));
-        const body: unknown = yield* response.json.pipe(Effect.mapError(failed));
-        const failure = decodeFailure(body);
+        // A refused key is a refused key whatever its body says; only the rest must be the wire.
+        const read = yield* Effect.result(response.json);
+        const failure =
+          read._tag === "Success" ? decodeFailure(read.success) : Option.none<RuntimeFailure>();
         if (response.status === 401)
           return yield* new KeyRefused(
             Option.isSome(failure) && failure.value.correlationId !== undefined
               ? { correlationId: failure.value.correlationId }
               : {}
           );
+        if (read._tag === "Failure") return yield* failed(read.failure);
+        const body = read.success;
         if (response.status === 200) {
           const rows = Option.flatMap(decodeSuccess(body), (success) => decodeRows(success.value));
           return Option.isSome(rows) ? rows.value : yield* failed();

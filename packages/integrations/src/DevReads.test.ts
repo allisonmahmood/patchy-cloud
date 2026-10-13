@@ -6,7 +6,7 @@ import {
   PostgresRows,
   RuntimeFailure,
   WIRE_VERSION,
-  type PostHogDeclaration
+  PostHogDeclaration
 } from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -39,6 +39,9 @@ import * as PostHogDouble from "./test/posthog.js";
  * `patchy dev`'s PostHog binding against a real instance door: the endpoint on a socket over a
  * migrated database, its PostHog the double. Nothing reaches the network.
  */
+
+type Declaration = typeof PostHogDeclaration.Type;
+type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 
 /** Queries named `hold…` wait here until a test lets them answer. */
 let held: PromiseWithResolvers<void> | undefined;
@@ -155,21 +158,21 @@ const connection = Effect.gen(function* () {
     description: "Product analytics",
     credentials: PostHogDouble.credentials(project)
   });
-});
+}).pipe(Effect.orDie);
 
-const owner = {
+const owner: Viewer = {
   user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
   company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: DEV_SEED.companyName },
   admin: true
 };
-const colleague = {
+const colleague: Viewer = {
   ...owner,
   user: { id: "usr_dev_colleague", email: "colleague@patchy.local", name: "Dev Colleague" },
   admin: false
 };
 
 /** A local dev binding, as `patchy dev` admits either viewer. */
-const local = (declaration: PostHogDeclaration, now: number, viewer: typeof owner = owner) =>
+const local = (declaration: Declaration, now: number, viewer: Viewer = owner) =>
   Binding.Binding.of({
     patchId: "localdev0000",
     versionId: "ver_000000000000000000000000",
@@ -200,8 +203,8 @@ const origin = Effect.gen(function* () {
 const query = Effect.fn("test.devReads.query")(function* (
   token: string,
   options: {
-    readonly viewer?: typeof owner;
-    readonly declaration?: Partial<PostHogDeclaration>;
+    readonly viewer?: Viewer;
+    readonly declaration?: Partial<Declaration>;
     readonly args?: Record<string, unknown>;
     readonly apiUrl?: string;
   } = {}
@@ -211,7 +214,7 @@ const query = Effect.fn("test.devReads.query")(function* (
     apiUrl: options.apiUrl ?? (yield* origin),
     token: Option.some(Redacted.make(token))
   }).pipe(Effect.provide(FetchHttpClient.layer));
-  const declaration: PostHogDeclaration = {
+  const declaration: Declaration = {
     kind: "posthog",
     id: found.id,
     handle: found.handle,
