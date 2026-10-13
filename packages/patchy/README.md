@@ -450,13 +450,13 @@ It is not a repo command and never reads `patchy.json`, even inside a patch repo
 Use the pinned `pnpm patchy` there; pass `--api-url` when discovery should target
 an instance other than the normally resolved one.
 
-| command                                | behaviour                                                                                                                                             | `--json` success                                                                                                    |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `patchy list` or `patchy list patches` | Lists patches grouped Yours, Company, then Connections. Both forms include connections.                                                               | `{ patches, connections }`, merged from `GET /api/patches` and `GET /api/connections`.                              |
-| `patchy list <patch>`                  | Prints the patch row, full description, cumulative Tables and Stores, then Reads across retained versions, with declaration hints or refusal reasons. | Patch detail wire body with `inventory` and `reads`.                                                                |
-| `patchy list <patch> <primitive>`      | Describes one table or file store, never rows or file contents.                                                                                       | Primitive detail wire body with `kind`, `name`, `description`, `shared`, `schemaRevision`, `columns` and `indexes`. |
-| `patchy list connections [--all]`      | Lists company connections and their state; `--all` also shows offered integrations.                                                                   | Connections wire body `{ connections, offered? }`.                                                                  |
-| `patchy list connections <handle>`     | Prints the current immutable schema snapshot with its revision and `takenAt`.                                                                         | Connection detail wire body `{ handle, description, status, snapshot }`.                                            |
+| command                                          | behaviour                                                                                                                                             | `--json` success                                                                                                    |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `patchy list` or `patchy list patches`           | Lists patches grouped Yours, Company, then Connections. Both forms include connections.                                                               | `{ patches, connections }`, merged from `GET /api/patches` and `GET /api/connections`.                              |
+| `patchy list <patch>`                            | Prints the patch row, full description, cumulative Tables and Stores, then Reads across retained versions, with declaration hints or refusal reasons. | Patch detail wire body with `inventory` and `reads`.                                                                |
+| `patchy list <patch> <primitive>`                | Describes one table or file store, never rows or file contents.                                                                                       | Primitive detail wire body with `kind`, `name`, `description`, `shared`, `schemaRevision`, `columns` and `indexes`. |
+| `patchy list connections [--all]`                | Lists company connections of every integration and their state; `--all` also shows offered integrations.                                              | Connections wire body `{ connections, offered? }`.                                                                  |
+| `patchy list connections <integration>/<handle>` | Prints the current immutable metadata snapshot with its revision and `takenAt`. A bare handle names the only connection with it.                      | Connection detail wire body `{ integration, handle, description, status, snapshot }`.                               |
 
 Every level accepts `--json`; success has no added `ok` wrapper. Filter JSON
 locally when choosing candidates by description. Flags apply only at these levels:
@@ -542,8 +542,8 @@ Tier 2 adds a starter handler module in `server/`, config-bound builders in
 The release's exact `workerd` pin installs with scripts disabled; execution
 spawns its platform package's binary, not a postinstall-created wrapper.
 
-Use actual connection handles from `list connections`; inspect one with
-`list connections <handle>`. Shared-table targets come from the discovery
+Use actual connection names from `list connections`; inspect one with
+`list connections <integration>/<handle>`, such as `postgres/warehouse`. Shared-table targets come from the discovery
 chain above, using the response's canonical patch id.
 Connection setup and reconnection belong to an admin's browser at
 `/company/connections`; no CLI command accepts a

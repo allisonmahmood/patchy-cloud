@@ -1,4 +1,4 @@
-import { PostgresDeclaration, type ConnectionDetail } from "@patchy/api";
+import { Integration, PostgresDeclaration, type ConnectionDetail } from "@patchy/api";
 import * as Companies from "@patchy/companies/Companies";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -15,7 +15,7 @@ export const Description = Schema.String.check(
 export class Connection extends Schema.Class<Connection>("Connection")({
   id: Schema.String,
   companyId: Schema.String,
-  integration: Schema.Literal("postgres"),
+  integration: Integration,
   handle: Companies.Handle,
   description: Description,
   mode: Schema.Literal("company"),
@@ -34,7 +34,8 @@ export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()
     companyId: Schema.String,
     lookup: Schema.Union([
       Schema.Struct({ id: Schema.String, revision: Schema.optionalKey(Schema.Int) }),
-      Schema.Struct({ handle: Schema.String })
+      // The integration as asked for, which may be one Patchy doesn't ship.
+      Schema.Struct({ integration: Schema.String, handle: Schema.String })
     ])
   }
 ) {
@@ -194,8 +195,10 @@ export class ConnectionStore extends Context.Service<
   {
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
     readonly get: (companyId: string, id: string) => Effect.Effect<Connection, ConnectionError>;
+    /** A handle names a connection only within its integration. */
     readonly detail: (
       companyId: string,
+      integration: Integration,
       handle: string
     ) => Effect.Effect<typeof ConnectionDetail.Type, ConnectionNotFound | ConnectionStorageFailed>;
     readonly snapshot: (

@@ -55,7 +55,7 @@ const connectionLines = (result: typeof Connections.Type) => {
   const lines: string[] = [];
   for (const connection of result.connections) {
     lines.push(
-      `${connection.handle}  ${connection.description}  ${connection.status}`,
+      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`,
       `  ${connection.hint}`
     );
   }
@@ -84,7 +84,9 @@ const primitiveLines = (primitive: PrimitiveDetail) => [
 ];
 
 const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
-  const lines = [`${connection.handle}  ${connection.description}  ${connection.status}`];
+  const lines = [
+    `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`
+  ];
   const snapshot = connection.snapshot;
   if (snapshot === null) return [...lines, "Snapshot: unavailable"];
   lines.push(
@@ -122,6 +124,31 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
   return lines;
 };
 
+/**
+ * `postgres/warehouse` names one connection. A bare handle names the only connection with it; with
+ * none, it is asked for as Postgres, as before other integrations, so the instance answers.
+ */
+const connectionName = Effect.fn("Discovery.connectionName")(function* (
+  client: Api.Client,
+  name: string
+) {
+  const parts = name.split("/");
+  if (parts.length === 2 && parts[0] && parts[1]) return [parts[0], parts[1]] as const;
+  if (parts.length !== 1)
+    return yield* new LocalError({
+      message: "Use list connections <integration>/<handle>, such as postgres/warehouse."
+    });
+  const listed = yield* client
+    .listConnections({ query: { integrations: "all" } })
+    .pipe(Effect.catch(refusal));
+  const named = listed.connections.filter((connection) => connection.handle === name);
+  if (named.length > 1)
+    return yield* new LocalError({
+      message: `Several connections are named ${name}; name one:\n${named.map((connection) => `  patchy list connections ${connection.integration}/${name}`).join("\n")}`
+    });
+  return [named[0]?.integration ?? "postgres", name] as const;
+});
+
 /** Discovery uses the saved instance, never a patch repo's configuration. */
 export const list = Effect.fn("Discovery.list")(function* (
   token: Redacted.Redacted,
@@ -149,20 +176,23 @@ export const list = Effect.fn("Discovery.list")(function* (
     return yield* new LocalError({
       message: "--state is only valid when listing patches or their primitives."
     });
-  if (detail?.includes("/"))
+  if (!isConnectionPath && detail?.includes("/"))
     return yield* new LocalError({
       message: "Use separate names for list <patch> <primitive>; slashes belong in add targets."
     });
   const client = yield* Api.client(token);
   if (isConnectionPath) {
     if (detail !== undefined) {
+      const [integration, handle] = yield* connectionName(client, detail);
       const result = yield* client
-        .getConnection({ params: { handle: detail } })
+        .getIntegrationConnection({ params: { integration, handle } })
         .pipe(Effect.catch(refusal));
       return yield* Output.report(encodeConnection(result), connectionDetailLines(result));
     }
     const result = yield* client
-      .listConnections({ query: { all: Option.getOrElse(options.all, () => false) } })
+      .listConnections({
+        query: { all: Option.getOrElse(options.all, () => false), integrations: "all" }
+      })
       .pipe(Effect.catch(refusal));
     return yield* Output.report(encodeConnections(result), connectionLines(result));
   }
@@ -171,7 +201,7 @@ export const list = Effect.fn("Discovery.list")(function* (
     const [patches, connections] = yield* Effect.all(
       [
         client.list({ query: { state, mine: Option.getOrElse(options.mine, () => false) } }),
-        client.listConnections({ query: {} })
+        client.listConnections({ query: { integrations: "all" } })
       ],
       { concurrency: 2 }
     ).pipe(Effect.catch(refusal));

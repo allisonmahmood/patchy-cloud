@@ -72,8 +72,10 @@ const seed = Effect.gen(function* () {
         ${JSON.stringify({ host: "private-host.example", port: 5432, database: "private-db", role: "secret-role" })}, 'private-ciphertext',
         'missing-key', 1, 4, ${DEV_SEED.userId}, '2026-02-01T00:00:00Z')`;
     // An older snapshot must never masquerade as the missing current revision.
-    yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, revision, snapshot, created_at)
-      VALUES (${id}, ${companyId}, ${handle === "pending" ? 3 : 4}, ${JSON.stringify(snapshot)}, ${takenAt})`;
+    yield* sql`INSERT INTO connection_snapshots
+      (connection_id, company_id, integration, revision, snapshot, created_at)
+      VALUES (${id}, ${companyId}, 'postgres', ${handle === "pending" ? 3 : 4},
+        ${JSON.stringify(snapshot)}, ${takenAt})`;
   }
 });
 const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pipe(
@@ -187,6 +189,7 @@ it.layer(layer)("connections group", (it) => {
           assert.strictEqual(response.status, 200);
           assert.strictEqual(response.headers["cache-control"], "private, no-store");
           assert.deepStrictEqual(yield* response.json, {
+            integration: "postgres",
             handle,
             description: `${handle} description`,
             status,
@@ -194,6 +197,7 @@ it.layer(layer)("connections group", (it) => {
           });
         }
         assert.deepStrictEqual(yield* api.getConnection({ params: { handle: "pending" } }), {
+          integration: "postgres",
           handle: "pending",
           description: "pending description",
           status: "connected",
@@ -213,7 +217,44 @@ it.layer(layer)("connections group", (it) => {
       })
   );
 
-  it.effect("requires an active member bearer on both routes, not a browser cookie", () =>
+  it.effect(
+    "names a connection by its integration, answering an unknown integration like an unknown handle",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* memberClient;
+        assert.deepStrictEqual(
+          yield* api.getIntegrationConnection({
+            params: { integration: "postgres", handle: "warehouse" }
+          }),
+          yield* api.getConnection({ params: { handle: "warehouse" } })
+        );
+        const unknown = yield* api.getConnection({
+          params: { handle: "unknown" },
+          responseMode: "response-only"
+        });
+        for (const params of [
+          { integration: "postgres", handle: "unknown" },
+          { integration: "salesforce", handle: "warehouse" },
+          { integration: "postgres", handle: "foreign-only" }
+        ]) {
+          const response = yield* api.getIntegrationConnection({
+            params,
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 404);
+          assert.strictEqual(response.headers["cache-control"], "private, no-store");
+          assert.deepStrictEqual(yield* response.json, yield* unknown.json);
+        }
+        // With Postgres the only integration, every integration lists what Postgres alone does.
+        const legacy = yield* api.listConnections({ query: { all: true } });
+        assert.deepStrictEqual(
+          yield* api.listConnections({ query: { all: true, integrations: "all" } }),
+          legacy
+        );
+      })
+  );
+
+  it.effect("requires an active member bearer on every route, not a browser cookie", () =>
     Effect.gen(function* () {
       const tokens = yield* MachineTokens.MachineTokens;
       const minted = yield* tokens.mint({ userId: "connections-inactive", name: "Inactive" });
@@ -225,6 +266,10 @@ it.layer(layer)("connections group", (it) => {
           yield* api.listConnections({ query: {}, responseMode: "response-only" }),
           yield* api.getConnection({
             params: { handle: "warehouse" },
+            responseMode: "response-only"
+          }),
+          yield* api.getIntegrationConnection({
+            params: { integration: "postgres", handle: "warehouse" },
             responseMode: "response-only"
           })
         ])
@@ -295,7 +340,9 @@ it.layer(layer)("connections group", (it) => {
             assert.include(yield* response.json, { ok: false, code: "connection_storage_failed" });
             assert.notInclude(yield* response.text, "connection_snapshots");
             assert.notInclude(yield* response.text, "private_missing_snapshots");
-            const failure = yield* store.detail(DEV_SEED.companyId, "warehouse").pipe(Effect.flip);
+            const failure = yield* store
+              .detail(DEV_SEED.companyId, "postgres", "warehouse")
+              .pipe(Effect.flip);
             assert.instanceOf(failure, ConnectionStore.ConnectionStorageFailed);
             if (failure._tag === "ConnectionStorageFailed")
               assert.strictEqual(failure.operation, "detail");

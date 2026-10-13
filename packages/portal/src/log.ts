@@ -1,5 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+import { integrations } from "@patchy/api";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 import { InvocationLog } from "@patchy/runtime";
@@ -17,7 +18,7 @@ export interface LogNames {
   readonly versions: ReadonlyMap<string, number>;
   /** The patch as people know it: its distinct title, else its name. */
   readonly patch: string;
-  /** Company connection handles by id, for the calls that went to them. */
+  /** Company connection names (`postgres/warehouse`) by id, for the calls that went to them. */
   readonly connections: ReadonlyMap<string, string>;
 }
 
@@ -87,8 +88,11 @@ const timing = (entry: InvocationLog.Invocation) =>
     .filter((part) => part !== null)
     .join(" · ");
 
+/** An integration's operations are named `<integration>.<method>`. */
+const isConnectionCall = (op: string) =>
+  integrations.some((integration) => op.startsWith(`${integration}.`));
 const callLabel = (op: string) =>
-  op.startsWith("postgres.")
+  isConnectionCall(op)
     ? "connection call"
     : op.startsWith("tables.")
       ? "table write"
@@ -97,15 +101,18 @@ const callLabel = (op: string) =>
         : "call";
 // Stored relations are quoted identifiers; plain ones read better bare.
 const resource = (value: string) => value.replace(/"([a-z_][a-z0-9_]*)"/gu, "$1");
-/** "warehouse.customers.list": the connection by handle (its id once deleted), relation, method. */
+/**
+ * "postgres/warehouse.customers.list": the connection by name (its id once deleted), relation,
+ * method.
+ */
 const connectionCall = (item: InvocationLog.TreeItem, names: LogNames) => {
-  const handle =
+  const name =
     item.connectionId === null
       ? "connection"
       : (names.connections.get(item.connectionId) ?? item.connectionId);
   const relation =
     item.resource === null ? "" : `.${resource(item.resource).replace(/^public\./u, "")}`;
-  return `${handle}${relation}.${item.name.slice("postgres.".length)}`;
+  return `${name}${relation}.${item.name.slice(item.name.indexOf(".") + 1)}`;
 };
 
 type LogLine = typeof Schema.Json.Type;
@@ -135,7 +142,7 @@ const tree = (
     const what =
       item.type === "invocation"
         ? `${item.name} (${item.kind})`
-        : item.name.startsWith("postgres.")
+        : isConnectionCall(item.name)
           ? `${connectionCall(item, names)} (${callLabel(item.name)})`
           : `${item.name}${item.resource === null ? "" : ` ${resource(item.resource)}`} (${callLabel(item.name)})`;
     const as =

@@ -813,7 +813,7 @@ export const add = Effect.fn("Project.add")(function* (
       return yield* new LocalError({ message: "Use patchy add postgres/<handle> [--as <alias>]." });
     const handle = integration === "postgres" ? undefined : integration.slice("postgres/".length);
     const available = yield* client
-      .listConnections({ query: {} })
+      .listConnections({ query: { integrations: "all" } })
       .pipe(Effect.catch((error) => refusal(error, "Could not read the connections.")));
     const connections = available.connections.filter(
       (connection) =>

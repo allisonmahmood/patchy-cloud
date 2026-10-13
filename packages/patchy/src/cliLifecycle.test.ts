@@ -668,7 +668,7 @@ describe("patchy list", () => {
         "Company:\nzyxwvutsrqpo  archive  deleted · gone in 18 days  Sam · deactivated"
       );
       expect(result.stdout).toContain("(no description)");
-      expect(result.stdout).toContain("Connections:\nsales-db");
+      expect(result.stdout).toContain("Connections:\npostgres/sales-db");
       expect(result.stdout).toContain("patchy add postgres/sales-db");
       expect(result.stdout).not.toContain("patchy add postgres/archive-db");
     }
@@ -682,7 +682,8 @@ describe("patchy list", () => {
         expect(url.searchParams.get("mine")).toBe("true");
         return respond(200, { patches: [] });
       }
-      expect(url.search).toBe("");
+      // Connections are never filtered by the patch flags; the list asks for every integration.
+      expect(url.search).toBe("?integrations=all");
       respond(200, projectConnections);
     });
     const result = await runCli(
@@ -921,18 +922,25 @@ describe("patchy list", () => {
       enums: [],
       exclusions: [{ schema: "private", relation: "salaries", reason: "access_denied" }]
     };
-    for (const available of [true, false]) {
+    for (const [available, name] of [
+      [true, "sales-db"],
+      [false, "postgres/sales-db"]
+    ] as const) {
       const detail = {
+        integration: "postgres",
         handle: "sales-db",
         description: "Sales database",
         status: "connected",
         snapshot: available ? snapshot : null
       };
       const instance = await stubInstance((request, respond) => {
-        expect(request.url).toBe("/api/connections/sales-db");
+        // A bare handle is looked up among every integration's connections first.
+        if (request.url === "/api/connections?integrations=all")
+          return respond(200, projectConnections);
+        expect(request.url).toBe("/api/connections/postgres/sales-db");
         respond(200, detail);
       });
-      const args = ["list", "connections", "sales-db", "--api-url", instance.url];
+      const args = ["list", "connections", name, "--api-url", instance.url];
       const result = await runCli(args, { env });
       expect(result).toMatchObject({ status: 0, stderr: "" });
       if (available) {

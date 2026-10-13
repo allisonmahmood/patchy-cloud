@@ -3,6 +3,8 @@ import {
   Connections,
   ConnectionUnavailable,
   CurrentIdentity,
+  Integration,
+  integrations,
   NotFound,
   PatchyApi,
   refuse
@@ -14,6 +16,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as ConnectionStore from "./ConnectionStore.js";
 
 const encodeConnections = Schema.encodeSync(Connections);
+const isIntegration = Schema.is(Integration);
 const encodeDetail = Schema.encodeSync(ConnectionDetail);
 const noStore = { headers: { "cache-control": "private, no-store" } };
 const unavailable = (error: ConnectionStore.ConnectionStorageFailed) =>
@@ -29,11 +32,33 @@ const unavailable = (error: ConnectionStore.ConnectionStorageFailed) =>
 export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =>
   Effect.gen(function* () {
     const connections = yield* ConnectionStore.ConnectionStore;
+    const detail = (integration: string, handle: string) =>
+      Effect.gen(function* () {
+        const identity = yield* CurrentIdentity;
+        // An unknown integration answers like an unknown handle.
+        if (!isIntegration(integration))
+          return yield* new ConnectionStore.ConnectionNotFound({
+            companyId: identity.company.id,
+            lookup: { integration, handle }
+          });
+        const found = yield* connections.detail(identity.company.id, integration, handle);
+        return HttpServerResponse.jsonUnsafe(encodeDetail(found), noStore);
+      }).pipe(
+        Effect.catchTags({
+          ConnectionStorageFailed: unavailable,
+          ConnectionNotFound: (error) =>
+            Effect.succeed(refuse(NotFound, { ok: false, error: error.message }, noStore.headers))
+        })
+      );
     return handlers
       .handle("listConnections", ({ query }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const rows = yield* connections.list(identity.company.id);
+          // CLIs from before other integrations decode Postgres only, and never ask for every one.
+          const shown = query.integrations === "all" ? integrations : (["postgres"] as const);
+          const rows = (yield* connections.list(identity.company.id)).filter((row) =>
+            shown.includes(row.integration)
+          );
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
               connections: rows.map(({ id, handle, integration, description, status }) => ({
@@ -43,7 +68,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                 description,
                 status,
                 ...(status === "connected"
-                  ? { hint: `patchy add postgres/${handle}` }
+                  ? { hint: `patchy add ${integration}/${handle}` }
                   : {
                       reason: "not_connected" as const,
                       hint: "Ask an administrator to reconnect it at /company/connections."
@@ -51,12 +76,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
               })),
               ...(query.all
                 ? {
-                    offered: [
-                      {
-                        integration: "postgres",
-                        connected: rows.some((row) => row.status === "connected")
-                      }
-                    ]
+                    offered: shown.map((integration) => ({
+                      integration,
+                      connected: rows.some(
+                        (row) => row.integration === integration && row.status === "connected"
+                      )
+                    }))
                   }
                 : {})
             }),
@@ -64,18 +89,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           );
         }).pipe(Effect.catchTags({ ConnectionStorageFailed: unavailable }), Effect.orDie)
       )
-      .handle("getConnection", ({ params }) =>
-        Effect.gen(function* () {
-          const identity = yield* CurrentIdentity;
-          const detail = yield* connections.detail(identity.company.id, params.handle);
-          return HttpServerResponse.jsonUnsafe(encodeDetail(detail), noStore);
-        }).pipe(
-          Effect.catchTags({
-            ConnectionStorageFailed: unavailable,
-            ConnectionNotFound: (error) =>
-              Effect.succeed(refuse(NotFound, { ok: false, error: error.message }, noStore.headers))
-          })
-        )
+      .handle("getConnection", ({ params }) => detail("postgres", params.handle))
+      .handle("getIntegrationConnection", ({ params }) =>
+        detail(params.integration, params.handle)
       );
   })
 );

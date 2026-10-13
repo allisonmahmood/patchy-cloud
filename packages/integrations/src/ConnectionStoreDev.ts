@@ -33,17 +33,21 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           ? Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, lookup: { id } }))
           : Effect.succeed(item.connection);
       },
-      detail: (companyId, handle) => {
+      detail: (companyId, integration, handle) => {
         const item = metadata.find(
-          (item) => item.connection.companyId === companyId && item.connection.handle === handle
+          (item) =>
+            item.connection.companyId === companyId &&
+            item.connection.integration === integration &&
+            item.connection.handle === handle
         );
         if (item === undefined)
           return Effect.fail(
-            new ConnectionStore.ConnectionNotFound({ companyId, lookup: { handle } })
+            new ConnectionStore.ConnectionNotFound({ companyId, lookup: { integration, handle } })
           );
         const { description, status, metadataRevision: revision } = item.connection;
         const snapshot = item.snapshots.find((snapshot) => snapshot.revision === revision);
         return Effect.succeed({
+          integration,
           handle,
           description,
           status,
@@ -69,6 +73,7 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           (item) =>
             item.connection.companyId === companyId &&
             item.connection.id === declaration.id &&
+            item.connection.integration === declaration.kind &&
             item.connection.handle === declaration.handle
         );
         if (item === undefined || item.connection.status !== "connected")

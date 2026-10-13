@@ -204,7 +204,7 @@ Every level accepts `--json`: the top merges `{ patches, connections }`;
 all other levels print the wire body with no added `ok` wrapper.
 
 For Postgres, run `pnpm patchy list connections`, then
-`pnpm patchy list connections <handle>` for its schema snapshot and `takenAt`.
+`pnpm patchy list connections postgres/<handle>` for its schema snapshot and `takenAt`.
 `list connections --all` adds offered integrations. A null snapshot is
 unavailable, not an empty database. Only connected entries carry an `add` hint;
 disconnected entries point to `/company/connections`. Discovery grants no access.

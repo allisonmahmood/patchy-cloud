@@ -21,7 +21,7 @@ A future connection belonging to one user rather than their company, such as tha
 _Avoid_: user resource, private connection
 
 **Connection handle**:
-The immutable name a company connection carries beside its integration — `warehouse` in `postgres/warehouse` — distinguishing connections in one company. A declared connection binds to its stable identity, not a later reuse of that handle.
+The immutable name a company connection carries beside its integration — `warehouse` in `postgres/warehouse` — distinguishing one integration's connections in one company. Two integrations may each have a `warehouse`, so the integration and handle together name a connection. A declared connection binds to its stable identity, not a later reuse of that handle.
 _Avoid_: alias, connection id (the identity, which never changes)
 
 **Declaration**:

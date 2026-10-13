@@ -119,7 +119,8 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const id = newInternalId("call");
     let query: string | null = null;
-    if (input.op === "postgres.query" && input.sql !== undefined) {
+    // Every integration's query operation is `<integration>.query`, matching the column's check.
+    if (input.op.endsWith(".query") && input.sql !== undefined) {
       // encodeInto stops before a partial UTF-8 code point without allocating
       // the whole query. The prefix is audit text, never executable SQL.
       const { read } = encoder.encodeInto(input.sql, new Uint8Array(MAX_SQL_BYTES));
