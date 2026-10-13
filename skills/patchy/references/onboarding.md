@@ -22,8 +22,8 @@ without it.
   Once the machine is logged in, run [step 3, the company look](#3-the-company-look),
   then hand back: the portal's guide has the person ask for their first patch next.
 - **"Redo my Patchy setup"** runs the whole conversation again. It reuses a working
-  publishing key, updates the cached welcome page, and leaves an existing company
-  look alone: changing it is its own request (see the main skill's
+  publishing key, updates the welcome page already published, and leaves an
+  existing company look alone: changing it is its own request (see the main skill's
   [Changing the look](../SKILL.md#changing-the-look)).
 
 Those are the only triggers. Installing or wiring up the skill runs nothing, and there
@@ -161,8 +161,9 @@ take the person's role, email and company name from `whoami --json`:
 
 ### 4. Publish the welcome patch
 
-Write `welcome.html` from `welcome-patch.html` in this directory. The structure and copy
-are the deliverable. Settle its style by the main skill's
+Write `~/Patchy/welcome.html` from `welcome-patch.html` in this directory, by the main
+skill's [Where patch files live](../SKILL.md#where-patch-files-live). The structure and
+copy are the deliverable. Settle its style by the main skill's
 [order](../SKILL.md#styling-a-static-page): what the person asked for in this
 conversation, then on a redo the published welcome page's own style, then the company
 look, then the Patchy look. The template's own CSS uses only the look's tokens, so in a
@@ -172,16 +173,18 @@ with no logo, the company's name. Follow the brief where it fits, its voice and 
 included. Then:
 
 ```bash
-patchy validate './welcome.html' && patchy publish './welcome.html' --json
+patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --json
 ```
 
 Publishing never starts a login or creates a key. If it says `Run: patchy login`,
 finish the handoff above and retry this publish.
 
-A new welcome patch defaults to `company`. Redoing onboarding updates the cached patch
-and preserves its current scope; pass `--share company` or `--share public` only when
-the user explicitly chooses that audience. The welcome page's copy explains the
-company default and the owner's public option, rather than assuming its current scope.
+A new welcome patch defaults to `company`. A redo updates the welcome page already
+published, never a second one: find it with `patchy list --mine --json` and add
+`--patch <id>` to the publish, which preserves its current scope. Pass
+`--share company` or `--share public` only when the user explicitly chooses that
+audience. The welcome page's copy explains the company default and the owner's public
+option, rather than assuming its current scope.
 
 Hand over `address` and announce the **returned `scope`**:
 
@@ -195,8 +198,9 @@ the company door. The field name `publicUrl` is not proof of anonymous access.
 If browser access is unavailable for a company page or an older version, ask the
 user to open the link or supply its content; a publishing key does not open the page.
 
-To change the audience afterward, the owner can run `patchy share './welcome.html' public`
-or `patchy share './welcome.html' company`; `patchy share --patch <id> public` (or
+To change the audience afterward, the owner can run
+`patchy share ~/Patchy/welcome.html public` or
+`patchy share ~/Patchy/welcome.html company`; `patchy share --patch <id> public` (or
 `company`) selects an id instead of the cached file. Announce the scope that command
 returns too. Older versions, and all versions after taking the patch back to company,
 have origin responses of `private, no-store` and answer 401 without a session.
