@@ -17,7 +17,15 @@ it("parses types, ignoring labels, precisions, timezones and tuple field names",
     name: "Enum8",
     args: []
   });
-  for (const broken of ["", "Array(", "Tuple(String,)", "Map(String, UInt8))", "'String'"])
+  for (const broken of [
+    "",
+    "Array(",
+    "Tuple(String,)",
+    "Map(String, UInt8))",
+    "'String'",
+    // An escaped field name isn't decoded, so its value couldn't be found to check.
+    "Tuple(`line\\nfeed` UInt64)"
+  ])
     assert.isUndefined(Mapping.parse(broken), broken);
 });
 
@@ -51,4 +59,6 @@ it("checks 64-bit integers where the type puts them, and nowhere else", () => {
   assert.isUndefined(
     value("Array(Tuple(id UInt64, at DateTime))", [{ at: "2026-10-01 00:00:00", id: 2 ** 60 }])
   );
+  // A key that names no member doesn't let its value skip the check.
+  assert.isUndefined(value("Tuple(id UInt64, score Float64)", { other: 2 ** 60, score: 1 }));
 });

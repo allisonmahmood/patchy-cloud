@@ -18,8 +18,9 @@ export interface Type {
   readonly field?: string;
 }
 
-const unquote = (name: string) =>
-  name.startsWith("`") ? name.slice(1, -1).replace(/\\(.)/g, "$1") : name;
+/** A field name as an object value keys it; an escaped one isn't decoded, so it is refused. */
+const unquote = (name: string): string | undefined =>
+  !name.startsWith("`") ? name : name.includes("\\") ? undefined : name.slice(1, -1);
 
 /** ClickHouse type families, after Nullable(...) and LowCardinality(...) are unwrapped. */
 type Family =
@@ -82,6 +83,7 @@ export const parse = (text: string): Type | undefined => {
         let field: string | undefined;
         if (next.kind === "name" && peek(1)?.kind === "name") {
           field = unquote(next.text);
+          if (field === undefined) return undefined;
           at++;
         }
         const inner = type();
@@ -210,13 +212,13 @@ const exact = (type: Type, value: unknown): boolean => {
           return member === undefined || exact(member, item);
         });
       if (typeof value !== "object") return true;
-      // An object carries a named tuple by field; its key order is not the tuple's. An unnamed
-      // member is checked against every value, since no key says which is its.
+      // An object carries a named tuple by field; its key order is not the tuple's. A member
+      // no key names is checked against every value, so a value can't escape by its key.
       const record: Readonly<Record<string, unknown>> = { ...value };
       return inner.args.every((member) =>
-        member.field === undefined
-          ? Object.values(record).every((item) => exact(member, item))
-          : !Object.hasOwn(record, member.field) || exact(member, record[member.field])
+        member.field !== undefined && Object.hasOwn(record, member.field)
+          ? exact(member, record[member.field])
+          : Object.values(record).every((item) => exact(member, item))
       );
     }
     case "Map": {
