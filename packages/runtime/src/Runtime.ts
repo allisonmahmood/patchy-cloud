@@ -243,6 +243,8 @@ export interface OperationError {
   readonly scope?: LimitScope;
   readonly value?: number;
   readonly details?: Readonly<Record<string, typeof Schema.Json.Type>>;
+  /** The integration operation a relayed callback refusal names, such as `posthog.query`. */
+  readonly integrationOperation?: string;
 }
 
 export type RuntimeError =
@@ -293,6 +295,9 @@ export const toFailure = (error: RuntimeError): RuntimeFailure => {
     ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
     ...("correlationId" in error && error.correlationId !== undefined
       ? { correlationId: error.correlationId }
+      : {}),
+    ...("integrationOperation" in error && typeof error.integrationOperation === "string"
+      ? { operation: error.integrationOperation }
       : {})
   };
 };

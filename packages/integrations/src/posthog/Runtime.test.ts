@@ -17,6 +17,7 @@ import {
   InvocationCapabilities,
   InvocationLog,
   LoadedVersions,
+  Runtime,
   RuntimeApi,
   RuntimeLog,
   RuntimeProduction,
@@ -287,7 +288,11 @@ it.layer(tier1)("PostHog in a tier 1 page", (it) => {
               (error: unknown) => error
             )
         );
-        assert.include(refused, { name: "PatchyError", code: "invalid_query" });
+        assert.include(refused, {
+          name: "PatchyError",
+          code: "invalid_query",
+          operation: "posthog.query"
+        });
 
         const log = yield* RuntimeLog.RuntimeLog;
         const calls = yield* log.recent({
@@ -357,7 +362,10 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
               tables: {},
               files: {},
               uses: { analytics: declaration },
-              handlers: { "report.views": { kind: "action", args: {}, result: { kind: "json" } } }
+              handlers: {
+                "report.views": { kind: "action", args: {}, result: { kind: "json" } },
+                "report.broken": { kind: "action", args: {}, result: { kind: "json" } }
+              }
             }
           });
           const gateway = yield* CallbackGateway.make(built);
@@ -374,7 +382,14 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
               shape: { day: t.timestamp(), views: t.integer() }
             })
           });
-          export default createGuest({ report: { views } });`,
+          const broken = action({ args: {}, result: t.json(), handler: async (ctx) =>
+            ctx.connections.analytics.query({
+              name: "broken",
+              query: "SELECT * FROM evnts",
+              shape: { n: t.integer() }
+            })
+          });
+          export default createGuest({ report: { views, broken } });`,
             "report.ts"
           );
           const guest: GuestProtocol.Bundle = {
@@ -403,6 +418,19 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
           assert.deepStrictEqual(result, { ok: true, value: { ok: true, rows: expected } });
           assert.deepStrictEqual(requests.at(-1)!.body, {
             query: { kind: "HogQLQuery", ...query }
+          });
+
+          // The action doesn't catch PostHog's refusal, so its caller gets it, still PostHog's.
+          const refused = yield* invocations
+            .call(
+              { handler: "report.broken", args: {} },
+              { ...binding, correlationId: newInternalId("call") },
+              Effect.succeed(viewer)
+            )
+            .pipe(Effect.flip);
+          assert.include(Runtime.toFailure(refused), {
+            code: "invalid_query",
+            operation: "posthog.query"
           });
         }),
       60_000

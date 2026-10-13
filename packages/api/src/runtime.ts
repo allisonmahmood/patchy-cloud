@@ -637,7 +637,13 @@ export const RuntimeFailure = Schema.Struct({
   code: RuntimeCode,
   ...limitRefusalFields,
   details: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
-  correlationId: Schema.optionalKey(NonEmptyText)
+  correlationId: Schema.optionalKey(NonEmptyText),
+  /**
+   * The integration operation that refused a tier 2 callback, such as `posthog.query`, stamped
+   * by the host. A handler that relays the refusal keeps it, so its caller still reads that
+   * integration's details.
+   */
+  operation: Schema.optionalKey(NonEmptyText)
 }).annotate({ identifier: "RuntimeFailure" });
 export type RuntimeFailure = typeof RuntimeFailure.Type;
 

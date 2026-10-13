@@ -67,6 +67,19 @@ it("records the operation that refused, so its integration's details narrow by i
   expect(posthog?.operation).toBe("posthog.query");
   // An error decoded once keeps its operation.
   expect(decodeError(posthog, "tables.list")?.operation).toBe("posthog.query");
+  // A refusal an action relays names the operation that refused, not the server call.
+  const relayed = decodeError(
+    {
+      source: "patchy",
+      code: "invalid_query",
+      error: "Bad HogQL.",
+      details: { message: "x" },
+      operation: "posthog.query"
+    },
+    "server.call"
+  );
+  expect(relayed?.operation).toBe("posthog.query");
+  expect(isPatchyError(relayed, "invalid_query", "posthog")).toBe(true);
   expect(isPatchyError(posthog, "invalid_query", "posthog")).toBe(true);
   expect(isPatchyError(posthog, "invalid_query", "posthog.query")).toBe(true);
   expect(isPatchyError(posthog, "invalid_query", "postgres")).toBe(false);
@@ -86,6 +99,13 @@ it("records the operation that refused, so its integration's details narrow by i
   if (isPatchyError(error, "invalid_query", "postgres")) {
     const sqlstate: string = error.details.sqlstate;
     void sqlstate;
+  }
+  const from: string = "posthog";
+  if (isPatchyError(error, "invalid_query", from)) {
+    const message: string = error.details.message;
+    // @ts-expect-error a from known only as a string may name PostHog, which has no SQLSTATE
+    void error.details.sqlstate;
+    void message;
   }
   // Narrowing on the code alone keeps Postgres's details, as patches written before PostHog do.
   if (isPatchyError(error, "invalid_query")) {

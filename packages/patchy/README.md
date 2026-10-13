@@ -336,7 +336,8 @@ document-bound port; patch frames must not fetch the runtime directly. HTTP and
 port transport constructors remain internal, not public client exports. All
 runtime failures use `PatchyError` and `isPatchyError(error, code)`; a lost reply
 is `unknown_outcome`, never an automatic replay. A call's refusal records its
-`operation`, and `isPatchyError(error, code, from)` narrows by an operation such
+`operation`; an integration's refusal that a tier 2 action relays keeps the
+integration's. `isPatchyError(error, code, from)` narrows by an operation such
 as `posthog.query` or an integration such as `posthog`, whose details it then
 types. Narrowing on the code alone types Postgres's details.
 Limit refusals may also carry `scope`, `limitId`, `value` and `retryAfter`.

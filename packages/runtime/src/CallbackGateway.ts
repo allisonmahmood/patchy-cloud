@@ -149,12 +149,21 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const resolved = yield* Effect.result(capabilities.resolve(token, attempt));
     if (resolved._tag === "Failure") return resolved.failure.failure;
     const capability = resolved.success;
+    // An integration's refusals name it, so a handler that relays one keeps its details. A
+    // nested handler's refusal keeps the operation it already names.
+    let integration: string | undefined;
     const remember = (
       reply: GuestProtocol.CallbackReply,
       status: number
     ): GuestProtocol.CallbackReply =>
       !reply.ok && reply.source === "patchy"
-        ? capabilities.rememberRefusal(capability, reply, status)
+        ? capabilities.rememberRefusal(
+            capability,
+            integration === undefined || reply.operation !== undefined
+              ? reply
+              : { ...reply, operation: integration },
+            status
+          )
         : reply;
     if (!transportCharged) {
       const refusal = capabilities.chargeCallback(capability);
@@ -209,6 +218,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const operation = Object.hasOwn(handlers, request.op) ? handlers[request.op] : undefined;
     if (request.op !== "log" && request.op !== "server.call" && operation === undefined)
       return remember(refused("invalid_request", "Unknown callback operation."), 400);
+    if (operation?.kind === "integration") integration = request.op;
     if (capability.kind === "query" && operation?.transport !== undefined)
       return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
     // PostHog's arguments keep the cap they have on tier 1; nothing past it is sent.

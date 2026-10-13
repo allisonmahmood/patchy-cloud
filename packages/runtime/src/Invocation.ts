@@ -138,6 +138,9 @@ export class CallbackRefusal extends Schema.TaggedError<CallbackRefusal>()("Call
   get details() {
     return this.failure.details;
   }
+  get integrationOperation() {
+    return this.failure.operation;
+  }
 }
 
 const decodeCall = Schema.decodeUnknownEffect(ServerCall, { onExcessProperty: "error" });

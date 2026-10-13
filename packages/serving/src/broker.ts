@@ -60,7 +60,11 @@ const decodeUnsubscribe = Schema.decodeUnknownSync(
 const decoder = new TextDecoder();
 type Operation = keyof typeof runtimeOperations;
 type Reply = { value: unknown; bytes?: ArrayBuffer; heldBytes: number };
-type LimitMetadata = Pick<RuntimeFailure, "scope" | "limitId" | "value" | "retryAfter">;
+// The integration operation a relayed refusal names rides along with the limit metadata.
+type LimitMetadata = Pick<
+  RuntimeFailure,
+  "scope" | "limitId" | "value" | "retryAfter" | "operation"
+>;
 class Refusal extends Error {
   constructor(
     readonly code: RuntimeCode,
@@ -494,7 +498,7 @@ function mount(frame: HTMLIFrameElement): void {
         )
           throw new HandlerRefusal(decodeHandlerFailure(result));
         const error = decodeFailure(result);
-        const { scope, limitId, value, retryAfter } = error;
+        const { scope, limitId, value, retryAfter, operation } = error;
         throw new Refusal(error.code, error.error, error.details, error.correlationId, {
           ...(scope === undefined ? {} : { scope }),
           ...(limitId === undefined ? {} : { limitId }),
@@ -503,9 +507,11 @@ function mount(frame: HTMLIFrameElement): void {
           (error.code === "rate_limited" ||
             error.code === "limit_exceeded" ||
             error.code === "too_many_requests" ||
-            error.code === "busy")
+            error.code === "busy" ||
+            error.code === "source_rate_limited")
             ? { retryAfter }
-            : {})
+            : {}),
+          ...(operation === undefined ? {} : { operation })
         });
       }
       if (

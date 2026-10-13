@@ -91,8 +91,13 @@ export class PatchyError<C extends ErrorCode = ErrorCode, O extends string = str
 export type Errors<C extends ErrorCode, O extends string = string> = {
   [K in C]: PatchyError<K, O>;
 }[C];
-/** An operation, or every operation of the integration it names: `posthog` is `posthog.*`. */
-type Operations<F extends string> = F extends `${string}.${string}` ? F : `${F}.${string}`;
+/**
+ * Refusals from an operation, or from every operation of the integration it names: `posthog`
+ * is `posthog.*`. A `from` known only as a string could name either integration.
+ */
+type From<C extends ErrorCode, F extends string> = string extends F
+  ? Errors<C, PostHogOperation> | Errors<C>
+  : Errors<C, F extends `${string}.${string}` ? F : `${F}.${string}`>;
 /**
  * Narrows to a Patchy refusal, optionally with this code and from an operation such as
  * `posthog.query` or an integration such as `posthog`, whose details it then carries.
@@ -101,7 +106,7 @@ export function isPatchyError<C extends ErrorCode, const F extends string>(
   error: unknown,
   code: C,
   from: F
-): error is Errors<C, Operations<F>>;
+): error is From<C, F>;
 export function isPatchyError<C extends ErrorCode>(error: unknown, code: C): error is Errors<C>;
 export function isPatchyError(error: unknown): error is Errors<ErrorCode>;
 export function isPatchyError(
@@ -120,7 +125,8 @@ export function isPatchyError(
 
 /**
  * Decode both the runtime failure document and the broker's nested error document, recording
- * the operation the call made. An error already decoded keeps the operation it has.
+ * the operation that refused: the document's own, which a handler relays, else the call's. An
+ * error already decoded keeps the operation it has.
  */
 export function decodeError(value: unknown, operation?: string): PatchyError | undefined {
   if (isPatchyError(value)) {
@@ -138,6 +144,8 @@ export function decodeError(value: unknown, operation?: string): PatchyError | u
     record.details !== null && typeof record.details === "object" && !Array.isArray(record.details)
       ? (record.details as ErrorDetails<ErrorCode>)
       : {};
+  const origin =
+    typeof record.operation === "string" && record.operation !== "" ? record.operation : operation;
   return new PatchyError(
     record.code as ErrorCode,
     message,
@@ -159,7 +167,7 @@ export function decodeError(value: unknown, operation?: string): PatchyError | u
       record.retryAfter >= 0
         ? { retryAfter: record.retryAfter }
         : {}),
-      ...(operation === undefined ? {} : { operation })
+      ...(origin === undefined ? {} : { operation: origin })
     }
   );
 }

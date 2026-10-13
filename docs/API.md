@@ -573,7 +573,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -596,7 +597,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -613,7 +615,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -630,7 +633,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -647,7 +651,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -664,7 +669,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -681,7 +687,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -698,7 +705,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -715,7 +723,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
