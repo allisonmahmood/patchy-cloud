@@ -53,7 +53,7 @@ const binding = Binding.Binding.of({
     admin: false
   }
 });
-const connection = new ConnectionStore.Connection({
+const connection = {
   companyId: binding.companyId,
   id: declaration.id,
   integration: "postgres",
@@ -67,7 +67,7 @@ const connection = new ConnectionStore.Connection({
   lastTestedAt: null,
   lastDiscoveredAt: null,
   createdBy: "usr_parity"
-});
+} satisfies ConnectionStore.Connection;
 const relation = { schema: "public", name: "items" };
 const request = { connection: "warehouse", relation };
 const fixtureSql = "INSERT INTO public.items VALUES (1, ARRAY[1, 2]), (2, ARRAY[3])";
@@ -163,7 +163,15 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
           const store = yield* ConnectionStore.ConnectionStore.pipe(
             Effect.provide(
               ConnectionStoreDev.layer([
-                { connection, snapshots: [{ revision: declaration.revision, snapshot }] }
+                {
+                  connection,
+                  snapshots: [
+                    {
+                      revision: declaration.revision,
+                      metadata: { integration: "postgres", snapshot }
+                    }
+                  ]
+                }
               ])
             )
           );
@@ -251,7 +259,15 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
           const store = yield* ConnectionStore.ConnectionStore.pipe(
             Effect.provide(
               ConnectionStoreDev.layer([
-                { connection, snapshots: [{ revision: declaration.revision, snapshot }] }
+                {
+                  connection,
+                  snapshots: [
+                    {
+                      revision: declaration.revision,
+                      metadata: { integration: "postgres", snapshot }
+                    }
+                  ]
+                }
               ])
             )
           );
@@ -335,7 +351,15 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
           const store = yield* ConnectionStore.ConnectionStore.pipe(
             Effect.provide(
               ConnectionStoreDev.layer([
-                { connection, snapshots: [{ revision: declaration.revision, snapshot }] }
+                {
+                  connection,
+                  snapshots: [
+                    {
+                      revision: declaration.revision,
+                      metadata: { integration: "postgres", snapshot }
+                    }
+                  ]
+                }
               ])
             )
           );

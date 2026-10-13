@@ -107,5 +107,19 @@ export const migrations: Migrations = {
     `ALTER TABLE runtime_calls DROP CONSTRAINT runtime_calls_check`,
     `ALTER TABLE runtime_calls ADD CONSTRAINT runtime_calls_sql_check
       CHECK (sql IS NULL OR (op LIKE '%.query' AND octet_length(sql) <= 8192))`
+  ),
+  // `patchy dev` reads a live integration as a machine token's person, from no patch or version.
+  // The machine is a snapshot like the rest: revoking its key keeps the row's name.
+  "0014_runtime_calls_machine": ddl(
+    `ALTER TABLE runtime_calls
+      ADD COLUMN machine_id TEXT,
+      ADD COLUMN machine_name TEXT,
+      DROP CONSTRAINT runtime_calls_credential_kind_check,
+      ADD CONSTRAINT runtime_calls_credential_kind_check
+        CHECK (credential_kind IN ('session', 'admin', 'machine')),
+      ADD CONSTRAINT runtime_calls_machine_check CHECK (CASE WHEN credential_kind = 'machine'
+        THEN machine_id IS NOT NULL AND machine_name IS NOT NULL
+          AND patch_id IS NULL AND version_id IS NULL
+        ELSE machine_id IS NULL AND machine_name IS NULL END)`
   )
 };

@@ -54,8 +54,18 @@ export const defineIntegration = <
   };
   readonly operations: Operations;
   readonly generate: (declaration: Declaration, metadata: NoInfer<Metadata["Type"]>) => Generated;
-  readonly dev: (
+  /**
+   * The local binding over fixtures: how dev runs an integration by default (ADR-0013). Absent
+   * when dev reads the real connection instead, through `live`.
+   */
+  readonly dev?: (
     metadata: NoInfer<Metadata["Type"]>,
     fixture: Fixture
   ) => Layer.Layer<Dev, DevError, DevRequirements>;
+  /**
+   * The operations `patchy dev` runs on the real connection, through the instance as the machine
+   * token's person. Only for an integration that can't write and whose shapes can't be known
+   * ahead (#643); the instance's dev door runs nothing else.
+   */
+  readonly live?: ReadonlyArray<keyof Operations & string>;
 }) => definition;

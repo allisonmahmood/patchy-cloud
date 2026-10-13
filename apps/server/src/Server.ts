@@ -40,11 +40,14 @@ import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
   ConnectionsApi,
+  DevReads,
   SqlConnectionStore,
   CredentialKeys,
   PostgresSource,
   PostgresExecution,
-  PostgresOperations
+  PostgresOperations,
+  PostHogSource,
+  PostHogOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
@@ -160,7 +163,8 @@ const services = Layer.mergeAll(
       const files = yield* Files.make;
       const members = yield* Members.make;
       const postgres = yield* PostgresOperations.makeHandlers;
-      const handlers = { me, ...tables, ...files, ...members, ...postgres };
+      const posthog = yield* PostHogOperations.makeHandlers;
+      const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog };
       const runtime = Layer.merge(
         RuntimeProduction.layer(handlers),
         RuntimeStream.layer.pipe(
@@ -197,8 +201,12 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
+      // One PostHog source, so connection administration and patches share each project's slots.
       Layer.provideMerge(
-        SqlConnectionStore.layer.pipe(Layer.provide([CredentialKeys.layer, PostgresSource.layer]))
+        SqlConnectionStore.layer.pipe(
+          Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
+          Layer.provideMerge(PostHogSource.layer)
+        )
       ),
       Layer.provideMerge(Tables.layer),
       Layer.provideMerge(Analytics.layer),
@@ -248,6 +256,7 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     AuthApi.layer,
     PatchesApi.layer,
     ConnectionsApi.layer,
+    DevReads.layer,
     LookApi.layer,
     SdkApi.layer,
     RuntimeApi.layer,

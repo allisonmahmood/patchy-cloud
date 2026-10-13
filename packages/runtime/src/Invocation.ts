@@ -112,7 +112,9 @@ export class ExecutorBusy extends Schema.TaggedError<ExecutorBusy>()("ExecutorBu
 /** A guest may relay only the exact refusal its host issued to this attempt. */
 export class CallbackRefusal extends Schema.TaggedError<CallbackRefusal>()("CallbackRefusal", {
   failure: RuntimeFailure,
-  status: Schema.Number
+  status: Schema.Number,
+  /** The integration operation the host recorded with this refusal, never the guest's claim. */
+  integrationOperation: Schema.optionalKey(Schema.String)
 }) {
   get code() {
     return this.failure.code;
@@ -585,10 +587,22 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   if (!descriptor.errors?.includes(reply.code))
                     return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 } else {
-                  const trusted = capability.refusals.find(
-                    (entry) => canonicalArgs(entry.failure) === canonicalArgs(reply)
+                  const relayed = canonicalArgs(reply);
+                  const matches = capability.refusals.filter(
+                    (entry) => canonicalArgs(entry.failure) === relayed
                   );
-                  if (trusted !== undefined) return yield* new CallbackRefusal(trusted);
+                  const trusted = matches[0];
+                  // Identical refusals from two integrations can't say which one was relayed,
+                  // so neither is named.
+                  const operation = matches.every((entry) => entry.operation === trusted?.operation)
+                    ? trusted?.operation
+                    : undefined;
+                  if (trusted !== undefined)
+                    return yield* new CallbackRefusal({
+                      failure: trusted.failure,
+                      status: trusted.status,
+                      ...(operation === undefined ? {} : { integrationOperation: operation })
+                    });
                   return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 }
               }

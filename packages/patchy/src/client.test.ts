@@ -7,6 +7,7 @@ import {
   createSharedTable,
   createSharedStore,
   decodeError,
+  isPatchyError,
   type QueryRegistry,
   type Transport
 } from "./client.js";
@@ -47,6 +48,76 @@ it("decodes every runtime refusal without confusing handler errors or untagged d
   expect(
     decodeError({ ok: true, source: "patchy", code: "busy", error: "Successful business data." })
   ).toBeUndefined();
+});
+
+it("records the operation that refused, so its integration's details narrow by it", () => {
+  const posthog = decodeError(
+    { source: "patchy", code: "invalid_query", error: "Bad HogQL.", details: { message: "x" } },
+    "posthog.query"
+  );
+  const postgres = decodeError(
+    {
+      source: "patchy",
+      code: "invalid_query",
+      error: "Bad SQL.",
+      details: { sqlstate: "42703", message: "y" }
+    },
+    "postgres.query"
+  );
+  expect(posthog?.operation).toBe("posthog.query");
+  // An error decoded once keeps its operation.
+  expect(decodeError(posthog, "tables.list")?.operation).toBe("posthog.query");
+  // A refusal an action relays names the operation that refused, not the server call.
+  const relayed = decodeError(
+    {
+      source: "patchy",
+      code: "invalid_query",
+      error: "Bad HogQL.",
+      details: { message: "x" },
+      operation: "posthog.query"
+    },
+    "server.call"
+  );
+  expect(relayed?.operation).toBe("posthog.query");
+  expect(isPatchyError(relayed, "invalid_query", "posthog")).toBe(true);
+  expect(isPatchyError(posthog, "invalid_query", "posthog")).toBe(true);
+  expect(isPatchyError(posthog, "invalid_query", "posthog.query")).toBe(true);
+  expect(isPatchyError(posthog, "invalid_query", "postgres")).toBe(false);
+  // @ts-expect-error a from names a whole integration; a prefix of one matches nothing
+  expect(isPatchyError(posthog, "invalid_query", "post")).toBe(false);
+  expect(isPatchyError(postgres, "invalid_query", "postgres")).toBe(true);
+  const error: unknown = posthog;
+  if (isPatchyError(error, "invalid_query", "posthog")) {
+    const message: string = error.details.message;
+    // @ts-expect-error PostHog sends no SQLSTATE
+    void error.details.sqlstate;
+    void message;
+  }
+  if (isPatchyError(error, "shape_mismatch", "posthog.query")) {
+    const type: string | undefined = error.details.type;
+    void type;
+  }
+  if (isPatchyError(error, "invalid_query", "postgres")) {
+    const sqlstate: string = error.details.sqlstate;
+    void sqlstate;
+  }
+  const from: "postgres" | "posthog" = Math.random() > 0.5 ? "posthog" : "postgres";
+  if (isPatchyError(error, "invalid_query", from)) {
+    const message: string = error.details.message;
+    // @ts-expect-error either integration may have refused, and PostHog sends no SQLSTATE
+    void error.details.sqlstate;
+    void message;
+  }
+  const loose: string = "posthog";
+  // @ts-expect-error a from must name one integration, or one of its operations
+  isPatchyError(error, "invalid_query", loose);
+  // @ts-expect-error a pattern could match either integration's operations
+  isPatchyError(error, "invalid_query", "posthog.query" as `${string}.query`);
+  // Narrowing on the code alone keeps Postgres's details, as patches written before PostHog do.
+  if (isPatchyError(error, "invalid_query")) {
+    const sqlstate: string = error.details.sqlstate;
+    void sqlstate;
+  }
 });
 
 it("caches blob URLs until replacement/deletion and revokes them on close", async () => {

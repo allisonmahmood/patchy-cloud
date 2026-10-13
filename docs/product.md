@@ -2,11 +2,11 @@
 
 The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `GLOSSARY.md` defines its context's terms; this file describes the product.
 
-Built today: tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres connections.
+Built today: tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres and PostHog connections.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
-Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
+Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Portal, Company, Connections and Your machines share one app shell and component set.
 
 Tier 2 repos publish an HTML artifact and an inspected server artifact. The local dev loop runs the hosted handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller and ECS Fargate provider are built, including spare claims, stopping and drain, crash metering and the patch breaker. Production admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
@@ -35,7 +35,7 @@ Each version has exactly one tier. The CLI checks the tree and bundle; the serve
 The **Patchy SDK** is the release-versioned code a patch imports: Core supplies
 the generated client, contract, Preact with compat semantics and shell operations,
 including generated-file downloads separate from stored-file access;
-Primitives supply tables and files; Integrations supply company Postgres;
+Primitives supply tables and files; Integrations supply company Postgres and PostHog;
 Helpers include `patchy/csv`, a synchronous text codec based on PapaParse with
 Patchy's own API, importable on both page and server graphs. Everything else
 written or copied into the patch is **company code**, maintained by the company.
@@ -76,7 +76,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres and PostHog connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -150,7 +150,8 @@ there and the independent purpose into write-once `AGENTS.md`, alongside the
 `src/` page and `server/` handler split in words that hold on either tier,
 skill paths, runtime-check guidance and the generated-index pointer.
 `CLAUDE.md` imports it. The local dev runtime uses real handlers over local data,
-never a production-data shortcut.
+never a production-data shortcut, except for an integration that reads the real
+connection in dev, today PostHog ([Development](#development)).
 
 For tiers 0, 1 and 2, `patchy dev` checks the pin, CLI and runtime against the instance release, then
 authenticates a new session as the machine token's user. It refreshes declarations
@@ -177,7 +178,8 @@ the published inventory determines additive changes and refusals, not the last
 local config; compatible additions preserve rows. `dev.log` records each call's
 viewer, handler, outcome and milliseconds, `ctx.log` output and local-only failure
 message/stack. Starting with `--json` records full wide events and invocation JSON.
-There are no runtime database log rows, PostHog delivery or connection keyring.
+There are no local runtime database log rows, PostHog delivery or connection keyring;
+dev reads of a live integration are logged on the instance instead.
 
 `patchy dev` runs the same handler engine and callback path as production.
 It enforces contract limits, but does not reproduce production scheduling,
@@ -224,15 +226,16 @@ The CLI tells agents to ask their user before forcing.
 definitions and connection snapshots. It runs anywhere under the saved login
 and never reads `patchy.json`; discovery grants no authority. See
 [Sharing and finding](#sharing-and-finding) for the discovery chain.
-`patchy add postgres/<handle>`, `patchy add shared-table <patchId>/<table>`
+`patchy add postgres/<handle>`, `patchy add posthog/<handle>`,
+`patchy add shared-table <patchId>/<table>`
 or `patchy add shared-store <patchId>/<store> --as <alias>` adds one declaration by
 TypeScript AST and generates the client, context, missing fixture stub and skill.
 The insertion is a literal declaration, requiring no import changes. An uneditable
 expression fails with its exact source line and the exact declaration line to
 add manually before refresh, rather than guessing at a rewrite.
-`patchy add postgres` selects a sole connected Postgres connection; with several
-it lists choices from `list connections` and stops. With none, it names
-`/company/connections`.
+`patchy add postgres` or `patchy add posthog` selects that integration's sole
+connected connection; with several it lists choices from `list connections` and
+stops. With none, it names `/company/connections`.
 Connection refusals point to `/company/connections`; an unavailable shared table or store
 addition points to `/company`. Restore source access or correct the declaration.
 `patchy remove <alias>`
@@ -261,8 +264,8 @@ The **global skill** is the door for sign-in, static pages and `init`; inside a 
 the **project skills** govern. Their sole source is `packages/sdk/skills/`:
 `patchy-loop`, `patchy-tables` and `patchy-files` are core;
 `patchy-preact` is added on tiers 1 and 2; `patchy-server` is added on tier 2.
-`patchy-postgres`, `patchy-shared-tables`, `patchy-shared-stores` and
-`patchy-members` follow declarations. Refresh re-fetches every present skill
+`patchy-postgres`, `patchy-posthog`, `patchy-shared-tables`, `patchy-shared-stores`
+and `patchy-members` follow declarations. Refresh re-fetches every present skill
 and adds implied ones. Skill presence is sticky except for two cases:
 dropping below tier 2 removes `patchy-server` alongside the `workerd` pin and
 generated `server.ts`, and removing the member-directory declaration removes
@@ -271,12 +274,12 @@ obsolete instructions. Explicit remove may retire a declaration skill when no
 declaration of its kind remains.
 
 A **fixture stub** contains metadata and guidance, not company rows or bytes.
-The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
+PostHog declarations have none. The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
 with invented local inserts, or `fixtures/shared-<alias>/` with invented files
 for the named source store. Refresh creates a missing directory and never
 overwrites an existing one. Dev loads shared fixtures at start; edit them and
 restart to change a local source. Authority changes are not simulated.
-Only metadata and inventory come from the instance.
+Only metadata and inventory come from the instance, apart from PostHog's dev reads.
 On tier 1, every readable row is available to every admitted viewer;
 UI filters do not create access control. Tier 2 enforces rules in handlers.
 A public tier 1 patch can read its declared member directory for a signed-in
@@ -599,7 +602,7 @@ files, shared resources, connections and members remain behind handlers.
 
 ## Companies
 
-A company is the tenant for its patches, users and Postgres connections. It is flat, with no sub-tenants, and has a globally unique handle alongside its display name. Nothing crosses the company boundary except a patch deliberately shared publicly. Runtime records company bound seconds, database time and calls; billing, groups and a company usage view are not built.
+A company is the tenant for its patches, users and connections. It is flat, with no sub-tenants, and has a globally unique handle alongside its display name. Nothing crosses the company boundary except a patch deliberately shared publicly. Runtime records company bound seconds, database time and calls; billing, groups and a company usage view are not built.
 
 A company comes to exist on **create-or-join**, after sign-in: a person without an invitation names a company, chooses its handle and becomes its first admin. The company and user are created together; a solo builder is a company of one. The handle is fixed once created, 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and reserved platform names refused. Self-serve billing — put in a card, set when it tops up — is the intended later path, not a step in today's signup.
 
@@ -607,7 +610,7 @@ A company comes to exist on **create-or-join**, after sign-in: a person without 
 
 A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
-An **admin** runs the company's invitations, roles, deactivation, reactivation and Postgres connections. Admins manage descriptions, sharing, served versions, retire, delete, restore and reassignment from the portal. Publish stays owner-only. Groups and group permissions remain future work.
+An **admin** runs the company's invitations, roles, deactivation, reactivation and connections. Admins manage descriptions, sharing, served versions, retire, delete, restore and reassignment from the portal. Publish stays owner-only. Groups and group permissions remain future work.
 
 Today `/company` lists users, roles, active/deactivated state and pending invites
 in one table, with how many live patches each person owns among those the reader
@@ -636,7 +639,7 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 
 ### Integrations and connections
 
-Patchy ships the **integration** — today Postgres — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
+Patchy ships the **integration** — today Postgres and PostHog — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
 `/company/connections` is one table of the company's connections across
 integrations: each row is titled with the name agents type (`postgres/warehouse`),
@@ -1058,24 +1061,27 @@ A replacement patch under the old name never takes over the source identity.
 ## Integrations
 
 Company Postgres connections, discovery, publish binding and constrained runtime
-reads are built, with generated relation clients and local fixtures. Other
-integrations and personal connections remain planned.
+reads are built, with generated relation clients and local fixtures. Company
+PostHog connections read one PostHog Cloud project through named HogQL queries.
+Other integrations and personal connections remain planned.
 
-An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres is the first; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first and PostHog the second; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.
 
 ### Company and personal connections
 
-Today Postgres supports **company** connections only: an admin connects a source,
-and every active company member may use it through a company-runtime patch that
-declares it. There is no per-patch grant. “As the viewer” means Patchy checks
-company access and records the user; the source sees the shared role from the
-connection string, not a separate database identity for each person.
+Today every integration supports **company** connections only: an admin connects
+a source, and every active company member may use it through a company-runtime
+patch that declares it. There is no per-patch grant. “As the viewer” means Patchy
+checks company access and records the user; the source sees the shared role from
+the connection string, or the admin's PostHog key, not a separate identity for
+each person.
 
 A company may hold several connections of that integration, each with an
 immutable **handle** and an editable description: `postgres/warehouse`,
-`postgres/reporting`. Handles are unique per integration per company.
+`postgres/reporting`. Handles are unique per integration per company, so
+`postgres/warehouse` and `posthog/warehouse` are two connections.
 
 The broader model allows group grants and **personal** connections, but neither
 is built. A personal connection would be made by its user, need no admin
@@ -1117,6 +1123,68 @@ metadata. Admins can test, rotate credentials on the same endpoint, retarget to 
 new host or database with discovery, refresh schema, disconnect, reconnect and edit
 the description. Rotation and retargeting preserve identity; disconnect keeps data.
 A connection may be deleted only when no stored patch version declares it.
+
+### Connecting PostHog
+
+PostHog is read-only and company-wide, for PostHog Cloud only: `us.posthog.com`
+or `eu.posthog.com`, with no self-hosted host field. An admin follows the connect
+walkthrough: create a personal API key in PostHog limited to one project, with
+Read on Query, Event definitions and Property definitions, then paste it with the
+region and numeric project id. Before connecting, the walkthrough says that every
+member can read the project's events and people through any patch that declares
+it, including anything events carry, and warns: **While someone builds a patch
+that uses this connection, their agent reads real PostHog data through Patchy, as
+them. Nothing is written, and every read appears in recent calls.**
+
+Connect runs a test query and discovery before saving anything, and the key is
+encrypted under the same keyring. The test and discovery prove the access exists;
+Patchy doesn't claim to verify that broader access is absent, since PostHog offers
+no way to check. Replacing the key keeps the region and project; changing either
+is a retarget, which rediscovers. Patchy calls only the two Cloud hosts and
+refuses every redirect. Response bodies, refusals included, are read under the
+8 MiB cap before they are decoded.
+
+Discovery pages through event definitions and event and person property
+definitions, keeping names, types and descriptions, never events. Pagination is
+followed only within the region's host and the project's own list. At most 100
+pages, 10,000 definitions and 4 MiB of snapshot are kept; anything over refuses
+discovery before anything is saved, so a partial snapshot is never stored as
+complete. A description over 1,000 characters is cut and marked `[truncated]`,
+since it is only a hint. Snapshots, revisions, `stale_generated` and
+deletion protection work exactly as for Postgres; new events don't move the
+revision until someone refreshes.
+
+A PostHog declaration carries `{ kind: "posthog", handle, id, revision }`. Patch
+code calls `patchy.connections.<alias>.query({ name, query, values, shape })`:
+`query` is HogQL, `values` fills its `{placeholders}` with constants that PostHog
+turns into literals, never names, and `shape` is the same column language as
+Postgres's raw query. `name` labels the call in recent calls and in PostHog's own
+query log. Patchy builds the request itself, a default blocking, cache-aware
+`HogQLQuery`, so patch code can only read. ClickHouse types map through one table:
+nullable and low-cardinality wrappers unwrap; 64-bit integers become numbers only
+while safe, even inside arrays, maps and tuples; decimals and wider integers need an explicit cast wherever they appear; `DateTime` becomes
+UTC ISO; anything else fails `shape_mismatch` naming the column. A result PostHog
+cut short (`hasMore`) fails `too_large`, telling the author to add a `LIMIT` of at
+most 1,000 or aggregate. HogQL errors are `invalid_query` with PostHog's bounded
+message and no SQLSTATE. A refusal records the operation that made it, even when a
+tier 2 action relays it, and `isPatchyError(error, code, "posthog")` narrows to
+PostHog's details; narrowing on
+the code alone keeps Postgres's, so Postgres patches typecheck unchanged. PostHog's rate, query budget and concurrency refusals are one
+`source_rate_limited` error, with `retryAfter` only when PostHog sent one; Patchy
+never replays a call.
+
+PostHog allows 240 queries a minute and 2,400 an hour per project (some legacy
+projects 120 an hour), 3 running at once and 10 seconds of execution. Each server
+process lets at most 3 queries run per region and project, shared by every
+connection to it; an excess call waits within its deadline, keeping a second's
+reserve, then fails `busy` with nothing sent. Each call has 15 seconds, bounded by
+the caller's remaining time; upstream work may outlive that, with no cancellation.
+A call that waited re-reads its connection before sending, so it never reaches a
+project the connection has left. Results are capped at 1,000 rows and 8 MiB, and
+arguments at 256 KiB. Tier 1 pages query through the broker as the viewer; tier 2
+queries only in actions, reauthorising the live viewer on every callback. PostHog
+reads are not live-query dependencies. Each call's name and first 8 KiB of query
+text, never its values or rows, appear in the connection's recent calls.
 
 ### Discovery and binding
 
@@ -1217,8 +1285,30 @@ There is no bring-your-own source: no generic REST escape hatch and no "connect 
 
 ### Development
 
-Patch development uses local fixtures, not live source rows or production credentials.
-The **dev binding** supplies the same Postgres execution dependency without
+Each integration chooses its **dev binding**
+([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)). The default is local
+fixtures or a fake, never live source rows or production credentials. An
+integration whose shapes can't be known ahead and which can't write may read the
+real connection in dev instead, and its connect form says so. Postgres keeps
+fixtures; PostHog reads live.
+
+**PostHog dev reads.** PostHog has no fixture. `patchy dev` sends each query to
+the instance as the machine token's person, for either local viewer; the instance
+runs it with the connection's own key, which never leaves it. The instance takes
+the company, person and machine from the token on every call, and again after any
+wait for one of the project's query slots, which dev and published patches share.
+The repo's declaration only routes the call: it must name a connected PostHog
+connection of the token's company. Only operations the integration opts into run
+this way, under the runtime's argument and result bounds, its deadline, draining
+and a per-person rate limit. Each read, refused or not, is a dev call in the
+connection's recent calls, marked Dev and naming the machine, with no patch. An
+expired or revoked key, a deactivated person, a disconnected source, another
+company's connection or an unreachable instance stops the read with a clear error;
+the rest of dev keeps working. The key reaches the dev daemon privately and stays
+out of generated files, logs and workerd; after `patchy login`, restart dev to use
+the new key.
+
+The Postgres **dev binding** supplies the same Postgres execution dependency without
 loading the keyring or runtime log. One PGlite database per connection under
 `.patchy/dev/` is shared by its aliases, with source-native types: numeric filters
 and ordering remain numeric, not string comparisons. Numeric precision and scale,

@@ -13,6 +13,7 @@ import {
 import { Binding } from "@patchy/runtime/dev";
 import { SubscriptionReads } from "@patchy/primitives";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -21,6 +22,8 @@ import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 
+/** These repos declare no PostHog connection, so dev never reaches an instance. */
+const offline = { instance: { apiUrl: "http://127.0.0.1:1", token: Option.none() } };
 const decodeMetadata = Schema.decodeUnknownEffect(DeclarationMetadata);
 const decodePage = Schema.decodeUnknownEffect(TablePage);
 const decodePostgresRows = Schema.decodeUnknownEffect(PostgresRows);
@@ -58,6 +61,7 @@ it.live(
         }),
         metadata: yield* decodeMetadata({
           postgres: {},
+          posthog: {},
           shared: {
             contacts: {
               declaration,
@@ -94,7 +98,8 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
       const resources = yield* DevResources.prepare(
         prepared,
         root,
-        path.join(root, ".patchy", "dev")
+        path.join(root, ".patchy", "dev"),
+        offline
       );
       const binding = Binding.Binding.of({
         ...resources.version,
@@ -182,6 +187,7 @@ it.live(
         },
         metadata: {
           postgres: {},
+          posthog: {},
           shared: {
             assets: {
               declaration: assets,
@@ -196,7 +202,8 @@ it.live(
         const resources = yield* DevResources.prepare(
           prepared,
           root,
-          path.join(root, ".patchy/dev")
+          path.join(root, ".patchy/dev"),
+          offline
         );
         const binding = Binding.Binding.of({
           ...resources.version,
@@ -260,7 +267,12 @@ it.live(
       });
       yield* fs.remove(path.join(fixture, "nested/asset.bin"));
       yield* fs.remove(path.join(fixture, "nested/logo.SVG"));
-      const resources = yield* DevResources.prepare(prepared, root, path.join(root, ".patchy/dev"));
+      const resources = yield* DevResources.prepare(
+        prepared,
+        root,
+        path.join(root, ".patchy/dev"),
+        offline
+      );
       const sql = yield* PgliteClient.PgliteClient.pipe(Effect.provideContext(resources.context));
       assert.deepStrictEqual(
         yield* sql`SELECT name FROM patchy.files WHERE patch_id = ${assets.patchId}`,
@@ -324,6 +336,7 @@ it.live(
         }),
         metadata: yield* decodeMetadata({
           postgres: {},
+          posthog: {},
           shared: {
             contacts: {
               declaration,
@@ -349,7 +362,7 @@ it.live(
         current: Prepared,
         insert?: string
       ) {
-        const resources = yield* DevResources.prepare(current, root, stateDir);
+        const resources = yield* DevResources.prepare(current, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
           identity: {
@@ -451,6 +464,7 @@ it.live(
         }),
         metadata: yield* decodeMetadata({
           postgres: {},
+          posthog: {},
           shared: {
             contacts: {
               declaration,
@@ -473,7 +487,7 @@ it.live(
           `INSERT INTO "p_refsource001"."contacts" ("id", "${column}") VALUES ('invented-contact', 'Initial contact');\n`
         );
       const session = Effect.fn("test.fixtureRetry")(function* (insert?: string) {
-        const resources = yield* DevResources.prepare(prepared, root, stateDir);
+        const resources = yield* DevResources.prepare(prepared, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
           identity: {
@@ -570,14 +584,14 @@ it.live(
           role: "admin",
           machine: { id: "local-machine", name: "Local machine" }
         }),
-        metadata: { postgres: {}, shared: {} }
+        metadata: { postgres: {}, posthog: {}, shared: {} }
       };
       const exercise = Effect.fn("test.publishedInventory")(function* (
         current: Prepared,
         expected: ReadonlyArray<string>,
         email: string
       ) {
-        const resources = yield* DevResources.prepare(current, root, stateDir);
+        const resources = yield* DevResources.prepare(current, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
           identity: {
@@ -659,7 +673,8 @@ it.live(
           }
         },
         root,
-        stateDir
+        stateDir,
+        offline
       ).pipe(Effect.scoped, Effect.flip);
       assert.strictEqual(refused._tag, "NotAdditive");
       yield* exercise(
@@ -739,6 +754,7 @@ it.live(
             mirror: { declaration: first, snapshot },
             second: { declaration: second, snapshot }
           },
+          posthog: {},
           shared: {}
         }
       };
@@ -752,7 +768,7 @@ CREATE TEMP TABLE session_marker AS SELECT * FROM fixture_marker;`
         );
       }
       yield* Effect.gen(function* () {
-        const resources = yield* DevResources.prepare(prepared, root, stateDir);
+        const resources = yield* DevResources.prepare(prepared, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
           identity: {

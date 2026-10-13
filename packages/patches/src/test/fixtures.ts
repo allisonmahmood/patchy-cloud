@@ -29,7 +29,12 @@ import * as CompanyTesting from "@patchy/company-database/testing";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { Tables } from "@patchy/primitives";
-import { SqlConnectionStore, CredentialKeys, PostgresSource } from "@patchy/integrations";
+import {
+  SqlConnectionStore,
+  CredentialKeys,
+  PostgresSource,
+  PostHogSource
+} from "@patchy/integrations";
 import { RuntimeLog, Wakes } from "@patchy/runtime";
 import type * as Content from "../Content.js";
 import * as Patches from "../Patches.js";
@@ -235,6 +240,7 @@ export const integrations = SqlConnectionStore.layer.pipe(
     Layer.mergeAll(
       CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)),
       PostgresSource.layer,
+      PostHogSource.layer,
       RuntimeLog.layer
     )
   )

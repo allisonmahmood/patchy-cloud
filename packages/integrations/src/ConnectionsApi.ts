@@ -54,8 +54,15 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
       .handle("listConnections", ({ query }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          // CLIs from before other integrations decode Postgres only, and never ask for every one.
-          const shown = query.integrations === "all" ? integrations : (["postgres"] as const);
+          // A caller names the integrations it decodes. CLIs from before PostHog decode Postgres
+          // only: they send nothing, or release 10's `all`.
+          const asked =
+            query.integrations === undefined || query.integrations === "all"
+              ? ["postgres"]
+              : query.integrations.split(",");
+          const shown: ReadonlyArray<Integration> = integrations.filter((integration) =>
+            asked.includes(integration)
+          );
           const rows = (yield* connections.list(identity.company.id)).filter((row) =>
             shown.includes(row.integration)
           );

@@ -1333,7 +1333,7 @@ const add = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Add members, a Postgres connection, shared-table or shared-store declaration and generate its files."
+    "Add members, a Postgres or PostHog connection, shared-table or shared-store declaration and generate its files."
   )
 );
 

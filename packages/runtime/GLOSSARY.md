@@ -141,7 +141,7 @@ The stable deployed-bundle contract a runtime request speaks, distinct from the 
 _Avoid_: Release, schema revision, transport version
 
 **Runtime log**:
-The attributed record of mutations, integration calls, admin discovery and server invocations. Mutations and actions always have invocation records; queries have them only on logging or failure. Invocation records keep the initiating viewer separate from the effective principal. A pending or unresolved outcome is not evidence that a write failed or is safe to replay.
+The attributed record of mutations, integration calls, admin discovery and server invocations. Each call names the credential it came through: a viewer's session, an admin's, or, for a dev read, a machine token, kept as its id and name at the time and with no patch or version. Mutations and actions always have invocation records; queries have them only on logging or failure. Invocation records keep the initiating viewer separate from the effective principal. A pending or unresolved outcome is not evidence that a write failed or is safe to replay.
 _Avoid_: Call log (Integrations' pointer to this record), analytics event
 
 **Request event**:

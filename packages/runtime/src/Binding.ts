@@ -12,5 +12,10 @@ export class Binding extends Context.Service<
     /** Invocation callbacks retain the viewer but act as the patch for owned resources. */
     readonly effectivePrincipal?: string;
     readonly invocationId?: string;
+    /**
+     * When the caller's deadline for this operation fires, in epoch milliseconds. An integration
+     * that queues for a slot stops waiting before it, so a refused wait is never a timeout.
+     */
+    readonly deadline?: number;
   }
 >()("@patchy/runtime/Binding") {}

@@ -42,6 +42,7 @@ import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as Execution from "./Execution.js";
 import * as Operations from "./Operations.js";
 import * as Source from "./Source.js";
+import * as PostHogSource from "../posthog/Source.js";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
 
@@ -262,9 +263,11 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
           .pipe(Effect.flip);
         assert.instanceOf(wrongHostname, SourceClient.TlsRequired);
         const connections = yield* SqlConnectionStore.make.pipe(
-          Effect.provideService(Source.Source, source)
+          Effect.provideService(Source.Source, source),
+          Effect.provide(PostHogSource.layer)
         );
         const connection = yield* connections.connect({
+          integration: "postgres",
           companyId: "cmp_dev",
           userId: "usr_dev",
           handle: "tls-warehouse",
@@ -403,9 +406,11 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
           Effect.provideService(SourceNetwork.SourceNetwork, network)
         );
         const connections = yield* SqlConnectionStore.make.pipe(
-          Effect.provideService(Source.Source, source)
+          Effect.provideService(Source.Source, source),
+          Effect.provide(PostHogSource.layer)
         );
         const connection = yield* connections.connect({
+          integration: "postgres",
           companyId: "cmp_dev",
           userId: "usr_dev",
           handle: "tls-cancel",

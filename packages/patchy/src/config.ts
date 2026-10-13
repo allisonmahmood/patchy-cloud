@@ -247,6 +247,10 @@ export const postgres = <const Handle extends string>(handle: Handle) => ({
   kind: "postgres" as const,
   handle
 });
+export const posthog = <const Handle extends string>(handle: Handle) => ({
+  kind: "posthog" as const,
+  handle
+});
 export const sharedTable = <const Patch extends string, const Table extends string>(
   patchId: Patch,
   table: Table
@@ -266,6 +270,7 @@ export const sharedStore = <const Patch extends string, const Store extends stri
 export const members = () => ({ kind: "members" as const });
 export type Declaration =
   | { readonly kind: "postgres"; readonly handle: string }
+  | { readonly kind: "posthog"; readonly handle: string }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
   | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
   | { readonly kind: "members" };

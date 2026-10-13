@@ -17,7 +17,7 @@ import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Execution from "./Execution.js";
 import * as SourceClient from "./SourceClient.js";
 
-const connection = new ConnectionStore.Connection({
+const connection = {
   id: "conn-execution",
   companyId: "company-execution",
   integration: "postgres",
@@ -31,7 +31,7 @@ const connection = new ConnectionStore.Connection({
   lastTestedAt: null,
   lastDiscoveredAt: null,
   createdBy: "tester"
-});
+} satisfies ConnectionStore.Connection;
 const declaration = {
   kind: "postgres" as const,
   id: connection.id,
@@ -74,7 +74,7 @@ const setup = Effect.fn("test.executionSetup")(function* (limits: Partial<Execut
   const clients: Array<Pg.Client> = [];
   const roles: Array<string> = [];
   const cancellations: Array<number> = [];
-  let current = connection;
+  let current: typeof ConnectionStore.PostgresConnection.Type = connection;
   let onCheck: Effect.Effect<void> = Effect.void;
   let beforeCredentials: Effect.Effect<void> = Effect.void;
   const scope = yield* Scope.Scope;
@@ -164,7 +164,13 @@ const setup = Effect.fn("test.executionSetup")(function* (limits: Partial<Execut
         {
           connection,
           snapshots: [
-            { revision: 1, snapshot: { version: 1, relations: [], enums: [], exclusions: [] } }
+            {
+              revision: 1,
+              metadata: {
+                integration: "postgres",
+                snapshot: { version: 1, relations: [], enums: [], exclusions: [] }
+              }
+            }
           ]
         }
       ])
@@ -176,8 +182,8 @@ const setup = Effect.fn("test.executionSetup")(function* (limits: Partial<Execut
     roles,
     cancellations,
     rolePrefix,
-    change: (changes: Partial<ConnectionStore.Connection>) => {
-      current = new ConnectionStore.Connection({ ...current, ...changes });
+    change: (changes: Partial<typeof ConnectionStore.PostgresConnection.Type>) => {
+      current = { ...current, ...changes };
     },
     watch: (effect: Effect.Effect<void>) => {
       onCheck = effect;

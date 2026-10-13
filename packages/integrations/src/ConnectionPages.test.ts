@@ -27,6 +27,7 @@ import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
+import * as PostHogDouble from "./test/posthog.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 
 const env = clerkEnv();
@@ -95,6 +96,23 @@ const source = Layer.effect(
   )
 );
 
+/** One PostHog project the connect walkthrough can reach, with a key limited to it. */
+const posthogProject = {
+  region: "eu",
+  id: 4321,
+  key: "phx_connectionPagesKey01",
+  events: [
+    { name: "$pageview", description: "Automatically captured page views." },
+    { name: "patch.opened" }
+  ],
+  eventProperties: [{ name: "$browser", property_type: "String" }],
+  personProperties: [{ name: "email", property_type: "String", description: "Their address" }]
+} satisfies PostHogDouble.Project;
+// The same project behind a second key, for replacing the key without moving the project.
+const posthog = PostHogDouble.make(
+  PostHogDouble.project(posthogProject, { ...posthogProject, key: "phx_connectionPagesKey02" })
+);
+
 const events: Analytics.AnalyticsEvent[] = [];
 const services = Layer.mergeAll(
   Session.layer,
@@ -109,6 +127,7 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(RuntimeLog.layer),
   Layer.provideMerge(source),
+  Layer.provideMerge(posthog.layer),
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),
@@ -319,6 +338,23 @@ it.layer(services)("company connection pages", (it) => {
           rowCount: null
         });
         yield* audit.begin({ ...begin, correlationId: "visible-pending", op: "postgres.get" });
+        // A read from `patchy dev`: a machine's key, no patch.
+        yield* audit.begin({
+          ...begin,
+          credentialKind: "machine",
+          machine: { id: "tok_laptop", name: "Laptop <one>" },
+          patchId: null,
+          versionId: null,
+          correlationId: "visible-dev",
+          op: "posthog.query",
+          resource: "dailyViews"
+        });
+        yield* audit.finish({
+          correlationId: "visible-dev",
+          outcome: "success",
+          durationMs: 40,
+          rowCount: 3
+        });
         yield* audit.begin({
           ...begin,
           companyId: foreign.company.id,
@@ -365,6 +401,17 @@ it.layer(services)("company connection pages", (it) => {
         assert.notInclude(row("visible-handler-error"), "<script>principal</script>");
         assert.include(row("visible-handler-error"), "<code>approval_required</code>");
         assert.include(row("visible-pending"), ">Unknown<");
+        assert.include(
+          row("visible-dev"),
+          '<td><span class="pill">Dev</span> patchy dev on Laptop &lt;one&gt;</td>'
+        );
+        assert.include(row("visible-dev"), `<td>${owner.user.name}</td>`);
+        assert.include(row("visible-dev"), "<code>query dailyViews</code>");
+        assert.include(
+          row("visible-dev"),
+          "The machine key Laptop &lt;one&gt;, reading the real connection while building a patch"
+        );
+        assert.notInclude(row("visible-dev"), "Patch / version");
         for (const forbidden of [
           sql,
           "<script>patch</script>",
@@ -485,7 +532,13 @@ it.layer(services)("company connection pages", (it) => {
         const owner = yield* createCompany("connections-lifecycle");
         const store = yield* ConnectionStore.ConnectionStore;
         const { connection, path } = yield* connect(owner.user, "warehouse");
-        const get = () => store.get(owner.company.id, connection.id);
+        const get = () =>
+          store.get(owner.company.id, connection.id).pipe(
+            Effect.map((found) => {
+              if (found.integration !== "postgres") return assert.fail("A Postgres connection");
+              return found;
+            })
+          );
         yield* TestClock.adjust("1 second");
         const tested = yield* follow(yield* send(`${path}/test`, post(owner.user)), owner.user);
         assert.include(tested, 'role="status"');
@@ -1023,6 +1076,133 @@ it.layer(services)("company connection pages", (it) => {
           (yield* Effect.flip(store.snapshot(company, reports.connection.id, 2)))._tag,
           "ConnectionNotFound"
         );
+      })
+  );
+  it.effect(
+    "connects PostHog through its walkthrough, refusing each field where it's wrong, and replaces the key in place",
+    () =>
+      Effect.gen(function* () {
+        events.length = 0;
+        const owner = yield* createCompany("connections-posthog");
+        const path = "/company/connections/connect/posthog";
+        const read = Effect.fn(function* (target: string) {
+          const response = yield* send(target, { headers: { cookie: cookie(owner.user) } });
+          return { status: response.status, html: yield* Effect.promise(() => response.text()) };
+        });
+        const form = yield* read(path);
+        assert.strictEqual(form.status, 200);
+        assert.include(form.html, '<ol class="steps">');
+        assert.include(form.html, "Create a read-only key in PostHog");
+        assert.include(form.html, 'aria-current="step"');
+        assert.include(
+          form.html,
+          "While someone builds a patch that uses this connection, their agent reads real PostHog data through Patchy, as them. Nothing is written, and every read appears in recent calls."
+        );
+        assert.include(
+          form.html,
+          '<label class="field-prefix" for="connection-handle">posthog/</label>'
+        );
+        assert.include(form.html, '<option value="eu">EU Cloud · eu.posthog.com</option>');
+        const fields = {
+          handle: "warehouse",
+          description: "Product analytics",
+          region: "eu",
+          project: String(posthogProject.id),
+          key: posthogProject.key
+        };
+        const refused = Effect.fn(function* (
+          changes: Record<string, string>,
+          field: string,
+          code: string
+        ) {
+          const response = yield* send(path, post(owner.user, { ...fields, ...changes }));
+          assert.strictEqual(response.status, 422);
+          const html = yield* Effect.promise(() => response.text());
+          assert.include(html, code);
+          assert.include(html, `id="connection-${field}-error"`);
+          assert.match(html, new RegExp(`id="connection-${field}"[^>]*aria-invalid="true"`));
+          // The key is never echoed back; region and project are kept.
+          assert.notInclude(html, posthogProject.key);
+          assert.notInclude(html, "phx_wrongKey000000");
+          assert.include(html, `value="${changes.project ?? fields.project}"`);
+        });
+        yield* refused({ project: "abc" }, "project", "invalid_credentials");
+        yield* refused({ key: "phc_projectToken00001" }, "key", "project API key");
+        yield* refused({ key: "phx_wrongKey000000" }, "key", "posthog_key_rejected");
+        assert.deepStrictEqual(
+          yield* (yield* ConnectionStore.ConnectionStore).list(owner.company.id),
+          []
+        );
+
+        // A Postgres connection already named warehouse leaves the name free for PostHog.
+        yield* connect(owner.user, "warehouse");
+        const created = yield* send(path, post(owner.user, fields));
+        assert.strictEqual(created.status, 303);
+        const page = yield* follow(created, owner.user);
+        assert.include(page, "PostHog connected and its events discovered.");
+        const connection = (yield* (yield* ConnectionStore.ConnectionStore).list(
+          owner.company.id
+        )).find((item) => item.integration === "posthog")!;
+        assert.deepStrictEqual(connection.display, {
+          region: "eu",
+          projectId: posthogProject.id,
+          keyHint: "phx_…ey01"
+        });
+        assert.include(page, '<h1 class="page-heading">posthog/warehouse</h1>');
+        assert.include(
+          page,
+          "<dt>Project</dt><dd>4321, EU Cloud</dd><dt>Key</dt><dd>phx_…ey01</dd>"
+        );
+        assert.include(page, "2 events, 1 event property and 1 person property.");
+        assert.include(page, "<code>$pageview</code>");
+        assert.include(page, "patchy add posthog/warehouse");
+        for (const label of ["Refresh events", "Replace key…", "Change project…"])
+          assert.include(page, label);
+        assert.deepInclude(reported(owner.company.id), [
+          "connection.connected",
+          owner.user.id,
+          connection.id,
+          "posthog"
+        ]);
+
+        // A query's name labels its call; its text is kept, its values are not.
+        const audit = yield* RuntimeLog.RuntimeLog;
+        yield* audit.begin({
+          companyId: owner.company.id,
+          patchId: "posthog-patch",
+          versionId: "posthog-version",
+          userId: owner.user.id,
+          credentialKind: "session",
+          op: "posthog.query",
+          resource: "public.dailyVisits",
+          connectionId: connection.id,
+          correlationId: "cor_posthog_page",
+          sql: "SELECT count() FROM events WHERE event = {event}",
+          deadlineMs: 15_000
+        });
+        const withCalls = (yield* read(`/company/connections/${connection.id}`)).html;
+        assert.include(withCalls, "<code>query public.dailyVisits</code>");
+        assert.include(withCalls, "SELECT count() FROM events WHERE event = {event}");
+
+        const replace = yield* read(`/company/connections/${connection.id}/rotate`);
+        assert.include(replace.html, 'id="connection-key"');
+        assert.notInclude(replace.html, 'id="connection-project"');
+        yield* follow(
+          yield* send(
+            `/company/connections/${connection.id}/rotate`,
+            post(owner.user, { key: "phx_connectionPagesKey02" })
+          ),
+          owner.user
+        );
+        const rotated = yield* (yield* ConnectionStore.ConnectionStore).get(
+          owner.company.id,
+          connection.id
+        );
+        assert.deepInclude(rotated, {
+          credentialRevision: connection.credentialRevision + 1,
+          metadataRevision: connection.metadataRevision,
+          display: { region: "eu", projectId: posthogProject.id, keyHint: "phx_…ey02" }
+        });
       })
   );
 });

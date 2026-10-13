@@ -126,6 +126,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.row.bytes",
     "runtime.batch.bytes",
     "runtime.postgres.bytes",
+    "runtime.posthog.bytes",
     "tier2.args.bytes",
     "runtime.result.bytes",
     "runtime.file.bytes",
@@ -242,6 +243,8 @@ export interface OperationError {
   readonly scope?: LimitScope;
   readonly value?: number;
   readonly details?: Readonly<Record<string, typeof Schema.Json.Type>>;
+  /** The integration operation a relayed callback refusal names, such as `posthog.query`. */
+  readonly integrationOperation?: string;
 }
 
 export type RuntimeError =
@@ -271,7 +274,8 @@ export const toFailure = (error: RuntimeError): RuntimeFailure => {
       error.code === "too_many_requests" ||
       error.code === "busy" ||
       error.code === "patch_paused" ||
-      error.code === "source_unavailable") &&
+      error.code === "source_unavailable" ||
+      error.code === "source_rate_limited") &&
     "retryAfterSeconds" in error
       ? error.retryAfterSeconds
       : undefined;
@@ -291,6 +295,9 @@ export const toFailure = (error: RuntimeError): RuntimeFailure => {
     ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
     ...("correlationId" in error && error.correlationId !== undefined
       ? { correlationId: error.correlationId }
+      : {}),
+    ...("integrationOperation" in error && typeof error.integrationOperation === "string"
+      ? { operation: error.integrationOperation }
       : {})
   };
 };
@@ -378,6 +385,7 @@ export const config = Effect.all({
   rowBytes: byteLimits.rowBytes,
   batchBytes: byteLimits.batchBytes,
   postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
+  posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
   serverArgsBytes: ContractLimits.get("tier2.args.bytes"),
   fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
@@ -406,6 +414,8 @@ export class Runtime extends Context.Service<
   {
     readonly bodyLimit: (op: string) => number;
     readonly drain: Effect.Effect<void>;
+    /** True once `drain` ran; other doors into the same work refuse new calls with it. */
+    readonly draining: Effect.Effect<boolean>;
     readonly maxCallBytes: number;
     readonly maxCallLimitId: RuntimeBodyLimitId;
     readonly fileBytes: number;
@@ -474,6 +484,7 @@ export const make = (
       settings.rowBytes + settings.callBytes,
       settings.batchBytes + settings.callBytes,
       settings.postgresBytes,
+      settings.posthogBytes,
       settings.serverArgsBytes + settings.callBytes
     );
     const maxCallLimitId =
@@ -483,7 +494,9 @@ export const make = (
           ? "runtime.row.bytes"
           : maxCallBytes === settings.serverArgsBytes + settings.callBytes
             ? "tier2.args.bytes"
-            : "runtime.postgres.bytes";
+            : maxCallBytes === settings.postgresBytes
+              ? "runtime.postgres.bytes"
+              : "runtime.posthog.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -660,6 +673,7 @@ export const make = (
               input.op.startsWith("files.") ||
               input.op.startsWith("shared.") ||
               input.op.startsWith("postgres.") ||
+              input.op.startsWith("posthog.") ||
               input.op.startsWith("members."))
           )
             return yield* new ServerRequired();
@@ -720,18 +734,19 @@ export const make = (
           }).pipe(Effect.provideService(Binding.Binding, binding));
         }
         if (operation === undefined) return yield* new InvalidRequest({});
-        const execute = Effect.gen(function* () {
-          if (integration) yield* admit;
-          return yield* run(operation);
-        }).pipe(Effect.provideService(Binding.Binding, binding));
-        if (operation.kind === "read") return yield* execute;
+        const execute = (bound: Binding.Binding["Service"]) =>
+          Effect.gen(function* () {
+            if (integration) yield* admit;
+            return yield* run(operation);
+          }).pipe(Effect.provideService(Binding.Binding, bound));
+        if (operation.kind === "read") return yield* execute(binding);
         const deadlineMs =
           operation.kind === "mutation"
             ? settings.mutationDeadlineMs
             : settings.integrationDeadlineMs;
         // The logged deadline is the enforced one: past it the call fails with `timeout`.
         const startedAt = yield* Clock.currentTimeMillis;
-        const runWithDeadline = execute.pipe(
+        const runWithDeadline = execute({ ...binding, deadline: startedAt + deadlineMs }).pipe(
           Effect.timeoutOrElse({
             duration: deadlineMs,
             orElse: () =>
@@ -786,6 +801,7 @@ export const make = (
       drain: Effect.sync(() => {
         draining = true;
       }),
+      draining: Effect.sync(() => draining),
       call: (input, byteLength) =>
         dispatch(
           input,

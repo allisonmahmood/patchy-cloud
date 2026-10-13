@@ -1,6 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Buffer counts UTF-8 bytes without allocating another encoded body.
 import { Buffer } from "node:buffer";
-import { FilePutUpload, limitRefusal, type HandlerKind, type RuntimeFailure } from "@patchy/api";
+import {
+  FilePutUpload,
+  limitRefusal,
+  runtimeBodyLimitId,
+  type HandlerKind,
+  type RuntimeFailure
+} from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -75,7 +81,8 @@ const connections: Readonly<Record<string, true>> = {
   "postgres.list": true,
   "postgres.get": true,
   "postgres.getMany": true,
-  "postgres.query": true
+  "postgres.query": true,
+  "posthog.query": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -98,7 +105,7 @@ const refused = (
   error: string
 ): RuntimeFailure => ({ ok: false, source: "patchy", code, error });
 const bounded = (
-  id: "tier2.callbacks.fileBytes" | "tier2.log.bytes",
+  id: "tier2.callbacks.fileBytes" | "tier2.log.bytes" | "runtime.posthog.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -130,7 +137,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     fileBytes: ContractLimits.get("tier2.callbacks.fileBytes"),
     logBytes: ContractLimits.get("tier2.log.bytes"),
     mutationDeadline: ContractLimits.get("runtime.mutation.deadline"),
-    integrationDeadline: ContractLimits.get("integration.deadline")
+    integrationDeadline: ContractLimits.get("integration.deadline"),
+    posthogBytes: ContractLimits.get("runtime.posthog.bytes")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -141,13 +149,22 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const resolved = yield* Effect.result(capabilities.resolve(token, attempt));
     if (resolved._tag === "Failure") return resolved.failure.failure;
     const capability = resolved.success;
+    // An integration's refusal is recorded with its operation, so a handler that relays it keeps
+    // that integration's details. The record stays with the host: published guests decode
+    // replies strictly and predate the field. Only actions use integrations, and actions never
+    // nest, so no guest needs it.
+    let integration: string | undefined;
     const remember = (
       reply: GuestProtocol.CallbackReply,
       status: number
-    ): GuestProtocol.CallbackReply =>
-      !reply.ok && reply.source === "patchy"
-        ? capabilities.rememberRefusal(capability, reply, status)
-        : reply;
+    ): GuestProtocol.CallbackReply => {
+      if (reply.ok || reply.source !== "patchy") return reply;
+      // The same refusal can pass twice; only a copy that names an operation is new.
+      if (reply.operation === undefined)
+        return capabilities.rememberRefusal(capability, reply, status, integration);
+      const { operation, ...failure } = reply;
+      return capabilities.rememberRefusal(capability, failure, status, operation);
+    };
     if (!transportCharged) {
       const refusal = capabilities.chargeCallback(capability);
       if (refusal !== undefined) return refusal;
@@ -201,8 +218,15 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const operation = Object.hasOwn(handlers, request.op) ? handlers[request.op] : undefined;
     if (request.op !== "log" && request.op !== "server.call" && operation === undefined)
       return remember(refused("invalid_request", "Unknown callback operation."), 400);
+    if (operation?.kind === "integration") integration = request.op;
     if (capability.kind === "query" && operation?.transport !== undefined)
       return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
+    // PostHog's arguments keep the cap they have on tier 1; nothing past it is sent.
+    if (
+      runtimeBodyLimitId(request.op) === "runtime.posthog.bytes" &&
+      Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > limits.posthogBytes
+    )
+      return remember(bounded("runtime.posthog.bytes", limits.posthogBytes), 413);
     const run = Effect.gen(function* (): Effect.fn.Return<
       GuestProtocol.CallbackReply,
       Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
@@ -253,7 +277,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         ...capability.binding,
         effectivePrincipal,
         invocationId: attempt.invocationId,
-        correlationId: newInternalId("call")
+        correlationId: newInternalId("call"),
+        ...(handler.kind === "read" ? {} : { deadline: now + deadlineMs })
       });
       const execute = Effect.gen(function* (): Effect.fn.Return<
         GuestProtocol.CallbackReply,
@@ -408,9 +433,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             )
           );
           if (Exit.isFailure(result)) {
+            // A refusal relayed from elsewhere keeps the row it names: `patchy dev` journals
+            // nothing locally, and its live reads are logged on the instance.
             if (Option.isSome(failure) && !isCapabilityRefused(failure.value))
               return remember(
-                { ...Runtime.toFailure(failure.value), correlationId: binding.correlationId },
+                { correlationId: binding.correlationId, ...Runtime.toFailure(failure.value) },
                 failure.value.status
               );
             return yield* Effect.failCause(result.cause);

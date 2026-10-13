@@ -14,7 +14,8 @@ import {
   ConnectionStoreDev,
   PostgresDev,
   PostgresExecution,
-  PostgresOperations
+  PostgresOperations,
+  PostHogDev
 } from "@patchy/integrations/dev";
 import { Files, Members, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
 import { Binding, LoadedVersions, Wakes, me } from "@patchy/runtime/core";
@@ -174,7 +175,16 @@ interface LocalState {
   }>;
 }
 
-const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state: LocalState) {
+export interface Options extends DevExecution.Options {
+  /** How dev reaches integrations that read the real connection: the instance, with this key. */
+  readonly instance: PostHogDev.Instance;
+}
+
+const make = Effect.fn("DevResources.make")(function* (
+  prepared: Prepared,
+  state: LocalState,
+  instance: PostHogDev.Instance
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const tables = yield* Tables.Tables;
@@ -283,7 +293,9 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
     ...(yield* TableOperations.make),
     ...(yield* Members.make),
     ...fileHandlers,
-    ...postgres
+    ...postgres,
+    // PostHog has no fixture: its reads go to the real connection, through the instance.
+    ...(yield* PostHogDev.handlers(instance))
   };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };
@@ -294,7 +306,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   prepared: Prepared,
   root: string,
   stateDir: string,
-  options: DevExecution.Options = {}
+  options: Options
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -468,7 +480,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   for (const { declaration, snapshot } of Object.values(prepared.metadata.postgres)) {
     if (connections.has(declaration.id)) continue;
     connections.set(declaration.id, {
-      connection: new ConnectionStore.Connection({
+      connection: {
         id: declaration.id,
         companyId: version.companyId,
         integration: "postgres",
@@ -482,8 +494,10 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
         lastTestedAt: null,
         lastDiscoveredAt: null,
         createdBy: prepared.identity.user.id
-      }),
-      snapshots: [{ revision: declaration.revision, snapshot }]
+      } satisfies ConnectionStore.Connection,
+      snapshots: [
+        { revision: declaration.revision, metadata: { integration: "postgres", snapshot } }
+      ]
     });
     workerInputs.set(declaration.id, { declaration, snapshot });
   }
@@ -533,17 +547,21 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       Layer.provideMerge(resourceChanges)
     )
   );
-  const preparedResources = yield* make(prepared, {
-    stampPath,
-    stamp,
-    initialize,
-    changed,
-    changedSources,
-    version,
-    versions,
-    fixtures,
-    storeFixtures
-  }).pipe(Effect.provideContext(context));
+  const preparedResources = yield* make(
+    prepared,
+    {
+      stampPath,
+      stamp,
+      initialize,
+      changed,
+      changedSources,
+      version,
+      versions,
+      fixtures,
+      storeFixtures
+    },
+    options.instance
+  ).pipe(Effect.provideContext(context));
   if (version.manifest.tier === 2) {
     const execution = yield* DevExecution.make(
       version,

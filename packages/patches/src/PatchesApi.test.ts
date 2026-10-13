@@ -45,6 +45,7 @@ import {
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { ConnectionStore, SqlConnectionStore, PostgresSource } from "@patchy/integrations";
+import * as PostHogDouble from "../../integrations/src/test/posthog.js";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
@@ -2404,6 +2405,7 @@ const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: s
     })
   );
   const connection = yield* connections.connect({
+    integration: "postgres",
     companyId: admin.company.id,
     userId: admin.user.id,
     handle,
@@ -2442,10 +2444,10 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         const patches = yield* Patches.Patches;
         const loaded = Option.getOrThrow(yield* patches.find(created.patchId));
         assert.deepStrictEqual(loaded.version.manifest.uses.sales, declaration);
-        assert.deepStrictEqual(
-          yield* connections.snapshot(admin.company.id, connection.id, 1),
+        assert.deepStrictEqual(yield* connections.snapshot(admin.company.id, connection.id, 1), {
+          integration: "postgres",
           snapshot
-        );
+        });
 
         yield* connections.disconnect(identity);
         const objects = yield* ContentStore.ContentStore;
@@ -2517,6 +2519,78 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
           ConnectionStore.ConnectionInUse
         );
       })
+  );
+
+  it.effect("binds a PostHog connection's events revision and refuses it once refreshed", () =>
+    Effect.gen(function* () {
+      const project = {
+        region: "us",
+        id: 2468,
+        key: "phx_publishContractKey",
+        events: [{ name: "patch.opened" }]
+      } satisfies PostHogDouble.Project;
+      const connections = yield* SqlConnectionStore.make.pipe(
+        Effect.provide(PostHogDouble.make(PostHogDouble.project(project)).layer)
+      );
+      const connection = yield* connections.connect({
+        integration: "posthog",
+        companyId: admin.company.id,
+        userId: admin.user.id,
+        handle: "publish-analytics",
+        description: "Publish contract analytics",
+        credentials: PostHogDouble.credentials(project)
+      });
+      const declaration = {
+        kind: "posthog" as const,
+        handle: connection.handle,
+        id: connection.id,
+        revision: connection.metadataRevision
+      };
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const payload = publishRequest({
+        html: html("Analytics report"),
+        manifest: {
+          ...Fixtures.manifest,
+          name: "analytics-report",
+          uses: { analytics: declaration }
+        }
+      });
+      const created = yield* api.publish({ payload });
+      const patches = yield* Patches.Patches;
+      assert.deepStrictEqual(
+        Option.getOrThrow(yield* patches.find(created.patchId)).version.manifest.uses.analytics,
+        declaration
+      );
+      yield* connections.refresh({
+        companyId: admin.company.id,
+        userId: admin.user.id,
+        id: connection.id
+      });
+      const stale = yield* api.publish({
+        payload: publishRequest({
+          ...payload,
+          patchId: created.patchId,
+          publishKey: crypto.randomUUID()
+        }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(stale.status, 422);
+      assert.include(yield* stale.json, { code: "stale_generated" });
+      // A Postgres declaration can't claim the PostHog connection's identity.
+      const mismatched = yield* api.publish({
+        payload: publishRequest({
+          ...payload,
+          patchId: created.patchId,
+          publishKey: crypto.randomUUID(),
+          manifest: {
+            ...payload.manifest,
+            uses: { analytics: { ...declaration, kind: "postgres", revision: 2 } }
+          }
+        }),
+        responseMode: "response-only"
+      });
+      assert.include(yield* mismatched.json, { code: "connection_not_connected" });
+    })
   );
 
   it.effect("serializes deletion against the transaction recording a declaring version", () =>

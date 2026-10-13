@@ -66,7 +66,7 @@ test("broker admits server arguments up to 1 MiB and stamps local and runtime re
   ).toEqual([64 * 1024 + 1, 1024 * 1024]);
 });
 
-test("broker keeps admission retry timing but strips it from unsafe outcomes", async ({
+test("broker keeps admission and source retry timing and the refusing operation, but strips timing from unsafe outcomes", async ({
   page,
   instance
 }) => {
@@ -87,7 +87,9 @@ test("broker keeps admission retry timing but strips it from unsafe outcomes", a
       value: 30000,
       status: 504
     },
-    { code: "unknown_outcome", status: 503 }
+    { code: "unknown_outcome", status: 503 },
+    // A tier 2 action relaying PostHog's refusal names the operation that refused.
+    { code: "source_rate_limited", operation: "posthog.query", status: 429 }
   ];
   const requests: string[] = [];
   await page.route("**/api/runtime/call", async (route) => {
@@ -128,6 +130,8 @@ test("broker keeps admission retry timing but strips it from unsafe outcomes", a
     await expect.poll(error).toMatchObject({ source: "patchy", code });
     if (code === "limit_exceeded") {
       expect(await error()).toHaveProperty("retryAfter", 2);
+    } else if (code === "source_rate_limited") {
+      expect(await error()).toMatchObject({ retryAfter: 2, operation: "posthog.query" });
     } else {
       expect(await error()).not.toHaveProperty("retryAfter");
     }

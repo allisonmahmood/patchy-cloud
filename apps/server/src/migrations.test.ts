@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { CredentialKeys, PostgresSource, SqlConnectionStore } from "@patchy/integrations";
+import {
+  CredentialKeys,
+  PostgresSource,
+  PostHogSource,
+  SqlConnectionStore
+} from "@patchy/integrations";
 import { RuntimeLog } from "@patchy/runtime";
 import { migrate } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
@@ -31,9 +36,11 @@ it("allocates migration ids once each, with no gaps", () => {
 });
 
 // The first steps after launch that change connections run on databases that already hold them.
-const beforeIntegrations = Object.fromEntries(
-  Object.entries(migrations).filter(([key]) => key < "0011_connections_per_integration")
-);
+const before = (step: string) =>
+  Object.fromEntries(Object.entries(migrations).filter(([key]) => key < step));
+const beforeIntegrations = before("0011_connections_per_integration");
+/** The schema release 10 leaves: connections know their integration, handles are per company. */
+const release10 = before("0013_handles_per_integration");
 const secret = Redacted.make(
   "postgresql://reader:do-not-log-this@warehouse.example/sales?sslmode=verify-full"
 );
@@ -49,7 +56,9 @@ const services = Layer.mergeAll(
       }),
       inspect: () => Effect.die("discovery is not part of the upgrade")
     })
-  )
+  ),
+  // Never called: the upgrade reads no PostHog project.
+  PostHogSource.layer
 );
 
 it.layer(Testing.emptyLayer(beforeIntegrations))(
@@ -98,7 +107,7 @@ it.layer(Testing.emptyLayer(beforeIntegrations))(
           VALUES ('call_upgrade', ${who.companyId}, 'pat_upgrade', 'ver_upgrade', ${who.userId},
             'session', 'postgres.query', ${connection.id}, 'cor_upgrade', ${who.userId}, 'select 1')`;
 
-          yield* migrate(migrations);
+          yield* migrate(release10);
 
           const store = yield* SqlConnectionStore.make;
           const kept = yield* store.get(who.companyId, connection.id);
@@ -170,3 +179,161 @@ it.layer(Testing.emptyLayer(beforeIntegrations))(
     );
   }
 );
+
+it.layer(Testing.emptyLayer(release10))("the handles-per-integration upgrade", (it) => {
+  it.effect(
+    "lets two integrations share a handle, keeps every snapshot, and accepts release 10's writes",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const who = { companyId: "cmp_handles", userId: "usr_handles" };
+        yield* sql`INSERT INTO companies (id, handle, name) VALUES (${who.companyId}, 'handles', 'Northwind')`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES (${who.userId}, 'clerk_handles', ${who.companyId}, 'sam@example.com', 'Sam', 'admin')`;
+        // Release 10 connects with a targetless conflict and names every snapshot's integration.
+        const connect = (id: string, integration: string, display: unknown) =>
+          sql<{ id: string }>`INSERT INTO connections
+            (id, company_id, integration, handle, description, mode, status, display, credentials,
+              key_id, credential_revision, metadata_revision, created_by)
+            VALUES (${id}, ${who.companyId}, ${integration}, 'warehouse', '', 'company',
+              'connected', ${JSON.stringify(display)}, 'ciphertext', 'upgrade', 1, 1, ${who.userId})
+            ON CONFLICT DO NOTHING RETURNING id`;
+        const postgres = {
+          host: "warehouse.example",
+          port: 5432,
+          database: "sales",
+          role: "reader"
+        };
+        yield* connect("conn_release10", "postgres", postgres);
+        yield* sql`INSERT INTO connection_snapshots
+          (connection_id, company_id, integration, revision, snapshot, created_at)
+          VALUES ('conn_release10', ${who.companyId}, 'postgres', 1,
+            ${JSON.stringify({ version: 1, relations: [], enums: [], exclusions: [] })},
+            '2026-10-01T00:00:00Z')`;
+
+        yield* migrate(migrations);
+
+        assert.deepStrictEqual(
+          yield* sql`SELECT conname FROM pg_constraint
+            WHERE conrelid = 'connections'::regclass AND contype = 'u' ORDER BY conname`,
+          [{ conname: "connections_company_id_integration_handle_key" }]
+        );
+        // The same handle in another integration is a second connection; in the same one, taken.
+        assert.deepStrictEqual(yield* connect("conn_duplicate", "postgres", postgres), []);
+        assert.deepStrictEqual(
+          yield* connect("conn_posthog", "posthog", {
+            region: "us",
+            projectId: 12345,
+            keyHint: "phx_…a91f"
+          }),
+          [{ id: "conn_posthog" }]
+        );
+        yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, integration, revision, snapshot)
+          VALUES ('conn_posthog', ${who.companyId}, 'posthog', 1,
+            ${JSON.stringify({ version: 1, events: [], eventProperties: [], personProperties: [] })})`;
+        // A snapshot must name its integration now; only releases before 10 left it out.
+        assert.include(
+          String(
+            (yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, revision, snapshot)
+              VALUES ('conn_posthog', ${who.companyId}, 2, '{}')`.pipe(Effect.flip)).cause
+          ),
+          "ConstraintError"
+        );
+        const store = yield* SqlConnectionStore.make;
+        assert.deepStrictEqual(
+          (yield* store.list(who.companyId)).map(({ id, integration, handle }) => ({
+            id,
+            integration,
+            handle
+          })),
+          [
+            { id: "conn_posthog", integration: "posthog", handle: "warehouse" },
+            { id: "conn_release10", integration: "postgres", handle: "warehouse" }
+          ]
+        );
+        assert.deepStrictEqual(yield* store.snapshot(who.companyId, "conn_release10", 1), {
+          integration: "postgres",
+          snapshot: { version: 1, relations: [], enums: [], exclusions: [] }
+        });
+        assert.strictEqual(
+          (yield* store.snapshot(who.companyId, "conn_posthog", 1)).integration,
+          "posthog"
+        );
+      }).pipe(Effect.provide(services))
+  );
+});
+
+/** The schema the previous release leaves: no machine calls. */
+const beforeMachineCalls = before("0014_runtime_calls_machine");
+
+it.layer(Testing.emptyLayer(beforeMachineCalls))("the machine-calls upgrade", (it) => {
+  it.effect(
+    "keeps every logged call, accepts the previous release's writes and holds machine rows to their shape",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const companyId = "cmp_machine_calls";
+        const insert = (id: string, kind: string, extra: Record<string, string | null> = {}) => {
+          const row = {
+            id,
+            company_id: companyId,
+            credential_kind: kind,
+            op: "posthog.query",
+            correlation_id: id,
+            effective_principal: "usr_machine_calls",
+            ...extra
+          };
+          return sql`INSERT INTO runtime_calls ${sql.insert(row)}`;
+        };
+        yield* insert("call_session", "session", { patch_id: "pat_kept", version_id: "ver_kept" });
+        yield* insert("call_admin", "admin");
+
+        yield* migrate(migrations);
+
+        assert.deepStrictEqual(
+          yield* sql`SELECT id, credential_kind, machine_id, machine_name, patch_id
+            FROM runtime_calls ORDER BY id`,
+          [
+            {
+              id: "call_admin",
+              credential_kind: "admin",
+              machine_id: null,
+              machine_name: null,
+              patch_id: null
+            },
+            {
+              id: "call_session",
+              credential_kind: "session",
+              machine_id: null,
+              machine_name: null,
+              patch_id: "pat_kept"
+            }
+          ]
+        );
+        // The previous release, during a rollout or after a rollback, writes as it always did.
+        yield* insert("call_previous", "session", { patch_id: "pat_kept" });
+        yield* insert("call_machine", "machine", {
+          machine_id: "tok_laptop",
+          machine_name: "Laptop"
+        });
+        const refused = (id: string, kind: string, extra: Record<string, string | null>) =>
+          insert(id, kind, extra).pipe(
+            Effect.flip,
+            Effect.map((error) => String(error.cause))
+          );
+        for (const [id, kind, extra] of [
+          ["machine_without_name", "machine", { machine_id: "tok_laptop" }],
+          ["machine_without_id", "machine", { machine_name: "Laptop" }],
+          [
+            "machine_from_a_patch",
+            "machine",
+            { machine_id: "tok_laptop", machine_name: "Laptop", patch_id: "pat_kept" }
+          ],
+          ["session_with_machine_id", "session", { machine_id: "tok_laptop" }],
+          ["admin_with_machine_name", "admin", { machine_name: "Laptop" }],
+          ["unknown_kind", "robot", {}]
+        ] as const)
+          assert.include(yield* refused(id, kind, extra), "ConstraintError", id);
+      }).pipe(Effect.provide(services))
+  );
+});

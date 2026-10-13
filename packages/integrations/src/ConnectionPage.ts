@@ -5,13 +5,13 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
-import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import type { RequireSession } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as View from "./ConnectionsView.js";
 import * as PostgresPage from "./postgres/Page.js";
+import * as PostHogPage from "./posthog/Page.js";
 
 /** A page to read. */
 export type Target =
@@ -36,11 +36,14 @@ export interface Page {
   readonly redirect?: string;
 }
 
+type Submitted = Readonly<Record<string, string | undefined>>;
+
 /** An integration's page for new credentials or a new destination. */
 interface CredentialsPage {
   readonly title: (name: string) => string;
   readonly consequence: string;
-  readonly fields: (refusal?: View.Notice) => string;
+  /** The fields; a refused submit keeps what the integration echoes, never secrets. */
+  readonly fields: (submitted: Submitted, refusal?: View.Notice) => string;
 }
 
 /** What the pages say about one integration; the layout around it is the same for every one. */
@@ -48,44 +51,58 @@ interface IntegrationPage {
   readonly integration: View.Integration;
   readonly offer: View.Offer;
   readonly actions: View.Actions;
-  readonly source: (connection: ConnectionStore.Connection) => string;
-  readonly facts: (
-    connection: ConnectionStore.Connection
-  ) => ReadonlyArray<readonly [string, string]>;
-  readonly reads: (snapshot: typeof Snapshot.Type) => {
-    readonly summary: string;
-    readonly items: ReadonlyArray<string>;
-    readonly more: number;
-  };
   readonly connectIntro: string;
-  readonly connectFields: (
-    submitted: { readonly handle?: string; readonly description?: string },
-    refusal?: View.Notice
-  ) => string;
+  /** The steps around the connect form, when connecting starts outside Patchy. */
+  readonly walkthrough?: View.Walkthrough;
+  readonly connectFields: (submitted: Submitted, refusal?: View.Notice) => string;
   readonly rotate: CredentialsPage;
   readonly retarget: CredentialsPage;
-  /** Refusal codes about the credentials themselves, shown under their field. */
-  readonly credentialRefusals: ReadonlySet<string>;
+  /** Refusal codes about the credentials, by the field they are shown under. */
+  readonly credentialRefusals: ReadonlyMap<string, View.Field>;
+  /** The submitted credentials as one secret, or the refusal at the field that stops them. */
+  readonly credentials: (
+    form: Submitted,
+    current?: ConnectionStore.Connection
+  ) => Redacted.Redacted<string> | View.Notice;
+  /** The integration's own words for a completed action, where they differ. */
+  readonly results?: Partial<Record<keyof typeof results, string>>;
 }
-const pages: { readonly [K in Integration]: IntegrationPage } = { postgres: PostgresPage };
+const pages: { readonly [K in Integration]: IntegrationPage } = {
+  postgres: PostgresPage,
+  posthog: PostHogPage
+};
 const offers = integrations.map((integration) => pages[integration].offer);
 const isIntegration = Schema.is(Integration);
 
+/** Where a connection reads and its facts, in its integration's words. */
+const about = (connection: ConnectionStore.Connection) =>
+  connection.integration === "postgres"
+    ? { source: PostgresPage.source(connection), facts: PostgresPage.facts(connection) }
+    : { source: PostHogPage.source(connection), facts: PostHogPage.facts(connection) };
+/** What a snapshot lets patches read, in its integration's words. */
+const readsOf = (metadata: ConnectionStore.Metadata) =>
+  metadata.integration === "postgres"
+    ? PostgresPage.reads(metadata.snapshot)
+    : PostHogPage.reads(metadata.snapshot);
+
 /** The field each refusal is about, when it is about one. */
-const refusedField = (code: string | undefined): View.Notice["field"] =>
+const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>
   code === "invalid_connection_handle" || code === "connection_handle_taken"
     ? "handle"
     : code === "invalid_connection_description"
       ? "description"
-      : code !== undefined && integrations.some((key) => pages[key].credentialRefusals.has(code))
-        ? "credentials"
-        : undefined;
+      : code === undefined
+        ? undefined
+        : page.credentialRefusals.get(code);
 /** A refusal placed at its field when the re-rendered form has that field, else atop the page. */
 const atField = (
+  page: IntegrationPage,
   notice: View.Notice,
-  fields: ReadonlyArray<NonNullable<View.Notice["field"]>>
+  fields: ReadonlyArray<View.Field>
 ): View.Notice => {
-  const field = refusedField(notice.code);
+  if (notice.field !== undefined)
+    return fields.includes(notice.field) ? notice : { ...notice, field: undefined };
+  const field = refusedField(page, notice.code);
   return field !== undefined && fields.includes(field) ? { ...notice, field } : notice;
 };
 
@@ -103,6 +120,10 @@ const results = {
   delete: "Connection deleted. Its schema snapshots have been kept."
 } as const;
 const isResult = Schema.is(Schema.Literals(Object.keys(results) as Array<keyof typeof results>));
+type Result = keyof typeof results;
+const result = (page: IntegrationPage | undefined, key: Result): View.Notice => ({
+  message: page?.results?.[key] ?? results[key]
+});
 
 const forbidden: View.Notice = {
   message: "Only an admin can manage company connections.",
@@ -123,18 +144,15 @@ const filters = (query: URLSearchParams): View.Filters => {
 const row = (
   connection: ConnectionStore.Connection,
   usage: ReadonlyMap<string, ConnectionStore.Usage>
-): View.Row => {
-  const page = pages[connection.integration];
-  return {
-    id: connection.id,
-    integration: page.integration,
-    handle: connection.handle,
-    description: connection.description,
-    source: page.source(connection),
-    status: connection.status,
-    ...(usage.get(connection.id) ?? ConnectionStore.unused)
-  };
-};
+): View.Row => ({
+  id: connection.id,
+  integration: pages[connection.integration].integration,
+  handle: connection.handle,
+  description: connection.description,
+  source: about(connection).source,
+  status: connection.status,
+  ...(usage.get(connection.id) ?? ConnectionStore.unused)
+});
 
 const index = Effect.fn("ConnectionPage.index")(function* (
   viewer: RequireSession.Viewer["Service"],
@@ -205,7 +223,7 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
 
 const connectForm = (
   integration: Integration,
-  submitted: { readonly handle?: string; readonly description?: string } = {},
+  submitted: Submitted = {},
   notice?: View.Notice
 ): Page => {
   const page = pages[integration];
@@ -215,6 +233,7 @@ const connectForm = (
       integration: page.integration,
       intro: page.connectIntro,
       fields: page.connectFields(submitted, notice),
+      ...(page.walkthrough === undefined ? {} : { walkthrough: page.walkthrough }),
       notice
     }),
     status: notice?.status
@@ -252,7 +271,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
         people === null
           ? "Unknown"
           : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
-      facts: page.facts(connection),
+      facts: about(connection).facts,
       ...usage
     } satisfies View.Connection
   };
@@ -261,14 +280,15 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
 const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
   viewer: RequireSession.Viewer["Service"],
   id: string,
-  notice?: View.Notice
+  given?: View.Notice | Result
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "admin";
   const { connection, page, people, view } = yield* connectionView(viewer, id);
+  const notice = typeof given === "string" ? result(page, given) : given;
   const reads = yield* store.snapshot(viewer.company.id, id, connection.metadataRevision).pipe(
-    Effect.map((snapshot) => ({
-      ...page.reads(snapshot),
+    Effect.map((metadata) => ({
+      ...readsOf(metadata),
       revision: connection.metadataRevision,
       foundAt: connection.lastDiscoveredAt
     })),
@@ -316,7 +336,11 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
   viewer: RequireSession.Viewer["Service"],
   id: string,
   action: View.Confirmation,
-  form: { readonly description?: string; readonly notice?: View.Notice } = {}
+  form: {
+    readonly description?: string;
+    readonly submitted?: Submitted;
+    readonly notice?: View.Notice;
+  } = {}
 ) {
   const { page, view } = yield* connectionView(viewer, id);
   // Delete is offered only while nothing declares the connection; a stale link says why.
@@ -332,7 +356,7 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
       form: credentials && {
         title: credentials.title(name),
         consequence: credentials.consequence,
-        fields: credentials.fields(form.notice)
+        fields: credentials.fields(form.submitted ?? {}, form.notice)
       },
       description: form.description,
       notice: form.notice
@@ -354,12 +378,12 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
   target: Target,
   query: URLSearchParams
 ) {
-  const result = query.get("result");
-  const done = result && isResult(result) ? { message: results[result] } : undefined;
+  const key = query.get("result");
+  const done = key && isResult(key) ? key : undefined;
   const admin = viewer.role === "admin";
   switch (target.kind) {
     case "index":
-      return yield* index(viewer, query, done);
+      return yield* index(viewer, query, done && result(undefined, done));
     case "catalogue":
       return yield* catalogue(viewer);
     case "connect":
@@ -379,11 +403,17 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
 });
 
 const decodeConnect = Schema.decodeUnknownEffect(
-  Schema.Struct({ handle: Schema.String, description: Schema.String, credentials: Schema.String })
+  Schema.Struct({ handle: Schema.String, description: Schema.String })
 );
-const decodeCredentials = Schema.decodeUnknownEffect(Schema.Struct({ credentials: Schema.String }));
 const decodeDescription = Schema.decodeUnknownEffect(Schema.Struct({ description: Schema.String }));
 const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+/** The form's text fields; a page echoes only the ones that are not secret. */
+const submittedOf = (form: Readonly<Record<string, unknown>> | null): Submitted =>
+  Object.fromEntries(
+    Object.entries(form ?? {}).flatMap(([key, value]) =>
+      typeof value === "string" ? [[key, value]] : []
+    )
+  );
 
 const unreadable: View.Notice = {
   message: "The form could not be read. Submit it again.",
@@ -391,7 +421,7 @@ const unreadable: View.Notice = {
   status: 400
 };
 const incomplete: View.Notice = {
-  message: "Complete the form and submit it again. Connection strings are never redisplayed.",
+  message: "Complete the form and submit it again. Credentials are never redisplayed.",
   code: "invalid_request",
   status: 422
 };
@@ -430,24 +460,29 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
   viewer: RequireSession.Viewer["Service"],
   integration: Integration
 ) {
+  const page = pages[integration];
   const form = yield* formBody;
+  const submitted = submittedOf(form);
   // A refused connect keeps what was typed, except the credentials.
   const refused = (notice: View.Notice) =>
     connectForm(
       integration,
-      { handle: text(form?.handle), description: text(form?.description) },
-      atField(notice, ["handle", "description", "credentials"])
+      submitted,
+      atField(page, notice, ["handle", "description", "credentials", "region", "project", "key"])
     );
   if (form === null) return refused(unreadable);
   return yield* Effect.gen(function* () {
     const fields = yield* decodeConnect(form);
+    const credentials = page.credentials(submitted);
+    if (!Redacted.isRedacted(credentials)) return refused(credentials);
     const connection = yield* (yield* ConnectionStore.ConnectionStore).connect(
       {
+        integration,
         companyId: viewer.company.id,
         userId: viewer.user.id,
         handle: fields.handle,
         description: fields.description,
-        credentials: Redacted.make(fields.credentials)
+        credentials
       },
       yield* reporter(viewer, "connection.connected")
     );
@@ -469,30 +504,49 @@ const act = Effect.fn("ConnectionPage.act")(function* (
   kind: Exclude<Change["kind"], "connect">
 ) {
   const form = yield* formBody;
+  const submitted = submittedOf(form);
   /** The page the change came from, with its refusal and a typed description kept. */
-  const refused = (notice: View.Notice) => {
-    switch (kind) {
-      case "rotate":
-      case "retarget":
-        return confirmationPage(viewer, id, kind, { notice: atField(notice, ["credentials"]) });
-      case "description":
-        return confirmationPage(viewer, id, kind, {
-          description: text(form?.description),
-          notice: atField(notice, ["description"])
-        });
-      case "delete":
-        return connectionPage(viewer, id, notice.code === "connection_in_use" ? inUse(id) : notice);
-      default:
-        return connectionPage(viewer, id, notice);
-    }
-  };
+  const refused = (notice: View.Notice) =>
+    Effect.gen(function* () {
+      switch (kind) {
+        case "rotate":
+        case "retarget": {
+          const { page } = yield* connectionView(viewer, id);
+          return yield* confirmationPage(viewer, id, kind, {
+            submitted,
+            notice: atField(page, notice, ["credentials", "region", "project", "key"])
+          });
+        }
+        case "description": {
+          const { page } = yield* connectionView(viewer, id);
+          return yield* confirmationPage(viewer, id, kind, {
+            description: text(form?.description),
+            notice: atField(page, notice, ["description"])
+          });
+        }
+        case "delete":
+          return yield* connectionPage(
+            viewer,
+            id,
+            notice.code === "connection_in_use" ? inUse(id) : notice
+          );
+        default:
+          return yield* connectionPage(viewer, id, notice);
+      }
+    });
   if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {
     const store = yield* ConnectionStore.ConnectionStore;
     const input = { companyId: viewer.company.id, userId: viewer.user.id, id };
     if (kind === "rotate" || kind === "retarget") {
-      const fields = yield* decodeCredentials(form);
-      yield* store[kind]({ ...input, credentials: Redacted.make(fields.credentials) });
+      const current = yield* store.get(viewer.company.id, id);
+      // Replacing credentials keeps where they point; pointing elsewhere names it anew.
+      const credentials = pages[current.integration].credentials(
+        submitted,
+        kind === "rotate" ? current : undefined
+      );
+      if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
+      yield* store[kind]({ ...input, credentials });
     } else if (kind === "description") {
       const fields = yield* decodeDescription(form);
       yield* store.describe({ ...input, description: fields.description });
@@ -512,7 +566,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
         error._tag === "SchemaError"
           ? incomplete
           : error._tag === "ConnectionRetargetRequired"
-            ? // Credentials for another database belong to Point elsewhere; say so where refused.
+            ? // Credentials for another target belong to pointing elsewhere; say so where refused.
               {
                 ...refusal(error),
                 next: {

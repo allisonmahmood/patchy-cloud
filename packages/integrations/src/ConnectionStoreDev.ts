@@ -1,4 +1,3 @@
-import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ConnectionStore from "./ConnectionStore.js";
@@ -7,7 +6,7 @@ export interface DevConnection {
   readonly connection: ConnectionStore.Connection;
   readonly snapshots: ReadonlyArray<{
     readonly revision: number;
-    readonly snapshot: typeof Snapshot.Type;
+    readonly metadata: ConnectionStore.Metadata;
     /** Absent when local generated metadata does not carry the immutable row's timestamp. */
     readonly takenAt?: string;
   }>;
@@ -48,17 +47,24 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
             new ConnectionStore.ConnectionNotFound({ companyId, lookup: { integration, handle } })
           );
         const { description, status, metadataRevision: revision } = item.connection;
-        const snapshot = item.snapshots.find((snapshot) => snapshot.revision === revision);
-        return Effect.succeed({
-          integration,
-          handle,
-          description,
-          status,
-          snapshot:
-            snapshot?.takenAt === undefined
-              ? null
-              : { ...snapshot.snapshot, revision, takenAt: snapshot.takenAt }
-        });
+        const found = item.snapshots.find((snapshot) => snapshot.revision === revision);
+        const base = { handle, description, status };
+        if (found?.takenAt === undefined)
+          return Effect.succeed({ ...base, integration, snapshot: null });
+        const stamp = { revision, takenAt: found.takenAt };
+        return Effect.succeed(
+          found.metadata.integration === "postgres"
+            ? {
+                ...base,
+                integration: "postgres",
+                snapshot: { ...found.metadata.snapshot, ...stamp }
+              }
+            : {
+                ...base,
+                integration: "posthog",
+                snapshot: { ...found.metadata.snapshot, ...stamp }
+              }
+        );
       },
       snapshot: (companyId, id, revision) => {
         const item = metadata.find(
@@ -69,7 +75,7 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           ? Effect.fail(
               new ConnectionStore.ConnectionNotFound({ companyId, lookup: { id, revision } })
             )
-          : Effect.succeed(snapshot.snapshot);
+          : Effect.succeed(snapshot.metadata);
       },
       resolve: (companyId, declaration) => {
         const item = metadata.find(

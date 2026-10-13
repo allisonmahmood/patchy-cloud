@@ -246,11 +246,11 @@ Responses:
 
 ### `GET /api/connections`
 
-List the caller's company connections, including disconnected ones, for any active member. Connected entries carry a copy-ready add hint; disconnected entries carry reason `not_connected` and a /company/connections hint. A bare all or all=true also includes every offered integration's connected state. Without integrations=all, only Postgres connections and offers are listed, the shape CLIs from before other integrations decode. No snapshots, credentials or business rows. Responses are private, no-store.
+List the caller's company connections, including disconnected ones, for any active member. Connected entries carry a copy-ready add hint; disconnected entries carry reason `not_connected` and a /company/connections hint. A bare all or all=true also includes every offered integration's connected state. integrations names, comma-separated, the integrations the caller decodes, such as postgres,posthog; only those connections and offers are listed, and unknown names are ignored. Omitted, or the integrations=all that CLIs from release 10 send, lists Postgres only, the shape those CLIs decode. No snapshots, credentials or business rows. Responses are private, no-store.
 
 Responses:
 
-- `200` { connections: { id: string, handle: string, integration: "postgres", description: string, status: "connected" | "disconnected", hint: string, reason?: "not_connected" }[], offered?: { integration: "postgres", connected: boolean }[] }
+- `200` { connections: { id: string, handle: string, integration: "postgres" | "posthog", description: string, status: "connected" | "disconnected", hint: string, reason?: "not_connected" }[], offered?: { integration: "postgres" | "posthog", connected: boolean }[] }
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }
@@ -276,12 +276,33 @@ Read one company connection by its integration and exact handle, for any active 
 
 Responses:
 
-- `200` { integration: "postgres", handle: string, description: string, status: "connected" | "disconnected", snapshot: { version: 1, relations: { schema: string, name: string, kind: "table" | "view", columns: { name: string, type: { schema: string, name: string, sql: string, baseSchema: string, baseName: string, kind: "base" | "enum" | "array", modifiers?: integer[], element?: { baseSchema: string, baseName: string, kind: "base" | "enum" } }, nullable: boolean }[], primaryKey: { name: string, columns: string[] } | null, foreignKeys: { name: string, columns: string[], target: { schema: string, relation: string, columns: string[] } }[] }[], enums: { schema: string, name: string, labels: string[] }[], exclusions: { schema: string, relation: string, column?: string, reason: "access_denied" | "relation_limit" | "column_limit" | "unsupported_type" | "reserved_name" | "key_limit" | "enum_limit" }[], revision: integer, takenAt: string } | null }
+- `200` { integration: "postgres", handle: string, description: string, status: "connected" | "disconnected", snapshot: { version: 1, relations: { schema: string, name: string, kind: "table" | "view", columns: { name: string, type: { schema: string, name: string, sql: string, baseSchema: string, baseName: string, kind: "base" | "enum" | "array", modifiers?: integer[], element?: { baseSchema: string, baseName: string, kind: "base" | "enum" } }, nullable: boolean }[], primaryKey: { name: string, columns: string[] } | null, foreignKeys: { name: string, columns: string[], target: { schema: string, relation: string, columns: string[] } }[] }[], enums: { schema: string, name: string, labels: string[] }[], exclusions: { schema: string, relation: string, column?: string, reason: "access_denied" | "relation_limit" | "column_limit" | "unsupported_type" | "reserved_name" | "key_limit" | "enum_limit" }[], revision: integer, takenAt: string } | null } | { integration: "posthog", handle: string, description: string, status: "connected" | "disconnected", snapshot: { version: 1, events: { name: string, description?: string }[], eventProperties: { name: string, type: string | null, description?: string }[], personProperties: { name: string, type: string | null, description?: string }[], revision: integer, takenAt: string } | null }
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "connection_storage_failed" }
+
+## devReads
+
+### `POST /api/connections/dev-read`
+
+`patchy dev` reads a connection whose integration reads live in development, today PostHog's `posthog.query`, as the bearer. The machine token is the only authority: its person, company and machine are read from the token on every call and again after any wait for one of the project's query slots, which answers 401 when the token stopped working meanwhile. `connection` only selects: it must name a connected PostHog connection of the token's company, which any active member reads through. Other operations, including every Postgres one, answer `invalid_request`. `args` are the runtime operation's without its `connection` alias. The runtime's bounds apply: a body over `runtime.posthog.bytes` answers 413 `too_large`, each call has the 15-second `integration.deadline` (`timeout`, 504), results keep the operation's row and `runtime.result.bytes` bounds, and published patches share the process's slots per PostHog project (`busy`). Calls are limited to `runtime.calls.perMinute` per person across every repo (`rate_limited`, 429), after the per-address protected-API limit. A draining host answers `busy`. Every call with a valid token and envelope, refused or not, is recorded in recent calls as a machine call with no patch or version; its failures carry the row's `correlationId`, and a live operation's refusals name it in `operation`, as a published patch's do. Success is `{ ok: true, value: { ok: true, rows } }`; refusals are runtime failures. Responses are no-store.
+
+Request body: [DevRead](#devread)
+
+Responses:
+
+- `200` [RuntimeSuccess](#runtimesuccess)
+- `400` [RuntimeFailure](#runtimefailure) | { ok: false, error: string }
+- `401` [RuntimeFailure_1](#runtimefailure_1) | { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `404` [RuntimeFailure_3](#runtimefailure_3) | { ok: false, error: string }
+- `409` [RuntimeFailure_4](#runtimefailure_4)
+- `413` [RuntimeFailure_5](#runtimefailure_5)
+- `429` [RuntimeFailure_6](#runtimefailure_6) | { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` [RuntimeFailure_7](#runtimefailure_7)
+- `504` [RuntimeFailure_8](#runtimefailure_8)
 
 ## look
 
@@ -345,11 +366,11 @@ Responses:
 
 Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap.
 
-Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string, shared?: boolean } }, uses: { [key: string]: { kind: "members" } | { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } | { kind: "sharedStore", patchId: string, store: string, id?: string, revision?: integer } }, handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } }, sdkImports?: string[] }, serverModules: string[], patchId?: string, skills: string[] }
+Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string, shared?: boolean } }, uses: { [key: string]: { kind: "members" } | { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "posthog", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } | { kind: "sharedStore", patchId: string, store: string, id?: string, revision?: integer } }, handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } }, sdkImports?: string[] }, serverModules: string[], patchId?: string, skills: string[] }
 
 Responses:
 
-- `200` { ok: true, files: { path: string, contents: string }[], metadata: { postgres: { [key: string]: { declaration: { kind: "postgres", handle: string, id: string, revision: integer }, snapshot: { version: 1, relations: { schema: string, name: string, kind: "table" | "view", columns: { name: string, type: { schema: string, name: string, sql: string, baseSchema: string, baseName: string, kind: "base" | "enum" | "array", modifiers?: integer[], element?: { baseSchema: string, baseName: string, kind: "base" | "enum" } }, nullable: boolean }[], primaryKey: { name: string, columns: string[] } | null, foreignKeys: { name: string, columns: string[], target: { schema: string, relation: string, columns: string[] } }[] }[], enums: { schema: string, name: string, labels: string[] }[], exclusions: { schema: string, relation: string, column?: string, reason: "access_denied" | "relation_limit" | "column_limit" | "unsupported_type" | "reserved_name" | "key_limit" | "enum_limit" }[] } } }, shared: { [key: string]: { declaration: { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer }, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, uses: { [key: string]: { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } } } | { declaration: { kind: "sharedStore", patchId: string, store: string, id: string, revision: integer }, definition: { description: string, shared?: boolean } } } }, uses: { alias: string, id: string, revision: integer }[] }
+- `200` { ok: true, files: { path: string, contents: string }[], metadata: { postgres: { [key: string]: { declaration: { kind: "postgres", handle: string, id: string, revision: integer }, snapshot: { version: 1, relations: { schema: string, name: string, kind: "table" | "view", columns: { name: string, type: { schema: string, name: string, sql: string, baseSchema: string, baseName: string, kind: "base" | "enum" | "array", modifiers?: integer[], element?: { baseSchema: string, baseName: string, kind: "base" | "enum" } }, nullable: boolean }[], primaryKey: { name: string, columns: string[] } | null, foreignKeys: { name: string, columns: string[], target: { schema: string, relation: string, columns: string[] } }[] }[], enums: { schema: string, name: string, labels: string[] }[], exclusions: { schema: string, relation: string, column?: string, reason: "access_denied" | "relation_limit" | "column_limit" | "unsupported_type" | "reserved_name" | "key_limit" | "enum_limit" }[] } } }, posthog: { [key: string]: { declaration: { kind: "posthog", handle: string, id: string, revision: integer }, snapshot: { version: 1, events: { name: string, description?: string }[], eventProperties: { name: string, type: string | null, description?: string }[], personProperties: { name: string, type: string | null, description?: string }[] } } }, shared: { [key: string]: { declaration: { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer }, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, uses: { [key: string]: { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } } } | { declaration: { kind: "sharedStore", patchId: string, store: string, id: string, revision: integer }, definition: { description: string, shared?: boolean } } } }, uses: { alias: string, id: string, revision: integer }[] }
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }
@@ -573,14 +594,15 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
 ### RuntimeCode
 
 ```
-"connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "table_not_declared" | "row_not_found" | "not_found" | "invalid_row" | "unique_violation" | "invalid_cursor" | "not_additive" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "session_refresh_required" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "handler_failed" | "handler_timeout" | "write_conflict" | "patch_paused" | "server_required" | "tier2_not_public" | "limit_exceeded" | "offset_exhausted"
+"connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "table_not_declared" | "row_not_found" | "not_found" | "invalid_row" | "unique_violation" | "invalid_cursor" | "not_additive" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "session_refresh_required" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "handler_failed" | "handler_timeout" | "write_conflict" | "patch_paused" | "server_required" | "tier2_not_public" | "limit_exceeded" | "offset_exhausted" | "source_rate_limited"
 ```
 
 ### RuntimeFailure_7
@@ -596,7 +618,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -613,7 +636,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -630,7 +654,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -647,7 +672,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -664,7 +690,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -681,7 +708,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -698,7 +726,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -715,7 +744,8 @@ substituting the host's limit configuration.
   value?: number,
   retryAfter?: number,
   details?: { [key: string]: unknown },
-  correlationId?: string
+  correlationId?: string,
+  operation?: string
 }
 ```
 
@@ -749,7 +779,7 @@ RuntimeSuccess | HandlerFailure
 ### RuntimeCall
 
 ```
-{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.list", args: { connection: string, relation: { schema: string, name: string }, eq?: { [key: string]: string | number | boolean | null }, range?: { column: string, gt?: string | number | boolean | null, gte?: string | number | boolean | null, lt?: string | number | boolean | null, lte?: string | number | boolean | null }, orderBy?: { column: string, direction: "asc" | "desc" }, select?: string[], limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.get", args: { connection: string, relation: { schema: string, name: string }, key: { [key: string]: string | number | boolean | null } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.getMany", args: { connection: string, relation: { schema: string, name: string }, keys: { [key: string]: string | number | boolean | null }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.query", args: { connection: string, sql: string, params: ((string | number | boolean | null) | (string | number | boolean | null)[])[], shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "server.call", args: { handler: string, args: { [key: string]: unknown }, mutationKey?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.list", args: { cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.search", args: { text: string, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.get", args: { id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.getMany", args: { ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.get", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.getMany", args: { table: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.list", args: { table: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.get", args: { alias: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.getMany", args: { alias: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.list", args: { alias: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insert", args: { table: string, row: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insertMany", args: { table: string, rows: { [key: string]: unknown }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.update", args: { table: string, id: string, patch: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.delete", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.put", args: { store: string, name: string, contentType: string } | { store: string, name: string, upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stage", args: { contentType: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.discard", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.inspectUpload", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.get", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.redeem", args: { handle: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.list", args: { store: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stat", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.get", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.list", args: { alias: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.stat", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.delete", args: { store: string, name: string } }
+{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.list", args: { connection: string, relation: { schema: string, name: string }, eq?: { [key: string]: string | number | boolean | null }, range?: { column: string, gt?: string | number | boolean | null, gte?: string | number | boolean | null, lt?: string | number | boolean | null, lte?: string | number | boolean | null }, orderBy?: { column: string, direction: "asc" | "desc" }, select?: string[], limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.get", args: { connection: string, relation: { schema: string, name: string }, key: { [key: string]: string | number | boolean | null } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.getMany", args: { connection: string, relation: { schema: string, name: string }, keys: { [key: string]: string | number | boolean | null }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.query", args: { connection: string, sql: string, params: ((string | number | boolean | null) | (string | number | boolean | null)[])[], shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "posthog.query", args: { connection: string, name: string, query: string, values?: { [key: string]: string | number | boolean | null | (string | number | boolean | null)[] }, shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "server.call", args: { handler: string, args: { [key: string]: unknown }, mutationKey?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.list", args: { cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.search", args: { text: string, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.get", args: { id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.getMany", args: { ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.get", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.getMany", args: { table: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.list", args: { table: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.get", args: { alias: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.getMany", args: { alias: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.list", args: { alias: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insert", args: { table: string, row: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insertMany", args: { table: string, rows: { [key: string]: unknown }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.update", args: { table: string, id: string, patch: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.delete", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.put", args: { store: string, name: string, contentType: string } | { store: string, name: string, upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stage", args: { contentType: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.discard", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.inspectUpload", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.get", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.redeem", args: { handle: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.list", args: { store: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stat", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.get", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.list", args: { alias: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.stat", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.delete", args: { store: string, name: string } }
 ```
 
 ### RuntimePrincipal
@@ -858,6 +888,12 @@ RuntimeSuccess | HandlerFailure
   patchyLook: { look.css: string, LOOK.md: string } | null,
   admins: { id: string, name: string }[]
 }
+```
+
+### DevRead
+
+```
+{ op: "posthog.query", connection: { id: string, handle: string }, args: { name: string, query: string, values?: { [key: string]: string | number | boolean | null | (string | number | boolean | null)[] }, shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } }
 ```
 
 ### Described
@@ -1139,7 +1175,7 @@ RuntimeSuccess | HandlerFailure
     tier: 0 | 1 | 2 | 3,
     tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
     files: { [key: string]: { description: string, shared?: boolean } },
-    uses: { [key: string]: { kind: "postgres", handle: string, id: string, revision: integer } | { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } | { kind: "sharedStore", patchId: string, store: string, id: string, revision: integer } | { kind: "members" } },
+    uses: { [key: string]: { kind: "postgres", handle: string, id: string, revision: integer } | { kind: "posthog", handle: string, id: string, revision: integer } | { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } | { kind: "sharedStore", patchId: string, store: string, id: string, revision: integer } | { kind: "members" } },
     handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: HandlerSchema }, result: HandlerSchema, errors?: string[] } },
     sdkImports?: string[]
   },

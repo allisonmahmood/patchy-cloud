@@ -706,7 +706,77 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
         code: "session_expired",
         correlationId: denied!.correlationId
       });
-      assert.deepStrictEqual(capability.refusals, [{ failure: refusal, status: 401 }]);
+      // The host keeps the integration operation with its record; published guests decode
+      // replies strictly, so the reply never carries it.
+      assert.notProperty(refusal, "operation");
+      assert.strictEqual(capability.refusals.length, 1);
+      assert.strictEqual(capability.refusals[0]!.failure, refusal);
+      assert.include(capability.refusals[0], { status: 401, operation: "postgres.query" });
     }).pipe(Effect.scoped)
+  );
+  it.effect(
+    "PostHog queries run only in actions, as the live viewer, within the action's remaining time",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const seen: Array<Binding.Binding["Service"]> = [];
+        const gateway = yield* CallbackGateway.make({
+          "posthog.query": {
+            kind: "integration",
+            connectionId: () => "posthog-connection",
+            resource: () => "dailyVisits",
+            run: () =>
+              Effect.gen(function* () {
+                seen.push(yield* Binding.Binding);
+                return { ok: true, rows: [] };
+              })
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const call = { op: "posthog.query", args: { connection: "analytics" } };
+        for (const kind of ["query", "mutation"] as const) {
+          const capability = yield* Fixtures.issue(capabilities, { kind });
+          assert.include(yield* gateway.callback(capability.token, capability.attempt, call), {
+            ok: false,
+            code: "access_denied"
+          });
+        }
+        assert.strictEqual(seen.length, 0);
+        const renamed = {
+          ...Fixtures.identity,
+          user: { ...Fixtures.identity.user, name: "Renamed" }
+        };
+        const action = yield* Fixtures.issue(capabilities, {
+          kind: "action",
+          reauthorize: Effect.succeed(renamed)
+        });
+        assert.deepStrictEqual(yield* gateway.callback(action.token, action.attempt, call), {
+          ok: true,
+          value: { ok: true, rows: [] }
+        });
+        // Reauthorised on this callback, bounded by the integration deadline inside the action's.
+        assert.strictEqual(seen[0]!.identity?.user.name, "Renamed");
+        assert.strictEqual(seen[0]!.effectivePrincipal, Fixtures.identity.user.id);
+        assert.isAtMost(seen[0]!.deadline!, action.attempt.deadline);
+        // A viewer deactivated mid-action loses access on the next call.
+        const deactivated = yield* Fixtures.issue(capabilities, {
+          kind: "action",
+          reauthorize: Effect.fail(new Runtime.AccessDenied({}))
+        });
+        assert.include(yield* gateway.callback(deactivated.token, deactivated.attempt, call), {
+          ok: false,
+          code: "access_denied"
+        });
+        assert.strictEqual(seen.length, 1);
+        // PostHog's arguments keep their tier 1 cap: past it, nothing runs.
+        const oversized = yield* Fixtures.issue(capabilities, { kind: "action" });
+        assert.include(
+          yield* gateway.callback(oversized.token, oversized.attempt, {
+            op: "posthog.query",
+            args: { connection: "analytics", query: "x".repeat(300_000) }
+          }),
+          { ok: false, code: "too_large", limitId: "runtime.posthog.bytes" }
+        );
+        assert.strictEqual(seen.length, 1);
+      }).pipe(Effect.scoped)
   );
 });

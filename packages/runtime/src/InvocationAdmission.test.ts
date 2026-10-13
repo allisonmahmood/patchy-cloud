@@ -44,13 +44,15 @@ it.effect(
   () =>
     Effect.gen(function* () {
       let calls = 0;
-      // The gate is by prefix: one operation each for tables, files, shared, members and postgres.
+      // The gate is by prefix: one operation each for tables, files, shared, members and each
+      // integration.
       const operations = [
         "tables.insert",
         "files.list",
         "shared.files.get",
         "members.search",
-        "postgres.list"
+        "postgres.list",
+        "posthog.query"
       ];
       const handlers = Object.fromEntries(
         operations.map((op) => [

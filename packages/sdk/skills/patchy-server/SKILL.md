@@ -27,12 +27,14 @@ operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflic
 behavior. Production hosting requires the fleet executor.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
-rows for `ctx.shared` tables and `ctx.connections`. Put invented shared files
+rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog has no
+fixture, and its actions read the real project through the instance, as the
+publishing key's person for either viewer. Put invented shared files
 in `fixtures/shared-<alias>/`; restart after fixture or config edits.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
 output and local-only failure message/stack. Starting with `--json` records full
 wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`.
-No runtime database log rows are written.
+No local runtime log rows are written; the instance logs PostHog dev reads.
 
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors
@@ -124,8 +126,8 @@ refuse a later callback even if an earlier read succeeded in the same query.
 Handle that refusal rather than serving an earlier value as current data.
 Member-directory reads are outside the company snapshot.
 
-Queries have no `ctx.connections`. Company Postgres reads belong in actions,
-not subscribed queries. The host enforces this kind rule, even if code bypasses
+Queries have no `ctx.connections`. Company Postgres and PostHog reads belong in
+actions, not subscribed queries. The host enforces this kind rule, even if code bypasses
 the TypeScript context.
 
 ### Atomic mutations
@@ -328,7 +330,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 <!-- prettier-ignore -->
 | Limit id | Kind | Default | Unit | Scope | Measures | Refusal | Company override | Configuration |
 | --- | --- | ---: | --- | --- | --- | --- | --- | --- |
-| `runtime.calls.perMinute` | contract | 300 | calls/minute | viewer | Calls per viewer per patch, excluding callbacks and subscription re-runs | `rate_limited` | No | release |
+| `runtime.calls.perMinute` | contract | 300 | calls/minute | viewer | Calls per viewer per patch, excluding callbacks and subscription re-runs; patchy dev reads per person across every repo | `rate_limited` | No | release |
 | `frame.outstanding` | contract | 32 | requests | viewer | Outstanding requests per document, including calls held while starting | `too_many_requests` | No | release |
 | `frame.heldBytes` | contract | 67108864 | bytes | viewer | Total bytes held by one frame | `too_large` | No | release |
 | `runtime.call.bytes` | contract | 65536 | bytes | viewer | Tier 1 operation envelope | `too_large` | No | release |
@@ -339,6 +341,12 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `runtime.file.bytes` | contract | 20971520 | bytes | viewer | File bytes per operation | `too_large` | No | release |
 | `runtime.mutation.deadline` | contract | 30000 | milliseconds | viewer | Tier 1 mutation deadline | `timeout` | No | release |
 | `integration.deadline` | contract | 15000 | milliseconds | viewer | Each integration call within its parent deadline | `timeout` | No | release |
+| `runtime.posthog.bytes` | contract | 262144 | bytes | viewer | PostHog operation arguments | `too_large` | No | release |
+| `posthog.queries.concurrent` | contract | 3 | queries | host | Running PostHog queries per region and project in one server process, shared by every connection to that project | `busy` | No | release |
+| `posthog.discovery.pages` | contract | 100 | pages | company | Definition pages one PostHog discovery reads, across events and both property kinds | None | No | release |
+| `posthog.discovery.entries` | contract | 10000 | definitions | company | Event and property definitions one PostHog snapshot keeps | None | No | release |
+| `posthog.discovery.bytes` | contract | 4194304 | bytes | company | Encoded PostHog snapshot | None | No | release |
+| `posthog.discovery.description` | contract | 1000 | characters | company | One definition's description in a PostHog snapshot; a longer one is cut and marked [truncated] | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
 | `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
 | `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |

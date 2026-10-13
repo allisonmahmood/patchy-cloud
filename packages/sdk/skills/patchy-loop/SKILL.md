@@ -205,15 +205,16 @@ connections. Wrong-level flags are local errors, exit 1.
 Every level accepts `--json`: the top merges `{ patches, connections }`;
 all other levels print the wire body with no added `ok` wrapper.
 
-For Postgres, run `pnpm patchy list connections`, then
-`pnpm patchy list connections postgres/<handle>` for its schema snapshot and `takenAt`.
+For a company connection, run `pnpm patchy list connections`, then
+`pnpm patchy list connections <integration>/<handle>` for its snapshot and
+`takenAt`: a Postgres schema, or a PostHog project's events and properties.
 `list connections --all` adds offered integrations. A null snapshot is
-unavailable, not an empty database. Only connected entries carry an `add` hint;
+unavailable, not an empty source. Only connected entries carry an `add` hint;
 disconnected entries point to `/company/connections`. Discovery grants no access.
 
 ## Commands and ownership
 
-- `pnpm patchy add postgres/<handle> --as sales` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub and skill. Choose the target through discovery above. `add postgres` chooses a sole connected Postgres connection; with several it lists choices from `list connections` and stops. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
+- `pnpm patchy add postgres/<handle> --as sales`, `pnpm patchy add posthog/<handle> --as analytics` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub (none for PostHog) and skill. Choose the target through discovery above. `add postgres` and `add posthog` choose that integration's sole connected connection; with several they list choices from `list connections` and stop. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
 - `pnpm patchy remove sales` reverses the declaration and its generated output, and removes its declaration skill when no declaration of that kind remains. It leaves the fixture for you and says so.
 - An uneditable `uses` expression fails with its exact source line and, for add, the exact literal declaration line to insert. Either make `uses` an explicit object literal while preserving its meaning and retry, or add the declaration yourself and run `pnpm patchy refresh`. Do not bypass the refusal by editing generated metadata.
 - `pnpm patchy refresh` fetches one release, updates the managed pins and installs if needed, re-execs that CLI, executes config, generates, and activates the managed set transactionally. Failure retains the previous set. It refreshes every present skill and adds config-implied skills. `patchy-server` follows the tier and `patchy-members` follows its declaration; other installed skills stay sticky. If another present skill is no longer offered, refresh fails rather than leaving stale instructions. It announces newly recorded SDK capabilities with their entrypoints, where they run and limits; `--json` returns them in `addedCapabilities`. Older repos record the full catalogue once, and an unchanged refresh returns an empty list.
@@ -229,9 +230,9 @@ Commit config, `patchy.json` with its description and sync stamp, generated outp
 
 ## Data boundary
 
-Development uses local PGlite data and agent-authored fixtures. Only metadata and published inventory come from the instance, never production rows or files. Fill each declaration's fixture stub with invented local `INSERT` statements matching its header; views are synthetic local tables. Missing fixtures are not permission to query production. Owned-table example rows are inserted through the local generated client, not a cloud data dump.
+Development uses local PGlite data and agent-authored fixtures. Only metadata and published inventory come from the instance, never production rows or files, except PostHog: it has no fixture, and dev reads the real project through the instance as the publishing key's person, read-only, each read logged on the connection as a Dev call. Fill each declaration's fixture stub with invented local `INSERT` statements matching its header; views are synthetic local tables. Missing fixtures are not permission to query production. Owned-table example rows are inserted through the local generated client, not a cloud data dump.
 
-New starts bind the primary viewer from the publishing key's `/api/me` identity and refresh declaration metadata. Tiers 1 and 2 also mount a fixed non-admin colleague. `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` output and local-only failure message/stack. Starting with `--json` records full wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`. No runtime database log rows, PostHog delivery or connection keyring are used. Before the first publish, schema changes recreate local data. Afterwards, the published inventory is the baseline: additive changes preserve rows, and changes publish would refuse are refused locally with the same object/change/fix. A local-only schema incompatible with an otherwise valid config can be recreated.
+New starts bind the primary viewer from the publishing key's `/api/me` identity and refresh declaration metadata. Tiers 1 and 2 also mount a fixed non-admin colleague. `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` output and local-only failure message/stack. Starting with `--json` records full wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows, PostHog event delivery or connection keyring are used; PostHog reads are logged on the instance. Before the first publish, schema changes recreate local data. Afterwards, the published inventory is the baseline: additive changes preserve rows, and changes publish would refuse are refused locally with the same object/change/fix. A local-only schema incompatible with an otherwise valid config can be recreated.
 
 `patchy dev` runs the same handler engine and callback path as production.
 It does not reproduce production scheduling, operating capacity or containment. A handler
@@ -239,9 +240,10 @@ that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Contract limits still apply; production
 operating capacity does not. PGlite is not evidence for hosted `busy` or
 `write_conflict` behavior. Tier 2 reads invented shared and Postgres fixtures
-through `ctx.shared` and `ctx.connections`.
+through `ctx.shared` and `ctx.connections`; PostHog actions read the real project
+through the instance, as the publishing key's person for either viewer.
 
-On tier 1, every readable row is available to every admitted company viewer, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables and Postgres are read-only, checked against live source access. A public tier 1 patch returns null from `me()`. Signed-in company members can read its declared member directory; anonymous viewers and outsiders cannot. Tables, files and integrations still return `not_available_on_public` for everyone. Tier 2 cannot be public.
+On tier 1, every readable row is available to every admitted company viewer, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables, Postgres and PostHog are read-only, checked against live source access. A public tier 1 patch returns null from `me()`. Signed-in company members can read its declared member directory; anonymous viewers and outsiders cannot. Tables, files and integrations still return `not_available_on_public` for everyone. Tier 2 cannot be public.
 
 ## Presence and live screens
 

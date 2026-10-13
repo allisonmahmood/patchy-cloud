@@ -46,6 +46,7 @@ import {
 import { generateClient, generateSharedStoreClient } from "../../../sdk/src/generateClient.js";
 import { generateServer } from "../../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../../integrations/src/postgres/Generate.js";
+import { generate as generatePostHog } from "../../../integrations/src/posthog/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
 import { lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
@@ -339,6 +340,14 @@ export const projectConnections = {
       status: "disconnected",
       reason: "not_connected",
       hint: "Ask an admin to reconnect archive-db at /company/connections."
+    },
+    {
+      id: "conn-product",
+      handle: "product",
+      integration: "posthog",
+      description: "Synthetic product analytics",
+      status: "connected",
+      hint: "patchy add posthog/product"
     }
   ]
 };
@@ -413,6 +422,7 @@ export const generateProjectResponse = (
     declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
   }> = [];
   const postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]> = {};
+  const posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]> = {};
   const sharedMetadata: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]> = {};
   const shared: Record<string, string> = {};
   const connections: Record<string, string> = {};
@@ -443,6 +453,25 @@ export const generateProjectResponse = (
       shared[alias] = `./uses/${alias}.js`;
       uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
       skills.add("patchy-shared-stores");
+      continue;
+    }
+    if (declaration.kind === "posthog") {
+      const stamp = { ...declaration, id: "conn-product", revision: 1 };
+      const snapshot = {
+        version: 1 as const,
+        events: [{ name: "$pageview" }],
+        eventProperties: [],
+        personProperties: []
+      };
+      posthog[alias] = { declaration: stamp, snapshot };
+      const generated = generatePostHog(stamp, snapshot);
+      files.push(
+        { path: `patchy/_generated/uses/${alias}.ts`, contents: generated.client },
+        { path: `patchy/_generated/context/${alias}.md`, contents: generated.context }
+      );
+      connections[alias] = `./uses/${alias}.js`;
+      uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
+      skills.add("patchy-posthog");
       continue;
     }
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
@@ -494,7 +523,7 @@ export const generateProjectResponse = (
       path: `.agents/skills/${skill}/SKILL.md`,
       contents: readFileSync(path.join(packageDir, "../sdk/skills", skill, "SKILL.md"), "utf8")
     });
-  return { ok: true, files, metadata: { postgres, shared: sharedMetadata }, uses };
+  return { ok: true, files, metadata: { postgres, posthog, shared: sharedMetadata }, uses };
 };
 
 export const projectHandler: Handler = (request, respond) => {

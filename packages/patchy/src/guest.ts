@@ -159,8 +159,13 @@ const fileStore = (call: Call, callback: Callback, store: string, writable: bool
     : read;
 };
 
-// Match the generated Postgres client's public-relation and schema namespace conventions.
-const postgres = (call: Call, connection: string, invalidRequest: (message: string) => never) => {
+// Match the generated connection clients: Postgres's relations and schema namespaces, and the
+// query member every integration has.
+const connectionClient = (
+  call: Call,
+  connection: string,
+  invalidRequest: (message: string) => never
+) => {
   const rows = async (op: string, args: Readonly<Record<string, unknown>>) => {
     const value = await call(op, args);
     if (
@@ -188,22 +193,19 @@ const postgres = (call: Call, connection: string, invalidRequest: (message: stri
       if (typeof name !== "string") return undefined;
       if (Object.hasOwn(target, name)) return target[name];
       if (name === "query") {
-        return (target[name] = (
-          sql: string,
-          params: readonly Json[],
-          shape: Readonly<
-            Record<
-              string,
-              {
-                readonly kind: string;
-                readonly optional?: boolean;
-                readonly isOptional?: boolean;
-                readonly hasDefault?: boolean;
-              }
-            >
+        type Shape = Readonly<
+          Record<
+            string,
+            {
+              readonly kind: string;
+              readonly optional?: boolean;
+              readonly isOptional?: boolean;
+              readonly hasDefault?: boolean;
+            }
           >
-        ) => {
-          const wireShape = Object.fromEntries(
+        >;
+        const wireShape = (shape: Shape) =>
+          Object.fromEntries(
             Object.entries(shape).map(([column, value]) => {
               if (
                 value.kind === "ref" ||
@@ -223,8 +225,34 @@ const postgres = (call: Call, connection: string, invalidRequest: (message: stri
               ];
             })
           );
-          return call("postgres.query", { connection, sql, params, shape: wireShape });
-        });
+        // PostHog's query takes one request object; Postgres's takes SQL, parameters and a shape.
+        // The host checks the alias's declared kind, so a mismatch is refused there.
+        return (target[name] = (
+          request:
+            | string
+            | {
+                readonly name: string;
+                readonly query: string;
+                readonly values?: Readonly<Record<string, Json>>;
+                readonly shape: Shape;
+              },
+          params?: readonly Json[],
+          shape?: Shape
+        ) =>
+          typeof request === "string"
+            ? call("postgres.query", {
+                connection,
+                sql: request,
+                params,
+                shape: wireShape(shape ?? {})
+              })
+            : call("posthog.query", {
+                connection,
+                name: request.name,
+                query: request.query,
+                ...(request.values === undefined ? {} : { values: request.values }),
+                shape: wireShape(request.shape)
+              }));
       }
       // A name is either a public relation or a non-public schema. Its next property selects it.
       const publicRelation = relation("public", name);
@@ -382,7 +410,7 @@ export function createGuest(
         }
         if (!reply.ok) {
           const error =
-            decodeHandlerError(reply) ?? decodeError(reply) ?? new Error("Callback refused.");
+            decodeHandlerError(reply) ?? decodeError(reply, op) ?? new Error("Callback refused.");
           refusals.set(error, reply);
           throw error;
         }
@@ -420,7 +448,9 @@ export function createGuest(
         ...(kind !== "action"
           ? {}
           : {
-              connections: names((connection) => postgres(call, connection, invalidRequest)),
+              connections: names((connection) =>
+                connectionClient(call, connection, invalidRequest)
+              ),
               run: names((module) =>
                 names(
                   (name) =>

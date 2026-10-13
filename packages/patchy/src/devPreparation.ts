@@ -77,7 +77,8 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           ...(repo.description === undefined ? {} : { description: repo.description })
         };
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
-          if (declaration.kind === "members") continue;
+          // PostHog has no fixture: dev reads the real connection.
+          if (declaration.kind === "members" || declaration.kind === "posthog") continue;
           const relative =
             declaration.kind === "postgres"
               ? `fixtures/postgres-${declaration.handle}.sql`
@@ -114,7 +115,9 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         });
         const metadata = generated.metadata;
         if (
-          Object.keys(metadata.postgres).length + Object.keys(metadata.shared).length !==
+          Object.keys(metadata.postgres).length +
+            Object.keys(metadata.posthog).length +
+            Object.keys(metadata.shared).length !==
           Object.values(manifest.uses).filter((declaration) => declaration.kind !== "members")
             .length
         )
@@ -126,14 +129,16 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           const actual =
             declaration.kind === "postgres"
               ? metadata.postgres[alias]?.declaration
-              : metadata.shared[alias]?.declaration;
+              : declaration.kind === "posthog"
+                ? metadata.posthog[alias]?.declaration
+                : metadata.shared[alias]?.declaration;
           if (
             actual === undefined ||
             actual.kind !== declaration.kind ||
             actual.id !== declaration.id ||
             actual.revision !== declaration.revision ||
-            (actual.kind === "postgres" &&
-              declaration.kind === "postgres" &&
+            ((actual.kind === "postgres" || actual.kind === "posthog") &&
+              (declaration.kind === "postgres" || declaration.kind === "posthog") &&
               actual.handle !== declaration.handle) ||
             (actual.kind === "sharedTable" &&
               declaration.kind === "sharedTable" &&

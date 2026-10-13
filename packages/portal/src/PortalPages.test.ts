@@ -67,7 +67,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(
     ConnectionStoreDev.layer([
       {
-        connection: new ConnectionStore.Connection({
+        connection: {
           id: "con_warehouse",
           companyId: "cmp_portal_log",
           integration: "postgres",
@@ -81,7 +81,7 @@ const services = Layer.mergeAll(
           lastTestedAt: null,
           lastDiscoveredAt: null,
           createdBy: "usr_portal_log"
-        }),
+        } satisfies ConnectionStore.Connection,
         snapshots: []
       }
     ])

@@ -32,7 +32,8 @@ export const registry = {
     default: 300,
     unit: "calls/minute",
     scope: "viewer",
-    measure: "Calls per viewer per patch, excluding callbacks and subscription re-runs",
+    measure:
+      "Calls per viewer per patch, excluding callbacks and subscription re-runs; patchy dev reads per person across every repo",
     refusal: "rate_limited",
     overridable: false
   },
@@ -124,6 +125,62 @@ export const registry = {
     scope: "viewer",
     measure: "Each integration call within its parent deadline",
     refusal: "timeout",
+    overridable: false
+  },
+  "runtime.posthog.bytes": {
+    kind: "contract",
+    default: 262144,
+    unit: "bytes",
+    scope: "viewer",
+    measure: "PostHog operation arguments",
+    refusal: "too_large",
+    overridable: false
+  },
+  "posthog.queries.concurrent": {
+    kind: "contract",
+    default: 3,
+    unit: "queries",
+    scope: "host",
+    measure:
+      "Running PostHog queries per region and project in one server process, shared by every connection to that project",
+    refusal: "busy",
+    overridable: false
+  },
+  "posthog.discovery.pages": {
+    kind: "contract",
+    default: 100,
+    unit: "pages",
+    scope: "company",
+    measure: "Definition pages one PostHog discovery reads, across events and both property kinds",
+    refusal: null,
+    overridable: false
+  },
+  "posthog.discovery.entries": {
+    kind: "contract",
+    default: 10000,
+    unit: "definitions",
+    scope: "company",
+    measure: "Event and property definitions one PostHog snapshot keeps",
+    refusal: null,
+    overridable: false
+  },
+  "posthog.discovery.bytes": {
+    kind: "contract",
+    default: 4194304,
+    unit: "bytes",
+    scope: "company",
+    measure: "Encoded PostHog snapshot",
+    refusal: null,
+    overridable: false
+  },
+  "posthog.discovery.description": {
+    kind: "contract",
+    default: 1000,
+    unit: "characters",
+    scope: "company",
+    measure:
+      "One definition's description in a PostHog snapshot; a longer one is cut and marked [truncated]",
+    refusal: null,
     overridable: false
   },
   "tier2.query.deadline": {
