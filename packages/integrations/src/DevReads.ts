@@ -42,7 +42,7 @@ export class KeyRefused extends Schema.TaggedError<KeyRefused>()("DevReadKeyRefu
 /** No such connection in the token's company; another company's answers the same. */
 export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()(
   "DevReadConnectionNotFound",
-  { connection: Schema.String }
+  { connection: Schema.String, cause: ConnectionStore.ConnectionNotFound }
 ) {
   readonly code = "access_denied" as const;
   readonly status = 403;
@@ -53,7 +53,7 @@ export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()
 
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "DevReadConnectionNotConnected",
-  { connection: Schema.String }
+  { connection: Schema.String, cause: ConnectionStore.ConnectionNotConnected }
 ) {
   readonly code = "access_denied" as const;
   readonly status = 403;
@@ -71,6 +71,12 @@ const live = new Set(
 const runners = PostHogOperations.devReads;
 const isLive = (op: string): op is keyof typeof runners =>
   live.has(op) && Object.hasOwn(runners, op);
+
+/**
+ * The log keeps text as the caller sent it, but Postgres text can't hold NUL: an argument that
+ * carries one is refused after logging, never before.
+ */
+const audit = (text: string | null | undefined) => text?.replaceAll("\u0000", "\uFFFD");
 
 const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(DevReadEnvelope), {
   onExcessProperty: "error"
@@ -102,11 +108,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       const operation = isLive(input.op) ? runners[input.op] : undefined;
       const named = `${input.op.slice(0, input.op.indexOf("."))}/${input.connection.handle}`;
       // Attribute the call only to a connection of the token's company: another company's id is
-      // neither recorded nor confirmed.
-      const connectionId = yield* connections.get(identity.company.id, input.connection.id).pipe(
-        Effect.map((found) => found.id),
-        Effect.orElseSucceed(() => null)
+      // neither recorded nor confirmed. A lookup that failed refuses the call once it is logged.
+      const lookup = yield* connections.get(identity.company.id, input.connection.id).pipe(
+        Effect.map((found): string | null => found.id),
+        Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(null) }),
+        Effect.result
       );
+      const connectionId = lookup._tag === "Success" ? lookup.success : null;
       const correlationId = newInternalId("call");
       const startedAt = yield* Clock.currentTimeMillis;
       yield* log
@@ -118,9 +126,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           patchId: null,
           versionId: null,
           op: input.op,
-          resource: operation?.resource(input.args) ?? null,
+          resource: audit(operation?.resource(input.args)) ?? null,
           connectionId,
-          ...(operation === undefined ? {} : { sql: operation.sql(input.args) }),
+          ...(operation === undefined ? {} : { sql: audit(operation.sql(input.args)) }),
           correlationId,
           deadlineMs: settings.deadlineMs
         })
@@ -139,6 +147,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
         )
       );
       const run = Effect.gen(function* () {
+        if (lookup._tag === "Failure")
+          return yield* new Runtime.SourceUnavailable({ cause: lookup.failure });
         if (yield* runtime.draining) return yield* new Runtime.Draining();
         const attempt = yield* limits.consume({
           key: `dev-read:${identity.user.id}`,
@@ -166,9 +176,10 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             Effect.provideService(PostHogSource.Source, source),
             Effect.provideService(ConnectionStore.ConnectionStore, connections),
             Effect.catchTags({
-              ConnectionNotFound: () => Effect.fail(new ConnectionNotFound({ connection: named })),
-              ConnectionNotConnected: () =>
-                Effect.fail(new ConnectionNotConnected({ connection: named }))
+              ConnectionNotFound: (cause) =>
+                Effect.fail(new ConnectionNotFound({ connection: named, cause })),
+              ConnectionNotConnected: (cause) =>
+                Effect.fail(new ConnectionNotConnected({ connection: named, cause }))
             })
           );
       }).pipe(

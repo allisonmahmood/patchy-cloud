@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A stub answers on a real socket, as a proxy would.
+import { createServer } from "node:http";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -26,6 +28,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as DevReads from "./DevReads.js";
@@ -125,23 +128,28 @@ const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(DevReadsGroup)).p
   Layer.provide(DevReads.layer),
   Layer.provide(Authorization.layer)
 );
-const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
-  Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provideMerge(runtime),
-  Layer.provideMerge(
-    SqlConnectionStore.layer.pipe(
-      Layer.provide([
-        PostgresSource.layer,
-        CredentialKeys.layerFromKeys(
-          Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
-        )
-      ]),
-      Layer.provideMerge(double.layer)
-    )
-  ),
-  Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, RuntimeLog.layer, Limits.layer)),
-  Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer())))
-);
+/** The door on a socket over a migrated database; `log` stands in for the runtime log when given. */
+const serve = (
+  log: Layer.Layer<RuntimeLog.RuntimeLog, never, SqlClient.SqlClient> = RuntimeLog.layer
+) =>
+  HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+    Layer.provideMerge(NodeHttpServer.layerTest),
+    Layer.provideMerge(runtime),
+    Layer.provideMerge(
+      SqlConnectionStore.layer.pipe(
+        Layer.provide([
+          PostgresSource.layer,
+          CredentialKeys.layerFromKeys(
+            Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
+          )
+        ]),
+        Layer.provideMerge(double.layer)
+      )
+    ),
+    Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),
+    Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer())))
+  );
+const layer = serve();
 
 /** The company's PostHog connection, connected through the double once per suite. */
 const connection = Effect.gen(function* () {
@@ -445,7 +453,44 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
             (yield* devCalls)[0]!.correlationId
           );
 
+          // Postgres text can't hold NUL, so the log keeps a stand-in and the call is still refused.
+          for (const args of [
+            { ...read, name: "nul\u0000name" },
+            { ...read, query: "SELECT\u0000 1" }
+          ]) {
+            const nul = yield* post({ op: "posthog.query", connection: connection_, args });
+            assert.strictEqual(nul.status, 400);
+            assert.strictEqual(
+              refusal(nul.body).correlationId,
+              (yield* devCalls)[0]!.correlationId
+            );
+          }
+
           const before = (yield* devCalls).length;
+          // A body that never declares its length is cut off at the bound as it streams.
+          const streamed = yield* Effect.promise(async () => {
+            const chunk = new TextEncoder().encode("x".repeat(64 * 1024));
+            const response = await fetch(url, {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${DEV_SEED.token}`,
+                "content-type": "application/json"
+              },
+              duplex: "half",
+              body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  for (let sent = 0; sent < 5; sent++) controller.enqueue(chunk);
+                  controller.close();
+                }
+              })
+            } as RequestInit & { duplex: "half" });
+            return { status: response.status, body: (await response.json()) as unknown };
+          });
+          assert.strictEqual(streamed.status, 413);
+          assert.deepInclude(refusal(streamed.body), {
+            code: "too_large",
+            limitId: "runtime.posthog.bytes"
+          });
           const oversized = yield* post({
             op: "posthog.query",
             connection: connection_,
@@ -598,4 +643,97 @@ it.layer(limited, { excludeTestServices: true, timeout: "60 seconds" })(
       30_000
     );
   }
+);
+
+/** The runtime log, except that a dev read's row can't be written. */
+const unloggable = Layer.effect(
+  RuntimeLog.RuntimeLog,
+  Effect.map(RuntimeLog.make, (log) =>
+    RuntimeLog.RuntimeLog.of({
+      ...log,
+      begin: (input) =>
+        input.credentialKind === "machine"
+          ? Effect.fail(
+              new SqlError({ reason: new ConnectionError({ cause: new Error("log down") }) })
+            )
+          : log.begin(input)
+    })
+  )
+);
+
+it.layer(serve(unloggable), { excludeTestServices: true, timeout: "60 seconds" })(
+  "an unloggable read",
+  (it) => {
+    it.effect(
+      "is refused before PostHog hears of it",
+      () =>
+        Effect.gen(function* () {
+          yield* connection;
+          const before = queries().length;
+          const refused = yield* query(DEV_SEED.token).pipe(Effect.flip);
+          assert.strictEqual(refused.code, "source_unavailable");
+          assert.strictEqual(queries().length, before);
+        }),
+      30_000
+    );
+  }
+);
+
+it.live(
+  "maps what answers before the door: the per-address limit and a bare 401",
+  () =>
+    Effect.gen(function* () {
+      const answers = [
+        {
+          status: 429,
+          type: "application/json",
+          body: JSON.stringify({
+            ok: false,
+            error: "Rate limit exceeded.",
+            code: "rate_limited",
+            retryAfterSeconds: 12
+          })
+        },
+        { status: 401, type: "text/plain", body: "Unauthorized" }
+      ];
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          createServer((request, response) => {
+            request.resume();
+            const answer = answers.shift()!;
+            response.writeHead(answer.status, { "content-type": answer.type });
+            response.end(answer.body);
+          })
+        ),
+        (server) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void)))
+      );
+      yield* Effect.callback<void>(
+        (resume) => void server.listen(0, "127.0.0.1", () => resume(Effect.void))
+      );
+      const address = server.address();
+      if (address === null || typeof address === "string") return assert.fail("Expected TCP");
+      const handlers = yield* PostHogDev.handlers({
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        token: Option.some(Redacted.make("pp_machine_key"))
+      }).pipe(Effect.provide(FetchHttpClient.layer));
+      const call = Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        handlers["posthog.query"]
+          .run({ connection: "analytics", ...read })
+          .pipe(
+            Effect.provideService(
+              Binding.Binding,
+              local({ kind: "posthog", id: "conn_product", handle: "product", revision: 1 }, now)
+            ),
+            Effect.flip
+          )
+      );
+      assert.deepInclude(Runtime.toFailure(yield* call), {
+        code: "rate_limited",
+        limitId: "rate.protectedApi.perMinute",
+        scope: "host",
+        retryAfter: 12
+      });
+      assert.instanceOf(yield* call, PostHogDev.KeyRefused);
+    }),
+  { timeout: 30_000 }
 );

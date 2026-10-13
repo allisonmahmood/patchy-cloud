@@ -704,7 +704,7 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
           "protected-API limit. A draining host answers `busy`. Every call with a valid token " +
           "and envelope, refused or not, is recorded in recent calls as a machine call with no " +
           "patch or version; its failures carry the row's `correlationId`. Success is " +
-          "`{ ok: true, value: { rows } }`; refusals are runtime failures. Responses are no-store."
+          "`{ ok: true, value: { ok: true, rows } }`; refusals are runtime failures. Responses are no-store."
       )
     )
   )
