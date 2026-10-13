@@ -364,7 +364,12 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
         now: yield* Clock.currentTimeMillis,
         names: {
           ...names,
-          connections: new Map(connections.map((connection) => [connection.id, connection.handle]))
+          connections: new Map(
+            connections.map((connection) => [
+              connection.id,
+              `${connection.integration}/${connection.handle}`
+            ])
+          )
         },
         entries: page.entries,
         next: page.next,

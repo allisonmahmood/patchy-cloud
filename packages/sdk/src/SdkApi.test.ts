@@ -727,8 +727,9 @@ it.layer(layer)("SDK company generation", (it) => {
           VALUES (${id}, ${identity.company.id}, 'postgres', ${handle}, 'SDK fixture', 'company', ${status},
             ${sql.json({ host: "db.example.com", port: 5432, database: "sales", role: "reader" })},
             'not-a-valid-ciphertext', 'missing-key', 1, 4, ${identity.user.id})`;
-          yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, revision, snapshot)
-          VALUES (${id}, ${identity.company.id}, 4, ${sql.json(snapshot)})`;
+          yield* sql`INSERT INTO connection_snapshots
+          (connection_id, company_id, integration, revision, snapshot)
+          VALUES (${id}, ${identity.company.id}, 'postgres', 4, ${sql.json(snapshot)})`;
         }
         const client = yield* HttpClient.HttpClient;
         const response = yield* client.execute(

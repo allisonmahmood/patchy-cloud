@@ -2104,7 +2104,7 @@ it.layer(layer)("patch log on a socket", (it) => {
         tree,
         [
           "3 calls · 2 log lines",
-          "warehouse.customers.list (connection call) · as Alex Succeeded 12 ms · 412 rows",
+          "postgres/warehouse.customers.list (connection call) · as Alex Succeeded 12 ms · 412 rows",
           "leads.create (mutation) · as the patch Succeeded 30 ms · 2 attempts",
           "tables.insert leads (table write) · as the patch Succeeded 12 ms · 1 row",
           `importing 412 rows from warehouse row 57 is invalid {&quot;owner&quot;:&quot;&lt;sam@&gt;&quot;}`

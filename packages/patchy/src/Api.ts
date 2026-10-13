@@ -72,6 +72,9 @@ export const client = (token?: Redacted.Redacted) =>
     );
   });
 
+/** The instance's typed client, as `client` builds it. */
+export type Client = Effect.Success<ReturnType<typeof client>>;
+
 /** Preserve generated transport/refusals; only a recovered attempt may use an old receipt. */
 export const publish = Effect.fn("Api.publish")(function* (
   token: Redacted.Redacted,

@@ -459,17 +459,29 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
         (yield* store.resolve(connection.companyId, declaration(connection))).revision,
         2
       );
-      assert.deepStrictEqual(yield* store.detail(connection.companyId, connection.handle), {
-        handle: "warehouse",
-        description: "Local metadata",
-        status: "connected",
-        snapshot: { ...evolved, revision: 2, takenAt: "2026-01-02T03:04:05.000Z" }
-      });
-      assert.strictEqual((yield* store.detail(connection.companyId, "untimed")).snapshot, null);
-      const missingHandle = yield* store.detail(connection.companyId, "missing").pipe(Effect.flip);
+      assert.deepStrictEqual(
+        yield* store.detail(connection.companyId, "postgres", connection.handle),
+        {
+          integration: "postgres",
+          handle: "warehouse",
+          description: "Local metadata",
+          status: "connected",
+          snapshot: { ...evolved, revision: 2, takenAt: "2026-01-02T03:04:05.000Z" }
+        }
+      );
+      assert.strictEqual(
+        (yield* store.detail(connection.companyId, "postgres", "untimed")).snapshot,
+        null
+      );
+      const missingHandle = yield* store
+        .detail(connection.companyId, "postgres", "missing")
+        .pipe(Effect.flip);
       assert.instanceOf(missingHandle, ConnectionStore.ConnectionNotFound);
       if (missingHandle._tag === "ConnectionNotFound")
-        assert.deepStrictEqual(missingHandle.lookup, { handle: "missing" });
+        assert.deepStrictEqual(missingHandle.lookup, {
+          integration: "postgres",
+          handle: "missing"
+        });
       const missingId = yield* store.get(connection.companyId, "missing").pipe(Effect.flip);
       assert.instanceOf(missingId, ConnectionStore.ConnectionNotFound);
       if (missingId._tag === "ConnectionNotFound")

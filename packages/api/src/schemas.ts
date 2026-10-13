@@ -588,10 +588,15 @@ export const GenerationManifest = Schema.Struct({
   )
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
+/** Every integration Patchy ships; a connection's handle is unique within its integration. */
+export const integrations = ["postgres"] as const;
+export const Integration = Schema.Literals(integrations);
+export type Integration = typeof Integration.Type;
+
 export const ConnectionSummary = Schema.Struct({
   id: Schema.String,
   handle: Schema.String,
-  integration: Schema.Literal("postgres"),
+  integration: Integration,
   description: Schema.String,
   status: Schema.Literals(["connected", "disconnected"]),
   hint: Schema.String,
@@ -601,13 +606,12 @@ export const ConnectionSummary = Schema.Struct({
 export const Connections = Schema.Struct({
   connections: Schema.Array(ConnectionSummary),
   offered: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({ integration: Schema.Literal("postgres"), connected: Schema.Boolean })
-    )
+    Schema.Array(Schema.Struct({ integration: Integration, connected: Schema.Boolean }))
   )
 });
 
 export const ConnectionDetail = Schema.Struct({
+  integration: Integration,
   handle: ConnectionSummary.fields.handle,
   description: ConnectionSummary.fields.description,
   status: ConnectionSummary.fields.status,

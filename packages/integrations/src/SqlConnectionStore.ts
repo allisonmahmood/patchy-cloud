@@ -1,4 +1,4 @@
-import { ConnectionDetail, PostgresDeclaration } from "@patchy/api";
+import { ConnectionDetail, integrations, type Integration, PostgresDeclaration } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
 import { newInternalId } from "@patchy/core";
@@ -47,6 +47,7 @@ const StoredConnection = Schema.Struct({
 });
 type StoredConnection = typeof StoredConnection.Type;
 const SnapshotDetail = Schema.Struct({
+  integration: ConnectionDetail.fields.integration,
   handle: ConnectionDetail.fields.handle,
   description: ConnectionDetail.fields.description,
   status: ConnectionDetail.fields.status,
@@ -105,23 +106,29 @@ export const make = Effect.gen(function* () {
       WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}`
   });
   const detailRow = SqlSchema.findOneOption({
-    Request: Schema.Struct({ companyId: Schema.String, handle: Schema.String }),
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      integration: ConnectionDetail.fields.integration,
+      handle: Schema.String
+    }),
     Result: SnapshotDetail,
-    execute: ({ companyId, handle }) => sql`SELECT c.handle, c.description, c.status,
+    execute: ({ companyId, integration, handle }) => sql`SELECT c.integration, c.handle,
+      c.description, c.status,
       c.metadata_revision AS revision, s.snapshot,
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
       FROM connections c LEFT JOIN connection_snapshots s
         ON s.connection_id = c.id AND s.company_id = c.company_id AND s.revision = c.metadata_revision
-      WHERE c.company_id = ${companyId} AND c.handle = ${handle}`
+      WHERE c.company_id = ${companyId} AND c.integration = ${integration} AND c.handle = ${handle}`
   });
   // The current revision's immutable row supplies both metadata and its timestamp.
   const detail = Effect.fn("ConnectionStore.detail")(
-    function* (companyId: string, handle: string) {
-      const found = yield* detailRow({ companyId, handle });
+    function* (companyId: string, integration: Integration, handle: string) {
+      const found = yield* detailRow({ companyId, integration, handle });
       if (Option.isNone(found))
-        return yield* new ConnectionNotFound({ companyId, lookup: { handle } });
+        return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
       const { description, status, snapshot, revision, takenAt } = found.value;
       return {
+        integration,
         handle,
         description,
         status,
@@ -202,14 +209,17 @@ export const make = Effect.gen(function* () {
       )
     );
   });
+  // A snapshot names its integration itself: it outlives its connection, and decodes by it.
   const writeSnapshot = Effect.fn("ConnectionStore.writeSnapshot")(function* (
-    input: Identity,
+    input: Identity & { readonly integration: Integration },
     revision: number,
     snapshot: typeof Snapshot.Type,
     now: number
   ) {
-    yield* sql`INSERT INTO connection_snapshots (company_id, connection_id, revision, snapshot, created_at)
-      VALUES (${input.companyId}, ${input.id}, ${revision}, ${encodeSnapshot(snapshot)}, to_timestamp(${now / 1_000}))`;
+    yield* sql`INSERT INTO connection_snapshots
+      (company_id, connection_id, integration, revision, snapshot, created_at)
+      VALUES (${input.companyId}, ${input.id}, ${input.integration}, ${revision},
+        ${encodeSnapshot(snapshot)}, to_timestamp(${now / 1_000}))`;
   });
 
   const list = Effect.fn("ConnectionStore.list")(
@@ -240,13 +250,16 @@ export const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       return yield* reportedTransaction(
         Effect.gen(function* () {
+          // A targetless conflict resolves on whichever handle key the schema has: per
+          // company today, per integration once a second integration ships.
           const inserted = yield* sql`INSERT INTO connections
         (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
          credential_revision, metadata_revision, created_by, last_tested_at, last_discovered_at)
-        VALUES (${identity.id}, ${input.companyId}, 'postgres', ${input.handle}, ${input.description}, 'company',
-          'connected', ${encodeDisplay(inspected.display)}, ${encrypted.credentials}, ${encrypted.keyId},
-          1, 1, ${input.userId}, to_timestamp(${now / 1_000}), to_timestamp(${now / 1_000}))
-        ON CONFLICT (company_id, handle) DO NOTHING RETURNING id`;
+        VALUES (${identity.id}, ${input.companyId}, ${identity.integration}, ${input.handle},
+          ${input.description}, 'company', 'connected', ${encodeDisplay(inspected.display)},
+          ${encrypted.credentials}, ${encrypted.keyId}, 1, 1, ${input.userId},
+          to_timestamp(${now / 1_000}), to_timestamp(${now / 1_000}))
+        ON CONFLICT DO NOTHING RETURNING id`;
           if (inserted.length === 0) return yield* new ConnectionHandleTaken({});
           yield* writeSnapshot(identity, 1, inspected.snapshot, now);
           return yield* get(input.companyId, identity.id);
@@ -311,7 +324,12 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* lock(input, current);
         const revision = current.metadataRevision + 1;
-        yield* writeSnapshot(input, revision, inspected.snapshot, now);
+        yield* writeSnapshot(
+          { ...input, integration: current.integration },
+          revision,
+          inspected.snapshot,
+          now
+        );
         yield* sql`UPDATE connections SET metadata_revision = ${revision},
         display = ${encodeDisplay(inspected.display)}, last_tested_at = to_timestamp(${now / 1_000}),
         last_discovered_at = to_timestamp(${now / 1_000})
@@ -381,7 +399,8 @@ export const make = Effect.gen(function* () {
             yield* sql`SELECT 1 FROM patch_versions v JOIN patches p ON p.id = v.patch_id
       WHERE p.company_id = ${input.companyId} AND EXISTS (
         SELECT 1 FROM jsonb_each(v.manifest->'uses') AS declaration
-        WHERE declaration.value->>'kind' = 'postgres' AND declaration.value->>'id' = ${input.id}
+        WHERE declaration.value->>'kind' IN ${sql.in(integrations)}
+          AND declaration.value->>'id' = ${input.id}
       ) LIMIT 1`;
           if (references.length !== 0) return yield* new ConnectionInUse({});
           yield* sql`DELETE FROM connections WHERE id = ${input.id} AND company_id = ${input.companyId}`;
@@ -396,6 +415,7 @@ export const make = Effect.gen(function* () {
       const found = yield* connectionRow({ companyId, id: declaration.id, locked: true });
       if (
         Option.isNone(found) ||
+        found.value.integration !== declaration.kind ||
         found.value.handle !== declaration.handle ||
         found.value.status !== "connected"
       ) {
@@ -421,6 +441,7 @@ export const make = Effect.gen(function* () {
       const found = yield* storedRow({ companyId, id: declaration.id, locked: false });
       if (
         Option.isNone(found) ||
+        found.value.integration !== declaration.kind ||
         found.value.handle !== declaration.handle ||
         found.value.status !== "connected"
       )

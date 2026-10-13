@@ -230,13 +230,13 @@ Discovery reads metadata under the machine token without granting access.
 The top level merges two routes; the other levels expose their wire body
 unchanged, with no `ok` wrapper. [API reference](../API.md) owns the wire fields.
 
-| command                                | behaviour                                                                                     | `--json` success                                                                                   |
-| -------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `patchy list` or `patchy list patches` | Company patches, grouped Yours and Company, then Connections. Both forms include connections. | `{ patches, connections }`, merged from `GET /api/patches` and `GET /api/connections`              |
-| `patchy list <patch>`                  | Patch row, description, cumulative Tables and Stores, and Reads across retained versions.     | Patch detail wire body, including `inventory: { tables, stores } \| null` and `reads`              |
-| `patchy list <patch> <primitive>`      | One table or file store's definition, never contents.                                         | Primitive detail wire body `{ kind, name, description, shared, schemaRevision, columns, indexes }` |
-| `patchy list connections [--all]`      | Company connections in both states; `--all` adds offered integrations.                        | Connections wire body `{ connections, offered? }`                                                  |
-| `patchy list connections <handle>`     | Current immutable schema snapshot and its `takenAt`; unavailable when null.                   | Connection detail wire body `{ handle, description, status, snapshot }`                            |
+| command                                          | behaviour                                                                                                                      | `--json` success                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `patchy list` or `patchy list patches`           | Company patches, grouped Yours and Company, then Connections. Both forms include connections.                                  | `{ patches, connections }`, merged from `GET /api/patches` and `GET /api/connections`              |
+| `patchy list <patch>`                            | Patch row, description, cumulative Tables and Stores, and Reads across retained versions.                                      | Patch detail wire body, including `inventory: { tables, stores } \| null` and `reads`              |
+| `patchy list <patch> <primitive>`                | One table or file store's definition, never contents.                                                                          | Primitive detail wire body `{ kind, name, description, shared, schemaRevision, columns, indexes }` |
+| `patchy list connections [--all]`                | Company connections of every integration in both states; `--all` adds offered integrations.                                    | Connections wire body `{ connections, offered? }`                                                  |
+| `patchy list connections <integration>/<handle>` | Current immutable metadata snapshot and its `takenAt`; unavailable when null. A bare handle names the only connection with it. | Connection detail wire body `{ integration, handle, description, status, snapshot }`               |
 
 `--json` applies everywhere. `--state live|retired|all`, default `live`, governs
 the top level's patches and patch resolution at both detail levels. `all` includes

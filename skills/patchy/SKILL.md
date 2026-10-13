@@ -51,7 +51,7 @@ Its JSON failure includes the actual patch `state` beside `code`.
 flag applies to connections. Wrong-level flags are local errors, exit 1.
 
 For a company connection, run `patchy list connections`, then
-`patchy list connections <handle>` to inspect its snapshot and `takenAt`.
+`patchy list connections postgres/<handle>` to inspect its snapshot and `takenAt`.
 `list connections --all` also shows offered integrations. A null snapshot means
 unavailable, not an empty database. Select a connected handle and add it from
 the consuming repo with `pnpm patchy add postgres/<handle> --as <alias>`.

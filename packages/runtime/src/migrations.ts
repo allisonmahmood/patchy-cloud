@@ -1,7 +1,7 @@
 /**
- * The runtime's operation log, invocation journal and query rollups, id 5 in
- * the global migration sequence (`packages/sql/GLOSSARY.md`). Squashed into one
- * baseline before launch.
+ * The runtime's operation log, invocation journal and query rollups: the baseline
+ * is id 5 in the global migration sequence (`packages/sql/GLOSSARY.md`), squashed
+ * before launch; later steps follow it.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -100,5 +100,12 @@ export const migrations: Migrations = {
     )`,
     `CREATE INDEX runtime_query_rollup_runs_applied
       ON runtime_query_rollup_runs (applied_at)`
+  ),
+  // Any integration's query operation keeps its capped text, not only Postgres's.
+  "0012_query_text_any_integration": ddl(
+    // The baseline's check spans two columns, so Postgres named it after the table alone.
+    `ALTER TABLE runtime_calls DROP CONSTRAINT runtime_calls_check`,
+    `ALTER TABLE runtime_calls ADD CONSTRAINT runtime_calls_sql_check
+      CHECK (sql IS NULL OR (op LIKE '%.query' AND octet_length(sql) <= 8192))`
   )
 };

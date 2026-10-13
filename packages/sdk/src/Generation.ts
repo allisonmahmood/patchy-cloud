@@ -286,7 +286,10 @@ export const generate = Effect.fn("Generation.generate")(function* (
     const client = `${root}/uses/${alias}.ts`;
     if (declaration.kind === "postgres") {
       const connection = available.find(
-        (entry) => entry.handle === declaration.handle && entry.status === "connected"
+        (entry) =>
+          entry.integration === declaration.kind &&
+          entry.handle === declaration.handle &&
+          entry.status === "connected"
       );
       if (connection === undefined)
         return yield* new ConnectionNotConnected({ handle: declaration.handle });

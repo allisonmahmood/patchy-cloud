@@ -464,7 +464,10 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
 export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLevel: true })
   .add(
     HttpApiEndpoint.get("listConnections", "/connections", {
-      query: { all: Schema.optionalKey(queryFlag) },
+      query: {
+        all: Schema.optionalKey(queryFlag),
+        integrations: Schema.optionalKey(Schema.Literal("all"))
+      },
       success: Connections,
       error: [ConnectionUnavailable, ...protectedErrors]
     }).annotateMerge(
@@ -472,8 +475,9 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
         "List the caller's company connections, including disconnected ones, for any active member. " +
           "Connected entries carry a copy-ready add hint; disconnected entries carry reason " +
           "`not_connected` and a /company/connections hint. A bare all or all=true also includes " +
-          "every offered integration's connected state. No snapshots, credentials or business rows. " +
-          "Responses are private, no-store."
+          "every offered integration's connected state. Without integrations=all, only Postgres " +
+          "connections and offers are listed, the shape CLIs from before other integrations decode. " +
+          "No snapshots, credentials or business rows. Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.get("getConnection", "/connections/:handle", {
@@ -482,11 +486,23 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
       error: [ConnectionUnavailable, ...protectedErrors]
     }).annotateMerge(
       describe(
-        "Read one company connection by its exact handle, for any active member. " +
+        "Read one company Postgres connection by its exact handle, for any active member. Kept for " +
+          "CLIs from before other integrations; current CLIs name the integration. Answers as " +
+          "/connections/postgres/:handle does."
+      )
+    ),
+    HttpApiEndpoint.get("getIntegrationConnection", "/connections/:integration/:handle", {
+      params: { integration: Schema.String, handle: Schema.String },
+      success: ConnectionDetail,
+      error: [ConnectionUnavailable, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "Read one company connection by its integration and exact handle, for any active member. " +
           "The current immutable snapshot includes its revision and ISO takenAt timestamp, " +
           "including when the connection is disconnected. A missing snapshot is null, never an " +
-          "empty database. Unknown handles and another company's connections answer the same 404. " +
-          "Never returns credentials or business rows. Responses are private, no-store."
+          "empty database. Unknown integrations, unknown handles and another company's connections " +
+          "answer the same 404. Never returns credentials or business rows. Responses are private, " +
+          "no-store."
       )
     )
   )

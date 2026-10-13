@@ -1,6 +1,6 @@
 /**
- * Company connections and their immutable schema snapshots, id 6 in the global
- * migration sequence. Squashed into one baseline before launch.
+ * Company connections and their immutable schema snapshots: the baseline is id 6
+ * in the global migration sequence, squashed before launch; later steps follow it.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -43,5 +43,16 @@ export const migrations: Migrations = {
     `CREATE TRIGGER connection_snapshots_immutable
       BEFORE UPDATE OR DELETE OR TRUNCATE ON connection_snapshots
       FOR EACH STATEMENT EXECUTE FUNCTION reject_connection_snapshot_mutation()`
+  ),
+  // A snapshot names its integration itself, since it outlives its connection. Each
+  // release must work against the schema the next one leaves (docs/OPERATIONS.md), and
+  // the release before this one omits the snapshot's integration, so the column keeps a
+  // default; filling existing rows that way needs no UPDATE, which the immutability
+  // trigger would refuse. Handles stay unique per company until the step that admits a
+  // second integration swaps that key for one per integration: two handle keys at once
+  // would let concurrent connects fail on the key their ON CONFLICT does not name.
+  "0011_connections_per_integration": ddl(
+    `ALTER TABLE connections DROP CONSTRAINT connections_integration_check`,
+    `ALTER TABLE connection_snapshots ADD COLUMN integration TEXT NOT NULL DEFAULT 'postgres'`
   )
 };
