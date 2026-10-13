@@ -13,7 +13,7 @@ import {
   StreamAdmission,
   StreamLimits
 } from "@patchy/runtime/dev";
-import { documentTitle } from "@patchy/core";
+import { documentTitle, validateHtml } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import {
   brokerScript,
@@ -106,8 +106,11 @@ export const serve = Effect.fn("Dev.serve")(function* (
     Effect.provide(FetchHttpClient.layer)
   );
   const nextBuild = yield* watch(record.root, stateDir, toolchain);
+  // As publish reads it: a tier 0 page whole, a scripted bundle only from its start.
+  const titleOf = (page: string) =>
+    prepared.manifest.tier === 0 ? validateHtml(page).title : documentTitle(page);
   let html = yield* nextBuild(prepared.manifest);
-  let title = documentTitle(html);
+  let title = titleOf(html);
   let revision = 1;
   if (nextServer !== undefined) {
     yield* Effect.forever(
@@ -315,7 +318,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
       Effect.tap((bundle) =>
         Effect.sync(() => {
           html = bundle;
-          title = documentTitle(bundle);
+          title = titleOf(bundle);
           revision++;
         })
       ),
