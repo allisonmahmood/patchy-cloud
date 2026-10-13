@@ -26,7 +26,7 @@ Patchy implements tier 0 static pages, tier 1 sandboxed browser tools and tier 2
 - Tier 3 is next: execution without a viewer, including inbound routes, webhooks, schedules and unattended automation. It is not built.
 - Tier 4, a sandbox for agents, remains future work.
 
-Tables and files are patch-owned. Both scripted tiers support live queries, read-only shared tables and stores, the member directory, company Postgres connections and a two-viewer local dev loop. More integrations, including Gmail and Salesforce, remain future work.
+Tables and files are patch-owned. Both scripted tiers support live queries, read-only shared tables and stores, the member directory, company Postgres and PostHog connections and a two-viewer local dev loop. More integrations, including Gmail and Salesforce, remain future work.
 
 ## Final note from Patchy
 

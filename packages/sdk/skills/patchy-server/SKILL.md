@@ -27,7 +27,8 @@ operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflic
 behavior. Production hosting requires the fleet executor.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
-rows for `ctx.shared` tables and `ctx.connections`. Put invented shared files
+rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog has no
+fixture, and this release's dev refuses its calls. Put invented shared files
 in `fixtures/shared-<alias>/`; restart after fixture or config edits.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
 output and local-only failure message/stack. Starting with `--json` records full
@@ -124,8 +125,8 @@ refuse a later callback even if an earlier read succeeded in the same query.
 Handle that refusal rather than serving an earlier value as current data.
 Member-directory reads are outside the company snapshot.
 
-Queries have no `ctx.connections`. Company Postgres reads belong in actions,
-not subscribed queries. The host enforces this kind rule, even if code bypasses
+Queries have no `ctx.connections`. Company Postgres and PostHog reads belong in
+actions, not subscribed queries. The host enforces this kind rule, even if code bypasses
 the TypeScript context.
 
 ### Atomic mutations

@@ -275,7 +275,7 @@ the patch must present the partial outcome.
 ### Config
 
 ```ts
-import { defineConfig, table, t, files, postgres, sharedTable } from "patchy/config";
+import { defineConfig, table, t, files, postgres, posthog, sharedTable } from "patchy/config";
 
 export default defineConfig({
   name: "team-notes",
@@ -296,6 +296,7 @@ export default defineConfig({
   files: { attachments: files("Note attachments keyed by note id and filename.") },
   uses: {
     sales: postgres("warehouse"),
+    analytics: posthog("product"),
     contacts: sharedTable("abcdefghijkl", "contacts")
   }
 });
@@ -341,8 +342,8 @@ Limit refusals may also carry `scope`, `limitId`, `value` and `retryAfter`.
 
 On a company patch, every viewer who can open it can read and write all its own
 tables and files; there are no row rules or separate write scopes. Shared tables
-and stores are read-only and Postgres integrations perform constrained reads as the role
-the admin supplied. On a public tier 1 patch, `me()` returns null, but signed-in
+and stores are read-only, Postgres integrations perform constrained reads as the role
+the admin supplied, and PostHog connections run read-only HogQL with the admin's key. On a public tier 1 patch, `me()` returns null, but signed-in
 company members can read the declared member directory. Anonymous viewers and
 viewers outside the company cannot read it. Tables, files and integrations still
 fail with `not_available_on_public`, even for company members.
@@ -501,17 +502,18 @@ Use the instance-installed CLI outside a repo and the pinned `pnpm patchy` insid
 The private package is not available as `npx patchy@latest`; use the
 instance's release tarball as described above.
 
-| command                                                                                                                                                                 | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                             |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                                                                                 | Authenticates first, prints instance and identity, refuses a CLI whose release differs from the instance's, then installs the release and generates a new repo. Tier 1 is the default; tier 2 adds handlers and its managed engine pin. An initialized target is refused. | `{ ok, dir, release, tier, generated, skills, installed }`                                                   |
-| `patchy refresh`                                                                                                                                                        | Reconciles managed pins and generated files with the release and tier as one transaction, installing and re-executing a new CLI as needed.                                                                                                                                | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }`  |
-| `patchy add postgres/<handle> [--as <alias>]`, `patchy add shared-table <patchId>/<table> [--as <alias>]` or `patchy add shared-store <patchId>/<store> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block names its source line and the declaration to add manually.                                         | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                 |
-| `patchy add members`                                                                                                                                                    | Adds the fixed `members` declaration, typed client and `patchy-members` skill. No id, revision stamp or fixture.                                                                                                                                                          | `{ ok, alias: "members", declaration: { kind: "members" }, generated, skills, addedCapabilities, warnings }` |
-| `patchy remove <alias>`                                                                                                                                                 | Reverses the declaration and generated output; removes an unused declaration skill. Leaves any fixture. Refuses `remove members` while a configured `t.member()` column exists.                                                                                           | `{ ok, alias, removed, addedCapabilities, warnings }`                                                        |
+| command                                                                                                                                                                                                               | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                                                                                                                               | Authenticates first, prints instance and identity, refuses a CLI whose release differs from the instance's, then installs the release and generates a new repo. Tier 1 is the default; tier 2 adds handlers and its managed engine pin. An initialized target is refused. | `{ ok, dir, release, tier, generated, skills, installed }`                                                   |
+| `patchy refresh`                                                                                                                                                                                                      | Reconciles managed pins and generated files with the release and tier as one transaction, installing and re-executing a new CLI as needed.                                                                                                                                | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }`  |
+| `patchy add postgres/<handle> [--as <alias>]`, `patchy add posthog/<handle> [--as <alias>]`, `patchy add shared-table <patchId>/<table> [--as <alias>]` or `patchy add shared-store <patchId>/<store> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture (none for PostHog) and skill. An uneditable block names its source line and the declaration to add manually.                      | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                 |
+| `patchy add members`                                                                                                                                                                                                  | Adds the fixed `members` declaration, typed client and `patchy-members` skill. No id, revision stamp or fixture.                                                                                                                                                          | `{ ok, alias: "members", declaration: { kind: "members" }, generated, skills, addedCapabilities, warnings }` |
+| `patchy remove <alias>`                                                                                                                                                                                               | Reverses the declaration and generated output; removes an unused declaration skill. Leaves any fixture. Refuses `remove members` while a configured `t.member()` column exists.                                                                                           | `{ ok, alias, removed, addedCapabilities, warnings }`                                                        |
 
-`patchy add postgres` selects the sole connected Postgres connection; with several
-it lists copy-ready choices from `list connections` and stops. With none, it names `/company/connections`.
-The default Postgres alias camel-cases the handle's hyphens; a shared table or
+`patchy add postgres` or `patchy add posthog` selects that integration's sole connected
+connection; with several it lists copy-ready choices from `list connections` and stops.
+With none, it names `/company/connections`.
+The default connection alias camel-cases the handle's hyphens; a shared table or
 store alias defaults to its resource name. `--as` overrides the default.
 
 Initialization requires an empty or new target directory and an existing parent.
@@ -756,7 +758,8 @@ manifest. Omitted published columns and indexes remain in the local schema,
 including unique constraints; omission does not relax writes.
 
 Each Postgres declaration needs `fixtures/postgres-<handle>.sql`; aliases of
-one connection share its PGlite. Shared tables need `fixtures/shared-<alias>.sql`
+one connection share its PGlite. PostHog declarations need no fixture, and this
+release's dev refuses their calls with `source_unavailable`. Shared tables need `fixtures/shared-<alias>.sql`
 and use cumulative source definitions, including retained ref targets whose
 declaration was omitted from the source's current manifest. Missing files fail naming the
 file, rather than silently generating an empty replacement. Invent the fixture
@@ -1343,7 +1346,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--description <text>`: on file-mode `publish`, set the description. Repo mode refuses the flag and points at `patchy.json`.
 - `--tier 0|1` — on `init`, the new repo's declared tier; default 1.
 - `--purpose <text>` — on `init`, required for agent, JSON and non-terminal invocations; asked at an interactive human terminal otherwise.
-- `--as <alias>`: on `add`, override the default camelCased Postgres handle or shared table/store name.
+- `--as <alias>`: on `add`, override the default camelCased connection handle or shared table/store name.
 - `--state live|retired|all` filters top-level patches and governs patch resolution at both detail levels of `list`; the default is `live`.
 - `--mine` restricts patches to yours on `list` and `list patches` only.
 - `--all` includes offered integrations and their state on `list connections` only, not connection detail.
@@ -1441,7 +1444,7 @@ The package bundles the global skill at `skills/patchy/SKILL.md`: what Patchy is
 sign-in, safe static-file publishing and the `patchy init` door for building a
 tool. Inside a patch repo, its project skills govern. The instance generates
 those from `packages/sdk`: core loop/tables/files skills at init, Preact guidance
-on tiers 1 and 2, server guidance on tier 2, and Postgres, shared-table,
+on tiers 1 and 2, server guidance on tier 2, and Postgres, PostHog, shared-table,
 shared-store and member-directory skills added by declarations.
 Refresh them through the CLI, not by editing the generated copies. See
 [skill distribution](../../docs/SKILL_DISTRIBUTION.md) for the canonical sources

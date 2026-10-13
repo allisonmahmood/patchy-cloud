@@ -1,11 +1,11 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres and PostHog connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
 
 ## Language
 
 **Integration**:
-A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres is built; OAuth integrations such as Salesforce and Gmail remain future work.
+A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres and PostHog are built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
@@ -41,12 +41,16 @@ An admin's hint about a connection's purpose, helping a builder choose it. It ne
 _Avoid_: permission, policy, grant
 
 **Metadata**:
-The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot.
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture
 
 **Schema snapshot**:
 An immutable description of a connection's relations, columns, keys, enum labels and named exclusions. A failed discovery leaves the previous snapshot current.
 _Avoid_: inventory (the cumulative authority for patch-owned resources), schema revision (Primitives' term)
+
+**Events snapshot**:
+An immutable list of a PostHog project's event definitions and event and person property definitions, with their types and descriptions, never events. Its types are hints for writing HogQL; a query may name anything the project has.
+_Avoid_: event catalogue, schema (PostHog has none to snapshot)
 
 **Revision**:
 The connection's server-assigned metadata revision identifying one schema snapshot. A published declaration keeps the revision it was generated against; refreshing discovery never rewrites it.
@@ -57,7 +61,7 @@ A source table or view described in a Postgres schema snapshot. Its source name 
 _Avoid_: primitive table, collection
 
 **Retarget**:
-Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere, beside Replace credentials, which rotates them for the same endpoint.
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint.
 _Avoid_: rename, new connection
 
 **Credential revision**:
@@ -68,8 +72,16 @@ _Avoid_: snapshot revision, key id
 An explicit raw SQL query with a declared result shape instead of the relation-specific typed client. It remains a constrained read through the supplied role, not harmless execution of arbitrary SQL.
 _Avoid_: unrestricted SQL, direct database access
 
+**HogQL query**:
+PostHog's one operation: a named, read-only query in PostHog's ClickHouse-flavoured SQL, with constant values for its placeholders and a declared result shape. Patchy builds the request, so patch code can only read. Its **name** labels the call in recent calls and in PostHog's own query log.
+_Avoid_: event export, insight (PostHog's saved chart)
+
+**Project slots**:
+The queries one server process lets run at once against one PostHog region and project, shared by every connection to it. A call that can't get one before its deadline is refused busy, having sent nothing.
+_Avoid_: pool (a Postgres word for reusable sessions), rate limit (PostHog's own)
+
 **Typed client**:
-The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch.
+The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch; the PostHog client exposes one HogQL query.
 _Avoid_: proxy (how it is carried out, not what the code sees), driver, raw API
 
 **Call log**:
@@ -77,7 +89,7 @@ See **Runtime log** in [Runtime](../runtime/GLOSSARY.md); connection calls and a
 _Avoid_: audit trail, analytics event (a business moment, not a call)
 
 **Dev binding**:
-The local implementation of an integration's supported operations, using synthetic data instead of production credentials or business rows. It preserves the operation contract while making its limits explicit.
+The local implementation of an integration's supported operations, using synthetic data instead of production credentials or business rows. It preserves the operation contract while making its limits explicit. PostHog has none: dev is to read the real connection instead, since its shapes can't be known ahead and it can't write.
 _Avoid_: Mock integration, production proxy
 
 **Fixture**:

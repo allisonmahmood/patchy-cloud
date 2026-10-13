@@ -370,6 +370,37 @@ describe("patch-repo commands", () => {
     expect(readFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), "utf8")).toBe(fixture);
   });
 
+  it("adds a PostHog declaration with its client and skill, and no fixture", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const result = await runCli(["add", "posthog/product", "--as", "analytics", "--json"], {
+      cwd: dir,
+      env
+    });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      alias: "analytics",
+      declaration: { kind: "posthog", handle: "product" },
+      generated: expect.arrayContaining([
+        "patchy/_generated/uses/analytics.ts",
+        "patchy/_generated/context/analytics.md"
+      ]),
+      skills: [...coreProjectSkills, "patchy-posthog"].sort()
+    });
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toContain(
+      '"analytics": { kind: "posthog", handle: "product" }'
+    );
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
+      uses: { analytics: { kind: "posthog", handle: "product", id: "conn-product", revision: 1 } }
+    });
+    expect(existsSync(path.join(dir, "fixtures"))).toBe(false);
+    // Only a connected PostHog connection of that name is added; Postgres ones never are.
+    const missing = await runCli(["add", "posthog/sales-db", "--json"], { cwd: dir, env });
+    expect(missing).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(missing.stderr)).toMatchObject({ code: "connection_not_connected" });
+  });
+
   it("adds the unstamped member directory and refuses removal until member columns are gone", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);

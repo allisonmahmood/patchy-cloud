@@ -892,6 +892,55 @@ describe("patchy list", () => {
     }
   );
 
+  it("prints a PostHog connection's events and properties with types", async () => {
+    const detail = {
+      integration: "posthog",
+      handle: "product",
+      description: "Product analytics",
+      status: "connected",
+      snapshot: {
+        version: 1,
+        revision: 2,
+        takenAt: "2026-10-01T00:00:00.000Z",
+        events: [{ name: "$pageview", description: "Page views\nsecond line" }],
+        eventProperties: [{ name: "$browser", type: "String" }],
+        personProperties: [{ name: "email", type: null }]
+      }
+    };
+    const instance = await stubInstance((request, respond) => {
+      // A bare handle only one connection has finds its integration first.
+      if (request.url === "/api/connections?integrations=postgres%2Cposthog")
+        return respond(200, projectConnections);
+      expect(request.url).toBe("/api/connections/posthog/product");
+      respond(200, detail);
+    });
+    for (const name of ["posthog/product", "product"]) {
+      const result = await runCli(["list", "connections", name, "--api-url", instance.url], {
+        env
+      });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(result.stdout).toBe(
+        [
+          "posthog/product  Product analytics  connected",
+          "Events revision: 2",
+          "Taken at: 2026-10-01T00:00:00.000Z",
+          "Events:",
+          "  $pageview  Page views",
+          "Event properties:",
+          "  $browser (String)",
+          "Person properties:",
+          "  email",
+          ""
+        ].join("\n")
+      );
+    }
+    const json = await runCli(
+      ["list", "connections", "posthog/product", "--json", "--api-url", instance.url],
+      { env }
+    );
+    expect(JSON.parse(json.stdout)).toEqual(detail);
+  });
+
   it("prints connection snapshots with keys and taken-at, or explicitly unavailable", async () => {
     const snapshot = {
       version: 1,

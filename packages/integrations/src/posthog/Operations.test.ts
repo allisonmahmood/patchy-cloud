@@ -247,7 +247,7 @@ it.effect("refuses shapes the result can't fill, naming the column", () =>
       { column: "revenue", reason: "type", type: "Decimal(18, 2)" }
     );
     assert.deepStrictEqual(
-      yield* mismatch([["total", "UInt64"]], [[9007199254740993]], { total: { kind: "number" } }),
+      yield* mismatch([["total", "UInt64"]], [[2 ** 53]], { total: { kind: "number" } }),
       { column: "total", reason: "value", type: "UInt64" }
     );
     assert.deepStrictEqual(
@@ -333,7 +333,8 @@ it.effect("surfaces PostHog's own refusals without retrying", () =>
     assert.deepInclude(limited.error, { code: "source_rate_limited", retryAfterSeconds: 30 });
     assert.strictEqual(limited.sent, 1);
     const revoked = yield* refused(PostHogDouble.json(401, { detail: "Invalid key." }));
-    assert.deepInclude(revoked.error, { code: "source_unavailable", refusal: "key_rejected" });
+    assert.instanceOf(revoked.error, Operations.ConnectionRefused);
+    assert.deepInclude(revoked.error, { code: "source_unavailable" });
   })
 );
 

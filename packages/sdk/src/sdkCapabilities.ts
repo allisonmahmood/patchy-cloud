@@ -193,6 +193,17 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     limits: `Declare a connected company source. Read-only queries return at most 1,000 rows and ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB, with a 10-second statement timeout and a 15-second service deadline bounded by the action's remaining time. Credentials stay with Patchy and access is checked on each call. Queries and mutations cannot use ctx.connections; Postgres reads are not live-query dependencies.`
   },
   {
+    id: "integrations.posthog",
+    group: "Integrations",
+    name: "Company PostHog reads",
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.connections",
+      "patchy/_generated/server.ts: ctx.connections"
+    ],
+    runs: "Tier 1 pages through the broker; tier 2 actions. patchy dev refuses PostHog calls in this release",
+    limits: `Declare a connected company PostHog Cloud project. query({ name, query, values, shape }) runs one named, read-only HogQL query; values are constants for its placeholders. At most 1,000 rows and ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB, ${runtimeByteLimits.posthogBytes / 1024} KiB of arguments and a 15-second service deadline bounded by the action's remaining time. A result PostHog cut short fails too_large; PostHog's own limits fail source_rate_limited and are never retried. Queries and mutations cannot use ctx.connections; PostHog reads are not live-query dependencies.`
+  },
+  {
     id: "helpers.csv",
     group: "Helpers",
     name: "CSV text codec",
@@ -206,7 +217,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
   Core: "window.print() works in the frame, including browser print-to-PDF.",
-  Integrations: "Postgres is the only shipped company integration.",
+  Integrations: "Postgres and PostHog are the shipped company integrations.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
 };

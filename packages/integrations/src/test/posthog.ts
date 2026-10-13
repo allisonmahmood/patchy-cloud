@@ -100,11 +100,11 @@ export const project =
     }
     const list =
       rest === "event_definitions/"
-        ? found.events
+        ? (found.events ?? [])
         : rest === "property_definitions/"
           ? request.url.searchParams.get("type") === "person"
-            ? found.personProperties
-            : found.eventProperties
+            ? (found.personProperties ?? [])
+            : (found.eventProperties ?? [])
           : undefined;
     if (list === undefined || request.method !== "GET")
       return json(404, {

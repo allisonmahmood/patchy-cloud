@@ -70,7 +70,9 @@ const product = {
   eventProperties: [{ name: "$browser", property_type: "String" }],
   personProperties: [{ name: "email", property_type: "String" }]
 } satisfies PostHogDouble.Project;
-const posthog = PostHogDouble.make(PostHogDouble.project(product));
+/** Another project, reached by its own key. */
+const other = { ...product, id: 999, key: "phx_otherProjectKey01" } satisfies PostHogDouble.Project;
+const posthog = PostHogDouble.make(PostHogDouble.project(product, other));
 const fixture = SqlConnectionStore.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -446,6 +448,61 @@ it.layer(fixture)("ConnectionStore", (it) => {
           (yield* store.snapshot(who.companyId, connected.id, 2).pipe(Effect.flip)).code,
           "connection_not_found"
         );
+      })
+  );
+
+  it.effect(
+    "keeps PostHog beside a Postgres connection of the same name, and its snapshot after deletion",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const postgres = yield* store.connect(input("shared-name"));
+        const posthog = yield* store.connect({
+          ...input("shared-name"),
+          integration: "posthog",
+          credentials: PostHogDouble.credentials(product)
+        });
+        assert.notStrictEqual(posthog.id, postgres.id);
+        assert.deepInclude(posthog, {
+          integration: "posthog",
+          display: { region: "us", projectId: product.id, keyHint: "phx_…ey01" }
+        });
+        assert.instanceOf(
+          yield* store
+            .connect({
+              ...input("shared-name"),
+              integration: "posthog",
+              credentials: PostHogDouble.credentials(product)
+            })
+            .pipe(Effect.flip),
+          ConnectionStore.ConnectionHandleTaken
+        );
+        assert.deepStrictEqual(
+          (yield* store.detail(who.companyId, "posthog", "shared-name")).snapshot,
+          {
+            version: 1,
+            events: [{ name: "$pageview", description: "Page views" }, { name: "patch.opened" }],
+            eventProperties: [{ name: "$browser", type: "String" }],
+            personProperties: [{ name: "email", type: "String" }],
+            revision: 1,
+            takenAt: posthog.lastDiscoveredAt!
+          }
+        );
+        // A key for the same project replaces credentials; one for another project is a retarget.
+        assert.instanceOf(
+          yield* store
+            .rotate({
+              ...identity(posthog),
+              credentials: PostHogDouble.credentials(other)
+            })
+            .pipe(Effect.flip),
+          ConnectionStore.ConnectionRetargetRequired
+        );
+        // The snapshot names its own integration, so it decodes after its connection is gone.
+        yield* store.delete(identity(posthog));
+        const kept = yield* store.snapshot(who.companyId, posthog.id, 1);
+        assert.strictEqual(kept.integration, "posthog");
+        assert.strictEqual((yield* store.get(who.companyId, postgres.id)).integration, "postgres");
       })
   );
 });

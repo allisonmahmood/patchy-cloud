@@ -794,6 +794,62 @@ it.layer(layer)("SDK company generation", (it) => {
   );
 
   it.effect(
+    "generates a PostHog client and its events, beside a Postgres connection of the same name",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient;
+        const snapshot = {
+          version: 1 as const,
+          events: [{ name: "$pageview", description: "Page views <script>" }],
+          eventProperties: [{ name: "$browser", type: "String" }],
+          personProperties: [{ name: "email", type: null }]
+        };
+        yield* sql`INSERT INTO connections
+          (id, company_id, integration, handle, description, mode, status, display, credentials,
+           key_id, credential_revision, metadata_revision, created_by)
+          VALUES ('sdk-posthog', ${identity.company.id}, 'posthog', 'warehouse', 'Product analytics',
+            'company', 'connected', ${sql.json({ region: "us", projectId: 12345, keyHint: "phx_…a91f" })},
+            'not-a-valid-ciphertext', 'missing-key', 1, 2, ${identity.user.id})`;
+        yield* sql`INSERT INTO connection_snapshots
+          (connection_id, company_id, integration, revision, snapshot)
+          VALUES ('sdk-posthog', ${identity.company.id}, 'posthog', 2, ${sql.json(snapshot)})`;
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(identity.machine.id),
+            HttpClientRequest.bodyJsonUnsafe({
+              ...generateRequest(),
+              manifest: {
+                ...Fixtures.manifest,
+                uses: { analytics: { kind: "posthog", handle: "warehouse" } }
+              }
+            })
+          )
+        );
+        assert.strictEqual(response.status, 200);
+        const output = yield* decodeGenerated(yield* response.json);
+        assert.deepStrictEqual(output.uses, [
+          { alias: "analytics", id: "sdk-posthog", revision: 2 }
+        ]);
+        assert.deepStrictEqual(output.metadata.posthog, {
+          analytics: {
+            declaration: { kind: "posthog", handle: "warehouse", id: "sdk-posthog", revision: 2 },
+            snapshot
+          }
+        });
+        const file = (path: string) => output.files.find((item) => item.path === path)?.contents;
+        assert.include(file("patchy/_generated/uses/analytics.ts"), '"posthog.query"');
+        const context = file("patchy/_generated/context/analytics.md")!;
+        assert.include(context, "<code>$pageview</code>: Page views &lt;script&gt;");
+        assert.include(context, "<code>$browser</code> (String)");
+        assert.isDefined(file(".agents/skills/patchy-posthog/SKILL.md"));
+        assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
+        const index = JSON.parse(file("patchy/_generated/index.json")!);
+        assert.notProperty(index.uses[0], "fixture");
+      })
+  );
+
+  it.effect(
     "generates cumulative shared inventory and rejects sources the member cannot open",
     () =>
       Effect.gen(function* () {
