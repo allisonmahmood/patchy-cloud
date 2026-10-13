@@ -26,6 +26,7 @@ import pg from "pg";
 import { tsImport } from "tsx/esm/api";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import cliPackage from "../packages/patchy/package.json" with { type: "json" };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPackageDir = path.join(repoRoot, "packages/patchy");
@@ -2156,7 +2157,7 @@ async function assertStoredDraft(
     assert.equal(version.versionNumber, index + 1);
     assert.equal(version.createdByMachineTokenId, machineTokenId);
     assert.equal(version.tier, 0);
-    assert.equal(version.release, "0.0.1");
+    assert.equal(version.release, cliPackage.version);
     assert.equal(version.wireVersion, 1);
     assert.equal(
       await readFile(path.join(objectDir, version.objectKey), "utf8"),

@@ -81,7 +81,7 @@ See **Publish key** in [Patches](../patches/GLOSSARY.md), distinct from the mach
 _Avoid_: publishing key, token
 
 **Release**:
-The exact version shared by Patchy's CLI, config builders, browser client and dev runtime. An instance accepts only its current release for new publishing and dev starts; unresolved publishes remain recoverable and deployed versions keep their own wire contract.
+The exact version shared by Patchy's CLI, config builders, browser client and dev runtime, named `0.<id>.0` after the newest What's new release. An instance accepts only its current release for new publishing and dev starts; unresolved publishes remain recoverable and deployed versions keep their own wire contract.
 _Avoid_: wire version, patch version
 
 **Server bundle**:

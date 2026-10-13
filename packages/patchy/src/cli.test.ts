@@ -531,7 +531,7 @@ describe("patchy status", async () => {
       hasToken: false,
       tokenSource: null,
       stateDir: dir,
-      cliVersion: "0.0.1"
+      cliVersion: CURRENT_RELEASE
     });
 
     // A worktree with a running dev instance is found from any directory
