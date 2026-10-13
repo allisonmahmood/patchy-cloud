@@ -639,9 +639,9 @@ export const RuntimeFailure = Schema.Struct({
   details: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
   correlationId: Schema.optionalKey(NonEmptyText),
   /**
-   * The integration operation that refused a tier 2 callback, such as `posthog.query`, stamped
-   * by the host. A handler that relays the refusal keeps it, so its caller still reads that
-   * integration's details.
+   * The integration operation that refused, such as `posthog.query`, when a tier 2 handler relays
+   * its refusal: the host restores it from its own record, so the caller still reads that
+   * integration's details. Callback replies to a guest never carry it.
    */
   operation: Schema.optionalKey(NonEmptyText)
 }).annotate({ identifier: "RuntimeFailure" });

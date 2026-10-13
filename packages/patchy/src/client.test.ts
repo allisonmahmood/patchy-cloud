@@ -83,6 +83,7 @@ it("records the operation that refused, so its integration's details narrow by i
   expect(isPatchyError(posthog, "invalid_query", "posthog")).toBe(true);
   expect(isPatchyError(posthog, "invalid_query", "posthog.query")).toBe(true);
   expect(isPatchyError(posthog, "invalid_query", "postgres")).toBe(false);
+  // @ts-expect-error a from names a whole integration; a prefix of one matches nothing
   expect(isPatchyError(posthog, "invalid_query", "post")).toBe(false);
   expect(isPatchyError(postgres, "invalid_query", "postgres")).toBe(true);
   const error: unknown = posthog;
@@ -100,13 +101,18 @@ it("records the operation that refused, so its integration's details narrow by i
     const sqlstate: string = error.details.sqlstate;
     void sqlstate;
   }
-  const from: string = "posthog";
+  const from: "postgres" | "posthog" = Math.random() > 0.5 ? "posthog" : "postgres";
   if (isPatchyError(error, "invalid_query", from)) {
     const message: string = error.details.message;
-    // @ts-expect-error a from known only as a string may name PostHog, which has no SQLSTATE
+    // @ts-expect-error either integration may have refused, and PostHog sends no SQLSTATE
     void error.details.sqlstate;
     void message;
   }
+  const loose: string = "posthog";
+  // @ts-expect-error a from must name one integration, or one of its operations
+  isPatchyError(error, "invalid_query", loose);
+  // @ts-expect-error a pattern could match either integration's operations
+  isPatchyError(error, "invalid_query", "posthog.query" as `${string}.query`);
   // Narrowing on the code alone keeps Postgres's details, as patches written before PostHog do.
   if (isPatchyError(error, "invalid_query")) {
     const sqlstate: string = error.details.sqlstate;

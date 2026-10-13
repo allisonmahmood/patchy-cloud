@@ -149,22 +149,22 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const resolved = yield* Effect.result(capabilities.resolve(token, attempt));
     if (resolved._tag === "Failure") return resolved.failure.failure;
     const capability = resolved.success;
-    // An integration's refusals name it, so a handler that relays one keeps its details. A
-    // nested handler's refusal keeps the operation it already names.
+    // An integration's refusal is recorded with its operation, so a handler that relays it keeps
+    // that integration's details. The record stays with the host: published guests decode
+    // replies strictly and predate the field. Only actions use integrations, and actions never
+    // nest, so no guest needs it.
     let integration: string | undefined;
     const remember = (
       reply: GuestProtocol.CallbackReply,
       status: number
-    ): GuestProtocol.CallbackReply =>
-      !reply.ok && reply.source === "patchy"
-        ? capabilities.rememberRefusal(
-            capability,
-            integration === undefined || reply.operation !== undefined
-              ? reply
-              : { ...reply, operation: integration },
-            status
-          )
-        : reply;
+    ): GuestProtocol.CallbackReply => {
+      if (reply.ok || reply.source !== "patchy") return reply;
+      // The same refusal can pass twice; only a copy that names an operation is new.
+      if (reply.operation === undefined)
+        return capabilities.rememberRefusal(capability, reply, status, integration);
+      const { operation, ...failure } = reply;
+      return capabilities.rememberRefusal(capability, failure, status, operation);
+    };
     if (!transportCharged) {
       const refusal = capabilities.chargeCallback(capability);
       if (refusal !== undefined) return refusal;

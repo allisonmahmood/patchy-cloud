@@ -55,7 +55,12 @@ export interface Capability {
   readonly tree: TreeBudget;
   readonly counters: Counters;
   readonly logs: Array<Schema.Json>;
-  readonly refusals: Array<{ readonly failure: RuntimeFailure; readonly status: number }>;
+  readonly refusals: Array<{
+    readonly failure: RuntimeFailure;
+    readonly status: number;
+    /** The integration operation that refused, restored when a guest relays the refusal. */
+    readonly operation?: string;
+  }>;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
   /** Host-observed resource attempts, recorded before callback authorisation. */
   readonly onDependency?: (key: string) => void;
@@ -133,7 +138,8 @@ export class InvocationCapabilities extends Context.Service<
     readonly rememberRefusal: (
       capability: Capability,
       failure: RuntimeFailure,
-      status: number
+      status: number,
+      operation?: string
     ) => RuntimeFailure;
     readonly execute: <A, E, R>(
       capability: Capability,
@@ -153,13 +159,18 @@ export const make = Effect.gen(function* () {
   const rememberRefusal: InvocationCapabilities["Service"]["rememberRefusal"] = (
     capability,
     failure,
-    status
+    status,
+    operation
   ) => {
     if (
       capability.refusals.length <= countLimit &&
       !capability.refusals.some((entry) => entry.failure === failure)
     )
-      capability.refusals.push({ failure, status });
+      capability.refusals.push({
+        failure,
+        status,
+        ...(operation === undefined ? {} : { operation })
+      });
     return failure;
   };
   const chargeCallback: InvocationCapabilities["Service"]["chargeCallback"] = (capability) => {

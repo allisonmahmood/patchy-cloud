@@ -112,7 +112,9 @@ export class ExecutorBusy extends Schema.TaggedError<ExecutorBusy>()("ExecutorBu
 /** A guest may relay only the exact refusal its host issued to this attempt. */
 export class CallbackRefusal extends Schema.TaggedError<CallbackRefusal>()("CallbackRefusal", {
   failure: RuntimeFailure,
-  status: Schema.Number
+  status: Schema.Number,
+  /** The integration operation the host recorded with this refusal, never the guest's claim. */
+  integrationOperation: Schema.optionalKey(Schema.String)
 }) {
   get code() {
     return this.failure.code;
@@ -137,9 +139,6 @@ export class CallbackRefusal extends Schema.TaggedError<CallbackRefusal>()("Call
   }
   get details() {
     return this.failure.details;
-  }
-  get integrationOperation() {
-    return this.failure.operation;
   }
 }
 
@@ -591,7 +590,14 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   const trusted = capability.refusals.find(
                     (entry) => canonicalArgs(entry.failure) === canonicalArgs(reply)
                   );
-                  if (trusted !== undefined) return yield* new CallbackRefusal(trusted);
+                  if (trusted !== undefined)
+                    return yield* new CallbackRefusal({
+                      failure: trusted.failure,
+                      status: trusted.status,
+                      ...(trusted.operation === undefined
+                        ? {}
+                        : { integrationOperation: trusted.operation })
+                    });
                   return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 }
               }

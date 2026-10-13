@@ -91,22 +91,24 @@ export class PatchyError<C extends ErrorCode = ErrorCode, O extends string = str
 export type Errors<C extends ErrorCode, O extends string = string> = {
   [K in C]: PatchyError<K, O>;
 }[C];
+/** The integrations whose refusals carry their own details. */
+type Integration = "postgres" | "posthog";
 /**
- * Refusals from an operation, or from every operation of the integration it names: `posthog`
- * is `posthog.*`. A `from` known only as a string could name either integration.
+ * An integration or one of its operations. Each names exactly one integration, so the details
+ * it narrows to are never a guess.
  */
-type From<C extends ErrorCode, F extends string> = string extends F
-  ? Errors<C, PostHogOperation> | Errors<C>
-  : Errors<C, F extends `${string}.${string}` ? F : `${F}.${string}`>;
+type From = Integration | `${Integration}.${string}`;
+/** An operation, or every operation of the integration it names: `posthog` is `posthog.*`. */
+type Operations<F extends From> = F extends `${string}.${string}` ? F : `${F}.${string}`;
 /**
  * Narrows to a Patchy refusal, optionally with this code and from an operation such as
  * `posthog.query` or an integration such as `posthog`, whose details it then carries.
  */
-export function isPatchyError<C extends ErrorCode, const F extends string>(
+export function isPatchyError<C extends ErrorCode, const F extends From>(
   error: unknown,
   code: C,
   from: F
-): error is From<C, F>;
+): error is Errors<C, Operations<F>>;
 export function isPatchyError<C extends ErrorCode>(error: unknown, code: C): error is Errors<C>;
 export function isPatchyError(error: unknown): error is Errors<ErrorCode>;
 export function isPatchyError(

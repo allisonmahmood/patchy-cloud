@@ -706,7 +706,12 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
         code: "session_expired",
         correlationId: denied!.correlationId
       });
-      assert.deepStrictEqual(capability.refusals, [{ failure: refusal, status: 401 }]);
+      // The host keeps the integration operation with its record; published guests decode
+      // replies strictly, so the reply never carries it.
+      assert.notProperty(refusal, "operation");
+      assert.strictEqual(capability.refusals.length, 1);
+      assert.strictEqual(capability.refusals[0]!.failure, refusal);
+      assert.include(capability.refusals[0], { status: 401, operation: "postgres.query" });
     }).pipe(Effect.scoped)
   );
   it.effect(
