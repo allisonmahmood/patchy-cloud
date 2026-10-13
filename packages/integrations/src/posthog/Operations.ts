@@ -170,19 +170,22 @@ export const shaped = Effect.fn("PostHogOperations.shaped")(function* (
     readonly kind: (typeof shape)[string]["kind"];
     readonly optional: boolean;
     readonly type: string;
+    readonly parsed: Mapping.Type;
   }> = [];
   for (const [name, column] of Object.entries(shape)) {
     const index = indices.get(name);
     if (index === undefined) return yield* new ShapeMismatch({ column: name, reason: "missing" });
     const type = response.types[index]![1];
-    if (!Mapping.compatible(column.kind, type))
+    const parsed = Mapping.parse(type);
+    if (parsed === undefined || !Mapping.compatible(column.kind, parsed))
       return yield* new ShapeMismatch({ column: name, reason: "type", type });
     columns.push({
       name,
       index,
       kind: column.kind,
       optional: column.optional === true,
-      type
+      type,
+      parsed
     });
   }
   const rows: Row[] = [];
@@ -197,7 +200,7 @@ export const shaped = Effect.fn("PostHogOperations.shaped")(function* (
         if (!column.optional)
           return yield* new ShapeMismatch({ column: column.name, reason: "null" });
       } else {
-        value = Mapping.value(column.kind, column.type, raw);
+        value = Mapping.value(column.kind, column.parsed, raw);
         if (value === undefined || !isJson(value))
           return yield* new ShapeMismatch({
             column: column.name,
