@@ -393,9 +393,10 @@ browser sign-out is a separate control on **Your machines**.
   `--api-url` does not carry it along, even when the URL is the same.
 - A rejected key is a hard error. Log in again as the same user to keep editing
   that user's pages; if an environment key overrides it, resolve that override.
-- A new publish checks the executing CLI against `GET /api/release`, then validates the file.
+- A new publish checks the executing CLI against `GET /api/release`, then validates the file;
+  `patchy init` and `patchy look publish` check it too.
   A `release_mismatch` names both releases and the instance's install line:
-  rerun it to upgrade the CLI. Inside a patch repo, use `pnpm patchy refresh`.
+  rerun it to upgrade the CLI, then retry. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources. Repo mode admits
   tiers 0, 1 and 2 with tables, stores, shared tables, shared stores, members and Postgres declarations.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the

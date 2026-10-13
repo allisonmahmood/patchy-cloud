@@ -56,7 +56,7 @@ import * as Login from "./Login.js";
 import * as Output from "./Output.js";
 import * as State from "./State.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
-import { checkRelease } from "./ReleaseCheck.js";
+import { requireCurrentCli } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
 import * as Setup from "./Setup.js";
 import { prepareRepoPublish } from "./repoBuild.js";
@@ -605,12 +605,7 @@ const publish = Command.make(
               )
             )
           : undefined;
-        const release = yield* client
-          .release()
-          .pipe(
-            Effect.catch((error) => Api.classify(error, "Could not read the instance release."))
-          );
-        yield* checkRelease(release.release, { cli: RELEASE }, { instanceUrl: instance.apiUrl });
+        yield* requireCurrentCli(client);
         const path = yield* Path.Path;
         const { resolved, html } = yield* readHtml(Option.getOrThrow(options.file));
         yield* validated(html);
@@ -1066,6 +1061,7 @@ const lookPublish = Command.make(
             message: `The look failed its checks; nothing was published.\n- ${errors.join("\n- ")}`
           });
         const client = yield* Api.client(yield* requiredToken());
+        yield* requireCurrentCli(client);
         const published = yield* client
           .publishLook({ payload: new LookPublishRequest({ note, files }) })
           .pipe(Effect.catch((error) => refused(error, "Look publish failed.")));

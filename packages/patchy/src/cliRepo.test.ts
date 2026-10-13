@@ -770,6 +770,21 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     expect(instance.requests.some((request) => request.url.split("?")[0] === route)).toBe(true);
   });
 
+  it("refuses init from a CLI behind its instance before asking for a purpose or writing", async () => {
+    const instance = await stubInstance(projectHandler, () => "9.9.9");
+    const parent = tempDir();
+    const result = await runCli(["init", "notes", "--api-url", instance.url, "--json"], {
+      cwd: parent,
+      env
+    });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    const failure = JSON.parse(result.stderr);
+    expect(failure).toMatchObject({ kind: "local", code: "release_mismatch" });
+    expect(failure.error).toContain(`curl -fsS '${instance.url}/install.mjs'`);
+    expect(instance.requests.map(({ url }) => url)).toEqual(["/api/me", "/api/release"]);
+    expect(existsSync(path.join(parent, "notes"))).toBe(false);
+  });
+
   // The packed tier 2 e2e initializes tier 2; this owns the offline pin and both tier transitions.
   it("initializes a tier 1 typechecking tree offline, refuses reinitialization and preserves sources across tier changes", async () => {
     const registry = await localPackageRegistry();

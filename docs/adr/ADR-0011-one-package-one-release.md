@@ -92,9 +92,11 @@ accepted ranges. Dev and publish refuse unsupported loaded Vite and plugin
 versions with `toolchain_unsupported` and an upgrade command. Refresh reports a
 required upgrade in its warnings without editing those dependencies.
 
-New publishes and dev starts require the pin, executing CLI and loaded runtime,
-where present, to equal the instance's current release. A mismatch names both
-releases and `patchy refresh`. A saved publish is recovered before this check;
-upgrading cannot erase its key or change its owner. Running dev sessions and
-already deployed bundles are not invalidated by a release: deployed bundles use
-the stable, versioned runtime wire rather than an exact-current SDK check.
+New publishes of a patch or a look, new repos and dev starts require the pin,
+executing CLI and loaded runtime, where present, to equal the instance's current
+release. A mismatch names both releases and the repair: `patchy refresh` in a
+repo, the instance's installer outside one. A saved publish is recovered before
+this check; upgrading cannot erase its key or change its owner. Running dev
+sessions and already deployed bundles are not invalidated by a release: deployed
+bundles use the stable, versioned runtime wire rather than an exact-current SDK
+check.

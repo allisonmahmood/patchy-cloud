@@ -41,6 +41,7 @@ import {
 } from "./ManagedProject.js";
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
 import { RELEASE } from "./release.js";
+import { requireCurrentCli } from "./ReleaseCheck.js";
 import { processResult } from "./processResult.js";
 import { lookNotices } from "./lookNotices.js";
 import { primitiveReminders } from "./primitiveReminders.js";
@@ -905,13 +906,15 @@ export const init = Effect.fn("Project.init")(function* (
   const path = yield* Path.Path;
   const instance = yield* Instance.Instance;
   const client = yield* Api.client(token);
-  // Identity is checked before purpose prompting, directory checks, or any repo writes.
+  // Identity and the CLI's release are checked before purpose prompting, directory checks, or
+  // any repo writes.
   const identity = yield* client
     .me()
     .pipe(Effect.catch((error) => refusal(error, "Authentication failed.")));
   yield* Output.notice(
     `Instance: ${instance.apiUrl}\nUser: ${identity.user.name} (${identity.user.email})\nCompany: ${identity.company.name} (${identity.company.handle})`
   );
+  const release = yield* requireCurrentCli(client);
   let purpose = Option.getOrUndefined(purposeOption);
   while (true) {
     if (purpose === undefined) {
@@ -965,9 +968,6 @@ export const init = Effect.fn("Project.init")(function* (
       )).length > 0
   )
     return yield* new LocalError({ message: `Refusing to initialize an existing tree: ${dir}` });
-  const release = yield* client
-    .release()
-    .pipe(Effect.catch((error) => Api.classify(error, "Could not read the instance release.")));
   const candidate = path
     .basename(dir)
     .toLowerCase()
