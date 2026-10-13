@@ -4,8 +4,10 @@ A company's **look** is how its tools look by default: three text files an admin
 publishes with `patchy look publish <dir> --note "<why>"`. Capture one on the
 person's machine into a new folder outside any patch repo, from a website, a brand
 book or wherever else the brand already lives, and keep the folder until the
-publish succeeds. Captures took 8 to 14 minutes in testing; tell the person about
-ten.
+publish succeeds. After that Patchy holds the published files: any colleague's agent
+reads them with `patchy look --json`, and a small edit starts from `current.files`. The
+folder needs no keeping, so don't offer to keep it. Captures took 8 to 14 minutes in
+testing; tell the person about ten.
 
 | File       | What it holds                                                            |
 | ---------- | ------------------------------------------------------------------------ |

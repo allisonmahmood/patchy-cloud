@@ -154,9 +154,10 @@ take the person's role, email and company name from `whoami --json`:
   patchy look publish <dir> --note "captured from acme.com" --json
   ```
 
-  Say: "Acme's look is published as revision 1. New tools start in it, and only
-  admins can change it." On no, their tools use the Patchy look until an admin
-  publishes one; "make our tools look like acme.com" starts that any time.
+  Say: "Acme's look is published as revision 1 for everyone at Acme. Their agents
+  use it by default for new pages and tools, with no setup on their side. Only admins
+  can change it." On no, their tools use the Patchy look until an admin publishes
+  one; "make our tools look like acme.com" starts that any time.
 
 ### 4. Publish the welcome patch
 
@@ -238,9 +239,10 @@ actually gives you; never invent one, and never carry these into a real session.
 >
 > **User**: the green should be darker, like the footer
 >
-> **Agent**: Footer green it is. Greenfield Pottery's look is published as revision 1.
-> New tools start in it, and only admins can change it. Publishing your welcome page
-> now… Here it is: `https://pages.example.com/greenfield/welcome` — signed-in
+> **Agent**: Footer green it is. Greenfield Pottery's look is published as revision 1
+> for everyone at Greenfield Pottery. Their agents use it by default for new pages and
+> tools, with no setup on their side. Only admins can change it. Publishing your
+> welcome page now… Here it is: `https://pages.example.com/greenfield/welcome` — signed-in
 > colleagues in your company can open it. Next time, just say "publish this with
 > patchy".
 
