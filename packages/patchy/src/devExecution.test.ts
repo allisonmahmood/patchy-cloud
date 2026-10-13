@@ -8,7 +8,7 @@ import { CURRENT_RELEASE, Identity, Upload, type RuntimeStreamFrame } from "@pat
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Inspection from "@patchy/execution/inspection";
 import { ContractLimits } from "@patchy/limits";
-import { Binding, Invocation, Subscriptions } from "@patchy/runtime/dev";
+import { Binding, Invocation, Runtime, Subscriptions } from "@patchy/runtime/dev";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -76,7 +76,8 @@ const analytics = action({args:{name:t.text()},result:t.json(),handler:async (ct
   try { return {viewer:ctx.viewer.user.id, rows:(await ctx.connections.analytics.query({name:args.name,query:"SELECT event FROM events LIMIT 10",shape:{event:t.text()}})).rows}; }
   catch (error) { return {code:error.code, correlationId:error.correlationId ?? null}; }
 }});
-export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,adopt,fail,oversized,analytics}}, ["assets"]);`
+const relayed = action({args:{},result:t.json(),handler:async ctx => (await ctx.connections.analytics.query({name:"broken",query:"SELECT 1",shape:{event:t.text()}})).rows});
+export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,adopt,fail,oversized,analytics,relayed}}, ["assets"]);`
       },
       alias: { "patchy/server": new URL("./server.ts", import.meta.url).pathname },
       external: ["./executeConfig.js"],
@@ -398,9 +399,32 @@ it.live(
         ok: true,
         value: { code: "invalid_query", correlationId: "call_on_the_instance" }
       });
+      // An action that relays the refusal hands its caller the operation, as a published one does.
+      const relayed = yield* invocation
+        .call(
+          { handler: "demo.relayed", args: {} },
+          {
+            ...resources.version,
+            identity: viewer,
+            principal: { userId: viewer.user.id },
+            correlationId: "dev-posthog-relay"
+          },
+          Effect.succeed(viewer)
+        )
+        .pipe(Effect.flip);
+      assert.deepInclude(Runtime.toFailure(relayed), {
+        code: "invalid_query",
+        operation: "posthog.query",
+        correlationId: "call_on_the_instance"
+      });
       assert.deepStrictEqual(
         seen.map((request) => request.authorization),
-        ["Bearer pp_machine_key", "Bearer pp_machine_key", "Bearer pp_machine_key"]
+        [
+          "Bearer pp_machine_key",
+          "Bearer pp_machine_key",
+          "Bearer pp_machine_key",
+          "Bearer pp_machine_key"
+        ]
       );
       assert.deepStrictEqual(seen[0]!.body, {
         op: "posthog.query",

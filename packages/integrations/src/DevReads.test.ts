@@ -37,6 +37,7 @@ import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as PostHogDouble from "./test/posthog.js";
+import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
 
 /**
  * `patchy dev`'s PostHog binding against a real instance door: the endpoint on a socket over a
@@ -66,6 +67,12 @@ const project = {
   query: async ({ name, query }) => {
     if (name?.startsWith("hold") && held !== undefined) await held.promise;
     if (query === "SELECT 1") return PostHogDouble.rows([["1", "UInt8"]], [[1]]);
+    if (name === "limited")
+      return PostHogDouble.json(
+        429,
+        { type: "throttled", code: "rate_limit_exceeded", detail: "Too many queries." },
+        { "retry-after": "7" }
+      );
     if (query.includes("numbers(1001)"))
       return PostHogDouble.rows(
         [["n", "UInt64"]],
@@ -343,6 +350,27 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
             }
           }).pipe(Effect.flip);
           assert.strictEqual(large.code, "too_large");
+
+          // Each refusal names its operation, as a published patch's does, so a patch narrows
+          // PostHog's details the same way in dev; a rate limit keeps PostHog's Retry-After.
+          const limited = yield* query(DEV_SEED.token, { args: { name: "limited" } }).pipe(
+            Effect.flip
+          );
+          const failure = Runtime.toFailure(limited);
+          assert.deepInclude(failure, {
+            code: "source_rate_limited",
+            retryAfter: 7,
+            operation: "posthog.query"
+          });
+          assert.strictEqual(Runtime.toFailure(invalid).operation, "posthog.query");
+          const seen = decodeError(failure);
+          assert.isTrue(isPatchyError(seen, "source_rate_limited", "posthog"));
+          assert.isFalse(isPatchyError(seen, "source_rate_limited", "postgres"));
+          assert.strictEqual(seen?.retryAfter, 7);
+          const detailed = decodeError(Runtime.toFailure(invalid));
+          if (!isPatchyError(detailed, "invalid_query", "posthog"))
+            return assert.fail("invalid_query from PostHog");
+          assert.strictEqual(detailed.details.message, "Unknown table");
         }),
       30_000
     );

@@ -214,9 +214,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
         })
         .pipe(Effect.mapError((cause) => new Runtime.UnknownOutcome({ cause, correlationId })));
       if (Exit.isFailure(result))
+        // A refusal of a live operation names it, as a published patch's refusal reaches its
+        // caller, so the patch reads that integration's details in dev too.
         return yield* RuntimeApi.recordFailure(
           failure ?? new Runtime.SourceUnavailable({ cause: result.cause }),
-          correlationId
+          { correlationId, ...(operation === undefined ? {} : { operation: input.op }) }
         );
       const body = yield* encodeSuccess({ ok: true, value: result.value }).pipe(
         Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))

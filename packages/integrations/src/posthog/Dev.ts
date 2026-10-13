@@ -75,6 +75,9 @@ export class Refused extends Schema.TaggedError<Refused>()("PostHogDevRefused", 
   get correlationId() {
     return this.failure.correlationId;
   }
+  get integrationOperation() {
+    return this.failure.operation;
+  }
 }
 
 const decodeSuccess = Schema.decodeUnknownOption(RuntimeSuccess);

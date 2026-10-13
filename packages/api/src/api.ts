@@ -703,7 +703,8 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
           "person across every repo (`rate_limited`, 429), after the per-address " +
           "protected-API limit. A draining host answers `busy`. Every call with a valid token " +
           "and envelope, refused or not, is recorded in recent calls as a machine call with no " +
-          "patch or version; its failures carry the row's `correlationId`. Success is " +
+          "patch or version; its failures carry the row's `correlationId`, and a live operation's " +
+          "refusals name it in `operation`, as a published patch's do. Success is " +
           "`{ ok: true, value: { ok: true, rows } }`; refusals are runtime failures. Responses are no-store."
       )
     )

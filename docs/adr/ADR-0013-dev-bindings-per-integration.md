@@ -14,6 +14,6 @@ Future integrations choose for themselves by the same rule: a fixture or fake wh
 
 ## Consequences
 
-A dev read is real company data under the builder's own access, the same any member already has through a published patch. An expired or revoked key, a deactivated person, a disconnected source or an unreachable instance stops these reads with a clear error while the rest of dev keeps working. Rolling back to a release that doesn't know machine calls breaks the recent calls of a connection that has them, until rolled forward or those rows are deleted.
+A dev read is real company data under the builder's own access, the same any member already has through a published patch. An expired or revoked key, a deactivated person, a disconnected source or an unreachable instance stops these reads with a clear error while the rest of dev keeps working. A release reads only the credential kinds it knows, so rolling back to one from before machine calls hides dev calls rather than breaking a connection's recent calls.
 
 Decided in [#643](https://github.com/allisonmahmood/patchy-cloud/issues/643), implemented by [#647](https://github.com/allisonmahmood/patchy-cloud/issues/647).

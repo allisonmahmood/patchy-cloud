@@ -26,12 +26,15 @@ const encodeServerReply = Schema.encodeUnknownEffect(ServerCallReply);
 const encodeFailure = Schema.encodeSync(RuntimeFailure);
 const noStore = { "cache-control": "no-store" };
 
-/** A refusal as the runtime wire carries it; `correlationId` names the call's logged row. */
-export const failure = (error: Runtime.RuntimeError, correlationId?: string) => {
-  const body = {
-    ...Runtime.toFailure(error),
-    ...(correlationId === undefined ? {} : { correlationId })
-  };
+/**
+ * A refusal as the runtime wire carries it. `named` adds what only the replying door knows: the
+ * logged row's `correlationId`, and the integration `operation` that refused.
+ */
+export const failure = (
+  error: Runtime.RuntimeError,
+  named: Pick<RuntimeFailure, "correlationId" | "operation"> = {}
+) => {
+  const body = { ...Runtime.toFailure(error), ...named };
   return HttpServerResponse.jsonUnsafe(encodeFailure(body), {
     status: error.status,
     headers: {
@@ -43,7 +46,7 @@ export const failure = (error: Runtime.RuntimeError, correlationId?: string) => 
 
 export const recordFailure = Effect.fnUntraced(function* (
   error: Runtime.RuntimeError,
-  correlationId?: string
+  named: Pick<RuntimeFailure, "correlationId" | "operation"> = {}
 ) {
   yield* WideEvents.enrich({
     outcome:
@@ -58,7 +61,7 @@ export const recordFailure = Effect.fnUntraced(function* (
     code: error.code,
     ...("limitId" in error && error.limitId !== undefined ? { limitId: error.limitId } : {})
   });
-  return failure(error, correlationId);
+  return failure(error, named);
 });
 
 /** Keep the stream finalizer in the request scope, after its refusal response.

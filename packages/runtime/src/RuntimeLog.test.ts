@@ -155,6 +155,36 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
           [["known", new Date(NOW)]]
         );
         assert.isNull(yield* log.find({ companyId, correlationId: "known-later" }));
+        // A dev read is a kind this release knows: it shows, naming its machine, beside the
+        // synthetic kind it still hides.
+        yield* TestClock.setTime(NOW + 2_000);
+        yield* log.begin({
+          companyId,
+          userId: DEV_SEED.userId,
+          credentialKind: "machine",
+          machine: { id: "tok_laptop", name: "Laptop" },
+          patchId: null,
+          versionId: null,
+          op: "posthog.query",
+          resource: "dailyViews",
+          connectionId: "known",
+          correlationId: "known-dev"
+        });
+        assert.deepStrictEqual(
+          (yield* log.recent({ companyId, connectionId: "known" })).map((call) => [
+            call.correlationId,
+            call.credentialKind,
+            call.machine
+          ]),
+          [
+            ["known-dev", "machine", { id: "tok_laptop", name: "Laptop" }],
+            ["known-session", "session", null]
+          ]
+        );
+        assert.deepStrictEqual(
+          [...(yield* log.latest({ companyId, connectionIds: ["known", "only-unknown"] }))],
+          [["known", new Date(NOW + 2_000)]]
+        );
       })
     )
   );
