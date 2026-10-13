@@ -66,6 +66,25 @@ before use. Disconnected connections point to the admin's
 browser at `/company/connections`. Listing grants no access and reads no rows
 or file contents.
 
+## Where patch files live
+
+A page's file and a tool's repo are how they get updated. Republishing a file updates
+the patch it created, and a tool's repo is the only copy of its source: publish sends
+what it built, not the project. Keep both somewhere lasting:
+
+- The person's choice wins: a folder they name, the patch repo they are working in,
+  or the file a page was published from.
+- Otherwise, new work goes in a `Patchy` folder in their home directory: a page as
+  `~/Patchy/<file>.html`, a tool with `patchy init ~/Patchy/<folder>`. In PowerShell
+  the folder is `"$HOME\Patchy"`. Create it when missing; `init` refuses a missing
+  parent directory.
+- Never a session scratch or temporary folder. Look captures and other throwaway work
+  are exempt.
+- A new page takes a file name not already in its folder, and its first publish adds
+  `--new`, since a cache entry can outlive a deleted file. Republishing it updates
+  its patch.
+- Tell the person where it lives when you create it.
+
 ## Building a tool
 
 When the user wants a tool with its own rows, files or company connections,
@@ -80,7 +99,7 @@ Use the instance-installed CLI described under Publishing, settle the instance
 and identity, and complete the login handoff below if needed. Then run:
 
 ```bash
-patchy init ./team-tool --tier 1 --purpose "The user's purpose for this tool" --json
+patchy init ~/Patchy/team-tool --tier 1 --purpose "The user's purpose for this tool" --json
 ```
 
 For tier 2, use the same command with `--tier 2`. It adds starter handlers in
@@ -88,7 +107,8 @@ For tier 2, use the same command with `--tier 2`. It adds starter handlers in
 `workerd` pin with install scripts disabled, and `patchy-server` alongside
 `patchy-preact` and `patchy-loop`.
 
-Use the user's actual purpose and chosen directory. Initialization authenticates
+Use the user's actual purpose and the folder
+[Where patch files live](#where-patch-files-live) picks. Initialization authenticates
 first; without a key it exits 1 with `Run: patchy login`, not a half-created repo.
 It installs the pinned package and generates client, context, fixture stubs and
 project skills; tiers 1 and 2 start with an empty HTML root and Preact components
@@ -317,10 +337,11 @@ the chosen instance and follow the handoff. Resolve an overriding
    Name the user, company and machine it reports. A successful login does not
    override `PATCHY_API_TOKEN`; completion reports that override in `warnings`.
    Relay any warning and resolve an unintended identity before publishing.
-   Then resume the requested operation: `init` for a tool, or validate and publish a static page:
+   Then resume the requested operation with the file and flags it chose: `init` for
+   a tool, or validate and publish a static page, adding `--new` on its first publish:
 
 ```bash
-patchy validate './plan.html' && patchy publish './plan.html' --json
+patchy validate ~/Patchy/plan.html && patchy publish ~/Patchy/plan.html --new --json
 ```
 
 Skip login only when `whoami` already identifies the intended publisher, then
@@ -563,10 +584,11 @@ from acme.com" or "make our green darker"; writing or restyling a page leaves it
 alone. Read the person's role from `patchy whoami --json`.
 
 - **A member** hears that only admins can change it, named from `admins`. Offer to
-  draft it anyway: capture it into a folder, run `patchy look preview <dir>`, and
-  publish the file it writes as an ordinary page for them to show an admin
-  (`patchy publish <path> --name look-draft --json`); the single-look preview passes
-  `validate`.
+  draft it anyway: capture it into a folder, run `patchy look preview <dir>`, copy
+  the file it writes into `~/Patchy` under a file name not already there, since the
+  next preview overwrites it, and publish that copy as an ordinary page for them to
+  show an admin (`patchy publish <copy> --new --json`); the single-look preview
+  passes `validate`.
 - **An admin's** new look is captured by `references/look-capture.md`, or for a small
   change, `current.files` copied into a folder and edited. Before publishing,
   `patchy look preview <dir> --compare` writes it beside the current look. Its two
@@ -607,9 +629,10 @@ Blocked or unsafe:
 1. Settle the style by [the order above](#styling-a-static-page), reading
    `patchy look --json` when a look applies, so you know which one you are writing to
    before you write.
-2. Write the artifact locally as one `.html` file, complete and self-contained. For a
-   restrained technical report, that means clear sections, tables, and diagrams where
-   they clarify the work.
+2. Write the artifact as one `.html` file where
+   [Where patch files live](#where-patch-files-live) puts it, complete and
+   self-contained. For a restrained technical report, that means clear sections,
+   tables, and diagrams where they clarify the work.
 3. Run `validate` until it passes.
 4. Publish with `--json` so the response gives the actual scope; set `--share` only for
    an explicit sharing choice. With no key, finish the login handoff above before retrying.
