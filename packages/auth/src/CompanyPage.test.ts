@@ -12,6 +12,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
@@ -480,6 +481,47 @@ it.layer(services)("company page and actions", (it) => {
           "/company/invites",
           post(owner.user, { email: "third@example.com fourth@example.com", role: "member" })
         )
+      );
+    })
+  );
+
+  it.effect("keeps going past an address it cannot save and leaves that one in the box", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-batch-fault");
+      const companies = yield* Companies.Companies;
+      const offline = new SqlError({
+        reason: new ConnectionError({ cause: new Error("database offline") })
+      });
+      const response = yield* send(
+        "/company/invites",
+        post(owner.user, {
+          email: "before@example.com broken@example.com after@example.com",
+          role: "member"
+        })
+      ).pipe(
+        Effect.provideService(
+          Companies.Companies,
+          Companies.Companies.of({
+            ...companies,
+            createInvite: (input) =>
+              input.email === "broken@example.com"
+                ? Effect.fail(offline)
+                : companies.createInvite(input)
+          })
+        )
+      );
+      assert.strictEqual(response.status, 503);
+      const html = yield* Effect.promise(() => response.text());
+      assert.include(html, "Invited before@example.com and after@example.com.");
+      assert.include(html, "Could not save the invite for broken@example.com.");
+      assert.include(html, ">broken@example.com</textarea>");
+      assert.deepStrictEqual(
+        (yield* companies.listInvites(owner.company.id)).map(({ email }) => email).sort(),
+        ["after@example.com", "before@example.com"]
+      );
+      assert.deepStrictEqual(
+        reported(owner.company.id).map((event) => event.name),
+        ["invite.sent", "invite.sent"]
       );
     })
   );

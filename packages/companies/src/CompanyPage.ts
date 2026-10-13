@@ -55,7 +55,7 @@ export const styles = `
     .company-table .table { min-width: 760px; overflow-wrap: break-word; }
     .company-table :is(th, td) { vertical-align: middle; }
     .company-table .company-row-actions { text-align: right; white-space: nowrap; }
-    .company-person { display: flex; align-items: center; gap: 12px; line-height: 1.35; }
+    .company-person { display: flex; align-items: center; gap: 12px; }
     .company-actions { display: inline-flex; align-items: center; gap: 6px; }
     @media (max-width: 640px) {
       .company-invite-row { grid-template-columns: minmax(0, 1fr) auto; }
@@ -111,10 +111,10 @@ const addresses = (text: string) => {
   });
 };
 
-/** What became of one address in an invite: emailed, saved without its email, or skipped. */
+/** What became of one address in an invite: emailed, saved without its email, skipped, or not saved. */
 interface Delivery {
   readonly email: string;
-  readonly outcome: "sent" | "unsent" | "member" | "invited";
+  readonly outcome: "sent" | "unsent" | "member" | "invited" | "failed";
 }
 
 /** "a, b and c", escaped. */
@@ -355,7 +355,7 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
               ? `That is ${list.length} addresses. Send up to ${inviteBatch} at a time.`
               : undefined;
       if (problem) return yield* render(viewer, { draft: { text, role, problem } });
-      // Each address is its own invitation: one already in the company skips that address only.
+      // Each address is its own invitation: a refusal or a failed save stops that address only.
       const outcomes = yield* Effect.forEach(list, (email) =>
         Invitations.create({
           email,
@@ -377,7 +377,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           })),
           Effect.catchTags({
             AlreadyInCompany: () => Effect.succeed<Delivery>({ email, outcome: "member" }),
-            AlreadyInvited: () => Effect.succeed<Delivery>({ email, outcome: "invited" })
+            AlreadyInvited: () => Effect.succeed<Delivery>({ email, outcome: "invited" }),
+            SqlError: () => Effect.succeed<Delivery>({ email, outcome: "failed" })
           })
         )
       );
@@ -387,6 +388,7 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       const unsent = emails("unsent");
       const members = emails("member");
       const invited = emails("invited");
+      const failed = emails("failed");
       if (sent.length === outcomes.length)
         return { title: viewer.company.name, body: "", redirect: "/company" };
       const lines = [
@@ -395,14 +397,21 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           ? `Saved the invite for ${sentenceList(unsent)}, but the email did not go out. Resend it from the list.`
           : "",
         members.length
-          ? `${sentenceList(members)} ${members.length === 1 ? "is" : "are"} already in ${escapeHtml(viewer.company.name)}.`
+          ? `${sentenceList(members)} ${members.length === 1 ? "is" : "are"} already in a company.`
           : "",
         invited.length
           ? `${sentenceList(invited)} already ${invited.length === 1 ? "has an invite" : "have invites"}. Resend from the list instead.`
+          : "",
+        failed.length
+          ? `Could not save the invite for ${sentenceList(failed)}. ${failed.length === 1 ? "It is" : "They are"} still in the box; send again.`
           : ""
       ];
       return yield* render(viewer, {
-        notice: { message: lines.filter(Boolean).join(" "), status: unsent.length ? 502 : 409 }
+        notice: {
+          message: lines.filter(Boolean).join(" "),
+          status: failed.length ? 503 : unsent.length ? 502 : 409
+        },
+        draft: failed.length ? { text: failed.join("\n"), role } : undefined
       });
     }
     if (action.kind === "revoke") {
