@@ -172,16 +172,16 @@ masthead the look's logo (`<img src="data:image/svg+xml;base64,…" alt="<compan
 with no logo, the company's name. Follow the brief where it fits, its voice and recipes
 included.
 
-Then publish it as the person's one welcome page, never a second one. Before writing,
-see whether `~/Patchy/welcome.html` is already there:
+Then publish it as the person's one welcome page, never a second one. Whether
+`~/Patchy/welcome.html` was already there before you wrote it decides how:
 
-- **It is**: this machine published it before, and republishing updates that patch:
+- **It was**: this machine published it before, and republishing updates that patch:
 
   ```bash
   patchy validate ~/Patchy/welcome.html && patchy publish ~/Patchy/welcome.html --json
   ```
 
-- **It isn't**: the file cache is per machine, so look for one published elsewhere
+- **It wasn't**: the file cache is per machine, so look for one published elsewhere
   with `patchy list --mine --state all --json`, named `welcome` or `welcome-<n>`. Ask
   the person when unsure which it is. Update a live one by adding `--patch <id>`; a
   retired or deleted one is theirs to restore or leave. With none, create it by
