@@ -89,8 +89,12 @@ See **Runtime log** in [Runtime](../runtime/GLOSSARY.md); connection calls and a
 _Avoid_: audit trail, analytics event (a business moment, not a call)
 
 **Dev binding**:
-The local implementation of an integration's supported operations, using synthetic data instead of production credentials or business rows. It preserves the operation contract while making its limits explicit. PostHog has none: dev is to read the real connection instead, since its shapes can't be known ahead and it can't write.
+How `patchy dev` runs an integration's operations, chosen per integration ([ADR-0013](../../docs/adr/ADR-0013-dev-bindings-per-integration.md)). By default it is local, over fixtures or a fake, with no production credentials or business rows. An integration whose shapes can't be known ahead and which can't write reads the real connection instead, through a dev read; PostHog does, Postgres keeps fixtures.
 _Avoid_: Mock integration, production proxy
+
+**Dev read**:
+One live dev binding call: the instance runs an operation the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person.
+_Avoid_: Dev proxy, impersonated read
 
 **Fixture**:
 Builder-authored synthetic data for a declaration's local shape, with invented rows for connections and shared tables, or files for shared stores. Fixtures establish local behavior, not production data, authority or volume guarantees; view fixtures contain explicit rows rather than recomputed source data.

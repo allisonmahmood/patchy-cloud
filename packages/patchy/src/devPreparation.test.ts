@@ -57,7 +57,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   yield* fs.writeFileString(path.join(root, "fixtures/shared-contacts.sql"), "");
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
-    `import { defineConfig, table, t, members, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n` +
+    `import { defineConfig, table, t, members, posthog, sharedTable, sharedStore } from ${JSON.stringify(builders)};\n` +
       'import { column } from "./fields.ts";\n' +
       `export default defineConfig({ name: "preparation-test", tier: ${tier}, tables: { notes: table("Notes identified by id.", { [column]: t.text() }) }, uses: ${uses} });\n`
   );
@@ -213,6 +213,41 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         assert.deepStrictEqual((yield* prepare).warnings, [
           "Table `notes` changed since its last generation; check that its description still holds: 'Notes identified by id.'"
         ]);
+      }),
+    { timeout: 30_000 }
+  );
+  it.effect(
+    "prepares PostHog without a fixture, since dev reads the real connection, and checks its metadata",
+    () =>
+      Effect.gen(function* () {
+        const analytics = {
+          kind: "posthog",
+          id: "conn_product",
+          handle: "product",
+          revision: 2
+        } as const;
+        const index = {
+          ...currentIndex,
+          uses: [{ alias: "analytics", id: analytics.id, revision: 2, declaration: analytics }]
+        };
+        const uses = '{ analytics: posthog("product") }';
+        const metadata = (declaration: typeof analytics | { revision: number }) => ({
+          postgres: {},
+          shared: {},
+          posthog: {
+            analytics: {
+              declaration: { ...analytics, ...declaration },
+              snapshot: { version: 1, events: [], eventProperties: [], personProperties: [] }
+            }
+          }
+        });
+        const { prepare } = yield* harness({ index, uses, metadata: metadata(analytics) });
+        assert.deepStrictEqual((yield* prepare).manifest.uses, { analytics });
+        const stale = yield* harness({ index, uses, metadata: metadata({ revision: 3 }) });
+        assert.strictEqual(
+          (yield* stale.prepare.pipe(Effect.flip)).message,
+          "Generation returned inconsistent metadata for analytics."
+        );
       }),
     { timeout: 30_000 }
   );

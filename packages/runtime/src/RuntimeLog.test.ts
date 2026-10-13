@@ -8,7 +8,9 @@ import * as Testing from "@patchy/sql/testing";
 import * as RuntimeLog from "./RuntimeLog.js";
 
 const NOW = Date.UTC(2026, 0, 1);
-const mutation = (correlationId: string): RuntimeLog.Begin => ({
+const mutation = (
+  correlationId: string
+): Extract<RuntimeLog.Begin, { readonly credentialKind: "session" | "admin" }> => ({
   companyId: DEV_SEED.companyId,
   patchId: "runtimepatch",
   versionId: "ver_runtime",

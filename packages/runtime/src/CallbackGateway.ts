@@ -433,9 +433,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             )
           );
           if (Exit.isFailure(result)) {
+            // A refusal relayed from elsewhere keeps the row it names: `patchy dev` journals
+            // nothing locally, and its live reads are logged on the instance.
             if (Option.isSome(failure) && !isCapabilityRefused(failure.value))
               return remember(
-                { ...Runtime.toFailure(failure.value), correlationId: binding.correlationId },
+                { correlationId: binding.correlationId, ...Runtime.toFailure(failure.value) },
                 failure.value.status
               );
             return yield* Effect.failCause(result.cause);

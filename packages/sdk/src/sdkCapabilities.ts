@@ -200,7 +200,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "patchy/_generated/client.ts: patchy.connections",
       "patchy/_generated/server.ts: ctx.connections"
     ],
-    runs: "Tier 1 pages through the broker; tier 2 actions. patchy dev refuses PostHog calls in this release",
+    runs: "Tier 1 pages through the broker; tier 2 actions. patchy dev reads the real project through the instance as the machine key's person",
     limits: `Declare a connected company PostHog Cloud project. query({ name, query, values, shape }) runs one named, read-only HogQL query; values are constants for its placeholders. At most 1,000 rows and ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB, ${runtimeByteLimits.posthogBytes / 1024} KiB of arguments and a 15-second service deadline bounded by the action's remaining time. A result PostHog cut short fails too_large; PostHog's own limits fail source_rate_limited and are never retried. Queries and mutations cannot use ctx.connections; PostHog reads are not live-query dependencies.`
   },
   {

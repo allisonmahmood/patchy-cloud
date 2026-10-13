@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import { Identity, RuntimeStreamFrame } from "@patchy/api";
 import { shellContentSecurityPolicy } from "@patchy/serving/shell";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -84,7 +85,8 @@ it.live(
           pid: process.pid,
           birth: "starting"
         },
-        toolchain
+        toolchain,
+        Option.none()
       ).pipe(Effect.forkScoped);
       yield* Effect.gen(function* () {
         while (!(yield* Effect.promise(() => readRecord(stateDir)))?.url)
@@ -347,7 +349,8 @@ it.live(
           pid: process.pid,
           birth: "starting"
         },
-        toolchain
+        toolchain,
+        Option.none()
       ).pipe(Effect.forkScoped);
       yield* Effect.gen(function* () {
         while (!(yield* Effect.promise(() => readRecord(stateDir)))?.url)

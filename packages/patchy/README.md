@@ -725,7 +725,8 @@ behavior.
 plus `ctx.log` output. Handler failures include their original message and stack
 locally; browsers still receive the normal redacted error. A daemon started with
 `--json` writes full wide-event JSON and invocation records to the log. There are
-no runtime database log rows or PostHog delivery.
+no local runtime log rows or PostHog event delivery; the instance logs PostHog dev
+reads as Dev calls on the connection's page.
 
 Vite runs in build-watch mode, not as an unrestricted dev server. A successful
 `src/` rebuild atomically swaps the single-file page and reloads the whole shell.
@@ -762,12 +763,18 @@ manifest. Omitted published columns and indexes remain in the local schema,
 including unique constraints; omission does not relax writes.
 
 Each Postgres declaration needs `fixtures/postgres-<handle>.sql`; aliases of
-one connection share its PGlite. PostHog declarations need no fixture, and this
-release's dev refuses their calls with `source_unavailable`. Shared tables need `fixtures/shared-<alias>.sql`
+one connection share its PGlite. PostHog declarations need no fixture: dev reads the
+real project through the instance's dev read door as the key's person, for either
+viewer (ADR-0013). The key reaches the daemon on stdin only when such a declaration
+exists, never argv, the environment, state files or `dev.log`, and never workerd.
+A refused key fails `access_denied` naming `patchy login` and a dev restart; an
+unreachable instance fails `source_unavailable` and the rest of dev keeps working.
+Shared tables need `fixtures/shared-<alias>.sql`
 and use cumulative source definitions, including retained ref targets whose
 declaration was omitted from the source's current manifest. Missing files fail naming the
 file, rather than silently generating an empty replacement. Invent the fixture
-rows; dev fetches metadata only, never production rows, bytes or credentials.
+rows; dev fetches metadata only, never production rows, bytes or credentials,
+apart from those PostHog reads.
 Tier 2 handlers read these fixtures through `ctx.shared` and `ctx.connections`
 using the same callback operations as hosted execution.
 

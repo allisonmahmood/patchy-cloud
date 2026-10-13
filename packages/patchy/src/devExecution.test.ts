@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A stub instance answers on a real socket.
+import { createServer } from "node:http";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
@@ -10,6 +12,8 @@ import { Binding, Invocation, Subscriptions } from "@patchy/runtime/dev";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
@@ -20,6 +24,9 @@ import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import type { ServerBinding } from "./devExecution.js";
 import type { Json } from "./config.js";
+
+/** These repos declare no PostHog connection, so dev never reaches an instance. */
+const offline = { instance: { apiUrl: "http://127.0.0.1:1", token: Option.none() } };
 
 const identity = new Identity({
   user: { id: "usr_dev", name: "Builder", email: "dev@patchy.local" },
@@ -65,7 +72,11 @@ const adopt = action({args:{upload:t.upload()},result:t.json(),handler:async (ct
 }});
 const fail = mutation({args:{},result:t.text(),handler:async ctx => {await ctx.tables.notes.insert({title:"must roll back"}); throw new Error("dev failure diagnostic");}});
 const oversized = query({args:{},result:t.text(),handler:async () => "x".repeat(1000)});
-export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,adopt,fail,oversized}}, ["assets"]);`
+const analytics = action({args:{name:t.text()},result:t.json(),handler:async (ctx,args) => {
+  try { return {viewer:ctx.viewer.user.id, rows:(await ctx.connections.analytics.query({name:args.name,query:"SELECT event FROM events LIMIT 10",shape:{event:t.text()}})).rows}; }
+  catch (error) { return {code:error.code, correlationId:error.correlationId ?? null}; }
+}});
+export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,adopt,fail,oversized,analytics}}, ["assets"]);`
       },
       alias: { "patchy/server": new URL("./server.ts", import.meta.url).pathname },
       external: ["./executeConfig.js"],
@@ -153,6 +164,7 @@ it.live(
         root,
         `${root}/.patchy/dev`,
         {
+          ...offline,
           server: yield* bundle("initial"),
           observe: (settlement) =>
             Effect.sync(() => {
@@ -280,6 +292,134 @@ it.live(
 );
 
 it.live(
+  "an action reads PostHog through the instance as the machine's person, for either viewer",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-dev-posthog-" });
+      // The instance's dev door, as far as this repo can tell: it sees the key and the route.
+      const seen: Array<{ readonly authorization?: string; readonly body: unknown }> = [];
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          createServer((request, response) => {
+            const chunks: Buffer[] = [];
+            request.on("data", (chunk: Buffer) => chunks.push(chunk));
+            request.on("end", () => {
+              const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+                args: { name: string };
+              };
+              seen.push({
+                ...(request.headers.authorization === undefined
+                  ? {}
+                  : { authorization: request.headers.authorization }),
+                body
+              });
+              const refused = body.args.name === "broken";
+              response.writeHead(refused ? 400 : 200, { "content-type": "application/json" });
+              response.end(
+                JSON.stringify(
+                  refused
+                    ? {
+                        ok: false,
+                        source: "patchy",
+                        code: "invalid_query",
+                        error: "PostHog rejected the query.",
+                        details: { message: "Unknown table" },
+                        correlationId: "call_on_the_instance"
+                      }
+                    : { ok: true, value: { ok: true, rows: [{ event: "$pageview" }] } }
+                )
+              );
+            });
+          })
+        ),
+        (server) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void)))
+      );
+      yield* Effect.callback<void>(
+        (resume) => void server.listen(0, "127.0.0.1", () => resume(Effect.void))
+      );
+      const address = server.address();
+      if (address === null || typeof address === "string") return assert.fail("Expected TCP");
+      const declaration = {
+        kind: "posthog" as const,
+        id: "conn_product",
+        handle: "product",
+        revision: 1
+      };
+      const resources = yield* DevResources.prepare(
+        {
+          ...prepared,
+          manifest: { ...prepared.manifest, uses: { analytics: declaration } },
+          metadata: {
+            postgres: {},
+            shared: {},
+            posthog: {
+              analytics: {
+                declaration,
+                snapshot: { version: 1, events: [], eventProperties: [], personProperties: [] }
+              }
+            }
+          }
+        },
+        root,
+        `${root}/.patchy/dev`,
+        {
+          instance: {
+            apiUrl: `http://127.0.0.1:${address.port}`,
+            token: Option.some(Redacted.make("pp_machine_key"))
+          },
+          server: yield* bundle("posthog")
+        }
+      );
+      const invocation = Context.getUnsafe(resources.context, Invocation.Invocation);
+      const colleague = {
+        ...viewer,
+        user: { id: "usr_colleague", name: "Colleague", email: "colleague@patchy.local" },
+        admin: false
+      };
+      const call = (name: string, current: typeof viewer) =>
+        invocation.call(
+          { handler: "demo.analytics", args: { name } },
+          {
+            ...resources.version,
+            identity: current,
+            principal: { userId: current.user.id },
+            correlationId: "dev-posthog"
+          },
+          Effect.succeed(current)
+        );
+      for (const current of [viewer, colleague])
+        assert.deepStrictEqual(yield* call("views", current), {
+          ok: true,
+          value: { viewer: current.user.id, rows: [{ event: "$pageview" }] }
+        });
+      // A refusal keeps the instance's row, through workerd and back.
+      assert.deepStrictEqual(yield* call("broken", viewer), {
+        ok: true,
+        value: { code: "invalid_query", correlationId: "call_on_the_instance" }
+      });
+      assert.deepStrictEqual(
+        seen.map((request) => request.authorization),
+        ["Bearer pp_machine_key", "Bearer pp_machine_key", "Bearer pp_machine_key"]
+      );
+      assert.deepStrictEqual(seen[0]!.body, {
+        op: "posthog.query",
+        connection: { id: "conn_product", handle: "product" },
+        args: {
+          name: "views",
+          query: "SELECT event FROM events LIMIT 10",
+          shape: { event: { kind: "text", optional: false } }
+        }
+      });
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
+  { timeout: 60_000 }
+);
+
+it.live(
   "swaps immutable bindings, retains nested work and discards subscription runs crossing a swap",
   () =>
     Effect.gen(function* () {
@@ -290,6 +430,7 @@ it.live(
       const removed = yield* bundle("removed", "removed");
       const breaking = yield* bundle("breaking", "breaking");
       const resources = yield* DevResources.prepare(prepared, root, `${root}/.patchy/dev`, {
+        ...offline,
         server: initial
       });
       // `resources` is typed for every tier; `yield*` keeps both tiers' staging failures.

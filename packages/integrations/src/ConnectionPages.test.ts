@@ -338,6 +338,23 @@ it.layer(services)("company connection pages", (it) => {
           rowCount: null
         });
         yield* audit.begin({ ...begin, correlationId: "visible-pending", op: "postgres.get" });
+        // A read from `patchy dev`: a machine's key, no patch.
+        yield* audit.begin({
+          ...begin,
+          credentialKind: "machine",
+          machine: { id: "tok_laptop", name: "Laptop <one>" },
+          patchId: null,
+          versionId: null,
+          correlationId: "visible-dev",
+          op: "posthog.query",
+          resource: "dailyViews"
+        });
+        yield* audit.finish({
+          correlationId: "visible-dev",
+          outcome: "success",
+          durationMs: 40,
+          rowCount: 3
+        });
         yield* audit.begin({
           ...begin,
           companyId: foreign.company.id,
@@ -384,6 +401,17 @@ it.layer(services)("company connection pages", (it) => {
         assert.notInclude(row("visible-handler-error"), "<script>principal</script>");
         assert.include(row("visible-handler-error"), "<code>approval_required</code>");
         assert.include(row("visible-pending"), ">Unknown<");
+        assert.include(
+          row("visible-dev"),
+          '<td><span class="pill">Dev</span> patchy dev on Laptop &lt;one&gt;</td>'
+        );
+        assert.include(row("visible-dev"), `<td>${owner.user.name}</td>`);
+        assert.include(row("visible-dev"), "<code>query dailyViews</code>");
+        assert.include(
+          row("visible-dev"),
+          "The machine key Laptop &lt;one&gt;, reading the real connection while building a patch"
+        );
+        assert.notInclude(row("visible-dev"), "Patch / version");
         for (const forbidden of [
           sql,
           "<script>patch</script>",

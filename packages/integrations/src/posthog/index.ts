@@ -23,11 +23,14 @@ export const posthog: {
   readonly metadata?: typeof metadata;
   readonly operations: typeof operations;
   readonly generate: typeof generate;
+  readonly live?: ReadonlyArray<keyof typeof operations>;
 } = defineIntegration({
   name: "posthog",
   modes: ["company"],
   credentials: Source.Credentials,
   metadata,
   operations,
-  generate
+  generate,
+  // Its events and properties can't be known ahead, and it can't write: dev reads the real project.
+  live: ["query"]
 });

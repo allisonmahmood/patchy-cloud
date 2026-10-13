@@ -262,3 +262,78 @@ it.layer(Testing.emptyLayer(release10))("the handles-per-integration upgrade", (
       }).pipe(Effect.provide(services))
   );
 });
+
+/** The schema the previous release leaves: no machine calls. */
+const beforeMachineCalls = before("0014_runtime_calls_machine");
+
+it.layer(Testing.emptyLayer(beforeMachineCalls))("the machine-calls upgrade", (it) => {
+  it.effect(
+    "keeps every logged call, accepts the previous release's writes and holds machine rows to their shape",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const companyId = "cmp_machine_calls";
+        const insert = (id: string, kind: string, extra: Record<string, string | null> = {}) => {
+          const row = {
+            id,
+            company_id: companyId,
+            credential_kind: kind,
+            op: "posthog.query",
+            correlation_id: id,
+            effective_principal: "usr_machine_calls",
+            ...extra
+          };
+          return sql`INSERT INTO runtime_calls ${sql.insert(row)}`;
+        };
+        yield* insert("call_session", "session", { patch_id: "pat_kept", version_id: "ver_kept" });
+        yield* insert("call_admin", "admin");
+
+        yield* migrate(migrations);
+
+        assert.deepStrictEqual(
+          yield* sql`SELECT id, credential_kind, machine_id, machine_name, patch_id
+            FROM runtime_calls ORDER BY id`,
+          [
+            {
+              id: "call_admin",
+              credential_kind: "admin",
+              machine_id: null,
+              machine_name: null,
+              patch_id: null
+            },
+            {
+              id: "call_session",
+              credential_kind: "session",
+              machine_id: null,
+              machine_name: null,
+              patch_id: "pat_kept"
+            }
+          ]
+        );
+        // The previous release, during a rollout or after a rollback, writes as it always did.
+        yield* insert("call_previous", "session", { patch_id: "pat_kept" });
+        yield* insert("call_machine", "machine", {
+          machine_id: "tok_laptop",
+          machine_name: "Laptop"
+        });
+        const refused = (id: string, kind: string, extra: Record<string, string | null>) =>
+          insert(id, kind, extra).pipe(
+            Effect.flip,
+            Effect.map((error) => String(error.cause))
+          );
+        for (const [id, kind, extra] of [
+          ["machine_without_name", "machine", { machine_id: "tok_laptop" }],
+          ["machine_without_id", "machine", { machine_name: "Laptop" }],
+          [
+            "machine_from_a_patch",
+            "machine",
+            { machine_id: "tok_laptop", machine_name: "Laptop", patch_id: "pat_kept" }
+          ],
+          ["session_with_machine_id", "session", { machine_id: "tok_laptop" }],
+          ["admin_with_machine_name", "admin", { machine_name: "Laptop" }],
+          ["unknown_kind", "robot", {}]
+        ] as const)
+          assert.include(yield* refused(id, kind, extra), "ConstraintError", id);
+      }).pipe(Effect.provide(services))
+  );
+});

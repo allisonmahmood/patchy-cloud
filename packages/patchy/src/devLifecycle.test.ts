@@ -171,10 +171,17 @@ const command = Effect.fn("test.lifecycle.command")(function* (
   return JSON.parse(running.stdout());
 });
 
-const fixture = Effect.gen(function* () {
+/** The repo's PostHog declaration, when a fixture reads one; dev reads it through the stub. */
+const product = { kind: "posthog" as const, id: "conn_product", handle: "product", revision: 1 };
+
+const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
+  options: { readonly posthog?: boolean } = {}
+) {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-lifecycle-" });
   const requests: string[] = [];
+  /** What the instance's dev door received: the bearer and the body. */
+  const devReads: Array<{ readonly authorization?: string; readonly body: unknown }> = [];
   const cloudDescription: { description: string; descriptionUpdatedAt: string | null } = {
     description: "",
     descriptionUpdatedAt: null
@@ -221,16 +228,47 @@ const fixture = Effect.gen(function* () {
               inventory: { tables: [], stores: [] },
               reads: []
             });
+          if (url === "/api/connections/dev-read") {
+            devReads.push({
+              ...(request.headers.authorization === undefined
+                ? {}
+                : { authorization: request.headers.authorization }),
+              body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
+            });
+            return respond({ ok: true, value: { ok: true, rows: [{ event: "$pageview" }] } });
+          }
           if (url === "/api/sdk/generate") {
             try {
               const { manifest } = decodeGenerate(
                 JSON.parse(Buffer.concat(chunks).toString("utf8"))
               );
-              assert.deepStrictEqual(manifest.uses, {});
+              assert.deepStrictEqual(
+                manifest.uses,
+                options.posthog ? { analytics: { kind: "posthog", handle: "product" } } : {}
+              );
+              const stamps = options.posthog
+                ? [{ alias: "analytics", id: product.id, revision: 1, declaration: product }]
+                : [];
               return respond({
                 ok: true,
-                uses: [],
-                metadata: { postgres: {}, posthog: {}, shared: {} },
+                uses: stamps.map(({ alias, id, revision }) => ({ alias, id, revision })),
+                metadata: {
+                  postgres: {},
+                  shared: {},
+                  posthog: options.posthog
+                    ? {
+                        analytics: {
+                          declaration: product,
+                          snapshot: {
+                            version: 1,
+                            events: [],
+                            eventProperties: [],
+                            personProperties: []
+                          }
+                        }
+                      }
+                    : {}
+                },
                 files: [
                   {
                     path: "patchy/_generated/client.ts",
@@ -241,7 +279,7 @@ const fixture = Effect.gen(function* () {
                     contents: JSON.stringify({
                       release: RELEASE,
                       manifestVersion: MANIFEST_VERSION,
-                      uses: [],
+                      uses: stamps,
                       skills: [],
                       capabilities: sdkCapabilities
                     })
@@ -289,8 +327,8 @@ const fixture = Effect.gen(function* () {
   );
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
-    'import { defineConfig, table, t } from "patchy/config";\n' +
-      'export default defineConfig({ name: "lifecycle-test", tier: 1, tables: { notes: table("Notes identified by id.", { title: t.text() }) }, files: { attachments: { description: "Attachments keyed by filename." } }, uses: {} });\n'
+    'import { defineConfig, table, t, posthog } from "patchy/config";\n' +
+      `export default defineConfig({ name: "lifecycle-test", tier: 1, tables: { notes: table("Notes identified by id.", { title: t.text() }) }, files: { attachments: { description: "Attachments keyed by filename." } }, uses: ${options.posthog ? '{ analytics: posthog("product") }' : "{}"} });\n`
   );
   yield* fs.writeFileString(
     path.join(root, "index.html"),
@@ -315,8 +353,9 @@ const fixture = Effect.gen(function* () {
       }
     })
   );
-  return { root, instance, stateDir, requests, cloudDescription };
+  return { root, instance, stateDir, requests, cloudDescription, devReads };
 });
+const fixture = makeFixture();
 const nodeFsLink = (from: string, to: string) =>
   Effect.promise(() => nodeFs.symlink(from, to, "dir"));
 
@@ -551,6 +590,76 @@ it.effect("failure notices are deduplicated and confined to each command", () =>
     Effect.provideService(GlobalFlag.LogLevel, Option.none()),
     Effect.provide(TestConsole.layer)
   )
+);
+
+/** The key is in no file the session wrote, nor in the daemon's arguments or environment. */
+const holdsNoKey = Effect.fn("test.lifecycle.holdsNoKey")(function* (
+  stateDir: string,
+  pid: number
+) {
+  const key = "disposable-lifecycle-token";
+  for (const name of yield* Effect.promise(() => nodeFs.readdir(stateDir, { recursive: true }))) {
+    const file = path.join(stateDir, name);
+    if ((yield* Effect.promise(() => nodeFs.stat(file))).isFile())
+      assert.notInclude(yield* Effect.promise(() => nodeFs.readFile(file, "utf8")), key, name);
+  }
+  if (process.platform !== "linux") return;
+  for (const view of ["cmdline", "environ"])
+    assert.notInclude(
+      yield* Effect.promise(() => nodeFs.readFile(`/proc/${pid}/${view}`, "utf8")),
+      key,
+      view
+    );
+});
+
+it.live(
+  "hands the key to the daemon on stdin only; both viewers read PostHog as its person, detached and in the foreground",
+  () =>
+    Effect.gen(function* () {
+      const { root, instance, stateDir, devReads } = yield* makeFixture({ posthog: true });
+      const read = {
+        connection: "analytics",
+        name: "views",
+        query: "SELECT event FROM events LIMIT 10",
+        shape: { event: { kind: "text" } }
+      };
+      const detached = yield* command(root, instance, []);
+      for (const [url, viewerId] of [
+        [detached.url, identity.user.id],
+        [detached.colleagueUrl, "usr_dev_colleague"]
+      ] as const)
+        assert.nestedPropertyVal(
+          yield* call(url, "posthog.query", read, viewerId),
+          "value.rows[0].event",
+          "$pageview"
+        );
+      // Either viewer reads as the key's person: the instance decides, from the key alone.
+      assert.deepStrictEqual(
+        devReads.map((request) => request.authorization),
+        ["Bearer disposable-lifecycle-token", "Bearer disposable-lifecycle-token"]
+      );
+      assert.deepStrictEqual(devReads[0]!.body, {
+        op: "posthog.query",
+        connection: { id: product.id, handle: product.handle },
+        args: { name: read.name, query: read.query, shape: read.shape }
+      });
+      yield* holdsNoKey(stateDir, (yield* Effect.promise(() => readRecord(stateDir)))!.pid);
+      yield* command(root, instance, ["stop"]);
+
+      const foreground = yield* cli(root, instance, ["--foreground", "--json"]);
+      yield* output(foreground, "stdout", "\n");
+      const reported = JSON.parse(foreground.stdout());
+      assert.nestedPropertyVal(
+        yield* call(reported.url, "posthog.query", read),
+        "value.rows[0].event",
+        "$pageview"
+      );
+      assert.strictEqual(devReads.at(-1)!.authorization, "Bearer disposable-lifecycle-token");
+      yield* holdsNoKey(stateDir, reported.pid);
+      foreground.child.kill("SIGINT");
+      assert.strictEqual((yield* exited(foreground)).code, 130);
+    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+  { timeout: 60_000 }
 );
 
 it.live(

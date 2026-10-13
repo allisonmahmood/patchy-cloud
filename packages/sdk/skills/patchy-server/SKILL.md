@@ -28,12 +28,13 @@ behavior. Production hosting requires the fleet executor.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
 rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog has no
-fixture, and this release's dev refuses its calls. Put invented shared files
+fixture, and its actions read the real project through the instance, as the
+publishing key's person for either viewer. Put invented shared files
 in `fixtures/shared-<alias>/`; restart after fixture or config edits.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
 output and local-only failure message/stack. Starting with `--json` records full
 wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`.
-No runtime database log rows are written.
+No local runtime log rows are written; the instance logs PostHog dev reads.
 
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors
@@ -329,7 +330,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 <!-- prettier-ignore -->
 | Limit id | Kind | Default | Unit | Scope | Measures | Refusal | Company override | Configuration |
 | --- | --- | ---: | --- | --- | --- | --- | --- | --- |
-| `runtime.calls.perMinute` | contract | 300 | calls/minute | viewer | Calls per viewer per patch, excluding callbacks and subscription re-runs | `rate_limited` | No | release |
+| `runtime.calls.perMinute` | contract | 300 | calls/minute | viewer | Calls per viewer per patch, excluding callbacks and subscription re-runs; patchy dev reads per person across every repo | `rate_limited` | No | release |
 | `frame.outstanding` | contract | 32 | requests | viewer | Outstanding requests per document, including calls held while starting | `too_many_requests` | No | release |
 | `frame.heldBytes` | contract | 67108864 | bytes | viewer | Total bytes held by one frame | `too_large` | No | release |
 | `runtime.call.bytes` | contract | 65536 | bytes | viewer | Tier 1 operation envelope | `too_large` | No | release |

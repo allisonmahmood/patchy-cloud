@@ -245,6 +245,10 @@ worktree, so they open `/join` here afterwards.
 
 The cloud (`pnpm dev`) supplies release bytes, identity and metadata; a patch's
 local runtime (`patchy dev`) runs its handlers over PGlite and invented fixtures.
+A PostHog declaration has no fixture: `patchy dev` reads the real connection
+through the cloud's dev read door, as the CLI's machine key
+([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)), so the connection must
+exist on this instance.
 With the cloud healthy, initialize beneath this checkout so discovery finds it:
 
 ```sh
@@ -312,6 +316,12 @@ can quote it.
 - **Integrations.** The connector refuses local and private addresses even on a
   dev instance, so the integrations suites exercise discovery and reads against
   disposable Postgres, and patch repos read `fixtures/postgres-<handle>.sql`.
+  PostHog only reaches PostHog Cloud, so its suites inject a PostHog double
+  (`packages/integrations/src/test/posthog.ts`) and never contact a real project.
+  Dev reads run the patch repo's binding against the real dev read door over that
+  double (`DevReads.test.ts`); in `patchy dev` they appear on the connection's
+  page as Dev calls. Connecting PostHog on a local instance needs a real key and
+  project, so check those by hand only with a disposable project.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

@@ -19,7 +19,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 <!-- prettier-ignore -->
 | Limit id | Kind | Default | Unit | Scope | Measures | Refusal | Company override | Configuration |
 | --- | --- | ---: | --- | --- | --- | --- | --- | --- |
-| `runtime.calls.perMinute` | contract | 300 | calls/minute | viewer | Calls per viewer per patch, excluding callbacks and subscription re-runs | `rate_limited` | No | release |
+| `runtime.calls.perMinute` | contract | 300 | calls/minute | viewer | Calls per viewer per patch, excluding callbacks and subscription re-runs; patchy dev reads per person across every repo | `rate_limited` | No | release |
 | `frame.outstanding` | contract | 32 | requests | viewer | Outstanding requests per document, including calls held while starting | `too_many_requests` | No | release |
 | `frame.heldBytes` | contract | 67108864 | bytes | viewer | Total bytes held by one frame | `too_large` | No | release |
 | `runtime.call.bytes` | contract | 65536 | bytes | viewer | Tier 1 operation envelope | `too_large` | No | release |

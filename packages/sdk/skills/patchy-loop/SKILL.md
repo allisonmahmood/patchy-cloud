@@ -230,9 +230,9 @@ Commit config, `patchy.json` with its description and sync stamp, generated outp
 
 ## Data boundary
 
-Development uses local PGlite data and agent-authored fixtures. Only metadata and published inventory come from the instance, never production rows or files. Fill each declaration's fixture stub with invented local `INSERT` statements matching its header; views are synthetic local tables. Missing fixtures are not permission to query production. Owned-table example rows are inserted through the local generated client, not a cloud data dump.
+Development uses local PGlite data and agent-authored fixtures. Only metadata and published inventory come from the instance, never production rows or files, except PostHog: it has no fixture, and dev reads the real project through the instance as the publishing key's person, read-only, each read logged on the connection as a Dev call. Fill each declaration's fixture stub with invented local `INSERT` statements matching its header; views are synthetic local tables. Missing fixtures are not permission to query production. Owned-table example rows are inserted through the local generated client, not a cloud data dump.
 
-New starts bind the primary viewer from the publishing key's `/api/me` identity and refresh declaration metadata. Tiers 1 and 2 also mount a fixed non-admin colleague. `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` output and local-only failure message/stack. Starting with `--json` records full wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`. No runtime database log rows, PostHog delivery or connection keyring are used. Before the first publish, schema changes recreate local data. Afterwards, the published inventory is the baseline: additive changes preserve rows, and changes publish would refuse are refused locally with the same object/change/fix. A local-only schema incompatible with an otherwise valid config can be recreated.
+New starts bind the primary viewer from the publishing key's `/api/me` identity and refresh declaration metadata. Tiers 1 and 2 also mount a fixed non-admin colleague. `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` output and local-only failure message/stack. Starting with `--json` records full wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows, PostHog event delivery or connection keyring are used; PostHog reads are logged on the instance. Before the first publish, schema changes recreate local data. Afterwards, the published inventory is the baseline: additive changes preserve rows, and changes publish would refuse are refused locally with the same object/change/fix. A local-only schema incompatible with an otherwise valid config can be recreated.
 
 `patchy dev` runs the same handler engine and callback path as production.
 It does not reproduce production scheduling, operating capacity or containment. A handler
@@ -240,8 +240,8 @@ that spins forever times out, and a health check restarts the dev engine, which
 can interrupt other calls in flight. Contract limits still apply; production
 operating capacity does not. PGlite is not evidence for hosted `busy` or
 `write_conflict` behavior. Tier 2 reads invented shared and Postgres fixtures
-through `ctx.shared` and `ctx.connections`; this release's dev refuses PostHog
-calls with `source_unavailable`.
+through `ctx.shared` and `ctx.connections`; PostHog actions read the real project
+through the instance, as the publishing key's person for either viewer.
 
 On tier 1, every readable row is available to every admitted company viewer, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables, Postgres and PostHog are read-only, checked against live source access. A public tier 1 patch returns null from `me()`. Signed-in company members can read its declared member directory; anonymous viewers and outsiders cannot. Tables, files and integrations still return `not_available_on_public` for everyone. Tier 2 cannot be public.
 

@@ -44,6 +44,11 @@ Done when `pnpm dev status` exits 0.
   errors. Read the PNG to look at it. `<person>` is any email, or an
   environment person's key or first name.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
+  Postgres declarations read invented fixtures. PostHog declarations have none:
+  `patchy dev` reads the real connection through this instance, as the CLI's
+  key, and each read shows as a Dev call on the connection's page. Connecting
+  PostHog here takes a real key and project, so check dev reads through the
+  suites' PostHog double unless the person hands you a disposable project.
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.

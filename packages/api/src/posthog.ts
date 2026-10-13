@@ -18,14 +18,16 @@ export const PostHogValues = Schema.Record(
 export const PostHogQueryName = Schema.String.check(
   Schema.isPattern(/^[A-Za-z][A-Za-z0-9_.:-]{0,99}$/)
 );
-export const PostHogQuery = Schema.Struct({
-  connection: DefinitionName,
+const queryFields = {
   name: PostHogQueryName,
   /** HogQL, PostHog's ClickHouse-flavoured SQL. */
   query: PostgresText.check(Schema.isMinLength(1)),
   values: Schema.optionalKey(PostHogValues),
   shape: PostgresShape
-});
+};
+export const PostHogQuery = Schema.Struct({ connection: DefinitionName, ...queryFields });
+/** A `patchy dev` read's arguments: the repo's alias routed it locally and stays there. */
+export const PostHogDevQuery = Schema.Struct(queryFields);
 export const posthogOperations = {
   "posthog.query": {
     request: Schema.Struct({ op: Schema.Literal("posthog.query"), args: PostHogQuery }),

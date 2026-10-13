@@ -1,5 +1,5 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
-import { PostgresRows, PostHogQuery, WIRE_VERSION } from "@patchy/api";
+import { WIRE_VERSION } from "@patchy/api";
 import type { PatchInventory } from "@patchy/api";
 import {
   CompanyDatabases,
@@ -14,7 +14,8 @@ import {
   ConnectionStoreDev,
   PostgresDev,
   PostgresExecution,
-  PostgresOperations
+  PostgresOperations,
+  PostHogDev
 } from "@patchy/integrations/dev";
 import { Files, Members, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
 import { Binding, LoadedVersions, Wakes, me } from "@patchy/runtime/core";
@@ -43,17 +44,6 @@ export class StateUnavailable extends Schema.TaggedError<StateUnavailable>()(
 ) {
   override get message() {
     return `Could not prepare local dev state at ${this.path}.`;
-  }
-}
-/** PostHog reads go to the real connection in dev; until that lands, dev refuses them. */
-export class PostHogUnavailable extends Schema.TaggedError<PostHogUnavailable>()(
-  "DevPostHogUnavailable",
-  {}
-) {
-  readonly code = "source_unavailable" as const;
-  readonly status = 503;
-  override get message() {
-    return "patchy dev can't read PostHog yet; live reads arrive with allisonmahmood/patchy-cloud#647.";
   }
 }
 export class SharedFixtureInvalid extends Schema.TaggedError<SharedFixtureInvalid>()(
@@ -185,7 +175,16 @@ interface LocalState {
   }>;
 }
 
-const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state: LocalState) {
+export interface Options extends DevExecution.Options {
+  /** How dev reaches integrations that read the real connection: the instance, with this key. */
+  readonly instance: PostHogDev.Instance;
+}
+
+const make = Effect.fn("DevResources.make")(function* (
+  prepared: Prepared,
+  state: LocalState,
+  instance: PostHogDev.Instance
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const tables = yield* Tables.Tables;
@@ -295,10 +294,8 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
     ...(yield* Members.make),
     ...fileHandlers,
     ...postgres,
-    "posthog.query": Runtime.handler(
-      { kind: "integration", input: PostHogQuery, output: PostgresRows },
-      () => Effect.fail(new PostHogUnavailable({}))
-    )
+    // PostHog has no fixture: its reads go to the real connection, through the instance.
+    ...(yield* PostHogDev.handlers(instance))
   };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };
@@ -309,7 +306,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   prepared: Prepared,
   root: string,
   stateDir: string,
-  options: DevExecution.Options = {}
+  options: Options
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -550,17 +547,21 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       Layer.provideMerge(resourceChanges)
     )
   );
-  const preparedResources = yield* make(prepared, {
-    stampPath,
-    stamp,
-    initialize,
-    changed,
-    changedSources,
-    version,
-    versions,
-    fixtures,
-    storeFixtures
-  }).pipe(Effect.provideContext(context));
+  const preparedResources = yield* make(
+    prepared,
+    {
+      stampPath,
+      stamp,
+      initialize,
+      changed,
+      changedSources,
+      version,
+      versions,
+      fixtures,
+      storeFixtures
+    },
+    options.instance
+  ).pipe(Effect.provideContext(context));
   if (version.manifest.tier === 2) {
     const execution = yield* DevExecution.make(
       version,

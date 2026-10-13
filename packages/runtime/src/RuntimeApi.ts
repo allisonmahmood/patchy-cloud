@@ -8,6 +8,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import {
   PatchyApi,
+  type RuntimeBodyLimitId,
   RuntimeEnvelope,
   RuntimeFailure,
   RuntimeSuccess,
@@ -25,8 +26,12 @@ const encodeServerReply = Schema.encodeUnknownEffect(ServerCallReply);
 const encodeFailure = Schema.encodeSync(RuntimeFailure);
 const noStore = { "cache-control": "no-store" };
 
-export const failure = (error: Runtime.RuntimeError) => {
-  const body = Runtime.toFailure(error);
+/** A refusal as the runtime wire carries it; `correlationId` names the call's logged row. */
+export const failure = (error: Runtime.RuntimeError, correlationId?: string) => {
+  const body = {
+    ...Runtime.toFailure(error),
+    ...(correlationId === undefined ? {} : { correlationId })
+  };
   return HttpServerResponse.jsonUnsafe(encodeFailure(body), {
     status: error.status,
     headers: {
@@ -36,7 +41,10 @@ export const failure = (error: Runtime.RuntimeError) => {
   });
 };
 
-const recordFailure = Effect.fnUntraced(function* (error: Runtime.RuntimeError) {
+export const recordFailure = Effect.fnUntraced(function* (
+  error: Runtime.RuntimeError,
+  correlationId?: string
+) {
   yield* WideEvents.enrich({
     outcome:
       error.code === "unknown_outcome"
@@ -50,7 +58,7 @@ const recordFailure = Effect.fnUntraced(function* (error: Runtime.RuntimeError) 
     code: error.code,
     ...("limitId" in error && error.limitId !== undefined ? { limitId: error.limitId } : {})
   });
-  return failure(error);
+  return failure(error, correlationId);
 });
 
 /** Keep the stream finalizer in the request scope, after its refusal response.
@@ -73,26 +81,22 @@ const forEachBodyChunk = Effect.fn("RuntimeApi.forEachBodyChunk")(function* (
 });
 
 /** Count actual bytes, not Content-Length, and stop collecting before decoding an overflow. */
-const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Runtime["Service"]) {
+export const readText = Effect.fn("RuntimeApi.readText")(function* (
+  maxBytes: number,
+  limitId: RuntimeBodyLimitId
+) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  if (Number(request.headers["content-length"]) > runtime.maxCallBytes)
+  if (Number(request.headers["content-length"]) > maxBytes)
     return yield* WideEvents.enrich({
       limits: [
         {
-          limitId: runtime.maxCallLimitId,
-          value: runtime.maxCallBytes,
+          limitId,
+          value: maxBytes,
           peak: Number(request.headers["content-length"]),
           configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
         }
       ]
-    }).pipe(
-      Effect.andThen(
-        new Runtime.TooLarge({
-          maxBytes: runtime.maxCallBytes,
-          limitId: runtime.maxCallLimitId
-        })
-      )
-    );
+    }).pipe(Effect.andThen(new Runtime.TooLarge({ maxBytes, limitId })));
   let size = 0;
   let text = "";
   const decoder = new TextDecoder();
@@ -103,26 +107,27 @@ const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Ru
         requestBytes: size,
         limits: [
           {
-            limitId: runtime.maxCallLimitId,
-            value: runtime.maxCallBytes,
+            limitId,
+            value: maxBytes,
             peak: size,
             configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
           }
         ]
       });
-      if (size > runtime.maxCallBytes)
-        return yield* new Runtime.TooLarge({
-          maxBytes: runtime.maxCallBytes,
-          limitId: runtime.maxCallLimitId
-        });
+      if (size > maxBytes) return yield* new Runtime.TooLarge({ maxBytes, limitId });
       text += decoder.decode(chunk, { stream: true });
     })
   );
   text += decoder.decode();
+  return { text, byteLength: size };
+});
+
+const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Runtime["Service"]) {
+  const { text, byteLength } = yield* readText(runtime.maxCallBytes, runtime.maxCallLimitId);
   const input = yield* decodeCall(text).pipe(
     Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
   );
-  return { input, byteLength: size };
+  return { input, byteLength };
 });
 
 /** Read only after admission and, for ordinary puts, the mutation log's begin. */

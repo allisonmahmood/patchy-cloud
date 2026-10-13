@@ -1,12 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Detached children, birth-checked signals and append-only log descriptors are process-boundary operations.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import * as fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import * as Config from "effect/Config";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
-import type * as Redacted from "effect/Redacted";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -171,6 +172,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
         await atomicJson(stateDir, "prepared.json", { ...prepared, toolchain });
         await fs.rm(await safePath(stateDir, "failure.json"), { force: true });
       });
+      const live = Object.keys(prepared.metadata.posthog).length > 0;
       const nonce = randomUUID();
       // Write the nonce before spawning; the child may reach its entrypoint before spawn returns.
       const initial: Daemon = {
@@ -208,7 +210,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
           const child = spawn(process.execPath, [...process.execArgv, entry, stateDir, nonce], {
             cwd: root,
             detached: true,
-            stdio: ["ignore", log.fd, log.fd],
+            stdio: ["pipe", log.fd, log.fd],
             env: processEnv
           });
           await new Promise<void>((resolve, reject) => {
@@ -216,6 +218,18 @@ export const start = Effect.fn("Dev.start")(function* <R>(
             child.once("error", reject);
           });
           if (!child.pid) throw new Error("Dev daemon has no PID");
+          // The key travels on stdin only, and only when a declared integration reads the real
+          // connection. stdin always closes, so the daemon never waits on it.
+          try {
+            const stdin = child.stdin;
+            if (!stdin) throw new Error("Dev daemon has no stdin");
+            const finished = once(stdin, "finish");
+            stdin.end(live ? Redacted.value(credential) : "");
+            await finished;
+          } catch (error) {
+            child.kill("SIGKILL");
+            throw error;
+          }
           const stamp = await birth(child.pid);
           if (!stamp) throw new Error("Dev daemon exited before recording its identity");
           const record = { ...initial, pid: child.pid, birth: stamp };
