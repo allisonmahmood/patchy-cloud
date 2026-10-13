@@ -107,6 +107,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
   );
   const nextBuild = yield* watch(record.root, stateDir, toolchain);
   let html = yield* nextBuild(prepared.manifest);
+  let title = documentTitle(html);
   let revision = 1;
   if (nextServer !== undefined) {
     yield* Effect.forever(
@@ -201,7 +202,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
               handlerKinds: handlerKinds(resources.version.manifest.handlers),
               patch: {
                 id: version.patchId,
-                title: documentTitle(html) ?? prepared.manifest.name ?? "Local patch"
+                title: title ?? prepared.manifest.name ?? "Local patch"
               },
               version: {
                 id: version.versionId,
@@ -314,6 +315,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
       Effect.tap((bundle) =>
         Effect.sync(() => {
           html = bundle;
+          title = documentTitle(bundle);
           revision++;
         })
       ),

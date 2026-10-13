@@ -60,8 +60,6 @@ export function validateHtml(
     return { ok: false, errors, warnings, title: null };
   }
 
-  let title: string | null = null;
-
   function walk(node: HtmlNode): void {
     if ("tagName" in node && node.tagName) {
       const tagName = node.tagName.toLowerCase();
@@ -107,10 +105,6 @@ export function validateHtml(
       }
     }
 
-    if (!title && isTitle(node)) {
-      title = titleText(node);
-    }
-
     if ("childNodes" in node) {
       for (const child of node.childNodes || []) {
         walk(child);
@@ -120,6 +114,7 @@ export function validateHtml(
 
   walk(document);
 
+  const title = documentTitle(html);
   if (!title) {
     warnings.push("No <title> found; Patchy Cloud will use a generic title.");
   }
@@ -134,30 +129,29 @@ export function validateHtml(
 
 type HtmlNode = parse5.DefaultTreeAdapterMap["node"];
 
+/** The title comes before a bundle's inline code, which runs to megabytes; only this much is read. */
+const TITLE_SEARCH_CHARACTERS = 512 * 1024;
+
 /**
- * The page's title as a browser picks it, bounded as tier 0's is. Publish and `patchy dev` read
- * it from scripted pages, which the static policy would reject, so their tab shows it too.
+ * The page's title as a browser picks it: the first HTML `<title>`, trimmed and bounded, or null
+ * when it is missing or empty. Publish and `patchy dev` read it from scripted bundles too, so
+ * their tab shows it.
  */
 export function documentTitle(html: string): string | null {
-  const find = (node: HtmlNode): string | null => {
-    if (isTitle(node)) return titleText(node);
-    if (!("childNodes" in node)) return null;
-    for (const child of node.childNodes) {
-      const title = find(child);
-      if (title !== null) return title;
-    }
-    return null;
-  };
-  return find(parse5.parse(html));
+  // parse5 builds deep trees without recursion; walking one must not recurse either.
+  const pending: HtmlNode[] = [parse5.parse(html.slice(0, TITLE_SEARCH_CHARACTERS))];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (isTitle(node)) return collectText(node).trim().slice(0, 140) || null;
+    if ("childNodes" in node)
+      for (let index = node.childNodes.length - 1; index >= 0; index--)
+        pending.push(node.childNodes[index]!);
+  }
+  return null;
 }
 
 /** An SVG's `<title>` labels the drawing, not the document. */
 function isTitle(node: HtmlNode): boolean {
   return "tagName" in node && node.tagName === "title" && node.namespaceURI === parse5.html.NS.HTML;
-}
-
-function titleText(node: HtmlNode): string | null {
-  return collectText(node).trim().slice(0, 140) || null;
 }
 
 function collectText(node: HtmlNode): string {

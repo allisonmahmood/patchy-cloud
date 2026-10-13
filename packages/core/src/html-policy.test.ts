@@ -61,10 +61,12 @@ describe("validateHtml", () => {
     expect(result.warnings).toContain("No <title> found; Patchy Cloud will use a generic title.");
   });
 
-  it("reads the title a browser shows from a scripted page, not an icon's", () => {
+  it("reads the title a browser shows: the first HTML one, at any depth", () => {
     expect(
       documentTitle("<svg><title>Icon</title></svg><title> Launch queue </title><script>1</script>")
     ).toBe("Launch queue");
     expect(documentTitle("<svg><title>Icon</title></svg><script>1</script>")).toBeNull();
+    expect(documentTitle("<title> </title><title>Second</title>")).toBeNull();
+    expect(documentTitle(`${"<div>".repeat(20_000)}<title>Deep</title>`)).toBe("Deep");
   });
 });
