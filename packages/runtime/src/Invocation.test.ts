@@ -308,6 +308,46 @@ it.layer(services)("Invocation", (it) => {
       })
   );
 
+  it.effect(
+    "names a relayed refusal's integration only when the host's record is unambiguous",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+        const refusal = {
+          ok: false,
+          source: "patchy",
+          code: "source_unavailable",
+          error: "The source is unavailable."
+        } as const;
+        const relay = Effect.fn(function* (operations: ReadonlyArray<string>) {
+          const invocations = yield* makeInvocation((request) =>
+            capabilities.resolve(request.callback.capability, request).pipe(
+              Effect.orDie,
+              Effect.map((capability) => {
+                // Distinct records of the same refusal, as two integrations' callbacks leave them.
+                for (const operation of operations)
+                  capabilities.rememberRefusal(capability, { ...refusal }, 503, operation);
+                return { outcome: "returned" as const, reply: refusal, guestMs: 1 };
+              })
+            )
+          );
+          const failure = yield* invocations
+            .call(
+              { handler: "demo.query", args: { id: 1 } },
+              { ...binding, correlationId: `relay-${operations.join("-")}` },
+              Effect.succeed(viewer)
+            )
+            .pipe(Effect.flip);
+          return Runtime.toFailure(failure);
+        });
+        assert.include(yield* relay(["posthog.query"]), {
+          code: "source_unavailable",
+          operation: "posthog.query"
+        });
+        assert.notProperty(yield* relay(["postgres.query", "posthog.query"]), "operation");
+      })
+  );
+
   it.effect("preserves executor capacity refusals and sanitises executor defects", () =>
     Effect.gen(function* () {
       const busy = yield* makeInvocation(() =>

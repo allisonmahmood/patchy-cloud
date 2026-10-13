@@ -587,16 +587,21 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   if (!descriptor.errors?.includes(reply.code))
                     return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 } else {
-                  const trusted = capability.refusals.find(
-                    (entry) => canonicalArgs(entry.failure) === canonicalArgs(reply)
+                  const relayed = canonicalArgs(reply);
+                  const matches = capability.refusals.filter(
+                    (entry) => canonicalArgs(entry.failure) === relayed
                   );
+                  const trusted = matches[0];
+                  // Identical refusals from two integrations can't say which one was relayed,
+                  // so neither is named.
+                  const operation = matches.every((entry) => entry.operation === trusted?.operation)
+                    ? trusted?.operation
+                    : undefined;
                   if (trusted !== undefined)
                     return yield* new CallbackRefusal({
                       failure: trusted.failure,
                       status: trusted.status,
-                      ...(trusted.operation === undefined
-                        ? {}
-                        : { integrationOperation: trusted.operation })
+                      ...(operation === undefined ? {} : { integrationOperation: operation })
                     });
                   return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 }
