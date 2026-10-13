@@ -70,7 +70,7 @@ it.live(
           uses: { members: { kind: "members" } }
         },
         identity,
-        metadata: { postgres: {}, shared: {} }
+        metadata: { postgres: {}, posthog: {}, shared: {} }
       };
       const server = yield* DevServer.serve(
         prepared,
@@ -333,7 +333,7 @@ it.live(
           uses: {}
         },
         identity,
-        metadata: { postgres: {}, shared: {} }
+        metadata: { postgres: {}, posthog: {}, shared: {} }
       };
       const server = yield* DevServer.serve(
         prepared,

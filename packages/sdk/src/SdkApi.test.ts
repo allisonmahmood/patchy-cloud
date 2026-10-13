@@ -666,7 +666,7 @@ it.layer(layer)("SDK company generation", (it) => {
         })
       });
       assert.deepStrictEqual(output.uses, []);
-      assert.deepStrictEqual(output.metadata, { postgres: {}, shared: {} });
+      assert.deepStrictEqual(output.metadata, { postgres: {}, posthog: {}, shared: {} });
       assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
       assert.isTrue(
         output.files.some(({ path }) => path === ".agents/skills/patchy-members/SKILL.md")
@@ -759,6 +759,7 @@ it.layer(layer)("SDK company generation", (it) => {
               snapshot
             }
           },
+          posthog: {},
           shared: {}
         });
         for (const path of [
@@ -1119,7 +1120,7 @@ it.layer(layer)("SDK company generation", (it) => {
             Effect.provide(
               ConnectionStoreDev.layer([
                 {
-                  connection: new ConnectionStore.Connection({
+                  connection: {
                     id: "sdk-missing-snapshot",
                     companyId: identity.company.id,
                     integration: "postgres",
@@ -1138,7 +1139,7 @@ it.layer(layer)("SDK company generation", (it) => {
                     lastTestedAt: null,
                     lastDiscoveredAt: null,
                     createdBy: identity.user.id
-                  }),
+                  } satisfies ConnectionStore.Connection,
                   snapshots: []
                 }
               ])

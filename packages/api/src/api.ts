@@ -69,6 +69,7 @@ import {
   Release,
   Connections,
   ConnectionDetail,
+  PostgresConnectionDetail,
   ConnectionUnavailable,
   GenerateRequest,
   Generated,
@@ -466,7 +467,12 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
     HttpApiEndpoint.get("listConnections", "/connections", {
       query: {
         all: Schema.optionalKey(queryFlag),
-        integrations: Schema.optionalKey(Schema.Literal("all"))
+        integrations: Schema.optionalKey(
+          Schema.String.check(
+            Schema.isPattern(/^[a-z0-9]+(?:,[a-z0-9]+)*$/),
+            Schema.isMaxLength(200)
+          )
+        )
       },
       success: Connections,
       error: [ConnectionUnavailable, ...protectedErrors]
@@ -475,14 +481,16 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
         "List the caller's company connections, including disconnected ones, for any active member. " +
           "Connected entries carry a copy-ready add hint; disconnected entries carry reason " +
           "`not_connected` and a /company/connections hint. A bare all or all=true also includes " +
-          "every offered integration's connected state. Without integrations=all, only Postgres " +
-          "connections and offers are listed, the shape CLIs from before other integrations decode. " +
-          "No snapshots, credentials or business rows. Responses are private, no-store."
+          "every offered integration's connected state. integrations names, comma-separated, the " +
+          "integrations the caller decodes, such as postgres,posthog; only those connections and " +
+          "offers are listed, and unknown names are ignored. Omitted, or the integrations=all that " +
+          "CLIs from release 10 send, lists Postgres only, the shape those CLIs decode. No " +
+          "snapshots, credentials or business rows. Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.get("getConnection", "/connections/:handle", {
       params: { handle: Schema.String },
-      success: ConnectionDetail,
+      success: PostgresConnectionDetail,
       error: [ConnectionUnavailable, ...protectedErrors]
     }).annotateMerge(
       describe(

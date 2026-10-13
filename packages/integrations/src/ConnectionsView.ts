@@ -46,8 +46,11 @@ export interface Notice {
   /** Where to go instead, such as Point elsewhere after credentials name another database. */
   readonly next?: { readonly href: string; readonly label: string };
   /** The form field a refusal is about; it then replaces that field's hint instead of heading the page. */
-  readonly field?: "handle" | "description" | "credentials";
+  readonly field?: Field;
 }
+
+/** The connection forms' fields a refusal can sit at; an integration names its own credential fields. */
+export type Field = "handle" | "description" | "credentials" | "region" | "project" | "key";
 
 export type View = "all" | "attention" | "unused";
 export interface Filters {
@@ -101,12 +104,7 @@ export const notice = (value: Notice | undefined) =>
  * A field's hint, or after a refusal at that field the callout that replaces it, with the
  * attributes that mark the field at fault. Forms that use it set `novalidate`.
  */
-export const fieldNote = (
-  id: string,
-  field: NonNullable<Notice["field"]>,
-  hint: string,
-  refusal: Notice | undefined
-) =>
+export const fieldNote = (id: string, field: Field, hint: string, refusal: Notice | undefined) =>
   refusal?.field === field
     ? {
         attributes: ` aria-describedby="${id}-error" aria-invalid="true" autofocus`,
@@ -291,14 +289,63 @@ export const renderCatalogue = (input: {
 }): string =>
   `<article class="connections-subpage"><p><a href="${indexPath}">Connections</a></p><h1 class="page-heading">Connect a source</h1><p>Patchy tests the credentials and finds what's inside before saving anything. Every member can read a company-wide source through any patch that declares it.</p>${input.admin ? "" : '<p class="supporting-text">Only admins can connect sources.</p>'}${catalogue(input.offers, input.rows, input.admin)}${onRequest}</article>`;
 
-/** An integration's connect form inside the shared frame; the integration supplies the fields. */
+/** One step of a connect walkthrough that happens outside the form. */
+export interface Step {
+  readonly title: string;
+  readonly text: string;
+}
+/** The steps around a connect form: what to do first, the form's own step, and what comes next. */
+export interface Walkthrough {
+  readonly before: ReadonlyArray<Step>;
+  readonly current: string;
+  readonly after: ReadonlyArray<Step>;
+}
+
+const step = (
+  state: "done" | "current" | "upcoming",
+  marker: string,
+  title: string,
+  body: string
+) =>
+  `<li class="step${state === "upcoming" ? "" : ` step-${state}`}"${state === "current" ? ' aria-current="step"' : ""}><span class="step-marker" aria-hidden="true">${marker}</span><div><h2 class="step-title">${escapeHtml(title)}</h2>${body}</div></li>`;
+
+/**
+ * An integration's connect form inside the shared frame; the integration supplies the fields. With
+ * a walkthrough, the form is the open step between what to do first and what comes after.
+ */
 export const renderConnect = (input: {
   readonly integration: Integration;
   readonly intro: string;
   readonly fields: string;
+  readonly walkthrough?: Walkthrough;
   readonly notice?: Notice;
-}): string =>
-  `<article class="connections-subpage"><p><a href="${indexPath}">Connections</a> / <a href="${cataloguePath}">Connect a source</a></p><h1 class="page-heading">Connect ${escapeHtml(input.integration.label)}</h1><p>${escapeHtml(input.intro)}</p>${notice(input.notice)}<form method="post" action="${escapeAttribute(connectPath(input.integration.key))}" novalidate>${input.fields}<div class="actions"><button class="btn btn-primary" type="submit">Test and connect</button><a class="btn btn-quiet" href="${cataloguePath}">Cancel</a></div></form></article>`;
+}): string => {
+  const form = `<form method="post" action="${escapeAttribute(connectPath(input.integration.key))}" novalidate>${input.fields}<div class="actions"><button class="btn btn-primary" type="submit">Test and connect</button><a class="btn btn-quiet" href="${cataloguePath}">Cancel</a></div></form>`;
+  const walkthrough = input.walkthrough;
+  const body =
+    walkthrough === undefined
+      ? form
+      : `<ol class="steps">${[
+          ...walkthrough.before.map((item) =>
+            step("done", "✓", item.title, `<p>${escapeHtml(item.text)}</p>`)
+          ),
+          step(
+            "current",
+            String(walkthrough.before.length + 1),
+            walkthrough.current,
+            `<div class="step-card">${form}</div>`
+          ),
+          ...walkthrough.after.map((item, index) =>
+            step(
+              "upcoming",
+              String(walkthrough.before.length + 2 + index),
+              item.title,
+              `<p>${escapeHtml(item.text)}</p>`
+            )
+          )
+        ].join("")}</ol>`;
+  return `<article class="connections-subpage"><p><a href="${indexPath}">Connections</a> / <a href="${cataloguePath}">Connect a source</a></p><h1 class="page-heading">Connect ${escapeHtml(input.integration.label)}</h1><p>${escapeHtml(input.intro)}</p>${notice(input.notice)}${body}</article>`;
+};
 
 // ---------- one connection ----------
 
@@ -359,10 +406,16 @@ const minute = (at: Date) => {
 // Stored relations are quoted identifiers; plain ones read better bare.
 const relation = (value: string) =>
   value.replace(/"([a-z_][a-z0-9_]*)"/gu, "$1").replace(/^public\./u, "");
-/** "customers.list", "query", "discover": the method, on its relation when it has one. */
+/**
+ * "customers.list", "query", "discover": the method, on its Postgres relation when it has one. A
+ * PostHog query's resource is its name, shown as written: "query dailyRequests".
+ */
 const callName = (call: RuntimeLog.Call) => {
   const method = call.op.slice(call.op.indexOf(".") + 1);
-  return call.resource === null ? method : `${relation(call.resource)}.${method}`;
+  if (call.resource === null) return method;
+  return call.op.startsWith("posthog.")
+    ? `${method} ${call.resource}`
+    : `${relation(call.resource)}.${method}`;
 };
 /** The patch and version a call came from; a version since reclaimed leaves its ids in Details. */
 const from = (call: RuntimeLog.Call, names: CallNames) => {

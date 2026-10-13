@@ -54,7 +54,11 @@ export const defineIntegration = <
   };
   readonly operations: Operations;
   readonly generate: (declaration: Declaration, metadata: NoInfer<Metadata["Type"]>) => Generated;
-  readonly dev: (
+  /**
+   * The local binding over fixtures. Absent when dev reads the real connection instead: an
+   * integration that can't write and whose shapes can't be known ahead (#643).
+   */
+  readonly dev?: (
     metadata: NoInfer<Metadata["Type"]>,
     fixture: Fixture
   ) => Layer.Layer<Dev, DevError, DevRequirements>;

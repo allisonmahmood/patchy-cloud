@@ -12,6 +12,7 @@ import {
   PatchName,
   MembersDeclaration,
   PostgresDeclaration,
+  PostHogDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -98,6 +99,10 @@ const configSchema = Schema.Struct({
         handle: PostgresDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: PostHogDeclaration.fields.kind,
+        handle: PostHogDeclaration.fields.handle
+      }),
+      Schema.Struct({
         kind: SharedStoreDeclaration.fields.kind,
         patchId: SharedStoreDeclaration.fields.patchId,
         store: SharedStoreDeclaration.fields.store
@@ -119,6 +124,7 @@ const generatedIndexSchema = Schema.Struct({
       id: PostgresDeclaration.fields.id,
       declaration: Schema.Union([
         PostgresDeclaration,
+        PostHogDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
@@ -293,6 +299,8 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
       declaration.kind !== generated.kind ||
       (declaration.kind === "postgres" &&
         (generated.kind !== "postgres" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "posthog" &&
+        (generated.kind !== "posthog" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "sharedStore" &&
         (generated.kind !== "sharedStore" ||
           declaration.patchId !== generated.patchId ||

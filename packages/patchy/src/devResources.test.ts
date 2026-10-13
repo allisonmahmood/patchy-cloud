@@ -58,6 +58,7 @@ it.live(
         }),
         metadata: yield* decodeMetadata({
           postgres: {},
+          posthog: {},
           shared: {
             contacts: {
               declaration,
@@ -182,6 +183,7 @@ it.live(
         },
         metadata: {
           postgres: {},
+          posthog: {},
           shared: {
             assets: {
               declaration: assets,
@@ -324,6 +326,7 @@ it.live(
         }),
         metadata: yield* decodeMetadata({
           postgres: {},
+          posthog: {},
           shared: {
             contacts: {
               declaration,
@@ -451,6 +454,7 @@ it.live(
         }),
         metadata: yield* decodeMetadata({
           postgres: {},
+          posthog: {},
           shared: {
             contacts: {
               declaration,
@@ -570,7 +574,7 @@ it.live(
           role: "admin",
           machine: { id: "local-machine", name: "Local machine" }
         }),
-        metadata: { postgres: {}, shared: {} }
+        metadata: { postgres: {}, posthog: {}, shared: {} }
       };
       const exercise = Effect.fn("test.publishedInventory")(function* (
         current: Prepared,
@@ -739,6 +743,7 @@ it.live(
             mirror: { declaration: first, snapshot },
             second: { declaration: second, snapshot }
           },
+          posthog: {},
           shared: {}
         }
       };

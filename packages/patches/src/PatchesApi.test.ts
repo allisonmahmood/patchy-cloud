@@ -2404,6 +2404,7 @@ const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: s
     })
   );
   const connection = yield* connections.connect({
+    integration: "postgres",
     companyId: admin.company.id,
     userId: admin.user.id,
     handle,
@@ -2442,10 +2443,10 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         const patches = yield* Patches.Patches;
         const loaded = Option.getOrThrow(yield* patches.find(created.patchId));
         assert.deepStrictEqual(loaded.version.manifest.uses.sales, declaration);
-        assert.deepStrictEqual(
-          yield* connections.snapshot(admin.company.id, connection.id, 1),
+        assert.deepStrictEqual(yield* connections.snapshot(admin.company.id, connection.id, 1), {
+          integration: "postgres",
           snapshot
-        );
+        });
 
         yield* connections.disconnect(identity);
         const objects = yield* ContentStore.ContentStore;

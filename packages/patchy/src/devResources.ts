@@ -1,5 +1,5 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
-import { WIRE_VERSION } from "@patchy/api";
+import { PostgresRows, PostHogQuery, WIRE_VERSION } from "@patchy/api";
 import type { PatchInventory } from "@patchy/api";
 import {
   CompanyDatabases,
@@ -43,6 +43,17 @@ export class StateUnavailable extends Schema.TaggedError<StateUnavailable>()(
 ) {
   override get message() {
     return `Could not prepare local dev state at ${this.path}.`;
+  }
+}
+/** PostHog reads go to the real connection in dev; until that lands, dev refuses them. */
+export class PostHogUnavailable extends Schema.TaggedError<PostHogUnavailable>()(
+  "DevPostHogUnavailable",
+  {}
+) {
+  readonly code = "source_unavailable" as const;
+  readonly status = 503;
+  override get message() {
+    return "patchy dev can't read PostHog yet; live reads arrive with allisonmahmood/patchy-cloud#647.";
   }
 }
 export class SharedFixtureInvalid extends Schema.TaggedError<SharedFixtureInvalid>()(
@@ -283,7 +294,11 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
     ...(yield* TableOperations.make),
     ...(yield* Members.make),
     ...fileHandlers,
-    ...postgres
+    ...postgres,
+    "posthog.query": Runtime.handler(
+      { kind: "integration", input: PostHogQuery, output: PostgresRows },
+      () => Effect.fail(new PostHogUnavailable({}))
+    )
   };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };
@@ -468,7 +483,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   for (const { declaration, snapshot } of Object.values(prepared.metadata.postgres)) {
     if (connections.has(declaration.id)) continue;
     connections.set(declaration.id, {
-      connection: new ConnectionStore.Connection({
+      connection: {
         id: declaration.id,
         companyId: version.companyId,
         integration: "postgres",
@@ -482,8 +497,10 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
         lastTestedAt: null,
         lastDiscoveredAt: null,
         createdBy: prepared.identity.user.id
-      }),
-      snapshots: [{ revision: declaration.revision, snapshot }]
+      } satisfies ConnectionStore.Connection,
+      snapshots: [
+        { revision: declaration.revision, metadata: { integration: "postgres", snapshot } }
+      ]
     });
     workerInputs.set(declaration.id, { declaration, snapshot });
   }

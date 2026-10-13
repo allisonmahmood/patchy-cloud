@@ -230,7 +230,7 @@ const fixture = Effect.gen(function* () {
               return respond({
                 ok: true,
                 uses: [],
-                metadata: { postgres: {}, shared: {} },
+                metadata: { postgres: {}, posthog: {}, shared: {} },
                 files: [
                   {
                     path: "patchy/_generated/client.ts",

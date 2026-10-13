@@ -87,8 +87,29 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
   const lines = [
     `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`
   ];
+  if (connection.snapshot === null) return [...lines, "Snapshot: unavailable"];
+  if (connection.integration === "posthog") {
+    const snapshot = connection.snapshot;
+    const described = (description: string | undefined) =>
+      description === undefined ? "" : `  ${description.split(/\r?\n/, 1)[0]}`;
+    const properties = (title: string, items: typeof snapshot.eventProperties) => [
+      `${title}:`,
+      ...items.map(
+        (item) =>
+          `  ${item.name}${item.type === null ? "" : ` (${item.type})`}${described(item.description)}`
+      )
+    ];
+    return [
+      ...lines,
+      `Events revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`,
+      "Events:",
+      ...snapshot.events.map((event) => `  ${event.name}${described(event.description)}`),
+      ...properties("Event properties", snapshot.eventProperties),
+      ...properties("Person properties", snapshot.personProperties)
+    ];
+  }
   const snapshot = connection.snapshot;
-  if (snapshot === null) return [...lines, "Snapshot: unavailable"];
   lines.push(
     `Schema revision: ${snapshot.revision}`,
     `Taken at: ${snapshot.takenAt}`,
@@ -139,7 +160,7 @@ const connectionName = Effect.fn("Discovery.connectionName")(function* (
       message: "Use list connections <integration>/<handle>, such as postgres/warehouse."
     });
   const listed = yield* client
-    .listConnections({ query: { integrations: "all" } })
+    .listConnections({ query: { integrations: Api.decodable } })
     .pipe(Effect.catch(refusal));
   const named = listed.connections.filter((connection) => connection.handle === name);
   if (named.length > 1)
@@ -191,7 +212,7 @@ export const list = Effect.fn("Discovery.list")(function* (
     }
     const result = yield* client
       .listConnections({
-        query: { all: Option.getOrElse(options.all, () => false), integrations: "all" }
+        query: { all: Option.getOrElse(options.all, () => false), integrations: Api.decodable }
       })
       .pipe(Effect.catch(refusal));
     return yield* Output.report(encodeConnections(result), connectionLines(result));
@@ -201,7 +222,7 @@ export const list = Effect.fn("Discovery.list")(function* (
     const [patches, connections] = yield* Effect.all(
       [
         client.list({ query: { state, mine: Option.getOrElse(options.mine, () => false) } }),
-        client.listConnections({ query: { integrations: "all" } })
+        client.listConnections({ query: { integrations: Api.decodable } })
       ],
       { concurrency: 2 }
     ).pipe(Effect.catch(refusal));

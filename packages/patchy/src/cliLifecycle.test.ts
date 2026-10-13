@@ -682,8 +682,9 @@ describe("patchy list", () => {
         expect(url.searchParams.get("mine")).toBe("true");
         return respond(200, { patches: [] });
       }
-      // Connections are never filtered by the patch flags; the list asks for every integration.
-      expect(url.search).toBe("?integrations=all");
+      // Connections are never filtered by the patch flags; the list names every integration
+      // this release decodes.
+      expect(url.searchParams.get("integrations")).toBe("postgres,posthog");
       respond(200, projectConnections);
     });
     const result = await runCli(
@@ -935,7 +936,7 @@ describe("patchy list", () => {
       };
       const instance = await stubInstance((request, respond) => {
         // A bare handle is looked up among every integration's connections first.
-        if (request.url === "/api/connections?integrations=all")
+        if (request.url === "/api/connections?integrations=postgres%2Cposthog")
           return respond(200, projectConnections);
         expect(request.url).toBe("/api/connections/postgres/sales-db");
         respond(200, detail);

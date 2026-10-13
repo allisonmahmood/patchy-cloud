@@ -1,32 +1,60 @@
-import { Integration, PostgresDeclaration, type ConnectionDetail } from "@patchy/api";
+import {
+  type ConnectionDeclaration,
+  type ConnectionDetail,
+  type Integration,
+  PostHogSnapshot
+} from "@patchy/api";
+import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as CredentialKeys from "./CredentialKeys.js";
-import type { Snapshot } from "@patchy/api/postgres-snapshot";
-import * as Source from "./postgres/Source.js";
+import * as PostgresSource from "./postgres/Source.js";
+import * as PostHogSource from "./posthog/Source.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
   Schema.makeFilter((value) => !/[\r\n]/.test(value))
 );
-export class Connection extends Schema.Class<Connection>("Connection")({
+const fields = {
   id: Schema.String,
   companyId: Schema.String,
-  integration: Integration,
   handle: Companies.Handle,
   description: Description,
   mode: Schema.Literal("company"),
   status: Schema.Literals(["connected", "disconnected"]),
-  display: Source.Display,
   credentialRevision: Schema.Int,
   metadataRevision: Schema.Int,
   lastTestedAt: Schema.NullOr(Schema.String),
   lastDiscoveredAt: Schema.NullOr(Schema.String),
   createdBy: Schema.String
-}) {}
+};
+export const PostgresConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("postgres"),
+  display: PostgresSource.Display
+});
+export const PostHogConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("posthog"),
+  display: PostHogSource.Display
+});
+/** A company connection; its integration decides what its display says. */
+export const Connection = Schema.Union([PostgresConnection, PostHogConnection]);
+export type Connection = typeof Connection.Type;
+/** Where a connection reads, in its integration's terms; credentials of one target share it. */
+export type Target = {
+  readonly [C in Connection as C["integration"]]: Pick<C, "integration" | "display">;
+}[Integration];
+
+/** A stored snapshot, decoded by the integration its own row names. */
+export const Metadata = Schema.Union([
+  Schema.Struct({ integration: Schema.Literal("postgres"), snapshot: Snapshot }),
+  Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot })
+]);
+export type Metadata = typeof Metadata.Type;
 
 export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()(
   "ConnectionNotFound",
@@ -79,7 +107,7 @@ export class ConnectionHandleTaken extends Schema.TaggedError<ConnectionHandleTa
   readonly code = "connection_handle_taken";
   readonly status = 409;
   override get message() {
-    return "This company already has a connection with that handle.";
+    return "This company already has a connection with that name.";
   }
 }
 export class InvalidConnectionHandle extends Schema.TaggedError<InvalidConnectionHandle>()(
@@ -173,7 +201,8 @@ export type ConnectionError =
   | ConnectionInUse
   | ConnectionMutationUnavailable
   | CredentialKeys.CredentialError
-  | Source.SourceError;
+  | PostgresSource.SourceError
+  | PostHogSource.SourceError;
 
 /** Who declares a connection, by the rule that decides whether it may be deleted. */
 export interface Usage {
@@ -203,6 +232,7 @@ export interface Identity {
   readonly id: string;
 }
 export interface ConnectInput {
+  readonly integration: Integration;
   readonly companyId: string;
   readonly userId: string;
   readonly handle: string;
@@ -236,12 +266,13 @@ export class ConnectionStore extends Context.Service<
       companyId: string,
       integration: Integration,
       handle: string
-    ) => Effect.Effect<typeof ConnectionDetail.Type, ConnectionNotFound | ConnectionStorageFailed>;
+    ) => Effect.Effect<ConnectionDetail, ConnectionNotFound | ConnectionStorageFailed>;
+    /** A stored snapshot, by the integration its own row names, even after its connection is gone. */
     readonly snapshot: (
       companyId: string,
       id: string,
       revision: number
-    ) => Effect.Effect<typeof Snapshot.Type, ConnectionError>;
+    ) => Effect.Effect<Metadata, ConnectionError>;
     /**
      * `report` runs with the commit, after discovery: a disconnect during COMMIT
      * still reports, and a refusal or rollback never does.
@@ -267,12 +298,12 @@ export class ConnectionStore extends Context.Service<
     /** Hold the connection lock until the declaring version commits in the caller's platform transaction. */
     readonly resolve: (
       companyId: string,
-      declaration: typeof PostgresDeclaration.Type
-    ) => Effect.Effect<typeof PostgresDeclaration.Type, ResolveError>;
+      declaration: ConnectionDeclaration
+    ) => Effect.Effect<ConnectionDeclaration, ResolveError>;
     /** Live identity and credential revision, never the published metadata stamp. Decrypt only to create a pool. */
     readonly poolCredentials: (
       companyId: string,
-      declaration: typeof PostgresDeclaration.Type,
+      declaration: ConnectionDeclaration,
       credentialRevision: number
     ) => Effect.Effect<Redacted.Redacted<string>, ConnectionError>;
   }

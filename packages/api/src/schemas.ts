@@ -10,6 +10,7 @@ import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
+import { PostHogSnapshot } from "./posthogSnapshot.js";
 import {
   HandlerDescriptors,
   HandlerModuleName,
@@ -492,6 +493,13 @@ export const PostgresDeclaration = Schema.Struct({
   id: NonEmptyText,
   revision: Revision
 });
+export const PostHogDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("posthog")
+});
+/** A company connection a version declares, bound to its identity and metadata revision. */
+export const ConnectionDeclaration = Schema.Union([PostgresDeclaration, PostHogDeclaration]);
+export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
 export const sharedTableId = (patchId: string, table: string): string => `${patchId}/${table}`;
 
@@ -555,6 +563,7 @@ export const Manifest = Schema.Struct({
   uses: definitions(
     Schema.Union([
       PostgresDeclaration,
+      PostHogDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -576,6 +585,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...PostHogDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -590,7 +604,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres"] as const;
+export const integrations = ["postgres", "posthog"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -611,19 +625,25 @@ export const Connections = Schema.Struct({
   )
 });
 
-export const ConnectionDetail = Schema.Struct({
-  integration: Integration,
-  handle: ConnectionSummary.fields.handle,
-  description: ConnectionSummary.fields.description,
-  status: ConnectionSummary.fields.status,
-  snapshot: Schema.NullOr(
-    Schema.Struct({
-      ...Snapshot.fields,
-      revision: Revision,
-      takenAt: Schema.String
-    })
-  )
-});
+const detail = <const I extends Integration, F extends Schema.Struct.Fields>(
+  integration: I,
+  snapshot: F
+) =>
+  Schema.Struct({
+    integration: Schema.Literal(integration),
+    handle: ConnectionSummary.fields.handle,
+    description: ConnectionSummary.fields.description,
+    status: ConnectionSummary.fields.status,
+    snapshot: Schema.NullOr(
+      Schema.Struct({ ...snapshot, revision: Revision, takenAt: Schema.String })
+    )
+  });
+/** What the legacy `/connections/:handle` route answers, as CLIs from before PostHog decode it. */
+export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
+export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
+/** One connection and its current metadata, in its integration's shape. */
+export const ConnectionDetail = Schema.Union([PostgresConnectionDetail, PostHogConnectionDetail]);
+export type ConnectionDetail = typeof ConnectionDetail.Type;
 
 export const ConnectionUnavailable = failure(503, {
   code: Schema.Literal("connection_storage_failed")
@@ -656,6 +676,10 @@ export const DeclarationMetadata = Schema.Struct({
   postgres: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: PostgresDeclaration, snapshot: Snapshot })
+  ),
+  posthog: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: PostHogDeclaration, snapshot: PostHogSnapshot })
   ),
   shared: Schema.Record(
     Schema.String,

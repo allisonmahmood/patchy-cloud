@@ -5,6 +5,7 @@ import {
   files,
   members,
   postgres,
+  posthog,
   sharedStore,
   sharedTable,
   t,
@@ -63,6 +64,7 @@ const config = defineConfig({
   uses: {
     members: members(),
     sales: postgres("warehouse"),
+    product: posthog("warehouse"),
     customers: sharedTable("abcdefghijkl", "customers"),
     logos: sharedStore("abcdefghijkl", "logos")
   }
@@ -98,6 +100,9 @@ export type ConfigAssertions = [
   Assert<Equal<typeof config.tables.notes.indexes.byTitle.columns, readonly ["title"]>>,
   Assert<Equal<typeof config.tables.notes.indexes.byCount.unique, true>>,
   Assert<Equal<typeof config.uses.sales.handle, "warehouse">>,
+  Assert<
+    Equal<typeof config.uses.product, { readonly kind: "posthog"; readonly handle: "warehouse" }>
+  >,
   Assert<Equal<typeof config.uses.logos.store, "logos">>,
   Assert<Equal<typeof config.uses.logos.kind, "sharedStore">>,
   Assert<Equal<typeof executeConfig, (path: string) => Promise<ExecutedManifest>>>,

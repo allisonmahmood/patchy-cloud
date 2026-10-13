@@ -68,7 +68,7 @@ const snapshot: typeof Snapshot.Type = {
     }
   ]
 };
-const connection = new ConnectionStore.Connection({
+const connection = {
   id: declaration.id,
   companyId: DEV_SEED.companyId,
   integration: "postgres",
@@ -82,7 +82,7 @@ const connection = new ConnectionStore.Connection({
   lastTestedAt: null,
   lastDiscoveredAt: null,
   createdBy: DEV_SEED.userId
-});
+} satisfies ConnectionStore.Connection;
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version) =>
     Effect.succeed(
@@ -142,7 +142,12 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
         yield* sql.unsafe("INSERT INTO public.orders VALUES (1), (2)");
         const store = yield* ConnectionStore.ConnectionStore.pipe(
           Effect.provide(
-            ConnectionStoreDev.layer([{ connection, snapshots: [{ revision: 1, snapshot }] }])
+            ConnectionStoreDev.layer([
+              {
+                connection,
+                snapshots: [{ revision: 1, metadata: { integration: "postgres", snapshot } }]
+              }
+            ])
           )
         );
         const execution = yield* nativeExecution(store, {

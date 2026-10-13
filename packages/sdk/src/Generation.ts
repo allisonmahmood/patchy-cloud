@@ -16,7 +16,7 @@ import {
   type TableDefinition
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
-import { ConnectionStore, Postgres } from "@patchy/integrations";
+import { ConnectionStore, Postgres, PostHog } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
@@ -61,12 +61,13 @@ export class UnsafeGeneratedPath extends Schema.TaggedError<UnsafeGeneratedPath>
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
+    integration: Schema.Literals(["postgres", "posthog"]),
     handle: Schema.String
   }
 ) {
   readonly code = "connection_not_connected" as const;
   override get message() {
-    return `Postgres connection ${this.handle} is not connected. Ask an administrator at /company/connections.`;
+    return `${this.integration === "postgres" ? "Postgres" : "PostHog"} connection ${this.handle} is not connected. Ask an administrator at /company/connections.`;
   }
 }
 export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
@@ -115,7 +116,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "members" }
+    { kind: "postgres" | "posthog" | "members" }
   >
 ) => {
   const source =
@@ -146,6 +147,7 @@ const knownSkills = [
   "patchy-preact",
   "patchy-server",
   "patchy-postgres",
+  "patchy-posthog",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -249,7 +251,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       skill: string;
       context: string;
       client: string;
-      fixture: string;
+      fixture?: string;
     }
   > = [];
   const declarations: Array<{
@@ -262,13 +264,17 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const shared: Record<string, string> = Object.create(null);
   const metadata: {
     postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]>;
+    posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
+    posthog: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
-  const available = Object.values(request.manifest.uses).some((entry) => entry.kind === "postgres")
+  const available = Object.values(request.manifest.uses).some(
+    (entry) => entry.kind === "postgres" || entry.kind === "posthog"
+  )
     ? yield* connections.list(companyId).pipe(
         Effect.mapError(
           (cause) =>
@@ -284,7 +290,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     if (declaration.kind === "members") continue;
     const context = `${root}/context/${alias}.md`;
     const client = `${root}/uses/${alias}.ts`;
-    if (declaration.kind === "postgres") {
+    if (declaration.kind === "postgres" || declaration.kind === "posthog") {
       const connection = available.find(
         (entry) =>
           entry.integration === declaration.kind &&
@@ -292,14 +298,16 @@ export const generate = Effect.fn("Generation.generate")(function* (
           entry.status === "connected"
       );
       if (connection === undefined)
-        return yield* new ConnectionNotConnected({ handle: declaration.handle });
+        return yield* new ConnectionNotConnected({
+          integration: declaration.kind,
+          handle: declaration.handle
+        });
       const resolved = {
-        kind: "postgres" as const,
         handle: connection.handle,
         id: connection.id,
         revision: connection.metadataRevision
       };
-      const snapshot = yield* connections.snapshot(companyId, resolved.id, resolved.revision).pipe(
+      const stored = yield* connections.snapshot(companyId, resolved.id, resolved.revision).pipe(
         Effect.mapError(
           (cause) =>
             new GenerationUnavailable({
@@ -309,27 +317,49 @@ export const generate = Effect.fn("Generation.generate")(function* (
             })
         )
       );
-      metadata.postgres[alias] = { declaration: resolved, snapshot };
-      const output = Postgres.postgres.generate(
-        { ...resolved, description: connection.description },
-        snapshot
-      );
-      const fixture = `fixtures/postgres-${connection.handle}.sql`;
-      files.set(client, output.client);
-      files.set(context, output.context);
-      files.set(fixture, output.fixture);
+      const described = { ...resolved, description: connection.description };
+      let fixture: string | undefined;
+      if (stored.integration === "postgres") {
+        const declared = { kind: "postgres" as const, ...resolved };
+        metadata.postgres[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Postgres.postgres.generate(
+          { ...described, kind: "postgres" },
+          stored.snapshot
+        );
+        fixture = `fixtures/postgres-${connection.handle}.sql`;
+        files.set(client, output.client);
+        files.set(context, output.context);
+        files.set(fixture, output.fixture);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          skill: ".agents/skills/patchy-postgres/SKILL.md",
+          context,
+          client,
+          fixture
+        });
+        skills.add("patchy-postgres");
+      } else {
+        // PostHog has no fixture: dev reads the real connection.
+        const declared = { kind: "posthog" as const, ...resolved };
+        metadata.posthog[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = PostHog.posthog.generate({ ...described, kind: "posthog" }, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          skill: ".agents/skills/patchy-posthog/SKILL.md",
+          context,
+          client
+        });
+        skills.add("patchy-posthog");
+      }
       factories[alias] = `./uses/${alias}.js`;
-      skills.add("patchy-postgres");
-      uses.push({
-        alias,
-        id: resolved.id,
-        revision: resolved.revision,
-        declaration: resolved,
-        skill: ".agents/skills/patchy-postgres/SKILL.md",
-        context,
-        client,
-        fixture
-      });
     } else if (declaration.kind === "sharedStore") {
       const source = yield* patches
         .sharedStore(declaration.patchId, declaration.store, companyId)

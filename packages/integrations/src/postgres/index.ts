@@ -24,7 +24,7 @@ export const postgres: {
   readonly metadata?: typeof metadata;
   readonly operations: typeof operations;
   readonly generate: typeof generate;
-  readonly dev: typeof dev;
+  readonly dev?: typeof dev;
 } = defineIntegration({
   name: "postgres",
   modes: ["company"],

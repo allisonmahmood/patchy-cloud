@@ -1,4 +1,10 @@
-import { ConnectionDetail, integrations, type Integration, PostgresDeclaration } from "@patchy/api";
+import {
+  type ConnectionDeclaration,
+  type ConnectionDetail,
+  integrations,
+  type Integration,
+  PostHogSnapshot
+} from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
 import { newInternalId } from "@patchy/core";
@@ -28,33 +34,68 @@ import {
   Description,
   InvalidConnectionDescription,
   InvalidConnectionHandle,
+  Metadata,
+  PostgresConnection,
+  PostHogConnection,
   StaleGenerated,
   type ConnectInput,
   type CredentialsInput,
-  type Identity
+  type Identity,
+  type Target
 } from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
-import * as Source from "./postgres/Source.js";
+import * as PostgresSource from "./postgres/Source.js";
+import * as PostHogSource from "./posthog/Source.js";
 
 const isDescription = Schema.is(Description);
-const decodeSnapshot = Schema.decodeUnknownEffect(Snapshot);
-const encodeSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot));
-const encodeDisplay = Schema.encodeSync(Schema.fromJsonString(Source.Display));
-const StoredConnection = Schema.Struct({
-  ...Connection.fields,
-  credentials: Schema.String,
-  keyId: Schema.String
-});
+const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
+const encodePostgresSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot));
+const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSnapshot));
+const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
+const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
+const encodeSnapshot = (metadata: Metadata) =>
+  metadata.integration === "postgres"
+    ? encodePostgresSnapshot(metadata.snapshot)
+    : encodePostHogSnapshot(metadata.snapshot);
+const encodeDisplay = (target: Target) =>
+  target.integration === "postgres"
+    ? encodePostgresDisplay(target.display)
+    : encodePostHogDisplay(target.display);
+/** Credentials for the same destination may replace each other; anything else is a retarget. */
+const sameTarget = (current: Target, next: Target) =>
+  current.integration === "postgres"
+    ? next.integration === "postgres" &&
+      next.display.host === current.display.host &&
+      next.display.port === current.display.port &&
+      next.display.database === current.display.database
+    : next.integration === "posthog" &&
+      next.display.region === current.display.region &&
+      next.display.projectId === current.display.projectId;
+const secret = { credentials: Schema.String, keyId: Schema.String };
+const StoredConnection = Schema.Union([
+  Schema.Struct({ ...PostgresConnection.fields, ...secret }),
+  Schema.Struct({ ...PostHogConnection.fields, ...secret })
+]);
 type StoredConnection = typeof StoredConnection.Type;
-const SnapshotDetail = Schema.Struct({
-  integration: ConnectionDetail.fields.integration,
-  handle: ConnectionDetail.fields.handle,
-  description: ConnectionDetail.fields.description,
-  status: ConnectionDetail.fields.status,
-  snapshot: Schema.NullOr(Snapshot),
+const detailFields = {
+  handle: Schema.String,
+  description: Schema.String,
+  status: Schema.Literals(["connected", "disconnected"]),
   revision: Schema.Int,
   takenAt: Schema.NullOr(Schema.String)
-});
+};
+const SnapshotDetail = Schema.Union([
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("postgres"),
+    snapshot: Schema.NullOr(Snapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("posthog"),
+    snapshot: Schema.NullOr(PostHogSnapshot)
+  })
+]);
 const Lookup = Schema.Struct({
   companyId: Schema.String,
   id: Schema.String,
@@ -64,7 +105,8 @@ const Lookup = Schema.Struct({
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const keys = yield* CredentialKeys.CredentialKeys;
-  const source = yield* Source.Source;
+  const postgres = yield* PostgresSource.Source;
+  const posthog = yield* PostHogSource.Source;
   const audit = yield* RuntimeLog.RuntimeLog;
   const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
     display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
@@ -104,17 +146,19 @@ export const make = Effect.gen(function* () {
       WHERE company_id = ${companyId} AND id = ${id} AND ${known}
       ${locked ? sql`FOR UPDATE` : sql``}`
   });
+  // The snapshot row names its own integration: it outlives its connection.
   const snapshotRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ companyId: Schema.String, id: Schema.String, revision: Schema.Int }),
-    Result: Schema.Struct({ snapshot: Snapshot }),
-    execute: ({ companyId, id, revision }) => sql`SELECT snapshot FROM connection_snapshots
+    Result: Metadata,
+    execute: ({ companyId, id, revision }) => sql`SELECT integration, snapshot
+      FROM connection_snapshots
       WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}
         AND ${known}`
   });
   const detailRow = SqlSchema.findOneOption({
     Request: Schema.Struct({
       companyId: Schema.String,
-      integration: ConnectionDetail.fields.integration,
+      integration: Schema.Literals(integrations),
       handle: Schema.String
     }),
     Result: SnapshotDetail,
@@ -191,14 +235,17 @@ export const make = Effect.gen(function* () {
       const found = yield* detailRow({ companyId, integration, handle });
       if (Option.isNone(found))
         return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
-      const { description, status, snapshot, revision, takenAt } = found.value;
-      return {
-        integration,
-        handle,
-        description,
-        status,
-        snapshot: snapshot === null || takenAt === null ? null : { ...snapshot, revision, takenAt }
-      };
+      const { revision, takenAt, ...row } = found.value;
+      const stamp = takenAt === null ? null : { revision, takenAt };
+      return row.integration === "postgres"
+        ? {
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          }
+        : ({
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          } satisfies ConnectionDetail);
     },
     Effect.catchTags(safe("detail"))
   );
@@ -237,8 +284,37 @@ export const make = Effect.gen(function* () {
       return yield* new ConnectionChanged({});
     return found.value;
   });
+  /** The integration's own check of credentials, before anything is saved. */
+  const testTarget = Effect.fn("ConnectionStore.testTarget")(function* (
+    integration: Integration,
+    credentials: Redacted.Redacted<string>
+  ) {
+    const target: Target =
+      integration === "postgres"
+        ? { integration, display: yield* postgres.test(credentials) }
+        : { integration, display: yield* posthog.test(credentials) };
+    return target;
+  });
+  /** Tests and discovers; the snapshot is decoded again before it is stored. */
+  const discoverTarget = Effect.fn("ConnectionStore.discoverTarget")(function* (
+    integration: Integration,
+    credentials: Redacted.Redacted<string>
+  ) {
+    if (integration === "postgres") {
+      const { display, snapshot } = yield* postgres.inspect(credentials);
+      return {
+        target: { integration, display } satisfies Target as Target,
+        metadata: { integration, snapshot } satisfies Metadata as Metadata
+      };
+    }
+    const { display, snapshot } = yield* posthog.inspect(credentials);
+    return {
+      target: { integration, display } satisfies Target as Target,
+      metadata: { integration, snapshot } satisfies Metadata as Metadata
+    };
+  });
   const inspect = Effect.fn("ConnectionStore.inspect")(function* (
-    input: Identity,
+    input: Identity & { readonly integration: Integration },
     credentials: Redacted.Redacted<string>
   ) {
     const correlationId = newInternalId("cor");
@@ -249,16 +325,16 @@ export const make = Effect.gen(function* () {
       patchId: null,
       versionId: null,
       credentialKind: "admin",
-      op: "postgres.discover",
+      op: `${input.integration}.discover`,
       resource: null,
       connectionId: input.id,
       correlationId,
       deadlineMs: registry["integration.deadline"].default
     });
-    return yield* source.inspect(credentials).pipe(
+    return yield* discoverTarget(input.integration, credentials).pipe(
       Effect.flatMap((result) =>
-        decodeSnapshot(result.snapshot).pipe(
-          Effect.map((snapshot) => ({ display: result.display, snapshot }))
+        decodeMetadata(result.metadata).pipe(
+          Effect.map((metadata) => ({ target: result.target, metadata }))
         )
       ),
       Effect.onExit((exit) =>
@@ -276,15 +352,15 @@ export const make = Effect.gen(function* () {
   });
   // A snapshot names its integration itself: it outlives its connection, and decodes by it.
   const writeSnapshot = Effect.fn("ConnectionStore.writeSnapshot")(function* (
-    input: Identity & { readonly integration: Integration },
+    input: Identity,
     revision: number,
-    snapshot: typeof Snapshot.Type,
+    metadata: Metadata,
     now: number
   ) {
     yield* sql`INSERT INTO connection_snapshots
       (company_id, connection_id, integration, revision, snapshot, created_at)
-      VALUES (${input.companyId}, ${input.id}, ${input.integration}, ${revision},
-        ${encodeSnapshot(snapshot)}, to_timestamp(${now / 1_000}))`;
+      VALUES (${input.companyId}, ${input.id}, ${metadata.integration}, ${revision},
+        ${encodeSnapshot(metadata)}, to_timestamp(${now / 1_000}))`;
   });
 
   const list = Effect.fn("ConnectionStore.list")(
@@ -296,7 +372,7 @@ export const make = Effect.gen(function* () {
       const found = yield* snapshotRow({ companyId, id, revision });
       if (Option.isNone(found))
         return yield* new ConnectionNotFound({ companyId, lookup: { id, revision } });
-      return found.value.snapshot;
+      return found.value;
     },
     Effect.catchTags(safe("snapshot"))
   );
@@ -309,24 +385,24 @@ export const make = Effect.gen(function* () {
     function* (input: ConnectInput, report?: (connection: Connection) => Effect.Effect<void>) {
       if (!Companies.isHandle(input.handle)) return yield* new InvalidConnectionHandle({});
       if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
-      const identity = { ...input, id: newInternalId("conn"), integration: "postgres" as const };
+      const identity = { ...input, id: newInternalId("conn") };
       const inspected = yield* inspect(identity, input.credentials);
       const encrypted = yield* keys.encrypt(identity, input.credentials);
       const now = yield* Clock.currentTimeMillis;
       return yield* reportedTransaction(
         Effect.gen(function* () {
-          // A targetless conflict resolves on whichever handle key the schema has: per
-          // company today, per integration once a second integration ships.
+          // A targetless conflict resolves on whichever handle key the schema has, so the
+          // release before handles became unique per integration also worked.
           const inserted = yield* sql`INSERT INTO connections
         (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
          credential_revision, metadata_revision, created_by, last_tested_at, last_discovered_at)
         VALUES (${identity.id}, ${input.companyId}, ${identity.integration}, ${input.handle},
-          ${input.description}, 'company', 'connected', ${encodeDisplay(inspected.display)},
+          ${input.description}, 'company', 'connected', ${encodeDisplay(inspected.target)},
           ${encrypted.credentials}, ${encrypted.keyId}, 1, 1, ${input.userId},
           to_timestamp(${now / 1_000}), to_timestamp(${now / 1_000}))
         ON CONFLICT DO NOTHING RETURNING id`;
           if (inserted.length === 0) return yield* new ConnectionHandleTaken({});
-          yield* writeSnapshot(identity, 1, inspected.snapshot, now);
+          yield* writeSnapshot(identity, 1, inspected.metadata, now);
           return yield* get(input.companyId, identity.id);
         }),
         report
@@ -337,7 +413,7 @@ export const make = Effect.gen(function* () {
   const test = Effect.fn("ConnectionStore.test")(
     function* (input: Identity) {
       const current = yield* stored(input);
-      yield* source.test(yield* keys.decrypt(current, current));
+      yield* testTarget(current.integration, yield* keys.decrypt(current, current));
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
@@ -352,20 +428,14 @@ export const make = Effect.gen(function* () {
   const rotate = Effect.fn("ConnectionStore.rotate")(
     function* (input: CredentialsInput) {
       const current = yield* stored(input);
-      const display = yield* source.test(input.credentials);
-      if (
-        display.host !== current.display.host ||
-        display.port !== current.display.port ||
-        display.database !== current.display.database
-      ) {
-        return yield* new ConnectionRetargetRequired({});
-      }
+      const target = yield* testTarget(current.integration, input.credentials);
+      if (!sameTarget(current, target)) return yield* new ConnectionRetargetRequired({});
       const encrypted = yield* keys.encrypt(current, input.credentials);
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* lock(input, current);
-          yield* sql`UPDATE connections SET display = ${encodeDisplay(display)}, credentials = ${encrypted.credentials},
+          yield* sql`UPDATE connections SET display = ${encodeDisplay(target)}, credentials = ${encrypted.credentials},
         key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1,
         last_tested_at = to_timestamp(${now / 1_000}) WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return yield* get(input.companyId, input.id);
@@ -382,21 +452,16 @@ export const make = Effect.gen(function* () {
     if (credentials === undefined && current.status !== "connected")
       return yield* new ConnectionNotConnected({});
     const secret = credentials ?? (yield* keys.decrypt(current, current));
-    const inspected = yield* inspect(input, secret);
+    const inspected = yield* inspect({ ...input, integration: current.integration }, secret);
     const encrypted = credentials === undefined ? undefined : yield* keys.encrypt(current, secret);
     const now = yield* Clock.currentTimeMillis;
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* lock(input, current);
         const revision = current.metadataRevision + 1;
-        yield* writeSnapshot(
-          { ...input, integration: current.integration },
-          revision,
-          inspected.snapshot,
-          now
-        );
+        yield* writeSnapshot(input, revision, inspected.metadata, now);
         yield* sql`UPDATE connections SET metadata_revision = ${revision},
-        display = ${encodeDisplay(inspected.display)}, last_tested_at = to_timestamp(${now / 1_000}),
+        display = ${encodeDisplay(inspected.target)}, last_tested_at = to_timestamp(${now / 1_000}),
         last_discovered_at = to_timestamp(${now / 1_000})
         ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1`}
         WHERE id = ${input.id} AND company_id = ${input.companyId}`;
@@ -429,7 +494,7 @@ export const make = Effect.gen(function* () {
     function* (input: Identity) {
       const current = yield* stored(input);
       if (current.status === "connected") return yield* get(input.companyId, input.id);
-      yield* source.test(yield* keys.decrypt(current, current));
+      yield* testTarget(current.integration, yield* keys.decrypt(current, current));
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
@@ -471,7 +536,7 @@ export const make = Effect.gen(function* () {
     Effect.catchTags(safe("delete"))
   );
   const resolve = Effect.fn("ConnectionStore.resolve")(
-    function* (companyId: string, declaration: typeof PostgresDeclaration.Type) {
+    function* (companyId: string, declaration: ConnectionDeclaration) {
       const found = yield* connectionRow({ companyId, id: declaration.id, locked: true });
       if (
         Option.isNone(found) ||
@@ -484,7 +549,7 @@ export const make = Effect.gen(function* () {
       if (found.value.metadataRevision !== declaration.revision)
         return yield* new StaleGenerated({});
       return {
-        kind: "postgres" as const,
+        kind: declaration.kind,
         handle: found.value.handle,
         id: found.value.id,
         revision: found.value.metadataRevision
@@ -493,11 +558,7 @@ export const make = Effect.gen(function* () {
     Effect.catchTags(safe("resolve"))
   );
   const poolCredentials = Effect.fn("ConnectionStore.poolCredentials")(
-    function* (
-      companyId: string,
-      declaration: typeof PostgresDeclaration.Type,
-      credentialRevision: number
-    ) {
+    function* (companyId: string, declaration: ConnectionDeclaration, credentialRevision: number) {
       const found = yield* storedRow({ companyId, id: declaration.id, locked: false });
       if (
         Option.isNone(found) ||

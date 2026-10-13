@@ -339,6 +339,12 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `runtime.file.bytes` | contract | 20971520 | bytes | viewer | File bytes per operation | `too_large` | No | release |
 | `runtime.mutation.deadline` | contract | 30000 | milliseconds | viewer | Tier 1 mutation deadline | `timeout` | No | release |
 | `integration.deadline` | contract | 15000 | milliseconds | viewer | Each integration call within its parent deadline | `timeout` | No | release |
+| `runtime.posthog.bytes` | contract | 262144 | bytes | viewer | PostHog operation arguments | `too_large` | No | release |
+| `posthog.queries.concurrent` | contract | 3 | queries | host | Running PostHog queries per region and project in one server process, shared by every connection to that project | `busy` | No | release |
+| `posthog.discovery.pages` | contract | 100 | pages | company | Definition pages one PostHog discovery reads, across events and both property kinds | None | No | release |
+| `posthog.discovery.entries` | contract | 10000 | definitions | company | Event and property definitions one PostHog snapshot keeps | None | No | release |
+| `posthog.discovery.bytes` | contract | 4194304 | bytes | company | Encoded PostHog snapshot | None | No | release |
+| `posthog.discovery.description` | contract | 1000 | characters | company | One definition's description in a PostHog snapshot | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
 | `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
 | `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |

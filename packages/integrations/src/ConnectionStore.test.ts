@@ -15,6 +15,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
+import * as PostHogDouble from "./test/posthog.js";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
 const evolved: typeof Snapshot.Type = {
@@ -28,11 +29,18 @@ const secret = Redacted.make(
 );
 const who = { companyId: DEV_SEED.companyId, userId: DEV_SEED.userId };
 const input = (handle: string): ConnectionStore.ConnectInput => ({
+  integration: "postgres",
   ...who,
   handle,
   description: "Sales warehouse",
   credentials: secret
 });
+/** A stored Postgres snapshot, tagged as the store returns it. */
+const pg = (snapshot: typeof Snapshot.Type) => ({ integration: "postgres" as const, snapshot });
+const postgresDisplay = (connection: ConnectionStore.Connection) => {
+  if (connection.integration !== "postgres") return assert.fail("A Postgres connection");
+  return connection.display;
+};
 const identity = (connection: ConnectionStore.Connection): ConnectionStore.Identity => ({
   ...who,
   id: connection.id
@@ -53,12 +61,23 @@ const source = Source.Source.of({
     return { display: { host, port, database, role }, snapshot: empty };
   })
 });
+/** A PostHog project a key limited to it can read. */
+const product = {
+  region: "us",
+  id: 12345,
+  key: "phx_connectionStoreKey01",
+  events: [{ name: "patch.opened" }, { name: "$pageview", description: "Page views" }],
+  eventProperties: [{ name: "$browser", property_type: "String" }],
+  personProperties: [{ name: "email", property_type: "String" }]
+} satisfies PostHogDouble.Project;
+const posthog = PostHogDouble.make(PostHogDouble.project(product));
 const fixture = SqlConnectionStore.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CredentialKeys.layerFromKeys(Redacted.make(`old:${oldKey}`)),
       RuntimeLog.layer,
-      Layer.succeed(Source.Source, source)
+      Layer.succeed(Source.Source, source),
+      posthog.layer
     )
   ),
   Layer.provideMerge(Testing.layer())
@@ -144,7 +163,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         )
       });
       assert.strictEqual(rotated.status, "disconnected");
-      assert.strictEqual(rotated.display.role, "replacement");
+      assert.strictEqual(postgresDisplay(rotated).role, "replacement");
       assert.strictEqual(rotated.credentialRevision, 3);
       assert.strictEqual(rotated.metadataRevision, 1);
       const reconnected = yield* store.reconnect(target);
@@ -165,7 +184,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         (yield* store.get(who.companyId, connected.id).pipe(Effect.flip)).code,
         "connection_not_found"
       );
-      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), empty);
+      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), pg(empty));
     })
   );
 
@@ -184,11 +203,11 @@ it.layer(fixture)("ConnectionStore", (it) => {
       assert.deepStrictEqual(yield* store.get(who.companyId, connected.id), connected);
       const retargeted = yield* store.retarget({ ...target, credentials });
       assert.strictEqual(retargeted.id, connected.id);
-      assert.strictEqual(retargeted.display.host, "other.example");
-      assert.strictEqual(retargeted.display.database, "reporting");
+      assert.strictEqual(postgresDisplay(retargeted).host, "other.example");
+      assert.strictEqual(postgresDisplay(retargeted).database, "reporting");
       assert.strictEqual(retargeted.credentialRevision, 2);
       assert.strictEqual(retargeted.metadataRevision, 2);
-      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), empty);
+      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), pg(empty));
       assert.strictEqual(
         (yield* store.resolve(who.companyId, declaration(connected)).pipe(Effect.flip)).code,
         "stale_generated"
@@ -219,8 +238,8 @@ it.layer(fixture)("ConnectionStore", (it) => {
         );
         const refreshed = yield* changed.refresh(target);
         assert.strictEqual(refreshed.metadataRevision, 2);
-        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), empty);
-        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 2), evolved);
+        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), pg(empty));
+        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 2), pg(evolved));
         assert.strictEqual(
           (yield* sql`UPDATE connection_snapshots SET snapshot = '{}'::jsonb WHERE connection_id = ${connected.id}`.pipe(
             Effect.flip
@@ -249,7 +268,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         assert.strictEqual(refusal.code, "source_unavailable");
         assert.notInclude(JSON.stringify(refusal), "source diagnostic with secret");
         assert.deepStrictEqual(yield* store.get(who.companyId, connected.id), refreshed);
-        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 2), evolved);
+        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 2), pg(evolved));
         assert.strictEqual(
           (yield* store.snapshot(who.companyId, connected.id, 3).pipe(Effect.flip)).code,
           "connection_not_found"
@@ -294,7 +313,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         "connection_storage_failed"
       );
       assert.deepStrictEqual(yield* store.get(who.companyId, connected.id), connected);
-      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), empty);
+      assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), pg(empty));
       assert.strictEqual(
         (yield* store.snapshot(who.companyId, connected.id, 2).pipe(Effect.flip)).code,
         "connection_not_found"
@@ -313,7 +332,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
           Effect.provide(CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey},old:${oldKey}`)))
         );
         const tested = yield* restarted.test(identity(connected));
-        assert.strictEqual(tested.display.database, "sales");
+        assert.strictEqual(postgresDisplay(tested).database, "sales");
         assert.deepStrictEqual(
           yield* sql`SELECT key_id FROM connections WHERE id = ${connected.id}`,
           [{ key_id: "old" }]
@@ -422,7 +441,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         yield* Deferred.succeed(resume, undefined);
         assert.strictEqual((yield* Fiber.join(refresh)).code, "connection_changed");
         assert.deepStrictEqual(yield* store.get(who.companyId, connected.id), disconnected);
-        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), empty);
+        assert.deepStrictEqual(yield* store.snapshot(who.companyId, connected.id, 1), pg(empty));
         assert.strictEqual(
           (yield* store.snapshot(who.companyId, connected.id, 2).pipe(Effect.flip)).code,
           "connection_not_found"
@@ -433,7 +452,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
 
 it.effect("dev holds metadata alone and explicitly refuses every administration operation", () =>
   Effect.gen(function* () {
-    const connection = new ConnectionStore.Connection({
+    const connection = {
       id: "dev-connection",
       companyId: "dev-company",
       integration: "postgres",
@@ -447,13 +466,16 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
       lastTestedAt: null,
       lastDiscoveredAt: "2026-02-01T00:00:00.000Z",
       createdBy: "dev-user"
-    });
+    } satisfies ConnectionStore.Connection;
     yield* Effect.gen(function* () {
       const store = yield* ConnectionStore.ConnectionStore;
-      assert.deepStrictEqual(yield* store.snapshot(connection.companyId, connection.id, 1), empty);
+      assert.deepStrictEqual(
+        yield* store.snapshot(connection.companyId, connection.id, 1),
+        pg(empty)
+      );
       assert.deepStrictEqual(
         yield* store.snapshot(connection.companyId, connection.id, 2),
-        evolved
+        pg(evolved)
       );
       assert.strictEqual(
         (yield* store.resolve(connection.companyId, declaration(connection))).revision,
@@ -519,18 +541,18 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
           {
             connection,
             snapshots: [
-              { revision: 1, snapshot: empty },
-              { revision: 2, snapshot: evolved, takenAt: "2026-01-02T03:04:05.000Z" }
+              { revision: 1, metadata: pg(empty) },
+              { revision: 2, metadata: pg(evolved), takenAt: "2026-01-02T03:04:05.000Z" }
             ]
           },
           {
-            connection: new ConnectionStore.Connection({
+            connection: {
               ...connection,
               id: "untimed-connection",
               handle: "untimed",
               metadataRevision: 1
-            }),
-            snapshots: [{ revision: 1, snapshot: empty }]
+            } satisfies ConnectionStore.Connection,
+            snapshots: [{ revision: 1, metadata: pg(empty) }]
           }
         ])
       )

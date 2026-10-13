@@ -1,6 +1,7 @@
 import type { PostgresDeclaration } from "@patchy/api";
 import { nativeType, quoteIdentifier, surface, typeMapping } from "./Mapping.js";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
+import { shapeTypes, wireShape } from "../shapeClient.js";
 
 export interface Generated {
   readonly client: string;
@@ -50,24 +51,8 @@ export interface KeyedRelation<Row, Columns extends keyof Row, Key> extends Rela
   get(key: Key): Promise<Row | null>;
   getMany(keys: readonly Key[]): Promise<readonly (Row | null)[]>;
 }
-export type ShapeKind = "text" | "integer" | "number" | "boolean" | "timestamp" | "json";
-export type ShapeColumn = { readonly kind: ShapeKind; readonly optional?: boolean; readonly default?: never; readonly table?: never };
-export type BuilderColumn = Column<ShapeKind, boolean, false>;
-export type Shape = Readonly<Record<string, ShapeColumn | BuilderColumn>>;
-export type ShapeValue<K extends ShapeKind> = K extends "integer" | "number" ? number : K extends "boolean" ? boolean : K extends "json" ? unknown : string;
-export type ShapeRow<S extends Shape> = { readonly [K in keyof S]: ShapeValue<S[K]["kind"]> | (S[K] extends { readonly isOptional: infer Optional } ? true extends Optional ? null : never : S[K] extends { readonly optional?: infer Optional } ? true extends Optional ? null : never : never) };
-export type Query = <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S) => Promise<Rows<ShapeRow<S>>>;
-function wireShape(shape: Shape): Readonly<Record<string, ShapeColumn>> {
-  return Object.fromEntries(Object.entries(shape).map(([name, column]) => {
-    if ((column.kind as string) === "ref" || ("hasDefault" in column && column.hasDefault))
-      throw new PatchyError("invalid_request", "Query shapes do not accept references or defaults.", {});
-    if (!("isOptional" in column) && Object.keys(column).some((key) => key !== "kind" && key !== "optional"))
-      throw new PatchyError("invalid_request", "Query shapes accept only kind and optional fields.", {});
-    const optional = "isOptional" in column ? column.isOptional : column.optional;
-    return [name, { kind: column.kind, ...(optional === undefined ? {} : { optional }) }];
-  }));
-}
-async function invoke(call: Call, op: Parameters<Call>[0], args: unknown): Promise<{ readonly ok: true; readonly rows: readonly unknown[]; readonly cursor?: string | null }> {
+${shapeTypes}export type Query = <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S) => Promise<Rows<ShapeRow<S>>>;
+${wireShape}async function invoke(call: Call, op: Parameters<Call>[0], args: unknown): Promise<{ readonly ok: true; readonly rows: readonly unknown[]; readonly cursor?: string | null }> {
   let value: unknown;
   try { value = await call(op, args); } catch (error) { throw decodeError(error) ?? error; }
   const error = decodeError(value);

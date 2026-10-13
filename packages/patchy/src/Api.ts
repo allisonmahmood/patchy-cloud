@@ -27,7 +27,8 @@ import {
   type PatchyApi,
   PublishCreated,
   type PublishRequest,
-  PublishUpdated
+  PublishUpdated,
+  integrations
 } from "@patchy/api";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as CodingAgent from "./CodingAgent.js";
@@ -71,6 +72,9 @@ export const client = (token?: Redacted.Redacted) =>
       )
     );
   });
+
+/** Every integration this release decodes, as connection listings ask for them. */
+export const decodable = integrations.join(",");
 
 /** The instance's typed client, as `client` builds it. */
 export type Client = Effect.Success<ReturnType<typeof client>>;

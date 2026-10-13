@@ -9,4 +9,7 @@ export * as PostgresSource from "./postgres/Source.js";
 export * as Postgres from "./postgres/index.js";
 export * as PostgresExecution from "./postgres/Execution.js";
 export * as PostgresOperations from "./postgres/Operations.js";
+export * as PostHog from "./posthog/index.js";
+export * as PostHogSource from "./posthog/Source.js";
+export * as PostHogOperations from "./posthog/Operations.js";
 export { migrations } from "./migrations.js";

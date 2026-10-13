@@ -32,7 +32,8 @@ export const errorCodes = {
   server_required: true,
   tier2_not_public: true,
   limit_exceeded: true,
-  offset_exhausted: true
+  offset_exhausted: true,
+  source_rate_limited: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
 export type RelationIdentifier = { readonly schema: string; readonly name: string };
@@ -40,10 +41,13 @@ export type ShapeMismatchDetails =
   | {
       readonly column: string;
       readonly reason: "missing" | "duplicate" | "type" | "null" | "value" | "row_width";
+      /** PostHog's ClickHouse type for the column, when it was the problem. */
+      readonly type?: string;
     }
   | { readonly relation: RelationIdentifier; readonly reason: "source_schema_changed" };
 export type ErrorDetails<C extends ErrorCode> = C extends "invalid_query"
-  ? { readonly sqlstate: string; readonly message: string; readonly position?: string }
+  ? // Postgres names its SQLSTATE and position; PostHog sends its message only.
+    { readonly message: string; readonly sqlstate?: string; readonly position?: string }
   : C extends "shape_mismatch"
     ? ShapeMismatchDetails
     : C extends "relation_unknown"

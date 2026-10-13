@@ -64,6 +64,7 @@ const changeSchema = Schema.Union([
     declaration: Schema.Union([
       Schema.Struct({ kind: Schema.Literal("members") }),
       Schema.Struct({ kind: Schema.Literal("postgres"), handle: Schema.String }),
+      Schema.Struct({ kind: Schema.Literal("posthog"), handle: Schema.String }),
       Schema.Struct({
         kind: Schema.Literal("sharedTable"),
         patchId: Schema.String,
@@ -530,11 +531,13 @@ export const generate = Effect.fn("Project.generate")(function* (
     const skill =
       removedKind === "postgres"
         ? "patchy-postgres"
-        : removedKind === "members"
-          ? "patchy-members"
-          : removedKind === "sharedStore"
-            ? "patchy-shared-stores"
-            : "patchy-shared-tables";
+        : removedKind === "posthog"
+          ? "patchy-posthog"
+          : removedKind === "members"
+            ? "patchy-members"
+            : removedKind === "sharedStore"
+              ? "patchy-shared-stores"
+              : "patchy-shared-tables";
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
@@ -809,16 +812,23 @@ export const add = Effect.fn("Project.add")(function* (
       });
     declaration = { kind: "members" };
     defaultAlias = "members";
-  } else if (integration === "postgres" || integration.startsWith("postgres/")) {
+  } else if (
+    integration === "postgres" ||
+    integration === "posthog" ||
+    integration.startsWith("postgres/") ||
+    integration.startsWith("posthog/")
+  ) {
+    const kind = integration.startsWith("posthog") ? "posthog" : "postgres";
+    const label = kind === "posthog" ? "PostHog" : "Postgres";
     if (Option.isSome(target))
-      return yield* new LocalError({ message: "Use patchy add postgres/<handle> [--as <alias>]." });
-    const handle = integration === "postgres" ? undefined : integration.slice("postgres/".length);
+      return yield* new LocalError({ message: `Use patchy add ${kind}/<handle> [--as <alias>].` });
+    const handle = integration === kind ? undefined : integration.slice(`${kind}/`.length);
     const available = yield* client
-      .listConnections({ query: { integrations: "all" } })
+      .listConnections({ query: { integrations: Api.decodable } })
       .pipe(Effect.catch((error) => refusal(error, "Could not read the connections.")));
     const connections = available.connections.filter(
       (connection) =>
-        connection.integration === "postgres" &&
+        connection.integration === kind &&
         connection.status === "connected" &&
         (handle === undefined || connection.handle === handle)
     );
@@ -827,15 +837,16 @@ export const add = Effect.fn("Project.add")(function* (
         refusal: {
           ok: false,
           code: "connection_not_connected",
-          error: `No connected Postgres connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/company/connections.`
+          error: `No connected ${label} connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/company/connections.`
         }
       });
     if (connections.length > 1)
       return yield* new LocalError({
-        message: `Choose a Postgres connection from patchy list connections:\n${connections.map((connection) => `  patchy add postgres/${connection.handle} · ${connection.description}`).join("\n")}`
+        message: `Choose a ${label} connection from patchy list connections:\n${connections.map((connection) => `  patchy add ${kind}/${connection.handle} · ${connection.description}`).join("\n")}`
       });
-    declaration = { kind: "postgres", handle: connections[0]!.handle };
-    defaultAlias = connectionAlias(declaration.handle);
+    const chosen = connections[0]!.handle;
+    declaration = { kind, handle: chosen };
+    defaultAlias = connectionAlias(chosen);
   } else if (integration === "shared-table" || integration === "shared-store") {
     const resource = integration === "shared-store" ? "store" : "table";
     const parts = Option.isSome(target) ? target.value.split("/") : [];
@@ -889,7 +900,7 @@ export const add = Effect.fn("Project.add")(function* (
   } else
     return yield* new LocalError({
       message:
-        "Use patchy add members, patchy add postgres/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
+        "Use patchy add members, patchy add postgres/<handle>, patchy add posthog/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
     });
   const alias = Option.getOrElse(as, () => defaultAlias);
   yield* refresh(cwd, token, { kind: "add", alias, declaration });

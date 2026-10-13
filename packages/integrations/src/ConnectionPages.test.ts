@@ -27,6 +27,7 @@ import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
+import * as PostHogDouble from "./test/posthog.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 
 const env = clerkEnv();
@@ -95,6 +96,20 @@ const source = Layer.effect(
   )
 );
 
+/** One PostHog project the connect walkthrough can reach, with a key limited to it. */
+const posthogProject = {
+  region: "eu",
+  id: 4321,
+  key: "phx_connectionPagesKey01",
+  events: [
+    { name: "$pageview", description: "Automatically captured page views." },
+    { name: "patch.opened" }
+  ],
+  eventProperties: [{ name: "$browser", property_type: "String" }],
+  personProperties: [{ name: "email", property_type: "String", description: "Their address" }]
+} satisfies PostHogDouble.Project;
+const posthog = PostHogDouble.make(PostHogDouble.project(posthogProject));
+
 const events: Analytics.AnalyticsEvent[] = [];
 const services = Layer.mergeAll(
   Session.layer,
@@ -109,6 +124,7 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(RuntimeLog.layer),
   Layer.provideMerge(source),
+  Layer.provideMerge(posthog.layer),
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),
@@ -485,7 +501,13 @@ it.layer(services)("company connection pages", (it) => {
         const owner = yield* createCompany("connections-lifecycle");
         const store = yield* ConnectionStore.ConnectionStore;
         const { connection, path } = yield* connect(owner.user, "warehouse");
-        const get = () => store.get(owner.company.id, connection.id);
+        const get = () =>
+          store.get(owner.company.id, connection.id).pipe(
+            Effect.map((found) => {
+              if (found.integration !== "postgres") return assert.fail("A Postgres connection");
+              return found;
+            })
+          );
         yield* TestClock.adjust("1 second");
         const tested = yield* follow(yield* send(`${path}/test`, post(owner.user)), owner.user);
         assert.include(tested, 'role="status"');

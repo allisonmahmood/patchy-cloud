@@ -75,7 +75,8 @@ const connections: Readonly<Record<string, true>> = {
   "postgres.list": true,
   "postgres.get": true,
   "postgres.getMany": true,
-  "postgres.query": true
+  "postgres.query": true,
+  "posthog.query": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -253,7 +254,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         ...capability.binding,
         effectivePrincipal,
         invocationId: attempt.invocationId,
-        correlationId: newInternalId("call")
+        correlationId: newInternalId("call"),
+        ...(handler.kind === "read" ? {} : { deadline: now + deadlineMs })
       });
       const execute = Effect.gen(function* (): Effect.fn.Return<
         GuestProtocol.CallbackReply,

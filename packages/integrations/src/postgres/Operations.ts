@@ -235,9 +235,12 @@ const resolveRelation = Effect.fn("PostgresOperations.resolveRelation")(function
 ) {
   const resolved = yield* resolve(alias);
   const connections = yield* ConnectionStore.ConnectionStore;
-  const snapshot = yield* connections
+  const metadata = yield* connections
     .snapshot(resolved.binding.companyId, resolved.declaration.id, resolved.declaration.revision)
     .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+  // A declaration names its connection's integration, so its pinned snapshot is the same kind.
+  if (metadata.integration !== "postgres") return yield* new Runtime.AccessDenied({});
+  const snapshot = metadata.snapshot;
   const relation = surface(snapshot).relations.find(
     (item) => item.schema === requested.schema && item.name === requested.name
   );

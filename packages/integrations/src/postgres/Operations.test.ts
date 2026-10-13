@@ -153,7 +153,7 @@ const binding = Binding.Binding.of({
     admin: false
   }
 });
-const connection = new ConnectionStore.Connection({
+const connection = {
   companyId: binding.companyId,
   id: declaration.id,
   integration: "postgres",
@@ -167,7 +167,7 @@ const connection = new ConnectionStore.Connection({
   lastTestedAt: null,
   lastDiscoveredAt: null,
   createdBy: "usr_operations"
-});
+} satisfies ConnectionStore.Connection;
 const refreshed: typeof Snapshot.Type = {
   ...snapshot,
   relations: snapshot.relations.map((item) =>
@@ -264,14 +264,14 @@ const operations = Effect.fn("test.postgresOperations.operations")(function* (
         {
           connection,
           snapshots: [
-            { revision: 1, snapshot },
-            { revision: 2, snapshot: refreshed }
+            { revision: 1, metadata: { integration: "postgres", snapshot } },
+            { revision: 2, metadata: { integration: "postgres", snapshot: refreshed } }
           ]
         }
       ])
     )
   );
-  let current = connection;
+  let current: ConnectionStore.Connection = connection;
   const liveStore = ConnectionStore.ConnectionStore.of({
     ...store,
     get: (companyId, id) =>
@@ -669,12 +669,15 @@ it.layer(shared, { timeout: 30_000 })("read-only operations over one cluster", (
         }).pipe(Effect.flip);
         assert.strictEqual(failure.code, "shape_mismatch");
         assert.notInclude(JSON.stringify(failure), "private-parameter");
-        setConnection(new ConnectionStore.Connection({ ...connection, status: "disconnected" }));
+        setConnection({
+          ...connection,
+          status: "disconnected"
+        } satisfies ConnectionStore.Connection);
         assert.strictEqual(
           (yield* call("postgres.list", args).pipe(Effect.flip)).code,
           "access_denied"
         );
-        setConnection(new ConnectionStore.Connection({ ...connection, handle: "retargeted" }));
+        setConnection({ ...connection, handle: "retargeted" } satisfies ConnectionStore.Connection);
         assert.strictEqual(
           (yield* call("postgres.list", args).pipe(Effect.flip)).code,
           "access_denied"
@@ -716,7 +719,7 @@ it.layer(shared, { timeout: 30_000 })("read-only operations over one cluster", (
           value: { ok: true, rows: [{ value: 7 }] }
         }
       );
-      setConnection(new ConnectionStore.Connection({ ...connection, status: "disconnected" }));
+      setConnection({ ...connection, status: "disconnected" } satisfies ConnectionStore.Connection);
       const refusal = yield* gateway.callback(capability.token, capability.attempt, request);
       assert.include(refusal, { ok: false, source: "patchy", code: "access_denied" });
       assert.isTrue(yield* capabilities.settle(capability.token, "returned"));

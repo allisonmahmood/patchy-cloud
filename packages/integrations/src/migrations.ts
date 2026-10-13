@@ -54,5 +54,16 @@ export const migrations: Migrations = {
   "0011_connections_per_integration": ddl(
     `ALTER TABLE connections DROP CONSTRAINT connections_integration_check`,
     `ALTER TABLE connection_snapshots ADD COLUMN integration TEXT NOT NULL DEFAULT 'postgres'`
+  ),
+  // PostHog arrives, so a handle is unique within its integration: postgres/warehouse and
+  // posthog/warehouse may both exist. One statement swaps the keys, so the two never hold at
+  // once. The release before this one connects with a targetless ON CONFLICT and names every
+  // snapshot's integration, so it works against both changes.
+  "0013_handles_per_integration": ddl(
+    `ALTER TABLE connections
+      DROP CONSTRAINT connections_company_id_handle_key,
+      ADD CONSTRAINT connections_company_id_integration_handle_key
+        UNIQUE (company_id, integration, handle)`,
+    `ALTER TABLE connection_snapshots ALTER COLUMN integration DROP DEFAULT`
   )
 };
