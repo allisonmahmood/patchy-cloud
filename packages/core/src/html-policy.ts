@@ -114,7 +114,7 @@ export function validateHtml(
 
   walk(document);
 
-  const title = documentTitle(html);
+  const title = firstTitle(document, false);
   if (!title) {
     warnings.push("No <title> found; Patchy Cloud will use a generic title.");
   }
@@ -129,19 +129,34 @@ export function validateHtml(
 
 type HtmlNode = parse5.DefaultTreeAdapterMap["node"];
 
-/** The title comes before a bundle's inline code, which runs to megabytes; only this much is read. */
-const TITLE_SEARCH_CHARACTERS = 512 * 1024;
+/** A scripted bundle's title comes before its inline code, which runs to megabytes. */
+const TITLE_SEARCH_CHARACTERS = 64 * 1024;
 
 /**
- * The page's title as a browser picks it: the first HTML `<title>`, trimmed and bounded, or null
- * when it is missing or empty. Publish and `patchy dev` read it from scripted bundles too, so
- * their tab shows it.
+ * A scripted page's title, for publish and `patchy dev`; tier 0's comes from `validateHtml`. Only
+ * the start of the bundle is read, which also bounds parse5, whose cost grows with the square of
+ * nesting depth. A title past that limit, or cut by it, gives null.
  */
 export function documentTitle(html: string): string | null {
+  const cut = html.length > TITLE_SEARCH_CHARACTERS;
+  const document = parse5.parse(html.slice(0, TITLE_SEARCH_CHARACTERS), {
+    sourceCodeLocationInfo: cut
+  });
+  return firstTitle(document, cut);
+}
+
+/**
+ * The title as a browser picks it: the first HTML `<title>`, trimmed and bounded, or null when
+ * it is missing or empty. In a document cut short, only a title whose end tag survived counts.
+ */
+function firstTitle(document: HtmlNode, cut: boolean): string | null {
   // parse5 builds deep trees without recursion; walking one must not recurse either.
-  const pending: HtmlNode[] = [parse5.parse(html.slice(0, TITLE_SEARCH_CHARACTERS))];
+  const pending: HtmlNode[] = [document];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    if (isTitle(node)) return collectText(node).trim().slice(0, 140) || null;
+    if (isTitle(node)) {
+      if (cut && !node.sourceCodeLocation?.endTag) return null;
+      return collectText(node).trim().slice(0, 140) || null;
+    }
     if ("childNodes" in node)
       for (let index = node.childNodes.length - 1; index >= 0; index--)
         pending.push(node.childNodes[index]!);
@@ -150,7 +165,7 @@ export function documentTitle(html: string): string | null {
 }
 
 /** An SVG's `<title>` labels the drawing, not the document. */
-function isTitle(node: HtmlNode): boolean {
+function isTitle(node: HtmlNode): node is parse5.DefaultTreeAdapterMap["element"] {
   return "tagName" in node && node.tagName === "title" && node.namespaceURI === parse5.html.NS.HTML;
 }
 

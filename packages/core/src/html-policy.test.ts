@@ -67,6 +67,13 @@ describe("validateHtml", () => {
     ).toBe("Launch queue");
     expect(documentTitle("<svg><title>Icon</title></svg><script>1</script>")).toBeNull();
     expect(documentTitle("<title> </title><title>Second</title>")).toBeNull();
-    expect(documentTitle(`${"<div>".repeat(20_000)}<title>Deep</title>`)).toBe("Deep");
+    expect(documentTitle(`${"<b>".repeat(20_000)}<title>Deep</title>`)).toBe("Deep");
+  });
+
+  it("reads a long bundle's title only when the read limit leaves it whole", () => {
+    const limit = 64 * 1024;
+    const title = "<title>Fish &amp; chips</title>";
+    expect(documentTitle(`${title}<script>${" ".repeat(limit)}</script>`)).toBe("Fish & chips");
+    expect(documentTitle(`${" ".repeat(limit - 15)}${title}`)).toBeNull();
   });
 });
