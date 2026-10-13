@@ -14,7 +14,12 @@ type Kind = (typeof PostgresShapeColumn.Type)["kind"];
 export interface Type {
   readonly name: string;
   readonly args: ReadonlyArray<Type>;
+  /** A named tuple or Nested element's field, by which an object value carries it. */
+  readonly field?: string;
 }
+
+const unquote = (name: string) =>
+  name.startsWith("`") ? name.slice(1, -1).replace(/\\(.)/g, "$1") : name;
 
 /** ClickHouse type families, after Nullable(...) and LowCardinality(...) are unwrapped. */
 type Family =
@@ -74,10 +79,14 @@ export const parse = (text: string): Type | undefined => {
         if (peek()?.text === "=") at += 2;
       } else {
         // A named tuple field is a name followed by its type.
-        if (next.kind === "name" && peek(1)?.kind === "name") at++;
+        let field: string | undefined;
+        if (next.kind === "name" && peek(1)?.kind === "name") {
+          field = unquote(next.text);
+          at++;
+        }
         const inner = type();
         if (inner === undefined) return undefined;
-        args.push(inner);
+        args.push(field === undefined ? inner : { ...inner, field });
       }
       const separator = tokens[at++]?.text;
       if (separator === ")") return { name: head.text, args };
@@ -195,15 +204,20 @@ const exact = (type: Type, value: unknown): boolean => {
         value.every((item) => exact({ name: "Tuple", args: inner.args }, item))
       );
     case "Tuple": {
-      const items: ReadonlyArray<unknown> = Array.isArray(value)
-        ? value
-        : typeof value === "object"
-          ? Object.values(value)
-          : [];
-      return items.every((item, index) => {
-        const member = inner.args[index];
-        return member === undefined || exact(member, item);
-      });
+      if (Array.isArray(value))
+        return value.every((item, index) => {
+          const member = inner.args[index];
+          return member === undefined || exact(member, item);
+        });
+      if (typeof value !== "object") return true;
+      // An object carries a named tuple by field; its key order is not the tuple's. An unnamed
+      // member is checked against every value, since no key says which is its.
+      const record: Readonly<Record<string, unknown>> = { ...value };
+      return inner.args.every((member) =>
+        member.field === undefined
+          ? Object.values(record).every((item) => exact(member, item))
+          : !Object.hasOwn(record, member.field) || exact(member, record[member.field])
+      );
     }
     case "Map": {
       const values = inner.args[1];
