@@ -77,17 +77,21 @@ export const make = Effect.gen(function* () {
     SchemaError: (cause: Schema.SchemaError) =>
       Effect.fail(new ConnectionStorageFailed({ operation, cause: Redacted.make(cause) }))
   });
+  // Rows of integrations a later release added are not this release's to read: a rollback
+  // hides them, and a lookup by id answers not found instead of failing to decode.
+  const known = sql`integration IN ${sql.in(integrations)}`;
   const connectionRows = SqlSchema.findAll({
     Request: Schema.String,
     Result: Connection,
-    execute: (companyId) =>
-      sql`SELECT ${columns} FROM connections WHERE company_id = ${companyId} ORDER BY handle, id`
+    execute: (companyId) => sql`SELECT ${columns} FROM connections
+      WHERE company_id = ${companyId} AND ${known} ORDER BY handle, id`
   });
   const connectionRow = SqlSchema.findOneOption({
     Request: Lookup,
     Result: Connection,
     execute: ({ companyId, id, locked }) => sql`SELECT ${columns} FROM connections
-      WHERE company_id = ${companyId} AND id = ${id} ${locked ? sql`FOR UPDATE` : sql``}`
+      WHERE company_id = ${companyId} AND id = ${id} AND ${known}
+      ${locked ? sql`FOR UPDATE` : sql``}`
   });
   const storedRow = SqlSchema.findOneOption({
     Request: Lookup,
@@ -97,13 +101,15 @@ export const make = Effect.gen(function* () {
       id,
       locked
     }) => sql`SELECT ${columns}, credentials, key_id AS "keyId" FROM connections
-      WHERE company_id = ${companyId} AND id = ${id} ${locked ? sql`FOR UPDATE` : sql``}`
+      WHERE company_id = ${companyId} AND id = ${id} AND ${known}
+      ${locked ? sql`FOR UPDATE` : sql``}`
   });
   const snapshotRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ companyId: Schema.String, id: Schema.String, revision: Schema.Int }),
     Result: Schema.Struct({ snapshot: Snapshot }),
     execute: ({ companyId, id, revision }) => sql`SELECT snapshot FROM connection_snapshots
-      WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}`
+      WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}
+        AND ${known}`
   });
   const detailRow = SqlSchema.findOneOption({
     Request: Schema.Struct({
@@ -118,8 +124,67 @@ export const make = Effect.gen(function* () {
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
       FROM connections c LEFT JOIN connection_snapshots s
         ON s.connection_id = c.id AND s.company_id = c.company_id AND s.revision = c.metadata_revision
+          AND s.integration = c.integration
       WHERE c.company_id = ${companyId} AND c.integration = ${integration} AND c.handle = ${handle}`
   });
+  /**
+   * Every declaration of a connection in a stored version of one company's patches: the
+   * deletion rule, so `usage` and `delete` cannot disagree about what is unused.
+   */
+  const declarations = (companyId: string) => sql`patch_versions v
+    JOIN patches p ON p.id = v.patch_id
+    CROSS JOIN LATERAL jsonb_each(v.manifest->'uses') AS declaration
+    WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(integrations)}`;
+  // A patch is in one state: deleted, then disabled, then retired, else live.
+  const live = sql`p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.retired_at IS NULL`;
+  const usageRows = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      connectionId: Schema.String,
+      usedBy: Schema.Array(Schema.String),
+      olderVersions: Schema.Int,
+      retired: Schema.Int,
+      deleted: Schema.Int,
+      disabled: Schema.Int
+    }),
+    execute: (companyId) => sql`SELECT declaration.value->>'id' AS "connectionId",
+      COALESCE(array_agg(DISTINCT p.name ORDER BY p.name)
+        FILTER (WHERE ${live} AND v.id = p.current_version_id), '{}') AS "usedBy",
+      (count(DISTINCT v.id)
+        FILTER (WHERE ${live} AND v.id IS DISTINCT FROM p.current_version_id))::int AS "olderVersions",
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL AND p.disabled_at IS NULL
+        AND p.retired_at IS NOT NULL))::int AS retired,
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NOT NULL))::int AS deleted,
+      (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL
+        AND p.disabled_at IS NOT NULL))::int AS disabled
+      FROM ${declarations(companyId)}
+      GROUP BY 1`
+  });
+  const versionRows = SqlSchema.findAll({
+    Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
+    Result: Schema.Struct({ id: Schema.String, patch: Schema.String, number: Schema.Int }),
+    execute: ({ companyId, ids }) => sql`SELECT v.id, p.name AS patch, v.version_number AS number
+      FROM patch_versions v JOIN patches p ON p.id = v.patch_id
+      WHERE p.company_id = ${companyId} AND ${sql.in("v.id", ids)}`
+  });
+  const usage = Effect.fn("ConnectionStore.usage")(
+    function* (companyId: string) {
+      const rows = yield* usageRows(companyId);
+      return new Map(
+        rows.map(
+          ({ connectionId, ...usage }) => [connectionId, { ...usage, declared: true }] as const
+        )
+      );
+    },
+    Effect.catchTags(safe("usage"))
+  );
+  const versions = Effect.fn("ConnectionStore.versions")(
+    function* (companyId: string, ids: ReadonlyArray<string>) {
+      const rows = ids.length === 0 ? [] : yield* versionRows({ companyId, ids });
+      return new Map(rows.map((row) => [row.id, { patch: row.patch, number: row.number }]));
+    },
+    Effect.catchTags(safe("versions"))
+  );
   // The current revision's immutable row supplies both metadata and its timestamp.
   const detail = Effect.fn("ConnectionStore.detail")(
     function* (companyId: string, integration: Integration, handle: string) {
@@ -395,13 +460,8 @@ export const make = Effect.gen(function* () {
       reportedTransaction(
         Effect.gen(function* () {
           const connection = yield* lock(input);
-          const references =
-            yield* sql`SELECT 1 FROM patch_versions v JOIN patches p ON p.id = v.patch_id
-      WHERE p.company_id = ${input.companyId} AND EXISTS (
-        SELECT 1 FROM jsonb_each(v.manifest->'uses') AS declaration
-        WHERE declaration.value->>'kind' IN ${sql.in(integrations)}
-          AND declaration.value->>'id' = ${input.id}
-      ) LIMIT 1`;
+          const references = yield* sql`SELECT 1 FROM ${declarations(input.companyId)}
+            AND declaration.value->>'id' = ${input.id} LIMIT 1`;
           if (references.length !== 0) return yield* new ConnectionInUse({});
           yield* sql`DELETE FROM connections WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return connection;
@@ -456,6 +516,8 @@ export const make = Effect.gen(function* () {
   return ConnectionStore.ConnectionStore.of({
     list,
     get,
+    usage,
+    versions,
     detail,
     snapshot,
     connect,

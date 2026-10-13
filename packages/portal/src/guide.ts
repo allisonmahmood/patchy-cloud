@@ -1,7 +1,6 @@
 import type { RequireSession } from "@patchy/auth";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { ago, copyLine, copyScriptPath, escapeHtml } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
-import { ago } from "./render.js";
 
 /**
  * Where a person stands on the way to their first patch, from what Patchy already records. The portal shows the
@@ -18,9 +17,6 @@ const example = {
   name: "lead-tracker"
 };
 
-/** Where the portal serves `copyScript`; "assets" is a reserved company handle. */
-export const copyScriptPath = "/assets/copy.js";
-
 /** The first publish's note stays up for a day after the patch was created. */
 const firstPatchWindow = 24 * 60 * 60 * 1_000;
 
@@ -29,9 +25,6 @@ const icons = {
   agent: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 10 3 2.5L7 15M12.5 15H17" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   team: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" stroke-linecap="round"/><circle cx="17" cy="9" r="2.8"/><path d="M16.5 14.2c2.9.3 5 2.3 5 5.3" stroke-linecap="round"/></svg>`
 };
-
-const copyLine = (line: string, label: string) =>
-  `<div class="copy-line"><code aria-label="${escapeAttribute(label)}">${escapeHtml(line)}</code><button type="button" class="btn btn-primary" data-copy="${escapeAttribute(line)}" aria-live="polite" hidden>Copy</button></div>`;
 
 const preview = (lines: ReadonlyArray<string>) =>
   `<p class="supporting-text">Your agent will say something like</p><div class="agent-preview">${lines.map((line) => `<p>${line}</p>`).join("")}</div>`;
@@ -156,20 +149,3 @@ export const renderFirstPatchNote = (
       ? "Anyone with the link can open it."
       : `Everyone at ${escapeHtml(viewer.company.name)} can open it.`
   } To change it, tell your agent what to change.</p></section>`;
-
-/** Reveals each copy button and copies its line; a refused clipboard asks the person to select the line instead. */
-export const copyScript = `(() => {
-  for (const button of document.querySelectorAll("button[data-copy]")) {
-    const label = button.textContent;
-    let reset;
-    button.hidden = false;
-    button.addEventListener("click", () => {
-      clearTimeout(reset);
-      navigator.clipboard.writeText(button.dataset.copy ?? "").then(
-        () => { button.textContent = "Copied"; },
-        () => { button.textContent = "Select the line to copy"; }
-      ).finally(() => { reset = setTimeout(() => { button.textContent = label; }, 2000); });
-    });
-  }
-})();
-`;

@@ -16,6 +16,14 @@ _Avoid_: datasource, connected account, credential (what it holds, not what it i
 The member-readable list of the company's connections and their state, with declaration hints for connected ones and setup guidance for disconnected ones. Offered integrations are optional; drilling into one connection reveals its current immutable snapshot and taken-at time, or reports the snapshot unavailable.
 _Avoid_: connection administration
 
+**Catalogue**:
+The integrations Patchy offers a company, each with what it reads, how it connects (company-wide or personal) and how many connections the company already has. Admins connect a source from it; it is not a list of the company's connections.
+_Avoid_: marketplace, app directory, integrations page
+
+**Unused**:
+A connection no stored version of any company patch declares, which is exactly when it can be deleted. A connection only older versions or retired, deleted or disabled patches declare is used by no live patch, but is not unused; its row reads "None live" with how many.
+_Avoid_: idle (a statement about calls), orphaned
+
 **Personal connection**:
 A future connection belonging to one user rather than their company, such as that user's Gmail. Its credentials and lifetime follow the user; the access rules live in [the product](../../docs/product.md#company-and-personal-connections).
 _Avoid_: user resource, private connection
@@ -49,7 +57,7 @@ A source table or view described in a Postgres schema snapshot. Its source name 
 _Avoid_: primitive table, collection
 
 **Retarget**:
-Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot.
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere, beside Replace credentials, which rotates them for the same endpoint.
 _Avoid_: rename, new connection
 
 **Credential revision**:

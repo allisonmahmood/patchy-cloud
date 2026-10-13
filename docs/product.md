@@ -638,10 +638,29 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 
 Patchy ships the **integration** — today Postgres — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
-Today admins manage Postgres at `/company/connections`, linked from `/company`;
-members read its handles, descriptions, status and discovery/test timestamps.
-Connections are company-wide, not per patch. Personal connections and group
-grants remain future work.
+`/company/connections` is one table of the company's connections across
+integrations: each row is titled with the name agents type (`postgres/warehouse`),
+its source, status, the live patches that use it and, for admins, its last call.
+Healthy rows read Connected; only a problem gets a pill, and admins see
+disconnected sources named above the table. From nine connections the page adds
+search over names and descriptions, a source filter, Needs attention and, for
+admins, Unused; they are plain links and a GET form, and combine. **Used by**
+counts live patches whose served version declares the connection, and reads "None
+live · 3 retired" or "None live · 2 older versions" when only those still declare
+it; **Unused** means no stored version of any company patch declares it, which is
+exactly when Delete is offered. One "Connect a source" button leads admins to the **catalogue**, which says
+what each offered integration reads, how it connects and how many the company
+already has. With nothing connected, admins get the catalogue inline and members
+are told which admins can connect a source.
+
+Each connection's page has one layout for every integration: the `patchy add`
+line, what patches can read and recent calls on the left; its facts, who added it,
+Used by and the actions on the right. Replacing credentials, pointing elsewhere,
+editing the description, disconnecting and deleting each open their own page, as
+the portal confirms retire and delete. Members see the index without Last call,
+the attention notice or Unused, and connection pages without recent calls or
+actions. Connections are company-wide, not per patch. Personal connections and
+group grants remain future work.
 
 ### The company look
 
@@ -1110,9 +1129,9 @@ limits receive named exclusions rather than truncated enum labels. More than
 10,000 exclusions refuses discovery. Each successful discovery stores a whole
 validated immutable snapshot with a new server-assigned revision;
 a failure leaves the previous snapshot current. Snapshots are never deleted in v1.
-Discovery is attributed to the admin in the runtime log. Admins see recent calls
-on the connection's detail page: identity, patch/version, operation, duration,
-outcome, row count and correlation id. Query calls retain up to 8 KiB of SQL text,
+Discovery is attributed to the admin in the runtime log. Admins see the latest ten
+calls on the connection's page: when, the patch and version, the call, as whom,
+duration and rows, and outcome, with the correlation id behind each row's Details. Query calls retain up to 8 KiB of SQL text,
 never parameters; ordinary relation calls retain no SQL. Failed and denied
 attempts with a trusted session and loaded version are recorded too. Unauthenticated
 or unresolvable requests cannot be attributed to a company user.
@@ -1137,7 +1156,7 @@ Every company patch that declares a connected source can use it as its admitted
 viewer without a separate per-patch consent step. A public runtime cannot use
 it. Disconnecting the source makes subsequent calls fail `access_denied`, with
 the shell's first-party notice; reconnecting retains the connection identity.
-The current connect flow is admin-only on `/company/connections`, not a door
+The current connect flow is admin-only, from `/company/connections`, not a door
 that walks ordinary viewers into creating credentials.
 
 **Admin integration grants to the patch identity are deferred.** Tier 2 adds no
@@ -1194,7 +1213,7 @@ after an admin refreshes discovery. Live credentials and access are checked
 separately; a dropped or incompatible column fails the old call rather than
 silently changing its contract.
 
-There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company that needs an integration Patchy has not shipped requests it, and Patchy builds it. Admitting third-party integration authors would be a separate later decision; today's `patchy list connections --all` discovers the capabilities Patchy already offers.
+There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company can tell Patchy which integration it needs, and Patchy decides what to build. Admitting third-party integration authors would be a separate later decision; today's `patchy list connections --all` discovers the capabilities Patchy already offers.
 
 ### Development
 

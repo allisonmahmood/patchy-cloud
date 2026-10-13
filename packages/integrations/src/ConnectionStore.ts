@@ -109,7 +109,7 @@ export class ConnectionRetargetRequired extends Schema.TaggedError<ConnectionRet
   readonly code = "connection_retarget_required";
   readonly status = 409;
   override get message() {
-    return "These credentials name a different database. Use Retarget to discover its schema before switching.";
+    return "These credentials name a different database. Point the connection elsewhere to discover its schema before switching.";
   }
 }
 export class ConnectionInUse extends Schema.TaggedError<ConnectionInUse>()("ConnectionInUse", {}) {
@@ -135,6 +135,8 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
     operation: Schema.Literals([
       "list",
       "get",
+      "usage",
+      "versions",
       "detail",
       "snapshot",
       "connect",
@@ -173,6 +175,28 @@ export type ConnectionError =
   | CredentialKeys.CredentialError
   | Source.SourceError;
 
+/** Who declares a connection, by the rule that decides whether it may be deleted. */
+export interface Usage {
+  /** Live patches whose current version declares it, by name. */
+  readonly usedBy: ReadonlyArray<string>;
+  /** Declaring versions of live patches that are not their current version. */
+  readonly olderVersions: number;
+  /** Retired, deleted (not yet reclaimed) and disabled patches with a declaring version. */
+  readonly retired: number;
+  readonly deleted: number;
+  readonly disabled: number;
+  /** Some stored version of a company patch declares it, so it cannot be deleted. */
+  readonly declared: boolean;
+}
+export const unused: Usage = {
+  usedBy: [],
+  olderVersions: 0,
+  retired: 0,
+  deleted: 0,
+  disabled: 0,
+  declared: false
+};
+
 export interface Identity {
   readonly companyId: string;
   readonly userId: string;
@@ -195,6 +219,18 @@ export class ConnectionStore extends Context.Service<
   {
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
     readonly get: (companyId: string, id: string) => Effect.Effect<Connection, ConnectionError>;
+    /** Each declared connection's usage by id; a connection with no entry is `unused`. */
+    readonly usage: (
+      companyId: string
+    ) => Effect.Effect<ReadonlyMap<string, Usage>, ConnectionError>;
+    /** The patch and number of stored versions, so recent calls name where they came from. */
+    readonly versions: (
+      companyId: string,
+      ids: ReadonlyArray<string>
+    ) => Effect.Effect<
+      ReadonlyMap<string, { readonly patch: string; readonly number: number }>,
+      ConnectionError
+    >;
     /** A handle names a connection only within its integration. */
     readonly detail: (
       companyId: string,

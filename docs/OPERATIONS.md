@@ -632,7 +632,13 @@ commit; the run fails if the digests differ. The app stack returns to that
 release, and promotion stages and promotes its revision.
 
 Migrations do not roll back. Each release must work against the schema the next
-one leaves, so roll back only to a release that accepts the current schema.
+one leaves, so roll back only to a release that accepts the current schema. It
+must also skip the rows a later release writes: connection and call-log readers
+filter to the integrations and credential kinds their release knows, so
+connections of unknown integrations and calls of unknown credential kinds stay
+hidden after a rollback. A patch whose current version declares a later
+integration still needs that release to serve or roll back, so recovering it
+means rolling forward.
 
 ### Restoring data
 

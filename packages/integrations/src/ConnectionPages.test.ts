@@ -12,6 +12,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import { PostgresDeclaration } from "@patchy/api";
 import { Session } from "@patchy/auth";
@@ -45,6 +46,7 @@ const snapshot = {
   enums: [],
   exclusions: []
 } satisfies typeof Snapshot.Type;
+const connectPath = "/company/connections/connect/postgres";
 const encodeDeclarations = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ uses: Schema.Record(Schema.String, PostgresDeclaration) }))
 );
@@ -174,7 +176,7 @@ const connect = Effect.fn(function* (
   description = "Sales warehouse"
 ) {
   const response = yield* send(
-    "/company/connections/connect",
+    connectPath,
     post(user, {
       handle,
       description,
@@ -212,6 +214,48 @@ const follow = Effect.fn(function* (response: Response, user: Users.User) {
   });
   assert.strictEqual(page.status, 200);
   return yield* Effect.promise(() => page.text());
+});
+
+/**
+ * Stores version `number` of the company's patch `name`, declaring each connection under its own
+ * alias. `current` serves it; `retired` retires the patch.
+ */
+const storeVersion = Effect.fn(function* (
+  owner: { readonly company: Companies.Company; readonly user: Users.User },
+  name: string,
+  number: number,
+  connections: ReadonlyArray<ConnectionStore.Connection>,
+  options: { readonly current?: boolean; readonly retired?: boolean } = {}
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const patchId = `${owner.company.handle}-${name}`;
+  const versionId = `${patchId}-v${number}`;
+  const manifest = encodeDeclarations({
+    uses: Object.fromEntries(
+      connections.map((connection, index) => [
+        `source${index}`,
+        {
+          kind: "postgres",
+          handle: connection.handle,
+          id: connection.id,
+          revision: connection.metadataRevision
+        }
+      ])
+    )
+  });
+  yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+    VALUES (${patchId}, ${owner.company.id}, ${owner.user.id}, ${name}, ${name})
+    ON CONFLICT (id) DO NOTHING`;
+  yield* sql`INSERT INTO patch_versions (id, patch_id, version_number, object_key,
+    content_hash, file_size, created_by_machine_token_id, owner_user_id, tier, release,
+    manifest_version, wire_version, schema_revision, manifest, publish_key, payload_digest,
+    publish_response, publish_status)
+    VALUES (${versionId}, ${patchId}, ${number}, ${`connections/${versionId}.html`},
+      'test', 1, ${DEV_SEED.tokenId}, ${owner.user.id}, 0, 'test', 1, 1, 0,
+      ${manifest}::jsonb, ${versionId}, 'test', '{}'::jsonb, 201)`;
+  if (options.current)
+    yield* sql`UPDATE patches SET current_version_id = ${versionId} WHERE id = ${patchId}`;
+  if (options.retired) yield* sql`UPDATE patches SET retired_at = now() WHERE id = ${patchId}`;
 });
 
 it.layer(services)("company connection pages", (it) => {
@@ -303,19 +347,24 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.include(html, "patch-&lt;/code&gt;&lt;script&gt;patch&lt;/script&gt;");
         assert.include(html, "<code>version-one</code>");
-        assert.include(html, `<code>${owner.user.id}</code>`);
         assert.include(html, "<code>invalid_query</code>");
         assert.include(html, '<time datetime="2026-01-01T00:00:00.000Z">');
         assert.include(html, "<code>visible-query</code>");
-        const handlerRow = html
-          .split('<li class="list-row">')
-          .find((row) => row.includes("<code>visible-handler-error</code>"))!;
+        // Each call is its row and the Details row after it; a version since reclaimed keeps its ids.
+        const rows = html.split("<tr><td><time").slice(1);
+        const row = (correlationId: string) =>
+          rows.find((item) => item.includes(`<code>${correlationId}</code>`))!;
+        assert.include(row("visible-query"), `<td>${owner.user.name}</td>`);
+        assert.include(row("visible-query"), "<td>A patch since deleted</td>");
+        assert.include(row("visible-list"), "<code>orders.list</code>");
+        assert.include(row("visible-list"), "8 ms · 2 rows");
         assert.include(
-          handlerRow,
-          "<dt>Effective principal</dt><dd><code>patch&lt;/code&gt;&lt;script&gt;principal&lt;/script&gt;</code></dd>"
+          row("visible-handler-error"),
+          "<td>patch&lt;/code&gt;&lt;script&gt;principal&lt;/script&gt;</td>"
         );
-        assert.notInclude(handlerRow, "<script>principal</script>");
-        assert.include(handlerRow, "<code>approval_required</code>");
+        assert.notInclude(row("visible-handler-error"), "<script>principal</script>");
+        assert.include(row("visible-handler-error"), "<code>approval_required</code>");
+        assert.include(row("visible-pending"), ">Unknown<");
         for (const forbidden of [
           sql,
           "<script>patch</script>",
@@ -330,16 +379,29 @@ it.layer(services)("company connection pages", (it) => {
           companyId: owner.company.id,
           connectionId: connection.id
         });
-        const memberResponse = yield* send(path, { headers: { cookie: cookie(member) } }).pipe(
-          Effect.provideService(RuntimeLog.RuntimeLog, {
-            ...audit,
-            recent: () => Effect.die(new Error("A member must not query the runtime log"))
-          })
-        );
-        assert.strictEqual(memberResponse.status, 200);
-        const memberHtml = yield* Effect.promise(() => memberResponse.text());
-        assert.notInclude(memberHtml, 'aria-labelledby="connection-calls"');
-        assert.notInclude(memberHtml, "visible-query");
+        // A member's pages, including refusals, never read the call log.
+        const guarded = {
+          ...audit,
+          recent: () => Effect.die(new Error("A member must not query the runtime log")),
+          latest: () => Effect.die(new Error("A member must not query the runtime log"))
+        };
+        for (const [url, options, status] of [
+          [path, {}, 200],
+          ["/company/connections", {}, 200],
+          [`${path}/disconnect`, {}, 403],
+          [`${path}/disconnect`, post(member), 403],
+          [connectPath, post(member), 403]
+        ] as const) {
+          const memberResponse = yield* send(url, {
+            headers: { cookie: cookie(member) },
+            ...options
+          }).pipe(Effect.provideService(RuntimeLog.RuntimeLog, guarded));
+          assert.strictEqual(memberResponse.status, status);
+          const memberHtml = yield* Effect.promise(() => memberResponse.text());
+          assert.notInclude(memberHtml, 'aria-labelledby="connection-calls"');
+          assert.notInclude(memberHtml, "visible-query");
+          assert.notInclude(memberHtml, "Last call");
+        }
         assert.deepStrictEqual(
           (yield* audit.recent({ companyId: owner.company.id, connectionId: connection.id })).map(
             (call) => call.id
@@ -387,19 +449,30 @@ it.layer(services)("company connection pages", (it) => {
           const html = yield* Effect.promise(() => detail.text());
           assert.strictEqual(detail.status, 200);
           assert.include(html, "&lt;sales&amp;&quot;archive&gt;");
-          assert.include(html, `<dt>Connection ID</dt><dd><code>${connection.id}</code></dd>`);
+          assert.include(list, "&lt;sales&amp;&quot;archive&gt; on warehouse.example");
+          assert.include(html, `patchy add postgres/${connection.handle}`);
           assert.notInclude(html, database);
           assert.notInclude(html, escapedCredentials);
           assert.notInclude(html, "page-secret-escaped");
           assert.include(html, 'action="/logout"');
           for (const document of [list, html])
             assert.include(document, '<a href="/company/connections" aria-current="page">');
+          const rotate = yield* send(`${path}/rotate`, { headers: { cookie: cookie(viewer) } });
+          const rotateHtml = yield* Effect.promise(() => rotate.text());
           if (viewer.role === "admin") {
-            assert.include(list, 'action="/company/connections/connect"');
-            assert.include(html, `action="${path}/rotate"`);
-            assert.notMatch(html, /type="password"[^>]*value=/);
+            assert.include(list, 'href="/company/connections/connect"');
+            assert.include(html, `href="${path}/rotate"`);
+            assert.strictEqual(rotate.status, 200);
+            assert.include(rotateHtml, `action="${path}/rotate"`);
+            assert.include(rotateHtml, 'type="password"');
+            assert.notMatch(rotateHtml, /type="password"[^>]*value=/);
           } else {
-            assert.notMatch(`${list}${html}`, /<form\b[^>]*action="\/company\/connections/);
+            assert.strictEqual(rotate.status, 403);
+            assert.notMatch(
+              `${list}${html}${rotateHtml}`,
+              /<form\b[^>]*action="\/company\/connections/
+            );
+            assert.notInclude(`${list}${html}`, `href="${path}/rotate"`);
           }
         }
       })
@@ -431,7 +504,8 @@ it.layer(services)("company connection pages", (it) => {
         assert.strictEqual(wrongDestination.status, 409);
         const correction = yield* Effect.promise(() => wrongDestination.text());
         assert.include(correction, "connection_retarget_required");
-        assert.include(correction, `action="${path}/retarget"`);
+        assert.include(correction, `action="${path}/rotate"`);
+        assert.include(correction, `href="${path}/retarget"`);
         assert.strictEqual((yield* get()).display.database, "sales");
 
         yield* follow(
@@ -452,7 +526,24 @@ it.layer(services)("company connection pages", (it) => {
           owner.user
         );
         assert.include(updated, "Reports &lt;b&gt;for &quot;everyone&quot;&lt;/b&gt;");
-        assert.include(updated, 'value="Reports &lt;b&gt;for &quot;everyone&quot;&lt;/b&gt;"');
+        const editing = yield* send(`${path}/description`, {
+          headers: { cookie: cookie(owner.user) }
+        });
+        assert.include(
+          yield* Effect.promise(() => editing.text()),
+          'value="Reports &lt;b&gt;for &quot;everyone&quot;&lt;/b&gt;"'
+        );
+        const tooLong = yield* send(
+          `${path}/description`,
+          post(owner.user, { description: `Kept ${"x".repeat(500)}` })
+        );
+        assert.strictEqual(tooLong.status, 400);
+        const tooLongHtml = yield* Effect.promise(() => tooLong.text());
+        assert.include(tooLongHtml, `value="Kept ${"x".repeat(500)}"`);
+        assert.include(
+          tooLongHtml,
+          'aria-describedby="connection-description-error" aria-invalid="true" autofocus'
+        );
         yield* follow(
           yield* send(`${path}/description`, post(owner.user, { description: "" })),
           owner.user
@@ -464,8 +555,8 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.strictEqual((yield* get()).status, "disconnected");
         assert.include(disconnected, `action="${path}/reconnect"`);
-        assert.notInclude(disconnected, `action="${path}/disconnect"`);
-        assert.notInclude(disconnected, `action="${path}/refresh"`);
+        assert.notInclude(disconnected, `${path}/disconnect"`);
+        assert.notInclude(disconnected, `${path}/refresh"`);
         const testedWhileDisconnected = yield* follow(
           yield* send(`${path}/test`, post(owner.user)),
           owner.user
@@ -477,8 +568,13 @@ it.layer(services)("company connection pages", (it) => {
           owner.user
         );
         assert.strictEqual((yield* get()).status, "connected");
-        assert.include(reconnected, `action="${path}/disconnect"`);
-        assert.notInclude(reconnected, `action="${path}/reconnect"`);
+        assert.include(reconnected, `href="${path}/disconnect"`);
+        assert.notInclude(reconnected, `${path}/reconnect"`);
+        const confirming = yield* send(`${path}/delete`, {
+          headers: { cookie: cookie(owner.user) }
+        });
+        assert.strictEqual(confirming.status, 200);
+        assert.include(yield* Effect.promise(() => confirming.text()), `action="${path}/delete"`);
         const deleted = yield* follow(yield* send(`${path}/delete`, post(owner.user)), owner.user);
         assert.notInclude(deleted, `href="${path}"`);
         assert.strictEqual(
@@ -502,7 +598,7 @@ it.layer(services)("company connection pages", (it) => {
         const original = credentials.replace("/sales?", "/flaky?");
         const { connection, path } = yield* connect(owner.user, "warehouse", original);
         const badConnect = yield* send(
-          "/company/connections/connect",
+          connectPath,
           post(owner.user, {
             handle: "unavailable",
             description: "Unavailable source",
@@ -515,7 +611,9 @@ it.layer(services)("company connection pages", (it) => {
         assert.include(connectHtml, '<a href="/company/connections" aria-current="page">');
         assert.notInclude(connectHtml, "page-secret-rejected");
         assert.notInclude(connectHtml, "driver rejected");
-        assert.include(connectHtml, 'action="/company/connections/connect"');
+        assert.include(connectHtml, `action="${connectPath}"`);
+        assert.include(connectHtml, 'value="unavailable"');
+        assert.include(connectHtml, 'value="Unavailable source"');
         for (const action of ["rotate", "retarget"] as const) {
           const response = yield* send(
             `${path}/${action}`,
@@ -547,7 +645,7 @@ it.layer(services)("company connection pages", (it) => {
         yield* follow(yield* send(`${path}/reconnect`, post(owner.user)), owner.user);
         assert.strictEqual((yield* store.get(owner.company.id, connection.id)).status, "connected");
         const invalid = yield* send(
-          "/company/connections/connect",
+          connectPath,
           post(owner.user, {
             credentials:
               "postgresql://reader:page-secret-malformed@warehouse.example/sales?sslmode=verify-full"
@@ -555,6 +653,24 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.strictEqual(invalid.status, 422);
         assert.notInclude(yield* Effect.promise(() => invalid.text()), "page-secret-malformed");
+        // A refusal about one field replaces that field's hint, keeping what was typed.
+        const taken = yield* send(
+          connectPath,
+          post(owner.user, { handle: "warehouse", description: "Again", credentials })
+        );
+        assert.strictEqual(taken.status, 409);
+        const takenHtml = yield* Effect.promise(() => taken.text());
+        assert.include(
+          takenHtml,
+          'value="warehouse" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-handle-error" aria-invalid="true" autofocus'
+        );
+        assert.include(
+          takenHtml,
+          '<div class="note note-refused field-callout" id="connection-handle-error" role="alert">'
+        );
+        assert.include(takenHtml, "<code>connection_handle_taken</code>");
+        assert.notInclude(takenHtml, 'id="connection-handle-hint"');
+        assert.include(takenHtml, 'value="Again"');
         assert.deepStrictEqual(reported(owner.company.id), [
           ["connection.connected", owner.user.id, connection.id, "postgres"]
         ]);
@@ -570,10 +686,7 @@ it.layer(services)("company connection pages", (it) => {
         const other = yield* createCompany("connections-foreign");
         const { connection, path } = yield* connect(owner.user, "warehouse");
         const actions: ReadonlyArray<readonly [string, Record<string, string>]> = [
-          [
-            "/company/connections/connect",
-            { handle: "forged", description: "Forgery", credentials }
-          ],
+          [connectPath, { handle: "forged", description: "Forgery", credentials }],
           [`${path}/test`, {}],
           [`${path}/rotate`, { credentials: rotated }],
           [`${path}/retarget`, { credentials: retargeted }],
@@ -590,7 +703,7 @@ it.layer(services)("company connection pages", (it) => {
           );
           assert.strictEqual(response.status, 403);
           assert.include(yield* Effect.promise(() => response.text()), "access_denied");
-          if (url !== "/company/connections/connect") {
+          if (url !== connectPath) {
             const foreign = yield* send(
               url,
               post(other.user, { ...fields, companyId: owner.company.id, userId: owner.user.id })
@@ -602,10 +715,16 @@ it.layer(services)("company connection pages", (it) => {
             assert.include(foreignHtml, 'action="/logout"');
           }
         }
-        assert.strictEqual(
-          (yield* send(path, { headers: { cookie: cookie(other.user) } })).status,
-          404
-        );
+        for (const page of [path, `${path}/rotate`, `${path}/delete`])
+          assert.strictEqual(
+            (yield* send(page, { headers: { cookie: cookie(other.user) } })).status,
+            404
+          );
+        for (const page of [connectPath, `${path}/retarget`, `${path}/description`])
+          assert.strictEqual(
+            (yield* send(page, { headers: { cookie: cookie(member) } })).status,
+            403
+          );
         assert.deepStrictEqual(
           yield* (yield* ConnectionStore.ConnectionStore).get(owner.company.id, connection.id),
           connection
@@ -654,31 +773,24 @@ it.layer(services)("company connection pages", (it) => {
       Effect.gen(function* () {
         const owner = yield* createCompany("connections-declared");
         const { connection, path } = yield* connect(owner.user, "warehouse");
-        const sql = yield* SqlClient.SqlClient;
-        const manifest = encodeDeclarations({
-          uses: {
-            sales: {
-              kind: "postgres",
-              handle: connection.handle,
-              id: connection.id,
-              revision: connection.metadataRevision
-            }
-          }
-        });
-        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
-      VALUES ('connection-declared-patch', ${owner.company.id}, ${owner.user.id}, 'Reports', 'reports')`;
-        yield* sql`INSERT INTO patch_versions (id, patch_id, version_number, object_key,
-      content_hash, file_size, created_by_machine_token_id, owner_user_id, tier, release,
-      manifest_version, wire_version, schema_revision, manifest, publish_key, payload_digest,
-      publish_response, publish_status)
-      VALUES ('connection-declared-version', 'connection-declared-patch', 1, 'connections/declared.html',
-        'test', 1, ${DEV_SEED.tokenId}, ${owner.user.id}, 0, 'test', 1, 1, 0,
-        ${manifest}::jsonb, 'connection-declared', 'test', '{}'::jsonb, 201)`;
+        yield* storeVersion(owner, "reports", 1, [connection]);
         const response = yield* send(`${path}/delete`, post(owner.user));
         assert.strictEqual(response.status, 409);
         const html = yield* Effect.promise(() => response.text());
         assert.include(html, 'role="alert"');
-        assert.include(html, `action="${path}/disconnect"`);
+        assert.include(html, `href="${path}/disconnect"`);
+        assert.notInclude(html, `href="${path}/delete"`);
+        // A stale link to the confirmation says why instead of offering Delete.
+        const stale = yield* send(`${path}/delete`, { headers: { cookie: cookie(owner.user) } });
+        assert.strictEqual(stale.status, 409);
+        assert.include(yield* Effect.promise(() => stale.text()), "connection_in_use");
+        const index = yield* send("/company/connections", {
+          headers: { cookie: cookie(owner.user) }
+        });
+        assert.include(
+          yield* Effect.promise(() => index.text()),
+          'None live <span class="supporting-text">· 1 older version</span>'
+        );
         assert.strictEqual(
           (yield* send(path, { headers: { cookie: cookie(owner.user) } })).status,
           200
@@ -687,6 +799,230 @@ it.layer(services)("company connection pages", (it) => {
         assert.deepStrictEqual(reported(owner.company.id), [
           ["connection.connected", owner.user.id, connection.id, "postgres"]
         ]);
+      })
+  );
+  it.effect(
+    "names the live patches using a connection once each, by the rule that guards deletion",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("connections-usage");
+        const foreign = yield* createCompany("connections-usage-foreign");
+        const warehouse = yield* connect(owner.user, "warehouse");
+        const archive = yield* connect(owner.user, "archive");
+        const spare = yield* connect(owner.user, "spare");
+        const ledger = yield* connect(owner.user, "ledger");
+        // Two aliases in one served version count its patch once.
+        yield* storeVersion(owner, "revenue", 1, [warehouse.connection, warehouse.connection], {
+          current: true
+        });
+        // An older version keeps archive declared after the served one dropped it.
+        yield* storeVersion(owner, "reports", 1, [archive.connection]);
+        yield* storeVersion(owner, "reports", 2, [warehouse.connection], { current: true });
+        // A retired patch's served version declares warehouse without using it.
+        yield* storeVersion(owner, "old-board", 1, [warehouse.connection], {
+          current: true,
+          retired: true
+        });
+        // Only a retired patch declares ledger.
+        yield* storeVersion(owner, "old-ledger", 1, [ledger.connection], {
+          current: true,
+          retired: true
+        });
+        // Another company's version naming spare's id declares nothing here.
+        yield* storeVersion(foreign, "copycat", 1, [spare.connection], { current: true });
+        const usage = yield* (yield* ConnectionStore.ConnectionStore).usage(owner.company.id);
+        const declared = { olderVersions: 0, retired: 0, deleted: 0, disabled: 0, declared: true };
+        assert.deepStrictEqual(usage.get(warehouse.connection.id), {
+          ...declared,
+          usedBy: ["reports", "revenue"],
+          retired: 1
+        });
+        assert.deepStrictEqual(usage.get(archive.connection.id), {
+          ...declared,
+          usedBy: [],
+          olderVersions: 1
+        });
+        assert.deepStrictEqual(usage.get(ledger.connection.id), {
+          ...declared,
+          usedBy: [],
+          retired: 1
+        });
+        assert.isUndefined(usage.get(spare.connection.id));
+
+        const read = Effect.fn(function* (path: string) {
+          const response = yield* send(path, { headers: { cookie: cookie(owner.user) } });
+          return yield* Effect.promise(() => response.text());
+        });
+        const index = yield* read("/company/connections");
+        const row = (path: string) =>
+          index.split("<tr><td>").find((item) => item.includes(`href="${path}"`))!;
+        assert.include(row(warehouse.path), "<td>2 patches</td>");
+        // No sentence in a row: who still declares it, in Patchy's words.
+        assert.include(
+          row(archive.path),
+          '<td>None live <span class="supporting-text">· 1 older version</span></td>'
+        );
+        assert.include(
+          row(ledger.path),
+          '<td>None live <span class="supporting-text">· 1 retired</span></td>'
+        );
+        assert.include(row(spare.path), '<span class="supporting-text">None</span>');
+        const detail = yield* read(warehouse.path);
+        assert.include(
+          detail,
+          '<dt>Used by</dt><dd><a href="/patches/reports">reports</a> and <a href="/patches/revenue">revenue</a></dd>'
+        );
+        assert.notInclude(detail, `href="${warehouse.path}/delete"`);
+        assert.include(yield* read(spare.path), `href="${spare.path}/delete"`);
+        assert.include(
+          yield* read(ledger.path),
+          '<dt>Used by</dt><dd>None live <span class="supporting-text">· 1 retired</span></dd>'
+        );
+        const disconnecting = yield* read(`${warehouse.path}/disconnect`);
+        assert.include(disconnecting, "These patches lose access on their next call:");
+        assert.include(disconnecting, '<li><a href="/patches/revenue">revenue</a></li>');
+        assert.notInclude(disconnecting, "old-board");
+      })
+  );
+
+  it.effect(
+    "starts an empty company from the catalogue and tells members which admins can connect",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("connections-empty", "Empty Co");
+        const member = yield* addUser(owner, "member");
+        yield* addUser(owner, "second-admin", "admin");
+        const read = Effect.fn(function* (user: Users.User, path: string) {
+          const response = yield* send(path, { headers: { cookie: cookie(user) } });
+          return { status: response.status, html: yield* Effect.promise(() => response.text()) };
+        });
+        const admin = yield* read(owner.user, "/company/connections");
+        assert.include(admin.html, "Connect your first source");
+        assert.include(admin.html, `href="${connectPath}"`);
+        const empty = yield* read(member, "/company/connections");
+        assert.include(empty.html, "Nothing is connected yet");
+        assert.include(empty.html, `At Empty Co that's ${owner.user.name} and second-admin.`);
+        assert.notInclude(empty.html, `href="${connectPath}"`);
+        const catalogue = yield* read(owner.user, "/company/connections/connect");
+        assert.strictEqual(catalogue.status, 200);
+        assert.include(catalogue.html, `href="${connectPath}"`);
+        assert.notInclude((yield* read(member, "/company/connections/connect")).html, connectPath);
+        const form = yield* read(owner.user, connectPath);
+        assert.strictEqual(form.status, 200);
+        assert.include(form.html, `action="${connectPath}"`);
+        assert.include(
+          form.html,
+          '<label class="field-prefix" for="connection-handle">postgres/</label>'
+        );
+        assert.strictEqual(
+          (yield* read(owner.user, "/company/connections/connect/gmail")).status,
+          404
+        );
+      })
+  );
+  it.effect("keeps a connection's page and actions when the company directory cannot be read", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-directory");
+      const { path } = yield* connect(owner.user, "warehouse");
+      const users = yield* Users.Users;
+      const response = yield* send(path, { headers: { cookie: cookie(owner.user) } }).pipe(
+        Effect.provideService(Users.Users, {
+          ...users,
+          list: () =>
+            Effect.fail(
+              new SqlError({ reason: new ConnectionError({ cause: new Error("directory down") }) })
+            )
+        })
+      );
+      assert.strictEqual(response.status, 200);
+      const html = yield* Effect.promise(() => response.text());
+      assert.include(html, "<dt>Added by</dt><dd>Unknown</dd>");
+      assert.include(html, `href="${path}/disconnect"`);
+      assert.include(html, 'aria-labelledby="connection-calls"');
+    })
+  );
+  it.effect(
+    "hides connections and snapshots of an integration this release does not ship, as after a rollback",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("connections-unknown");
+        const { connection, path } = yield* connect(owner.user, "warehouse");
+        const reports = yield* connect(owner.user, "reports");
+        // A later release's rows, written straight to the tables. The integration is synthetic so
+        // this keeps testing the unknown case as Patchy ships more integrations.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
+          status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+          VALUES ('conn_later', ${owner.company.id}, 'future_integration', 'product',
+            'From a later release', 'company', 'connected', '{"region":"us"}'::jsonb, 'later',
+            'later', 1, 1, ${owner.user.id})`;
+        yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, integration,
+          revision, snapshot)
+          VALUES ('conn_later', ${owner.company.id}, 'future_integration', 1, '{"events":[]}'::jsonb)`;
+        const store = yield* ConnectionStore.ConnectionStore;
+        const company = owner.company.id;
+        assert.deepStrictEqual(
+          (yield* store.list(company)).map((item) => item.id).sort(),
+          [connection.id, reports.connection.id].sort()
+        );
+        const declaration = {
+          kind: "postgres" as const,
+          handle: "product",
+          id: "conn_later",
+          revision: 1
+        };
+        // Reads and actions on it are typed refusals, never decode failures.
+        const refusals = yield* Effect.all([
+          Effect.flip(store.get(company, "conn_later")),
+          Effect.flip(store.snapshot(company, "conn_later", 1)),
+          Effect.flip(
+            store.describe({
+              companyId: company,
+              userId: owner.user.id,
+              id: "conn_later",
+              description: ""
+            })
+          ),
+          Effect.flip(store.resolve(company, declaration)),
+          Effect.flip(store.poolCredentials(company, declaration, 1))
+        ]);
+        assert.deepStrictEqual(
+          refusals.map((error) => error._tag),
+          [
+            "ConnectionNotFound",
+            "ConnectionNotFound",
+            "ConnectionNotFound",
+            "ConnectionNotConnected",
+            "ConnectionNotConnected"
+          ]
+        );
+        const index = yield* send("/company/connections", {
+          headers: { cookie: cookie(owner.user) }
+        });
+        assert.strictEqual(index.status, 200);
+        const html = yield* Effect.promise(() => index.text());
+        assert.include(html, `href="${path}"`);
+        assert.notInclude(html, "conn_later");
+        assert.notInclude(html, "From a later release");
+        const unknown = "/company/connections/conn_later";
+        assert.strictEqual(
+          (yield* send(unknown, { headers: { cookie: cookie(owner.user) } })).status,
+          404
+        );
+        assert.strictEqual((yield* send(`${unknown}/disconnect`, post(owner.user))).status, 404);
+        // A known connection whose current snapshot names another integration keeps the
+        // connection and reads its metadata as unavailable.
+        yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, integration,
+          revision, snapshot)
+          VALUES (${reports.connection.id}, ${company}, 'future_integration', 2, '{"events":[]}'::jsonb)`;
+        yield* sql`UPDATE connections SET metadata_revision = 2 WHERE id = ${reports.connection.id}`;
+        const detail = yield* store.detail(company, "postgres", "reports");
+        assert.strictEqual(detail.handle, "reports");
+        assert.isNull(detail.snapshot);
+        assert.strictEqual(
+          (yield* Effect.flip(store.snapshot(company, reports.connection.id, 2)))._tag,
+          "ConnectionNotFound"
+        );
       })
   );
 });

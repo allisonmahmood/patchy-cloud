@@ -5,5 +5,6 @@ export * from "./ids.js";
 export * from "./types.js";
 export { escapeAttribute, escapeHtml, htmlPage, whatsNewKind } from "./html.js";
 export type { AppShell } from "./html.js";
-export { dateLabel, daysLeft, renderOffPatch } from "./patch-presentation.js";
+export { ago, dateLabel, daysLeft, renderOffPatch } from "./patch-presentation.js";
+export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
 export * as WhatsNew from "./whatsNew.js";
