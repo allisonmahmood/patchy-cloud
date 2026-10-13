@@ -1159,7 +1159,7 @@ Postgres's raw query. `name` labels the call in recent calls and in PostHog's ow
 query log. Patchy builds the request itself, a default blocking, cache-aware
 `HogQLQuery`, so patch code can only read. ClickHouse types map through one table:
 nullable and low-cardinality wrappers unwrap; 64-bit integers become numbers only
-while safe; decimals and wider integers need an explicit cast; `DateTime` becomes
+while safe, even inside arrays, maps and tuples; decimals and wider integers need an explicit cast wherever they appear; `DateTime` becomes
 UTC ISO; anything else fails `shape_mismatch` naming the column. A result PostHog
 cut short (`hasMore`) fails `too_large`, telling the author to add a `LIMIT` of at
 most 1,000 or aggregate. HogQL errors are `invalid_query` with PostHog's bounded

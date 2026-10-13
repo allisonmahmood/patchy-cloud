@@ -762,6 +762,16 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           code: "access_denied"
         });
         assert.strictEqual(seen.length, 1);
+        // PostHog's arguments keep their tier 1 cap: past it, nothing runs.
+        const oversized = yield* Fixtures.issue(capabilities, { kind: "action" });
+        assert.include(
+          yield* gateway.callback(oversized.token, oversized.attempt, {
+            op: "posthog.query",
+            args: { connection: "analytics", query: "x".repeat(300_000) }
+          }),
+          { ok: false, code: "too_large", limitId: "runtime.posthog.bytes" }
+        );
+        assert.strictEqual(seen.length, 1);
       }).pipe(Effect.scoped)
   );
 });

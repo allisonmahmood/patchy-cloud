@@ -262,6 +262,39 @@ it.effect("refuses shapes the result can't fill, naming the column", () =>
       yield* mismatch([["a", "UInt8"]], [[1, 2]], { a: { kind: "integer" } }),
       { column: "", reason: "row_width" }
     );
+    // Rounded types are refused at any depth, and wide integers or unknown types at all.
+    for (const [type, kind, raw] of [
+      ["Tuple(Decimal(18, 2), String)", "json", [1.5, "a"]],
+      ["Int128", "integer", 1],
+      ["Array(UInt256)", "json", [1]],
+      ["AggregateFunction(uniq, String)", "json", "opaque"]
+    ] as const)
+      assert.deepStrictEqual(yield* mismatch([["c", type]], [[raw]], { c: { kind } }), {
+        column: "c",
+        reason: "type",
+        type
+      });
+    for (const [type, raw] of [
+      ["Array(UInt64)", [1, 2 ** 53]],
+      ["Map(String, Nullable(Int64))", { a: 2 ** 60 }]
+    ] as const)
+      assert.deepStrictEqual(yield* mismatch([["c", type]], [[raw]], { c: { kind: "json" } }), {
+        column: "c",
+        reason: "value",
+        type
+      });
+  })
+);
+
+it.effect("keeps composite values whose integers are exact", () =>
+  Effect.gen(function* () {
+    const { call } = yield* operations(
+      rowsOf([["counts", "Array(UInt64)"]], [[[1, 9007199254740991]]])
+    );
+    assert.deepStrictEqual(yield* call(request({ counts: { kind: "json" } })), {
+      ok: true,
+      rows: [{ counts: [1, 9007199254740991] }]
+    });
   })
 );
 

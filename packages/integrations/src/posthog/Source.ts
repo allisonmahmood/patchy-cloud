@@ -504,7 +504,8 @@ export const make = Effect.gen(function* () {
       found.push(...page.results);
       if (found.length > registry["posthog.discovery.entries"].default)
         return yield* new DiscoveryTooLarge({ limitId: "posthog.discovery.entries" });
-      if (page.next === undefined || page.next === null || page.results.length === 0) {
+      // An empty page with a next link is followed too: only the page bound ends a list early.
+      if (page.next === undefined || page.next === null) {
         next = undefined;
         continue;
       }

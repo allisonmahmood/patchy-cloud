@@ -1,6 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Buffer counts UTF-8 bytes without allocating another encoded body.
 import { Buffer } from "node:buffer";
-import { FilePutUpload, limitRefusal, type HandlerKind, type RuntimeFailure } from "@patchy/api";
+import {
+  FilePutUpload,
+  limitRefusal,
+  runtimeBodyLimitId,
+  type HandlerKind,
+  type RuntimeFailure
+} from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -99,7 +105,7 @@ const refused = (
   error: string
 ): RuntimeFailure => ({ ok: false, source: "patchy", code, error });
 const bounded = (
-  id: "tier2.callbacks.fileBytes" | "tier2.log.bytes",
+  id: "tier2.callbacks.fileBytes" | "tier2.log.bytes" | "runtime.posthog.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -131,7 +137,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     fileBytes: ContractLimits.get("tier2.callbacks.fileBytes"),
     logBytes: ContractLimits.get("tier2.log.bytes"),
     mutationDeadline: ContractLimits.get("runtime.mutation.deadline"),
-    integrationDeadline: ContractLimits.get("integration.deadline")
+    integrationDeadline: ContractLimits.get("integration.deadline"),
+    posthogBytes: ContractLimits.get("runtime.posthog.bytes")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -204,6 +211,12 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       return remember(refused("invalid_request", "Unknown callback operation."), 400);
     if (capability.kind === "query" && operation?.transport !== undefined)
       return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
+    // PostHog's arguments keep the cap they have on tier 1; nothing past it is sent.
+    if (
+      runtimeBodyLimitId(request.op) === "runtime.posthog.bytes" &&
+      Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > limits.posthogBytes
+    )
+      return remember(bounded("runtime.posthog.bytes", limits.posthogBytes), 413);
     const run = Effect.gen(function* (): Effect.fn.Return<
       GuestProtocol.CallbackReply,
       Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused

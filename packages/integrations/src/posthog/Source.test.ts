@@ -234,6 +234,24 @@ it.effect("tests a key, then reads every definition across pages, sorted and des
   })
 );
 
+it.effect("follows an empty page that still has a next link", () =>
+  Effect.gen(function* () {
+    const projectHandler = PostHogDouble.project(product);
+    const { source: posthog } = yield* source((request) =>
+      request.url.pathname.endsWith("/event_definitions/")
+        ? request.url.searchParams.has("offset")
+          ? PostHogDouble.json(200, { next: null, results: [{ name: "after.empty" }] })
+          : PostHogDouble.json(200, {
+              next: `${request.url.origin}${request.url.pathname}?offset=1`,
+              results: []
+            })
+        : projectHandler(request)
+    );
+    const { snapshot } = yield* posthog.inspect(PostHogDouble.credentials(product));
+    assert.deepStrictEqual(snapshot.events, [{ name: "after.empty" }]);
+  })
+);
+
 it.effect("refuses pagination that leaves the project, its host or its kind of property", () =>
   Effect.gen(function* () {
     for (const next of [

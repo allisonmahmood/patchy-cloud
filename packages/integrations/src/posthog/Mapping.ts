@@ -13,7 +13,8 @@ export type Family =
   | "string"
   | "date"
   | "integer"
-  | "bigint"
+  | "int64"
+  | "wide"
   | "float"
   | "decimal"
   | "boolean"
@@ -51,11 +52,12 @@ export const family = (type: string): Family => {
       return "integer";
     case "Int64":
     case "UInt64":
+      return "int64";
     case "Int128":
     case "UInt128":
     case "Int256":
     case "UInt256":
-      return "bigint";
+      return "wide";
     case "Float32":
     case "Float64":
       return "float";
@@ -87,21 +89,27 @@ export const family = (type: string): Family => {
   }
 };
 
+/** Types PostHog sends as rounded numbers: decimals and integers wider than 64 bits. */
+const rounded = /\b(?:Decimal(?:32|64|128|256)?|U?Int(?:128|256))\b/;
+/** 64-bit integers, which are numbers in JSON and exact only while they are safe. */
+const int64 = /\bU?Int64\b/;
+
 /**
- * Which shape kinds a column of this family can fill. `json` takes any value except a decimal,
- * which PostHog sends as a rounded number; a decimal must be cast whatever the shape.
+ * Whether a column of this ClickHouse type can fill the shape kind. A type that PostHog would
+ * round, at any depth, must be cast whatever the shape; an unknown type is refused.
  */
-export const compatible = (kind: Kind, from: Family): boolean => {
+export const compatible = (kind: Kind, type: string): boolean => {
+  const from = family(type);
   if (from === "nothing") return true;
   switch (kind) {
     case "json":
-      return from !== "decimal";
+      return from !== "decimal" && from !== "wide" && from !== "unknown" && !rounded.test(type);
     case "text":
       return from === "string" || from === "date";
     case "integer":
-      return from === "integer" || from === "bigint";
+      return from === "integer" || from === "int64";
     case "number":
-      return from === "integer" || from === "bigint" || from === "float";
+      return from === "integer" || from === "int64" || from === "float";
     case "boolean":
       // ClickHouse comparisons return UInt8 0 or 1.
       return from === "boolean" || from === "integer";
@@ -109,6 +117,16 @@ export const compatible = (kind: Kind, from: Family): boolean => {
       return from === "datetime";
   }
 };
+
+/** Whether a JSON value holds an integer too large to be exact, at any depth. */
+const unsafe = (value: unknown): boolean =>
+  typeof value === "number"
+    ? Number.isInteger(value) && !Number.isSafeInteger(value)
+    : Array.isArray(value)
+      ? value.some(unsafe)
+      : typeof value === "object" && value !== null
+        ? Object.values(value).some(unsafe)
+        : false;
 
 const datetime =
   /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})?$/;
@@ -129,14 +147,13 @@ export const utc = (value: string): string | undefined => {
 
 /**
  * One value of a compatible column as the shape returns it, or undefined when it doesn't fit:
- * an unsafe integer, a non-finite float, or a date that isn't one.
+ * an unsafe integer at any depth, a non-finite float, or a date that isn't one.
  */
-export const value = (kind: Kind, from: Family, raw: unknown): unknown => {
+export const value = (kind: Kind, type: string, raw: unknown): unknown => {
+  const from = family(type);
   switch (kind) {
     case "json":
-      return from === "bigint" && !(typeof raw === "number" && Number.isSafeInteger(raw))
-        ? undefined
-        : raw;
+      return int64.test(type) && unsafe(raw) ? undefined : raw;
     case "text":
       return typeof raw === "string" ? raw : undefined;
     case "integer":

@@ -78,7 +78,7 @@ Use the declared alias when constructing the client. \`query({ name, query, valu
 - \`name\` is required. It labels the call in the connection's recent calls and in PostHog's own query log.
 - \`values\` fills the query's \`{placeholders}\` with constants, never table or column names. Values are strings, finite numbers, booleans, null, or arrays of those.
 - \`shape\` uses strict text/integer/number/boolean/timestamp/json descriptors with optional: true for nullability. Missing or duplicate columns, a type the kind can't hold and a nonoptional null fail with shape_mismatch; extra columns are dropped.
-- Types: String, UUID, enums and dates are text; Int8 to UInt32 are integer or number; Int64 and UInt64 are numbers only while they are safe integers; Float32/64 are number; Bool is boolean; DateTime is timestamp, as UTC with six fractional digits and Z. Cast Decimal and larger integers with toString(...) or toFloat64(...).
+- Types: String, UUID, enums and dates are text; Int8 to UInt32 are integer or number; Int64 and UInt64 are numbers only while they are safe integers; Float32/64 are number; Bool is boolean; DateTime is timestamp, as UTC with six fractional digits and Z. Arrays, maps and tuples are json, with 64-bit integers inside them still safe. Decimal, 128- and 256-bit integers and unmapped types fail wherever they appear; cast them with toString(...) or toFloat64(...).
 - At most 1,000 rows and 8 MB. PostHog returns 100 rows unless the query has a LIMIT; a result PostHog cut short fails with too_large, so add a LIMIT of at most 1,000 or aggregate.
 - PostHog's rate, budget and concurrency limits fail with source_rate_limited, with retryAfter only when PostHog sent one. Patchy never retries a query.
 

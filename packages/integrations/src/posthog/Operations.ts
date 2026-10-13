@@ -24,7 +24,7 @@ export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDecla
 /** The key or project stopped working after connect; only an admin can fix it. */
 export class ConnectionRefused extends Schema.TaggedError<ConnectionRefused>()(
   "PostHogConnectionRefused",
-  { refusal: Schema.Literals(["key_rejected", "access_denied", "project_not_found"]) }
+  { cause: Schema.Union([Source.KeyRejected, Source.AccessDenied, Source.ProjectNotFound]) }
 ) {
   readonly code = "source_unavailable" as const;
   readonly status = 503;
@@ -169,22 +169,19 @@ export const shaped = Effect.fn("PostHogOperations.shaped")(function* (
     readonly index: number;
     readonly kind: (typeof shape)[string]["kind"];
     readonly optional: boolean;
-    readonly family: Mapping.Family;
     readonly type: string;
   }> = [];
   for (const [name, column] of Object.entries(shape)) {
     const index = indices.get(name);
     if (index === undefined) return yield* new ShapeMismatch({ column: name, reason: "missing" });
     const type = response.types[index]![1];
-    const family = Mapping.family(type);
-    if (!Mapping.compatible(column.kind, family))
+    if (!Mapping.compatible(column.kind, type))
       return yield* new ShapeMismatch({ column: name, reason: "type", type });
     columns.push({
       name,
       index,
       kind: column.kind,
       optional: column.optional === true,
-      family,
       type
     });
   }
@@ -200,7 +197,7 @@ export const shaped = Effect.fn("PostHogOperations.shaped")(function* (
         if (!column.optional)
           return yield* new ShapeMismatch({ column: column.name, reason: "null" });
       } else {
-        value = Mapping.value(column.kind, column.family, raw);
+        value = Mapping.value(column.kind, column.type, raw);
         if (value === undefined || !isJson(value))
           return yield* new ShapeMismatch({
             column: column.name,
@@ -257,11 +254,9 @@ const query = operation({
       )
       .pipe(
         Effect.catchTags({
-          PostHogKeyRejected: () => Effect.fail(new ConnectionRefused({ refusal: "key_rejected" })),
-          PostHogAccessDenied: () =>
-            Effect.fail(new ConnectionRefused({ refusal: "access_denied" })),
-          PostHogProjectNotFound: () =>
-            Effect.fail(new ConnectionRefused({ refusal: "project_not_found" }))
+          PostHogKeyRejected: (cause) => Effect.fail(new ConnectionRefused({ cause })),
+          PostHogAccessDenied: (cause) => Effect.fail(new ConnectionRefused({ cause })),
+          PostHogProjectNotFound: (cause) => Effect.fail(new ConnectionRefused({ cause }))
         })
       );
     return yield* shaped(response, args.shape);
