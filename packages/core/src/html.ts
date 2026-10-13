@@ -322,6 +322,14 @@ function appBody(app: AppShell, body: string): string {
   return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
 }
 
+/**
+ * Patchy's mark from patchyhq.com, the one icon on every first-party page and patch tab. It is
+ * inline, so it needs no route and passes every one of those pages' `img-src data:`.
+ */
+export const faviconLink = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect x="114" y="110" width="286" height="286" rx="82" fill="#15130F" transform="rotate(-6 257 253) translate(22 22)"/><rect x="114" y="110" width="286" height="286" rx="82" fill="#91DD5A" stroke="#15130F" stroke-width="30" transform="rotate(-6 257 253)"/><path d="M256 180H326V250" fill="none" stroke="#15130F" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" transform="rotate(-6 291 215)"/></svg>'
+)}">`;
+
 /** First-party HTML shell. Served patch documents remain separate in Serving. */
 export function htmlPage(options: {
   title: string;
@@ -336,6 +344,7 @@ export function htmlPage(options: {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(options.title)}</title>
+  ${faviconLink}
   ${options.head ?? ""}
   <style>
     ${shellStyles}

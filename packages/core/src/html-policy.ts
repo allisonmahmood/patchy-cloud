@@ -62,7 +62,7 @@ export function validateHtml(
 
   let title: string | null = null;
 
-  function walk(node: parse5.DefaultTreeAdapterMap["node"]): void {
+  function walk(node: HtmlNode): void {
     if ("tagName" in node && node.tagName) {
       const tagName = node.tagName.toLowerCase();
 
@@ -107,8 +107,8 @@ export function validateHtml(
       }
     }
 
-    if ("tagName" in node && node.tagName === "title" && !title) {
-      title = collectText(node).trim().slice(0, 140) || null;
+    if (!title && isTitle(node)) {
+      title = titleText(node);
     }
 
     if ("childNodes" in node) {
@@ -132,7 +132,35 @@ export function validateHtml(
   };
 }
 
-function collectText(node: parse5.DefaultTreeAdapterMap["node"]): string {
+type HtmlNode = parse5.DefaultTreeAdapterMap["node"];
+
+/**
+ * The page's title as a browser picks it, bounded as tier 0's is. Publish and `patchy dev` read
+ * it from scripted pages, which the static policy would reject, so their tab shows it too.
+ */
+export function documentTitle(html: string): string | null {
+  const find = (node: HtmlNode): string | null => {
+    if (isTitle(node)) return titleText(node);
+    if (!("childNodes" in node)) return null;
+    for (const child of node.childNodes) {
+      const title = find(child);
+      if (title !== null) return title;
+    }
+    return null;
+  };
+  return find(parse5.parse(html));
+}
+
+/** An SVG's `<title>` labels the drawing, not the document. */
+function isTitle(node: HtmlNode): boolean {
+  return "tagName" in node && node.tagName === "title" && node.namespaceURI === parse5.html.NS.HTML;
+}
+
+function titleText(node: HtmlNode): string | null {
+  return collectText(node).trim().slice(0, 140) || null;
+}
+
+function collectText(node: HtmlNode): string {
   let value = "";
   if ("childNodes" in node) {
     for (const child of node.childNodes || []) {

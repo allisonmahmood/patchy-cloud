@@ -13,6 +13,7 @@ import {
   StreamAdmission,
   StreamLimits
 } from "@patchy/runtime/dev";
+import { documentTitle } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import {
   brokerScript,
@@ -198,7 +199,10 @@ export const serve = Effect.fn("Dev.serve")(function* (
               scope: "local",
               viewerId: identity.user.id,
               handlerKinds: handlerKinds(resources.version.manifest.handlers),
-              patch: { id: version.patchId, title: prepared.manifest.name ?? "Local patch" },
+              patch: {
+                id: version.patchId,
+                title: documentTitle(html) ?? prepared.manifest.name ?? "Local patch"
+              },
               version: {
                 id: version.versionId,
                 versionNumber: 1,

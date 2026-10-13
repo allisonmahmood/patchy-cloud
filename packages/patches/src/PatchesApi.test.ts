@@ -1769,6 +1769,23 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
+  it.effect("titles a scripted patch from its page, falling back to its name", () =>
+    Effect.gen(function* () {
+      const manifest = { ...Fixtures.manifest, tier: 1 as const, name: "titled-script" };
+      const created = yield* publish({
+        html: "<!doctype html><title>Launch queue</title><div id=root></div><script>1</script>",
+        manifest
+      }).pipe(Effect.provide(Fixtures.as(admin)));
+      assert.strictEqual(created.title, "Launch queue");
+      const untitled = yield* publish({
+        html: "<!doctype html><script>2</script>",
+        manifest,
+        patchId: created.patchId
+      }).pipe(Effect.provide(Fixtures.as(admin)));
+      assert.strictEqual(untitled.title, "titled-script");
+    })
+  );
+
   it.effect("publishes tier-one scripts without changing their bytes and replays the attempt", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));

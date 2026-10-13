@@ -37,6 +37,8 @@ export const SCRIPTED_CONTENT_SECURITY_POLICY = [
 export const SCRIPTED_SHELL_SECURITY_POLICY = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
+  // The tab's icon is an inline data: URL.
+  "img-src data:",
   "frame-src 'self'",
   "script-src 'self'",
   "connect-src 'self'",

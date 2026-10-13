@@ -19,6 +19,8 @@ export function starterFiles(options: {
 }): Record<string, string> {
   const { instance, name, tier, purpose, tarball, toolchain: versions = toolchain } = options;
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+  // The page's <title> names the patch's browser tab; agents seldom revisit index.html.
+  const title = `${name.charAt(0).toUpperCase()}${name.slice(1).replaceAll("-", " ")}`;
   return {
     "patchy.json": json({ instance, description: purpose }),
     "fixtures/.gitkeep": "",
@@ -50,8 +52,8 @@ export function starterFiles(options: {
     "patchy.config.ts": `import { defineConfig, table, t } from "patchy/config";\n\nexport default defineConfig({\n  name: ${JSON.stringify(name)},\n  tier: ${tier},\n  tables: { notes: table("One note per id, with a title.", { title: t.text() }) },\n  files: {},\n  uses: {}\n});\n`,
     "index.html":
       tier >= 1
-        ? '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n'
-        : '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My patch</title><link rel="stylesheet" href="/patchy/_generated/look.css"></head><body><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></body></html>\n',
+        ? `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n`
+        : `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/patchy/_generated/look.css"></head><body><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></body></html>\n`,
     ...(tier >= 1
       ? {
           "src/main.tsx": `import "../patchy/_generated/look.css";
