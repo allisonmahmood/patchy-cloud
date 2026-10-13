@@ -44,17 +44,15 @@ export const migrations: Migrations = {
       BEFORE UPDATE OR DELETE OR TRUNCATE ON connection_snapshots
       FOR EACH STATEMENT EXECUTE FUNCTION reject_connection_snapshot_mutation()`
   ),
-  // A handle names a connection within its integration, and a snapshot names its
-  // integration itself, since it outlives its connection. Each release must work against
-  // the schema the next one leaves (docs/OPERATIONS.md), and a release before this one
-  // still inserts by (company_id, handle) and omits the snapshot's integration. So this
-  // step only adds: the per-company key and the snapshot default stay until the step that
-  // admits a second integration drops them. Filling existing snapshots by default needs
-  // no UPDATE, which the immutability trigger would refuse.
+  // A snapshot names its integration itself, since it outlives its connection. Each
+  // release must work against the schema the next one leaves (docs/OPERATIONS.md), and
+  // the release before this one omits the snapshot's integration, so the column keeps a
+  // default; filling existing rows that way needs no UPDATE, which the immutability
+  // trigger would refuse. Handles stay unique per company until the step that admits a
+  // second integration swaps that key for one per integration: two handle keys at once
+  // would let concurrent connects fail on the key their ON CONFLICT does not name.
   "0011_connections_per_integration": ddl(
     `ALTER TABLE connections DROP CONSTRAINT connections_integration_check`,
-    `ALTER TABLE connections ADD CONSTRAINT connections_company_id_integration_handle_key
-      UNIQUE (company_id, integration, handle)`,
     `ALTER TABLE connection_snapshots ADD COLUMN integration TEXT NOT NULL DEFAULT 'postgres'`
   )
 };

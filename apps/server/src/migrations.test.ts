@@ -155,16 +155,6 @@ it.layer(Testing.emptyLayer(beforeIntegrations))(
             yield* sql`SELECT integration FROM connection_snapshots WHERE connection_id = 'conn_previous'`,
             [{ integration: "postgres" }]
           );
-          // This release's writes conflict on the per-integration key.
-          assert.deepStrictEqual(
-            yield* sql`INSERT INTO connections
-            (id, company_id, integration, handle, description, mode, status, display, credentials,
-              key_id, credential_revision, metadata_revision, created_by)
-            VALUES ('conn_duplicate', ${who.companyId}, 'postgres', 'warehouse', '', 'company',
-              'connected', '{}', 'ciphertext', 'upgrade', 1, 1, ${who.userId})
-            ON CONFLICT (company_id, integration, handle) DO NOTHING RETURNING id`,
-            []
-          );
           // Any integration's query keeps its text; other operations still keep none (the row is
           // otherwise valid, so only the query-text check can refuse it).
           const insertCall = (id: string, op: string) =>

@@ -250,6 +250,8 @@ export const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       return yield* reportedTransaction(
         Effect.gen(function* () {
+          // A targetless conflict resolves on whichever handle key the schema has: per
+          // company today, per integration once a second integration ships.
           const inserted = yield* sql`INSERT INTO connections
         (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
          credential_revision, metadata_revision, created_by, last_tested_at, last_discovered_at)
@@ -257,7 +259,7 @@ export const make = Effect.gen(function* () {
           ${input.description}, 'company', 'connected', ${encodeDisplay(inspected.display)},
           ${encrypted.credentials}, ${encrypted.keyId}, 1, 1, ${input.userId},
           to_timestamp(${now / 1_000}), to_timestamp(${now / 1_000}))
-        ON CONFLICT (company_id, integration, handle) DO NOTHING RETURNING id`;
+        ON CONFLICT DO NOTHING RETURNING id`;
           if (inserted.length === 0) return yield* new ConnectionHandleTaken({});
           yield* writeSnapshot(identity, 1, inspected.snapshot, now);
           return yield* get(input.companyId, identity.id);
