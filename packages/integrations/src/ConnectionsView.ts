@@ -45,6 +45,8 @@ export interface Notice {
   readonly code?: string;
   /** Where to go instead, such as Point elsewhere after credentials name another database. */
   readonly next?: { readonly href: string; readonly label: string };
+  /** The form field a refusal is about; it then replaces that field's hint instead of heading the page. */
+  readonly field?: "handle" | "description" | "credentials";
 }
 
 export type View = "all" | "attention" | "unused";
@@ -86,11 +88,34 @@ const muted = (text: string) => `<span class="supporting-text">${escapeHtml(text
 const hidden = (key: string, value: string) =>
   `<input type="hidden" name="${escapeAttribute(key)}" value="${escapeAttribute(value)}">`;
 
-/** A refusal is an alert; a completed action is a status. */
+const noticeDetail = (value: Notice) =>
+  `${value.code ? `<br><code>${escapeHtml(value.code)}</code>` : ""}${value.next ? `<br><a href="${escapeAttribute(value.next.href)}">${escapeHtml(value.next.label)}</a>` : ""}`;
+
+/** A refusal is an alert; a completed action is a status. A field's refusal sits with its field. */
 export const notice = (value: Notice | undefined) =>
-  value === undefined
+  value === undefined || value.field !== undefined
     ? ""
-    : `<div class="note ${value.status ? "note-refused" : "note-ok"}" role="${value.status ? "alert" : "status"}">${escapeHtml(value.message)}${value.code ? `<br><code>${escapeHtml(value.code)}</code>` : ""}${value.next ? `<br><a href="${escapeAttribute(value.next.href)}">${escapeHtml(value.next.label)}</a>` : ""}</div>`;
+    : `<div class="note ${value.status ? "note-refused" : "note-ok"}" role="${value.status ? "alert" : "status"}">${escapeHtml(value.message)}${noticeDetail(value)}</div>`;
+
+/**
+ * A field's hint, or after a refusal at that field the callout that replaces it, with the
+ * attributes that mark the field at fault. Forms that use it set `novalidate`.
+ */
+export const fieldNote = (
+  id: string,
+  field: NonNullable<Notice["field"]>,
+  hint: string,
+  refusal: Notice | undefined
+) =>
+  refusal?.field === field
+    ? {
+        attributes: ` aria-describedby="${id}-error" aria-invalid="true" autofocus`,
+        note: `<div class="note note-refused field-callout" id="${id}-error" role="alert"><strong class="note-title">${escapeHtml(refusal.message)}</strong>${noticeDetail(refusal)}</div>`
+      }
+    : {
+        attributes: ` aria-describedby="${id}-hint"`,
+        note: `<p id="${id}-hint" class="field-hint">${escapeHtml(hint)}</p>`
+      };
 
 export const styles = `
     .connections-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 24px; }
@@ -146,7 +171,7 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows: ReadonlyArray<Row>, admin
   `<ul class="list">${offers
     .map((offer) => {
       const count = rows.filter((row) => row.integration.key === offer.integration.key).length;
-      return `<li class="list-row connections-offer"><div><p><strong>${escapeHtml(offer.integration.label)}</strong>${count > 0 ? ` ${muted(`· ${count} connected`)}` : ""}</p><p class="supporting-text">${escapeHtml(offer.reads)}</p><p class="supporting-text">${escapeHtml(offer.mode)}</p></div>${admin ? `<a class="btn" href="${escapeAttribute(connectPath(offer.integration.key))}">Connect ${escapeHtml(offer.integration.label)}</a>` : ""}</li>`;
+      return `<li class="list-row connections-offer"><div><p><strong>${escapeHtml(offer.integration.label)}</strong>${count > 0 ? ` ${muted(`· ${plural(count, "connection")}`)}` : ""}</p><p class="supporting-text">${escapeHtml(offer.reads)}</p><p class="supporting-text">${escapeHtml(offer.mode)}</p></div>${admin ? `<a class="btn" href="${escapeAttribute(connectPath(offer.integration.key))}">Connect ${escapeHtml(offer.integration.label)}</a>` : ""}</li>`;
     })
     .join("")}</ul>`;
 const onRequest =
@@ -222,7 +247,7 @@ export const renderIndex = (input: {
     const head = `<h1 class="page-heading">Connections</h1><p>${escapeHtml(lead)}</p>${notice(input.notice)}`;
     return admin
       ? `${head}<section class="section"><h2 class="section-heading">Connect your first source</h2><p>Pick what your patches should read. Patchy tests the credentials and finds what's inside before saving anything.</p>${catalogue(input.offers, all, true)}${onRequest}</section>`
-      : `${head}<div class="note"><strong class="note-title">Nothing is connected yet</strong><p>${escapeHtml(`Only admins can connect sources. At ${input.company} that's ${listed(input.admins)}. Once one is connected, ask your agent to add it to a patch.`)}</p></div><section class="section"><h2 class="section-heading">What Patchy can connect</h2>${catalogue(input.offers, all, false)}</section>`;
+      : `${head}<div class="note"><strong class="note-title">Nothing is connected yet</strong><p>${escapeHtml(`Only admins can connect sources.${input.admins.length === 0 ? "" : ` At ${input.company} that's ${listed(input.admins)}.`} Once one is connected, ask your agent to add it to a patch.`)}</p></div><section class="section"><h2 class="section-heading">What Patchy can connect</h2>${catalogue(input.offers, all, false)}</section>`;
   }
   const many = all.length >= CONTROLS_AT;
   // A member's link to Unused shows everything rather than a view they cannot choose.
@@ -235,10 +260,11 @@ export const renderIndex = (input: {
   const shown = all.filter((row) => matches(row, filters));
   const filtered = filters.q !== "" || filters.source !== undefined || filters.view !== "all";
   const clear = `<a href="${indexPath}">Clear filters</a>`;
+  const count = `<p class="supporting-text">${escapeHtml(`Showing ${shown.length} of ${all.length}.`)} ${clear}</p>`;
   const list =
     shown.length === 0
-      ? `<p>No connections match these filters.</p><p>${clear}</p>`
-      : `${table(shown, admin ? input.lastCalls : undefined, input.now)}${filtered ? `<p class="supporting-text">${escapeHtml(`Showing ${shown.length} of ${all.length}.`)} ${clear}</p>` : ""}`;
+      ? `<p>No connections match these filters.</p>${count}`
+      : `${table(shown, admin ? input.lastCalls : undefined, input.now)}${filtered ? count : ""}`;
   return `${head}${notice(input.notice)}${admin ? attention(all) : ""}${many ? controls(all, filters, admin) : ""}${list}`;
 };
 
@@ -257,7 +283,7 @@ export const renderConnect = (input: {
   readonly fields: string;
   readonly notice?: Notice;
 }): string =>
-  `<article class="connections-subpage"><p><a href="${indexPath}">Connections</a> / <a href="${cataloguePath}">Connect a source</a></p><h1 class="page-heading">Connect ${escapeHtml(input.integration.label)}</h1><p>${escapeHtml(input.intro)}</p>${notice(input.notice)}<form method="post" action="${escapeAttribute(connectPath(input.integration.key))}">${input.fields}<div class="actions"><button class="btn btn-primary" type="submit">Test and connect</button><a class="btn btn-quiet" href="${cataloguePath}">Cancel</a></div></form></article>`;
+  `<article class="connections-subpage"><p><a href="${indexPath}">Connections</a> / <a href="${cataloguePath}">Connect a source</a></p><h1 class="page-heading">Connect ${escapeHtml(input.integration.label)}</h1><p>${escapeHtml(input.intro)}</p>${notice(input.notice)}<form method="post" action="${escapeAttribute(connectPath(input.integration.key))}" novalidate>${input.fields}<div class="actions"><button class="btn btn-primary" type="submit">Test and connect</button><a class="btn btn-quiet" href="${cataloguePath}">Cancel</a></div></form></article>`;
 
 // ---------- one connection ----------
 
@@ -457,7 +483,15 @@ export const renderConfirmation = (input: {
       title: `Edit the description of ${label}`,
       consequence:
         "One line telling builders what this is. With many connections, it's how people find the right one. It neither grants nor restricts access.",
-      fields: `<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(input.description ?? connection.description)}">`,
+      fields: (() => {
+        const note = fieldNote(
+          "connection-description",
+          "description",
+          "One line, at most 500 characters.",
+          input.notice
+        );
+        return `<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(input.description ?? connection.description)}"${note.attributes}>${note.note}`;
+      })(),
       submit: ["btn-primary", "Save description"]
     },
     disconnect: {
@@ -473,5 +507,5 @@ export const renderConfirmation = (input: {
       submit: ["btn-danger", `Delete ${label}`]
     }
   }[action];
-  return `<article class="connections-subpage"><p><a href="${escapeAttribute(back)}">Back to ${escapeHtml(label)}</a></p><h1 class="page-heading">${escapeHtml(page.title)}</h1>${notice(input.notice)}<form class="confirmation-form" method="post" action="${escapeAttribute(connectionPath(connection.id, action))}"><p class="confirmation-consequence">${escapeHtml(page.consequence)}</p>${page.fields}<div class="confirmation-actions"><button class="btn ${page.submit[0]}" type="submit">${escapeHtml(page.submit[1])}</button><a class="btn btn-quiet" href="${escapeAttribute(back)}">Cancel</a></div></form></article>`;
+  return `<article class="connections-subpage"><p><a href="${escapeAttribute(back)}">Back to ${escapeHtml(label)}</a></p><h1 class="page-heading">${escapeHtml(page.title)}</h1>${notice(input.notice)}<form class="confirmation-form" method="post" action="${escapeAttribute(connectionPath(connection.id, action))}" novalidate><p class="confirmation-consequence">${escapeHtml(page.consequence)}</p>${page.fields}<div class="confirmation-actions"><button class="btn ${page.submit[0]}" type="submit">${escapeHtml(page.submit[1])}</button><a class="btn btn-quiet" href="${escapeAttribute(back)}">Cancel</a></div></form></article>`;
 };

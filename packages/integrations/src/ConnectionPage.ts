@@ -40,7 +40,7 @@ export interface Page {
 interface CredentialsPage {
   readonly title: (name: string) => string;
   readonly consequence: string;
-  readonly fields: string;
+  readonly fields: (refusal?: View.Notice) => string;
 }
 
 /** What the pages say about one integration; the layout around it is the same for every one. */
@@ -58,16 +58,36 @@ interface IntegrationPage {
     readonly more: number;
   };
   readonly connectIntro: string;
-  readonly connectFields: (submitted: {
-    readonly handle?: string;
-    readonly description?: string;
-  }) => string;
+  readonly connectFields: (
+    submitted: { readonly handle?: string; readonly description?: string },
+    refusal?: View.Notice
+  ) => string;
   readonly rotate: CredentialsPage;
   readonly retarget: CredentialsPage;
+  /** Refusal codes about the credentials themselves, shown under their field. */
+  readonly credentialRefusals: ReadonlySet<string>;
 }
 const pages: { readonly [K in Integration]: IntegrationPage } = { postgres: PostgresPage };
 const offers = integrations.map((integration) => pages[integration].offer);
 const isIntegration = Schema.is(Integration);
+
+/** The field each refusal is about, when it is about one. */
+const refusedField = (code: string | undefined): View.Notice["field"] =>
+  code === "invalid_connection_handle" || code === "connection_handle_taken"
+    ? "handle"
+    : code === "invalid_connection_description"
+      ? "description"
+      : code !== undefined && integrations.some((key) => pages[key].credentialRefusals.has(code))
+        ? "credentials"
+        : undefined;
+/** A refusal placed at its field when the re-rendered form has that field, else atop the page. */
+const atField = (
+  notice: View.Notice,
+  fields: ReadonlyArray<NonNullable<View.Notice["field"]>>
+): View.Notice => {
+  const field = refusedField(notice.code);
+  return field !== undefined && fields.includes(field) ? { ...notice, field } : notice;
+};
 
 const results = {
   connect: "Database connected and schema discovered.",
@@ -139,11 +159,18 @@ const index = Effect.fn("ConnectionPage.index")(function* (
           Effect.catchTags({ SqlError: () => Effect.succeed("unavailable" as const) })
         )
     : undefined;
+  // Names to ask are a courtesy: an unreadable directory leaves them out.
   const admins =
     !admin && connections.length === 0
-      ? (yield* (yield* Users.Users).list(viewer.company.id))
-          .filter((user) => user.role === "admin" && user.deactivatedAt === null)
-          .map((user) => user.name)
+      ? yield* (yield* Users.Users).list(viewer.company.id).pipe(
+          Effect.map((users) =>
+            users
+              .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+              .map((user) => user.name)
+              .sort((a, b) => a.localeCompare(b))
+          ),
+          Effect.catchTags({ SqlError: () => Effect.succeed([]) })
+        )
       : [];
   return {
     title: "Connections",
@@ -187,7 +214,7 @@ const connectForm = (
     body: View.renderConnect({
       integration: page.integration,
       intro: page.connectIntro,
-      fields: page.connectFields(submitted),
+      fields: page.connectFields(submitted, notice),
       notice
     }),
     status: notice?.status
@@ -203,14 +230,16 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   const connection = yield* store.get(viewer.company.id, id);
   const page = pages[connection.integration];
   const usage = (yield* store.usage(viewer.company.id)).get(id) ?? ConnectionStore.unused;
-  // Deactivated people keep their names: they still added connections and made calls.
-  const people = new Map(
-    (yield* (yield* Users.Users).list(viewer.company.id)).map((user) => [user.id, user.name])
+  // Deactivated people keep their names: they still added connections and made calls. A
+  // directory that cannot be read leaves the page and its actions working, without names.
+  const people = yield* (yield* Users.Users).list(viewer.company.id).pipe(
+    Effect.map((users) => new Map(users.map((user) => [user.id, user.name]))),
+    Effect.catchTags({ SqlError: () => Effect.succeed(undefined) })
   );
   return {
     connection,
     page,
-    people,
+    people: people ?? new Map<string, string>(),
     view: {
       id: connection.id,
       integration: page.integration,
@@ -219,7 +248,10 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
       status: connection.status,
       mode: page.offer.mode,
       testedAt: connection.lastTestedAt,
-      addedBy: people.get(connection.createdBy) ?? "Someone no longer in the company",
+      addedBy:
+        people === undefined
+          ? "Unknown"
+          : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
       facts: page.facts(connection),
       ...usage
     } satisfies View.Connection
@@ -297,7 +329,11 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
       connection: view,
       action,
       actions: page.actions,
-      form: credentials && { ...credentials, title: credentials.title(name) },
+      form: credentials && {
+        title: credentials.title(name),
+        consequence: credentials.consequence,
+        fields: credentials.fields(form.notice)
+      },
       description: form.description,
       notice: form.notice
     }),
@@ -400,7 +436,7 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
     connectForm(
       integration,
       { handle: text(form?.handle), description: text(form?.description) },
-      notice
+      atField(notice, ["handle", "description", "credentials"])
     );
   if (form === null) return refused(unreadable);
   return yield* Effect.gen(function* () {
@@ -438,8 +474,12 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     switch (kind) {
       case "rotate":
       case "retarget":
+        return confirmationPage(viewer, id, kind, { notice: atField(notice, ["credentials"]) });
       case "description":
-        return confirmationPage(viewer, id, kind, { description: text(form?.description), notice });
+        return confirmationPage(viewer, id, kind, {
+          description: text(form?.description),
+          notice: atField(notice, ["description"])
+        });
       case "delete":
         return connectionPage(viewer, id, notice.code === "connection_in_use" ? inUse(id) : notice);
       default:

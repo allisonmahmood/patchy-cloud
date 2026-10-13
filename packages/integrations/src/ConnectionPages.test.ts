@@ -12,6 +12,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import { PostgresDeclaration } from "@patchy/api";
 import { Session } from "@patchy/auth";
@@ -537,9 +538,11 @@ it.layer(services)("company connection pages", (it) => {
           post(owner.user, { description: `Kept ${"x".repeat(500)}` })
         );
         assert.strictEqual(tooLong.status, 400);
+        const tooLongHtml = yield* Effect.promise(() => tooLong.text());
+        assert.include(tooLongHtml, `value="Kept ${"x".repeat(500)}"`);
         assert.include(
-          yield* Effect.promise(() => tooLong.text()),
-          `value="Kept ${"x".repeat(500)}"`
+          tooLongHtml,
+          'aria-describedby="connection-description-error" aria-invalid="true" autofocus'
         );
         yield* follow(
           yield* send(`${path}/description`, post(owner.user, { description: "" })),
@@ -650,6 +653,24 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.strictEqual(invalid.status, 422);
         assert.notInclude(yield* Effect.promise(() => invalid.text()), "page-secret-malformed");
+        // A refusal about one field replaces that field's hint, keeping what was typed.
+        const taken = yield* send(
+          connectPath,
+          post(owner.user, { handle: "warehouse", description: "Again", credentials })
+        );
+        assert.strictEqual(taken.status, 409);
+        const takenHtml = yield* Effect.promise(() => taken.text());
+        assert.include(
+          takenHtml,
+          'value="warehouse" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-handle-error" aria-invalid="true" autofocus'
+        );
+        assert.include(
+          takenHtml,
+          '<div class="note note-refused field-callout" id="connection-handle-error" role="alert">'
+        );
+        assert.include(takenHtml, "<code>connection_handle_taken</code>");
+        assert.notInclude(takenHtml, 'id="connection-handle-hint"');
+        assert.include(takenHtml, 'value="Again"');
         assert.deepStrictEqual(reported(owner.company.id), [
           ["connection.connected", owner.user.id, connection.id, "postgres"]
         ]);
@@ -869,5 +890,26 @@ it.layer(services)("company connection pages", (it) => {
           404
         );
       })
+  );
+  it.effect("keeps a connection's page and actions when the company directory cannot be read", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-directory");
+      const { path } = yield* connect(owner.user, "warehouse");
+      const users = yield* Users.Users;
+      const response = yield* send(path, { headers: { cookie: cookie(owner.user) } }).pipe(
+        Effect.provideService(Users.Users, {
+          ...users,
+          list: () =>
+            Effect.fail(
+              new SqlError({ reason: new ConnectionError({ cause: new Error("directory down") }) })
+            )
+        })
+      );
+      assert.strictEqual(response.status, 200);
+      const html = yield* Effect.promise(() => response.text());
+      assert.include(html, "<dt>Added by</dt><dd>Unknown</dd>");
+      assert.include(html, `href="${path}/disconnect"`);
+      assert.include(html, 'aria-labelledby="connection-calls"');
+    })
   );
 });

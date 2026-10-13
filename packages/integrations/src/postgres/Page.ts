@@ -1,6 +1,7 @@
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import { escapeAttribute } from "@patchy/core";
 import type * as ConnectionStore from "../ConnectionStore.js";
+import * as View from "../ConnectionsView.js";
 
 /** What the connections pages say about Postgres; the layout around it is every integration's. */
 
@@ -70,25 +71,56 @@ export const connectIntro =
 
 /** The access note sits with the credentials field: it is about the role inside that string. */
 const promise = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member can query this database through any patch that declares it, as the role you supply.</p><p>Patchy sends constrained reads through the role you supplied, but a SELECT can still invoke functions and extensions, so this is not a promise that arbitrary SQL is harmless. Supply a dedicated, least-privileged role.</p></div>`;
-const credentials = (note = "") =>
-  `${note}<label class="field-label" for="connection-credentials">Connection string</label><input class="field" id="connection-credentials" type="password" name="credentials" required autocomplete="new-password" spellcheck="false" aria-describedby="connection-credentials-hint"><p id="connection-credentials-hint" class="field-hint">A Postgres connection string with a password and sslmode=verify-full. Only host, port, database, user, password and sslmode are accepted. Credentials are encrypted and never shown again.</p>`;
+const credentials = (refusal: View.Notice | undefined, note = "") => {
+  const field = View.fieldNote(
+    "connection-credentials",
+    "credentials",
+    "A Postgres connection string with a password and sslmode=verify-full. Only host, port, database, user, password and sslmode are accepted. Credentials are encrypted and never shown again.",
+    refusal
+  );
+  return `${note}<label class="field-label" for="connection-credentials">Connection string</label><input class="field" id="connection-credentials" type="password" name="credentials" required autocomplete="new-password" spellcheck="false"${field.attributes}>${field.note}`;
+};
+
+/** Refusals about the connection string itself, shown under it rather than atop the page. */
+export const credentialRefusals: ReadonlySet<string> = new Set([
+  "invalid_credentials",
+  "tls_required",
+  "public_address_required",
+  "superuser_refused",
+  "createdb_refused",
+  "createrole_refused",
+  "connection_retarget_required"
+]);
 
 /** The connect form's fields; a refused submit keeps the handle and description, never credentials. */
-export const connectFields = (submitted: {
-  readonly handle?: string;
-  readonly description?: string;
-}) =>
-  `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">postgres/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-handle-hint"></div><p id="connection-handle-hint" class="field-hint">3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. Patches declare it by this name, which can't be changed later.</p><label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}" aria-describedby="connection-description-hint"><p id="connection-description-hint" class="field-hint">One line telling builders what this database is for. With many connections, it's how people find the right one.</p>${credentials(promise)}`;
+export const connectFields = (
+  submitted: { readonly handle?: string; readonly description?: string },
+  refusal?: View.Notice
+) => {
+  const handle = View.fieldNote(
+    "connection-handle",
+    "handle",
+    "3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. Patches declare it by this name, which can't be changed later.",
+    refusal
+  );
+  const description = View.fieldNote(
+    "connection-description",
+    "description",
+    "One line telling builders what this database is for. With many connections, it's how people find the right one.",
+    refusal
+  );
+  return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">postgres/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${credentials(refusal, promise)}`;
+};
 
 export const rotate = {
   title: (name: string) => `Replace credentials for ${name}`,
   consequence:
     "Patchy tests the new credentials against the same database before saving them. The connection keeps its identity and what patches can read, but a different role changes what every declaring patch can reach. To use another database, point it elsewhere instead.",
-  fields: credentials()
+  fields: (refusal?: View.Notice) => credentials(refusal)
 };
 export const retarget = {
   title: (name: string) => `Point ${name} elsewhere`,
   consequence:
     "Patchy tests the new destination and discovers its schema before switching. Every declaring patch then reads the new database through the schema it was published with, until it is refreshed and published again. A disconnected connection stays disconnected.",
-  fields: credentials(promise)
+  fields: (refusal?: View.Notice) => credentials(refusal, promise)
 };

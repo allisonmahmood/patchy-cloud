@@ -142,6 +142,7 @@ describe("the connections index", () => {
     ]);
     const none = index(thirty, { filters: { q: "nothing matches", view: "unused" } });
     expect(none).toContain("No connections match these filters.");
+    expect(none).toContain("Showing 0 of 30.");
     expect(none).toContain('<input type="hidden" name="view" value="unused">');
     // The view links keep the search and source.
     expect(index(thirty, { filters: { q: "pay", source: "stripe" } })).toContain(
@@ -181,6 +182,12 @@ describe("the connections index", () => {
     for (const hidden of ["Last call", "need attention", "Unused", "Connect a source"])
       expect(html).not.toContain(hidden);
     expect(html).toContain("Needs attention 2");
+  });
+
+  it("counts every connection an offered integration already has, connected or not", () => {
+    expect(View.renderCatalogue({ admin: true, rows: thirty, offers })).toContain(
+      '<span class="supporting-text">· 9 connections</span>'
+    );
   });
 
   it("starts an empty company from the catalogue for admins and tells members whom to ask", () => {
