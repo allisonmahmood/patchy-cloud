@@ -20,6 +20,15 @@ const mutation = (correlationId: string): RuntimeLog.Begin => ({
   correlationId
 });
 
+/** Runs a case whose schema change must not outlive it: its transaction always rolls back. */
+const rolledBack = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql
+      .withTransaction(Effect.andThen(body, Effect.fail("rolled back" as const)))
+      .pipe(Effect.catch((error) => (error === "rolled back" ? Effect.void : Effect.fail(error))));
+  });
+
 it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog", (it) => {
   it.effect(
     "bounds recent calls by company and connection with the same deadline semantics as correlation lookup",
@@ -107,6 +116,45 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
         0
       );
     })
+  );
+
+  it.effect("hides calls recorded under a credential kind this release does not know", () =>
+    rolledBack(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const log = yield* RuntimeLog.RuntimeLog;
+        const sql = yield* SqlClient.SqlClient;
+        // A later release records calls under a new kind and lifts this check. The kind is
+        // synthetic, so this keeps testing the unknown case as Patchy adds kinds.
+        yield* sql`ALTER TABLE runtime_calls DROP CONSTRAINT runtime_calls_credential_kind_check`;
+        const companyId = DEV_SEED.companyId;
+        const later = (correlationId: string, connectionId: string) =>
+          sql`INSERT INTO runtime_calls (id, at, company_id, user_id, effective_principal,
+            credential_kind, op, connection_id, correlation_id, deadline_ms)
+            VALUES (${`call_${correlationId}`}, to_timestamp(${(NOW + 1_000) / 1_000}),
+              ${companyId}, ${DEV_SEED.userId}, ${DEV_SEED.userId}, 'future_credential',
+              'future.query', ${connectionId}, ${correlationId}, 15000)`;
+        yield* log.begin({
+          ...mutation("known-session"),
+          op: "postgres.list",
+          connectionId: "known"
+        });
+        yield* later("known-later", "known");
+        yield* later("only-later", "only-unknown");
+        // Filters apply before the limit, so the newest call this release knows still shows.
+        assert.deepStrictEqual(
+          (yield* log.recent({ companyId, connectionId: "known", limit: 1 })).map(
+            (call) => call.correlationId
+          ),
+          ["known-session"]
+        );
+        assert.deepStrictEqual(
+          [...(yield* log.latest({ companyId, connectionIds: ["known", "only-unknown"] }))],
+          [["known", new Date(NOW)]]
+        );
+        assert.isNull(yield* log.find({ companyId, correlationId: "known-later" }));
+      })
+    )
   );
 
   it.effect("retains patch and viewer callback attribution in recent connection calls", () =>

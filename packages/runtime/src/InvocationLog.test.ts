@@ -39,6 +39,15 @@ const finish = (id: string): InvocationLog.Finish => ({
   replyDelivered: true
 });
 
+/** Runs a case whose schema change must not outlive it: its transaction always rolls back. */
+const rolledBack = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql
+      .withTransaction(Effect.andThen(body, Effect.fail("rolled back" as const)))
+      .pipe(Effect.catch((error) => (error === "rolled back" ? Effect.void : Effect.fail(error))));
+  });
+
 it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("InvocationLog", (it) => {
   it.effect("persists admission and settlement independently of the service lifetime", () =>
     Effect.gen(function* () {
@@ -326,6 +335,48 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
           viewerIds: [DEV_SEED.userId]
         });
       })
+  );
+
+  it.effect(
+    "leaves calls of a credential kind this release does not know out of an entry's steps",
+    () =>
+      rolledBack(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW);
+          const log = yield* InvocationLog.InvocationLog;
+          const calls = yield* RuntimeLog.make;
+          const sql = yield* SqlClient.SqlClient;
+          // A later release records calls under a new kind and lifts this check. The kind is
+          // synthetic, so this keeps testing the unknown case as Patchy adds kinds.
+          yield* sql`ALTER TABLE runtime_calls DROP CONSTRAINT runtime_calls_credential_kind_check`;
+          const scope = { companyId: DEV_SEED.companyId, patchId: "kindspatch" };
+          const root = { ...begin("kinds-root"), ...scope, kind: "action" as const };
+          yield* log.begin(root);
+          yield* calls.begin({
+            companyId: scope.companyId,
+            patchId: scope.patchId,
+            versionId: root.versionId,
+            userId: null,
+            effectivePrincipal: "patch",
+            invocationId: root.id,
+            credentialKind: "session",
+            op: "tables.insert",
+            resource: "leads",
+            connectionId: null,
+            correlationId: "kinds-session"
+          });
+          yield* sql`INSERT INTO runtime_calls (id, at, company_id, patch_id, version_id,
+            effective_principal, invocation_id, credential_kind, op, correlation_id, deadline_ms)
+            VALUES ('call_kinds_later', to_timestamp(${NOW / 1_000}), ${scope.companyId},
+              ${scope.patchId}, ${root.versionId}, 'patch', ${root.id}, 'future_credential',
+              'future.query', 'kinds-later', 1000)`;
+          const [entry] = (yield* log.page({ ...scope, limit: 1 })).entries;
+          assert.deepStrictEqual(
+            entry?.tree.map((item) => item.name),
+            ["tables.insert"]
+          );
+        })
+      )
   );
 
   it.effect("filters within a bounded window of entries and carries on past its edge", () =>

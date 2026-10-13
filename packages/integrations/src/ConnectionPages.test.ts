@@ -941,4 +941,88 @@ it.layer(services)("company connection pages", (it) => {
       assert.include(html, 'aria-labelledby="connection-calls"');
     })
   );
+  it.effect(
+    "hides connections and snapshots of an integration this release does not ship, as after a rollback",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("connections-unknown");
+        const { connection, path } = yield* connect(owner.user, "warehouse");
+        const reports = yield* connect(owner.user, "reports");
+        // A later release's rows, written straight to the tables. The integration is synthetic so
+        // this keeps testing the unknown case as Patchy ships more integrations.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
+          status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+          VALUES ('conn_later', ${owner.company.id}, 'future_integration', 'product',
+            'From a later release', 'company', 'connected', '{"region":"us"}'::jsonb, 'later',
+            'later', 1, 1, ${owner.user.id})`;
+        yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, integration,
+          revision, snapshot)
+          VALUES ('conn_later', ${owner.company.id}, 'future_integration', 1, '{"events":[]}'::jsonb)`;
+        const store = yield* ConnectionStore.ConnectionStore;
+        const company = owner.company.id;
+        assert.deepStrictEqual(
+          (yield* store.list(company)).map((item) => item.id).sort(),
+          [connection.id, reports.connection.id].sort()
+        );
+        const declaration = {
+          kind: "postgres" as const,
+          handle: "product",
+          id: "conn_later",
+          revision: 1
+        };
+        // Reads and actions on it are typed refusals, never decode failures.
+        const refusals = yield* Effect.all([
+          Effect.flip(store.get(company, "conn_later")),
+          Effect.flip(store.snapshot(company, "conn_later", 1)),
+          Effect.flip(
+            store.describe({
+              companyId: company,
+              userId: owner.user.id,
+              id: "conn_later",
+              description: ""
+            })
+          ),
+          Effect.flip(store.resolve(company, declaration)),
+          Effect.flip(store.poolCredentials(company, declaration, 1))
+        ]);
+        assert.deepStrictEqual(
+          refusals.map((error) => error._tag),
+          [
+            "ConnectionNotFound",
+            "ConnectionNotFound",
+            "ConnectionNotFound",
+            "ConnectionNotConnected",
+            "ConnectionNotConnected"
+          ]
+        );
+        const index = yield* send("/company/connections", {
+          headers: { cookie: cookie(owner.user) }
+        });
+        assert.strictEqual(index.status, 200);
+        const html = yield* Effect.promise(() => index.text());
+        assert.include(html, `href="${path}"`);
+        assert.notInclude(html, "conn_later");
+        assert.notInclude(html, "From a later release");
+        const unknown = "/company/connections/conn_later";
+        assert.strictEqual(
+          (yield* send(unknown, { headers: { cookie: cookie(owner.user) } })).status,
+          404
+        );
+        assert.strictEqual((yield* send(`${unknown}/disconnect`, post(owner.user))).status, 404);
+        // A known connection whose current snapshot names another integration keeps the
+        // connection and reads its metadata as unavailable.
+        yield* sql`INSERT INTO connection_snapshots (connection_id, company_id, integration,
+          revision, snapshot)
+          VALUES (${reports.connection.id}, ${company}, 'future_integration', 2, '{"events":[]}'::jsonb)`;
+        yield* sql`UPDATE connections SET metadata_revision = 2 WHERE id = ${reports.connection.id}`;
+        const detail = yield* store.detail(company, "postgres", "reports");
+        assert.strictEqual(detail.handle, "reports");
+        assert.isNull(detail.snapshot);
+        assert.strictEqual(
+          (yield* Effect.flip(store.snapshot(company, reports.connection.id, 2)))._tag,
+          "ConnectionNotFound"
+        );
+      })
+  );
 });

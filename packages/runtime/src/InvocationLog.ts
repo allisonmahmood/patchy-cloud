@@ -8,6 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { HandlerKind } from "@patchy/api";
+import { credentialKinds } from "./RuntimeLog.js";
 
 export const Outcome = Schema.Literals([
   "pending",
@@ -309,6 +310,7 @@ export const make = Effect.gen(function* () {
           c.outcome_code, c.duration_ms, 1, c.row_count, c.connection_id, '[]'::jsonb
         FROM runtime_calls c
         WHERE c.company_id = ${companyId} AND c.invocation_id = parent.id
+          AND c.credential_kind IN ${sql.in(credentialKinds)}
         ORDER BY c.at, c.id LIMIT parent.lim)
       ) step`
   });

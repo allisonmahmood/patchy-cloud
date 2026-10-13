@@ -77,17 +77,21 @@ export const make = Effect.gen(function* () {
     SchemaError: (cause: Schema.SchemaError) =>
       Effect.fail(new ConnectionStorageFailed({ operation, cause: Redacted.make(cause) }))
   });
+  // Rows of integrations a later release added are not this release's to read: a rollback
+  // hides them, and a lookup by id answers not found instead of failing to decode.
+  const known = sql`integration IN ${sql.in(integrations)}`;
   const connectionRows = SqlSchema.findAll({
     Request: Schema.String,
     Result: Connection,
-    execute: (companyId) =>
-      sql`SELECT ${columns} FROM connections WHERE company_id = ${companyId} ORDER BY handle, id`
+    execute: (companyId) => sql`SELECT ${columns} FROM connections
+      WHERE company_id = ${companyId} AND ${known} ORDER BY handle, id`
   });
   const connectionRow = SqlSchema.findOneOption({
     Request: Lookup,
     Result: Connection,
     execute: ({ companyId, id, locked }) => sql`SELECT ${columns} FROM connections
-      WHERE company_id = ${companyId} AND id = ${id} ${locked ? sql`FOR UPDATE` : sql``}`
+      WHERE company_id = ${companyId} AND id = ${id} AND ${known}
+      ${locked ? sql`FOR UPDATE` : sql``}`
   });
   const storedRow = SqlSchema.findOneOption({
     Request: Lookup,
@@ -97,13 +101,15 @@ export const make = Effect.gen(function* () {
       id,
       locked
     }) => sql`SELECT ${columns}, credentials, key_id AS "keyId" FROM connections
-      WHERE company_id = ${companyId} AND id = ${id} ${locked ? sql`FOR UPDATE` : sql``}`
+      WHERE company_id = ${companyId} AND id = ${id} AND ${known}
+      ${locked ? sql`FOR UPDATE` : sql``}`
   });
   const snapshotRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ companyId: Schema.String, id: Schema.String, revision: Schema.Int }),
     Result: Schema.Struct({ snapshot: Snapshot }),
     execute: ({ companyId, id, revision }) => sql`SELECT snapshot FROM connection_snapshots
-      WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}`
+      WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}
+        AND ${known}`
   });
   const detailRow = SqlSchema.findOneOption({
     Request: Schema.Struct({
@@ -118,6 +124,7 @@ export const make = Effect.gen(function* () {
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
       FROM connections c LEFT JOIN connection_snapshots s
         ON s.connection_id = c.id AND s.company_id = c.company_id AND s.revision = c.metadata_revision
+          AND s.integration = c.integration
       WHERE c.company_id = ${companyId} AND c.integration = ${integration} AND c.handle = ${handle}`
   });
   /**

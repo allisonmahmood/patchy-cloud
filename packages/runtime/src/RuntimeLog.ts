@@ -11,6 +11,12 @@ import { newInternalId } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 
 const MUTATION_DEADLINE_MS = registry["runtime.mutation.deadline"].default;
+
+/**
+ * The credentials this release records calls under. Every read filters to them, so a call a later
+ * release recorded under a new kind stays hidden after a rollback instead of failing to decode.
+ */
+export const credentialKinds = ["session", "admin"] as const;
 const MAX_SQL_BYTES = 8_192;
 const encoder = new TextEncoder();
 
@@ -21,7 +27,7 @@ export interface Begin {
   readonly userId: string | null;
   readonly effectivePrincipal?: string;
   readonly invocationId?: string | null;
-  readonly credentialKind: "session" | "admin";
+  readonly credentialKind: (typeof credentialKinds)[number];
   readonly op: string;
   readonly resource: string | null;
   readonly connectionId: string | null;
@@ -40,7 +46,7 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   userId: Schema.NullOr(Schema.String),
   effectivePrincipal: Schema.String,
   invocationId: Schema.NullOr(Schema.String),
-  credentialKind: Schema.Literals(["session", "admin"]),
+  credentialKind: Schema.Literals(credentialKinds),
   op: Schema.String,
   resource: Schema.NullOr(Schema.String),
   connectionId: Schema.NullOr(Schema.String),
@@ -93,6 +99,7 @@ export const make = Effect.gen(function* () {
       THEN 'unknown' ELSE outcome END AS outcome,
     outcome_code AS "outcomeCode", duration_ms AS "durationMs", row_count AS "rowCount", sql,
     correlation_id AS "correlationId", deadline_ms AS "deadlineMs"`;
+  const known = sql`credential_kind IN ${sql.in(credentialKinds)}`;
   const findCall = SqlSchema.findOneOption({
     Request: Schema.Struct({
       companyId: Schema.String,
@@ -103,7 +110,7 @@ export const make = Effect.gen(function* () {
     execute: ({ companyId, correlationId, now }) => sql`
       SELECT ${columns(now)}
       FROM runtime_calls
-      WHERE company_id = ${companyId} AND correlation_id = ${correlationId}`
+      WHERE company_id = ${companyId} AND correlation_id = ${correlationId} AND ${known}`
   });
   const recentCalls = SqlSchema.findAll({
     Request: Schema.Struct({
@@ -116,11 +123,11 @@ export const make = Effect.gen(function* () {
     execute: ({ companyId, connectionId, limit, now }) => sql`
       SELECT ${columns(now)}
       FROM runtime_calls
-      WHERE company_id = ${companyId} AND connection_id = ${connectionId}
+      WHERE company_id = ${companyId} AND connection_id = ${connectionId} AND ${known}
       ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 
-  // One index probe per connection, so a busy connection's history is never scanned.
+  // One index probe per connection, reading past only rows of kinds this release skips.
   const latestCalls = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
@@ -134,9 +141,10 @@ export const make = Effect.gen(function* () {
           CROSS JOIN LATERAL (
             SELECT at FROM runtime_calls
             WHERE company_id = $1 AND connection_id = connection.id
+              AND credential_kind = ANY($3::text[])
             ORDER BY at DESC, id DESC LIMIT 1
           ) AS newest`,
-        [companyId, connectionIds]
+        [companyId, connectionIds, credentialKinds]
       )
   });
 
