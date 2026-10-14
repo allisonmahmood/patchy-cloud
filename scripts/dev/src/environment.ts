@@ -308,23 +308,45 @@ const ALLOWED_TOOLS = [
   "Bash(wc:*)"
 ];
 
+/** The settings the launcher passes to Claude Code with `--settings`. */
+const encodeAgentSettings = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ claudeMdExcludes: Schema.Array(Schema.String) }))
+);
+
 /**
  * `agent`: Claude Code in the workspace as a fresh Patchy user has it, with no
- * personal settings, skills or connectors. Permissions come as flags, so the
- * workspace needs no trust prompt. Arguments pass through.
+ * personal settings, skills, connectors or instruction files. The shell's
+ * `PATCHY_API_URL` and `PATCHY_API_TOKEN` are cleared, so the environment's
+ * login decides where and as whom it publishes. Claude Code loads instruction
+ * files from every folder above its working directory, the developer's HOME
+ * among them; those are excluded, so only the workspace's own load. Permissions
+ * come as flags, so the workspace needs no trust prompt. Arguments pass through.
  */
-const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layout) {
+export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layout) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+  const above: Array<string> = [];
+  for (let dir = layout.dir; !above.includes(dir); dir = path.dirname(dir)) above.push(dir);
+  // Each folder's CLAUDE.md, CLAUDE.local.md and AGENTS.md, those in its
+  // .claude, and its .claude/rules.
+  const settings = encodeAgentSettings({
+    claudeMdExcludes: above.flatMap((dir) => [
+      path.join(dir, "*.md"),
+      path.join(dir, ".claude", "*.md"),
+      path.join(dir, ".claude", "rules", "**")
+    ])
+  });
   yield* fs.writeFileString(
     layout.agent,
     [
       "#!/usr/bin/env bash",
       "# Claude Code in this Patchy environment's workspace, as a fresh Patchy user has it.",
+      "unset PATCHY_API_URL PATCHY_API_TOKEN",
       `export PATH=${quote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
       `export PATCHY_STATE_DIR=${quote(layout.state)}`,
       `cd ${quote(layout.workspace)} || exit 1`,
-      `exec claude "$@" --setting-sources project --strict-mcp-config --permission-mode acceptEdits --add-dir /tmp --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
+      `exec claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir /tmp --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
       ""
     ].join("\n"),
     { mode: 0o755 }
