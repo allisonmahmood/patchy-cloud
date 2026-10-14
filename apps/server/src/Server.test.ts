@@ -17,6 +17,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { framedDocument } from "@patchy/core";
 import {
   FRONTEND_API_HOST,
   signedInCookies,
@@ -122,7 +123,7 @@ it.layer(
         assert.strictEqual(page.status, 200);
         const frame = (yield* page.text).match(/<iframe\b[^>]*>/)?.[0];
         assert.isDefined(frame, "the restored patch opens its document");
-        assert.strictEqual(attributes(frame!).srcdoc, document);
+        assert.strictEqual(attributes(frame!).srcdoc, framedDocument(document));
       }
     })
   );

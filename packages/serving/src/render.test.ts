@@ -158,13 +158,17 @@ describe("patch pages", () => {
       patch,
       version,
       scope: "public",
-      html: '<p title="a&b">hi</p><script>alert(1)</script>'
+      // Led by a byte order mark, which has to give way to the frame's base.
+      html: '\uFEFF<p title="a&b">hi</p><script>alert(1)</script>'
     });
 
-    // The document reaches the frame through the escaped attribute, never raw.
+    // The document reaches the frame through the escaped attribute, never raw, led by the
+    // frame's own base so its same-page links scroll.
     expect(html).toContain('sandbox=""');
     expect(html).toContain('referrerpolicy="no-referrer"');
-    expect(html).toContain('srcdoc="&lt;p title=&quot;a&amp;b&quot;&gt;hi&lt;/p&gt;');
+    expect(html).toContain(
+      'srcdoc="&lt;base href=&quot;about:srcdoc&quot;&gt;&lt;p title=&quot;a&amp;b&quot;&gt;hi&lt;/p&gt;'
+    );
     expect(html).not.toContain("<script>alert");
 
     // No chrome around it: no footer, no link out, no form, no script of its own.
@@ -195,7 +199,9 @@ describe("patch pages", () => {
     expect(html).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
     expect(html).toContain('sandbox=""');
     expect(html).toContain('title="&lt;b&gt;Company&lt;/b&gt;"');
-    expect(html).toContain('srcdoc="&lt;p title=&quot;a&amp;b&quot;&gt;Private&lt;/p&gt;');
+    expect(html).toContain(
+      'srcdoc="&lt;base href=&quot;about:srcdoc&quot;&gt;&lt;p title=&quot;a&amp;b&quot;&gt;Private&lt;/p&gt;'
+    );
     expect(html).not.toContain("<script>alert");
   });
 

@@ -7,7 +7,7 @@
  * page passes tier 0 validation, so an agent can publish it to show someone.
  */
 import * as CssTree from "css-tree";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { escapeAttribute, escapeHtml, framedDocument } from "@patchy/core";
 import type { LookFiles, LookToken } from "@patchy/core/look";
 
 /** One look on the specimen, with what its masthead calls it. */
@@ -112,7 +112,7 @@ export const previewPage = (first: Pane, second?: Pane): string => {
   const frames = panes
     .map(
       (pane) =>
-        `<iframe title="${escapeAttribute(pane.label)}" srcdoc="${escapeAttribute(specimen(pane))}"></iframe>`
+        `<iframe title="${escapeAttribute(pane.label)}" srcdoc="${escapeAttribute(framedDocument(specimen(pane)))}"></iframe>`
     )
     .join("\n");
   return `<!doctype html>

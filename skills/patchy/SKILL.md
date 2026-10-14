@@ -624,7 +624,8 @@ Allowed:
 - semantic HTML
 - inline CSS in `<style>` blocks: a look's `look.css` first, the page's own after
 - normal metadata: charset, viewport, title
-- HTTPS links when useful
+- same-page links (`href="#totals"`) for a contents list or back-to-top; links to
+  other pages or sites are not supported on a static page, so cite sources in text
 - `data:` URLs for a look's embedded fonts and logo, and for tiny CSS textures
 
 Blocked or unsafe:

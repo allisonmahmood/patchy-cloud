@@ -6,14 +6,18 @@ export const NO_STORE_CACHE_CONTROL = "no-store";
 export const PUBLIC_PATCH_CACHE_CONTROL = "public, max-age=60";
 export const PRIVATE_PATCH_CACHE_CONTROL = "private, no-store";
 
-/** Tier 0 fonts load only from the page's own bytes; a remote font stays blocked. */
+/**
+ * Tier 0 fonts load only from the page's own bytes; a remote font stays blocked. `base-uri about:`
+ * admits the `<base href="about:srcdoc">` leading the framed page (core's `framedDocument`), so
+ * its same-page links scroll, and admits no base that reaches the network.
+ */
 const STATIC_DOCUMENT_SECURITY_POLICY = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
   "img-src https: data:",
   "font-src data:",
   "frame-src 'self' about:",
-  "base-uri 'none'",
+  "base-uri about:",
   "form-action 'none'"
 ].join("; ");
 

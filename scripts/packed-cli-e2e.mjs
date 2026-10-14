@@ -2002,7 +2002,7 @@ function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
   assert.ok(
-    viewer.body.includes(`srcdoc="${escapedHtml}"`),
+    viewer.body.includes(`srcdoc="&lt;base href=&quot;about:srcdoc&quot;&gt;${escapedHtml}"`),
     "the frame must contain the complete uploaded version, attribute-escaped"
   );
   assert.ok(!viewer.body.includes(html), "uploaded HTML must never enter the outer shell");
