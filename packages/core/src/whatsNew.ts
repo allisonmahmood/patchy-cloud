@@ -50,6 +50,51 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 12,
+    date: "2026-10-15",
+    through: "b58b8996619cfaf48670e3a86d5555bb680e7f25",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "Links within a page jump to their section",
+        detail:
+          "On a page your agent publishes, a table of contents or a back-to-top link now scrolls to its section. Clicking one used to blank the page and show a browser error instead. Pages already published work now, with nothing to republish.",
+        prs: [677]
+      },
+      {
+        kind: "Improved",
+        title: "Set up Patchy however you ask",
+        detail:
+          "Your AI agent now sets Patchy up on your computer whatever words you use, not only the line from the guide, and still sets up your company's look. If you give your agent nothing but Patchy's address, the sign-in page now shows it the line to start from, so it no longer has to guess.",
+        prs: [672, 674]
+      },
+      {
+        kind: "Improved",
+        title: "Claude Code can know Patchy is your company's own",
+        detail:
+          "If you use Claude Code, setting up Patchy now offers to tell its auto mode that Patchy is your company's own service, so it doesn't treat publishing a page as sending it outside the company. It asks you first, applies to all your projects and can be undone. If auto mode still stops a publish, your agent explains why and asks you what to do.",
+        prs: [676]
+      },
+      {
+        kind: "Fixed",
+        title: "Your agent remembers Patchy after a Node.js update",
+        detail:
+          "Patchy's instructions for your AI agent now live in your home folder, so switching or removing a version of Node.js no longer makes your agent forget Patchy. If the patchy command itself goes missing, your agent reinstalls it from your company's Patchy.",
+        prs: [673]
+      },
+      {
+        kind: "Fixed",
+        title: "Sign-in codes say how many minutes they have left",
+        detail:
+          "When your agent signs you in on a new computer, it now tells you how many minutes the code has left, instead of a time that could be in another time zone.",
+        prs: [675]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy checks uploaded pages and logos within strict limits, so one unusual upload can't slow Patchy down for everyone."
+    ]
+  },
+  {
     id: 11,
     date: "2026-10-13",
     through: "a253cb2df4da03fbbac3f4dad9ec376a95115aad",
