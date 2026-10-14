@@ -462,6 +462,13 @@ browser sign-out is a separate control on **Your machines**.
   Older versions, and all versions after taking a patch back to company, have origin responses
   of `private, no-store` and answer 401 without a session. Previously public copies may remain
   cached for up to 60 seconds; already downloaded copies cannot be recalled.
+- When Claude Code's auto mode blocks a publish, never retry it another way. The
+  denial names its rule. Most rules, such as Excess Sensitive Detail, clear when the
+  person approves: name what it objected to and who would see the page, and ask with
+  the AskUserQuestion tool whether to publish it as it is. No approval clears Data
+  Exfiltration: say so, and offer a page without the detail it objected to. If their
+  settings do not name this instance yet, also offer onboarding's
+  [auto mode entry](references/onboarding.md#3-claude-codes-auto-mode).
 - For take-down and recovery, follow [Managing a patch](#managing-a-patch).
   If the user chooses deletion, confirm first, then use
   `patchy delete './plan.html' --yes` or `patchy delete --patch <id> --yes`.
