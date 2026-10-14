@@ -2162,7 +2162,8 @@ export const make = Effect.gen(function* () {
     const row = yield* manageable(patchId, actor);
     if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
       return yield* new StaleAction({ patchId });
-    if (stateOf(row) === "live") return yield* new WrongState({ state: "live" });
+    const from = stateOf(row);
+    if (from === "live") return yield* new WrongState({ state: from });
     const millis = yield* Clock.currentTimeMillis;
     const purgeMillis =
       row.deletedAt === null ? null : row.deletedAt.getTime() + Duration.toMillis(RECOVERY_WINDOW);
@@ -2170,7 +2171,7 @@ export const make = Effect.gen(function* () {
       return yield* new PatchDeleted({
         purgeAt: DateTime.formatIso(DateTime.makeUnsafe(purgeMillis))
       });
-    if (expectedState !== undefined && stateOf(row) !== expectedState)
+    if (expectedState !== undefined && from !== expectedState)
       return yield* new StaleAction({ patchId });
     if (!force) {
       const rows = yield* offSources({ patchId, companyId: row.companyId }).pipe(
@@ -2196,7 +2197,7 @@ export const make = Effect.gen(function* () {
       name: "patch.restored",
       principalId: actor.userId,
       companyId: row.companyId,
-      properties: changed(row, actor)
+      properties: { ...changed(row, actor), from }
     });
     return yield* afterChange(patchId);
   }, withLifecycleTransaction);

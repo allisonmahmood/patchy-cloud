@@ -505,14 +505,14 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
       // Each change reports once; describing is not a lifecycle change.
       assert.deepStrictEqual(lifecycleEvents(first.patchId), [
         { name: "patch.retired", ...envelope, properties: change },
-        { name: "patch.restored", ...envelope, properties: change },
+        { name: "patch.restored", ...envelope, properties: { ...change, from: "retired" } },
         {
           name: "patch.rolled_back",
           ...envelope,
           properties: { ...change, versionNumber: 1, fromVersionNumber: 2 }
         },
         { name: "patch.deleted", ...envelope, properties: change },
-        { name: "patch.restored", ...envelope, properties: change }
+        { name: "patch.restored", ...envelope, properties: { ...change, from: "deleted" } }
       ]);
     })
   );

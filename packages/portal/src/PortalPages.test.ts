@@ -1279,7 +1279,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
               properties: {
                 patchId: patch.patchId,
                 ownerUserId: workspace.owner.id,
-                byAdmin: person === workspace.admin
+                byAdmin: person === workspace.admin,
+                from: state
               }
             }
           ]);
@@ -2801,7 +2802,12 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
               name: "patch.restored",
               principalId: workspace.admin.id,
               companyId: workspace.id,
-              properties: { patchId: patch.patchId, ownerUserId: workspace.owner.id, byAdmin: true }
+              properties: {
+                patchId: patch.patchId,
+                ownerUserId: workspace.owner.id,
+                byAdmin: true,
+                from: "retired"
+              }
             }
           ]);
           assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
