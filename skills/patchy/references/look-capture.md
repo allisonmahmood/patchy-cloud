@@ -63,12 +63,23 @@ opaque `#RRGGBB`.
   keep the fill, which carries recognition, and change the text. Between two real
   brand values, take the one that passes. Say in `LOOK.md` which values changed.
 - **Element styles** cover body, headings, paragraphs, links, tables, buttons,
-  inputs, selects and labels, with their hover, focus, disabled and invalid
-  states. They take colours, fonts, borders, radius and spacing from the tokens;
-  sizes, weights and line heights are literals. A plain `button` is the brand's
-  primary button. Signature effects (shadows, transforms, uppercase, a lip under
-  a button) belong in the brief's recipes: a new revision's element styles land
-  on every patch that imports the look, including buttons it styled itself.
+  inputs, selects, textareas, checkboxes, radios and labels, with their hover,
+  focus, disabled and invalid states. They take colours, fonts, borders, radius
+  and spacing from the tokens; sizes, weights and line heights are literals. A
+  plain `button` is the brand's primary button. Signature effects (shadows,
+  transforms, uppercase, a lip under a button) belong in the brief's recipes: a
+  new revision's element styles land on every patch that imports the look,
+  including buttons it styled itself.
+- **States.** Keep checkboxes and radios out of the text-field rule, as in
+  `input:not([type="checkbox"], [type="radio"])`, and colour them with
+  `accent-color`, so they stay small beside their label. Mark an invalid field
+  with `[aria-invalid="true"]` in the danger colour, never bare `:invalid`, which
+  matches an empty required field before anyone types. Every control keeps a
+  visible keyboard-focus indicator: don't remove the outline on `:focus` without
+  a replacement that also shows on checkboxes and radios. Put state rules after
+  the base rules, since that `:not()` weighs as much as `[aria-invalid="true"]`;
+  make sure they beat the focus rules, so a focused invalid field stays invalid;
+  and guard hover with `:not(:disabled)`.
 - **Which theme.** Capture the colour scheme the company's own app uses. A dark
   look sets `color-scheme: dark` in `:root`, so native controls match.
 - **Fonts.** Embed a font the company may self-host as a `data:` URL
@@ -79,8 +90,11 @@ opaque `#RRGGBB`.
   so a patch's own CSS always wins. Every `url()` is a `data:` URL.
 
 `patchy look preview <dir> --json` lists in `failures` every reason `look publish`
-would refuse the folder, worded as publish words it. The folder is ready when
-`failures` is empty.
+would refuse the folder, worded as publish words it. Empty `failures` means
+publish will accept the folder, not that it looks right. Before showing the look,
+open the specimen, check its States row and Tab through its form: each state must
+look different from resting, and an invalid field must still look invalid while
+focused.
 
 ## `LOOK.md`
 

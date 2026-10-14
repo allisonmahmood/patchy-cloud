@@ -135,7 +135,7 @@
     font-weight: 700;
   }
 
-  input,
+  input:not([type="checkbox"], [type="radio"]),
   select,
   textarea {
     box-sizing: border-box;
@@ -152,11 +152,27 @@
   textarea::placeholder {
     color: var(--look-muted);
   }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--look-accent);
+  }
   input:focus,
   select:focus,
   textarea:focus {
     border-color: var(--look-link);
-    outline: none;
+  }
+  /* After the focus rule, which weighs the same, so a focused invalid field stays red. */
+  input[aria-invalid="true"],
+  select[aria-invalid="true"],
+  textarea[aria-invalid="true"] {
+    border-color: var(--look-danger);
+  }
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    background: var(--look-border);
+    color: var(--look-muted);
+    cursor: not-allowed;
   }
 
   :focus-visible {

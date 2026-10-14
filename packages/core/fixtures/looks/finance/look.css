@@ -114,7 +114,7 @@
       background-color 0.1s,
       color 0.1s;
   }
-  button:hover {
+  button:hover:not(:disabled) {
     background: var(--look-bg);
     color: var(--look-fg);
   }
@@ -149,6 +149,19 @@
     accent-color: var(--look-fg);
     width: 18px;
     height: 18px;
+  }
+  input[aria-invalid="true"],
+  select[aria-invalid="true"],
+  textarea[aria-invalid="true"] {
+    border-color: var(--look-danger);
+  }
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    border-color: var(--look-border);
+    background: var(--look-surface);
+    color: var(--look-muted);
+    cursor: not-allowed;
   }
 
   label {
