@@ -257,6 +257,22 @@ describe("checkLook", () => {
     ]);
   });
 
+  it("refuses a logo past the bounds a static page is held to", () => {
+    const logo = (svg: string) => checkLook(look({}, "", { "logo.svg": svg }));
+    const attributes = Array.from({ length: 300 }, (_, index) => ` a${index}`).join("");
+    expect(logo(`<svg${attributes}></svg>`)).toEqual([
+      "logo.svg: An element has more than 256 attributes."
+    ]);
+    expect(logo(`<svg>${"<g>".repeat(5000)}</svg>`)).toEqual([
+      "logo.svg: HTML nests elements more than 512 deep."
+    ]);
+    // A <desc> holds HTML, whose formatting tags are cloned into each block they stay open across.
+    const style = `<b style="${"color: red; ".repeat(1000)}">`;
+    expect(logo(`<svg><desc><p>${style}${"x<p>".repeat(2200)}</desc></svg>`)).toEqual([
+      "logo.svg: HTML needs too much repair to check: close elements in the order they were opened, and keep table content inside cells."
+    ]);
+  });
+
   it("refuses NUL characters, which no file of a look needs", () => {
     expect(checkLook(look({}, "", { "LOOK.md": "# Acme\u0000" }))).toEqual([
       "LOOK.md contains a NUL character."

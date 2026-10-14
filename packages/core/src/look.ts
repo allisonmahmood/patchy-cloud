@@ -7,6 +7,7 @@
 import * as CssTree from "css-tree";
 import * as parse5 from "parse5";
 import { registry } from "@patchy/limits/registry";
+import { ParseLimitExceeded, parseBoundedFragment } from "./html-policy.js";
 
 /** The fifteen tokens every look sets. Patchy fixes the names and meanings; the company sets the values. */
 export const LOOK_TOKENS = [
@@ -248,20 +249,36 @@ const checkCss = (css: string): string[] => {
   return errors;
 };
 
-/** The logo is one `<svg>` that embeds anything it shows; `#fragment` links stay inside it. */
+/**
+ * The logo is one `<svg>` that embeds anything it shows; `#fragment` links stay inside it. It is
+ * parsed under the same bounds as a static page, which also bound the walk below.
+ */
 const checkLogo = (svg: string): string[] => {
-  const roots = parse5
-    .parseFragment(svg)
-    .childNodes.filter(
-      (node) => node.nodeName !== "#comment" && !("value" in node && node.value.trim() === "")
-    );
+  let fragment: parse5.DefaultTreeAdapterMap["documentFragment"];
+  try {
+    fragment = parseBoundedFragment(svg);
+  } catch (error) {
+    if (error instanceof ParseLimitExceeded) return [`logo.svg: ${error.message}`];
+    throw error;
+  }
+  const roots = fragment.childNodes.filter(
+    (node) => node.nodeName !== "#comment" && !("value" in node && node.value.trim() === "")
+  );
   const [root] = roots;
   if (roots.length !== 1 || root?.nodeName !== "svg")
     return ["logo.svg must be one <svg> element."];
   const errors: string[] = [];
-  const targets: string[] = [];
+  const targets = new Set<string>();
+  // Error recovery can clone one styled element thousands of times; each CSS text parses once.
+  const parsed = new Map<string, readonly string[]>();
   const css = (text: string, context: string) => {
-    for (const { target } of cssReferences(CssTree.parse(text, { context }))) targets.push(target);
+    const key = `${context}\u0000${text}`;
+    let found = parsed.get(key);
+    if (found === undefined) {
+      found = cssReferences(CssTree.parse(text, { context })).map(({ target }) => target);
+      parsed.set(key, found);
+    }
+    for (const target of found) targets.add(target);
   };
   const visit = (node: parse5.DefaultTreeAdapterMap["childNode"]) => {
     if (!("tagName" in node)) return;
@@ -269,7 +286,7 @@ const checkLogo = (svg: string): string[] => {
     for (const { name, value } of node.attrs) {
       if (/^on/i.test(name))
         errors.push(`logo.svg has an ${name} attribute; a logo is a picture, not a program.`);
-      else if (name === "href" || name === "src") targets.push(value);
+      else if (name === "href" || name === "src") targets.add(value);
       else if (name === "style") css(value, "declarationList");
       else if (/url\(/i.test(value)) css(value, "value");
     }
@@ -291,7 +308,7 @@ const checkLogo = (svg: string): string[] => {
   visit(root);
   return [
     ...errors,
-    ...targets
+    ...[...targets]
       .filter((target) => !isData(target) && !target.trim().startsWith("#"))
       .map((target) => `logo.svg references ${target}; embed it as a data: URL.`)
   ];

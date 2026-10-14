@@ -54,6 +54,54 @@ describe("validateHtml", () => {
     expect(validateHtml(html).errors).toEqual(expectedErrors);
   });
 
+  it("rejects a document over the size limit without parsing it", () => {
+    expect(validateHtml("<div>".repeat(1000), { maxBytes: 1024 }).errors).toEqual([
+      "HTML document is 5000 bytes; maximum is 1024 bytes."
+    ]);
+  });
+
+  it("bounds how deep a document nests, counting its implied <html> and <body>", () => {
+    expect(validateHtml("<div>".repeat(510)).ok).toBe(true);
+    expect(validateHtml("<div>".repeat(511)).errors).toEqual([
+      "HTML nests elements more than 512 deep."
+    ]);
+  });
+
+  it("bounds the attributes on an element", () => {
+    const attributes = (count: number) =>
+      Array.from({ length: count }, (_, index) => ` a${index}`).join("");
+    const tooMany = ["An element has more than 256 attributes."];
+
+    expect(validateHtml(`<div${attributes(256)}>`).ok).toBe(true);
+    expect(validateHtml(`<div${attributes(257)}>`).errors).toEqual(tooMany);
+    expect(validateHtml(`</div${attributes(257)}>`).errors).toEqual(tooMany);
+    // A repeated <body> tag adds its attributes to the first.
+    expect(
+      validateHtml(Array.from({ length: 300 }, (_, index) => `<body a${index}>`).join("")).errors
+    ).toEqual(tooMany);
+  });
+
+  it("bounds the repair of misnested markup", () => {
+    const tooMuch = [
+      "HTML needs too much repair to check: close elements in the order they were opened, and keep table content inside cells."
+    ];
+
+    // Table content outside a cell moves to just before the table, which is cheap.
+    expect(validateHtml(`<table>${"stray<br>".repeat(6000)}</table>`).ok).toBe(true);
+    // Closing <b> early moves every child of the block it crosses, front first.
+    expect(validateHtml(`<b><div>${"<br>".repeat(600)}</b>`).ok).toBe(true);
+    expect(validateHtml(`<b><div>${"<br>".repeat(6000)}</b>`).errors).toEqual(tooMuch);
+    // Formatting left open across paragraphs is cloned into each; distinct attributes defeat the
+    // parser's own cap of three alike, so each "x<p>" clones all 500.
+    const open = Array.from({ length: 500 }, (_, index) => `<b a=${index}>`).join("");
+    expect(validateHtml(`<p>${open}${"x<p>".repeat(100)}`).ok).toBe(true);
+    expect(validateHtml(`<p>${open}${"x<p>".repeat(2000)}`).errors).toEqual(tooMuch);
+    // One clone carries the whole attribute again, so a long one counts once per clone.
+    const long = `<p><b title="${"x".repeat(8000)}">`;
+    expect(validateHtml(`${long}${"x<p>".repeat(100)}`).ok).toBe(true);
+    expect(validateHtml(`${long}${"x<p>".repeat(2200)}`).errors).toEqual(tooMuch);
+  });
+
   it("warns when title is missing", () => {
     const result = validateHtml("<main>No title</main>");
 
@@ -67,7 +115,13 @@ describe("validateHtml", () => {
     ).toBe("Launch queue");
     expect(documentTitle("<svg><title>Icon</title></svg><script>1</script>")).toBeNull();
     expect(documentTitle("<title> </title><title>Second</title>")).toBeNull();
-    expect(documentTitle(`${"<b>".repeat(20_000)}<title>Deep</title>`)).toBe("Deep");
+    expect(documentTitle(`${"<b>".repeat(500)}<title>Deep</title>`)).toBe("Deep");
+  });
+
+  it("gives up on a bundle's title past the bounds a static page is held to", () => {
+    expect(documentTitle(`${"<b>".repeat(600)}<title>Deep</title>`)).toBeNull();
+    const open = Array.from({ length: 500 }, (_, index) => `<b a=${index}>`).join("");
+    expect(documentTitle(`<title>Clones</title><p>${open}${"x<p>".repeat(2000)}`)).toBeNull();
   });
 
   it("reads a long bundle's title only when the read limit leaves it whole", () => {
