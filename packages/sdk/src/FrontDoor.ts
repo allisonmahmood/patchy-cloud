@@ -52,7 +52,7 @@ Windows PowerShell:
 ${installCommand(base, "powershell")}; if ($LASTEXITCODE -eq 0) { patchy.cmd login --api-url '${base}' --json }
 \`\`\`
 
-The installer downloads this instance's \`patchy\` release, checks it against the release's SHA-512 integrity, installs it globally with npm and links its skill as \`~/.agents/skills/patchy\` and \`~/.claude/skills/patchy\`. It prints the paths it used, or what to fix. Run it again to upgrade.
+The installer downloads this instance's \`patchy\` release, checks it against the release's SHA-512 integrity, installs it globally with npm, copies its skill to \`~/.patchy/skills/patchy\` and links that copy as \`~/.agents/skills/patchy\` and \`~/.claude/skills/patchy\`. It prints the paths it used, or what to fix. Run it again to upgrade.
 
 ## Browser handoff
 

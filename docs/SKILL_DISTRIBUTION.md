@@ -21,11 +21,15 @@ archive, its SHA-512 integrity, and its tested and accepted toolchain versions.
 `GET /api/release` reports that archive's exact URL and integrity; the
 unauthenticated tarball route is immutable. A same-version rebuild with different
 bytes gets a different URL, which `refresh` writes into the managed `patchy` pin.
-After installation, the global skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
-`patchy setup` links that whole directory, references included, as
+After installation, the global skill ships at `node_modules/patchy/skills/patchy/SKILL.md`
+in npm's global prefix. `patchy setup` copies that whole directory, references
+included, to `~/.patchy/skills/patchy` and links the copy as
 `~/.agents/skills/patchy` and `~/.claude/skills/patchy`; the instance's
 `/install.mjs` runs it after installing the release, so an agent can read the
-skill straight away and later sessions discover it.
+skill straight away and later sessions discover it. The copy is outside the
+prefix: when a Node version manager switches or removes the Node that installed
+the CLI, agents keep the skill, which tells them to reinstall `patchy`. Each
+setup replaces the copy whole with the running release's skill.
 
 Before serving discovery, the server validates the current archive's SHA-256 and
 SHA-512 against the metadata and writes those verified bytes under `sdk/` in its
@@ -42,9 +46,9 @@ to them. Losing that store loses the retention guarantee. Local build outputs an
 caches contain only the current release and do not replace durable storage.
 
 Bundling a skill and wiring it into this checkout do not start onboarding;
-onboarding runs only when the user asks. Only `patchy setup` links the global
-skill into a machine's agent skill directories, and it replaces only links it
-owns: see the package README.
+onboarding runs only when the user asks. Only `patchy setup` puts the global
+skill in a machine's agent skill directories, and it replaces only the copy and
+links it owns: see the package README.
 
 ## Project skills
 

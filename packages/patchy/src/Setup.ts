@@ -1,18 +1,25 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Ownership needs lstat and Windows needs junctions; Effect's FileSystem follows links and takes no link type.
 /**
- * `patchy setup`: register the package's bundled global skill with agents by
- * linking its whole directory into each agent skill path. Setup owns a link
- * whose target is a `patchy` package's `skills/patchy` directory, including a
- * dangling one left by an npm prefix that no longer exists, and nothing else.
+ * `patchy setup`: register the package's bundled global skill with agents. It
+ * copies the whole bundled directory to `~/.patchy/skills/patchy`, outside any
+ * npm prefix, and links each agent skill path to that copy, so the skill
+ * outlives the Node version that installed the CLI. Setup owns that copy, links
+ * to it, and the links earlier releases made into a `patchy` package's
+ * `skills/patchy` directory, including a dangling one left by an npm prefix
+ * that no longer exists. Nothing else.
  */
 import {
+  cp,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   readlink,
   realpath,
+  rename,
+  rm,
   symlink,
-  unlink as remove
+  unlink as removeLink
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -24,6 +31,12 @@ import { LocalError } from "./CliError.js";
 
 /** The running package's bundled global skill directory, beside `dist/` in the installed package. */
 const bundledSkillDir = fileURLToPath(new URL("../skills/patchy", import.meta.url));
+
+/**
+ * The skill's copy. It follows the home directory, not `PATCHY_STATE_DIR`: a
+ * temporary state override is no place for a skill every agent session reads.
+ */
+export const skillCopy = (home: string) => path.join(home, ".patchy", "skills", "patchy");
 
 /** Where setup links the skill: the shared agents path, then Claude Code's. */
 export const skillLinks = (home: string) =>
@@ -62,39 +75,80 @@ const packageSkill = async (target: string) => {
   }
 };
 
-const inspect = async (link: string, skillDir: string): Promise<Entry> => {
-  const stats = await lstat(link).catch((error: unknown) =>
+/**
+ * The copy is setup's when it is a real directory under Patchy's own home. A
+ * link is `current` when it reaches the copy, even before the copy exists, and
+ * `owned` when an earlier setup pointed it into a `patchy` package.
+ */
+const inspect = async (at: string, copy: string): Promise<Entry> => {
+  const stats = await lstat(at).catch((error: unknown) =>
     missing(error) ? undefined : Promise.reject(error)
   );
   if (stats === undefined) return "missing";
+  if (at === copy) return stats.isDirectory() ? "owned" : "foreign";
   if (!stats.isSymbolicLink()) return "foreign";
-  const resolved = await realpath(link).catch(() => undefined);
-  if (resolved !== undefined && resolved === (await realpath(skillDir))) return "current";
-  const target = path.resolve(path.dirname(link), await readlink(link));
+  const target = path.resolve(path.dirname(at), await readlink(at));
+  if (target === copy) return "current";
+  const resolved = await realpath(at).catch(() => undefined);
+  if (resolved !== undefined && resolved === (await realpath(copy).catch(() => undefined)))
+    return "current";
   return (await packageSkill(target)) ? "owned" : "foreign";
 };
 
 /** Names the step, the path and the system error code; the error itself rides as `cause`. */
-const failure = (step: "inspect" | "link" | "remove", link: string) => (cause: unknown) =>
+const failure = (step: "inspect" | "copy" | "link" | "remove", at: string) => (cause: unknown) =>
   new LocalError({
-    message: `Could not ${step} the Patchy skill link at ${link}${Option.match(errno(cause), {
+    message: `Could not ${step} the Patchy skill at ${at}${Option.match(errno(cause), {
       onNone: () => "",
       onSome: ({ code }) => ` (${code})`
     })}.`,
     cause
   });
 
-const inspectAll = (home: string, skillDir: string) =>
-  Effect.forEach(skillLinks(home), (link) =>
-    Effect.tryPromise({ try: () => inspect(link, skillDir), catch: failure("inspect", link) }).pipe(
-      Effect.map((entry) => ({ link, entry }))
+/** The agent links, then the copy: removal takes the links first so none dangles. */
+const inspectAll = (home: string) => {
+  const copy = skillCopy(home);
+  return Effect.forEach([...skillLinks(home), copy], (at) =>
+    Effect.tryPromise({ try: () => inspect(at, copy), catch: failure("inspect", at) }).pipe(
+      Effect.map((entry) => ({ at, entry }))
     )
   );
+};
 
 /**
- * Link every agent skill path to `skillDir`. Checks every path before changing
- * any, so a conflict leaves the machine as it was. Already-correct links are
- * left untouched. Returns the link paths and the skill's `SKILL.md`.
+ * Replace the copy with the bundle, dropping files the bundle no longer ships.
+ * The bundle lands in a private sibling first and two renames swap it in, so an
+ * interrupted refresh leaves the old copy or none, never half of one.
+ */
+const refresh = async (skillDir: string, copy: string) => {
+  const parent = path.dirname(copy);
+  // Private like the state directory, which this may be the first to create.
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const work = await mkdtemp(path.join(parent, ".patchy-"));
+  const next = path.join(work, "next");
+  const previous = path.join(work, "previous");
+  try {
+    await cp(skillDir, next, { recursive: true });
+    const moved = await rename(copy, previous).then(
+      () => true,
+      (error: unknown) => (missing(error) ? false : Promise.reject(error))
+    );
+    await rename(next, copy).catch(async (error: unknown) => {
+      // Windows can briefly lock freshly written files; keep the old copy over none.
+      if (moved) await rename(previous, copy).catch(() => undefined);
+      throw error;
+    });
+  } finally {
+    // A leftover sibling is harmless; failing to remove it must not mask the result.
+    await rm(work, { recursive: true, force: true }).catch(() => undefined);
+  }
+};
+
+/**
+ * Refresh the copy from `skillDir` and link every agent skill path to it.
+ * Checks the copy and both links before changing any, so a conflict leaves the
+ * machine as it was. Already-correct links are left untouched. Returns the link
+ * paths and the copy's `SKILL.md`.
  */
 export const link = Effect.fn("Setup.link")(function* (
   home = homedir(),
@@ -109,42 +163,45 @@ export const link = Effect.fn("Setup.link")(function* (
         cause
       })
   });
-  const entries = yield* inspectAll(home, skillDir);
+  const copy = skillCopy(home);
+  const entries = yield* inspectAll(home);
   const conflicts = entries.filter(({ entry }) => entry === "foreign");
   if (conflicts.length > 0) {
     return yield* new LocalError({
       code: "skill_conflict",
-      message: `${conflicts.map(({ link }) => link).join(" and ")} ${conflicts.length === 1 ? "is" : "are"} not a link patchy setup made, so setup changed nothing. Move ${conflicts.length === 1 ? "it" : "them"} aside, then run patchy setup again.`
+      message: `${conflicts.map(({ at }) => at).join(" and ")} ${conflicts.length === 1 ? "was" : "were"} not made by patchy setup, so setup changed nothing. Move ${conflicts.length === 1 ? "it" : "them"} aside, then run patchy setup again.`
     });
   }
-  for (const { link, entry } of entries) {
-    if (entry === "current") continue;
+  yield* Effect.tryPromise({ try: () => refresh(skillDir, copy), catch: failure("copy", copy) });
+  for (const { at, entry } of entries) {
+    if (at === copy || entry === "current") continue;
     yield* Effect.tryPromise({
       try: async () => {
-        if (entry === "owned") await remove(link);
-        await mkdir(path.dirname(link), { recursive: true });
+        if (entry === "owned") await removeLink(at);
+        await mkdir(path.dirname(at), { recursive: true });
         // Junctions need no Windows developer mode; POSIX ignores the type.
-        await symlink(skillDir, link, "junction");
+        await symlink(copy, at, "junction");
       },
-      catch: failure("link", link)
+      catch: failure("link", at)
     });
   }
-  return { linked: entries.map(({ link }) => link), skill: manifest };
+  return { linked: [...skillLinks(home)], skill: path.join(copy, "SKILL.md") };
 });
 
-/** Remove the links setup owns; anything else at those paths stays, with a warning. */
-export const unlink = Effect.fn("Setup.unlink")(function* (
-  home = homedir(),
-  skillDir = bundledSkillDir
-) {
+/** Remove the links and copy setup owns; anything else at those paths stays, with a warning. */
+export const unlink = Effect.fn("Setup.unlink")(function* (home = homedir()) {
+  const copy = skillCopy(home);
   const removed: string[] = [];
   const warnings: string[] = [];
-  for (const { link, entry } of yield* inspectAll(home, skillDir)) {
+  for (const { at, entry } of yield* inspectAll(home)) {
     if (entry === "foreign") {
-      warnings.push(`Left ${link} in place: patchy setup did not make it.`);
+      warnings.push(`Left ${at} in place: patchy setup did not make it.`);
     } else if (entry !== "missing") {
-      yield* Effect.tryPromise({ try: () => remove(link), catch: failure("remove", link) });
-      removed.push(link);
+      yield* Effect.tryPromise({
+        try: () => (at === copy ? rm(copy, { recursive: true }) : removeLink(at)),
+        catch: failure("remove", at)
+      });
+      removed.push(at);
     }
   }
   return { removed, warnings };

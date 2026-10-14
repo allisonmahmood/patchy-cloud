@@ -109,7 +109,7 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
   it("installs the release, links both skill paths, and reinstalls on a second run", async () => {
     const { url } = await instance();
     const { home, prefix, bin, env, run } = machine(url);
-    const skill = path.join(installed(prefix), "skills/patchy");
+    const skill = path.join(home, ".patchy/skills/patchy");
     for (const attempt of ["first", "second"]) {
       const result = await run(env);
       expect(result, attempt).toMatchObject({ status: 0, stderr: "" });
@@ -125,6 +125,9 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
       name: "patchy",
       version: CURRENT_RELEASE
     });
+    // A version manager removing this Node takes the prefix, not the skill.
+    rmSync(prefix, { recursive: true });
+    expect(existsSync(path.join(home, ".claude/skills/patchy/SKILL.md"))).toBe(true);
   }, 180_000);
 
   it("refuses a download that does not match the release's integrity before npm runs", async () => {

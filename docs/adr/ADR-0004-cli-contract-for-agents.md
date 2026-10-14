@@ -156,17 +156,21 @@ renamed to `patches.json` or removed.
 | `patchy auth set [--token-stdin] [--api-url <url>]` | Save an existing key for the instance; save an explicit URL too. Default is a terminal-only non-echoing prompt. `--token-stdin` explicitly accepts one nonempty redirected token and refuses a terminal. Never accepts a token argument. | `{ ok, instanceUrl }`                                                                                                    |
 | `patchy whoami`                                     | Verify the selected key and print its user, company, role and machine.                                                                                                                                                                   | `Identity`: `{ user: { id, email, name }, company: { id, handle, name }, role, machine: { id, name } }`, no `ok` wrapper |
 | `patchy status`                                     | Local availability report, no network; an absent key is not a failure. Unreadable credentials report unavailable without modifying them.                                                                                                 | `{ instanceUrl, instanceSource, hasToken, tokenSource, stateDir, cliVersion }`                                           |
-| `patchy setup [--remove]`                           | Link the package's bundled global skill directory as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`; `--remove` deletes only links setup owns.                                                                                  | `{ ok, linked, skill }`; with `--remove`, `{ ok, removed, warnings }`                                                    |
+| `patchy setup [--remove]`                           | Copy the package's bundled global skill directory to `~/.patchy/skills/patchy` and link the copy as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`; `--remove` deletes only the copy and links setup owns.                      | `{ ok, linked, skill }`; with `--remove`, `{ ok, removed, warnings }`                                                    |
 | `patchy validate <file>`                            | Check the static-HTML policy without publishing or authenticating.                                                                                                                                                                       | `{ ok, warnings }`                                                                                                       |
 
-Setup owns a link whose target is a `patchy` package's `skills/patchy`
-directory, including a dangling one whose npm prefix is gone; it uses symlinks
-on POSIX and junctions on Windows. Correct links are left untouched and owned
-links to another package are replaced. Both paths are checked before either
-changes: a directory, a file or a foreign link is exit 1 with `skill_conflict`
-naming the path. `skill` is the bundled `SKILL.md`. Remove leaves anything it
-does not own and reports it in `warnings`. The instance's `/install.mjs` runs
-`setup --json` by absolute path after installing.
+The copy follows the home directory, never `PATCHY_STATE_DIR`, and each run
+replaces it whole, so the skill outlives the npm prefix of the Node that
+installed the CLI. Setup owns that copy, links to it, and a link an earlier
+release made to a `patchy` package's `skills/patchy` directory, including a
+dangling one whose npm prefix is gone; it uses symlinks on POSIX and junctions
+on Windows. Correct links are left untouched and owned links into a package are
+replaced. The copy and both links are checked before any changes: a directory,
+a file or a foreign link at an agent path, or a file or link at the copy's
+path, is exit 1 with `skill_conflict` naming the path. `skill` is the copy's
+`SKILL.md`. Remove leaves anything it does not own and reports it in
+`warnings`. The instance's `/install.mjs` runs `setup --json` by absolute path
+after installing.
 
 `status` walks the same key chain; `tokenSource` is `login`/`auth-set` only for a
 selected saved key with that provenance, otherwise null. It is not proof a key

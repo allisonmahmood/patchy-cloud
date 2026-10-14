@@ -1306,7 +1306,7 @@ async function runFrontDoorFlow(publicBaseUrl) {
       path.delimiter
     )
   };
-  const skill = path.join(prefix, "lib/node_modules/patchy/skills/patchy");
+  const skill = path.join(home, ".patchy/skills/patchy");
   for (const attempt of ["fresh install", "rerun"]) {
     const result = await run("sh", ["-c", line], { cwd: machine, env, timeoutMs: 180_000 });
     const lines = result.stdout.trim().split("\n");
