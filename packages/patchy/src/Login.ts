@@ -2,6 +2,7 @@
 import { hostname } from "node:os";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -47,6 +48,21 @@ const nextCommand = Effect.fn("Login.nextCommand")(function* (login: State.Pendi
   // Config cannot preserve a flag override: the worktree and environment outrank it.
   const target = source === "flag" ? ` --api-url '${apiUrl.replaceAll("'", "'\\''")}'` : "";
   return `patchy login --complete ${login.userCode}${target}`;
+});
+
+/**
+ * The handoff's expiry for a person at a terminal: minutes left by the Clock, then
+ * the clock time in the current zone. `--json` and the stored login keep the ISO instant.
+ */
+const expiryLine = Effect.fnUntraced(function* (expiresAt: string) {
+  const deadline = DateTime.make(expiresAt);
+  if (Option.isNone(deadline)) return `Expires: ${expiresAt}`;
+  const { hour, minute } = DateTime.toParts(yield* DateTime.setZoneCurrent(deadline.value));
+  const at = [hour, minute].map((part) => String(part).padStart(2, "0")).join(":");
+  const left = DateTime.toEpochMillis(deadline.value) - (yield* Clock.currentTimeMillis);
+  if (left <= 0) return `Expired at ${at}`;
+  const minutes = Math.max(1, Math.round(left / 60_000));
+  return `Expires in about ${minutes} minute${minutes === 1 ? "" : "s"}, at ${at}`;
 });
 
 const pendingReport = (login: State.PendingLogin, next: string) =>
@@ -210,6 +226,7 @@ export const login = Effect.fn("Login.login")(function* (options: {
     yield* state.savePendingLogin(apiUrl, current);
   }
   const next = yield* nextCommand(current);
+  const expires = yield* expiryLine(current.expiresAt);
   yield* Output.report(
     {
       ok: true,
@@ -226,7 +243,7 @@ export const login = Effect.fn("Login.login")(function* (options: {
     [
       `Sign in: ${current.verificationUrl}`,
       `Code: ${current.userCode}`,
-      `Expires: ${current.expiresAt}`,
+      expires,
       ...(reason === null
         ? ["Waiting for confirmation..."]
         : [`Not waiting because ${reason}.`, `Then run: ${next}`])

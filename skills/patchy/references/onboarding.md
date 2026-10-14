@@ -109,7 +109,10 @@ If the email is wrong, direct them to **Not you? Sign out** before they create
 a company. **Deny** ends a login they did not request or no longer want.
 The main skill owns completion, resume and error handling. When it reports
 `pending`, say **"Still waiting for your confirmation; the same link and code
-work until `<expiresAt>`."**
+work for about `<n>` more minutes."** A code lasts ten minutes; each time, count
+`<n>` down from the current time to the returned `expiresAt`, which stays fixed
+across polls. If a clock time helps, name its time zone: this machine's may not
+be the person's.
 
 The poll mints the key after confirmation; only `status: "logged_in"` means
 it was saved. Say:

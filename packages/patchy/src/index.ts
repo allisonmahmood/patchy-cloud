@@ -9,6 +9,7 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as CliOutput from "effect/cli/CliOutput";
@@ -38,6 +39,8 @@ Command.run(root, { version: RELEASE }).pipe(
       // Login's agent gate tests presence, including explicitly empty variables.
       ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
       output,
+      // Login prints its expiry as a clock time in this machine's zone.
+      DateTime.layerCurrentZoneLocal,
       Layer.succeed(Cwd, process.cwd())
     )
   ),
