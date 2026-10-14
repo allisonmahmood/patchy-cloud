@@ -184,6 +184,22 @@ it.layer(layer)("patches group", (it) => {
           ["patch.updated", uploader.company.id, uploader.user.id, "company", undefined, undefined]
         ]
       );
+      // Only the updates that moved the scope report a sharing change; the create carries its own.
+      const change = { patchId: created.patchId, ownerUserId: uploader.user.id, byAdmin: false };
+      assert.deepStrictEqual(lifecycleEvents(created.patchId), [
+        {
+          name: "patch.shared",
+          principalId: uploader.user.id,
+          companyId: uploader.company.id,
+          properties: { ...change, scope: "public", previousScope: "company" }
+        },
+        {
+          name: "patch.shared",
+          principalId: uploader.user.id,
+          companyId: uploader.company.id,
+          properties: { ...change, scope: "company", previousScope: "public" }
+        }
+      ]);
 
       const served = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
       assert.strictEqual(served.patch.scope, "company");
@@ -1433,11 +1449,12 @@ it.layer(publishLayer)("publish attempts", (it) => {
       // The client retries with the same publish key and gets that answer, reporting nothing new.
       assert.strictEqual((yield* api.publish({ payload: create })).patchId, patchId);
       assert.deepStrictEqual(reported(patchId), ["patch.created"]);
-      const update = publishRequest({ html: html("Interrupted update"), patchId });
+      const update = publishRequest({ html: html("Interrupted update"), patchId, scope: "public" });
       yield* Testing.interruptDuringCommit("patch_versions", api.publish({ payload: update }));
-      assert.deepStrictEqual(reported(patchId), ["patch.created", "patch.updated"]);
+      const updated = ["patch.created", "patch.updated", "patch.shared"];
+      assert.deepStrictEqual(reported(patchId), updated);
       assert.strictEqual((yield* api.publish({ payload: update })).versionNumber, 2);
-      assert.deepStrictEqual(reported(patchId), ["patch.created", "patch.updated"]);
+      assert.deepStrictEqual(reported(patchId), updated);
     })
   );
 
