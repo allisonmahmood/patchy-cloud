@@ -27,6 +27,7 @@ const expectedErrorsByRejectFixture: Readonly<Record<string, readonly string[]>>
   "blocked-tag-script.html": ["Blocked <script> tag found."],
   "inline-event-handler.html": ['Blocked inline event handler attribute "onclick" found.'],
   "meta-refresh.html": ["Blocked meta refresh tag found."],
+  "noscript-blocked-tag.html": ["Blocked <form> tag found."],
   "srcdoc-attribute.html": ['Blocked "srcdoc" attribute found.'],
   "unsafe-inline-css.html": ["Blocked unsafe inline CSS."]
 } satisfies RequiredRejectFixtures;
