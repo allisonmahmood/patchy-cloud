@@ -101,7 +101,7 @@
     "parse5": "catalog:",
     "semver": "^7.7.2",
     "typescript": "^6.0.3",
-    "vite": "^8.3.2",
+    "vite": "^8.3.4",
     "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^5.0.3"
   },
