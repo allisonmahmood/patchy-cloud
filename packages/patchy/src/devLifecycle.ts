@@ -92,12 +92,22 @@ const recorded = Effect.fn("Dev.recorded")(function* (
   return record;
 });
 
-const report = (record: Daemon, stateDir: string, warnings: readonly string[] = []) => {
+/**
+ * A healthy session as `dev status` observes it, or as `dev` returns it with `start`: whether it
+ * joined a running session, which pulls nothing from Patchy, and what a new start brought in.
+ */
+const report = (
+  record: Daemon,
+  stateDir: string,
+  start?: { readonly joined: boolean; readonly warnings: readonly string[] }
+) => {
   const stop = `pnpm patchy dev stop --api-url '${record.instance.replaceAll("'", "'\\''")}'`;
+  const warnings = start?.warnings ?? [];
   return Output.report(
     {
       ok: true,
       healthy: true,
+      ...(start === undefined ? {} : { joined: start.joined }),
       url: record.url,
       ...(record.colleagueUrl === undefined ? {} : { colleagueUrl: record.colleagueUrl }),
       logPath: logPath(stateDir),
@@ -109,6 +119,11 @@ const report = (record: Daemon, stateDir: string, warnings: readonly string[] = 
     },
     [
       ...warnings,
+      ...(start?.joined
+        ? [
+            "Joined the running session; nothing was pulled from Patchy. To bring in look or description changes, run `pnpm patchy refresh`; config and fixture changes need `pnpm patchy dev stop`, then `pnpm patchy dev`."
+          ]
+        : []),
       record.url!,
       ...(record.colleagueUrl === undefined ? [] : [`Colleague: ${record.colleagueUrl}`]),
       `Log: ${logPath(stateDir)}`,
@@ -275,7 +290,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
       return { record: ready, started: true, warnings: prepared.warnings };
     })
   );
-  yield* report(result.record, stateDir, result.warnings);
+  yield* report(result.record, stateDir, { joined: !result.started, warnings: result.warnings });
   if (!foreground) return;
   yield* Effect.scoped(
     Effect.gen(function* () {

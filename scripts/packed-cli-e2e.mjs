@@ -1454,6 +1454,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   const dev = parseJsonSuccess(await runCli(repoCliPath, ["dev", "--json"], options), [
     "ok",
     "healthy",
+    "joined",
     "url",
     "colleagueUrl",
     "logPath",
@@ -1464,6 +1465,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "warnings"
   ]);
   assert.equal(dev.healthy, true);
+  assert.equal(dev.joined, false);
   assert.equal(dev.release, release);
   assert.deepEqual(dev.identity, {
     user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },

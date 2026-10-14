@@ -64,8 +64,9 @@ skill's package copy.
   company's current look revision and its `LOOK.md` brief, or with the Patchy
   look (`packages/companies/looks/patchy/`, which `GET /api/look` also hands
   out) when the company has none. Every
-  generation rewrites it, so refresh and dev start bring in a new revision. A
-  missing marker fails generation, as `patchy-loop`'s does.
+  generation rewrites it, so refresh and a new dev start bring in a new revision;
+  a running dev session takes it with refresh. A missing marker fails
+  generation, as `patchy-loop`'s does.
 - Page skill, generated automatically on tiers 1 and 2: `patchy-preact`.
   Tier 0 does not add it; a previously installed copy remains sticky.
 - Declaration-driven: `patchy-postgres`, `patchy-posthog`, `patchy-shared-tables`, `patchy-shared-stores`, `patchy-members`.

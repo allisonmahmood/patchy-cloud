@@ -612,8 +612,9 @@ alone. Read the person's role from `patchy whoami --json`.
   `patchy look publish <dir> --note "<why>" --json`. `patchy look restore <n>` brings
   back an earlier revision, and `restore none` leaves the company with no look.
 
-A patch repo picks up a new revision at its next `refresh` or `dev` start. A static
-page keeps the look it was published with until someone updates it.
+A patch repo picks up a new revision at its next `refresh` or new `dev` start; a running
+dev session takes it with `refresh`. A static page keeps the look it was published with
+until someone updates it.
 
 ## HTML safety rules
 
