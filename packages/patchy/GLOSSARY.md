@@ -45,7 +45,7 @@ The optional, user-requested first-time setup conversation — establish where t
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
-The copy-paste request a person gives their agent to install the skill, complete onboarding and publish the welcome patch. It authorizes that first-time setup explicitly; installing the skill alone runs nothing.
+The copy-paste request a person gives their agent to install the skill, log the machine in and settle the company look; a request in their own words does the same. It authorizes that first-time setup explicitly; installing the skill alone runs nothing.
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Front door**:

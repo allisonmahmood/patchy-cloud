@@ -18,13 +18,14 @@ without it.
 
   Run the whole conversation below.
 
-- **The person gives the portal's setup line**, `Set up Patchy using <instance>/llms.txt`.
-  Once the machine is logged in, run [step 3, the company look](#3-the-company-look),
-  then hand back: the portal's guide has the person ask for their first patch next.
 - **"Redo my Patchy setup"** runs the whole conversation again. It reuses a working
   publishing key, updates the welcome page already published, and leaves an
   existing company look alone: changing it is its own request (see the main skill's
   [Changing the look](../SKILL.md#changing-the-look)).
+- **Any other request to get this machine ready to use Patchy**, in the person's own
+  words or the portal's setup line, `Set up Patchy using <instance>/llms.txt`.
+  Once the machine is logged in, run [step 3, the company look](#3-the-company-look),
+  then close with [step 5's sign-off](#5-sign-off).
 
 Those are the only triggers. Installing or wiring up the skill runs nothing, and there
 is no per-session first-run check.
