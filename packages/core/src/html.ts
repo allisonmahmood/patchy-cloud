@@ -330,6 +330,25 @@ export const faviconLink = `<link rel="icon" type="image/svg+xml" href="data:ima
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect x="114" y="110" width="286" height="286" rx="82" fill="#15130F" transform="rotate(-6 257 253) translate(22 22)"/><rect x="114" y="110" width="286" height="286" rx="82" fill="#91DD5A" stroke="#15130F" stroke-width="30" transform="rotate(-6 257 253)"/><path d="M256 180H326V250" fill="none" stroke="#15130F" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" transform="rotate(-6 291 215)"/></svg>'
 )}">`;
 
+/**
+ * A document as a `srcdoc` frame receives it, led by the frame's own base URL so its same-page
+ * links (`href="#totals"`) scroll instead of loading the embedding page into the frame.
+ *
+ * A srcdoc document's URL is `about:srcdoc`, but without a base of its own its relative URLs
+ * resolve against the embedder's: `#totals` names the embedding page. Against this base it names
+ * the framed document, so following it is a scroll, with no request. Any other relative URL stops
+ * resolving; absolute URLs are unaffected. A srcdoc document inherits its embedder's CSP, which
+ * must admit this base with `base-uri about:`.
+ *
+ * The base leads everything, doctype included: the first base with an `href` is the one that
+ * counts, so nothing in the page can displace it. A srcdoc document never renders in quirks mode,
+ * so the doctype it displaces changes nothing. Its one casualty is the attributes of the page's own
+ * `<head>` tag, which the parser drops once the base has implied a head. A leading byte order mark
+ * goes first: behind the base it would be text and end the head early.
+ */
+export const framedDocument = (html: string): string =>
+  `<base href="about:srcdoc">${html.replace(/^\uFEFF/, "")}`;
+
 /** First-party HTML shell. Served patch documents remain separate in Serving. */
 export function htmlPage(options: {
   title: string;

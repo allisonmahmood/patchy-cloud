@@ -174,5 +174,15 @@ test("a compare page frames each look alone, and its frames refuse requests too"
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
     )
   ).toBe(0);
+  // A specimen's same-page link scrolls its own frame instead of loading this page into it.
+  const specimen = page.frameLocator("iframe").first();
+  await expect(specimen.locator("#vendors")).not.toBeInViewport();
+  await specimen.getByRole("link", { name: "See all vendors" }).click();
+  await expect(specimen.locator("#vendors")).toBeInViewport();
+  expect(page.frames().map((frame) => frame.url())).toEqual([
+    `file://${file}`,
+    "about:srcdoc#vendors",
+    "about:srcdoc"
+  ]);
   expect(requests).toEqual([]);
 });
