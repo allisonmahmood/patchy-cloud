@@ -72,12 +72,6 @@ const runners = PostHogOperations.devReads;
 const isLive = (op: string): op is keyof typeof runners =>
   live.has(op) && Object.hasOwn(runners, op);
 
-/**
- * The log keeps text as the caller sent it, but Postgres text can't hold NUL: an argument that
- * carries one is refused after logging, never before.
- */
-const audit = (text: string | null | undefined) => text?.replaceAll("\u0000", "\uFFFD");
-
 const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(DevReadEnvelope), {
   onExcessProperty: "error"
 });
@@ -126,9 +120,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           patchId: null,
           versionId: null,
           op: input.op,
-          resource: audit(operation?.resource(input.args)) ?? null,
+          resource: operation?.resource(input.args) ?? null,
           connectionId,
-          ...(operation === undefined ? {} : { sql: audit(operation.sql(input.args)) }),
+          ...(operation === undefined ? {} : { sql: operation.sql(input.args) }),
           correlationId,
           deadlineMs: settings.deadlineMs
         })

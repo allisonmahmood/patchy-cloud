@@ -229,6 +229,22 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
           assert.strictEqual(failed?.userId, DEV_SEED.userId);
           assert.strictEqual(failed?.outcomeCode, "invalid_query");
           assert.strictEqual(failed?.sql, "INSERT INTO public.orders VALUES ($1) RETURNING id");
+          // Postgres text can't hold NUL, so the log keeps a stand-in and the query is still refused.
+          const nul = yield* send("postgres.query", {
+            connection: "sales",
+            sql: "SELECT 1\u0000",
+            params: [],
+            shape: { id: { kind: "integer" } }
+          });
+          const nulFailure = decodeFailure(yield* nul.json);
+          assert.strictEqual(nul.status, 400);
+          assert.strictEqual(nulFailure.code, "invalid_request");
+          const nulCall = yield* log.find({
+            companyId: DEV_SEED.companyId,
+            correlationId: nulFailure.correlationId!
+          });
+          assert.strictEqual(nulCall?.outcomeCode, "invalid_request");
+          assert.strictEqual(nulCall?.sql, "SELECT 1\uFFFD");
           const recent = yield* log.recent({
             companyId: DEV_SEED.companyId,
             connectionId: declaration.id

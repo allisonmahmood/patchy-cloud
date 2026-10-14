@@ -279,11 +279,14 @@ const column = <const K extends string, S extends Schema.Top>(kind: K, value: S)
 // PostgreSQL text has no NUL; jsonb also rejects unpaired UTF-16 surrogates.
 const invalidPostgresText =
   /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const everyInvalidPostgresText = new RegExp(invalidPostgresText, "g");
 export const PostgresText = Schema.String.check(
   Schema.makeFilter(
     (value) => !invalidPostgresText.test(value) || "Text must be valid Unicode without NUL."
   )
 );
+/** Text `PostgresText` admits, with U+FFFD for what it refuses; for audit copies, never arguments. */
+export const toPostgresText = (text: string) => text.replace(everyInvalidPostgresText, "\uFFFD");
 const postgresJson = (value: typeof Schema.Json.Type): boolean => {
   if (typeof value === "string") return !invalidPostgresText.test(value);
   if (Array.isArray(value)) return value.every(postgresJson);
