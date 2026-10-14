@@ -1,5 +1,5 @@
 // Patch-repo declarations, refresh and init through the bundled CLI.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE } from "@patchy/api";
@@ -27,6 +27,7 @@ import {
   tempDir,
   treeBytes
 } from "./test/cli.js";
+import { ManagedProject, ProjectLocked } from "./ManagedProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import { lookRevision, readLookFixture } from "../../../test/look-fixtures.js";
 
@@ -698,6 +699,59 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     });
     expect(readFileSync(path.join(dir, "package.json"), "utf8")).toBe(originalPackage);
   });
+
+  it("tells a refresh that another live command holds the repo, in text and JSON", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const holder = await ManagedProject.begin(dir);
+    try {
+      const json = await runCli(["refresh", "--json"], { cwd: dir, env });
+      expect(json).toMatchObject({ status: 1, stdout: "" });
+      expect(JSON.parse(json.stderr)).toEqual({
+        ok: false,
+        kind: "local",
+        error: new ProjectLocked({ holder: "live" }).message
+      });
+      const text = await runCli(["refresh"], { cwd: dir, env });
+      expect(text.status).toBe(1);
+      expect(text.stderr).toContain(new ProjectLocked({ holder: "live" }).message);
+    } finally {
+      await holder.finish(false);
+    }
+  });
+
+  it("reinstalls matching pins after a killed refresh, then clears its lock and transaction", async () => {
+    const instance = await stubInstance(
+      projectHandler,
+      () => CURRENT_RELEASE,
+      readFileSync(
+        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
+      )
+    );
+    const dir = projectTree(instance.url);
+    // This PID is alive, so only the birth mismatch proves the recorded owner gone.
+    mkdirSync(path.join(dir, ".patchy/refresh-lock"), { recursive: true });
+    writeFileSync(
+      path.join(dir, ".patchy/refresh-lock/dead.json"),
+      JSON.stringify({ pid: process.pid, birth: "stale", nonce: "dead" })
+    );
+    mkdirSync(path.join(dir, ".patchy/refresh-orphan/node_modules"), { recursive: true });
+    const store = tempDir();
+    const result = await runCli(["refresh", "--json"], {
+      cwd: dir,
+      env: {
+        ...env,
+        pnpm_config_registry: instance.url,
+        pnpm_config_store_dir: path.join(store, "store"),
+        pnpm_config_cache_dir: path.join(store, "cache"),
+        pnpm_config_update_notifier: "false"
+      }
+    });
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, changed: { pin: false } });
+    expect(existsSync(path.join(dir, "pnpm-lock.yaml"))).toBe(true);
+    expect(readdirSync(path.join(dir, ".patchy"))).toEqual([]);
+  }, 30_000); // One isolated pnpm install of the real release archive.
 
   it("checks the toolchain with the newly installed release, whichever CLI refreshes across a digest change", async () => {
     const required = { ...toolchain, vite: { testedAgainst: "99.0.0", accepted: "^99.0.0" } };

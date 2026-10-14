@@ -648,6 +648,15 @@ there if a later generation or build step fails, with its notice in the failure.
 Refresh fetches one release, reconciles the pins with the release and tier,
 installs as needed, re-execs that CLI for generation and the toolchain check,
 then stages and activates the set. Failure leaves the old managed set intact.
+Refresh, add, remove and dev start take `.patchy/refresh-lock`, which records
+its owner process; a second command refuses while that owner is alive. A run
+killed outright (SIGKILL, a closed terminal) can leave a mix of old and new
+managed files, its lock and its `.patchy/refresh-*` transaction directory. The
+next command reclaims the lock once its owner is gone. The next refresh
+regenerates every managed root, reinstalls even when the pins match, then
+removes the dead run's directory; dev start leaves it for that refresh. A lock
+with no owner the CLI can identify is never reclaimed: the refusal names it,
+and it can be removed by hand only when no other patchy command is running.
 Skills are sticky: refresh re-fetches every present skill and adds any the
 config implies.
 `patchy-server` is the sole tier-keyed exception, removed below tier 2.

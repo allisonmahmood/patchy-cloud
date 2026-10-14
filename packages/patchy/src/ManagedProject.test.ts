@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { ManagedProject } from "./ManagedProject.js";
+import { ManagedProject, ProjectLocked } from "./ManagedProject.js";
 
 const directories: string[] = [];
 const originalPackage = '{\n  "devDependencies": { "patchy": "old-release" }\n}\n';
@@ -191,4 +191,65 @@ it("removes a newly created fixture on rollback without deleting later authored 
   await writeFile(join(root, "fixtures/shared-assets/authored.bin"), authored);
   await transaction.finish(false);
   expect(await bytes(join(root, "fixtures/shared-assets"))).toEqual({ "authored.bin": authored });
+});
+
+const lockSlot = (root: string) => join(root, ".patchy/refresh-lock");
+const hold = async (root: string, owners: Record<string, string>) => {
+  await mkdir(lockSlot(root), { recursive: true });
+  for (const [name, contents] of Object.entries(owners))
+    await writeFile(join(lockSlot(root), name), contents);
+};
+// This PID is alive, so only the birth mismatch can prove its recorded owner gone.
+const deadOwner = JSON.stringify({ pid: process.pid, birth: "stale", nonce: "dead" });
+
+it("refuses a second transaction while the first is alive, then admits the next", async () => {
+  const root = await project();
+  const first = await ManagedProject.begin(root);
+  await expect(ManagedProject.begin(root)).rejects.toEqual(new ProjectLocked({ holder: "live" }));
+  await first.finish(true);
+  await (await ManagedProject.begin(root)).finish(true);
+});
+
+it("reclaims a dead owner's lock and clears its transaction only after a reinstall", async () => {
+  const root = await project();
+  await hold(root, { "dead.json": deadOwner });
+  await mkdir(join(root, ".patchy/refresh-orphan/node_modules"), { recursive: true });
+  const dev = await ManagedProject.begin(root);
+  expect(dev.interrupted).toBe(true);
+  await dev.finish(true);
+  expect(await readdir(join(root, ".patchy"))).toEqual(["refresh-orphan"]);
+  const refresh = await ManagedProject.begin(root);
+  expect(refresh.interrupted).toBe(true);
+  await refresh.prepareInstall();
+  await refresh.finish(true);
+  expect(await readdir(join(root, ".patchy"))).toEqual([]);
+});
+
+it.each([
+  ["an empty slot", {}],
+  ["a malformed owner", { "dead.json": "{" }],
+  [
+    "an owner without a birth",
+    { "dead.json": JSON.stringify({ pid: process.pid, nonce: "dead" }) }
+  ],
+  ["two owners", { "dead.json": deadOwner, "other.json": deadOwner }]
+])("never reclaims %s", async (_, owners) => {
+  const root = await project();
+  await hold(root, owners);
+  const error = await ManagedProject.begin(root).catch((cause: unknown) => cause);
+  expect(error).toEqual(new ProjectLocked({ holder: "unknown" }));
+  expect((error as ProjectLocked).message).toContain(".patchy/refresh-lock");
+  expect(await bytes(lockSlot(root))).toEqual(
+    Object.fromEntries(Object.entries(owners).map(([name, text]) => [name, Buffer.from(text)]))
+  );
+});
+
+it("releases without removing a replacement owner's claim", async () => {
+  const root = await project();
+  const transaction = await ManagedProject.begin(root);
+  // Simulate another owner replacing the slot before this transaction finishes.
+  await rm(lockSlot(root), { recursive: true });
+  await hold(root, { "replacement.json": "replacement" });
+  await transaction.finish(true);
+  expect(await readFile(join(lockSlot(root), "replacement.json"), "utf8")).toBe("replacement");
 });
