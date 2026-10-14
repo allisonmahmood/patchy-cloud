@@ -640,6 +640,11 @@ Blocked or unsafe:
 - unsafe inline CSS patterns
 - secrets, private URLs, and local paths
 
+Past what any page needs, the checker also refuses markup that nests more than 510
+elements deep, gives an element more than 256 attributes, or needs heavy repair, such
+as a `<b>` left open across thousands of blocks. Close tags in the order you opened
+them and keep table content inside cells; the refusal names the limit.
+
 ## Output pattern
 
 1. Settle the style by [the order above](#styling-a-static-page), reading

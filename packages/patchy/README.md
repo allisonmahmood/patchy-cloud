@@ -1030,7 +1030,9 @@ CSS `@import`. It does not duplicate core's tier 0 safe-HTML policy or restrict
 hyperlinks: fragment, relative and external anchors have the same acceptance in
 both tiers, while the runtime sandbox still governs navigation.
 The local HTML cap is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2; either excess
-is `too_large`, with a largest-contributor report. `server/` below tier 2 remains
+is `too_large`, with a largest-contributor report. Tier 0's policy also bounds the
+parser's work: nesting past 510 elements, more than 256 attributes on an element and
+heavy repair of misnested markup are refused with a message naming the bound. `server/` below tier 2 remains
 `tier_mismatch`; scripts require at least tier 1. A failed repo build never falls
 back to a static file.
 

@@ -7,6 +7,7 @@
 import * as CssTree from "css-tree";
 import * as parse5 from "parse5";
 import { registry } from "@patchy/limits/registry";
+import { ParseLimitExceeded, parseBoundedFragment } from "./html-policy.js";
 
 /** The fifteen tokens every look sets. Patchy fixes the names and meanings; the company sets the values. */
 export const LOOK_TOKENS = [
@@ -248,13 +249,21 @@ const checkCss = (css: string): string[] => {
   return errors;
 };
 
-/** The logo is one `<svg>` that embeds anything it shows; `#fragment` links stay inside it. */
+/**
+ * The logo is one `<svg>` that embeds anything it shows; `#fragment` links stay inside it. It is
+ * parsed under the same bounds as a static page, which also bound the walk below.
+ */
 const checkLogo = (svg: string): string[] => {
-  const roots = parse5
-    .parseFragment(svg)
-    .childNodes.filter(
-      (node) => node.nodeName !== "#comment" && !("value" in node && node.value.trim() === "")
-    );
+  let fragment: parse5.DefaultTreeAdapterMap["documentFragment"];
+  try {
+    fragment = parseBoundedFragment(svg);
+  } catch (error) {
+    if (error instanceof ParseLimitExceeded) return [`logo.svg: ${error.message}`];
+    throw error;
+  }
+  const roots = fragment.childNodes.filter(
+    (node) => node.nodeName !== "#comment" && !("value" in node && node.value.trim() === "")
+  );
   const [root] = roots;
   if (roots.length !== 1 || root?.nodeName !== "svg")
     return ["logo.svg must be one <svg> element."];
