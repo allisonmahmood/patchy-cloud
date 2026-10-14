@@ -15,9 +15,9 @@ work=$(mktemp -d) && curl -fsS 'https://pages.example.com/install.mjs' -o "$work
 patchy login --api-url https://pages.example.com
 ```
 
-The installer reads the instance's unauthenticated `GET /api/release`, downloads the exact `package.tarball` and checks its bytes against the SHA-512 `package.integrity` before running `npm install --global --ignore-scripts --no-audit --no-fund` on them. That catches a damaged or mismatched download, not a compromised instance. It then runs the new CLI's [`patchy setup`](#patchy-setup---remove) by absolute path and prints the executable and skill paths. It refuses Node older than 22.22.0 or a missing npm, and names the fix when npm cannot write its global prefix, when that prefix is inside Volta's Node image, or when that prefix's `bin` is not first on `PATH` for `patchy`. Rerunning it is the upgrade path: it always reinstalls the instance's current release. Windows PowerShell runs the same installer; `/llms.txt` has its line, which calls `patchy.cmd`.
+The installer reads the instance's unauthenticated `GET /api/release`, downloads the exact `package.tarball` and checks its bytes against the SHA-512 `package.integrity` before running `npm install --global --ignore-scripts --no-audit --no-fund` on them. That catches a damaged or mismatched download, not a compromised instance. It then runs the new CLI's [`patchy setup`](#patchy-setup---remove) by absolute path, which keeps the skill under `~/.patchy` where switching Node versions cannot take it, and prints the executable and skill paths. It refuses Node older than 22.22.0 or a missing npm, and names the fix when npm cannot write its global prefix, when that prefix is inside Volta's Node image, or when that prefix's `bin` is not first on `PATH` for `patchy`. Rerunning it is the upgrade path: it always reinstalls the instance's current release. Windows PowerShell runs the same installer; `/llms.txt` has its line, which calls `patchy.cmd`.
 
-Contributors working in this checkout can instead run `pnpm --filter patchy build`. It puts an executable at `packages/patchy/dist/index.js` and packs the release tarball. Symlink that executable as `patchy` into a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/patchy/dist/index.js`.
+Contributors working in this checkout can instead run `pnpm --filter patchy build`. It puts an executable at `packages/patchy/dist/index.js` and packs the release tarball. Symlink that executable as `patchy` into a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Agents read the copy of the skill that `patchy setup` made, so run `patchy setup` again after rebuilding to give them your skill changes. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/patchy/dist/index.js`.
 
 The package bundles its runtime dependencies and installs offline without running install scripts. Inside a patch repo it is pinned as one exact devDependency; `pnpm patchy` runs that copy. `GET /api/release` reports the tarball URL and SHA-512 integrity. See [ADR-0011](../../docs/adr/ADR-0011-one-package-one-release.md) for the release and stable-wire boundary.
 
@@ -960,24 +960,36 @@ one may be in a file the probe could not read.
 
 ### `patchy setup [--remove]`
 
-Register the package's bundled global skill with agents. Setup links the whole
-`skills/patchy` directory, references included, as `~/.agents/skills/patchy` and
-`~/.claude/skills/patchy`: symlinks on macOS and Linux, junctions on Windows.
-The installer runs it; run it yourself after installing some other way.
+Register the package's bundled global skill with agents. Setup copies the whole
+`skills/patchy` directory, references included, to `~/.patchy/skills/patchy` and
+links that copy as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`:
+symlinks on macOS and Linux, junctions on Windows. The copy lives outside npm's
+prefix, so the skill survives a Node version manager (mise, nvm, fnm, asdf)
+switching or removing the Node that installed the CLI. It follows the home
+directory, not `PATCHY_STATE_DIR`. The installer runs setup; run it yourself
+after installing some other way.
 
-Setup owns a link whose target is a `patchy` package's `skills/patchy`
-directory, including a dangling one left by an npm prefix that is gone, such as
-after switching Node versions. It creates missing links, replaces owned links to
-another package and leaves correct ones untouched, so a rerun changes nothing.
-It checks both paths before changing either: a real directory, a file or a link
-to anything else is exit 1 with `code: "skill_conflict"` naming the path, and
-nothing changes. `--remove` deletes only owned links and warns about anything
-else it leaves in place.
+Every run replaces the copy with the running release's skill, dropping files
+that release no longer ships. The new copy is written to a `.patchy-*` folder
+beside the old one and swapped in with two renames, so an agent never reads half
+a copy. A run that fails keeps the old copy; if it cannot put it back, its error
+names the folder where it is kept. A run killed between the two renames leaves
+no copy, both links dangling and that folder behind; running setup or the
+install line again recovers.
+Setup owns that copy, links to it, and links an earlier release made to a
+`patchy` package's `skills/patchy` directory, including a dangling one left by
+an npm prefix that is gone. It creates missing links, replaces owned links into
+a package and leaves correct ones untouched. It checks the copy and both links
+before changing any: a real directory, a file or a link to anything else at an
+agent path, or a file or link at the copy's path, is exit 1 with
+`code: "skill_conflict"` naming the path, and nothing changes. `--remove`
+deletes only the links and copy it owns and warns about anything else it leaves
+in place.
 
 ```sh
 patchy setup --json
 # { "ok": true, "linked": ["/home/you/.agents/skills/patchy", "/home/you/.claude/skills/patchy"],
-#   "skill": "/usr/local/lib/node_modules/patchy/skills/patchy/SKILL.md" }
+#   "skill": "/home/you/.patchy/skills/patchy/SKILL.md" }
 ```
 
 `--remove --json` returns `{ ok, removed, warnings }`.

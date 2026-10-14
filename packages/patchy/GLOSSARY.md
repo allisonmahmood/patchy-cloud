@@ -57,7 +57,7 @@ The instance's `/install.mjs`: a dependency-free Node script with the instance's
 _Avoid_: bootstrapper, npm package, self-update
 
 **Setup**:
-`patchy setup`, which links the package's global skill directory as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`. It owns only links to a `patchy` package's skill and refuses to replace anything else.
+`patchy setup`, which copies the package's global skill directory to `~/.patchy/skills/patchy` and links that copy as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`, so the skill outlives the Node version that installed the CLI. It owns only that copy, links to it and links an earlier setup made into a `patchy` package's skill, and refuses to replace anything else.
 _Avoid_: onboarding, install
 
 **Publishing key**:

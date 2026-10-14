@@ -1,6 +1,6 @@
 // The CLI contract from outside: setup, the exit-code ladder, login, keys and status.
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE } from "@patchy/api";
@@ -8,7 +8,6 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import {
   htmlFile,
   identity,
-  packageDir,
   readJson,
   requestBarrier,
   runCli,
@@ -17,17 +16,18 @@ import {
 } from "./test/cli.js";
 
 describe("patchy setup", () => {
-  it("links the bundled skill, removes its links, and refuses a path it does not own", async () => {
+  it("links a copy of the bundled skill, removes both, and refuses a path it does not own", async () => {
     const home = tempDir();
     const env = { HOME: home };
     const agents = path.join(home, ".agents/skills/patchy");
     const claude = path.join(home, ".claude/skills/patchy");
+    const copy = path.join(home, ".patchy/skills/patchy");
     const linked = await runCli(["setup", "--json"], { env });
     expect(linked).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(linked.stdout)).toEqual({
       ok: true,
       linked: [agents, claude],
-      skill: path.join(realpathSync(packageDir), "skills/patchy/SKILL.md")
+      skill: path.join(copy, "SKILL.md")
     });
     // The whole bundled directory, references included.
     expect(existsSync(path.join(claude, "references/onboarding.md"))).toBe(true);
@@ -36,7 +36,7 @@ describe("patchy setup", () => {
     expect(removed).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(removed.stdout)).toEqual({
       ok: true,
-      removed: [agents, claude],
+      removed: [agents, claude, copy],
       warnings: []
     });
 

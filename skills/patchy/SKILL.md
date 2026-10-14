@@ -276,25 +276,28 @@ New patches default to company scope; use `--share public` only when the user wa
 anyone with the link to read the page.
 
 Requires Node.js 22.22.0 or newer, with npm, and the `patchy` CLI on `PATH`.
-If the CLI is missing or its release differs from the intended instance, install
-from that instance, not a registry: its `/llms.txt` has the install line. For a
-new install, use the instance URL the user supplied; ask where to publish only
-if no destination is known. On macOS and Linux:
+If the CLI is missing, as after a Node version change, or its release differs
+from the intended instance, install from that instance, not a registry: its
+`/llms.txt` has the install line. The intended instance is the one the user
+named, otherwise the `apiUrl` in the state directory's `config.json`
+(`$PATCHY_STATE_DIR`, default `~/.patchy`); ask where to publish only when
+neither exists. On macOS and Linux:
 
 ```bash
 work=$(mktemp -d) && curl -fsS 'https://<instance>/install.mjs' -o "$work/install.mjs" && node "$work/install.mjs"
 ```
 
 The installer verifies the release's SHA-512 integrity before installing it
-globally with npm, links this skill as `~/.agents/skills/patchy` and
-`~/.claude/skills/patchy` through `patchy setup`, and prints the executable and
-skill paths. When it fails, its message names the fix: relay it. Rerunning it
-upgrades. A real directory already at a skill path is `skill_conflict`: ask the
-person before moving it, then run `patchy setup` again. In Windows PowerShell,
-use the PowerShell line from `/llms.txt` and call every `patchy` command as
-`patchy.cmd`.
+globally with npm, copies this skill to `~/.patchy/skills/patchy` and links it as
+`~/.agents/skills/patchy` and `~/.claude/skills/patchy` through `patchy setup`,
+and prints the executable and skill paths. When it fails, its message names the
+fix: relay it. Rerunning it upgrades. A real directory already at a skill path
+is `skill_conflict`: ask the person before moving it, then run `patchy setup`
+again. In Windows PowerShell, use the PowerShell line from `/llms.txt` and call
+every `patchy` command as `patchy.cmd`.
 Contributors in a source checkout may instead run `pnpm --filter patchy build`
 and symlink `packages/patchy/dist/index.js` as `patchy` into a directory on `PATH`.
+Agents read a copy of this skill, so rerun `patchy setup` after each rebuild.
 
 Settle the instance and available key before login or publish:
 

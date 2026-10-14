@@ -356,7 +356,7 @@ const setup = Command.make(
   "setup",
   {
     remove: Flag.Boolean("remove").pipe(
-      Flag.withDescription("Remove only the skill links setup made"),
+      Flag.withDescription("Remove only the skill copy and links setup made"),
       Flag.withDefault(false)
     )
   },
@@ -367,7 +367,7 @@ const setup = Command.make(
             const { removed, warnings } = yield* Setup.unlink();
             for (const warning of warnings) yield* Output.warn(warning);
             yield* Output.report({ ok: true, removed, warnings }, [
-              removed.length === 0 ? "No Patchy skill links to remove." : "Removed:",
+              removed.length === 0 ? "No Patchy skill to remove." : "Removed:",
               ...removed.map((link) => `  ${link}`)
             ]);
           })
@@ -382,7 +382,7 @@ const setup = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Link the bundled Patchy skill into ~/.agents/skills and ~/.claude/skills, or remove those links."
+    "Copy the bundled Patchy skill to ~/.patchy/skills and link it into ~/.agents/skills and ~/.claude/skills, or remove them."
   )
 );
 
