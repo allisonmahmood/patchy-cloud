@@ -135,11 +135,11 @@ describe("validateHtml", () => {
   });
 
   it("warns about each @font-face source that isn't a data: URL, wherever the rule sits", () => {
-    const result = validateHtml(`<title>Fonts</title>
+    const result = validateHtml(String.raw`<title>Fonts</title>
       <style>
         @font-face { src: local("Inter"), url(https://example.test/a.woff2) format("woff2"); }
         @media print { @font-face { src: url(fonts/b.woff2); } }
-        @supports (display: grid) { @font-face { src: url(//example.test/c.woff2); } }
+        @supports (display: grid) { @FONT-FACE { \73rc: url(//example.test/c.woff2); } }
       </style>
       <svg><style>@font-face { src: url(https://example.test/d.woff2); }</style></svg>`);
 

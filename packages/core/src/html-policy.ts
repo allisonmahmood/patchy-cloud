@@ -139,7 +139,8 @@ export function validateHtml(
       }
 
       if (tagName === "style") {
-        warnings.push(...blockedStyleSources(collectText(node)));
+        // Not spread: a stylesheet can name tens of thousands of sources, each a stack slot.
+        for (const warning of blockedStyleSources(collectText(node))) warnings.push(warning);
       }
     }
 
@@ -286,8 +287,11 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
 function blockedStyleSources(css: string): string[] {
   const warnings: string[] = [];
   try {
+    // css-tree keeps escapes in names, and a browser reads `\73rc` as `src`.
+    const named = (name: string | undefined, expected: string) =>
+      CssTree.ident.decode(name ?? "").toLowerCase() === expected;
     CssTree.walk(CssTree.parse(css), function (node) {
-      if (node.type === "Atrule" && node.name.toLowerCase() === "import") {
+      if (node.type === "Atrule" && named(node.name, "import")) {
         const target = node.prelude?.type === "AtrulePrelude" ? node.prelude.children.first : null;
         if (target?.type === "String" || target?.type === "Url")
           warnings.push(
@@ -295,8 +299,8 @@ function blockedStyleSources(css: string): string[] {
           );
       } else if (
         node.type === "Url" &&
-        this.atrule?.name.toLowerCase() === "font-face" &&
-        this.declaration?.property.toLowerCase() === "src" &&
+        named(this.atrule?.name, "font-face") &&
+        named(this.declaration?.property, "src") &&
         !/^(?:data:|#)/i.test(node.value.trim())
       ) {
         warnings.push(
