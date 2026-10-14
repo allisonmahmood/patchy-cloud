@@ -1,3 +1,4 @@
+import * as CssTree from "css-tree";
 import * as parse5 from "parse5";
 import type { HtmlValidationResult } from "./types.js";
 
@@ -136,6 +137,10 @@ export function validateHtml(
           errors.push("Blocked meta refresh tag found.");
         }
       }
+
+      if (tagName === "style") {
+        warnings.push(...blockedStyleSources(collectText(node)));
+      }
     }
 
     if ("childNodes" in node) {
@@ -272,6 +277,37 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
       node.parentNode = null;
     }
   };
+}
+
+/**
+ * What a `<style>` asks for that tier 0's content policy blocks, one warning per source:
+ * `@font-face` sources that aren't a `data:` URL or an in-page `#fragment`, and every `@import`.
+ */
+function blockedStyleSources(css: string): string[] {
+  const warnings: string[] = [];
+  try {
+    CssTree.walk(CssTree.parse(css), function (node) {
+      if (node.type === "Atrule" && node.name.toLowerCase() === "import") {
+        const target = node.prelude?.type === "AtrulePrelude" ? node.prelude.children.first : null;
+        if (target?.type === "String" || target?.type === "Url")
+          warnings.push(
+            `@import "${target.value}" won't load: static pages can't load other stylesheets. Inline its CSS, with any fonts embedded as data: URLs.`
+          );
+      } else if (
+        node.type === "Url" &&
+        this.atrule?.name.toLowerCase() === "font-face" &&
+        this.declaration?.property.toLowerCase() === "src" &&
+        !/^(?:data:|#)/i.test(node.value.trim())
+      ) {
+        warnings.push(
+          `@font-face source "${node.value}" won't load: static pages load fonts only from data: URLs. Embed the font as a data: URL or use a system font stack.`
+        );
+      }
+    });
+  } catch {
+    // css-tree recurses, so deeply nested rules overflow the stack; a warning never fails a page.
+  }
+  return warnings;
 }
 
 /** A scripted bundle's title comes before its inline code, which runs to megabytes. */

@@ -32,12 +32,36 @@ const expectedErrorsByRejectFixture: Readonly<Record<string, readonly string[]>>
   "unsafe-inline-css.html": ["Blocked unsafe inline CSS."]
 } satisfies RequiredRejectFixtures;
 
+const fontWarning = (source: string) =>
+  `@font-face source "${source}" won't load: static pages load fonts only from data: URLs. Embed the font as a data: URL or use a system font stack.`;
+const importWarning = (target: string) =>
+  `@import "${target}" won't load: static pages can't load other stylesheets. Inline its CSS, with any fonts embedded as data: URLs.`;
+
+const expectedWarningsByAcceptFixture: Readonly<Record<string, readonly string[]>> = {
+  "embedded-font.html": [],
+  "portfolio.html": [],
+  "project-status.html": [],
+  "remote-font.html": [fontWarning("https://example.test/remote.woff2")],
+  "remote-image.html": []
+};
+
 const acceptFixtures = await readFixtureCorpus("accept");
 const rejectFixtures = await readFixtureCorpus("reject");
 
 describe("validateHtml", () => {
-  it.each(acceptFixtures)("accepts $filename", ({ html }) => {
-    expect(validateHtml(html).ok).toBe(true);
+  it("defines exact warnings for every accept fixture", () => {
+    expect(Object.keys(expectedWarningsByAcceptFixture).sort()).toEqual(
+      acceptFixtures.map(({ filename }) => filename)
+    );
+  });
+
+  it.each(acceptFixtures)("accepts $filename with its specified warnings", ({ filename, html }) => {
+    const expectedWarnings = expectedWarningsByAcceptFixture[filename];
+    if (!expectedWarnings) {
+      throw new Error(`Missing expected warnings for ${filename}.`);
+    }
+
+    expect(validateHtml(html)).toMatchObject({ ok: true, warnings: expectedWarnings });
   });
 
   it("defines exact errors for every reject fixture", () => {
@@ -108,6 +132,57 @@ describe("validateHtml", () => {
 
     expect(result.ok).toBe(true);
     expect(result.warnings).toContain("No <title> found; Patchy Cloud will use a generic title.");
+  });
+
+  it("warns about each @font-face source that isn't a data: URL, wherever the rule sits", () => {
+    const result = validateHtml(`<title>Fonts</title>
+      <style>
+        @font-face { src: local("Inter"), url(https://example.test/a.woff2) format("woff2"); }
+        @media print { @font-face { src: url(fonts/b.woff2); } }
+        @supports (display: grid) { @font-face { src: url(//example.test/c.woff2); } }
+      </style>
+      <svg><style>@font-face { src: url(https://example.test/d.woff2); }</style></svg>`);
+
+    expect(result).toMatchObject({
+      ok: true,
+      warnings: [
+        fontWarning("https://example.test/a.woff2"),
+        fontWarning("fonts/b.woff2"),
+        fontWarning("//example.test/c.woff2"),
+        fontWarning("https://example.test/d.woff2")
+      ]
+    });
+  });
+
+  it("warns about every @import, naming its target", () => {
+    const result = validateHtml(`<title>Imports</title>
+      <style>@import url("https://example.test/a.css"); @import "https://example.test/b.css";</style>`);
+
+    expect(result).toMatchObject({
+      ok: true,
+      warnings: [
+        importWarning("https://example.test/a.css"),
+        importWarning("https://example.test/b.css")
+      ]
+    });
+  });
+
+  it("does not warn about embedded fonts, other URLs or template content", () => {
+    const result = validateHtml(`<title>Quiet</title>
+      <style>
+        @font-face { src: url("DATA:font/woff2;base64,AA") format("woff2"); }
+        @font-face { src: url("  data:font/woff2;base64,AA"), url(#glyphs), local("Inter"); }
+        body { background-image: url(https://example.test/texture.png); }
+      </style>
+      <template><style>@import "https://example.test/a.css";</style></template>`);
+
+    expect(result).toMatchObject({ ok: true, warnings: [] });
+  });
+
+  it("accepts CSS too deeply nested to read", () => {
+    expect(
+      validateHtml(`<title>Deep</title><style>${"@media{".repeat(5_000)}</style>`)
+    ).toMatchObject({ ok: true, warnings: [] });
   });
 
   it("reads the title a browser shows: the first HTML one, at any depth", () => {
