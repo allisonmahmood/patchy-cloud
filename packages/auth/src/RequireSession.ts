@@ -36,7 +36,8 @@ export class Enrollment extends Context.Service<Enrollment, Viewer["Service"] | 
 /**
  * The signed-out door at `/`, `/login`, company pages and private patch addresses. With Clerk,
  * sign-up runs through its waitlist: a new person's account starts from an invitation email's
- * link, and anyone else can join the waitlist.
+ * link, and anyone else can join the waitlist. The front page's door also gives the setup line,
+ * as plain text: an agent told only the instance's address reads this page first.
  */
 export function door(
   session: Session.Session["Service"],
@@ -47,13 +48,17 @@ export function door(
   const url = session.signInUrl(path);
   const signIn = `<a class="btn btn-primary" href="${escapeAttribute(url)}">Sign in</a>`;
   const { waitlistUrl } = session;
+  const setup =
+    !failed && new URL(path, session.publicBaseUrl).pathname === "/"
+      ? `<p class="supporting-text">Setting up with an agent? Tell it: <code>Set up Patchy using ${escapeHtml(new URL("/llms.txt", session.publicBaseUrl).href)}</code></p>`
+      : "";
   return pageResponse({
     title: failed ? "Sign-in could not complete" : "Sign in to Patchy",
     body: failed
       ? `<p>Try signing in again.</p><div class="actions">${signIn}</div>`
       : waitlistUrl === undefined
-        ? `<p>Continue to your company.</p><div class="actions">${signIn}</div>`
-        : `<p>Patchy Cloud is in private beta. Sign in to continue to your company.</p><p class="supporting-text">Invited, but new here? Start from the link in your invitation email. It creates your account.</p><div class="actions">${signIn}<a class="btn btn-quiet" href="${escapeAttribute(waitlistUrl)}">Join the waitlist</a></div>`,
+        ? `<p>Continue to your company.</p>${setup}<div class="actions">${signIn}</div>`
+        : `<p>Patchy Cloud is in private beta. Sign in to continue to your company.</p><p class="supporting-text">Invited, but new here? Start from the link in your invitation email. It creates your account.</p>${setup}<div class="actions">${signIn}<a class="btn btn-quiet" href="${escapeAttribute(waitlistUrl)}">Join the waitlist</a></div>`,
     status
   }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
 }
