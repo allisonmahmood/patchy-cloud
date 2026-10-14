@@ -43,6 +43,15 @@ const decodeFailure = Schema.decodeUnknownSync(
 );
 const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
 
+/**
+ * The daemon's Node arguments: the CLI's own, plus `--no-wasm-code-gc` on Node 24, whose V8 can
+ * free a Wasm wrapper twice and abort the daemon's PGlite (nodejs/node#66366). V8 flags are
+ * process-wide, so the flag goes on the daemon itself. Drop it once `engines` no longer accepts a
+ * Node 24 without the backport (nodejs/node#66376).
+ */
+export const daemonExecArgv = (node: string, execArgv: readonly string[]) =>
+  node.startsWith("24.") ? [...execArgv, "--no-wasm-code-gc"] : execArgv;
+
 const healthy = Effect.fn("Dev.healthy")(function* (record: Daemon) {
   if (!record.url || !(yield* io("Could not inspect the dev process.", () => sameProcess(record))))
     return false;
@@ -222,7 +231,8 @@ export const start = Effect.fn("Dev.start")(function* <R>(
         try {
           const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
           const entry = fileURLToPath(new URL(`./devChild.${extension}`, import.meta.url));
-          const child = spawn(process.execPath, [...process.execArgv, entry, stateDir, nonce], {
+          const nodeArgs = daemonExecArgv(process.versions.node, process.execArgv);
+          const child = spawn(process.execPath, [...nodeArgs, entry, stateDir, nonce], {
             cwd: root,
             detached: true,
             stdio: ["pipe", log.fd, log.fd],
