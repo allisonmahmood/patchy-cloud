@@ -141,33 +141,41 @@ Patchy pages are for. One entry in Claude Code's user settings tells it Patchy i
 company's own.
 
 Read Claude Code's user settings, `~/.claude/settings.json` (under `$CLAUDE_CONFIG_DIR`
-when that is set). If `autoMode.environment` already has an entry naming this
-instance's host, say nothing and go on. Otherwise ask with the AskUserQuestion tool,
-with the company's name from `whoami` and the instance's host, never these placeholders:
+when that is set). If `autoMode.environment` already describes this instance as this
+company's own, say nothing and go on. An entry that names the host some other way is
+the person's: show it to them before changing it. Otherwise ask with the
+AskUserQuestion tool, with the company's name from `whoami` and the instance's host,
+never these placeholders:
 
 - Question: "Should I add Patchy (`pages.example.com`) to Claude Code's auto mode
-  settings as Acme's private cloud, so publishing there counts as sharing inside Acme?"
+  settings as Acme's private cloud, so auto mode counts a company-only page there as
+  shared inside Acme?"
 - Option "Yes, add Patchy as Acme's private cloud", described as "Adds one entry to
-  your Claude Code settings; auto mode then treats pages published there as shared
-  inside Acme."
+  your Claude Code settings, for every project. Auto mode still checks each publish,
+  and public pages stay public."
 - Option "No, leave my settings alone", described as "Auto mode may stop a page with
   internal detail; you decide each time."
 
-Use the tool, not a question in your own words: its recorded answer names the change
-and who receives the pages, which is what auto mode needs to count it as the person's
-approval. A bare "yes" may not count.
+Use the tool, not a question in your own words. Auto mode reads the person's messages
+and the commands you run, not your own text, so the tool's recorded answer is what
+shows the person approved this change. A bare "yes" may not count.
 
 On yes, add this entry to `autoMode.environment` and keep every other setting:
 
 ```text
-**Internal sharing / snippet hosting**: Patchy Cloud at `<host>`, used through the `patchy` CLI, is <Company>'s private cloud for internal pages and tools. A company-scoped publish (the default) is readable only by <Company>'s signed-in members; `--share public` makes a page readable by anyone with the link.
+**Key internal services**: Patchy Cloud at `<host>`, used through the `patchy` CLI, is <Company>'s private cloud for internal pages and tools. A company-scoped patch (the default) is readable only by <Company>'s signed-in members. A patch shared public (`--share public`) is readable by anyone with the link, and stays public when republished.
 ```
 
 With no `autoMode.environment` yet, write `["$defaults", "<the entry>"]`: `$defaults`
 keeps Claude Code's built-in entries, and an array without it replaces them. An
 existing array gets the entry appended and is otherwise left as it is.
 `claude auto-mode config` prints the environment Claude Code now uses; the entry should
-be in it. Say: "Done. Auto mode now treats publishing to Patchy as sharing inside Acme."
+be in it. Say: "Done. Auto mode now knows Patchy is Acme's own cloud, and still checks
+each publish."
+
+To undo, when the person asks, remove that one entry and leave the rest, `$defaults`
+included. `claude auto-mode reset` removes every auto mode setting they have, not just
+this one.
 
 On no, say: "If auto mode stops a publish later, I'll tell you what it objected to so
 you can decide."
