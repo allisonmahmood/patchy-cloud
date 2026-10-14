@@ -1,6 +1,6 @@
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
- * `Patches`, `Limits` and `Analytics`: discovery, publish and owner lifecycle actions. The
+ * `Patches` and `Limits`: discovery, publish and owner lifecycle actions. The
  * identity comes from the bearer middleware the group declares; this
  * package never authenticates anyone.
  * The hosting server mounts the group with the rest of the API.
@@ -11,7 +11,6 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   BadRequest,
@@ -248,12 +247,6 @@ const keyConflict = () =>
     error: "Publish key was already used with a different payload."
   });
 
-/**
- * The shape of an SDK entry point, such as `patchy/server`. A manifest's
- * `sdkImports` is client supplied, so analytics drops anything else.
- */
-const SDK_ENTRY_POINT = /^patchy\/[a-z][a-z0-9/-]*$/;
-
 /** Where the publication came from, as far as the request says. */
 const requestOrigin = Effect.map(HttpServerRequest.HttpServerRequest, (request) => ({
   sourceIp: Option.getOrNull(request.remoteAddress),
@@ -266,7 +259,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const patches = yield* Patches.Patches;
     const openability = yield* Patches.Openability;
     const limits = yield* Limits.Limits;
-    const analytics = yield* Analytics.Analytics;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const maxHtmlBytes = yield* PatchesConfig.maxHtmlBytes;
     const maxBundleBytes = yield* PatchesConfig.maxBundleBytes;
@@ -544,40 +536,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             );
           if (HttpServerResponse.isHttpServerResponse(recorded)) return recorded;
           yield* WideEvents.enrich({ patchId: recorded.patchId, versionId: recorded.versionId });
-          yield* analytics.track({
-            name: patchId === null ? "patch.created" : "patch.updated",
-            principalId: identity.user.id,
-            companyId: identity.company.id,
-            properties: {
-              patchId: recorded.patchId,
-              // Only the owner publishes, so the publisher is the owner.
-              ownerUserId: identity.user.id,
-              machineTokenId: identity.machine.id,
-              versionNumber: recorded.versionNumber,
-              scope: recorded.scope,
-              tier: recorded.tier,
-              htmlBytes: recorded.artifacts.html.bytes,
-              serverBytes: recorded.artifacts.server?.bytes ?? 0,
-              sdkImports: (manifest.sdkImports ?? []).filter((source) =>
-                SDK_ENTRY_POINT.test(source)
-              ),
-              tables: Object.keys(manifest.tables),
-              stores: Object.keys(manifest.files),
-              integrations: Object.entries(manifest.uses).map(
-                ([alias, use]) => `${use.kind}:${alias}`
-              ),
-              queryHandlers: Object.values(manifest.handlers ?? {}).filter(
-                (handler) => handler.kind === "query"
-              ).length,
-              mutationHandlers: Object.values(manifest.handlers ?? {}).filter(
-                (handler) => handler.kind === "mutation"
-              ).length,
-              actionHandlers: Object.values(manifest.handlers ?? {}).filter(
-                (handler) => handler.kind === "action"
-              ).length,
-              ...(yield* Analytics.CurrentCli)
-            }
-          });
           return HttpServerResponse.text(recorded.responseBody, {
             status: recorded.status,
             contentType: "application/json"

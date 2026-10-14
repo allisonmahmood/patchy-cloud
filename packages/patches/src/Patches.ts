@@ -515,6 +515,37 @@ export interface Recorded extends PublishUpdated {
   readonly responseBody: string;
 }
 
+/**
+ * The shape of an SDK entry point, such as `patchy/server`. A manifest's
+ * `sdkImports` is client supplied, so analytics drops anything else.
+ */
+const SDK_ENTRY_POINT = /^patchy\/[a-z][a-z0-9/-]*$/;
+
+/**
+ * What `patch.created` and `patch.updated` say about a recorded version.
+ * Only the owner publishes, so the publisher is the owner.
+ */
+const publication = (input: RecordInput, versionNumber: number, scope: Patch["scope"]) => {
+  const handlers = Object.values(input.manifest.handlers ?? {});
+  return {
+    patchId: input.patchId,
+    ownerUserId: input.ownerUserId,
+    machineTokenId: input.machineTokenId,
+    versionNumber,
+    scope,
+    tier: input.manifest.tier,
+    htmlBytes: input.fileSize,
+    serverBytes: input.server?.bytes ?? 0,
+    sdkImports: (input.manifest.sdkImports ?? []).filter((source) => SDK_ENTRY_POINT.test(source)),
+    tables: Object.keys(input.manifest.tables),
+    stores: Object.keys(input.manifest.files),
+    integrations: Object.entries(input.manifest.uses).map(([alias, use]) => `${use.kind}:${alias}`),
+    queryHandlers: handlers.filter((handler) => handler.kind === "query").length,
+    mutationHandlers: handlers.filter((handler) => handler.kind === "mutation").length,
+    actionHandlers: handlers.filter((handler) => handler.kind === "action").length
+  };
+};
+
 const Replay = Schema.Struct({
   payloadDigest: Schema.String,
   response: Schema.JsonObject,
@@ -732,7 +763,8 @@ export class Patches extends Context.Service<
     /**
      * Records a publish whose bytes are already stored: the version row, the
      * patch row it creates or moves forward,
-     * in one transaction. Consumes the pending-object intent under a lock;
+     * in one transaction, reporting `patch.created` or `patch.updated` with its commit.
+     * Consumes the pending-object intent under a lock;
      * a sweep that claimed it first prevents the version from being recorded.
      * Re-checks the target, so the preflight's answer can still change here.
      */
@@ -2037,6 +2069,16 @@ export const make = Effect.gen(function* () {
           WHERE id = ${input.patchId}`;
 
         yield* announce(input.patchId);
+        // The version row is new: a reused publish key failed above and reports nothing.
+        yield* report({
+          name: input.intent === "create" ? "patch.created" : "patch.updated",
+          principalId: input.ownerUserId,
+          companyId,
+          properties: {
+            ...publication(input, versionNumber, scope),
+            ...(yield* Analytics.CurrentCli)
+          }
+        });
         return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
       }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
     ).pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))

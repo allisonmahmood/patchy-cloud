@@ -589,6 +589,30 @@ it.layer(layer)("DeviceLogins", (it) => {
     }).pipe(withDeviceLogins)
   );
 
+  it.effect("reports a mint whose poll is interrupted during COMMIT, once it has committed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const tokens = yield* MachineTokens.MachineTokens;
+      const userId = yield* addUser("interrupted");
+      const login = yield* logins.start({ machineNameHint: "host" });
+      yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Interrupted" });
+      yield* Testing.interruptDuringCommit("machine_tokens", logins.poll(login.deviceCode));
+      const [minted] = yield* tokens.list(userId);
+      assert.deepStrictEqual(
+        events.filter((event) => event.principalId === userId),
+        [
+          {
+            name: "token.minted",
+            principalId: userId,
+            companyId: DEV_SEED.companyId,
+            properties: { tokenId: minted!.id, replaced: false }
+          }
+        ]
+      );
+    }).pipe(withDeviceLogins)
+  );
+
   it.effect("charges lookup, confirm and deny once each against the same per-user allowance", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
