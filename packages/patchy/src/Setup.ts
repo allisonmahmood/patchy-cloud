@@ -52,6 +52,11 @@ const decodeManifest = Schema.decodeUnknownOption(
 );
 const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
 const errno = Schema.decodeUnknownOption(Schema.Struct({ code: Schema.String }));
+const isLocalError = Schema.is(LocalError);
+
+/** ` (CODE)` naming a system error, or nothing. */
+const code = (cause: unknown) =>
+  Option.match(errno(cause), { onNone: () => "", onSome: ({ code }) => ` (${code})` });
 
 /** A `patchy/skills/patchy` directory whose package is `patchy`, or that is gone with its prefix. */
 const packageSkill = async (target: string) => {
@@ -98,10 +103,7 @@ const inspect = async (at: string, copy: string): Promise<Entry> => {
 /** Names the step, the path and the system error code; the error itself rides as `cause`. */
 const failure = (step: "inspect" | "copy" | "link" | "remove", at: string) => (cause: unknown) =>
   new LocalError({
-    message: `Could not ${step} the Patchy skill at ${at}${Option.match(errno(cause), {
-      onNone: () => "",
-      onSome: ({ code }) => ` (${code})`
-    })}.`,
+    message: `Could not ${step} the Patchy skill at ${at}${code(cause)}.`,
     cause
   });
 
@@ -117,30 +119,39 @@ const inspectAll = (home: string) => {
 
 /**
  * Replace the copy with the bundle, dropping files the bundle no longer ships.
- * The bundle lands in a private sibling first and two renames swap it in, so an
- * interrupted refresh leaves the old copy or none, never half of one.
+ * The bundle lands in a private sibling first and two renames swap it in, so a
+ * failed refresh keeps the old copy and an agent never reads half of one. A
+ * kill between the renames leaves no copy until the next setup.
  */
-const refresh = async (skillDir: string, copy: string) => {
+const refresh = async (skillDir: string, copy: string, move: typeof rename) => {
   const parent = path.dirname(copy);
   // Private like the state directory, which this may be the first to create.
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const work = await mkdtemp(path.join(parent, ".patchy-"));
   const next = path.join(work, "next");
   const previous = path.join(work, "previous");
+  let keep = false;
   try {
     await cp(skillDir, next, { recursive: true });
-    const moved = await rename(copy, previous).then(
+    const moved = await move(copy, previous).then(
       () => true,
       (error: unknown) => (missing(error) ? false : Promise.reject(error))
     );
-    await rename(next, copy).catch(async (error: unknown) => {
-      // Windows can briefly lock freshly written files; keep the old copy over none.
-      if (moved) await rename(previous, copy).catch(() => undefined);
+    await move(next, copy).catch(async (error: unknown) => {
+      // Windows can briefly lock freshly written files; put the old copy back.
+      if (!moved) throw error;
+      await move(previous, copy).catch(() => {
+        keep = true;
+        throw new LocalError({
+          message: `Could not copy the Patchy skill at ${copy}${code(error)} or put the previous copy back, so it is kept at ${previous}. Run patchy setup again, or move it back.`,
+          cause: error
+        });
+      });
       throw error;
     });
   } finally {
     // A leftover sibling is harmless; failing to remove it must not mask the result.
-    await rm(work, { recursive: true, force: true }).catch(() => undefined);
+    if (!keep) await rm(work, { recursive: true, force: true }).catch(() => undefined);
   }
 };
 
@@ -148,11 +159,12 @@ const refresh = async (skillDir: string, copy: string) => {
  * Refresh the copy from `skillDir` and link every agent skill path to it.
  * Checks the copy and both links before changing any, so a conflict leaves the
  * machine as it was. Already-correct links are left untouched. Returns the link
- * paths and the copy's `SKILL.md`.
+ * paths and the copy's `SKILL.md`. `move` is `rename`; tests inject a failing one.
  */
 export const link = Effect.fn("Setup.link")(function* (
   home = homedir(),
-  skillDir = bundledSkillDir
+  skillDir = bundledSkillDir,
+  move = rename
 ) {
   const manifest = path.join(skillDir, "SKILL.md");
   yield* Effect.tryPromise({
@@ -172,7 +184,10 @@ export const link = Effect.fn("Setup.link")(function* (
       message: `${conflicts.map(({ at }) => at).join(" and ")} ${conflicts.length === 1 ? "was" : "were"} not made by patchy setup, so setup changed nothing. Move ${conflicts.length === 1 ? "it" : "them"} aside, then run patchy setup again.`
     });
   }
-  yield* Effect.tryPromise({ try: () => refresh(skillDir, copy), catch: failure("copy", copy) });
+  yield* Effect.tryPromise({
+    try: () => refresh(skillDir, copy, move),
+    catch: (cause) => (isLocalError(cause) ? cause : failure("copy", copy)(cause))
+  });
   for (const { at, entry } of entries) {
     if (at === copy || entry === "current") continue;
     yield* Effect.tryPromise({

@@ -10,6 +10,7 @@ import {
   symlinkSync,
   writeFileSync
 } from "node:fs";
+import { rename } from "node:fs/promises";
 import path from "node:path";
 import { NodeFileSystem } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
@@ -152,6 +153,29 @@ it.layer(NodeFileSystem.layer)("patchy setup", (it) => {
         assert.deepStrictEqual(read(claude), before);
         assert.deepStrictEqual(readdirSync(path.dirname(copy)), ["patchy"]);
       })
+  );
+
+  it.effect("keeps the previous copy, and names where, when it cannot be put back", () =>
+    Effect.gen(function* () {
+      const { home, skill, installed, copy, read } = yield* fixture;
+      yield* Setup.link(home, skill);
+      const before = read(copy);
+      // Every move into the copy's path fails, as a Windows lock can.
+      const locked: typeof rename = (from, to) =>
+        to === copy
+          ? Promise.reject(Object.assign(new Error("locked"), { code: "EPERM" }))
+          : rename(from, to);
+      const error = yield* Effect.flip(Setup.link(home, installed("next"), locked));
+      const [work, ...others] = readdirSync(path.dirname(copy));
+      assert.isDefined(work);
+      assert.deepStrictEqual(others, []);
+      const kept = path.join(path.dirname(copy), work, "previous");
+      assert.include(
+        error.message,
+        `(EPERM) or put the previous copy back, so it is kept at ${kept}.`
+      );
+      assert.deepStrictEqual(read(kept), before);
+    })
   );
 
   it.effect("removes the copy and the links setup owns, and nothing else", () =>

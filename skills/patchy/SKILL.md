@@ -297,6 +297,7 @@ again. In Windows PowerShell, use the PowerShell line from `/llms.txt` and call
 every `patchy` command as `patchy.cmd`.
 Contributors in a source checkout may instead run `pnpm --filter patchy build`
 and symlink `packages/patchy/dist/index.js` as `patchy` into a directory on `PATH`.
+Agents read a copy of this skill, so rerun `patchy setup` after each rebuild.
 
 Settle the instance and available key before login or publish:
 
