@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -65,8 +66,8 @@ const makeLoginHarness = (client: HttpClient.HttpClient, credentialSaveDelay = 0
   });
   return {
     files,
-    login: (wait: number) =>
-      Login.login({ complete: true, code: Option.none(), wait }).pipe(
+    login: (wait: number, { complete = true, json = true } = {}) =>
+      Login.login({ complete, code: Option.none(), wait }).pipe(
         Effect.provide(State.layer),
         Effect.provide(fs),
         Effect.provide(Path.layer),
@@ -75,10 +76,11 @@ const makeLoginHarness = (client: HttpClient.HttpClient, credentialSaveDelay = 0
         ),
         Effect.provideService(Instance.Instance, { apiUrl, source: "env", token: Option.none() }),
         Effect.provideService(Instance.ApiUrlFlag, Option.none()),
-        Effect.provideService(Output.JsonFlag, true),
+        Effect.provideService(Output.JsonFlag, json),
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.provideService(Api.CurrentCommand, "login"),
-        Effect.provide(Stdio.layerTest({}))
+        Effect.provide(Stdio.layerTest({})),
+        DateTime.withCurrentZone(DateTime.zoneMakeNamedUnsafe("Asia/Kolkata"))
       )
   };
 };
@@ -124,6 +126,46 @@ it.effect(
         }
       }
     })
+);
+
+it.effect("gives the handoff's expiry as minutes left and the clock time in the current zone", () =>
+  Effect.gen(function* () {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            { ok: true, ...pendingLogin, expiresAt: "1970-01-01T00:10:00.000Z" },
+            { status: 201 }
+          )
+        )
+      )
+    );
+    const { files, login } = makeLoginHarness(client);
+    // Asia/Kolkata is UTC+05:30 all year, so 00:10 UTC reads 05:40.
+    const cases = [
+      [1_000, "Expires in about 10 minutes, at 05:40"],
+      [570_000, "Expires in about 1 minute, at 05:40"],
+      [660_000, "Expired at 05:40"]
+    ] as const;
+    for (const [now] of cases) {
+      files.delete("/state/device-login.json");
+      yield* TestClock.setTime(now);
+      yield* login(60, { complete: false, json: false });
+    }
+    assert.deepStrictEqual(
+      yield* TestConsole.logLines,
+      cases.map(([, expiry]) =>
+        [
+          `Sign in: ${pendingLogin.verificationUrl}`,
+          `Code: ${pendingLogin.userCode}`,
+          expiry,
+          "Not waiting because stdin is not a terminal.",
+          `Then run: patchy login --complete ${pendingLogin.userCode}`
+        ].join("\n")
+      )
+    );
+  }).pipe(Effect.provide(TestConsole.layer))
 );
 
 it.effect("backs off by five seconds on slow_down without polling past the wait budget", () =>
