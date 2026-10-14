@@ -1029,6 +1029,10 @@ the instance release; executes config; checks generated declarations and server
 module names; builds with the repo's Vite toolchain; checks both import graphs;
 runs `tsc --noEmit`; and checks the evident tier. Stale generation fails locally
 with `stale_generated` before the build; run `patchy refresh`.
+A build that cannot resolve imports names the first three, each with the file
+that imports it, and counts the rest: a `patchy/_generated/logo.svg` the current
+look no longer has, for example. Other build and `tsc` output stays out of the
+error.
 Leftover files or external resource dependencies fail loudly. Bundle inspection checks
 resource completeness: embed resources, inline scripts and styles, and remove
 CSS `@import`. It does not duplicate core's tier 0 safe-HTML policy or restrict

@@ -70,7 +70,11 @@ describe("repo publish recovery", () => {
   it.each([
     ["patchy.config.ts", 'throw new Error("private-diagnostic-marker");'],
     ["src/main.ts", 'import { value } from "private-diagnostic-marker"; console.log(value);'],
-    ["vite.config.ts", 'throw new Error("private-diagnostic-marker"); export default {};']
+    ["vite.config.ts", 'throw new Error("private-diagnostic-marker"); export default {};'],
+    [
+      "vite.config.ts",
+      'export default { plugins: [{ name: "marker", transform() { throw new Error("private-diagnostic-marker"); } }] };'
+    ]
   ])("keeps %s failure diagnostics out of the public envelope", async (file, source) => {
     const instance = await stubInstance(projectHandler);
     const dir = publishTree(instance.url);
@@ -91,6 +95,39 @@ describe("repo publish recovery", () => {
     expect(existsSync(path.join(dir, ".patchy/publish", sha256(instance.url), "attempt"))).toBe(
       false
     );
+  });
+
+  it("names the imports the build cannot resolve and the files that import them", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    // The look generated no logo, as after a revision that dropped it.
+    writeFileSync(
+      path.join(dir, "src/main.tsx"),
+      'import logo from "../patchy/_generated/logo.svg";\nconsole.log(logo);\n'
+    );
+    const error = [
+      "Vite build failed:",
+      "- [UNRESOLVED_IMPORT] Could not resolve '../patchy/_generated/logo.svg' in src/main.tsx",
+      "Run `pnpm exec vite build` and fix the single-file build before publishing."
+    ].join("\n");
+    const json = await runCli(["publish", "--json"], options);
+    expect(json).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(json.stderr)).toMatchObject({ ok: false, kind: "local", error });
+    expect(await runCli(["publish"], options)).toMatchObject({ status: 1, stderr: `${error}\n` });
+    writeFileSync(
+      path.join(dir, "src/main.tsx"),
+      ["a", "b", "c", "d", "e"].map((name) => `import "./missing-${name}";`).join("\n")
+    );
+    const many = (await runCli(["publish"], options)).stderr;
+    expect(many.match(/^- \[UNRESOLVED_IMPORT\]/gm)).toHaveLength(3);
+    expect(many).toContain("\n- and 2 more\n");
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
   });
 
   it("reapplies a moved update's legacy receipt and retains a conflicting author selection", async () => {

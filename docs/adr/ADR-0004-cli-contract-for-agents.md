@@ -597,8 +597,9 @@ build and import check, `tsc --noEmit`, and evident-tier check. Residual files/e
 dependencies, an oversized HTML bundle (512 KiB at tier 0, 10 MiB at tiers 1 and 2,
 `too_large` with largest contributors), `server/` below tier 2, or script at tier 0 fail
 locally before attempt persistence. Compiler/build failures name the stage and
-diagnostic command; raw tool output stays outside the failure envelope and
-successful JSON stdout.
+diagnostic command. A build that cannot resolve imports also names the first
+three, each with the file that imports it, and counts the rest; other raw tool
+output stays outside the failure envelope and successful JSON stdout.
 
 Bundle inspection is a resource-completeness gate, not a second safe-HTML
 security policy. Resource dependencies must be embedded, scripts and styles
