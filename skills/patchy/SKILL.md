@@ -13,8 +13,9 @@ Inside a patch repo, its project skills govern building.
 ## Onboarding
 
 Read `references/onboarding.md` and follow it when the user asks to be walked through
-Patchy Cloud's onboarding, gives the portal's setup line
-(`Set up Patchy using <instance>/llms.txt`) or asks to redo their Patchy setup.
+Patchy Cloud's onboarding, asks to redo their Patchy setup, or asks in any words to get
+this machine ready to use Patchy, such as the portal's setup line
+(`Set up Patchy using <instance>/llms.txt`).
 That reference owns the whole flow —
 the company look, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
