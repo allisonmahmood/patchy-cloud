@@ -61,6 +61,18 @@ export interface Claims {
   readonly name: string;
 }
 
+/**
+ * The name a user row stores for these claims: never blank. Without a name, a person goes by
+ * their lowercased email's local part, or the whole email when that part is empty. Every write
+ * from claims applies it, and migration 15 applies it in SQL to the rows from before.
+ */
+export const displayName = ({ name, email }: Pick<Claims, "name" | "email">) => {
+  if (name.trim() !== "") return name;
+  const address = email.toLowerCase();
+  const at = address.lastIndexOf("@");
+  return at > 0 ? address.slice(0, at) : address;
+};
+
 /** Admin actions are company-scoped; the caller authorizes the acting admin. */
 export class Users extends Context.Service<
   Users,
@@ -161,10 +173,15 @@ export const make = Effect.gen(function* () {
   const list = Effect.fn("Users.list")((companyId: string) =>
     companyUsers(companyId).pipe(Effect.catchTags(dieOnSchemaError))
   );
+  // The stored name is settled before the change check, so a nameless person's repeat
+  // requests compare equal and write nothing.
   const refreshClaims = Effect.fn("Users.refreshClaims")(function* (claims: Claims) {
-    const updated = yield* refresh({ ...claims, email: claims.email.toLowerCase() }).pipe(
-      Effect.catchTags(dieOnSchemaError)
-    );
+    const email = claims.email.toLowerCase();
+    const updated = yield* refresh({
+      clerkUserId: claims.clerkUserId,
+      email,
+      name: displayName({ name: claims.name, email })
+    }).pipe(Effect.catchTags(dieOnSchemaError));
     return Option.isSome(updated) ? updated.value : yield* findByClerkId(claims.clerkUserId);
   });
 

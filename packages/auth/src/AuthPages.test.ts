@@ -200,6 +200,18 @@ it.layer(services)("first-party pages in memory", (it) => {
     })
   );
 
+  it.effect("suggests a company named for a nameless person's email", () =>
+    Effect.gen(function* () {
+      const nameless = signedInCookies(
+        signSession({ sub: "user_nameless", email: "Jo.Doe@Example.com", name: null })
+      );
+      const page = yield* send("/join", { headers: { cookie: nameless } });
+      const html = yield* Effect.promise(() => page.text());
+      assert.include(html, 'name="name" value="jo.doe&#39;s company"');
+      assert.include(html, 'name="handle" value="jo-doe-s-company"');
+    })
+  );
+
   it.effect("names every live invited company and consumes only the chosen invitation", () =>
     Effect.gen(function* () {
       const companies = yield* Companies.Companies;

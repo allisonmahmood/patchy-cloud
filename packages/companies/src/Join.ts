@@ -6,7 +6,7 @@ import { Analytics } from "@patchy/analytics";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
-import type { Claims } from "./Users.js";
+import { displayName, type Claims } from "./Users.js";
 
 const decodeForm = Schema.decodeUnknownEffect(
   Schema.Union([
@@ -135,7 +135,7 @@ const render = Effect.fn("Join.render")(function* (
       status: refusal?.status
     };
   }
-  const name = fields?.name ?? `${claims.name}'s company`;
+  const name = fields?.name ?? `${displayName(claims)}'s company`;
   const handle = fields?.handle ?? suggestedHandle(name);
   const nameAt = fieldRefusal?.field === "name" ? fieldRefusal : undefined;
   const handleAt = fieldRefusal?.field === "handle" ? fieldRefusal : undefined;

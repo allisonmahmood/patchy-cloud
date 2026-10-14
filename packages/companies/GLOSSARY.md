@@ -13,7 +13,7 @@ A company's globally unique short name, fixed once created. It uses 3–32 lower
 _Avoid_: slug, subdomain, namespace (what the handle opens, not the handle)
 
 **User**:
-One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md).
+One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md). A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does.
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:

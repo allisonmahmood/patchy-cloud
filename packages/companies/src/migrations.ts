@@ -2,7 +2,8 @@
  * The companies capability's schema, id 1 in the global migration sequence
  * (`packages/sql/GLOSSARY.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
- * id 9 adds each person's What's new marker and id 10 the company look.
+ * id 9 adds each person's What's new marker, id 10 the company look and id 15
+ * names the people stored without one.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -103,5 +104,13 @@ export const migrations: Migrations = {
     `ALTER TABLE companies ADD COLUMN current_look_revision INTEGER`,
     `ALTER TABLE companies ADD CONSTRAINT companies_current_look_fk
       FOREIGN KEY (id, current_look_revision) REFERENCES look_revisions (company_id, revision)`
+  ),
+  // A user's name is never blank (Users.displayName): someone stored without one goes by their
+  // email's local part, or the whole email when that part is empty. The directory trigger
+  // records each rename as it does any other.
+  "0015_user_name_never_blank": ddl(
+    `UPDATE users
+      SET name = COALESCE(NULLIF(regexp_replace(lower(email), '@[^@]*$', ''), ''), lower(email))
+      WHERE name ~ '^\\s*$'`
   )
 };

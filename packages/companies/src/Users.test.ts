@@ -35,10 +35,28 @@ const companyWithMember = Effect.fn("companyWithMember")(function* (
   });
   return { company, admin, member };
 });
+// An audit observer makes unnecessary writes observable without
+// inspecting the service's query text or PostgreSQL's row internals.
+const auditClaimRefresh = ddl(
+  `CREATE TABLE IF NOT EXISTS claim_refresh_audit (user_id TEXT NOT NULL)`,
+  `CREATE OR REPLACE FUNCTION audit_claim_refresh() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO claim_refresh_audit (user_id) VALUES (NEW.id);
+      RETURN NEW;
+    END;
+    $$`,
+  `CREATE OR REPLACE TRIGGER claim_refresh_audit AFTER UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION audit_claim_refresh()`
+);
 const outcome = {
   onSuccess: () => "ok",
   onFailure: (error: { readonly _tag: string }) => error._tag
 };
+
+it("keeps a given name exactly and falls back to the whole email when its local part is empty", () => {
+  assert.strictEqual(Users.displayName({ name: " Ada ", email: "x@example.com" }), " Ada ");
+  assert.strictEqual(Users.displayName({ name: "", email: "@Example.com" }), "@example.com");
+});
 
 it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Testing.layer())))(
   "Users",
@@ -50,19 +68,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           const users = yield* Users.Users;
           const sql = yield* SqlClient.SqlClient;
           const { admin } = yield* companyWithMember("claim-refresh");
-          // An audit observer makes unnecessary writes observable without
-          // inspecting the service's query text or PostgreSQL's row internals.
-          yield* ddl(
-            `CREATE TABLE claim_refresh_audit (user_id TEXT NOT NULL)`,
-            `CREATE FUNCTION audit_claim_refresh() RETURNS trigger LANGUAGE plpgsql AS $$
-                BEGIN
-                  INSERT INTO claim_refresh_audit (user_id) VALUES (NEW.id);
-                  RETURN NEW;
-                END;
-                $$`,
-            `CREATE TRIGGER claim_refresh_audit AFTER UPDATE ON users
-                  FOR EACH ROW EXECUTE FUNCTION audit_claim_refresh()`
-          );
+          yield* auditClaimRefresh;
           const claims = {
             clerkUserId: admin.clerkUserId,
             email: admin.email.toUpperCase(),
@@ -100,6 +106,29 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             })
           );
         })
+    );
+
+    it.effect("names a nameless person by their email's local part until a real name arrives", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { member } = yield* companyWithMember("nameless-refresh");
+        yield* auditClaimRefresh;
+        const updates = sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`;
+        const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "" };
+        assert.strictEqual((yield* users.refreshClaims(claims))?.name, "nameless-refresh-member");
+        assert.strictEqual((yield* updates).length, 1);
+        yield* users.refreshClaims({ ...claims, name: " \t" });
+        yield* users.refreshClaims({ ...claims, email: member.email.toUpperCase() });
+        assert.strictEqual((yield* updates).length, 1);
+        assert.strictEqual(
+          (yield* users.refreshClaims({ ...claims, name: "Grace Hopper" }))?.name,
+          "Grace Hopper"
+        );
+        assert.strictEqual((yield* users.refreshClaims(claims))?.name, "nameless-refresh-member");
+        const moved = yield* users.refreshClaims({ ...claims, email: "Grace@Example.com" });
+        assert.deepInclude(moved, { email: "grace@example.com", name: "grace" });
+      })
     );
 
     it.effect(
