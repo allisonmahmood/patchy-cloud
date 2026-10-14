@@ -119,6 +119,21 @@ it.layer(services)("first-party pages in memory", (it) => {
     })
   );
 
+  it.effect("gives the setup line on the front page's door only", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Session;
+      const page = (path: string, failed = false) =>
+        Effect.promise(() =>
+          HttpServerResponse.toWeb(RequireSession.door(session, path, failed)).text()
+        );
+      const setup = `Set up Patchy using ${origin}/llms.txt`;
+      assert.include(yield* page("/"), setup);
+      assert.include(yield* page("/?all=1"), setup);
+      assert.notInclude(yield* page("/acme/leads"), "llms.txt");
+      assert.notInclude(yield* page("/", true), "llms.txt");
+    })
+  );
+
   it.effect("creates a company with its admin and carries the return through enrollment", () =>
     Effect.gen(function* () {
       const sessionCookie = cookie("user_enroll");

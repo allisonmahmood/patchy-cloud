@@ -15,7 +15,7 @@ First-party pages compose the server-rendered shell and inline `<style>` block i
 Three page kinds:
 
 - **App shell**: the portal, Company, Connections and Your machines pages. `htmlPage` renders the shared header with brand, Patches, Company, Connections, Your machines, the What's new bell, viewer and sign-out, marks the current section, and places the content in a wide card. Auth's `pageResponse` takes the viewer and section in app mode. Portal not-found pages also keep this shell.
-- **First-party doors and static pages**: sign-in, create-or-join, device-login confirmation, deactivated and error doors keep the card rather than app navigation. The signed-out root is a sign-in door. All compose `htmlPage`.
+- **First-party doors and static pages**: sign-in, create-or-join, device-login confirmation, deactivated and error doors keep the card rather than app navigation. The signed-out root is a sign-in door whose `supporting-text` also gives an agent the setup line, plain text rather than a third action. All compose `htmlPage`.
 - **Served patches**: `renderPatchWrapper` is user content and deliberately does not compose `htmlPage`.
 
 ## The shell and its one exception
