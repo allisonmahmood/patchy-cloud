@@ -30,6 +30,10 @@ and that changing it is its own request, which only an admin can carry out.
 - `patchy/_generated/look.css` sets the tokens below and styles plain elements (body,
   headings, links, tables, buttons and inputs) inside `@layer look`. Read it before styling, so
   you build on those element styles instead of restyling them.
+- The look styles an invalid field by `aria-invalid="true"` and a disabled one by `disabled`.
+  `reportValidity()` sets no `aria-invalid`, so give a field that fails, by its own constraints
+  or an error about its value, `aria-invalid="true"`, and clear it when the value changes. Bare
+  `:invalid` already matches an empty required field before anyone types, so it isn't the hook.
 - A page uses the look by importing that file. A new repo's tier 1 and 2 `src/main.tsx`
   imports it and its tier 0 `index.html` links it; the build inlines it, fonts included, so the
   published page carries it in its own bytes. A page that doesn't import it keeps its own style

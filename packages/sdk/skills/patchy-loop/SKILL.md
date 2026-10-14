@@ -264,7 +264,7 @@ A tier 1 patch acts as the viewer only through Patchy and never holds their logi
 - No outbound fetches, external links, external scripts, styles or assets. Bundle code and styles into one HTML file; use embedded data or blob URLs for images, fonts and media. Outside systems are reached only through company integrations.
 - No client storage: `localStorage`, IndexedDB and cookies are unavailable. Save durable state in declared tables and file stores; keep transient UI state in memory.
 - No popups, `target=_blank`, top navigation, in-frame downloads or workers. Shell-mediated routing and downloads belong to the broker; do not invent unsupported client methods or navigate around the sandbox. Address segments beginning with `~` belong to Patchy.
-- Native form submission is blocked, including its `submit` event. Use `type="button"` click handlers and an Enter key handler for inputs, calling the generated client; keep validation with `reportValidity()`.
+- Native form submission is blocked, including its `submit` event. Use `type="button"` click handlers and an Enter key handler for inputs, calling the generated client. `reportValidity()` still checks fields; `patchy-look` says how a failing one shows as invalid.
 - No camera, microphone or geolocation. Clipboard writes must be user-triggered and have a visible failure state.
 - Access loss is not a broken patch. The shell owns notices for `access_denied`, `session_expired` and `principal_changed`; a changed session needs a fresh page under the new identity. Never swallow these into an empty success result.
 - `unknown_outcome` means a request left without a reply. Never automatically replay a mutation. Reconcile by reading before offering a deliberate retry.
