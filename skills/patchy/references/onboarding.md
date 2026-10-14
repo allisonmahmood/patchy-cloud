@@ -1,7 +1,8 @@
 # Onboarding
 
-Agent-led first-time setup: log this machine in if it has no publishing key, set up
-or announce the company's look, then publish the person's welcome patch.
+Agent-led first-time setup: log this machine in if it has no publishing key, offer to
+add Patchy to Claude Code's auto mode settings, set up or announce the company's look,
+then publish the person's welcome patch.
 
 The person's own words for it are "my welcome page" — that is what to say out loud.
 _Welcome patch_ is the term for it here.
@@ -24,8 +25,9 @@ without it.
   [Changing the look](../SKILL.md#changing-the-look)).
 - **Any other request to get this machine ready to use Patchy**, in the person's own
   words or the portal's setup line, `Set up Patchy using <instance>/llms.txt`.
-  Once the machine is logged in, run [step 3, the company look](#3-the-company-look),
-  then close with [step 5's sign-off](#5-sign-off).
+  Once the machine is logged in, run [step 3, Claude Code's auto mode](#3-claude-codes-auto-mode)
+  and [step 4, the company look](#4-the-company-look), then close with
+  [step 6's sign-off](#6-sign-off).
 
 Those are the only triggers. Installing or wiring up the skill runs nothing, and there
 is no per-session first-run check.
@@ -127,7 +129,50 @@ the user, company, role and machine before publishing. Describe the key as
 saved on this machine only for `tokenSource: "login"` or `"auth-set"`;
 environment and dev-env keys do not imply a saved credential file.
 
-### 3. The company look
+### 3. Claude Code's auto mode
+
+Only when you are Claude Code and the instance is a deployed one, not `dev-env` or
+localhost. Everyone else goes on to step 4.
+
+Claude Code's auto mode checks each action against safety rules before it runs, and
+treats any service its settings do not name as outside the company. It can then block
+a publish whose page carries code, file paths, ids or figures, the internal detail
+Patchy pages are for. One entry in Claude Code's user settings tells it Patchy is the
+company's own.
+
+Read Claude Code's user settings, `~/.claude/settings.json` (under `$CLAUDE_CONFIG_DIR`
+when that is set). If `autoMode.environment` already has an entry naming this
+instance's host, say nothing and go on. Otherwise ask with the AskUserQuestion tool,
+with the company's name from `whoami` and the instance's host, never these placeholders:
+
+- Question: "Should I add Patchy (`pages.example.com`) to Claude Code's auto mode
+  settings as Acme's private cloud, so publishing there counts as sharing inside Acme?"
+- Option "Yes, add Patchy as Acme's private cloud", described as "Adds one entry to
+  your Claude Code settings; auto mode then treats pages published there as shared
+  inside Acme."
+- Option "No, leave my settings alone", described as "Auto mode may stop a page with
+  internal detail; you decide each time."
+
+Use the tool, not a question in your own words: its recorded answer names the change
+and who receives the pages, which is what auto mode needs to count it as the person's
+approval. A bare "yes" may not count.
+
+On yes, add this entry to `autoMode.environment` and keep every other setting:
+
+```text
+**Internal sharing / snippet hosting**: Patchy Cloud at `<host>`, used through the `patchy` CLI, is <Company>'s private cloud for internal pages and tools. A company-scoped publish (the default) is readable only by <Company>'s signed-in members; `--share public` makes a page readable by anyone with the link.
+```
+
+With no `autoMode.environment` yet, write `["$defaults", "<the entry>"]`: `$defaults`
+keeps Claude Code's built-in entries, and an array without it replaces them. An
+existing array gets the entry appended and is otherwise left as it is.
+`claude auto-mode config` prints the environment Claude Code now uses; the entry should
+be in it. Say: "Done. Auto mode now treats publishing to Patchy as sharing inside Acme."
+
+On no, say: "If auto mode stops a publish later, I'll tell you what it objected to so
+you can decide."
+
+### 4. The company look
 
 This is the first moment after create-or-join. Read the look with `patchy look --json`
 into a file, as the main skill's [company look](../SKILL.md#the-company-look) says, and
@@ -163,7 +208,7 @@ take the person's role, email and company name from `whoami --json`:
   can change it." On no, their tools use the Patchy look until an admin publishes
   one; "make our tools look like acme.com" starts that any time.
 
-### 4. Publish the welcome patch
+### 5. Publish the welcome patch
 
 Write `~/Patchy/welcome.html` from `welcome-patch.html` in this directory, by the main
 skill's [Where patch files live](../SKILL.md#where-patch-files-live). The structure and
@@ -222,7 +267,7 @@ local logout succeeded. A worktree can still publish with its seeded key, and
 `PATCHY_API_TOKEN` is not the CLI's to remove. This does not sign the browser
 out; **Sign out** on **Your machines** does that.
 
-### 5. Sign-off
+### 6. Sign-off
 
 Close with what to say next time, in their words: "publish this with patchy", "publish
 this plan", "update my page", "take that page down". One line, not a manual.

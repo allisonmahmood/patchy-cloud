@@ -41,7 +41,7 @@ Software acting for a user, with that user's machine token: the CLI's primary dr
 _Avoid_: bot, service account, agent identity
 
 **Onboarding**:
-The optional, user-requested first-time setup conversation — establish where to publish and log the machine in, set up the company's [look](../companies/GLOSSARY.md) when its first admin wants one, then publish the welcome patch in the look that applies. Only an admin of a company with no look is asked about it; everyone else is told which look their tools use.
+The optional, user-requested first-time setup conversation — establish where to publish and log the machine in, offer to add the instance to Claude Code's auto mode settings as the company's own, set up the company's [look](../companies/GLOSSARY.md) when its first admin wants one, then publish the welcome patch in the look that applies. Only an admin of a company with no look is asked about it; everyone else is told which look their tools use.
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
