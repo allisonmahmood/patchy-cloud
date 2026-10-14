@@ -67,6 +67,9 @@ importers:
       lint-staged:
         specifier: ^17.6.0
         version: 17.6.0
+      minimatch:
+        specifier: ^10.2.6
+        version: 10.2.6
       npm:
         specifier: 12.2.0
         version: 12.2.0
@@ -100,6 +103,9 @@ importers:
       vitest:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@22.20.4)(vite@8.3.2(@types/node@22.20.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   apps/infra:
     dependencies:
@@ -4567,8 +4573,7 @@ snapshots:
 
   yallist@3.1.1: {}
 
-  yaml@2.9.1:
-    optional: true
+  yaml@2.9.1: {}
 
   yocto-queue@0.1.0: {}
 
