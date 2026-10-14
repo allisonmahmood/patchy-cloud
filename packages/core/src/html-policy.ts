@@ -43,13 +43,13 @@ const MAX_ATTRIBUTES = 256;
 const MAX_REPAIR_WORK = 1 << 24;
 /**
  * Counted in elements and their attributes as they are created, and in the characters of those
- * attributes. 512 KiB of markup spells out at most a quarter of either, but error recovery reopens
+ * attributes. Both are far beyond what 512 KiB of markup spells out, but error recovery reopens
  * formatting elements left open across blocks by cloning them, attributes and all, so a short page
  * could otherwise ask for hundreds of millions, and every check of an attribute would read each
  * clone's copy again.
  */
 const MAX_CREATED = 1 << 20;
-const MAX_CREATED_CHARACTERS = 1 << 21;
+const MAX_CREATED_CHARACTERS = 1 << 24;
 
 const TOO_DEEP = `HTML nests elements more than ${MAX_DEPTH} deep.`;
 const TOO_MANY_ATTRIBUTES = `An element has more than ${MAX_ATTRIBUTES} attributes.`;
