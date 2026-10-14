@@ -40,6 +40,7 @@ it.layer(Testing.emptyLayer(before("0015_user_name_never_blank")))(
         ('usr_empty', 'clerk_empty', 'cmp_names', 'ada.lovelace@example.com', '', 'member', NULL),
         ('usr_blank', 'clerk_blank', 'cmp_names', 'grace@example.com', ${" \t\n"}, 'member', NULL),
         ('usr_left', 'clerk_left', 'cmp_names', 'alan@example.com', '', 'member', now()),
+        ('usr_unicode', 'clerk_unicode', 'cmp_names', 'mei@example.com', ${"\u00a0\ufeff\u3000"}, 'member', NULL),
         ('usr_no_local', 'clerk_no_local', 'cmp_names', '@example.com', '', 'member', NULL),
         ('usr_named', 'clerk_named', 'cmp_names', 'sam@example.com', ' Sam  ', 'member', NULL)`;
           yield* migrate(migrations);
@@ -48,7 +49,8 @@ it.layer(Testing.emptyLayer(before("0015_user_name_never_blank")))(
             { id: "usr_empty", name: "ada.lovelace" },
             { id: "usr_left", name: "alan" },
             { id: "usr_named", name: " Sam  " },
-            { id: "usr_no_local", name: "@example.com" }
+            { id: "usr_no_local", name: "@example.com" },
+            { id: "usr_unicode", name: "mei" }
           ]);
         })
     );

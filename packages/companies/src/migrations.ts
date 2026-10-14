@@ -106,11 +106,12 @@ export const migrations: Migrations = {
       FOREIGN KEY (id, current_look_revision) REFERENCES look_revisions (company_id, revision)`
   ),
   // A user's name is never blank (Users.displayName): someone stored without one goes by their
-  // email's local part, or the whole email when that part is empty. The directory trigger
+  // email's local part, or the whole email when that part is empty. Blank is JavaScript trim()'s
+  // whitespace, spelled out because Postgres's \s varies with the locale. The directory trigger
   // records each rename as it does any other.
   "0015_user_name_never_blank": ddl(
     `UPDATE users
       SET name = COALESCE(NULLIF(regexp_replace(lower(email), '@[^@]*$', ''), ''), lower(email))
-      WHERE name ~ '^\\s*$'`
+      WHERE name ~ '^[\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*$'`
   )
 };
