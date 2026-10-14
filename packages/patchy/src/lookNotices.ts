@@ -2,7 +2,7 @@
 // Directory entries let the page walk skip links, dependencies and builds without following them.
 import { readdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
-import { LookRevision } from "@patchy/api";
+import { LookRestore, LookRevision } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -16,22 +16,30 @@ const LOOK_CSS = "patchy/_generated/look.css";
 const LOGO = "patchy/_generated/logo.svg";
 
 const decodeIndexLook = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ look: Schema.optionalKey(Schema.NullOr(LookRevision)) }))
+  Schema.fromJsonString(
+    Schema.Struct({
+      look: Schema.optionalKey(Schema.NullOr(LookRevision)),
+      lookRestore: Schema.optionalKey(Schema.NullOr(LookRestore))
+    })
+  )
 );
 
 /**
- * The revision an index.json names: null for the Patchy look, or for an index missing or from
- * before looks.
+ * The revision an index.json names, null for the Patchy look or for an index missing or from
+ * before looks, and who restored it, null for none or for an index from before restores were
+ * recorded.
  */
-const indexLook = (contents: string | undefined) =>
-  (contents === undefined ? undefined : Option.getOrUndefined(decodeIndexLook(contents)))?.look ??
-  null;
+const indexLook = (contents: string | undefined) => {
+  const index =
+    contents === undefined ? undefined : Option.getOrUndefined(decodeIndexLook(contents));
+  return { look: index?.look ?? null, restored: index?.lookRestore ?? null };
+};
 
 const readIndexLook = Effect.fn("lookNotices.readIndexLook")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   return indexLook(
     yield* fs.readFileString(path.join(root, INDEX)).pipe(Effect.orElseSucceed(() => undefined))
-  );
+  ).look;
 });
 
 /** Revision numbers restart in every company, so a revision is its number and its time. */
@@ -81,12 +89,14 @@ const pageLook = (root: string) =>
   });
 
 const revision = (look: LookRevision | null) => (look === null ? "none" : `rev ${look.revision}`);
-const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+/** Ends `text` with a full stop unless it already ends a sentence. */
+export const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 
 /**
  * Dev start and refresh, before activating what generation returned: a notice when it brings a
- * different revision from the one the repo had and the page uses the look. `company` is read
- * only then. The caller remembers the notice once activation succeeds.
+ * different revision from the one the repo had and the page uses the look. It credits the
+ * restorer when a restore set the incoming look, and otherwise the revision's author. `company`
+ * is read only then. The caller remembers the notice once activation succeeds.
  */
 export const lookNotices = Effect.fn("lookNotices")(function* <R>(
   root: string,
@@ -94,7 +104,9 @@ export const lookNotices = Effect.fn("lookNotices")(function* <R>(
   company: Effect.Effect<string, never, R>
 ) {
   const before = yield* readIndexLook(root);
-  const after = indexLook(generated.find((file) => file.path === INDEX)?.contents);
+  const { look: after, restored } = indexLook(
+    generated.find((file) => file.path === INDEX)?.contents
+  );
   if (sameLook(before, after)) return [];
   const page = yield* pageLook(root);
   if (!page.uses) return [];
@@ -102,11 +114,16 @@ export const lookNotices = Effect.fn("lookNotices")(function* <R>(
     before !== null && after !== null
       ? `rev ${before.revision} → ${after.revision}`
       : `${revision(before)} → ${revision(after)}`;
-  const by =
-    after === null ? ", so the Patchy look stands in" : ` by ${after.author.name}: ${after.note}`;
+  const credit =
+    restored !== null
+      ? `, restored by ${restored.by.name}${restored.note === null ? "" : `: ${restored.note}`}`
+      : after === null
+        ? ", so the Patchy look stands in"
+        : ` by ${after.author.name}: ${after.note}`;
   return [
     [
-      sentence(`${yield* company}'s look changed, ${change}${by}`),
+      sentence(`${yield* company}'s look changed, ${change}${credit}`),
+      ...(restored !== null && after === null ? ["The Patchy look stands in."] : []),
       // Settled by #547's prototype verdict: a revision recolours; restyling is the agent's job.
       "Colours and fonts follow; to restyle this tool's components, ask your agent to update it to the current look.",
       ...(page.logo && !generated.some((file) => file.path === LOGO)

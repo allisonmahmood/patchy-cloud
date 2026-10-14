@@ -8,6 +8,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
@@ -92,14 +93,17 @@ const company = Effect.fn("company")(function* (handle: string) {
     );
   return {
     ada: { id: `usr_${handle}_ada`, api: yield* client("ada") },
-    ben: { id: `usr_${handle}_ben`, api: yield* client("ben") }
+    ben: { id: `usr_${handle}_ben`, api: yield* client("ben") },
+    cleo: { id: `usr_${handle}_cleo`, api: yield* client("cleo") }
   };
 });
 
 const publish = (note: string, files = readLookFixture("patchy")) => ({
   payload: new LookPublishRequest({ note, files })
 });
-const restore = (revision: number | null) => ({ payload: new LookRestoreRequest({ revision }) });
+const restore = (revision: number | null, note?: string) => ({
+  payload: new LookRestoreRequest({ revision, ...(note === undefined ? {} : { note }) })
+});
 /** Patchy's own look as the instance hands it out: no logo, which is Patchy's mark. */
 const patchyFixture = readLookFixture("patchy");
 const patchyLook = { "look.css": patchyFixture["look.css"], "LOOK.md": patchyFixture["LOOK.md"] };
@@ -122,7 +126,8 @@ it.layer(layer)("look group", (it) => {
             admins: [
               { id: "usr_lifecycle_ada", name: "Ada Lovelace" },
               { id: "usr_lifecycle_cleo", name: "Cleo Park" }
-            ]
+            ],
+            restored: null
           }
         );
         const first = yield* ada.api.publishLook(publish("first capture"));
@@ -159,7 +164,8 @@ it.layer(layer)("look group", (it) => {
           { ...(yield* ada.api.restoreLook(restore(null))) },
           {
             ok: true,
-            current: null
+            current: null,
+            restored: { by: author, at: "1970-01-01T00:00:00.000Z", note: null }
           }
         );
         const none = yield* ben.api.getLook();
@@ -206,6 +212,52 @@ it.layer(layer)("look group", (it) => {
           ]
         );
       })
+  );
+
+  it.effect("records who restored the look, when and why, until the next publish", () =>
+    Effect.gen(function* () {
+      events.length = 0;
+      const { ada, ben, cleo } = yield* company("restorer");
+      yield* ada.api.publishLook(publish("first green"));
+      yield* ada.api.publishLook(publish("darker green", readLookFixture("linear")));
+      assert.isNull((yield* ben.api.getLook()).restored);
+
+      yield* TestClock.setTime(Date.parse("2026-10-07T12:00:00Z"));
+      const restored = yield* cleo.api.restoreLook(restore(1, " rev 2 failed  dark mode "));
+      const byCleo = {
+        by: { id: cleo.id, name: "Cleo Park" },
+        at: "2026-10-07T12:00:00.000Z",
+        note: "rev 2 failed dark mode"
+      };
+      assert.deepStrictEqual(restored.restored, byCleo);
+      const read = yield* ben.api.getLook();
+      assert.strictEqual(read.current?.revision, 1);
+      assert.deepStrictEqual(read.restored, byCleo);
+
+      // Restoring what is already current, or a member's refused restore, records nothing.
+      yield* TestClock.adjust("1 hour");
+      assert.deepStrictEqual((yield* ada.api.restoreLook(restore(1, "again"))).restored, byCleo);
+      yield* ben.api.restoreLook(restore(null, "mine")).pipe(Effect.flip);
+      assert.deepStrictEqual((yield* ben.api.getLook()).restored, byCleo);
+
+      // Restoring to no look records the restorer too, with no note when none was given.
+      const none = yield* ada.api.restoreLook(restore(null));
+      const byAda = {
+        by: { id: ada.id, name: "Ada Lovelace" },
+        at: "2026-10-07T13:00:00.000Z",
+        note: null
+      };
+      assert.deepStrictEqual(none.restored, byAda);
+      assert.deepStrictEqual((yield* ben.api.getLook()).restored, byAda);
+
+      // A publish's own author, time and note describe the look again.
+      yield* ada.api.publishLook(publish("third green"));
+      assert.isNull((yield* ben.api.getLook()).restored);
+      assert.deepStrictEqual(
+        events.filter(({ name }) => name === "look.restored").map(({ principalId }) => principalId),
+        [cleo.id, ada.id]
+      );
+    })
   );
 
   it.effect("names the company's active admins to a member, on reading and when refused", () =>
@@ -276,7 +328,8 @@ it.layer(layer)("look group", (it) => {
           admins: [
             { id: "usr_home_ada", name: "Ada Lovelace" },
             { id: "usr_home_cleo", name: "Cleo Park" }
-          ]
+          ],
+          restored: null
         }
       );
       assert.deepStrictEqual<unknown>(

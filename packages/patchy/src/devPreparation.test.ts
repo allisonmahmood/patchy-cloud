@@ -349,6 +349,43 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
       { timeout: 30_000 }
     );
 
+    it.effect(
+      "names the restorer instead of the revision's author when a restore set the look",
+      () =>
+        Effect.gen(function* () {
+          const index: {
+            look: ReturnType<typeof lookRevision> | null;
+            lookRestore?: {
+              by: { id: string; name: string };
+              at: string;
+              note: string | null;
+            } | null;
+          } = { ...currentIndex, look: lookRevision(8, "darker green") };
+          const { root, prepare } = yield* harness({ index });
+          yield* page(root, 'import "../patchy/_generated/look.css";\n');
+          yield* prepare;
+          const notices = Effect.map(prepare, ({ warnings }) => warnings);
+          const ada = { id: "usr_ada", name: "Ada" };
+          const at = "2026-10-07T12:00:00.000Z";
+          index.look = lookRevision(7, "first green");
+          index.lookRestore = { by: ada, at, note: "rev 8 failed dark mode" };
+          assert.deepStrictEqual(yield* notices, [
+            `Preparation's look changed, rev 8 → 7, restored by Ada: rev 8 failed dark mode. ${follow}`
+          ]);
+          index.look = null;
+          index.lookRestore = { by: ada, at, note: null };
+          assert.deepStrictEqual(yield* notices, [
+            `Preparation's look changed, rev 7 → none, restored by Ada. The Patchy look stands in. ${follow}`
+          ]);
+          // A publish clears the record, and its author is credited as before.
+          index.look = lookRevision(9, "rebrand");
+          index.lookRestore = null;
+          assert.deepStrictEqual(yield* notices, [
+            `Preparation's look changed, none → rev 9 by Sam: rebrand. ${follow}`
+          ]);
+        })
+    );
+
     it.effect("hears through a stylesheet at the repo root that imports the look", () =>
       Effect.gen(function* () {
         const index = { ...currentIndex, look: lookRevision(7, "first green") };

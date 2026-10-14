@@ -1001,6 +1001,16 @@ export class LookRevision extends Schema.Class<LookRevision>("LookRevision")({
   note: Schema.String
 }) {}
 
+/**
+ * The company's latest look restore: who moved the pointer, when, and the note they gave, null
+ * without one. A later restore replaces it and a publish clears it, so it is never a history.
+ */
+export const LookRestore = Schema.Struct({
+  by: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  at: IsoTimestamp,
+  note: Schema.NullOr(Schema.String)
+});
+
 /** The Patchy look's files as the look read carries them: never a logo, which is Patchy's mark. */
 export const PatchyLookFiles = Schema.Struct({
   "look.css": Schema.String,
@@ -1014,12 +1024,15 @@ const LookAdmins = Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.
  * The current revision with its files, or null for no look, and every revision newest first.
  * `patchyLook` is the Patchy look's `look.css` and `LOOK.md`, without Patchy's logo, when the
  * company has no look and it stands in; null otherwise. `admins` can change the look.
+ * `restored` is the latest restore, null after a publish; an instance from before restores were
+ * recorded leaves it out.
  */
 export class CompanyLook extends Schema.Class<CompanyLook>("CompanyLook")({
   current: Schema.NullOr(Schema.Struct({ ...LookRevision.fields, files: LookFiles })),
   revisions: Schema.Array(LookRevision),
   patchyLook: Schema.NullOr(PatchyLookFiles),
-  admins: LookAdmins
+  admins: LookAdmins,
+  restored: Schema.optionalKey(Schema.NullOr(LookRestore))
 }) {}
 
 export class LookPublishRequest extends Schema.Class<LookPublishRequest>("LookPublishRequest")({
@@ -1032,14 +1045,20 @@ export class LookPublished extends Schema.Class<LookPublished>("LookPublished")(
   { httpApiStatus: 201 }
 ) {}
 
-/** A revision number to make current, or null to leave the company with no look. */
+/**
+ * A revision number to make current, or null to leave the company with no look, and optionally
+ * why, as the person gave it.
+ */
 export class LookRestoreRequest extends Schema.Class<LookRestoreRequest>("LookRestoreRequest")({
-  revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0)))
+  revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  note: Schema.optionalKey(LookNote)
 }) {}
 
+/** The current revision after a restore, and the restore record as it now stands. */
 export class LookRestored extends Schema.Class<LookRestored>("LookRestored")({
   ok: Schema.Literal(true),
-  current: Schema.NullOr(LookRevision)
+  current: Schema.NullOr(LookRevision),
+  restored: Schema.optionalKey(Schema.NullOr(LookRestore))
 }) {}
 
 /** Only admins change the look; `admins` names who to ask. */

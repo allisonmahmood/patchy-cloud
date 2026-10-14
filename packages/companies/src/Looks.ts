@@ -1,8 +1,9 @@
 /**
  * A company's look: its numbered revisions and a pointer to the current one, like a patch's
  * versions and its served version. Publishing runs the look checks whoever calls it, so no
- * stored revision fails them. Callers authorize the admin; generation reads `read(...).current`,
- * and `patchyLook` when it is null.
+ * stored revision fails them. A restore that moves the pointer records who made it, when and
+ * why, and the next publish clears that record. Callers authorize the admin; generation reads
+ * `read(...).current` and `restored`, and `patchyLook` when the current revision is null.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -49,11 +50,20 @@ export interface Current extends Revision {
   readonly files: typeof LookFiles.Type;
 }
 
+/** The company's latest restore: who moved the pointer, when, and the note they gave. */
+export interface Restore {
+  readonly by: { readonly id: string; readonly name: string };
+  readonly at: Date;
+  readonly note: string | null;
+}
+
 export interface Look {
   /** Null when the company has no look, the starting state. */
   readonly current: Current | null;
   /** Every revision, newest first, including the current one. */
   readonly revisions: ReadonlyArray<Revision>;
+  /** The latest restore, or null when a publish set the current revision or none came yet. */
+  readonly restored: Restore | null;
 }
 
 export interface PublishInput {
@@ -63,11 +73,38 @@ export interface PublishInput {
   readonly files: typeof LookFiles.Type;
 }
 
+export interface RestoreInput {
+  readonly companyId: string;
+  /** The revision to make current, or null for no look. */
+  readonly revision: number | null;
+  /** The admin restoring it. */
+  readonly restoredBy: string;
+  readonly note: string | null;
+}
+
 /** A change to the pointer, with the revision it moved from, null for no look. */
 export interface Moved {
   readonly current: Revision | null;
   readonly from: number | null;
 }
+
+const RestoreRow = Schema.Struct({
+  restoredById: Schema.NullOr(Schema.String),
+  restoredByName: Schema.NullOr(Schema.String),
+  restoredAt: Schema.NullOr(Schema.Date),
+  restoreNote: Schema.NullOr(Schema.String)
+});
+const restoreOf = (row: typeof RestoreRow.Type | undefined): Restore | null =>
+  row === undefined ||
+  row.restoredById === null ||
+  row.restoredByName === null ||
+  row.restoredAt === null
+    ? null
+    : {
+        by: { id: row.restoredById, name: row.restoredByName },
+        at: row.restoredAt,
+        note: row.restoreNote
+      };
 
 const Row = Schema.Struct({
   revision: Schema.Int,
@@ -78,7 +115,8 @@ const Row = Schema.Struct({
   current: Schema.Boolean,
   css: Schema.NullOr(Schema.String),
   brief: Schema.NullOr(Schema.String),
-  logo: Schema.NullOr(Schema.String)
+  logo: Schema.NullOr(Schema.String),
+  ...RestoreRow.fields
 });
 const revision = (row: typeof Row.Type): Revision => ({
   revision: row.revision,
@@ -99,18 +137,27 @@ export class Looks extends Context.Service<
      * never carries Patchy's logo.
      */
     readonly patchyLook: typeof PatchyLookFiles.Type;
-    /** Checks the files, stores them as the next revision and makes it current. */
+    /**
+     * Checks the files, stores them as the next revision and makes it current. Clears the
+     * restore record: the new revision's own author, time and note describe the look.
+     */
     readonly publish: (
       input: PublishInput
     ) => Effect.Effect<
       Moved & { readonly current: Revision },
       InvalidLook | CompanyNotFound | SqlError
     >;
-    /** Points the company at one of its revisions, or at none. Copies nothing. */
-    readonly restore: (input: {
-      readonly companyId: string;
-      readonly revision: number | null;
-    }) => Effect.Effect<Moved, RevisionUnavailable | CompanyNotFound | SqlError>;
+    /**
+     * Points the company at one of its revisions, or at none, and records who restored it, when
+     * and why. Copies nothing. Restoring what is already current changes nothing, the record
+     * included. Returns the record as it stands afterwards.
+     */
+    readonly restore: (
+      input: RestoreInput
+    ) => Effect.Effect<
+      Moved & { readonly restored: Restore | null },
+      RevisionUnavailable | CompanyNotFound | SqlError
+    >;
   }
 >()("@patchy/companies/Looks") {}
 
@@ -128,7 +175,8 @@ export const make = Effect.gen(function* () {
     "LOOK.md": shipped("LOOK.md")
   }).pipe(Effect.orDie);
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
-  // One statement, so the history and the current files come from the same moment.
+  // One statement, so the history, the current files and the restore record come from the same
+  // moment. Every row repeats the record; a company with no revisions has never restored.
   const rows = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, only: Schema.NullOr(Schema.Int) }),
     Result: Row,
@@ -137,12 +185,24 @@ export const make = Effect.gen(function* () {
         r.note, COALESCE(r.revision = c.current_look_revision, false) AS current,
         CASE WHEN r.revision = c.current_look_revision THEN r.look_css END AS css,
         CASE WHEN r.revision = c.current_look_revision THEN r.look_md END AS brief,
-        CASE WHEN r.revision = c.current_look_revision THEN r.logo_svg END AS logo
+        CASE WHEN r.revision = c.current_look_revision THEN r.logo_svg END AS logo,
+        ru.id AS "restoredById", ru.name AS "restoredByName",
+        c.look_restored_at AS "restoredAt", c.look_restore_note AS "restoreNote"
       FROM companies c
       JOIN look_revisions r ON r.company_id = c.id
       JOIN users u ON u.id = r.author_id
+      LEFT JOIN users ru ON ru.id = c.look_restored_by
       WHERE c.id = ${companyId} AND (${only}::integer IS NULL OR r.revision = ${only})
       ORDER BY r.revision DESC`
+  });
+  const lastRestore = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: RestoreRow,
+    execute: (companyId) => sql`
+      SELECT u.id AS "restoredById", u.name AS "restoredByName",
+        c.look_restored_at AS "restoredAt", c.look_restore_note AS "restoreNote"
+      FROM companies c JOIN users u ON u.id = c.look_restored_by
+      WHERE c.id = ${companyId}`
   });
   // Serializes publishes and restores per company. NO KEY UPDATE leaves joins and invites,
   // which only take KEY SHARE on the company row, unblocked.
@@ -183,8 +243,13 @@ export const make = Effect.gen(function* () {
     const [row] = yield* rows({ companyId, only: number }).pipe(Effect.catchTags(dieOnSchemaError));
     return row === undefined ? null : revision(row);
   });
-  const setCurrent = (companyId: string, number: number | null) =>
-    sql`UPDATE companies SET current_look_revision = ${number} WHERE id = ${companyId}`;
+  const setPublished = (companyId: string, number: number) =>
+    sql`UPDATE companies SET current_look_revision = ${number}, look_restored_by = NULL,
+      look_restored_at = NULL, look_restore_note = NULL WHERE id = ${companyId}`;
+  const setRestored = (input: RestoreInput, now: number) =>
+    sql`UPDATE companies SET current_look_revision = ${input.revision},
+      look_restored_by = ${input.restoredBy}, look_restored_at = to_timestamp(${now / 1_000}),
+      look_restore_note = ${input.note} WHERE id = ${input.companyId}`;
 
   const read = Effect.fn("Looks.read")(function* (companyId: string) {
     const found = yield* rows({ companyId, only: null }).pipe(Effect.catchTags(dieOnSchemaError));
@@ -201,7 +266,8 @@ export const make = Effect.gen(function* () {
                 ...(current.logo === null ? {} : { "logo.svg": current.logo })
               }
             },
-      revisions: found.map(revision)
+      revisions: found.map(revision),
+      restored: restoreOf(found[0])
     } satisfies Look;
   });
 
@@ -221,7 +287,7 @@ export const make = Effect.gen(function* () {
           logo: input.files["logo.svg"] ?? null,
           now
         }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }));
-        yield* setCurrent(input.companyId, number);
+        yield* setPublished(input.companyId, number);
         const current = yield* one(input.companyId, number);
         if (current === null) return yield* Effect.die("The published look revision vanished.");
         return { current, from };
@@ -229,25 +295,22 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const restore = Effect.fn("Looks.restore")(function* (input: {
-    readonly companyId: string;
-    readonly revision: number | null;
-  }) {
+  const restore = Effect.fn("Looks.restore")(function* (input: RestoreInput) {
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         const from = yield* locked(input.companyId);
-        if (input.revision === null) {
-          yield* setCurrent(input.companyId, null);
-          return { current: null, from };
-        }
-        const current = yield* one(input.companyId, input.revision);
-        if (current === null)
+        const current =
+          input.revision === null ? null : yield* one(input.companyId, input.revision);
+        if (input.revision !== null && current === null)
           return yield* new RevisionUnavailable({
             companyId: input.companyId,
             revision: input.revision
           });
-        yield* setCurrent(input.companyId, input.revision);
-        return { current, from };
+        if (input.revision !== from) yield* setRestored(input, yield* Clock.currentTimeMillis);
+        const restored = yield* lastRestore(input.companyId).pipe(
+          Effect.catchTags(dieOnSchemaError)
+        );
+        return { current, from, restored: restoreOf(Option.getOrUndefined(restored)) };
       })
     );
   });

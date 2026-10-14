@@ -308,7 +308,7 @@ Responses:
 
 ### `GET /api/look`
 
-Read the caller's company look, for any active member. `current` is the current revision with its files' contents (`look.css`, `LOOK.md` and an optional `logo.svg`), or null when the company has no look. `revisions` lists every revision newest first with its author, time and note. When `current` is null, `patchyLook` holds the Patchy look that stands in, `look.css` and `LOOK.md` from the release with no logo; otherwise it is null. `admins` names the active admins, who alone change the look. Another company's look is never visible. Responses are private, no-store.
+Read the caller's company look, for any active member. `current` is the current revision with its files' contents (`look.css`, `LOOK.md` and an optional `logo.svg`), or null when the company has no look. `revisions` lists every revision newest first with its author, time and note. When `current` is null, `patchyLook` holds the Patchy look that stands in, `look.css` and `LOOK.md` from the release with no logo; otherwise it is null. `admins` names the active admins, who alone change the look. `restored` is the latest restore, `{ by: { id, name }, at, note }` with `note` null when none was given, also after restoring to no look; a publish sets it back to null, and a later restore replaces it. Another company's look is never visible. Responses are private, no-store.
 
 Responses:
 
@@ -337,7 +337,7 @@ Responses:
 
 ### `POST /api/look/restore`
 
-Admins only: make an earlier revision current, or send `revision: null` to leave the company with no look. Restoring moves the pointer; it copies nothing and adds no revision, and restoring the current revision changes nothing. An unknown revision answers 422 `revision_unavailable`; a member answers 403 `admin_required` with `admins`. The JSON body is limited to 4096 bytes.
+Admins only: make an earlier revision current, or send `revision: null` to leave the company with no look. An optional `note` says why, one line of 1–200 characters. Restoring moves the pointer and records the caller, the time and the note as the company's latest restore, which the response returns as `restored`; it copies nothing and adds no revision. Restoring the current revision changes nothing, the record included. An unknown revision answers 422 `revision_unavailable`; a member answers 403 `admin_required` with `admins`. The JSON body is limited to 4096 bytes.
 
 Request body: [LookRestoreRequest](#lookrestorerequest)
 
@@ -364,7 +364,7 @@ Responses:
 
 ### `POST /api/sdk/generate`
 
-Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap.
+Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap.
 
 Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string, shared?: boolean } }, uses: { [key: string]: { kind: "members" } | { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "posthog", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } | { kind: "sharedStore", patchId: string, store: string, id?: string, revision?: integer } }, handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } }, sdkImports?: string[] }, serverModules: string[], patchId?: string, skills: string[] }
 
@@ -831,7 +831,8 @@ RuntimeSuccess | HandlerFailure
 ```
 {
   ok: true,
-  current: LookRevision | null
+  current: LookRevision | null,
+  restored?: { by: { id: string, name: string }, at: string, note: string | null } | null
 }
 ```
 
@@ -853,7 +854,8 @@ RuntimeSuccess | HandlerFailure
 
 ```
 {
-  revision: integer | null
+  revision: integer | null,
+  note?: string
 }
 ```
 
@@ -886,7 +888,8 @@ RuntimeSuccess | HandlerFailure
   current: { revision: integer, author: { id: string, name: string }, createdAt: string, note: string, files: { look.css: string, LOOK.md: string, logo.svg?: string } } | null,
   revisions: LookRevision[],
   patchyLook: { look.css: string, LOOK.md: string } | null,
-  admins: { id: string, name: string }[]
+  admins: { id: string, name: string }[],
+  restored?: { by: { id: string, name: string }, at: string, note: string | null } | null
 }
 ```
 

@@ -37,8 +37,12 @@ Patchy's own look, shipped with the release in this package, which stands in whi
 _Avoid_: default theme, fallback style
 
 **Look revision**:
-One published look, numbered in order within its company with its author, time and note; its files never change. The company points at one revision as current, or at none, and restoring moves that pointer to an earlier revision without copying it.
+One published look, numbered in order within its company with its author, time and note; its files never change. The company points at one revision as current, or at none, and restoring moves that pointer to an earlier revision without copying it. A restored revision keeps its own author, time and note; the **look restore** says who brought it back.
 _Avoid_: look version (patches have versions), theme update
+
+**Look restore**:
+The company's record of its latest restore: the admin who moved the pointer, when, and an optional note why. It is one record, not a history: a later restore replaces it and a publish clears it, since the new revision's own author, time and note then describe the look. The look read carries it as `restored` and generation writes it into `index.json` as `lookRestore`.
+_Avoid_: rollback (patches roll back), restore history
 
 **Specimen**:
 The fixed page Patchy owns that shows a look on plain elements: text, buttons, cards, a badge per status, a table, a form, an empty state, their states and the colour swatches, styled only by `look.css`. It checks the tokens and element styles, not the brief's recipes, and ships with the release so every agent shows the same page.

@@ -531,7 +531,10 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
           "with its author, time and note. When `current` is null, `patchyLook` holds the " +
           "Patchy look that stands in, `look.css` and `LOOK.md` from the release with no logo; " +
           "otherwise it is null. `admins` names the active admins, who alone change the look. " +
-          "Another company's look is never visible. Responses are private, no-store."
+          "`restored` is the latest restore, `{ by: { id, name }, at, note }` with `note` null " +
+          "when none was given, also after restoring to no look; a publish sets it back to " +
+          "null, and a later restore replaces it. Another company's look is never visible. " +
+          "Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.post("publishLook", "/look/publish", {
@@ -562,10 +565,12 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
     }).annotateMerge(
       describe(
         "Admins only: make an earlier revision current, or send `revision: null` to leave the " +
-          "company with no look. Restoring moves the pointer; it copies nothing and adds no " +
-          "revision, and restoring the current revision changes nothing. An unknown revision " +
-          "answers 422 `revision_unavailable`; a member answers 403 `admin_required` with " +
-          "`admins`. The JSON body is limited to 4096 bytes."
+          "company with no look. An optional `note` says why, one line of 1–200 characters. " +
+          "Restoring moves the pointer and records the caller, the time and the note as the " +
+          "company's latest restore, which the response returns as `restored`; it copies " +
+          "nothing and adds no revision. Restoring the current revision changes nothing, the " +
+          "record included. An unknown revision answers 422 `revision_unavailable`; a member " +
+          "answers 403 `admin_required` with `admins`. The JSON body is limited to 4096 bytes."
       )
     )
   )
@@ -602,7 +607,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
           "Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. " +
             "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. " +
             "Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, " +
-            "typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
+            "typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
             "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. " +
             "Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap."
         )
