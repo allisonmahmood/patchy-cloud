@@ -565,3 +565,28 @@ describe("patchy status", async () => {
     expect(JSON.parse(unreadable.stdout)).toMatchObject({ hasToken: false, tokenSource: null });
   });
 });
+
+describe("help", () => {
+  it("marks a required flag, and leaving it out is a one-line error", async () => {
+    const [help, missing, missingJson] = await Promise.all([
+      runCli(["look", "publish", "--help"]),
+      runCli(["look", "publish", "./x"]),
+      runCli(["look", "publish", "./x", "--json"])
+    ]);
+    expect(help).toMatchObject({ status: 0, stderr: "" });
+    expect(help.stdout).toContain("\n  dir string    The look folder to publish\n");
+    expect(help.stdout).toContain(
+      "\n  --note string    Why this revision, such as darker green (required)\n"
+    );
+
+    // Usage still prints on stdout, as ADR-0004 records; the error is stderr's one line.
+    expect(missing).toMatchObject({ status: 1, stderr: "Missing required flag: --note\n" });
+    expect(missing.stdout).toContain("USAGE\n  patchy look publish [flags] <dir>\n");
+    expect(missingJson.status).toBe(1);
+    expect(JSON.parse(missingJson.stderr)).toEqual({
+      ok: false,
+      error: "Missing required flag: --note",
+      kind: "local"
+    });
+  });
+});

@@ -275,9 +275,20 @@ const auth = Command.make("auth").pipe(
 const login = Command.make(
   "login",
   {
-    complete: Flag.Boolean("complete").pipe(Flag.withDefault(false)),
-    code: Argument.String("code").pipe(Argument.optional),
-    wait: Flag.Finite("wait").pipe(Flag.withDefault(60))
+    complete: Flag.Boolean("complete").pipe(
+      Flag.withDescription("Finish the pending device login"),
+      Flag.withDefault(false)
+    ),
+    code: Argument.String("code").pipe(
+      Argument.withDescription(
+        "With --complete, the code login printed; must match the pending one"
+      ),
+      Argument.optional
+    ),
+    wait: Flag.Finite("wait").pipe(
+      Flag.withDescription("With --complete, seconds to poll; defaults to 60, and 0 polls once"),
+      Flag.withDefault(60)
+    )
   },
   (options) => run(Login.login(options))
 ).pipe(
@@ -351,6 +362,12 @@ const status = Command.make("status", {}, () =>
 // --- validate ---------------------------------------------------------------
 
 const fileArgument = Argument.String("file").pipe(Argument.withDescription("HTML file path"));
+
+/** `--force` on publish, delete, retire and restore. */
+const forceFlag = Flag.Boolean("force").pipe(
+  Flag.withDescription("Accept the reported dependant or source breakage; ask the person first"),
+  Flag.withDefault(false)
+);
 
 const setup = Command.make(
   "setup",
@@ -515,7 +532,7 @@ const publish = Command.make(
       Flag.withDescription("Set the description when publishing an HTML file"),
       Flag.optional
     ),
-    force: Flag.Boolean("force").pipe(Flag.withDefault(false)),
+    force: forceFlag,
     new: Flag.Boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
@@ -709,7 +726,10 @@ const share = Command.make(
       Argument.withDescription("The published HTML file, or company|public when using --patch"),
       Argument.optional
     ),
-    scope: Argument.Literals("scope", SharingScope.literals).pipe(Argument.optional),
+    scope: Argument.Literals("scope", SharingScope.literals).pipe(
+      Argument.withDescription("company or public, after the published HTML file"),
+      Argument.optional
+    ),
     share: Flag.Literals("share", SharingScope.literals).pipe(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
@@ -786,8 +806,13 @@ const del = Command.make(
       Flag.withDescription("Delete this patch by ID instead of by file"),
       Flag.optional
     ),
-    yes: Flag.Boolean("yes").pipe(Flag.withDefault(false)),
-    force: Flag.Boolean("force").pipe(Flag.withDefault(false))
+    yes: Flag.Boolean("yes").pipe(
+      Flag.withDescription(
+        "Confirm deletion without prompting; required for agent, --json and non-terminal calls; does not imply --force"
+      ),
+      Flag.withDefault(false)
+    ),
+    force: forceFlag
   },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
@@ -850,12 +875,18 @@ const del = Command.make(
 
 const lifecycleTarget = {
   file: fileArgument.pipe(Argument.optional),
-  patch: Flag.String("patch").pipe(Flag.optional)
+  patch: Flag.String("patch").pipe(
+    Flag.withDescription("Name the patch by ID instead of by file or the current repo"),
+    Flag.optional
+  )
 };
 
 const retire = Command.make(
   "retire",
-  { ...lifecycleTarget, force: Flag.Boolean("force").pipe(Flag.withDefault(false)) },
+  {
+    ...lifecycleTarget,
+    force: forceFlag
+  },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
@@ -879,7 +910,10 @@ const retire = Command.make(
 
 const restore = Command.make(
   "restore",
-  { ...lifecycleTarget, force: Flag.Boolean("force").pipe(Flag.withDefault(false)) },
+  {
+    ...lifecycleTarget,
+    force: forceFlag
+  },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
@@ -906,7 +940,10 @@ const restore = Command.make(
 
 const rollback = Command.make(
   "rollback",
-  { version: Argument.Int("n"), ...lifecycleTarget },
+  {
+    version: Argument.Int("n").pipe(Argument.withDescription("The retained version to serve")),
+    ...lifecycleTarget
+  },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
@@ -938,10 +975,22 @@ const rollback = Command.make(
 const describe = Command.make(
   "describe",
   {
-    fileOrText: Argument.String("file-or-text").pipe(Argument.optional),
-    text: Argument.String("text").pipe(Argument.optional),
-    patch: Flag.String("patch").pipe(Flag.optional),
-    clear: Flag.Boolean("clear").pipe(Flag.withDefault(false))
+    fileOrText: Argument.String("file-or-text").pipe(
+      Argument.withDescription("The description, or the HTML file when text or --clear follows"),
+      Argument.optional
+    ),
+    text: Argument.String("text").pipe(
+      Argument.withDescription("The description, after the HTML file"),
+      Argument.optional
+    ),
+    patch: Flag.String("patch").pipe(
+      Flag.withDescription("Name the patch by ID instead of by file or the current repo"),
+      Flag.optional
+    ),
+    clear: Flag.Boolean("clear").pipe(
+      Flag.withDescription("Remove the description instead of supplying text"),
+      Flag.withDefault(false)
+    )
   },
   (options) => {
     const file =
@@ -1043,7 +1092,7 @@ const readLookFolder = Effect.fn("readLookFolder")(function* (dir: string) {
 const lookPublish = Command.make(
   "publish",
   {
-    dir: Argument.String("dir"),
+    dir: Argument.String("dir").pipe(Argument.withDescription("The look folder to publish")),
     note: Flag.String("note").pipe(Flag.withDescription("Why this revision, such as darker green"))
   },
   (options) =>
@@ -1245,9 +1294,20 @@ const look = Command.make("look", {}, () =>
 const init = Command.make(
   "init",
   {
-    dir: Argument.String("dir").pipe(Argument.optional),
-    tier: Flag.Literals("tier", ["0", "1", "2"]).pipe(Flag.withDefault("1")),
-    purpose: Flag.String("purpose").pipe(Flag.optional)
+    dir: Argument.String("dir").pipe(
+      Argument.withDescription("Directory for the new repo; defaults to the current directory"),
+      Argument.optional
+    ),
+    tier: Flag.Literals("tier", ["0", "1", "2"]).pipe(
+      Flag.withDescription("Runtime tier for the new repo; defaults to 1"),
+      Flag.withDefault("1")
+    ),
+    purpose: Flag.String("purpose").pipe(
+      Flag.withDescription(
+        "What this patch is for; required for agent, --json and non-terminal calls; otherwise prompted"
+      ),
+      Flag.optional
+    )
   },
   (options) =>
     run(
@@ -1320,9 +1380,19 @@ const list = Command.make(
 const add = Command.make(
   "add",
   {
-    integration: Argument.String("integration"),
-    target: Argument.String("target").pipe(Argument.optional),
-    as: Flag.String("as").pipe(Flag.optional)
+    integration: Argument.String("integration").pipe(
+      Argument.withDescription(
+        "members, postgres/<handle>, posthog/<handle>, shared-table or shared-store"
+      )
+    ),
+    target: Argument.String("target").pipe(
+      Argument.withDescription("After shared-table or shared-store, <patchId>/<table or store>"),
+      Argument.optional
+    ),
+    as: Flag.String("as").pipe(
+      Flag.withDescription("Alias in uses; defaults to the camelCased handle or resource name"),
+      Flag.optional
+    )
   },
   (options) =>
     runProject(
@@ -1337,13 +1407,20 @@ const add = Command.make(
   )
 );
 
-const remove = Command.make("remove", { alias: Argument.String("alias") }, (options) =>
-  runProject(
-    Effect.gen(function* () {
-      const token = yield* requiredToken();
-      yield* Project.refresh(yield* Cwd, token, { kind: "remove", alias: options.alias });
-    })
-  )
+const remove = Command.make(
+  "remove",
+  {
+    alias: Argument.String("alias").pipe(
+      Argument.withDescription("The declaration's alias in uses")
+    )
+  },
+  (options) =>
+    runProject(
+      Effect.gen(function* () {
+        const token = yield* requiredToken();
+        yield* Project.refresh(yield* Cwd, token, { kind: "remove", alias: options.alias });
+      })
+    )
 ).pipe(
   Command.withDescription(
     "Remove a declaration and its unused skill, preserving fixtures. Members requires no member columns."
@@ -1368,7 +1445,14 @@ const generateProject = Command.make(
 
 const dev = Command.make(
   "dev",
-  { foreground: Flag.Boolean("foreground").pipe(Flag.withDefault(false)) },
+  {
+    foreground: Flag.Boolean("foreground").pipe(
+      Flag.withDescription(
+        "Wait and stream logs after readiness; Ctrl-C stops only a session it started"
+      ),
+      Flag.withDefault(false)
+    )
+  },
   ({ foreground }) =>
     runProject(
       Effect.gen(function* () {
