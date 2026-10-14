@@ -1,11 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { configDefaults, defineConfig } from "vitest/config";
+import development from "./vitest.development.config.js";
 
 export default defineConfig({
-  resolve: {
-    conditions: ["development"]
-  },
+  ...development,
   test: {
+    ...development.test,
     // Real-Postgres concurrency and live service contracts have separate opt-in jobs.
     exclude: [...configDefaults.exclude, "**/*.postgres.test.ts", "**/*.live.ts"],
     setupFiles: [fileURLToPath(new URL("./setup.ts", import.meta.url))],
