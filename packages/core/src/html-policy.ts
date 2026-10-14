@@ -42,11 +42,14 @@ const MAX_ATTRIBUTES = 256;
 /** Counted in the siblings error recovery passes as it moves nodes; see `locate`. */
 const MAX_REPAIR_WORK = 1 << 24;
 /**
- * Counted in elements and their attributes as they are created. 512 KiB of markup spells out at
- * most a quarter of this, but error recovery reopens formatting elements left open across blocks
- * by cloning them, so a short page could otherwise ask for hundreds of millions.
+ * Counted in elements and their attributes as they are created, and in the characters of those
+ * attributes. 512 KiB of markup spells out at most a quarter of either, but error recovery reopens
+ * formatting elements left open across blocks by cloning them, attributes and all, so a short page
+ * could otherwise ask for hundreds of millions, and every check of an attribute would read each
+ * clone's copy again.
  */
 const MAX_CREATED = 1 << 20;
+const MAX_CREATED_CHARACTERS = 1 << 21;
 
 const TOO_DEEP = `HTML nests elements more than ${MAX_DEPTH} deep.`;
 const TOO_MANY_ATTRIBUTES = `An element has more than ${MAX_ATTRIBUTES} attributes.`;
@@ -201,6 +204,7 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
   let depth = 0;
   let repairWork = 0;
   let created = 0;
+  let createdCharacters = 0;
 
   /**
    * Finds a node among its siblings for error recovery to move it, searching from the end and
@@ -223,7 +227,9 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
     ...tree,
     createElement(tagName, namespaceURI, attrs) {
       created += 1 + attrs.length;
-      if (created > MAX_CREATED) throw new ParseLimitExceeded(TOO_MUCH_REPAIR);
+      for (const { name, value } of attrs) createdCharacters += name.length + value.length;
+      if (created > MAX_CREATED || createdCharacters > MAX_CREATED_CHARACTERS)
+        throw new ParseLimitExceeded(TOO_MUCH_REPAIR);
       return tree.createElement(tagName, namespaceURI, attrs);
     },
     onItemPush() {

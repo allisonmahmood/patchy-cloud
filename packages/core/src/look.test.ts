@@ -266,6 +266,11 @@ describe("checkLook", () => {
     expect(logo(`<svg>${"<g>".repeat(5000)}</svg>`)).toEqual([
       "logo.svg: HTML nests elements more than 512 deep."
     ]);
+    // A <desc> holds HTML, whose formatting tags are cloned into each block they stay open across.
+    const style = `<b style="${"color: red; ".repeat(100)}">`;
+    expect(logo(`<svg><desc><p>${style}${"x<p>".repeat(2200)}</desc></svg>`)).toEqual([
+      "logo.svg: HTML needs too much repair to check: close elements in the order they were opened, and keep table content inside cells."
+    ]);
   });
 
   it("refuses NUL characters, which no file of a look needs", () => {

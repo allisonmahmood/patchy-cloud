@@ -96,6 +96,10 @@ describe("validateHtml", () => {
     const open = Array.from({ length: 500 }, (_, index) => `<b a=${index}>`).join("");
     expect(validateHtml(`<p>${open}${"x<p>".repeat(100)}`).ok).toBe(true);
     expect(validateHtml(`<p>${open}${"x<p>".repeat(2000)}`).errors).toEqual(tooMuch);
+    // One clone carries the whole attribute again, so a long one counts once per clone.
+    const long = `<p><b title="${"x".repeat(1000)}">`;
+    expect(validateHtml(`${long}${"x<p>".repeat(100)}`).ok).toBe(true);
+    expect(validateHtml(`${long}${"x<p>".repeat(2200)}`).errors).toEqual(tooMuch);
   });
 
   it("warns when title is missing", () => {
