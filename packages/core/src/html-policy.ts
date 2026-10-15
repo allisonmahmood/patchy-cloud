@@ -81,7 +81,11 @@ export function validateHtml(
 
   let document: parse5.DefaultTreeAdapterMap["document"];
   try {
-    document = BoundedParser.parse(html, { treeAdapter: boundedTreeAdapter() });
+    // Static pages run with scripts off, so a browser reads <noscript> content as markup.
+    document = BoundedParser.parse(html, {
+      treeAdapter: boundedTreeAdapter(),
+      scriptingEnabled: false
+    });
   } catch (error) {
     errors.push(
       error instanceof ParseLimitExceeded ? error.message : "HTML document could not be parsed."
