@@ -8,7 +8,7 @@ import * as Api from "./Api.js";
 import { LocalError } from "./CliError.js";
 import { configFailure, executeConfig, resolveStamps } from "./executeConfig.js";
 import { lookNotices } from "./lookNotices.js";
-import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./ManagedProject.js";
+import { ManagedProject, isProjectRefusal, presentSkills, safePath } from "./ManagedProject.js";
 import * as Output from "./Output.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
@@ -38,7 +38,7 @@ const io = <A>(operation: string, run: () => Promise<A>) =>
     try: run,
     catch: (cause) =>
       new LocalError({
-        message: isProjectChanged(cause) ? cause.message : `${operation} failed.`,
+        message: isProjectRefusal(cause) ? cause.message : `${operation} failed.`,
         cause
       })
   });

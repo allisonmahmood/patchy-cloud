@@ -35,7 +35,7 @@ import type { Declaration } from "./config.js";
 import {
   ConfigEdit,
   ManagedProject,
-  isProjectChanged,
+  isProjectRefusal,
   presentSkills,
   safePath
 } from "./ManagedProject.js";
@@ -136,7 +136,7 @@ const localIO = <A>(operation: string, run: () => Promise<A>) =>
     try: run,
     catch: (cause) =>
       new LocalError({
-        message: isProjectChanged(cause) ? cause.message : `${operation} failed.`,
+        message: isProjectRefusal(cause) ? cause.message : `${operation} failed.`,
         cause
       })
   });
@@ -659,8 +659,11 @@ export const refresh = Effect.fn("Project.refresh")(function* (
           const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
           // An older CLI may have locked this same pin without its integrity, which pnpm refuses.
           yield* recordIntegrity(cwd, pin);
+          // A run killed mid-install can leave node_modules on another build of a matching pin.
           const needsInstall =
-            pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
+            pinChanged ||
+            transaction.interrupted ||
+            !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
           if (pinChanged) {
             yield* localIO("Update package pin", () =>
               transaction.setPin("patchy", previousPin, pin.tarball)

@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isManagedOutputPath } from "@patchy/api";
 import * as Schema from "effect/Schema";
+import { birth, claim, release } from "./ownerLock.js";
 
 export const ConfigEdit = Schema.Struct({ before: Schema.String, after: Schema.String });
 
@@ -14,7 +15,20 @@ export class ProjectChanged extends Schema.TaggedError<ProjectChanged>()("Projec
     return `${this.file} changed during generation. Its author edits were preserved; retry with the current file.`;
   }
 }
-export const isProjectChanged = Schema.is(ProjectChanged);
+
+/** Another command holds `.patchy/refresh-lock`: one proven alive, or one nothing identifies. */
+export class ProjectLocked extends Schema.TaggedError<ProjectLocked>()("ProjectLocked", {
+  holder: Schema.Literals(["live", "unknown"])
+}) {
+  override get message() {
+    return this.holder === "live"
+      ? "Another patchy command is updating this repo's managed files. Retry when it finishes."
+      : "Could not identify the patchy command holding .patchy/refresh-lock. Remove it only if no other patchy command is running in this repo, then retry.";
+  }
+}
+
+/** Refusals whose own message reaches the person, instead of "<operation> failed.". */
+export const isProjectRefusal = Schema.is(Schema.Union([ProjectChanged, ProjectLocked]));
 
 export interface ManagedFile {
   readonly path: string;
@@ -91,21 +105,35 @@ export class ManagedProject {
   private hadModules = false;
   private constructor(
     readonly root: string,
-    private readonly temporary: string
+    private readonly temporary: string,
+    private readonly lock: { readonly slot: string; readonly nonce: string },
+    private readonly orphans: readonly string[]
   ) {}
+
+  /** A run died mid-transaction, leaving managed files and node_modules from either side. */
+  get interrupted(): boolean {
+    return this.orphans.length > 0;
+  }
 
   static async begin(root: string): Promise<ManagedProject> {
     const local = await safePath(root, ".patchy");
     await fs.mkdir(local, { recursive: true });
-    const lock = await safePath(root, ".patchy/refresh-lock");
-    await fs.mkdir(lock);
+    const slot = await safePath(root, ".patchy/refresh-lock");
+    // Where this process's birth cannot be read (Windows), its claim is taken but never reclaimed.
+    const claimed = await claim(slot, await birth(process.pid).catch(() => undefined));
+    if ("holder" in claimed) throw new ProjectLocked({ holder: claimed.holder });
+    const lock = { slot, nonce: claimed.nonce };
     let temporary: string | undefined;
     try {
+      // Every transaction holds the lock, so another transaction directory is a dead run's.
+      const orphans = (await fs.readdir(local))
+        .filter((name) => name.startsWith("refresh-") && name !== "refresh-lock")
+        .map((name) => path.join(local, name));
       temporary = await fs.mkdtemp(path.join(local, "refresh-"));
-      return new ManagedProject(root, temporary);
+      return new ManagedProject(root, temporary, lock, orphans);
     } catch (error) {
       if (temporary) await fs.rm(temporary, { recursive: true, force: true });
-      await fs.rmdir(lock);
+      await release(lock.slot, lock.nonce);
       throw error;
     }
   }
@@ -340,8 +368,11 @@ export class ManagedProject {
           });
       }
       await fs.rm(this.temporary, { recursive: true, force: true });
+      // A completed install reconciled what a dead run left; without one, the next refresh still must.
+      if (success && this.installed)
+        for (const orphan of this.orphans) await fs.rm(orphan, { recursive: true, force: true });
     } finally {
-      await fs.rmdir(path.join(this.root, ".patchy/refresh-lock"));
+      await release(this.lock.slot, this.lock.nonce);
     }
   }
 }
