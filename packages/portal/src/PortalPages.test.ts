@@ -2048,6 +2048,134 @@ const seedOf = (companyId: string, recorded: Patches.Recorded): Seed => ({
 });
 const logPath = (name: string, query = "") => `${cardPath(name)}/log${query}`;
 
+/** The patch names in All patches' table, in order. */
+const listed = (html: string) =>
+  [
+    ...(html.match(/<tbody>([\s\S]*)<\/tbody>/)?.[1] ?? "").matchAll(
+      /<strong>([a-z0-9-]+)<\/strong><\/a>/g
+    )
+  ].map((match) => match[1]!);
+/** The labels in one row's action menu. */
+const menuItems = (html: string, patchId: string) =>
+  text(html.match(new RegExp(`<div class="menu" id="menu-${patchId}"[\\s\\S]*?</div>`))?.[0] ?? "");
+
+it.layer(layer)("all patches on a socket", (it) => {
+  it.effect("lists every patch in tabs, searched within the tab and sorted by visits", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patches = yield* Patches.Patches;
+      const tool = yield* publishSource(workspace.owner, "lead-tracker");
+      const page = yield* publish(workspace.owner, "q3-review", {
+        description: "Quarterly review of revenue and wins."
+      });
+      const busy = yield* publish(workspace.member, "kudos", {
+        description: "<script>alert(1)</script> Shout-outs."
+      });
+      const retired = yield* publish(workspace.owner, "old-crm");
+      const deleted = yield* publish(workspace.member, "lunch-poll");
+      yield* patches.retire(retired.patchId, actor(workspace.owner));
+      yield* patches.delete(deleted.patchId, actor(workspace.member));
+      for (let visit = 0; visit < 3; visit++) yield* patches.recordVisit(busy.patchId);
+      yield* patches.recordVisit(tool.patchId);
+
+      const all = yield* (yield* request("/patches", workspace.owner)).text;
+      assert.strictEqual(heading(all), "All patches");
+      assert.deepStrictEqual(listed(all), [busy.name, tool.name, page.name]);
+      assert.include(text(all), "All 3 Tools 1 Pages 2 Yours 2 Retired and deleted 2");
+      assert.notInclude(all, "<script>alert(1)</script>");
+      assert.include(all, "&lt;script&gt;alert(1)&lt;/script&gt; Shout-outs");
+      assert.include(all, `<script defer src="/assets/copy.js"></script>`);
+
+      const tools = yield* (yield* request("/patches?show=tools", workspace.owner)).text;
+      assert.deepStrictEqual(listed(tools), [tool.name]);
+      const pages = yield* (yield* request("/patches?show=pages&q=REVENUE", workspace.owner)).text;
+      assert.deepStrictEqual(listed(pages), [page.name]);
+      assert.include(text(pages), "1 match for “REVENUE”");
+      assert.include(pages, 'name="show" value="pages"');
+      assert.isTrue(links(pages).some((link) => link.href === "/patches?show=tools&amp;q=REVENUE"));
+      const byOwner = yield* (yield* request("/patches?q=alex", workspace.owner)).text;
+      assert.deepStrictEqual(listed(byOwner), [busy.name]);
+      const yours = yield* (yield* request("/patches?show=yours", workspace.owner)).text;
+      assert.deepStrictEqual(listed(yours), [tool.name, page.name]);
+
+      const off = yield* (yield* request("/patches?show=off", workspace.owner)).text;
+      assert.deepStrictEqual(listed(off), [deleted.name, retired.name]);
+      assert.include(text(off), "Deleted · gone in 30 days");
+      assert.include(text(off), "Retired by Priya");
+      const nothing = yield* (yield* request("/patches?q=zebra", workspace.owner)).text;
+      assert.include(text(nothing), "No patches match “zebra”.");
+      const index = yield* (yield* request("/", workspace.member)).text;
+      assert.isTrue(links(index).some((link) => link.href === "/patches"));
+    })
+  );
+
+  it.effect("offers each viewer only the acts they may perform from a row's menu", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "office-map");
+      const menus = new Map<Person, string>();
+      for (const person of [workspace.member, workspace.owner, workspace.admin])
+        menus.set(
+          person,
+          menuItems(yield* (yield* request("/patches", person)).text, patch.patchId)
+        );
+      assert.strictEqual(menus.get(workspace.member), "office-map Open Copy link About this patch");
+      assert.strictEqual(
+        menus.get(workspace.owner),
+        "office-map Open Copy link About this patch Retire… Delete…"
+      );
+      assert.strictEqual(
+        menus.get(workspace.admin),
+        "office-map Open Copy link About this patch Reassign… Retire… Delete…"
+      );
+      const html = yield* (yield* request("/patches", workspace.admin)).text;
+      assert.include(html, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/office-map"`);
+    })
+  );
+
+  it.effect("shows Needs attention only to a patch's owner and admins, until recovery ends", () =>
+    Effect.gen(function* () {
+      // company() sets the clock, so both exist before it moves.
+      const outsider = yield* company();
+      const workspace = yield* company();
+      const patches = yield* Patches.Patches;
+      const sql = yield* SqlClient.SqlClient;
+      const deleted = yield* publish(workspace.owner, "lunch-poll");
+      const orphan = yield* publish(workspace.member, "asset-library");
+      yield* patches.delete(deleted.patchId, actor(workspace.owner));
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${workspace.member.id}`;
+      yield* TestClock.adjust(24 * DAY);
+
+      const owner = yield* (yield* request("/patches?show=attention", workspace.owner)).text;
+      assert.deepStrictEqual(listed(owner), [deleted.name]);
+      assert.include(text(owner), "Gone for good in 6 days");
+      assert.include(forms(owner), `${cardPath(deleted.name)}/restore`);
+      const admin = yield* (yield* request("/patches?show=attention", workspace.admin)).text;
+      assert.deepStrictEqual(listed(admin), [orphan.name, deleted.name]);
+      assert.include(text(admin), "Its owner is deactivated");
+      assert.isTrue(links(admin).some((link) => link.href === `${cardPath(orphan.name)}/reassign`));
+      assert.include(
+        text(yield* (yield* request("/patches", workspace.admin)).text),
+        "Needs attention 2"
+      );
+
+      const theirs = yield* (yield* request("/patches?show=attention", outsider.member)).text;
+      assert.include(text(theirs), "Nothing needs your attention.");
+      assert.notInclude(
+        text(yield* (yield* request("/patches", outsider.member)).text),
+        "Needs attention"
+      );
+
+      yield* TestClock.adjust(7 * DAY);
+      const ended = yield* (yield* request("/patches?show=off", workspace.owner)).text;
+      assert.include(text(ended), "Recovery ended");
+      assert.notInclude(menuItems(ended, deleted.patchId), "Restore");
+      const later = yield* (yield* request("/patches", workspace.owner)).text;
+      assert.notInclude(text(later), "Needs attention");
+    })
+  );
+});
+
 it.layer(layer)("patch log on a socket", (it) => {
   it.effect("shows an owner the tree of a failed action and refuses another owner's log", () =>
     Effect.gen(function* () {

@@ -12,6 +12,10 @@ _Avoid_: dashboard, home page (the root is a sign-in door when signed out), dire
 The compact list of the company's patches beside the card: name and the first clause of the description, grouped as the viewer's own, the company's, and retired and deleted behind a toggle.
 _Avoid_: sidebar, list (the CLI's `patchy list` is discovery, not this), table
 
+**All patches**:
+The table at `/patches` of every patch the viewer can open: tabs for All, Tools (tiers 1 and 2), Pages (tier 0), Yours, Needs attention and Retired and deleted, a search over name, title, description and owner, and each row's acts in its menu. **Needs attention** lists a patch only to its owner and admins: an admin sees live patches whose owner is deactivated, and both see deletions within a week of reclamation, each with the act that resolves it.
+_Avoid_: dashboard, directory, admin list
+
 **Card**:
 One patch's page at `/patches/<name>`: its address, description, owner, current version, who can open it and what reads it, with the management acts for whoever may perform them. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier

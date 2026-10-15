@@ -7,4 +7,13 @@ export { escapeAttribute, escapeHtml, framedDocument, htmlPage, whatsNewKind } f
 export type { AppShell } from "./html.js";
 export { ago, dateLabel, daysLeft, renderOffPatch } from "./patch-presentation.js";
 export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
+export {
+  avatar,
+  menuCopy,
+  menuLink,
+  menuPost,
+  patchMark,
+  rowMenu,
+  searchField
+} from "./components.js";
 export * as WhatsNew from "./whatsNew.js";

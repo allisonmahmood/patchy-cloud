@@ -719,6 +719,14 @@ export function htmlPage(options: {
     .avatar-amber { background: var(--paper-amber); }
     .avatar-waiting { border-style: dashed; border-color: var(--line-strong); background: transparent; color: var(--muted); }
     .avatar-off { border-color: var(--line-strong); background: transparent; color: var(--muted); }
+    /* mono: a tool's two-letter mark, tinted from its name and turned like the glyph; mono-blue, mono-green and
+       mono-amber vary the tint. page-mark: a tier 0 page's ruled sheet in the same footprint. */
+    .mono { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); font-size: .72rem; font-weight: 900; letter-spacing: .02em; line-height: 1; transform: rotate(-3deg); }
+    .mono-blue { background: var(--paper-blue); }
+    .mono-green { background: var(--paper-green); }
+    .mono-amber { background: var(--paper-amber); }
+    .page-mark { position: relative; flex: none; width: 26px; height: 32px; margin-inline: 4px; border: 2px solid var(--ink); border-radius: 3px 9px 3px 3px; background: var(--white); }
+    .page-mark::after { content: ""; position: absolute; inset: 7px 5px 6px; background: repeating-linear-gradient(transparent 0 4px, var(--line-strong) 4px 6px); }
     /* tag: a small label after a name, such as You. */
     .tag { display: inline-flex; align-items: center; min-height: 20px; margin-left: 6px; padding: 1px 7px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--ink-soft); font-size: .7rem; font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; vertical-align: 2px; }
     /* tabs: links that narrow one list, the current one marked like the app nav, each label followed by its count. */
