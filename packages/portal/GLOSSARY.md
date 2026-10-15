@@ -25,20 +25,20 @@ The table at `/patches` of every patch the viewer can open: tabs for All, Tools 
 _Avoid_: dashboard, directory, admin list
 
 **Card**:
-One patch's page at `/patches/<name>`: its address, description, owner, current version, who can open it and what reads it, with the management acts for whoever may perform them. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
+One patch's page at `/patches/<name>`, in tabs: **Overview** (its description, owner, current version, who can open it, what reads it, its visits and recent activity), **Log** and **Settings** for its owner and admins, and **Versions**. Its header leads with Open, or Restore for a manager while an off patch can be restored. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Log**:
-One patch's page at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first, each expanding into the calls it made and its `ctx.log` lines, filtered and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal only reads it.
+The card's tab at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first, each expanding into the calls it made and its `ctx.log` lines, filtered and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal only reads it.
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
 
 **Guide**:
 **Your first patch** at `/guide`, reached from Home's **Make your own** while the viewer owns no patch, and Home itself while nothing is live: what Patchy is, then the steps from the setup line to a first publish, each with a preview of what the agent will say. Its progress comes from the viewer's live machine tokens and owned patches, never a stored checklist, and owning any patch ends it: `/guide` then sends its owner Home.
 _Avoid_: onboarding (the global skill's welcome page is that), tutorial, checklist, wizard
 
-**Manage**:
-The owner or admin's controls on a card: description, who can open it, served version and uncomplicated restore stay inline. Retire, delete, restore with off sources and admin-only reassign lead to confirmation pages.
-_Avoid_: settings, admin panel, edit mode
+**Settings**:
+The card's tab at `/patches/<name>/settings` for its owner and admins: the owner with admin-only Reassign…, the description, who can open it, and Retire… and Delete…. The served version changes on Versions and an uncomplicated restore from the card's header. Retire, delete, restore with off sources and reassign lead to confirmation pages. A refused form shows the tab it sits on; a refusal of who may act, or of a form whose name now names another patch, shows Overview.
+_Avoid_: manage, admin panel, edit mode
 
 **Confirmation page**:
 The page for an act that breaks another tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. Patch management confirmations live under the card's URL; deactivation and reactivation confirmations follow the user's pick page and describe the exact selection.

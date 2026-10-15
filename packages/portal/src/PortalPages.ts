@@ -20,10 +20,13 @@ import { firstPatch, renderFirstPatchNote, renderGuide } from "./guide.js";
 import { homeStyles, renderHome } from "./home.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
+  type CardTab,
   type ConfirmationAction,
   type PatchAction,
-  renderCardPage,
+  renderCardFrame,
   renderConfirmation,
+  renderOverview,
+  renderSettings,
   renderVersions,
   styles
 } from "./render.js";
@@ -82,7 +85,6 @@ const context = Effect.gen(function* () {
   return {
     viewer,
     session,
-    all: query.get("all") === "1",
     query: request.method === "GET" ? (query.get("q") ?? "") : "",
     access: {
       companyId: viewer.company.id,
@@ -126,7 +128,6 @@ const logNames = Effect.fn("PortalPages.logNames")(function* (
 /** W-2 on the card: the owner's and admins' last three entries, once the patch has any or serves tier 2. */
 const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
   card: Patches.PortalCard,
-  all: boolean,
   now: number
 ) {
   const { viewer } = yield* context;
@@ -139,7 +140,7 @@ const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
   });
   if (entries.length === 0 && card.tier < 2) return "";
   const names = yield* logNames(card, viewer.company.id);
-  return renderRecentActivity({ patch: card.patch, all, now, names, entries });
+  return renderRecentActivity({ patch: card.patch, now, names, entries });
 });
 
 const overlongName = errorPage(
@@ -159,18 +160,31 @@ const newestMachine = Effect.fn("PortalPages.newestMachine")(function* (userId: 
   return newest === undefined ? null : { name: newest.name, createdAt: newest.createdAt };
 });
 
-/** One patch's card, or its versions page, at `/patches/<name>`. */
+/** A card tab that is not the log: Overview at `/patches/<name>`, then `/versions` and `/settings`. */
+type PageTab = Exclude<CardTab, "log">;
+const tabOf: Record<PatchAction, PageTab> = {
+  description: "settings",
+  scope: "settings",
+  rollback: "versions",
+  retire: "overview",
+  delete: "overview",
+  restore: "overview",
+  reassign: "overview"
+};
+const settingsForbidden = "Only the owner or an admin can change this patch's settings.";
+
+/** One patch's card at `/patches/<name>` on one of its tabs. A member asking for Settings gets Overview. */
 const render = Effect.fn("PortalPages.render")(function* (
   name: string,
   options: {
+    tab?: PageTab;
     status?: number;
     notice?: string;
     submittedDescription?: string;
     descriptionError?: string;
-    versions?: boolean;
   } = {}
 ) {
-  const { viewer, session, all, access } = yield* context;
+  const { viewer, session, access } = yield* context;
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -183,26 +197,35 @@ const render = Effect.fn("PortalPages.render")(function* (
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = yield* patches.portalCard(selected.patch.id, access);
   const now = yield* Clock.currentTimeMillis;
-  const body = options.versions
-    ? renderVersions({ card, viewer, all, now })
-    : renderCardPage({
-        card,
-        viewer,
-        all,
-        now,
-        publicBaseUrl: session.publicBaseUrl,
-        activity: yield* recentActivity(card, all, now),
-        notice: options.notice,
-        submittedDescription: options.submittedDescription,
-        descriptionError: options.descriptionError
-      });
+  const manages = viewer.role === "admin" || card.owner.id === viewer.user.id;
+  const refused = options.tab === "settings" && !manages;
+  const tab = refused ? "overview" : (options.tab ?? "overview");
+  const body =
+    tab === "settings"
+      ? renderSettings({
+          card,
+          viewer,
+          submittedDescription: options.submittedDescription,
+          descriptionError: options.descriptionError
+        })
+      : tab === "versions"
+        ? renderVersions({ card, viewer, now })
+        : renderOverview({ card, viewer, now, activity: yield* recentActivity(card, now) });
   return pageResponse(
     {
-      title: `${card.patch.name}${options.versions ? " versions" : ""}`,
+      title: `${card.patch.name}${tab === "overview" ? "" : ` ${tab}`}`,
       heading: "",
-      body,
+      body: renderCardFrame({
+        card,
+        viewer,
+        now,
+        publicBaseUrl: session.publicBaseUrl,
+        tab,
+        notice: refused ? settingsForbidden : options.notice,
+        body
+      }),
       styles,
-      status: options.status ?? 200,
+      status: refused ? 403 : (options.status ?? 200),
       app: { viewer, section: "patches" }
     },
     session
@@ -297,7 +320,7 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
     acknowledged?: boolean;
   } = {}
 ) {
-  const { viewer, session, all, access, query } = yield* context;
+  const { viewer, session, access, query } = yield* context;
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -314,10 +337,10 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
       notice: action === "reassign" ? adminRequired : forbidden
     });
   if (action === "restore" && form.status === undefined && card.offSources.length === 0)
-    return HttpServerResponse.redirect(
-      `/patches/${encodeURIComponent(card.patch.name)}${all ? "?all=1" : ""}`,
-      { status: 303, headers: { "cache-control": "private, no-store" } }
-    );
+    return HttpServerResponse.redirect(`/patches/${encodeURIComponent(card.patch.name)}`, {
+      status: 303,
+      headers: { "cache-control": "private, no-store" }
+    });
   if (
     (action === "retire" && card.patch.state !== "live") ||
     (action === "delete" && card.patch.state === "deleted") ||
@@ -336,7 +359,6 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
       body: renderConfirmation({
         card,
         viewer,
-        all,
         now,
         action,
         members,
@@ -357,7 +379,7 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
 
 /** The patch's log for its current owner and admins: newest first, filtered and paged by cursor. */
 const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
-  const { viewer, session, all, access } = yield* context;
+  const { viewer, session, access } = yield* context;
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -390,6 +412,7 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
   const page = yield* log.page({ ...scope, before, filter, limit: 25 });
   const choices = yield* log.choices(scope);
   const names = yield* logNames(card, viewer.company.id);
+  const now = yield* Clock.currentTimeMillis;
   // Calls record the connection's id; readers know it by its handle. A connection deleted
   // since, or a store that cannot answer, leaves the id.
   const connections = page.entries.some((entry) =>
@@ -403,25 +426,31 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
     {
       title: `${card.patch.name} log`,
       heading: "",
-      body: renderLog({
-        patch: card.patch,
-        all,
-        now: yield* Clock.currentTimeMillis,
-        names: {
-          ...names,
-          connections: new Map(
-            connections.map((connection) => [
-              connection.id,
-              `${connection.integration}/${connection.handle}`
-            ])
-          )
-        },
-        entries: page.entries,
-        next: page.next,
-        windowEnded: page.windowEnded,
-        before,
-        filter,
-        choices
+      body: renderCardFrame({
+        card,
+        viewer,
+        now,
+        publicBaseUrl: session.publicBaseUrl,
+        tab: "log",
+        body: renderLog({
+          patch: card.patch,
+          now,
+          names: {
+            ...names,
+            connections: new Map(
+              connections.map((connection) => [
+                connection.id,
+                `${connection.integration}/${connection.handle}`
+              ])
+            )
+          },
+          entries: page.entries,
+          next: page.next,
+          windowEnded: page.windowEnded,
+          before,
+          filter,
+          choices
+        })
       }),
       styles,
       app: { viewer, section: "patches" }
@@ -434,7 +463,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  const { viewer, all, access } = yield* context;
+  const { viewer, access } = yield* context;
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const selected = rows.find((row) => row.patch.name === name);
@@ -467,9 +496,11 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
     action === "retire" || action === "delete" || action === "restore" || action === "reassign"
       ? action
       : undefined;
+  // A refusal of a permitted act shows the tab its form is on; identity and permission refusals stay on Overview.
+  const tab = tabOf[action];
   const redisplay = (status: number, notice: string, nameError?: string) =>
     confirmation === undefined
-      ? render(name, { status, notice })
+      ? render(name, { tab, status, notice })
       : confirmationPage(name, confirmation, {
           status,
           notice: nameError === undefined ? notice : undefined,
@@ -532,11 +563,8 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       }
     }
     return HttpServerResponse.redirect(
-      `/patches/${encodeURIComponent(name)}${all ? "?all=1" : ""}`,
-      {
-        status: 303,
-        headers: { "cache-control": "private, no-store" }
-      }
+      `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}`,
+      { status: 303, headers: { "cache-control": "private, no-store" } }
     );
   });
   const stale = Effect.fn("PortalPages.stale")(function* (state?: Patches.Patch["state"]) {
@@ -546,6 +574,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
         ? ""
         : ` ${ago(fresh.patch.lastChangedAt, yield* Clock.currentTimeMillis)}`;
     return yield* render(name, {
+      tab,
       status: 409,
       notice: `${state === undefined ? "" : `This patch is ${state}. `}This patch changed while you had this page open: ${fresh.lastChangedAction ?? "updated"} by ${fresh.actorNames.lastChanged ?? fresh.owner.name}${when}. Nothing was done.`
     });
@@ -553,6 +582,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   const invalid = (notice: string) =>
     confirmation === undefined
       ? render(name, {
+          tab,
           status: 422,
           ...(action === "description"
             ? { submittedDescription: form.description ?? "", descriptionError: notice }
@@ -566,9 +596,9 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       AdminRequired: () => render(name, { status: 403, notice: adminRequired }),
       WrongState: (error) => stale(error.state),
       PatchDeleted: (error) =>
-        render(name, { status: 409, notice: `${error.message} Nothing was done.` }),
+        render(name, { tab, status: 409, notice: `${error.message} Nothing was done.` }),
       PatchRetired: (error) =>
-        render(name, { status: 409, notice: `${error.message} Nothing was done.` }),
+        render(name, { tab, status: 409, notice: `${error.message} Nothing was done.` }),
       SourcesOff: () => redisplay(409, "Some sources are off. Nothing was done."),
       InvalidDescription: (error) => invalid(`${error.message} Nothing was done.`),
       Tier2NotPublic: (error) => invalid(`${error.message} Nothing was done.`),
@@ -673,7 +703,12 @@ const patchRoutes = [
   {
     method: "GET" as const,
     path: "/patches/:name/versions" as const,
-    handle: (name: string) => render(name, { versions: true })
+    handle: (name: string) => render(name, { tab: "versions" })
+  },
+  {
+    method: "GET" as const,
+    path: "/patches/:name/settings" as const,
+    handle: (name: string) => render(name, { tab: "settings" })
   },
   {
     method: "GET" as const,

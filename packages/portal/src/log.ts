@@ -186,7 +186,6 @@ const entryId = (entry: InvocationLog.Invocation) => `entry-${entry.id}`;
 
 export const renderLog = (input: {
   readonly patch: Patches.Patch;
-  readonly all: boolean;
   readonly now: number;
   readonly names: LogNames;
   readonly entries: ReadonlyArray<InvocationLog.Entry>;
@@ -201,19 +200,16 @@ export const renderLog = (input: {
     readonly viewerIds: ReadonlyArray<string>;
   };
 }): string => {
-  const { patch, all, filter, names, now } = input;
-  const keep = { all: all ? "1" : undefined };
+  const { patch, filter, names, now } = input;
   const filters = {
-    ...keep,
     outcome: filter.outcome,
     person: filter.viewerId,
     handler: filter.handler
   };
   const filtered =
     filter.outcome !== undefined || filter.viewerId !== undefined || filter.handler !== undefined;
-  const back = `<p><a href="${escapeAttribute(`/patches/${encodeURIComponent(patch.name)}${all ? "?all=1" : ""}`)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">Log of ${escapeHtml(patch.name)}</h1>`;
   if (input.entries.length === 0 && !filtered && input.before === undefined)
-    return `<article>${back}<p>Nothing logged yet. Saves and actions appear here as people use ${escapeHtml(patch.name)}; reads appear only when they log or fail.</p></article>`;
+    return `<p>Nothing logged yet. Saves and actions appear here as people use ${escapeHtml(patch.name)}; reads appear only when they log or fail.</p>`;
   const select = (
     id: string,
     name: string,
@@ -237,7 +233,7 @@ export const renderLog = (input: {
   const people = input.choices.viewerIds
     .map((id) => [id, person(names, id)] as const)
     .sort((a, b) => a[1].localeCompare(b[1]));
-  const form = `<form class="log-filters" method="get" action="${escapeAttribute(logPath(patch))}">${all ? '<input type="hidden" name="all" value="1">' : ""}${select("log-outcome", "outcome", "Outcome", "All", filter.outcome, outcomeFilters)}${select("log-person", "person", "Person", "Anyone", filter.viewerId, people)}${select(
+  const form = `<form class="log-filters" method="get" action="${escapeAttribute(logPath(patch))}">${select("log-outcome", "outcome", "Outcome", "All", filter.outcome, outcomeFilters)}${select("log-person", "person", "Person", "Anyone", filter.viewerId, people)}${select(
     "log-handler",
     "handler",
     "Handler",
@@ -262,26 +258,25 @@ export const renderLog = (input: {
     : "";
   if (input.entries.length === 0) {
     const empty = filtered
-      ? `<p>No entries match these filters${input.windowEnded ? ` in the ${searched} searched` : ""}.</p><p><a href="${escapeAttribute(logPath(patch, keep))}">Clear filters</a></p>`
+      ? `<p>No entries match these filters${input.windowEnded ? ` in the ${searched} searched` : ""}.</p><p><a href="${escapeAttribute(logPath(patch))}">Clear filters</a></p>`
       : "<p>No older entries.</p>";
-    return `<article>${back}${intro}${form}${empty}${window}${paging}</article>`;
+    return `${intro}${form}${empty}${window}${paging}`;
   }
   const rows = input.entries.map((entry) => {
     const { invocation } = entry;
     return `<tr id="${escapeAttribute(entryId(invocation))}"><td>${time(invocation.startedAt, now)}</td><td>${escapeHtml(person(names, invocation.initiatingViewerId))}</td><td>${escapeHtml(version(names, invocation.versionId))}</td><td><code>${escapeHtml(invocation.handler)}</code></td><td>${escapeHtml(invocation.kind)}</td><td>${outcome(invocation.outcome, invocation.outcomeCode)}</td><td>${escapeHtml(timing(invocation))}</td></tr>${expansion(entry, names)}`;
   });
-  return `<article>${back}${intro}${form}<p class="supporting-text">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p><div class="portal-table"><table class="table log-table" aria-label="Log entries"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Person</th><th scope="col">Version</th><th scope="col">Handler</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${window}${paging}</article>`;
+  return `${intro}${form}<p class="supporting-text">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p><div class="portal-table"><table class="table log-table" aria-label="Log entries"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Person</th><th scope="col">Version</th><th scope="col">Handler</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${window}${paging}`;
 };
 
 /** W-2: the card's last three entries for its owner and admins, each linking into the log. */
 export const renderRecentActivity = (input: {
   readonly patch: Patches.Patch;
-  readonly all: boolean;
   readonly now: number;
   readonly names: LogNames;
   readonly entries: ReadonlyArray<InvocationLog.Entry>;
 }): string => {
-  const path = logPath(input.patch, { all: input.all ? "1" : undefined });
+  const path = logPath(input.patch);
   const rows = input.entries.map(({ invocation }) => {
     return `<li class="list-row"><p class="log-status"><a href="${escapeAttribute(`${path}#${entryId(invocation)}`)}"><strong>${escapeHtml(sentence(invocation, input.names))}</strong></a>${outcome(invocation.outcome, invocation.outcomeCode)}</p><p class="supporting-text">${time(invocation.startedAt, input.now, " UTC")} · ${escapeHtml(timing(invocation))}</p></li>`;
   });

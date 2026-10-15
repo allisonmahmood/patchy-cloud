@@ -134,7 +134,7 @@ export const renderHome = (input: HomeInput): string => {
       menuLink(card, "About this patch"),
       `<a class="menu-item" href="${escapeAttribute(address(patch))}" target="_blank" rel="noopener">Open in a new tab</a>`,
       menuCopy(url, "Copy link"),
-      ...(manages(row, viewer) ? [menuLink(card, "Settings")] : [])
+      ...(manages(row, viewer) ? [menuLink(`${card}/settings`, "Settings")] : [])
     ]);
     return `<div class="tile"><a class="tile-link" href="${escapeAttribute(address(patch))}">${patchMark(patch.name, row.tier)}<span class="tile-name">${escapeHtml(patch.name)}${tags(row)}</span><span class="tile-text">${escapeHtml(clause(row))}</span><span class="tile-meta">${escapeHtml(meta)}</span></a>${menu}</div>`;
   };

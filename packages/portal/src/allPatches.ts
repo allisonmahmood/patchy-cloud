@@ -136,7 +136,7 @@ const actions = (row: Patches.ReadPatch, viewer: Viewer, url: string, now: numbe
   ];
   if (!manages(row, viewer)) return rowMenu(patch.id, patch.name, items);
   const manage = [
-    menuLink(cardPath(patch), "Settings"),
+    menuLink(cardPath(patch, "settings"), "Settings"),
     ...(viewer.role === "admin" ? [menuLink(cardPath(patch, "reassign"), "Reassign…")] : []),
     ...(patch.state === "live" ? [menuLink(cardPath(patch, "retire"), "Retire…", true)] : []),
     ...(patch.state !== "live" && recoverable(patch, now)
