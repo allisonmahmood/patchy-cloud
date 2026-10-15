@@ -668,6 +668,16 @@ it.effect("failure notices are deduplicated and confined to each command", () =>
   )
 );
 
+it("the daemon adds --no-wasm-code-gc on Node 24 only", () => {
+  const cli = ["--import", "tsx", "--conditions=development"];
+  assert.deepStrictEqual(DevLifecycle.daemonExecArgv("24.20.0", cli), [
+    ...cli,
+    "--no-wasm-code-gc"
+  ]);
+  for (const node of ["22.22.0", "26.11.1", "240.0.0"])
+    assert.deepStrictEqual(DevLifecycle.daemonExecArgv(node, cli), cli);
+});
+
 /** The key is in no file the session wrote, nor in the daemon's arguments or environment. */
 const holdsNoKey = Effect.fn("test.lifecycle.holdsNoKey")(function* (
   stateDir: string,
