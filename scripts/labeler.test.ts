@@ -33,9 +33,10 @@ const areaGlobs = Object.entries(config)
 it("gives every directory under apps/ and packages/ an area label", () => {
   const files = execFileSync(
     "git",
-    ["ls-files", "--cached", "--others", "--exclude-standard", "apps", "packages"],
+    // -z: without it git quotes paths with non-ASCII characters.
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "apps", "packages"],
     { cwd: root, encoding: "utf8" }
-  ).split("\n");
+  ).split("\0");
   const directories = new Set(
     files
       .map((file) => file.split("/"))
