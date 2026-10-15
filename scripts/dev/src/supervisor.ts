@@ -8,6 +8,7 @@
  * Every log line lands in `.local/dev/dev.log` with one `[service]` prefix.
  */
 import EmbeddedPostgres from "embedded-postgres";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -32,7 +33,7 @@ import { DATABASE_NAME, Plan, signInOf } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
 import { loadScenario, seedScenario } from "./scenario.js";
-import { layout, writeEnv, writePlan } from "./state.js";
+import { FAILED, layout, writeEnv, writePlan } from "./state.js";
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
   stage: Schema.Literals(["start", "create-database"]),
@@ -59,6 +60,16 @@ export class DatabaseSetupError extends Schema.TaggedError<DatabaseSetupError>()
     return "The dev database failed to seed.";
   }
 }
+
+/** A failure's message, then its root cause's: a failed step names itself, Postgres says why. */
+const reasonOf = (failure: unknown) => {
+  const message = (value: unknown) => (value instanceof Error ? value.message : String(value));
+  let root = failure;
+  for (let depth = 0; depth < 8 && root instanceof Error && root.cause !== undefined; depth++) {
+    root = root.cause;
+  }
+  return root === failure ? message(failure) : `${message(failure)}: ${message(root)}`;
+};
 
 class PackageBuildFailed extends Schema.TaggedError<PackageBuildFailed>()("PackageBuildFailed", {
   exitCode: Schema.Number
@@ -157,11 +168,16 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server migrates on its own way up too; running it here first means
   // the seed below always lands on the current schema. The supervisor has no
-  // terminal, so a refusal (a ledger from before a squash says to reset) is
-  // written to dev.log, where `pnpm dev` points.
+  // terminal, so a failure is written to dev.log, marked for `pnpm dev` to
+  // print: a refusal (a duplicate id, or a ledger from before a squash says to
+  // reset) or a step's SQL error, which the Migrator raises as a defect.
   yield* migrate(migrations).pipe(
     Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))),
-    Effect.tapError((error) => say(error.message))
+    Effect.tapCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.void
+        : say(`${FAILED}The dev database failed to migrate: ${reasonOf(Cause.squash(cause))}`)
+    )
   );
   const inherited = yield* Config.all({
     PATH: Config.String("PATH"),

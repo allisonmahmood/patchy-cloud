@@ -22,7 +22,7 @@ pnpm dev up [scenario]   # an environment: a scenario's company, people and patc
 Use an environment for anything with more than one person (live sync,
 assignments, admin-only rules, invitations) and for demos. Use the URL each
 start prints; ports can change between starts. A failed start names its log:
-read `pnpm dev logs`.
+read `pnpm dev logs`. A failed migration also prints which step failed and why.
 
 Done when `pnpm dev status` exits 0.
 

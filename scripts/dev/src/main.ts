@@ -44,7 +44,7 @@ import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf }
 import { isPortFree } from "./ports.js";
 import { alive, signal } from "./process.js";
 import { loadScenario } from "./scenario.js";
-import { layout, readPlan, writePlan } from "./state.js";
+import { failureOf, layout, readPlan, writePlan } from "./state.js";
 import { supervise } from "./supervisor.js";
 
 class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerBuildFailed", {
@@ -56,10 +56,13 @@ class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerB
 }
 
 class SupervisorExited extends Schema.TaggedError<SupervisorExited>()("SupervisorExited", {
+  failure: Schema.optional(Schema.String),
   logFile: Schema.String
 }) {
   override get message() {
-    return `The supervisor exited before the server became healthy; see ${this.logFile}.`;
+    return this.failure === undefined
+      ? `The supervisor exited before the server became healthy; see ${this.logFile}.`
+      : `${this.failure}\nSee ${this.logFile}.`;
   }
 }
 
@@ -291,9 +294,11 @@ const buildBroker = Effect.fn("buildBroker")(function* (worktree: string) {
 /**
  * Writes the plan, spawns the supervisor detached, records its pid at once
  * (so a second start during initdb sees it and refuses), then waits for
- * `/healthz`. Callers build the broker first.
+ * `/healthz`. A supervisor that exits first is reported with the failure it
+ * logged to dev.log, when it logged one. Callers build the broker first.
  */
 const start = Effect.fn("start")(function* (plan: Plan) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const files = layout(plan, path);
@@ -324,7 +329,11 @@ const start = Effect.fn("start")(function* (plan: Plan) {
       return Option.getOrElse(recorded, () => plan);
     }
     if (!(yield* alive(supervisor.pid))) {
-      return yield* new SupervisorExited({ logFile: files.logFile });
+      const log = yield* fs.readFileString(files.logFile).pipe(Effect.orElseSucceed(() => ""));
+      return yield* new SupervisorExited({
+        failure: failureOf(log, supervisor.pid),
+        logFile: files.logFile
+      });
     }
     yield* Effect.sleep("250 millis");
   }

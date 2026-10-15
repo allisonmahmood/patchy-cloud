@@ -171,10 +171,22 @@ const ledgerRows = SqlSchema.findAll({
  * branch's own steps. Up to the lower of the two highest ids, both must list
  * the same steps. Ids above the record's highest are a newer build's steps and
  * pass, so an earlier build can still start. The Migrator runs its loader in
- * its transaction, after it locks the ledger.
+ * its transaction, after it locks the ledger. A duplicate id is refused first,
+ * by name.
  */
 const checkedLoader = Effect.fn("Sql.checkedLoader")(function* (migrations: Migrations) {
   const record = yield* Migrator.fromRecord(migrations);
+  // Sorted by id, so a duplicate sits next to its twin. The Migrator would
+  // refuse it too, without saying which id.
+  for (const [index, [id, step]] of record.entries()) {
+    const previous = record[index - 1];
+    if (previous?.[0] === id) {
+      return yield* new Migrator.MigrationError({
+        kind: "Duplicates",
+        message: `Migration id ${id} is used twice, by "${previous[1]}" and "${step}". Nothing was applied.`
+      });
+    }
+  }
   const ledger = yield* ledgerRows(undefined).pipe(
     Effect.mapError(
       (cause) =>
@@ -186,8 +198,6 @@ const checkedLoader = Effect.fn("Sql.checkedLoader")(function* (migrations: Migr
     )
   );
   const recorded = new Map(record.map(([id, name]) => [id, name]));
-  // The Migrator refuses a duplicate id itself, before anything runs.
-  if (recorded.size !== record.length) return record;
   const applied = new Map(ledger.map((row) => [row.id, row.name]));
   const shared = Math.min(Math.max(0, ...recorded.keys()), Math.max(0, ...applied.keys()));
   const diverged = [...recorded.keys(), ...applied.keys()]
@@ -211,8 +221,8 @@ const checkedLoader = Effect.fn("Sql.checkedLoader")(function* (migrations: Migr
  * EXCLUSIVE` lock on the ledger, and answers with what it applied. Callers
  * spread the capability records into one: `migrate({ ...auth, ...patches })`.
  * Ids are sorted numerically and a duplicate fails with `MigrationError`
- * (`kind: "Duplicates"`) before anything runs; a ledger with another history
- * fails with `kind: "BadState"` (see `checkedLoader`).
+ * (`kind: "Duplicates"`, naming the id) before anything runs; a ledger with
+ * another history fails with `kind: "BadState"` (see `checkedLoader`).
  */
 export const migrate = (migrations: Migrations) =>
   Migrator.make({})({ loader: checkedLoader(migrations), table: LEDGER_TABLE });
