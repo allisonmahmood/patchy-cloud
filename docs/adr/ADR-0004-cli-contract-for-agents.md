@@ -657,7 +657,7 @@ module without dynamic imports, separate from the HTML.
 | `patchy look`                                     | Current revision's number, author, date, note and file sizes, who restored it, then every revision newest first, and the admins. Any member.                                   | Wire body `{ current \| null, revisions, patchyLook, admins, restored }`, with the files' contents, no `ok` wrapper. |
 | `patchy look publish <dir> --note "<text>"`       | Admins: check the folder's `look.css`, `LOOK.md` and optional `logo.svg`, publish them as the next revision and make it current. Other files are named in a warning, not sent. | `{ ok, current, warnings? }`                                                                                         |
 | `patchy look restore <n\|none> [--note "<text>"]` | Admins: make revision `n` current, or leave the company with no look. Moves the pointer and records who restored it, when and the optional note.                               | `{ ok, current, restored }`, `current` null for `none`                                                               |
-| `patchy look preview [<dir>] [--compare]`         | Write the specimen as one self-contained HTML file and print its path: in the folder's look, the company's look, or the folder beside the company's with `--compare`.          | `{ ok, path, failures, warnings? }`                                                                                  |
+| `patchy look preview [<dir>] [--compare]`         | Write the specimen as one self-contained HTML file and print its path: in the folder's look, the company's (else the Patchy look), or the folder beside it with `--compare`.   | `{ ok, path, failures, warnings? }`                                                                                  |
 
 These commands run anywhere with the saved login; they never read `patchy.json`.
 `patchy look --json` names the look a static page starts from: `current.files`,
@@ -683,11 +683,11 @@ anything else is local exit 1. The `Patchy-Cli` command is `look` for all four.
 `look preview` writes `look-preview.html` in the state directory, replacing the
 last preview, and never refuses a look it can read: `failures` holds every line
 publish's `invalid_look` would list for the folder, empty when it would publish,
-and the company's look is not checked. A folder alone sends no request and needs
-no login; without a folder, or with `--compare`, it reads the current look as
-`patchy look` does. `--compare` with no current look renders the folder alone
-and says the company has no look yet. No folder and no current look, or
-`--compare` without a folder, is local exit 1; a folder missing `look.css` or
+and neither the company's nor the Patchy look is checked. A folder alone sends
+no request and needs no login; without a folder, or with `--compare`, it reads
+the look as `patchy look` does. With no current look, `patchyLook` takes the
+company's place, labelled "The Patchy look" and noting the company has none.
+`--compare` without a folder is local exit 1; a folder missing `look.css` or
 `LOOK.md` is local exit 1 as for publish, and other files are `warnings`.
 
 ### Publish recovery
