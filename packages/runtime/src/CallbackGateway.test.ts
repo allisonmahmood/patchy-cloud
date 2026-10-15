@@ -714,6 +714,47 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
       assert.include(capability.refusals[0], { status: 401, operation: "postgres.query" });
     }).pipe(Effect.scoped)
   );
+
+  it.effect("Postgres arguments keep their tier 1 cap: past it, nothing runs", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const maxBytes = yield* ContractLimits.get("runtime.postgres.bytes");
+      let runs = 0;
+      const gateway = yield* CallbackGateway.make({
+        "postgres.query": {
+          kind: "integration",
+          run: () =>
+            Effect.sync(() => {
+              runs++;
+              return { ok: true, rows: [] };
+            })
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      // The cap counts the encoded `{ op, args }`; the SQL fills it to the byte.
+      const call = (sqlBytes: number) => ({
+        op: "postgres.query",
+        args: { connection: "warehouse", sql: "x".repeat(sqlBytes), params: [] }
+      });
+      const atCap = maxBytes - JSON.stringify(call(0)).length;
+      const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+      assert.deepStrictEqual(
+        yield* gateway.callback(capability.token, capability.attempt, call(atCap)),
+        { ok: true, value: { ok: true, rows: [] } }
+      );
+      assert.include(
+        yield* gateway.callback(capability.token, capability.attempt, call(atCap + 1)),
+        {
+          ok: false,
+          code: "too_large",
+          scope: "viewer",
+          limitId: "runtime.postgres.bytes",
+          value: maxBytes
+        }
+      );
+      assert.strictEqual(runs, 1);
+      assert.include(capability.refusals[0], { status: 413, operation: "postgres.query" });
+    }).pipe(Effect.scoped)
+  );
   it.effect(
     "PostHog queries run only in actions, as the live viewer, within the action's remaining time",
     () =>
