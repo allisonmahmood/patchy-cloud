@@ -679,7 +679,9 @@ it.live(
       const host = yield* listener(async (request, response) => {
         hostRequests++;
         await bodyOf(request);
-        response.end(JSON.stringify({ ok: true, value: null }));
+        // Refuse as the supervisor does, so a small put's refusal crosses the RPC.
+        response.writeHead(413, { "content-type": "application/json" });
+        response.end(JSON.stringify(GuestProtocol.callbackFileTooLarge));
       });
       const child = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: child.url });
@@ -693,14 +695,15 @@ it.live(
       });
       expect(yield* put(overRpc, false, false)).toEqual(GuestProtocol.callbackFileTooLarge);
       expect(yield* put(40 * 1024 * 1024, true, false)).toEqual(GuestProtocol.callbackFileTooLarge);
-      // A handler that catches it sees the error the loader gives for a body under the RPC limit.
+      expect(hostRequests).toBe(0);
+      // A handler that catches it sees the same error as a refusal that crossed the RPC.
       const caught = yield* put(overRpc, false, true);
       expect(caught).toMatchObject({
         ok: true,
         value: { name: "PatchyError", ...GuestProtocol.callbackFileLimit }
       });
-      expect(caught).toEqual(yield* put(GuestProtocol.callbackFileLimit.value + 1, false, true));
-      expect(hostRequests).toBe(0);
+      expect(caught).toEqual(yield* put(4, false, true));
+      expect(hostRequests).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   30_000
 );
