@@ -325,6 +325,7 @@ export const make = Effect.gen(function* () {
         ORDER BY c.at, c.id LIMIT parent.lim)
       ) step`
   });
+  // Served by runtime_invocations_top_level_recent: one range scan over the company's last day.
   const failureCounts = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, since: Schema.Number, now: Schema.Number }),
     Result: Schema.Struct({ patchId: Schema.String, count: Schema.Int }),
