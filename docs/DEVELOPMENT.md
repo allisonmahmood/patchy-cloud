@@ -191,11 +191,20 @@ An environment is this instance plus what a multi-person check or demo needs:
   own folder and logged in as the scenario's publisher. `~/.patchy` is untouched.
 - **An agent workspace** under `$XDG_DATA_HOME/patchy-dev/<label>/`, outside the
   worktree so this repo's `CLAUDE.md` never loads there. Its `agent` launcher
-  starts Claude Code with only the Patchy skill and pre-approved `patchy` and
-  `pnpm` commands; arguments pass through, e.g. `…/agent -p "<task>"`. It loads
-  no `CLAUDE.md`, `AGENTS.md` or rules from the folders above the workspace,
-  your HOME's included, and ignores your shell's `PATCHY_API_URL` and
+  starts Claude Code as a Patchy user who has already set up: the Patchy skill,
+  the environment's CLI first on `PATH`, and pre-approved `patchy` and `pnpm`
+  commands; arguments pass through, e.g. `…/agent -p "<task>"`. It loads no
+  `CLAUDE.md`, `AGENTS.md` or rules from the folders above the workspace, your
+  HOME's included, and ignores your shell's `PATCHY_API_URL` and
   `PATCHY_API_TOKEN`, so it publishes here as the scenario's publisher.
+
+  Its commands still run as you, with your HOME and npm prefix, so never give it
+  the portal's setup line or have it run `patchy setup`. The setup line replaces
+  your global `patchy` with this instance's release, and both replace the Patchy
+  skill your own agents load from `~/.patchy/skills`, `~/.agents/skills` and
+  `~/.claude/skills`. `down` undoes none of it. To watch an agent set Patchy up,
+  give it a throwaway machine: see **Front door and onboarding** under
+  [What to exercise for a change](#what-to-exercise-for-a-change).
 
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
 is three people and no patches; `brightline` is a five-person agency with tier 0,
@@ -312,6 +321,36 @@ can quote it.
 - **Company management.** Invite, revoke, change roles, deactivate and
   reactivate from `/company`; deactivation revokes the user's machine tokens and
   the last active admin cannot be demoted.
+- **Front door and onboarding.** `pnpm test:packed-cli-e2e` runs the
+  `/llms.txt` install line on a clean HOME and npm prefix. To watch an agent
+  follow the portal's setup line, give it a throwaway machine, never the
+  environment's agent: a folder under `/tmp`, outside your HOME so no
+  `CLAUDE.md` above it loads, with its own HOME and npm prefix, no `PATCHY_*`,
+  and a `PATH` of its npm `bin`, Node's real directory (not a version manager's
+  shim) and the system tools, with no other `patchy` on it.
+
+  ```sh
+  url=http://127.0.0.1:29276   # the URL pnpm dev or up printed
+  m=$(mktemp -d /tmp/patchy-machine.XXXXXX) && mkdir "$m/home" "$m/work"
+  cat > "$m/env.sh" <<EOF
+  export HOME='$m/home' npm_config_prefix='$m/npm' npm_config_cache='$m/npm-cache' npm_config_userconfig=/dev/null
+  export PATH='$m/npm/bin:$(dirname "$(node -p process.execPath)")':/usr/bin:/bin
+  unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME PATCHY_API_URL PATCHY_API_TOKEN PATCHY_STATE_DIR
+  EOF
+  (. "$m/env.sh"; command -v patchy)   # must print nothing
+  cd "$m/work" && CLAUDE_ENV_FILE="$m/env.sh" claude --setting-sources project --strict-mcp-config "Set up Patchy using $url/llms.txt"
+  ```
+
+  `CLAUDE_ENV_FILE` applies `env.sh` to every command the agent runs, while
+  Claude Code itself keeps your HOME and so your login; setting HOME on `claude`
+  logs it out, and never copy its credentials file. The two flags leave out
+  your own settings, skills and connectors. A version manager installs global
+  packages beside Node, so if the check prints a path, your own `patchy` is
+  there: use a Node version without one. The installer should print paths
+  inside `$m` and stop at the login handoff. To run the install line without an
+  agent, paste it into `(. "$m/env.sh" && cd "$m/work" && <line>)`. `rm -rf "$m"`
+  removes the machine.
+
 - **Tier 1 and tier 2 runtime.** Publish a patch repo to the instance and use
   its generated client in two personas' browsers; `pnpm test:browser` and
   `pnpm test:packed-tier2-e2e` assemble the same journeys. Company calls need a
