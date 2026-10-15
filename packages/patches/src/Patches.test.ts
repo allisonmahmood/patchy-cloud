@@ -165,7 +165,7 @@ it.layer(
       const restored = Option.getOrThrow(yield* service.find(request.patchId));
       assert.strictEqual(restored.version.id, request.versionId);
       assert.strictEqual(restored.patch.lifecycleRevision, "9");
-      yield* service.recordOpen(reader.user.id, request.patchId);
+      yield* service.recordOpen(reader.user.id, request.patchId, request.versionId);
       yield* service.delete(request.patchId, owner);
       yield* TestClock.adjust(30 * DAY);
       yield* service.purgeDeleted(request.patchId);
@@ -614,25 +614,57 @@ it.layer(
       yield* TestClock.setTime(Date.UTC(2026, 9, 1));
       const service = yield* Patches.Patches;
       const patch = yield* create();
-      const scoreOf = (opens: ReadonlyArray<Patches.Open>) =>
-        opens.find((open) => open.patchId === patch.patchId)?.score;
-      yield* service.recordOpen(reader.user.id, patch.patchId);
-      yield* service.recordOpen(reader.user.id, patch.patchId);
-      assert.closeTo(scoreOf(yield* service.opens(reader.user.id))!, 2, 1e-9);
-      assert.isUndefined(scoreOf(yield* service.opens(quota.user.id)));
+      const open = (userId: string) =>
+        Effect.map(service.opens(userId), (opens) =>
+          opens.find((entry) => entry.patchId === patch.patchId)
+        );
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
+      assert.isUndefined(yield* open(quota.user.id));
 
       yield* TestClock.adjust(7 * DAY);
-      assert.closeTo(scoreOf(yield* service.opens(reader.user.id))!, 1, 1e-9);
-      yield* service.recordOpen(reader.user.id, patch.patchId);
-      const [open] = (yield* service.opens(reader.user.id)).filter(
-        (entry) => entry.patchId === patch.patchId
-      );
-      assert.closeTo(open!.score, 2, 1e-9);
-      assert.strictEqual(open!.lastOpenedAt, new Date(Date.UTC(2026, 9, 8)).toISOString());
+      assert.closeTo((yield* open(reader.user.id))!.score, 1, 1e-9);
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
+
+      // An open stamped earlier than the last one, from a clock behind or a slow request,
+      // counts at its age and never moves the last open back.
+      yield* TestClock.setTime(Date.UTC(2026, 9, 1));
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      yield* TestClock.setTime(Date.UTC(2026, 9, 8));
+      const late = (yield* open(reader.user.id))!;
+      assert.closeTo(late.score, 2.5, 1e-9);
+      assert.strictEqual(late.lastOpenedAt, new Date(Date.UTC(2026, 9, 8)).toISOString());
+
+      // Reading v1 while v2 is current records nothing.
+      const next = yield* update(patch.patchId);
+      yield* service.recordOpen(quota.user.id, patch.patchId, patch.versionId);
+      assert.isUndefined(yield* open(quota.user.id));
+      yield* service.recordOpen(quota.user.id, patch.patchId, next.versionId);
+      assert.closeTo((yield* open(quota.user.id))!.score, 1, 1e-9);
 
       yield* service.retire(patch.patchId, administrator);
-      yield* service.recordOpen(quota.user.id, patch.patchId);
-      assert.isUndefined(scoreOf(yield* service.opens(quota.user.id)));
+      yield* service.recordOpen(reader.user.id, patch.patchId, next.versionId);
+      assert.closeTo((yield* open(reader.user.id))!.score, 2.5, 1e-9);
+    })
+  );
+
+  it.effect("reads a decade-old open as nearly nothing and still counts the next one", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 9, 1));
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO patch_opens (user_id, patch_id, last_opened_at, score)
+        VALUES (${reader.user.id}, ${patch.patchId}, '2000-01-01T00:00:00Z', 50)`;
+      const scoreOf = Effect.map(
+        service.opens(reader.user.id),
+        (opens) => opens.find((entry) => entry.patchId === patch.patchId)!.score
+      );
+      assert.isBelow(yield* scoreOf, 1e-6);
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      assert.closeTo(yield* scoreOf, 1, 1e-9);
     })
   );
 

@@ -839,8 +839,12 @@ export class Patches extends Context.Service<
     ) => Effect.Effect<Option.Option<{ patch: Patch; version: PatchVersion }>, SqlError>;
     /** Counts a visit to a serving patch without changing its lifecycle. */
     readonly recordVisit: (patchId: string) => Effect.Effect<void, SqlError>;
-    /** Records that a member opened a serving patch's current version at its address. */
-    readonly recordOpen: (userId: string, patchId: string) => Effect.Effect<void, SqlError>;
+    /** Records that a member opened `versionId` at a serving patch's address, while it is current. */
+    readonly recordOpen: (
+      userId: string,
+      patchId: string,
+      versionId: string
+    ) => Effect.Effect<void, SqlError>;
     /**
      * What one member has opened, for that member's own Home. Nobody else reads these
      * rows: owners and admins see only the visit count.
@@ -2396,25 +2400,35 @@ export const make = Effect.gen(function* () {
   });
 
   const halfLifeSeconds = Duration.toSeconds(OPEN_HALF_LIFE);
-  // The stored score as of `at`: it was exact at the last open and has halved per half-life since.
-  const decayed = (at: Statement.Fragment) =>
-    sql`patch_opens.score * power(0.5,
-      GREATEST(0, extract(epoch FROM ${at} - patch_opens.last_opened_at)) / ${halfLifeSeconds})`;
-  const recordOpen = Effect.fn("Patches.recordOpen")(function* (userId: string, patchId: string) {
+  // 2^(−age / half-life) as float8. The age is clamped to [0, 1000 half-lives], so a decade-old
+  // row reads as nearly nothing instead of underflowing, and a clock that stepped back adds nothing.
+  const halving = (age: Statement.Fragment) =>
+    sql`power(0.5::float8,
+      LEAST(GREATEST(0, extract(epoch FROM ${age})::float8) / ${halfLifeSeconds}, 1000))`;
+  const recordOpen = Effect.fn("Patches.recordOpen")(function* (
+    userId: string,
+    patchId: string,
+    versionId: string
+  ) {
     const at = yield* now;
+    // Only while the served version is still current: a read of v1 that finishes after v2 is
+    // published must not mark v2 seen. Both opens decay to the later of the two instants, so a
+    // late-arriving earlier open never moves the last open back.
+    const latest = sql`GREATEST(patch_opens.last_opened_at, EXCLUDED.last_opened_at)`;
     yield* sql`INSERT INTO patch_opens (user_id, patch_id, last_opened_at, score)
       SELECT ${userId}, patches.id, ${at}, 1 FROM patches
-      WHERE patches.id = ${patchId} AND ${serving}
+      WHERE patches.id = ${patchId} AND patches.current_version_id = ${versionId} AND ${serving}
       ON CONFLICT (user_id, patch_id) DO UPDATE SET
-        score = ${decayed(sql`EXCLUDED.last_opened_at`)} + 1,
-        last_opened_at = EXCLUDED.last_opened_at`;
+        score = patch_opens.score * ${halving(sql`${latest} - patch_opens.last_opened_at`)}
+          + ${halving(sql`${latest} - EXCLUDED.last_opened_at`)},
+        last_opened_at = ${latest}`;
   });
   const openRows = SqlSchema.findAll({
     Request: Schema.Struct({ userId: Schema.String, nowMillis: Schema.Number }),
     Result: OpenRow,
     execute: ({ userId, nowMillis }) => sql`
       SELECT patch_id AS "patchId", last_opened_at AS "lastOpenedAt",
-        ${decayed(stamp(nowMillis))} AS score
+        patch_opens.score * ${halving(sql`${stamp(nowMillis)} - patch_opens.last_opened_at`)} AS score
       FROM patch_opens WHERE user_id = ${userId}`
   });
   const opens = Effect.fn("Patches.opens")(function* (userId: string) {

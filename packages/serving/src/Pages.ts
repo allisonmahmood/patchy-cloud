@@ -188,12 +188,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
       ? admission.user.id
       : undefined;
-  if (
-    kind === "address" &&
-    viewerId !== undefined &&
-    served.value.version.id === served.value.patch.currentVersionId
-  )
-    yield* patches.recordOpen(viewerId, served.value.patch.id).pipe(
+  if (kind === "address" && viewerId !== undefined)
+    yield* patches.recordOpen(viewerId, served.value.patch.id, served.value.version.id).pipe(
       Effect.catchTags({
         SqlError: (error) =>
           Effect.logWarning("Patch open recording failed.", error).pipe(
