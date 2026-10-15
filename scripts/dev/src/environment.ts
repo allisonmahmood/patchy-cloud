@@ -329,13 +329,16 @@ export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layou
   const above: Array<string> = [];
   for (let dir = layout.dir; !above.includes(dir); dir = path.dirname(dir)) above.push(dir);
   // Each folder's CLAUDE.md, CLAUDE.local.md and AGENTS.md, those in its
-  // .claude, and its .claude/rules.
+  // .claude, and its .claude/rules. Claude Code's patterns take no escapes, so
+  // a glob character in a folder's name becomes `?`, matching any one character.
   const settings = encodeAgentSettings({
-    claudeMdExcludes: above.flatMap((dir) => [
-      path.join(dir, "*.md"),
-      path.join(dir, ".claude", "*.md"),
-      path.join(dir, ".claude", "rules", "**")
-    ])
+    claudeMdExcludes: above
+      .map((dir) => dir.replace(/[*?[\]{}()\\]/g, "?"))
+      .flatMap((dir) => [
+        path.join(dir, "*.md"),
+        path.join(dir, ".claude", "*.md"),
+        path.join(dir, ".claude", "rules", "**")
+      ])
   });
   yield* fs.writeFileString(
     layout.agent,
@@ -516,8 +519,9 @@ const materialize = Effect.fn("materialize")(function* (
 
 /**
  * Builds everything outside the instance, resuming an `up` that stopped
- * halfway. A finished environment only moves its CLI and workspace repos to
- * the instance's current release, which changes when bundled code changed.
+ * halfway. A finished environment only rewrites its `agent` launcher and moves
+ * its CLI and workspace repos to the instance's current release, which changes
+ * when bundled code changed.
  */
 export const setUp = Effect.fn("Environment.setUp")(function* (
   plan: Plan,
@@ -530,6 +534,7 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   const release = yield* currentRelease(plan.apiUrl);
   const existing = yield* readManifest(layout);
   if (Option.isSome(existing) && existing.value.complete) {
+    yield* writeLauncher(layout);
     if (existing.value.release === release) return existing.value;
     yield* Console.error("The instance's release changed; updating the CLI and workspace repos.");
     yield* installCli(layout, release);
