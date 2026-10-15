@@ -606,9 +606,8 @@ alone. Read the person's role from `patchy whoami --json`.
   passes `validate`.
 - **An admin's** new look is captured by `references/look-capture.md`, or for a small
   change, `current.files` copied into a folder and edited. Before publishing,
-  `patchy look preview <dir> --compare` writes it beside the current look. Its two
-  frames scroll on their own, so open it for the person, or screenshot each look alone
-  (`patchy look preview <dir>`, then `patchy look preview`). Publish once they agree:
+  `patchy look preview <dir> --compare` writes it beside the current look; a full-page
+  screenshot shows both looks whole. Publish once they agree:
   `patchy look publish <dir> --note "<why>" --json`. `patchy look restore <n>` brings
   back an earlier revision, and `restore none` leaves the company with no look; pass
   the reason the person gave as `--note "<why>"`, so the notices name it.

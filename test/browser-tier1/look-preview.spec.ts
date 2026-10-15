@@ -176,26 +176,64 @@ test("a look's embedded font and logo render offline, and its remote URLs are ne
   expect(requests).toEqual([]);
 });
 
+/** Each frame's height while it shows its whole specimen without scrolling, else null. */
+const fittedHeights = (page: Page) =>
+  page.locator("iframe").evaluateAll((frames: HTMLIFrameElement[]) =>
+    frames.map((frame) => {
+      const document = frame.contentDocument;
+      const bottom = document?.querySelector(".specimen")?.getBoundingClientRect().bottom;
+      return document !== null &&
+        bottom !== undefined &&
+        frame.clientHeight >= bottom &&
+        document.documentElement.scrollHeight <= frame.clientHeight
+        ? frame.clientHeight
+        : null;
+    })
+  );
+
 // The compare page needs a current look, so it renders through the pure page rather than the CLI.
-test("a compare page frames each look alone, and its frames refuse requests too", async ({
+test("a compare page frames each look alone, fits each frame to its look, and its frames refuse requests too", async ({
   page
 }) => {
   const candidate = readLookFixture("linear");
+  const company = readLookFixture("duolingo");
   const file = path.join(tempDir(), "compare.html");
+  // A look's own full-height main, or a positioned body with uneven spacing, must neither grow
+  // its frame without bound nor clip it.
   writeFileSync(
     file,
     previewPage(
       {
         files: {
           ...candidate,
-          "look.css": `@import url("https://fonts.example.com/brand.css");\n${candidate["look.css"]}`
+          "look.css": `@import url("https://fonts.example.com/brand.css");\n${candidate["look.css"]}\n@layer look { main { min-height: 100vh; } }`
         },
         label: "Candidate"
       },
-      { files: readLookFixture("duolingo"), label: "Revision 1, the company's look" }
+      {
+        files: {
+          ...company,
+          "look.css": `${company["look.css"]}\n@layer look { body { position: relative; margin: 32px; padding-bottom: 64px; } main { height: 100vh; } }`
+        },
+        label: "Revision 1, the company's look"
+      }
     )
   );
   const requests = await openFile(page, file);
+
+  // One full-page screenshot holds both whole looks, side by side or stacked on a phone, and
+  // frames shrink back when the window widens again.
+  await expect.poll(() => fittedHeights(page)).toEqual([expect.any(Number), expect.any(Number)]);
+  const wide = await fittedHeights(page);
+  await page.setViewportSize({ width: 375, height: 800 });
+  await expect
+    .poll(async () =>
+      (await fittedHeights(page)).every((height, i) => height !== null && height > wide[i]!)
+    )
+    .toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect.poll(() => fittedHeights(page)).toEqual(wide);
+
   const panes = await Promise.all(
     page
       .frames()
@@ -216,7 +254,8 @@ test("a compare page frames each look alone, and its frames refuse requests too"
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
     )
   ).toBe(0);
-  // A specimen's same-page link scrolls its own frame instead of loading this page into it.
+  // A specimen's same-page link scrolls to its target, here the page around its fitted frame,
+  // instead of loading this page into the frame.
   const specimen = page.frameLocator("iframe").first();
   await expect(specimen.locator("#vendors")).not.toBeInViewport();
   await specimen.getByRole("link", { name: "See all vendors" }).click();

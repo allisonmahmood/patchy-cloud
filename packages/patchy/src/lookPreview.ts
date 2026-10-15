@@ -4,8 +4,10 @@
  * only its own classes, laying the page out from tokens, so every plain element shows the
  * look's styles. The page carries everything it needs, fonts and logo included, and its CSP
  * refuses any other request, so it renders offline exactly as a patch would. The single-look
- * page passes tier 0 validation, so an agent can publish it to show someone.
+ * page has no script and passes tier 0 validation, so an agent can publish it to show someone;
+ * the two-look page's one script sizes its frames.
  */
+import { createHash } from "node:crypto";
 import * as CssTree from "css-tree";
 import { escapeAttribute, escapeHtml, framedDocument } from "@patchy/core";
 import type { LookFiles, LookToken } from "@patchy/core/look";
@@ -58,8 +60,8 @@ const briefTitle = (brief: string) => /^#[ \t]+(.+?)[ \t]*$/m.exec(brief)?.[1] ?
 /** A `<style>` body that cannot close its element early. */
 const styleText = (css: string) => css.replace(/<\/style/gi, "<\\/style");
 
-const head = (title: string, styles: string) => `<meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="${CSP}" />
+const head = (title: string, styles: string, csp = CSP) => `<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>${escapeHtml(title)}</title>
 ${styles}`;
@@ -103,6 +105,42 @@ ${SPECIMEN_BODY}
 };
 
 /**
+ * Sizes each frame to its specimen, so the page scrolls as one and a full-page screenshot holds
+ * both whole looks. It measures the specimen rather than the frame's document, which is never
+ * shorter than the frame, and frees the specimen from a look's full-height `main` so frames
+ * shrink as well as grow. The frame's height is the specimen's offset in its document, its
+ * border box, and what a look puts below it on the body and root, plus the frame's border, the
+ * divider between panes. Without JavaScript, each frame stays 100vh and scrolls on its own.
+ */
+const FIT_FRAMES = `addEventListener("load", () => {
+  for (const frame of document.querySelectorAll("iframe")) {
+    const view = frame.contentWindow;
+    const specimen = frame.contentDocument?.querySelector(".specimen");
+    if (!specimen) continue;
+    specimen.style.minHeight = "0";
+    specimen.style.height = "auto";
+    new view.ResizeObserver(() => {
+      const { top, height } = specimen.getBoundingClientRect();
+      const below = [view.document.body, view.document.documentElement]
+        .map((element) => view.getComputedStyle(element))
+        .reduce(
+          (sum, style) =>
+            sum +
+            parseFloat(style.paddingBottom) +
+            parseFloat(style.borderBottomWidth) +
+            parseFloat(style.marginBottom),
+          0
+        );
+      const border = frame.offsetHeight - frame.clientHeight;
+      frame.style.height = Math.ceil(top + view.scrollY + height + below) + border + "px";
+    }).observe(specimen, { box: "border-box" });
+  }
+});`;
+
+// Each frame enforces this policy as well as its specimen's own, which allows no script.
+const COMPARE_CSP = `${CSP}; script-src 'sha256-${createHash("sha256").update(FIT_FRAMES).digest("base64")}'`;
+
+/**
  * The preview file: one specimen, or two side by side. Each of two sits in its own frame, so
  * each look's element styles reach only its own specimen.
  */
@@ -128,11 +166,13 @@ iframe + iframe { border-left: 1px solid #8888; }
   body { grid-template-columns: 1fr; }
   iframe + iframe { border-left: 0; border-top: 1px solid #8888; }
 }
-</style>`
+</style>`,
+  COMPARE_CSP
 )}
 </head>
 <body>
 ${frames}
+<script>${FIT_FRAMES}</script>
 </body>
 </html>
 `;
