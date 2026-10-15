@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 
+// Every vitest config in the repo builds on this one.
 export default defineConfig({
   resolve: {
     conditions: ["development"]

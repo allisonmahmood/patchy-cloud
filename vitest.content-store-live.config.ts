@@ -1,9 +1,11 @@
 import { defineConfig } from "vitest/config";
+import development from "./test/vitest.development.config.js";
 
-// Standalone on purpose: the offline setup rejects external HTTP requests.
+// Not on test/vitest.config.ts on purpose: its offline setup rejects external HTTP requests.
 export default defineConfig({
-  resolve: { conditions: ["development"] },
+  ...development,
   test: {
+    ...development.test,
     include: ["packages/content-store/live/**/*.live.ts"],
     fileParallelism: false,
     testTimeout: 60_000,
