@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { toPostgresText } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 
@@ -82,6 +83,10 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
 export class RuntimeLog extends Context.Service<
   RuntimeLog,
   {
+    /**
+     * Records a pending call before its arguments are checked. `resource` and `sql` are kept as
+     * audit text, with U+FFFD for what Postgres text can't hold, so a refused argument is logged.
+     */
     readonly begin: (input: Begin) => Effect.Effect<string, SqlError>;
     readonly finish: (input: {
       readonly correlationId: string;
@@ -177,10 +182,11 @@ export const make = Effect.gen(function* () {
     let query: string | null = null;
     // Every integration's query operation is `<integration>.query`, matching the column's check.
     if (input.op.endsWith(".query") && input.sql !== undefined) {
-      // encodeInto stops before a partial UTF-8 code point without allocating
-      // the whole query. The prefix is audit text, never executable SQL.
-      const { read } = encoder.encodeInto(input.sql, new Uint8Array(MAX_SQL_BYTES));
-      query = input.sql.slice(0, read);
+      // Cleaned before the cut, since a stand-in is wider than NUL. encodeInto stops before a
+      // partial UTF-8 code point without allocating the whole query.
+      const text = toPostgresText(input.sql);
+      const { read } = encoder.encodeInto(text, new Uint8Array(MAX_SQL_BYTES));
+      query = text.slice(0, read);
     }
     yield* sql`
       INSERT INTO runtime_calls (id, at, company_id, patch_id, version_id, user_id,
@@ -190,7 +196,8 @@ export const make = Effect.gen(function* () {
         ${input.versionId}, ${input.userId}, ${input.effectivePrincipal ?? input.userId},
         ${input.invocationId ?? null}, ${input.credentialKind}, ${machine?.id ?? null},
         ${machine?.name ?? null}, ${input.op},
-        ${input.resource}, ${input.connectionId}, ${input.correlationId},
+        ${input.resource === null ? null : toPostgresText(input.resource)}, ${input.connectionId},
+        ${input.correlationId},
         ${input.deadlineMs ?? MUTATION_DEADLINE_MS}, ${query})`;
     return id;
   });

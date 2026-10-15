@@ -482,16 +482,18 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           );
 
           // Postgres text can't hold NUL, so the log keeps a stand-in and the call is still refused.
-          for (const args of [
-            { ...read, name: "nul\u0000name" },
-            { ...read, query: "SELECT\u0000 1" }
-          ]) {
+          for (const [args, resource] of [
+            [{ ...read, name: "nul\u0000name" }, "nul\uFFFDname"],
+            [{ ...read, query: "SELECT\u0000 1" }, read.name]
+          ] as const) {
             const nul = yield* post({ op: "posthog.query", connection: connection_, args });
             assert.strictEqual(nul.status, 400);
-            assert.strictEqual(
-              refusal(nul.body).correlationId,
-              (yield* devCalls)[0]!.correlationId
-            );
+            assert.strictEqual(refusal(nul.body).code, "invalid_request");
+            assert.deepInclude((yield* devCalls)[0], {
+              correlationId: refusal(nul.body).correlationId,
+              outcomeCode: "invalid_request",
+              resource
+            });
           }
 
           const before = (yield* devCalls).length;
