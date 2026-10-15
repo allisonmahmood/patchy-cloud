@@ -47,7 +47,13 @@ Done when `pnpm dev status` exits 0.
   Claude Code in the environment's workspace with the Patchy skill, publishing
   as the scenario's publisher. It ignores the shell's `PATCHY_API_URL` and
   `PATCHY_API_TOKEN` and loads no `CLAUDE.md` from the folders above its
-  workspace. Give it a task with `…/agent -p "<task>"`.
+  workspace. Give it a task with `…/agent -p "<task>"`. It is a Patchy user who
+  has already set up, and its commands run as the person, with their HOME and
+  npm prefix: never give it the portal's setup line or have it run
+  `patchy setup`. The setup line replaces the person's global `patchy`, both
+  replace their Patchy skill, and `pnpm dev down` undoes neither. Onboarding
+  checks use DEVELOPMENT's throwaway machine, under **Front door and
+  onboarding**.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
   Postgres declarations read invented fixtures. PostHog declarations have none:
   `patchy dev` reads the real connection through this instance, as the CLI's

@@ -314,13 +314,17 @@ const encodeAgentSettings = Schema.encodeSync(
 );
 
 /**
- * `agent`: Claude Code in the workspace as a fresh Patchy user has it, with no
- * personal settings, skills, connectors or instruction files. The shell's
- * `PATCHY_API_URL` and `PATCHY_API_TOKEN` are cleared, so the environment's
- * login decides where and as whom it publishes. Claude Code loads instruction
- * files from every folder above its working directory, the developer's HOME
- * among them; those are excluded, so only the workspace's own load. Permissions
- * come as flags, so the workspace needs no trust prompt. Arguments pass through.
+ * `agent`: Claude Code in the workspace as a Patchy user who has already set
+ * up, with no personal settings, skills, connectors or instruction files. The
+ * shell's `PATCHY_API_URL` and `PATCHY_API_TOKEN` are cleared, so the
+ * environment's login decides where and as whom it publishes. Claude Code loads
+ * instruction files from every folder above its working directory, the
+ * developer's HOME among them; those are excluded, so only the workspace's own
+ * load. Its commands still run as the developer, with their HOME and npm
+ * prefix, so it must never be given the portal's setup line or run `patchy
+ * setup`: both write to the developer's own machine, and `down` undoes neither.
+ * Permissions come as flags, so the workspace needs no trust prompt. Arguments
+ * pass through.
  */
 export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layout) {
   const fs = yield* FileSystem.FileSystem;
@@ -346,7 +350,8 @@ export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layou
     layout.agent,
     [
       "#!/usr/bin/env bash",
-      "# Claude Code in this Patchy environment's workspace, as a fresh Patchy user has it.",
+      "# Claude Code in this Patchy environment's workspace, as a Patchy user who has set up.",
+      "# Its commands run as you: never give it the portal's setup line or `patchy setup`.",
       "unset PATCHY_API_URL PATCHY_API_TOKEN",
       `export PATH=${quote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
       `export PATCHY_STATE_DIR=${quote(layout.state)}`,
