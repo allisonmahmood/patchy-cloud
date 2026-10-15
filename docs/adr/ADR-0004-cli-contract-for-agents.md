@@ -461,8 +461,10 @@ Page imports from `server/` must be type-only.
 ### Local patch runtime
 
 `patchy dev [--foreground]` is distinct from the cloud checkout's `pnpm dev`.
-A healthy existing session returns before credentials or release checks. A new
-start resolves a key; checks the exact pin, CLI and installed runtime release;
+A healthy existing session returns before credentials, release checks or any
+request, reporting `joined: true`; it pulls nothing, and `refresh` brings look
+and description changes in while it runs. A new start, `joined: false`,
+resolves a key; checks the exact pin, CLI and installed runtime release;
 authenticates `/api/me`; pulls published inventory and declaration metadata;
 regenerates; provisions local PGlite; and starts Vite build-watch with the
 production shell, CSP, sandbox, broker and dispatcher. It uses fixtures and local
@@ -501,11 +503,12 @@ owned local files remain intact. Fixture bytes use `application/octet-stream`.
 Both tiers consume the same source fixtures through real runtime handlers.
 Edit fixtures and restart to change sources locally; authority changes are not simulated.
 
-| command                 | `--json` success                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------------------- |
-| `dev`, `dev status`     | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
-| `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                                              |
-| `dev logs`              | `{ ok, log, text }`                                                                          |
+| command                 | `--json` success                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `dev`                   | `{ ok, healthy: true, joined, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
+| `dev status`            | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }`         |
+| `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                                                      |
+| `dev logs`              | `{ ok, log, text }`                                                                                  |
 
 Start exits 0 only after the first valid single-file bundle and runtime are
 healthy. The daemon persists the checked release and full `/api/me` identity

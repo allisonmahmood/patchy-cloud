@@ -44,8 +44,9 @@ and that changing it is its own request, which only an admin can carry out.
   the build embeds it: on tiers 1 and 2 `import logo from "../patchy/_generated/logo.svg";`,
   on tier 0 `<img src="/patchy/_generated/logo.svg" alt="…">` in `index.html`. Remove the
   reference if a later look has no logo.
-- `patchy refresh` and `patchy dev` rewrite `patchy/_generated/` to the company's current
-  look. Put every change in your own CSS.
+- `patchy refresh` and a new `patchy dev` start rewrite `patchy/_generated/` to the company's
+  current look; a `patchy dev` that joins a running session doesn't, so refresh to bring a new
+  look into it. Put every change in your own CSS.
 - A tier 0 page, `look.css` included, must fit 512 KiB. When publish refuses it as `too_large`
   and the largest contributor is an inline `<style>`, that is the look's embedded fonts: tell
   the person. An admin can publish a revision with subset fonts or fewer weights, and tier 1

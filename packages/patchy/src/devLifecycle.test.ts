@@ -151,20 +151,25 @@ const output = (running: Running, stream: "stdout" | "stderr", text: string) =>
 // Starting dev builds with Vite and boots workerd; on a loaded run that alone can pass 12s.
 const exited = (running: Running) =>
   Effect.promise(() => running.exit).pipe(Effect.timeout("30 seconds"));
-const cli = (root: string, instance: string, args: ReadonlyArray<string>) =>
+const withKey = { PATCHY_API_TOKEN: "disposable-lifecycle-token" };
+const cli = (
+  root: string,
+  instance: string,
+  args: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv = withKey
+) =>
   subprocess(
     [path.join(root, "node_modules/patchy/dist/index.js"), "dev", ...args, "--api-url", instance],
     root,
-    {
-      PATCHY_API_TOKEN: "disposable-lifecycle-token"
-    }
+    env
   );
 const command = Effect.fn("test.lifecycle.command")(function* (
   root: string,
   instance: string,
-  args: ReadonlyArray<string>
+  args: ReadonlyArray<string>,
+  env?: NodeJS.ProcessEnv
 ) {
-  const running = yield* cli(root, instance, [...args, "--json"]);
+  const running = yield* cli(root, instance, [...args, "--json"], env);
   const result = yield* exited(running);
   assert.strictEqual(result.code, 0, running.stderr());
   assert.strictEqual(running.stderr(), "");
@@ -186,6 +191,8 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
     description: "",
     descriptionUpdatedAt: null
   };
+  /** The company look generation hands out; revision 0 leaves look.css out of the repo. */
+  const cloudLook = { revision: 0, css: "" };
   const server = yield* Effect.acquireRelease(
     Effect.sync(() =>
       createServer((request, response) => {
@@ -274,6 +281,9 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
                     path: "patchy/_generated/client.ts",
                     contents: generateClient({ connections: {} })
                   },
+                  ...(cloudLook.revision === 0
+                    ? []
+                    : [{ path: "patchy/_generated/look.css", contents: cloudLook.css }]),
                   {
                     path: "patchy/_generated/index.json",
                     contents: JSON.stringify({
@@ -281,7 +291,17 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
                       manifestVersion: MANIFEST_VERSION,
                       uses: stamps,
                       skills: [],
-                      capabilities: sdkCapabilities
+                      capabilities: sdkCapabilities,
+                      ...(cloudLook.revision === 0
+                        ? {}
+                        : {
+                            look: {
+                              revision: cloudLook.revision,
+                              author: { id: identity.user.id, name: identity.user.name },
+                              createdAt: "2026-10-01T00:00:00.000Z",
+                              note: `look ${cloudLook.revision}`
+                            }
+                          })
                     })
                   }
                 ]
@@ -353,7 +373,7 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
       }
     })
   );
-  return { root, instance, stateDir, requests, cloudDescription, devReads };
+  return { root, instance, stateDir, requests, cloudDescription, cloudLook, devReads };
 });
 const fixture = makeFixture();
 const nodeFsLink = (from: string, to: string) =>
@@ -395,13 +415,16 @@ it.live(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { root, instance, stateDir, requests } = yield* fixture;
-      const first = yield* command(root, instance, []);
+      const { joined, ...first } = yield* command(root, instance, []);
+      assert.isFalse(joined);
       assert.isString(first.colleagueUrl);
       assert.notStrictEqual(new URL(first.colleagueUrl).origin, new URL(first.url).origin);
       const record = (yield* Effect.promise(() => readRecord(stateDir)))!;
       assert.isTrue(yield* Effect.promise(() => sameProcess(record)));
       const requested = requests.length;
-      assert.deepStrictEqual(yield* command(root, instance, []), first);
+      assert.deepStrictEqual(yield* command(root, instance, []), { ...first, joined: true });
+      // Status observes the session; it neither starts nor joins one.
+      assert.deepStrictEqual(yield* command(root, instance, ["status"]), first);
       assert.strictEqual(requests.length, requested);
       assert.isFalse(yield* fs.exists(path.join(stateDir, "baseline.json")));
       yield* call(
@@ -507,13 +530,66 @@ it.live(
       cloudDescription.description = "Newer portal purpose";
       cloudDescription.descriptionUpdatedAt = "2026-09-16T12:00:00.000Z";
       const requested = requests.length;
-      const joined = yield* command(root, instance, []);
+      // Joining reads no key and calls no instance, and still reports the session's own login.
+      const joined = yield* command(root, instance, [], {});
+      assert.isTrue(joined.joined);
       assert.strictEqual(joined.pid, first.pid);
+      assert.strictEqual(joined.release, first.release);
+      assert.deepStrictEqual(joined.identity, first.identity);
       assert.deepStrictEqual(joined.warnings, []);
       assert.strictEqual(requests.length, requested);
       assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(repoPath)), synced);
     }).pipe(Effect.provide(NodeServices.layer)),
   { timeout: 45_000 }
+);
+
+it.live(
+  "refresh brings a new look into a running session, which serves it without a restart",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, instance, cloudLook } = yield* fixture;
+      // A linked stylesheet is a second asset unless the page inlines it, as `patchy init` sets up.
+      yield* nodeFsLink(
+        path.join(packageDir, "node_modules/vite-plugin-singlefile"),
+        path.join(root, "node_modules/vite-plugin-singlefile")
+      );
+      yield* fs.writeFileString(
+        path.join(root, "vite.config.ts"),
+        'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\nexport default defineConfig({ plugins: [viteSingleFile()] });\n'
+      );
+      yield* fs.writeFileString(
+        path.join(root, "index.html"),
+        '<!doctype html><html><head><title>Lifecycle</title><link rel="stylesheet" href="/patchy/_generated/look.css"></head><body>Local lifecycle</body></html>'
+      );
+      Object.assign(cloudLook, { revision: 1, css: "body { --lifecycle-look: look-one; }\n" });
+      const first = yield* command(root, instance, []);
+      const http = yield* HttpClient.HttpClient;
+      const page = http
+        .get(`${new URL(first.url).origin}/~content/${patchId}/${versionId}`)
+        .pipe(Effect.flatMap((response) => response.text));
+      assert.include(yield* page, "look-one");
+
+      Object.assign(cloudLook, { revision: 2, css: "body { --lifecycle-look: look-two; }\n" });
+      const running = yield* subprocess(
+        [
+          path.join(root, "node_modules/patchy/dist/index.js"),
+          "refresh",
+          "--json",
+          "--api-url",
+          instance
+        ],
+        root,
+        withKey
+      );
+      assert.strictEqual((yield* exited(running)).code, 0, running.stderr());
+      assert.include(JSON.parse(running.stdout()).warnings.join("\n"), "look changed, rev 1 → 2");
+      yield* Effect.gen(function* () {
+        while (!(yield* page).includes("look-two")) yield* Effect.sleep("100 millis");
+      }).pipe(Effect.timeout("20 seconds"));
+      assert.strictEqual((yield* command(root, instance, ["status"])).pid, first.pid);
+    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+  { timeout: 60_000 }
 );
 
 it.live(
@@ -669,6 +745,7 @@ it.live(
       const { root, instance, stateDir } = yield* fixture;
       const owner = yield* cli(root, instance, ["--foreground"]);
       yield* output(owner, "stdout", "Stop:");
+      assert.notInclude(owner.stdout(), "Joined");
       const record = (yield* Effect.promise(() => readRecord(stateDir)))!;
       yield* Effect.promise(() =>
         nodeFs.appendFile(path.join(stateDir, "dev.log"), "first chunk without newline")
@@ -679,6 +756,11 @@ it.live(
       );
       yield* output(owner, "stderr", "first chunk without newline and second chunk\n");
       const attached = yield* cli(root, instance, ["--foreground"]);
+      yield* output(
+        attached,
+        "stdout",
+        "Joined the running session; nothing was pulled from Patchy. To bring in look or description changes, run `pnpm patchy refresh`"
+      );
       yield* output(attached, "stderr", "first chunk without newline and second chunk\n");
       attached.child.kill("SIGINT");
       assert.strictEqual((yield* exited(attached)).code, 130);

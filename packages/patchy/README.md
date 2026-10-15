@@ -699,9 +699,13 @@ warnings and errors off the CLI's JSON stdout.
 Start this repo's local runtime, detached and idempotent. Exit 0 means the
 runtime and first single-file build are healthy; output contains the local
 page URL, `colleagueUrl` for tiers 1 and 2, log path and `pnpm patchy dev stop --api-url ...` command, using the
-repo's pinned CLI. A second start finds the same daemon without authenticating
-or checking a newer release. Start and status report the session's saved
-release and full `/api/me` identity, not the current login or a newer release.
+repo's pinned CLI. A second start joins the same daemon without a key, a
+request to the instance or a release check, so it pulls nothing from Patchy:
+JSON reports `joined: true`, where the start that created the session reports
+`false`, and text adds a line saying so. `patchy refresh` brings look and
+description changes into the repo while a session runs, and the session's
+build-watch serves a new look without a restart. Start and status report the session's saved release and full
+`/api/me` identity, not the current login or a newer release.
 
 New starts resolve a key, check the pin/CLI/installed runtime release, then
 authenticate `/api/me` and bind the viewer to the machine token's user. They pull
@@ -738,12 +742,13 @@ discarding results that cross the swap; removed handlers or incompatible argumen
 end that subscription permanently. Failed builds keep the last good binding or
 page and log the error. Config and fixture changes need `dev stop` followed by `dev`.
 
-| command             | behaviour                                                                                      | `--json` success                                                                             |
-| ------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                            | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
-| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                                       |
-| `dev logs`          | Print the dev log.                                                                             | `{ ok, log, text }`                                                                          |
-| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                                        |
+| command      | behaviour                                                                                      | `--json` success                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `dev`        | Start, or join a healthy session with `joined: true`.                                          | `{ ok, healthy: true, joined, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
+| `dev status` | Inspect; exits 1 with `not_running` unless healthy.                                            | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }`         |
+| `dev stop`   | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                                               |
+| `dev logs`   | Print the dev log.                                                                             | `{ ok, log, text }`                                                                                  |
+| `dev reset`  | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                                                |
 
 `--foreground` waits and streams logs; Ctrl-C stops a session it started.
 Joining an existing session leaves it running on interruption. Under `--json`
@@ -1264,7 +1269,7 @@ refusal, exit 1, as for publish, and `warnings` names any other file in it.
 `look preview` with no folder when the company has no look, or `--compare` with
 no folder, is local, exit 1.
 
-Every generation, at `init`, `refresh` and `dev` start, writes the company's
+Every generation, at `init`, `refresh` and a new `dev` start, writes the company's
 current look into the patch repo as managed files: `patchy/_generated/look.css`,
 `patchy/_generated/logo.svg` when the revision has one, and the `patchy-look`
 project skill, which holds the order to style by and the revision's brief. With
@@ -1274,7 +1279,9 @@ as `patchy look` shows it, `{ revision, author: { id, name }, createdAt, note }`
 or `null` for the Patchy look. A new repo's tier 1 and 2 `src/main.tsx` imports
 `look.css` and its tier 0 `index.html` links it, so the first page is already in
 the look; the single-file build inlines it, embedded fonts included. A page that
-doesn't import it keeps its own style, and refresh never edits page source.
+doesn't import it keeps its own style, and refresh never edits page source. A
+`dev` that joins a running session generates nothing; `refresh` brings a new
+revision into it.
 
 A page uses the look when its source names `patchy/_generated/look.css` or
 `logo.svg`: any `.html`, `.css` or script file outside `node_modules/`, `dist/`,
