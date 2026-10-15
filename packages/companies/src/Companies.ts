@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { newInternalId, WhatsNew } from "@patchy/core";
-import { AlreadyInCompany, Role, User, type Claims } from "./Users.js";
+import { AlreadyInCompany, displayName, Role, User, type Claims } from "./Users.js";
 
 /** Fixed once created: handles are not normalized into a different address. */
 export const Handle = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/));
@@ -195,11 +195,12 @@ export const make = Effect.gen(function* () {
       now: Schema.Number
     }),
     Result: User,
+    // Creation and invitation acceptance both land here, so the name rule applies once.
     // A new member starts caught up on What's new; the history is still one click away.
     execute: ({ id, companyId, clerkUserId, email, name, role, now }) => sql`
       INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at, whats_new_seen)
-      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${name}, ${role}, to_timestamp(${now / 1_000}),
-        ${WhatsNew.latestRelease})
+      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${role},
+        to_timestamp(${now / 1_000}), ${WhatsNew.latestRelease})
       ON CONFLICT DO NOTHING RETURNING ${userColumns}`
   });
   const existingUser = SqlSchema.findOneOption({

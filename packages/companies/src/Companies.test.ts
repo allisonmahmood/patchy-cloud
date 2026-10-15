@@ -81,6 +81,20 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         })
     );
 
+    it.effect("names a founder without a name by their email's local part", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        for (const [handle, userName] of [
+          ["nameless-empty", ""],
+          ["nameless-blank", " \t\n"]
+        ] as const) {
+          const input = { ...companyInput(handle), email: `${handle}.Founder@Example.com` };
+          const { user } = yield* companies.create({ ...input, userName });
+          assert.strictEqual(user.name, `${handle}.founder`);
+        }
+      })
+    );
+
     it.effect("lets only one create win a handle race without leaving an orphan admin", () =>
       Effect.gen(function* () {
         const companies = yield* Companies.Companies;
@@ -178,6 +192,25 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             "InviteUnavailable"
           );
         })
+    );
+
+    it.effect("names an invitee without a name by their email's local part", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const { company, user: admin } = yield* companies.create(companyInput("nameless-invite"));
+        const invite = yield* companies.createInvite({
+          companyId: company.id,
+          invitedBy: admin.id,
+          email: "Ada.Lovelace@Example.com"
+        });
+        const joined = yield* companies.consumeInvite({
+          inviteId: invite.id,
+          clerkUserId: "clerk_nameless_invitee",
+          email: "Ada.Lovelace@Example.com",
+          name: " "
+        });
+        assert.strictEqual(joined.name, "ada.lovelace");
+      })
     );
 
     it.effect("hides expired invitations from join and refuses to consume them", () =>

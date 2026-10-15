@@ -20,7 +20,7 @@ Read `../patchy-loop/SKILL.md` first. The directory belongs to the patch's compa
 
 Search matches a case-insensitive prefix of the full name or email. `"ann"` finds Anna, not Joanne. `%` and `_` are literal characters, not wildcards. It is not fuzzy search or surname matching. Keep the same search when reusing an opaque cursor; start again when it changes. Null means there is no next page. Results have deterministic ordering.
 
-`get(id)` returns `{ id, name, email, admin, active }` or null. `getMany(ids)` accepts at most 1,000 ids and returns one member or null for every input position, preserving duplicates and order. Both resolve deactivated users with `active: false`. Unknown and other-company ids return null.
+`get(id)` returns `{ id, name, email, admin, active }` or null. `name` is never blank: a user without one is named by their email's local part. `getMany(ids)` accepts at most 1,000 ids and returns one member or null for every input position, preserving duplicates and order. Both resolve deactivated users with `active: false`. Unknown and other-company ids return null.
 
 Table reads return ids, not joined directory data. Resolve a page's distinct owners once:
 
