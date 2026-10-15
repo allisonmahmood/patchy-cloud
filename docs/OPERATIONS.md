@@ -212,8 +212,10 @@ a URL or free text.
 
 The events, by area:
 
-- Machine tokens: `token.minted`.
-- Patches: `patch.created`, `patch.updated`, `patch.deleted`, `patch.purged`.
+- Machine tokens: `token.minted`, once the login poll that minted the token commits.
+- Patches: `patch.created`, `patch.updated`, `patch.deleted`, `patch.purged`. A
+  publish reports once, when the version it records commits; a retry with the
+  same publish key replays the answer and reports nothing.
 - Patch lifecycle: `patch.shared`, `patch.retired`, `patch.restored`,
   `patch.rolled_back`, `patch.reassigned`, and `patch.deleted` above. The Patches
   service reports each once, after the change commits, whether the CLI, the

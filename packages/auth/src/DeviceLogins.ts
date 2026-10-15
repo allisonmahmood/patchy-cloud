@@ -14,6 +14,7 @@ import { Analytics } from "@patchy/analytics";
 import { randomToken, sha256 } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
+import { withReportedCommit } from "@patchy/sql";
 import * as MachineTokens from "./MachineTokens.js";
 
 const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
@@ -277,7 +278,8 @@ export const make = Effect.gen(function* () {
 
   const poll = Effect.fn("DeviceLogins.poll")(function* (deviceCode: string) {
     const hash = sha256(deviceCode);
-    const result = yield* sql.withTransaction(
+    // The mint reports with its commit, so a poll interrupted then still reports it.
+    const result = yield* withReportedCommit(
       Effect.gen(function* (): Effect.fn.Return<
         { readonly reply: PollResult | PollError; readonly event?: Analytics.AnalyticsEvent },
         SqlError
@@ -350,11 +352,11 @@ export const make = Effect.gen(function* () {
             properties: { tokenId: minted.id, replaced, ...(yield* Analytics.CurrentCli) }
           }
         };
-      })
-    );
+      }),
+      (result) => (result.event === undefined ? Effect.void : analytics.track(result.event))
+    ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     // Terminal failures are values until the transaction commits their deletion.
     if (isPollError(result.reply)) return yield* result.reply;
-    if (result.event) yield* analytics.track(result.event);
     return result.reply;
   });
 

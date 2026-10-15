@@ -44,6 +44,7 @@ import {
 } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
+import * as Testing from "@patchy/sql/testing";
 import { ConnectionStore, SqlConnectionStore, PostgresSource } from "@patchy/integrations";
 import * as PostHogDouble from "../../integrations/src/test/posthog.js";
 import * as Content from "./Content.js";
@@ -1347,11 +1348,17 @@ it.layer(publishLayer)("publish attempts", (it) => {
         track: (event: Analytics.AnalyticsEvent) =>
           analytics.track(event).pipe(Effect.andThen(Effect.die(new Error("publish reply lost"))))
       });
+      // The publish reports with its commit, so a failure there lands after the commit.
       const unavailable = yield* client.pipe(
         Effect.provide(Fixtures.as(uploader)),
         Effect.provide(
           Layer.fresh(
-            PatchesApi.layer.pipe(Layer.provide(failedDelivery), Layer.provide(publishConfig()))
+            PatchesApi.layer.pipe(
+              Layer.provide(Content.layer),
+              Layer.provide(Patches.layer),
+              Layer.provide(failedDelivery),
+              Layer.provide(publishConfig())
+            )
           )
         )
       );
@@ -1404,6 +1411,33 @@ it.layer(publishLayer)("publish attempts", (it) => {
       assert.deepStrictEqual(inventory.files, {
         attachments: { description: "Attachments keyed by file name.", shared: false }
       });
+    })
+  );
+
+  it.effect("reports a publish interrupted during COMMIT once, and its replay never", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const patches = yield* Patches.Patches;
+      /** The business events reported about one patch, by name. */
+      const reported = (patchId: string) =>
+        events.flatMap((event) =>
+          "patchId" in event.properties && event.properties.patchId === patchId ? [event.name] : []
+        );
+      const create = publishRequest({ html: html("Interrupted create") });
+      yield* Testing.interruptDuringCommit("patch_versions", api.publish({ payload: create }));
+      // The version committed and reported, though its request never answered.
+      const { patchId } = decodeCreated(
+        Option.getOrThrow(yield* patches.replay(uploader.user.id, create.publishKey)).response
+      );
+      assert.deepStrictEqual(reported(patchId), ["patch.created"]);
+      // The client retries with the same publish key and gets that answer, reporting nothing new.
+      assert.strictEqual((yield* api.publish({ payload: create })).patchId, patchId);
+      assert.deepStrictEqual(reported(patchId), ["patch.created"]);
+      const update = publishRequest({ html: html("Interrupted update"), patchId });
+      yield* Testing.interruptDuringCommit("patch_versions", api.publish({ payload: update }));
+      assert.deepStrictEqual(reported(patchId), ["patch.created", "patch.updated"]);
+      assert.strictEqual((yield* api.publish({ payload: update })).versionNumber, 2);
+      assert.deepStrictEqual(reported(patchId), ["patch.created", "patch.updated"]);
     })
   );
 

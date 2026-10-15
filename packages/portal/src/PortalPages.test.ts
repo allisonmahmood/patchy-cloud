@@ -40,9 +40,15 @@ const recordingAnalytics = Layer.succeed(
   Analytics.Analytics,
   Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
 );
-/** The business events reported about one patch, in order. */
+/** The lifecycle events reported about one patch, in order, without its publishes. */
 const reported = (patchId: string) =>
-  events.filter((event) => "patchId" in event.properties && event.properties.patchId === patchId);
+  events.filter(
+    (event) =>
+      event.name !== "patch.created" &&
+      event.name !== "patch.updated" &&
+      "patchId" in event.properties &&
+      event.properties.patchId === patchId
+  );
 const routes = Layer.merge(
   PortalPages.layer,
   HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
