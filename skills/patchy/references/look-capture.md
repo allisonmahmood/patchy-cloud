@@ -130,6 +130,8 @@ The company's own mark, drawn to sit on `--look-bg`. A PNG goes inside an SVG as
 `<image href="data:image/png;base64,…">`. SVG text renders in the viewer's
 fallback font, so leave slack in the viewBox or convert a wordmark to paths. With
 no usable mark, leave the file out: patches then show the company's name.
+An inline `<svg>` copied from a page's HTML must be serialized as XML before it
+becomes `logo.svg`: `new XMLSerializer().serializeToString(svg)` in the browser.
 
 ## From a website
 

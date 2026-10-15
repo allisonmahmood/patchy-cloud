@@ -5,9 +5,9 @@
  * fonts embedded in `look.css` as `data:` URLs. Browser-safe.
  */
 import * as CssTree from "css-tree";
-import * as parse5 from "parse5";
+import { SaxesParser, type SaxesTagNS } from "saxes";
 import { registry } from "@patchy/limits/registry";
-import { ParseLimitExceeded, parseBoundedFragment } from "./html-policy.js";
+import { ParseLimitExceeded } from "./html-policy.js";
 
 /** The fifteen tokens every look sets. Patchy fixes the names and meanings; the company sets the values. */
 export const LOOK_TOKENS = [
@@ -249,27 +249,52 @@ const checkCss = (css: string): string[] => {
   return errors;
 };
 
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
 /**
- * The logo is one `<svg>` that embeds anything it shows; `#fragment` links stay inside it. It is
- * parsed under the same bounds as a static page, which also bound the walk below.
+ * How deep a logo may nest. saxes finds each element's namespace by searching every open
+ * element, so the parse slows with depth; real logos nest a few elements deep, though browsers
+ * render far deeper.
+ */
+const MAX_LOGO_DEPTH = 64;
+/**
+ * How long a logo's namespace may be. saxes pairs a namespace with every prefixed attribute's
+ * name, so a long one costs on every attribute; real namespaces are short URIs.
+ */
+const MAX_NAMESPACE_LENGTH = 256;
+
+/**
+ * saxes, reporting each problem's message to `onFail`. saxes alone builds an Error, stack trace
+ * and all, for every problem, and a broken logo can have one every few bytes.
+ */
+class LogoParser extends SaxesParser<{ xmlns: true }> {
+  readonly #onFail: (message: string) => void;
+  constructor(onFail: (message: string) => void) {
+    super({ xmlns: true });
+    this.#onFail = onFail;
+  }
+  override fail(message: string): this {
+    this.#onFail(message);
+    return this;
+  }
+}
+
+/**
+ * The logo is one `<svg>` that embeds anything it shows; `#fragment` links stay inside it. Every
+ * consumer shows it as an image, which browsers parse as strict, namespace-aware XML, so the
+ * checks read it that way too.
  */
 const checkLogo = (svg: string): string[] => {
-  let fragment: parse5.DefaultTreeAdapterMap["documentFragment"];
-  try {
-    fragment = parseBoundedFragment(svg);
-  } catch (error) {
-    if (error instanceof ParseLimitExceeded) return [`logo.svg: ${error.message}`];
-    throw error;
-  }
-  const roots = fragment.childNodes.filter(
-    (node) => node.nodeName !== "#comment" && !("value" in node && node.value.trim() === "")
-  );
-  const [root] = roots;
-  if (roots.length !== 1 || root?.nodeName !== "svg")
-    return ["logo.svg must be one <svg> element."];
+  let failure: string | undefined;
+  // saxes can name the wrong problem (a bare & reads as an unclosed tag), so every parse
+  // failure also says how to write the logo.
+  const parser = new LogoParser((message) => {
+    failure ??= `logo.svg:${parser.line}:${parser.column} is not well-formed XML (${message.replace(/\.$/, "")}); a logo is XML, not HTML, so quote every attribute, close every tag, declare prefixes such as xmlns:xlink, and write & as &amp; and &nbsp; as &#160;. For an inline <svg> copied from a page, serialize it with new XMLSerializer().serializeToString(svg) in a browser.`;
+  });
+  let root: SaxesTagNS | undefined;
   const errors: string[] = [];
   const targets = new Set<string>();
-  // Error recovery can clone one styled element thousands of times; each CSS text parses once.
+  // A logo can repeat one style on thousands of elements; each CSS text parses once.
   const parsed = new Map<string, readonly string[]>();
   const css = (text: string, context: string) => {
     const key = `${context}\u0000${text}`;
@@ -280,32 +305,71 @@ const checkLogo = (svg: string): string[] => {
     }
     for (const target of found) targets.add(target);
   };
-  const visit = (node: parse5.DefaultTreeAdapterMap["childNode"]) => {
-    if (!("tagName" in node)) return;
-    const tag = node.tagName.toLowerCase();
-    for (const { name, value } of node.attrs) {
-      if (/^on/i.test(name))
+  // Each open element and, for a <style>, its stylesheet.
+  const open: Array<{ readonly tag: string; text: string }> = [];
+  const text = (text: string) => {
+    const element = open.at(-1);
+    if (element?.tag === "style") element.text += text;
+  };
+  // Each declaration, as it is read and before saxes resolves anything against it.
+  parser.on("attribute", ({ name, prefix, value }) => {
+    if (name !== "xmlns" && prefix !== "xmlns") return;
+    if (value.length > MAX_NAMESPACE_LENGTH)
+      throw new ParseLimitExceeded(
+        `logo.svg's ${name} is longer than ${MAX_NAMESPACE_LENGTH} characters; a namespace is a short URI, so shorten it.`
+      );
+    // saxes trims a namespace; browsers read it as written.
+    if (value !== value.trim())
+      failure ??= `logo.svg's ${name} has spaces around its namespace; delete them.`;
+  });
+  // saxes doesn't fully check a DOCTYPE, and a logo needs none.
+  parser.on("doctype", () => {
+    failure ??= "logo.svg has a <!DOCTYPE>; delete it, since a logo needs none.";
+  });
+  // Firefox shows any XML 1.1 document as a broken image.
+  parser.on("xmldecl", ({ version }) => {
+    if (version !== undefined && version !== "1.0")
+      failure ??= `logo.svg declares XML ${version}; write version="1.0", which every browser reads.`;
+  });
+  parser.on("opentag", (node) => {
+    root ??= node;
+    const tag = node.local.toLowerCase();
+    open.push({ tag, text: "" });
+    if (open.length > MAX_LOGO_DEPTH)
+      throw new ParseLimitExceeded(
+        `logo.svg nests elements more than ${MAX_LOGO_DEPTH} deep; flatten its groups.`
+      );
+    for (const { name, prefix, local, value } of Object.values(node.attributes)) {
+      // A namespace declaration names a namespace, not a resource or a handler.
+      if (name === "xmlns" || prefix === "xmlns") continue;
+      const attribute = local.toLowerCase();
+      if (attribute.startsWith("on"))
         errors.push(`logo.svg has an ${name} attribute; a logo is a picture, not a program.`);
-      else if (name === "href" || name === "src") targets.add(value);
-      else if (name === "style") css(value, "declarationList");
+      else if (attribute === "href" || attribute === "src") targets.add(value);
+      else if (attribute === "style") css(value, "declarationList");
       else if (/url\(/i.test(value)) css(value, "value");
     }
     if (tag === "script")
       errors.push("logo.svg has a <script>; a logo is a picture, not a program.");
     if (tag === "foreignobject")
       errors.push("logo.svg has a <foreignObject>; draw the logo in SVG.");
-    if (tag === "style")
-      css(
-        node.childNodes
-          .map((child: parse5.DefaultTreeAdapterMap["childNode"]) =>
-            "value" in child ? child.value : ""
-          )
-          .join(""),
-        "stylesheet"
-      );
-    node.childNodes.forEach(visit);
-  };
-  visit(root);
+  });
+  parser.on("text", text);
+  parser.on("cdata", text);
+  parser.on("closetag", () => {
+    const element = open.pop();
+    if (element?.tag === "style") css(element.text, "stylesheet");
+  });
+  try {
+    parser.write(svg).close();
+  } catch (error) {
+    if (error instanceof ParseLimitExceeded) return [error.message];
+    throw error;
+  }
+  if (root?.local !== "svg") return ["logo.svg must be one <svg> element."];
+  if (failure !== undefined) return [failure];
+  if (root.uri !== SVG_NAMESPACE)
+    return [`logo.svg's <svg> is not in the SVG namespace; set xmlns="${SVG_NAMESPACE}" on it.`];
   return [
     ...errors,
     ...[...targets]
@@ -317,7 +381,7 @@ const checkLogo = (svg: string): string[] => {
 /**
  * Every reason a look cannot be published, each naming the file and what to change; empty when
  * it passes. The checks are the token set, opaque colours, `!important`, WCAG contrast,
- * self-containment and the limits registry's sizes.
+ * self-containment, a logo that is well-formed SVG and the limits registry's sizes.
  */
 export const checkLook = (files: LookFiles): ReadonlyArray<string> => {
   // Postgres text cannot hold NUL, and no stylesheet, brief or logo needs one.
@@ -326,14 +390,16 @@ export const checkLook = (files: LookFiles): ReadonlyArray<string> => {
     .map(([name]) => `${name} contains a NUL character.`);
   if (nul.length > 0) return nul;
   const errors = checkCss(files["look.css"]);
-  if (files["logo.svg"] !== undefined) errors.push(...checkLogo(files["logo.svg"]));
+  const logo = files["logo.svg"];
+  const limit = registry["look.bytes"].default;
+  // A logo past the whole look's limit is refused for its size below, without parsing it.
+  if (logo !== undefined && utf8Bytes(logo) <= limit) errors.push(...checkLogo(logo));
   const briefBytes = utf8Bytes(files["LOOK.md"]);
   const briefLimit = registry["look.brief.bytes"].default;
   if (files["LOOK.md"].trim() === "") errors.push("LOOK.md is empty.");
   else if (briefBytes > briefLimit)
     errors.push(`LOOK.md is ${kib(briefBytes)}; the limit is ${briefLimit / 1024} KiB.`);
-  const bytes = utf8Bytes(files["look.css"]) + briefBytes + utf8Bytes(files["logo.svg"] ?? "");
-  const limit = registry["look.bytes"].default;
+  const bytes = utf8Bytes(files["look.css"]) + briefBytes + utf8Bytes(logo ?? "");
   if (bytes > limit)
     errors.push(
       `The look is ${kib(bytes)}; the limit is ${limit / 1024} KiB, embedded fonts included.`
