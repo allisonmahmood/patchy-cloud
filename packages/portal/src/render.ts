@@ -2,23 +2,11 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
-import {
-  ago,
-  dateLabel,
-  daysLeft,
-  escapeAttribute,
-  escapeHtml,
-  renderOffPatch
-} from "@patchy/core";
+import { ago, dateLabel, escapeAttribute, escapeHtml, renderOffPatch } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 
 export const styles = `
-  .portal { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 36px; align-items: start; }
-  .portal-index, .portal-card { min-width: 0; }
-  .portal-card { position: sticky; top: 24px; }
-  /* The guide is taller than a screen, so it scrolls with the page rather than pinning beside a long index. */
-  .portal-guide { position: static; }
-  .portal-index-line { display: block; }
+  .portal-card { min-width: 0; max-width: 920px; }
   .portal-stop-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .portal-stop-actions > div { display: grid; align-content: start; }
   .portal-address { align-items: center; }
@@ -30,11 +18,6 @@ export const styles = `
   /* Log cells keep words whole, so on a phone the table scrolls in portal-table rather than splitting "Version". */
   .log-table { min-width: 880px; overflow-wrap: break-word; }
   .log-table time { white-space: nowrap; }
-  @media (max-width: 860px) {
-    .portal { grid-template-columns: minmax(0, 1fr); }
-    .portal-card { position: static; }
-    .portal-guide { order: -1; }
-  }
   @media (max-width: 760px) {
     .log-filters { grid-template-columns: minmax(0, 1fr); }
     .log-filters > :last-child { margin-top: 16px; }
@@ -43,8 +26,6 @@ export const styles = `
     .portal-stop-actions { grid-template-columns: minmax(0, 1fr); }
   }
 `;
-
-const epochMillis = (iso: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
 
 // The index line: text up to the first sentence-ending period or ellipsis, semicolon or spaced
 // en dash, bounded to 80 code points. A period inside a token (".NET", "1.2") is not a boundary.
@@ -78,61 +59,6 @@ const actionForm = (
   className?: string
 ): string =>
   `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(cardPath(patch, all, action))}">${hidden("expectedPatchId", patch.id)}`;
-
-const indexGroup = (
-  title: string,
-  rows: readonly Patches.ReadPatch[],
-  card: Patches.PortalCard | null,
-  all: boolean,
-  now: number,
-  lead = ""
-): string => {
-  if (rows.length === 0 && lead === "") return "";
-  const items = rows.map((row) => {
-    const { patch } = row;
-    const state =
-      patch.state === "retired"
-        ? "retired"
-        : patch.state === "deleted"
-          ? `deleted · gone in ${daysLeft(epochMillis(patch.purgeAt!), now)} days`
-          : "";
-    const clause = firstClause(patch.description);
-    return `<li class="list-row"><a class="list-link" href="${escapeAttribute(cardPath(patch, all))}"${card?.patch.id === patch.id ? ' aria-current="page"' : ""}><span class="portal-index-line">${escapeHtml(patch.name)}</span><span class="supporting-text portal-index-line">${escapeHtml(clause || "No description")}</span>${state ? `<span class="pill">${escapeHtml(state)}</span>` : ""}${row.owner.deactivated ? '<span class="pill">owner deactivated</span>' : ""}</a></li>`;
-  });
-  return `<section class="section"><h2 class="section-heading">${escapeHtml(title)}</h2><ul class="list list-compact">${lead}${items.join("")}</ul></section>`;
-};
-
-const renderIndex = (input: {
-  readonly rows: readonly Patches.ReadPatch[];
-  readonly card: Patches.PortalCard | null;
-  readonly viewer: RequireSession.Viewer["Service"];
-  readonly all: boolean;
-  readonly now: number;
-  readonly guide?: { readonly row: string };
-}): string => {
-  const yours: Patches.ReadPatch[] = [];
-  const company: Patches.ReadPatch[] = [];
-  const off: Patches.ReadPatch[] = [];
-  for (const row of input.rows) {
-    if (row.patch.state !== "live") off.push(row);
-    else if (row.owner.id === input.viewer.user.id) yours.push(row);
-    else company.push(row);
-  }
-  const byName = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
-    a.patch.name.localeCompare(b.patch.name);
-  yours.sort(byName);
-  company.sort(byName);
-  off.sort(byName);
-  const liveCount = yours.length + company.length;
-  const count = liveCount + (input.all ? off.length : 0);
-  const togglePath =
-    input.card === null ? (input.all ? "/" : "/?all=1") : cardPath(input.card.patch, !input.all);
-  const toggle =
-    off.length === 0
-      ? ""
-      : `<p><a href="${escapeAttribute(togglePath)}">${input.all ? "Hide" : "Show"} retired and deleted</a></p>`;
-  return `<aside class="portal-index" aria-label="Patch index"><p class="supporting-text">${escapeHtml(count)} ${count === 1 ? "patch" : "patches"} · <a href="/patches">All patches</a></p>${toggle}${liveCount === 0 && input.guide === undefined ? '<p class="supporting-text">No live patches.</p>' : ""}${indexGroup("Yours", yours, input.card, input.all, input.now, input.guide?.row)}${indexGroup("Company", company, input.card, input.all, input.now)}${input.all ? indexGroup("Retired and deleted", off, input.card, input.all, input.now) : ""}</aside>`;
-};
 
 const titleLine = (patch: Patches.Patch): string => {
   const normalized = (text: string) =>
@@ -323,9 +249,9 @@ const renderCard = (input: {
   return `<article class="portal-card"><p class="supporting-text">${escapeHtml(patch.companyHandle)} / ${escapeHtml(patch.name)}</p><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}${descriptionBlock(card)}${open}${facts}${offNote}${deactivated}${input.activity}${management}</article>`;
 };
 
-export const renderPortal = (input: {
-  readonly rows: readonly Patches.ReadPatch[];
-  readonly card: Patches.PortalCard | null;
+/** One patch's card on its own page, under any refusal or status note. */
+export const renderCardPage = (input: {
+  readonly card: Patches.PortalCard;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly all: boolean;
   readonly now: number;
@@ -334,18 +260,7 @@ export const renderPortal = (input: {
   readonly notice?: string;
   readonly submittedDescription?: string;
   readonly descriptionError?: string;
-  /** The guide while the viewer owns no patch: its index row, and its card when no patch is selected. */
-  readonly guide?: { readonly row: string; readonly card: string };
-  /** A status note above the index and card, such as the first patch's. */
-  readonly note?: string;
-}): string => {
-  const card =
-    input.card !== null
-      ? renderCard({ ...input, card: input.card })
-      : (input.guide?.card ??
-        `<article class="portal-card"><h1 class="page-heading">No live patches</h1><p>${input.all ? "Choose a patch from Retired and deleted to see its card." : "Show retired and deleted to see the company's patches."}</p></article>`);
-  return `${refusal(input.notice)}${input.note ?? ""}<div class="portal">${renderIndex(input)}${card}</div>`;
-};
+}): string => `${refusal(input.notice)}${renderCard(input)}`;
 
 export const renderVersions = (input: {
   readonly card: Patches.PortalCard;

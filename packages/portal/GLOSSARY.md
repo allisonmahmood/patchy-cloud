@@ -5,12 +5,20 @@ Where a signed-in person finds and manages their company's patches. The patch, i
 ## Language
 
 **Portal**:
-The signed-in landing at `/`: the company's patches on one side and one patch's card, or the guide, on the other. It lists only the viewer's own company, public patches included, and never another company's.
-_Avoid_: dashboard, home page (the root is a sign-in door when signed out), directory (the index is one half of it)
+Where a signed-in person finds and manages their company's patches: Home at `/`, All patches at `/patches`, each patch's card and the guide. It lists only the viewer's own company, public patches included, and never another company's.
+_Avoid_: dashboard, directory
 
-**Index**:
-The compact list of the company's patches beside the card: name and the first clause of the description, grouped as the viewer's own, the company's, and retired and deleted behind a toggle.
-_Avoid_: sidebar, list (the CLI's `patchy list` is discovery, not this), table
+**Home**:
+The signed-in landing at `/`, for opening patches rather than managing them: a search over every live patch, **Your usual**, **Tools** and **Pages**, with a way to All patches and to what is off. With nothing live and nothing of the viewer's own, Home is the guide. A search that matches nothing offers a line to hand an agent, built from the query.
+_Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
+
+**Your usual**:
+Home's first shelf: the four live patches the viewer opened most in the last 30 days, by their opens' halving score, padded with the company's most-visited. With no opens yet it is titled "Popular at" the company. It reads only the viewer's own opens.
+_Avoid_: favourites, pinned (pins are not built), recent
+
+**Tools** and **Pages**:
+Home's split of live patches by their current version's tier: **Tools** are tiers 1 and 2, opened and used; **Pages** are tier 0, read and passed around. A republish that changes the tier moves the patch. Pages **new to you** are a colleague's company-scope pages published in the last week that the viewer hasn't opened since; a public page never claims to be unread, since opening it records nothing.
+_Avoid_: apps, documents, docs, kinds (nothing is declared; the tier decides)
 
 **All patches**:
 The table at `/patches` of every patch the viewer can open: tabs for All, Tools (tiers 1 and 2), Pages (tier 0), Yours, Needs attention and Retired and deleted, a search over name, title, description and owner, and each row's acts in its menu. **Needs attention** lists a patch only to its owner and admins: an admin sees live patches whose owner is deactivated, and both see deletions within a week of reclamation, each with the act that resolves it.
@@ -25,7 +33,7 @@ One patch's page at `/patches/<name>/log` for its current owner and admins: its 
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
 
 **Guide**:
-The card for **Your first patch**, the index row that leads Yours until the viewer owns a patch: what Patchy is, then the steps from the setup line to a first publish, each with a preview of what the agent will say. Its progress comes from the viewer's live machine tokens and owned patches, never a stored checklist, and owning any patch ends it.
+**Your first patch** at `/guide`, reached from Home's **Make your own** while the viewer owns no patch, and Home itself while nothing is live: what Patchy is, then the steps from the setup line to a first publish, each with a preview of what the agent will say. Its progress comes from the viewer's live machine tokens and owned patches, never a stored checklist, and owning any patch ends it: `/guide` then sends its owner Home.
 _Avoid_: onboarding (the global skill's welcome page is that), tutorial, checklist, wizard
 
 **Manage**:

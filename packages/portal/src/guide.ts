@@ -3,8 +3,9 @@ import { ago, copyLine, copyScriptPath, escapeHtml } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 
 /**
- * Where a person stands on the way to their first patch, from what Patchy already records. The portal shows the
- * guide while they own no patch; `machine` is the newest machine logged in as them, once one is.
+ * Where a person stands on the way to their first patch, from what Patchy already records. The guide is at
+ * `/guide` while they own no patch, and is Home itself while nothing is live; `machine` is the newest machine
+ * logged in as them, once one is.
  */
 export interface Guide {
   readonly machine: { readonly name: string; readonly createdAt: string } | null;
@@ -60,7 +61,7 @@ export const renderGuide = (input: {
     "3",
     "Ask for your first patch",
     machine === null
-      ? `<p class="supporting-text">Anything works, like “Publish this plan with Patchy”. It shows up here, under Yours.</p>`
+      ? `<p class="supporting-text">Anything works, like “Publish this plan with Patchy”. It shows up on your Home.</p>`
       : `<div class="step-card"><p>Tell your agent what you want, and mention Patchy.</p>${copyLine(example.prompt, "Example request, select to copy")}<p class="supporting-text">Anything works: a lunch poll, an on-call rota, a page from today’s notes.</p>${preview(
           [
             you(example.prompt),
@@ -78,7 +79,7 @@ export const renderGuide = (input: {
             "current",
             "1",
             "Give your agent this line",
-            `<div class="step-card">${copyLine(setup, "Setup line, select to copy")}<p class="supporting-text">Paste it into Claude Code, Codex, Cursor or any AI agent that can run commands on your computer. It installs Patchy and gets this computer ready to publish.</p><details><summary>Don’t have an agent yet?</summary><p>An agent is an AI assistant that works on your computer, like Claude Code or Codex. Install one, then come back. This guide stays here until your first patch is live.</p></details>${preview(
+            `<div class="step-card">${copyLine(setup, "Setup line, select to copy")}<p class="supporting-text">Paste it into Claude Code, Codex, Cursor or any AI agent that can run commands on your computer. It installs Patchy and gets this computer ready to publish.</p><details><summary>Don’t have an agent yet?</summary><p>An agent is an AI assistant that works on your computer, like Claude Code or Codex. Install one, then come back. This guide stays at ${host}/guide until your first patch is live.</p></details>${preview(
               [
                 you(setup),
                 said("Installing Patchy… done."),
@@ -108,14 +109,6 @@ export const renderGuide = (input: {
   return `<article class="portal-card portal-guide" aria-labelledby="guide-heading"><p class="supporting-text">Get started · ${machine === null ? "a few minutes" : "2 of 3 done"}</p><h1 class="page-heading" id="guide-heading">Ship your first patch</h1><p class="lede">Patchy is where ${company}’s tools live. You say what you need, your AI agent builds it, and Patchy puts it online for everyone at ${company}.</p>${machine === null ? flow : ""}<ol class="steps">${steps.join("")}</ol><script defer src="${copyScriptPath}"></script></article>`;
 };
 
-/** "Your first patch" under Yours: the guide's row in the index, selected while the guide is the card. */
-export const renderGuideRow = (input: {
-  readonly guide: Guide;
-  readonly selected: boolean;
-  readonly all: boolean;
-}): string =>
-  `<li class="list-row"><a class="list-link list-link-placeholder" href="${input.all ? "/?all=1" : "/"}"${input.selected ? ' aria-current="page"' : ""}><span class="portal-index-line">Your first patch</span><span class="supporting-text portal-index-line">${input.guide.machine === null ? "Start here" : "1 step left"}</span></a></li>`;
-
 /** A person's earliest patch, for the day after it was made and while it is live. */
 export const firstPatch = (
   rows: ReadonlyArray<Patches.ReadPatch>,
@@ -139,7 +132,7 @@ export const firstPatch = (
     : undefined;
 };
 
-/** Shown above the first patch's card while `firstPatch` holds. */
+/** Shown at the top of Home while `firstPatch` holds. */
 export const renderFirstPatchNote = (
   row: Patches.ReadPatch,
   viewer: RequireSession.Viewer["Service"]

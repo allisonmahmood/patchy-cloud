@@ -314,8 +314,11 @@ can quote it.
   `public, max-age=60` and no `Set-Cookie`; older versions keep the door. Cover
   `share … public`, a new publish and `share … company`, and a reader from
   another company, who gets the same 404 as a missing patch.
-- **Portal and lifecycle.** Sign in as an owner, an admin and a member: `/` and
-  `/patches/<name>`, then `retire`, `delete --yes` and `restore` through the CLI
+- **Portal and lifecycle.** Sign in as an owner, an admin and a member: Home at
+  `/` (open a few patches first, so Your usual and New to you have something to
+  show; `pnpm dev shot <person> /<company>/<patch>` records an open), a search on
+  it, `/patches` and its tabs, `/guide` and `/patches/<name>`, then `retire`,
+  `delete --yes` and `restore` through the CLI
   and the notices at the patch's address. A source with a published consumer
   refuses retirement with `has_dependants` until `--force`.
 - **Company management.** Invite, revoke, change roles, deactivate and
