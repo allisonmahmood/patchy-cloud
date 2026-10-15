@@ -104,7 +104,12 @@ const transfer = action({ args: { direction: t.enum(["upload", "download"]), byt
   const bytes = await ctx.files.docs.get(String(args.bytes));
   return { length: bytes.length, first: bytes[0], last: bytes[bytes.length - 1] };
 }});
-export default createGuest({ demo: { read, bytes, transfer } });
+const oversized = action({ args: { bytes: t.integer(), blob: t.boolean(), caught: t.boolean() }, result: t.json(), handler: async (ctx, args) => {
+  const bytes = new Uint8Array(args.bytes);
+  const put = ctx.files.docs.put("oversized.bin", args.blob ? new Blob([bytes]) : bytes);
+  return args.caught ? put.then(() => null, error => JSON.parse(JSON.stringify({ ...error, message: error.message }))) : put;
+}});
+export default createGuest({ demo: { read, bytes, transfer, oversized } });
 `;
 const sdkBundle = Effect.promise(async () => {
   const result = await build({
@@ -663,3 +668,42 @@ for (const direction of ["upload", "download"] as const) {
     30_000
   );
 }
+
+// workerd refuses RPC arguments over 32 MiB, so the guest refuses those bodies before the RPC.
+it.live(
+  "refuses a file put over workerd's RPC limit with the loader's refusal",
+  () =>
+    Effect.gen(function* () {
+      const overRpc = 32 * 1024 * 1024 + 1;
+      let hostRequests = 0;
+      const host = yield* listener(async (request, response) => {
+        hostRequests++;
+        await bodyOf(request);
+        // Refuse as the supervisor does, so a small put's refusal crosses the RPC.
+        response.writeHead(413, { "content-type": "application/json" });
+        response.end(JSON.stringify(GuestProtocol.callbackFileTooLarge));
+      });
+      const child = yield* startWorkerd({ callbackUrls: [host.url] });
+      const engine = yield* Engine.make({ url: child.url });
+      const { binding } = yield* engine.bind(bundle(yield* sdkBundle));
+      const put = Effect.fn(function* (bytes: number, blob: boolean, caught: boolean) {
+        return returnedReply(
+          yield* engine.invoke(
+            invocation(binding, host.url, "demo.oversized", { args: { bytes, blob, caught } })
+          )
+        );
+      });
+      expect(yield* put(overRpc, false, false)).toEqual(GuestProtocol.callbackFileTooLarge);
+      expect(yield* put(40 * 1024 * 1024, true, false)).toEqual(GuestProtocol.callbackFileTooLarge);
+      expect(hostRequests).toBe(0);
+      // A handler that catches it sees the same error as a refusal that crossed the RPC.
+      const caught = yield* put(overRpc, false, true);
+      expect(caught).toMatchObject({
+        ok: true,
+        value: { name: "PatchyError", ...GuestProtocol.callbackFileLimit }
+      });
+      expect(caught).toEqual(yield* put(4, false, true));
+      expect(hostRequests).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  30_000
+);

@@ -65,12 +65,6 @@ const refusal = (
   code: "access_denied" | "handler_failed" | "invalid_request" | "timeout" | "source_unavailable",
   error: string
 ) => ({ ok: false, source: "patchy", code, error }) as const;
-const fileTooLarge = {
-  ok: false,
-  source: "patchy",
-  error: "The file exceeds the callback byte limit.",
-  ...GuestProtocol.callbackFileLimit
-} as const;
 const endedCallback = (reference: AttemptReference) =>
   Date.now() >= reference.deadline
     ? refusal("timeout", "The invocation callback deadline has passed.")
@@ -305,7 +299,7 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
       operation.body !== undefined &&
       operation.body.bytes.byteLength > GuestProtocol.callbackFileLimit.value
     )
-      return fileTooLarge;
+      return GuestProtocol.callbackFileTooLarge;
     const live = liveAttempt(this.ctx.props);
     if (live === undefined) return endedCallback(this.ctx.props);
     try {
@@ -337,7 +331,7 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
       let reply: GuestProtocol.CallbackReply;
       if (response.ok && response.headers.get("x-patchy-file-body") === "1") {
         const bytes = await readFileBody(response);
-        if (bytes === undefined) return fileTooLarge;
+        if (bytes === undefined) return GuestProtocol.callbackFileTooLarge;
         reply = {
           ok: true,
           body: {

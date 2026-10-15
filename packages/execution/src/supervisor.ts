@@ -431,15 +431,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         Effect.catchTags({
           CallbackBodyTooLarge: () =>
             Effect.succeed(
-              HttpServerResponse.jsonUnsafe(
-                {
-                  ok: false,
-                  source: "patchy",
-                  error: "The file exceeds the callback byte limit.",
-                  ...GuestProtocol.callbackFileLimit
-                },
-                { status: 413 }
-              )
+              HttpServerResponse.jsonUnsafe(GuestProtocol.callbackFileTooLarge, { status: 413 })
             ),
           TimeoutError: () => Effect.succeed(deadlineCallback()),
           SupervisorError: () => Effect.succeed(refusedCallback()),

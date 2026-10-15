@@ -397,7 +397,12 @@ export function createGuest(
           args: JSON.parse(canonicalArgs(args)),
           ...(body === undefined ? {} : { body })
         });
-        const received = await callbacks.call(operation);
+        // workerd refuses RPC arguments over 32 MiB before the loader's cap can answer, so an
+        // over-cap body gets the loader's refusal here. The loader still enforces the cap.
+        const received =
+          (body?.bytes.byteLength ?? 0) > GuestProtocol.callbackFileLimit.value
+            ? GuestProtocol.callbackFileTooLarge
+            : await callbacks.call(operation);
         if (received === null || typeof received !== "object")
           throw new Error("Invalid callback reply.");
         // RPC adds disposal metadata to the envelope; it is not part of the wire data.

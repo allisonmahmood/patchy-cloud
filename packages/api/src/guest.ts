@@ -11,6 +11,13 @@ export const workerdVersion = "1.20260924.1";
 // This date enables Node compatibility by default; wire 1 explicitly refuses it.
 export const compatibilityFlags = ["no_nodejs_compat", "no_nodejs_compat_v2"] as const;
 export const callbackFileLimit = limitRefusal("tier2.callbacks.fileBytes");
+/** The refusal of a callback body over the cap, given inside workerd before the host sees it. */
+export const callbackFileTooLarge = {
+  ok: false,
+  source: "patchy",
+  error: "The file exceeds the callback byte limit.",
+  ...callbackFileLimit
+} as const satisfies RuntimeFailure;
 
 const identity = Schema.NonEmptyString;
 const sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
