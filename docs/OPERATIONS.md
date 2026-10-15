@@ -219,9 +219,10 @@ The events, by area:
 - Patch lifecycle: `patch.shared`, `patch.retired`, `patch.restored`,
   `patch.rolled_back`, `patch.reassigned`, and `patch.deleted` above. The Patches
   service reports each once, after the change commits, whether the CLI, the
-  portal or a member's deactivation or reactivation made it. A refused,
-  rolled-back or no-op change reports nothing. `byAdmin` says the actor used a
-  company admin's rights.
+  portal or a member's deactivation or reactivation made it. An update publish
+  that passes another scope reports `patch.shared` too. A refused, rolled-back
+  or no-op change reports nothing. `byAdmin` says the actor used a company
+  admin's rights.
 - Companies and users: `company.created`, `user.joined`, `user.role_changed`,
   `user.deactivated`, `user.reactivated`.
 - Invitations: `invite.sent`, `invite.resent`, `invite.revoked`.

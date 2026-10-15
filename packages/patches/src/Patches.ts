@@ -763,7 +763,8 @@ export class Patches extends Context.Service<
     /**
      * Records a publish whose bytes are already stored: the version row, the
      * patch row it creates or moves forward,
-     * in one transaction, reporting `patch.created` or `patch.updated` with its commit.
+     * in one transaction, reporting `patch.created` or `patch.updated` with its commit,
+     * and `patch.shared` when an update changes the scope.
      * Consumes the pending-object intent under a lock;
      * a sweep that claimed it first prevents the version from being recorded.
      * Re-checks the target, so the preflight's answer can still change here.
@@ -2079,6 +2080,20 @@ export const make = Effect.gen(function* () {
             ...(yield* Analytics.CurrentCli)
           }
         });
+        // An update that passes another scope changes the patch's sharing, as the share action does.
+        if (existing !== null && scope !== existing.scope)
+          yield* report({
+            name: "patch.shared",
+            principalId: input.ownerUserId,
+            companyId,
+            properties: {
+              patchId: input.patchId,
+              ownerUserId: existing.ownerUserId,
+              byAdmin: false,
+              scope,
+              previousScope: existing.scope
+            }
+          });
         return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
       }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
     ).pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))
