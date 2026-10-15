@@ -96,5 +96,18 @@ export const migrations: Migrations = {
     WHERE deleted_at IS NOT NULL`,
     `CREATE UNIQUE INDEX patch_versions_server_object_key_idx
     ON patch_versions(server_object_key) WHERE server_object_key IS NOT NULL`
+  ),
+  // What each member opened, for their own Home only: when they last opened a patch and a
+  // count that halves every week since then (Patches.recordOpen). Reclaiming the patch
+  // removes its rows.
+  "0017_patch_opens": ddl(
+    `CREATE TABLE patch_opens (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+    last_opened_at TIMESTAMPTZ NOT NULL,
+    score DOUBLE PRECISION NOT NULL CHECK (score >= 0),
+    PRIMARY KEY (user_id, patch_id)
+    )`,
+    `CREATE INDEX patch_opens_patch_id_idx ON patch_opens(patch_id)`
   )
 };

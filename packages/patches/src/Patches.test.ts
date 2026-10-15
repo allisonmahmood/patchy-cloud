@@ -165,10 +165,16 @@ it.layer(
       const restored = Option.getOrThrow(yield* service.find(request.patchId));
       assert.strictEqual(restored.version.id, request.versionId);
       assert.strictEqual(restored.patch.lifecycleRevision, "9");
+      yield* service.recordOpen(reader.user.id, request.patchId);
       yield* service.delete(request.patchId, owner);
       yield* TestClock.adjust(30 * DAY);
       yield* service.purgeDeleted(request.patchId);
       assert.deepStrictEqual(revisions, ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "-1"]);
+      // Reclaiming a patch forgets who opened it.
+      assert.notInclude(
+        (yield* service.opens(reader.user.id)).map((open) => open.patchId),
+        request.patchId
+      );
     }).pipe(Effect.scoped)
   );
 
@@ -600,6 +606,49 @@ it.layer(
         yield* sql`SELECT visit_count::int AS count FROM patches WHERE id = ${patch.patchId}`,
         [{ count: 2 }]
       );
+    })
+  );
+
+  it.effect("remembers each member's opens of live patches, halving every week", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 9, 1));
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      const scoreOf = (opens: ReadonlyArray<Patches.Open>) =>
+        opens.find((open) => open.patchId === patch.patchId)?.score;
+      yield* service.recordOpen(reader.user.id, patch.patchId);
+      yield* service.recordOpen(reader.user.id, patch.patchId);
+      assert.closeTo(scoreOf(yield* service.opens(reader.user.id))!, 2, 1e-9);
+      assert.isUndefined(scoreOf(yield* service.opens(quota.user.id)));
+
+      yield* TestClock.adjust(7 * DAY);
+      assert.closeTo(scoreOf(yield* service.opens(reader.user.id))!, 1, 1e-9);
+      yield* service.recordOpen(reader.user.id, patch.patchId);
+      const [open] = (yield* service.opens(reader.user.id)).filter(
+        (entry) => entry.patchId === patch.patchId
+      );
+      assert.closeTo(open!.score, 2, 1e-9);
+      assert.strictEqual(open!.lastOpenedAt, new Date(Date.UTC(2026, 9, 8)).toISOString());
+
+      yield* service.retire(patch.patchId, administrator);
+      yield* service.recordOpen(quota.user.id, patch.patchId);
+      assert.isUndefined(scoreOf(yield* service.opens(quota.user.id)));
+    })
+  );
+
+  it.effect("counts visits for the company's patch reads", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      yield* service.recordVisit(patch.patchId);
+      const rows = yield* service.read({
+        companyId: uploader.company.id,
+        userId: uploader.user.id,
+        canOpen: () => true,
+        state: "all",
+        patchRef: patch.patchId
+      });
+      assert.strictEqual(rows[0]?.visits, 1);
     })
   );
 

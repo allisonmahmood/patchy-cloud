@@ -181,6 +181,26 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
         )
     })
   );
+  // An admitted member opening the current version's address, not an older version or the
+  // frame's content request, is an open for their own Home: it is what clears "new to you".
+  // Public pages are served without a session, so they record none.
+  const viewerId =
+    !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
+      ? admission.user.id
+      : undefined;
+  if (
+    kind === "address" &&
+    viewerId !== undefined &&
+    served.value.version.id === served.value.patch.currentVersionId
+  )
+    yield* patches.recordOpen(viewerId, served.value.patch.id).pipe(
+      Effect.catchTags({
+        SqlError: (error) =>
+          Effect.logWarning("Patch open recording failed.", error).pipe(
+            Effect.annotateLogs({ patchId: served.value.patch.id })
+          )
+      })
+    );
 
   const response = HttpServerResponse.text(
     kind === "content"
@@ -190,10 +210,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
           html,
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
-          viewerId:
-            !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
-              ? admission.user.id
-              : undefined,
+          viewerId,
           head: isPublic
             ? publicDirectory
               ? `<template id="patchy-session">${sessionScripts(session)}</template>`

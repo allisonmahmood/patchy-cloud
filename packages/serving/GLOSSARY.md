@@ -1,6 +1,6 @@
 # Serving
 
-How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content and visits belong to [Patches](../patches/GLOSSARY.md), sessions and viewers to [Auth](../auth/GLOSSARY.md), and document, stream, lifecycle and execution authority to [Runtime](../runtime/GLOSSARY.md); only personal-connection doors remain future work here.
+How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content, visits and members' opens belong to [Patches](../patches/GLOSSARY.md), sessions and viewers to [Auth](../auth/GLOSSARY.md), and document, stream, lifecycle and execution authority to [Runtime](../runtime/GLOSSARY.md); only personal-connection doors remain future work here.
 
 ## Language
 

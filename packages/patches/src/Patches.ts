@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import type * as Statement from "effect/sql/Statement";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
@@ -53,6 +54,8 @@ const decodeResponseBodies = Schema.decodeUnknownEffect(
 
 /** Deleted patches can be restored strictly before this window closes. */
 export const RECOVERY_WINDOW = Duration.days(30);
+/** How long an open takes to count half as much toward a member's usual patches. */
+export const OPEN_HALF_LIFE = Duration.days(7);
 
 /** Allows the bounded put and 60-second record transaction to finish before reclamation. */
 export const PENDING_OBJECT_LEASE = Duration.minutes(5);
@@ -298,6 +301,8 @@ export interface ReadPatch {
   readonly currentVersion: number;
   readonly tier: number;
   readonly publishedAt: string;
+  /** Served address and content requests while live, counted for everyone together. */
+  readonly visits: number;
   readonly reads: readonly (SharedResource & {
     readonly alias: string;
     readonly patchId: string;
@@ -309,6 +314,14 @@ export interface ReadPatch {
     readonly name: string;
     readonly owner: { readonly id: string; readonly name: string };
   })[];
+}
+
+/** One member's record of opening one patch, read only to build that member's own Home. */
+export interface Open {
+  readonly patchId: string;
+  readonly lastOpenedAt: string;
+  /** Every open counts 1, halving each `OPEN_HALF_LIFE` since, as of the read. */
+  readonly score: number;
 }
 
 export interface PortalCard extends ReadPatch {
@@ -630,12 +643,18 @@ class ReadPatchRow extends Schema.Class<ReadPatchRow>("ReadPatchRow")({
   currentVersion: Schema.Int,
   tier: Schema.Int,
   publishedAt: Stamp,
+  visits: Schema.Int,
   reads: Schema.Array(
     Schema.Union([
       Schema.Struct({ alias: Schema.String, patchId: Schema.String, table: Schema.String }),
       Schema.Struct({ alias: Schema.String, patchId: Schema.String, store: Schema.String })
     ])
   )
+}) {}
+class OpenRow extends Schema.Class<OpenRow>("OpenRow")({
+  patchId: Schema.String,
+  lastOpenedAt: Stamp,
+  score: Schema.Number
 }) {}
 class PortalMetadataRow extends Schema.Class<PortalMetadataRow>("PortalMetadataRow")({
   description: Schema.NullOr(Schema.String),
@@ -820,6 +839,13 @@ export class Patches extends Context.Service<
     ) => Effect.Effect<Option.Option<{ patch: Patch; version: PatchVersion }>, SqlError>;
     /** Counts a visit to a serving patch without changing its lifecycle. */
     readonly recordVisit: (patchId: string) => Effect.Effect<void, SqlError>;
+    /** Records that a member opened a serving patch's current version at its address. */
+    readonly recordOpen: (userId: string, patchId: string) => Effect.Effect<void, SqlError>;
+    /**
+     * What one member has opened, for that member's own Home. Nobody else reads these
+     * rows: owners and admins see only the visit count.
+     */
+    readonly opens: (userId: string) => Effect.Effect<ReadonlyArray<Open>, SqlError>;
     readonly retire: (
       patchId: string,
       actor: Actor,
@@ -1100,6 +1126,7 @@ export const make = Effect.gen(function* () {
         owner.deactivated_at IS NOT NULL AS "ownerDeactivated",
         current_version.version_number AS "currentVersion", current_version.tier,
         current_version.created_at AS "publishedAt",
+        LEAST(patches.visit_count, 2147483647)::int AS visits,
         COALESCE((
           SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(declarations))
             ORDER BY declarations.alias, declarations."patchId", declarations."table", declarations.store)
@@ -1487,6 +1514,7 @@ export const make = Effect.gen(function* () {
       currentVersion: row.currentVersion,
       tier: row.tier,
       publishedAt: iso(row.publishedAt),
+      visits: row.visits,
       reads: row.reads.map((declaration): ReadPatch["reads"][number] => {
         const source = openable.get(declaration.patchId)?.patch;
         return {
@@ -2367,6 +2395,37 @@ export const make = Effect.gen(function* () {
       WHERE patches.id = ${patchId} AND ${serving}`;
   });
 
+  const halfLifeSeconds = Duration.toSeconds(OPEN_HALF_LIFE);
+  // The stored score as of `at`: it was exact at the last open and has halved per half-life since.
+  const decayed = (at: Statement.Fragment) =>
+    sql`patch_opens.score * power(0.5,
+      GREATEST(0, extract(epoch FROM ${at} - patch_opens.last_opened_at)) / ${halfLifeSeconds})`;
+  const recordOpen = Effect.fn("Patches.recordOpen")(function* (userId: string, patchId: string) {
+    const at = yield* now;
+    yield* sql`INSERT INTO patch_opens (user_id, patch_id, last_opened_at, score)
+      SELECT ${userId}, patches.id, ${at}, 1 FROM patches
+      WHERE patches.id = ${patchId} AND ${serving}
+      ON CONFLICT (user_id, patch_id) DO UPDATE SET
+        score = ${decayed(sql`EXCLUDED.last_opened_at`)} + 1,
+        last_opened_at = EXCLUDED.last_opened_at`;
+  });
+  const openRows = SqlSchema.findAll({
+    Request: Schema.Struct({ userId: Schema.String, nowMillis: Schema.Number }),
+    Result: OpenRow,
+    execute: ({ userId, nowMillis }) => sql`
+      SELECT patch_id AS "patchId", last_opened_at AS "lastOpenedAt",
+        ${decayed(stamp(nowMillis))} AS score
+      FROM patch_opens WHERE user_id = ${userId}`
+  });
+  const opens = Effect.fn("Patches.opens")(function* (userId: string) {
+    const rows = yield* openRows({ userId, nowMillis: yield* Clock.currentTimeMillis });
+    return rows.map((row): Open => ({
+      patchId: row.patchId,
+      lastOpenedAt: iso(row.lastOpenedAt),
+      score: row.score
+    }));
+  }, Effect.catchTags(dieOnSchemaError));
+
   const listDeleted = Effect.fn("Patches.listDeleted")(function* (limit: number) {
     if (limit <= 0) return [];
     const rows = yield* listDeletedRows({ nowMillis: yield* Clock.currentTimeMillis, limit });
@@ -2452,6 +2511,8 @@ export const make = Effect.gen(function* () {
     find,
     findRetained,
     recordVisit,
+    recordOpen,
+    opens,
     retire,
     restore,
     rollback,

@@ -596,6 +596,51 @@ it.layer(layer)("pages", (it) => {
       })
   );
 
+  it.effect("records a member's open of the address, never the content URL or a public page", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const company = yield* publish("Opened by a member");
+      const open = yield* publish("Opened by anyone", "public");
+      const scores = Effect.map(
+        patches.opens(DEV_SEED.userId),
+        (opens) => new Map(opens.map((entry) => [entry.patchId, entry.score]))
+      );
+      assert.strictEqual((yield* get(company.path)).status, 200);
+      yield* get(`/~content/${company.patchId}/${company.versionId}`);
+      yield* get(company.path, {});
+      assert.strictEqual((yield* get(open.path)).status, 200);
+      const recorded = yield* scores;
+      assert.closeTo(recorded.get(company.patchId)!, 1, 1e-9);
+      assert.isFalse(recorded.has(open.patchId));
+      // A colleague reading v1 after v2 is out hasn't seen what changed.
+      yield* publish("Opened by a member, again", undefined, company.patchId);
+      assert.strictEqual((yield* get(`${company.path}/~v/1`)).status, 200);
+      assert.closeTo((yield* scores).get(company.patchId)!, 1, 1e-9);
+    })
+  );
+
+  it.effect("serves the page when recording an open fails", () =>
+    Effect.gen(function* () {
+      const { path, patchId } = yield* publish("Survives a failed open");
+      yield* ddl(
+        `CREATE FUNCTION fail_open() RETURNS trigger AS $$
+            BEGIN RAISE EXCEPTION 'Forced open recording failure.'; END
+          $$ LANGUAGE plpgsql`,
+        `CREATE TRIGGER fail_open BEFORE INSERT OR UPDATE ON patch_opens
+            FOR EACH ROW EXECUTE FUNCTION fail_open()`
+      );
+      const served = yield* get(path);
+      assert.strictEqual(served.status, 200);
+      assert.include(yield* served.text, "Survives a failed open");
+      const opened = yield* (yield* Patches.Patches).opens(DEV_SEED.userId);
+      assert.notInclude(
+        opened.map((entry) => entry.patchId),
+        patchId
+      );
+      yield* ddl(`DROP TRIGGER fail_open ON patch_opens`, `DROP FUNCTION fail_open()`);
+    })
+  );
+
   it.effect("serves the page when recording a visit fails", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
