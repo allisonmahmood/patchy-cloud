@@ -1,7 +1,8 @@
 /**
  * What lives under `<worktree>/.local/dev/` and how the runner reads and
  * writes it. `plan.json` is the handoff between `start` and the supervisor
- * and the record `status`/`stop` act on; `env` is what the CLI sources.
+ * and the record `status`/`stop` act on; `env` is what the CLI sources;
+ * `dev.log` is every process's lines, including why the supervisor stopped.
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,6 +18,28 @@ export const layout = (plan: Plan, path: Path.Path) => ({
   postgresDir: path.join(plan.stateDir, "postgres"),
   storageDir: path.join(plan.stateDir, "storage")
 });
+
+/** Starts the supervisor's `[dev]` line in `dev.log` that says why it stopped. */
+export const FAILED = "error: ";
+
+/**
+ * What the supervisor with this pid logged as the reason it stopped: the last
+ * marked line between its own `supervisor pid=` line and the next run's, so
+ * another run's failure is never reported for this one. `start` prints it when
+ * the supervisor exits before the server is healthy.
+ */
+export const failureOf = (log: string, pid: number) => {
+  const start = log.lastIndexOf(`[dev] supervisor pid=${pid} `);
+  if (start === -1) return undefined;
+  const next = log.indexOf("[dev] supervisor pid=", start + 1);
+  const marker = `[dev] ${FAILED}`;
+  const line = log
+    .slice(start, next === -1 ? undefined : next)
+    .split("\n")
+    .filter((entry) => entry.includes(marker))
+    .at(-1);
+  return line?.slice(line.indexOf(marker) + marker.length);
+};
 
 const planFileOf = (stateDir: string, path: Path.Path) => path.join(stateDir, "plan.json");
 const decodePlan = Schema.decodeUnknownEffect(PlanJson);

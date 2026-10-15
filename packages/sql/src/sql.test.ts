@@ -145,6 +145,21 @@ it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("ledger history", (it) 
       assert.strictEqual((yield* ledger).length, 2);
     })
   );
+
+  it.effect("refuses a duplicate id by name, and applies nothing", () =>
+    Effect.gen(function* () {
+      const error = yield* migrate({
+        ...widgets,
+        ...gadgets,
+        "3_sprockets": ddl("CREATE TABLE sprockets (id integer PRIMARY KEY)"),
+        "3_cogs": ddl("CREATE TABLE cogs (id integer PRIMARY KEY)")
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, Migrator.MigrationError);
+      assert.strictEqual(error.kind, "Duplicates");
+      assert.include(error.message, 'Migration id 3 is used twice, by "sprockets" and "cogs"');
+      assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "widgets"]);
+    })
+  );
 });
 
 /** A table whose COMMIT sleeps, through a deferred constraint trigger. */

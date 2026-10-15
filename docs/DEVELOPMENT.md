@@ -137,7 +137,9 @@ live database.
 The platform migrations were squashed before launch into one baseline per
 capability, ids 1 to 8. An instance created before the squash refuses to start:
 its ledger disagrees with the record, and the migration error says to run
-`pnpm dev reset`, which wipes its data. Its `dev.log` shows the error.
+`pnpm dev reset`, which wipes its data. Any failed migration, such as a
+duplicate id or a step's SQL error, stops the start: `pnpm dev` prints which
+step failed and why, and `dev.log` keeps it.
 
 ### Signing in and the CLI
 
