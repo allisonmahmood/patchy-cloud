@@ -2,7 +2,8 @@
  * The entrypoint. Effect's built-ins stay — `--help`, `--version` (the bare
  * version string), `--completions`, `--wizard`, `--log-level` — with the
  * formatter narrowed to what an agent reads: a parse error is its one line
- * (one document under `--json`), a version is the version. `NodeRuntime.runMain`
+ * (one document under `--json`), a version is the version, and help marks the
+ * flags the parser requires as Effect marks optional arguments. `NodeRuntime.runMain`
  * turns SIGINT and SIGTERM into interruption, which exits 130.
  */
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
@@ -12,6 +13,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as CliOutput from "effect/cli/CliOutput";
 import * as Command from "effect/cli/Command";
 import { Cwd, root } from "./commands.js";
@@ -24,6 +26,18 @@ const json = process.argv.includes("--json");
 const formatter = CliOutput.defaultFormatter({ colors: false });
 const output = CliOutput.layer({
   ...formatter,
+  formatHelpDoc: (doc) =>
+    formatter.formatHelpDoc({
+      ...doc,
+      flags: doc.flags.map((flag) =>
+        flag.required
+          ? {
+              ...flag,
+              description: Option.some(`${Option.getOrElse(flag.description, () => "")} (required)`)
+            }
+          : flag
+      )
+    }),
   formatVersion: (_name, version) => version,
   formatErrors: (errors) => {
     const message = errors.map((error) => error.message).join("\n");

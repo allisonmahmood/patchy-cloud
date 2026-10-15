@@ -1376,7 +1376,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--yes`: on `delete`, confirm deletion without an interactive prompt. Required for agent, JSON and non-terminal calls; it does not imply `--force`.
 - `--clear`: on `describe`, remove the description instead of supplying text.
 - `--description <text>`: on file-mode `publish`, set the description. Repo mode refuses the flag and points at `patchy.json`.
-- `--tier 0|1` — on `init`, the new repo's declared tier; default 1.
+- `--tier 0|1|2` — on `init`, the new repo's declared tier; default 1.
 - `--purpose <text>` — on `init`, required for agent, JSON and non-terminal invocations; asked at an interactive human terminal otherwise.
 - `--as <alias>`: on `add`, override the default camelCased connection handle or shared table/store name.
 - `--state live|retired|all` filters top-level patches and governs patch resolution at both detail levels of `list`; the default is `live`.
