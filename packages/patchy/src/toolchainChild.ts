@@ -19,16 +19,21 @@ const buildHint = "Run `pnpm exec vite build` and fix the single-file build befo
 
 /**
  * The reply's error for a failed build. Unresolved imports are named by their diagnostic's first
- * line, `[UNRESOLVED_IMPORT] Could not resolve '<import>' in <file>`; any other tool output, a
- * plugin's thrown text included, stays in this process.
+ * line, `[UNRESOLVED_IMPORT] Could not resolve '<import>' in <file>`, with the repo's own path
+ * removed; any other tool output, a plugin's thrown text included, stays in this process.
  */
 const failure = (cause: unknown) => {
   if (isLocalError(cause)) return cause.message;
-  const unresolved = isBuildFailure(cause)
-    ? cause.errors
-        .filter(isUnresolvedImport)
-        .map((error) => stripVTControlCharacters(error.message).split("\n", 1)[0]!)
-    : [];
+  const unresolved =
+    cause instanceof Error && isBuildFailure(cause)
+      ? cause.errors
+          .filter(isUnresolvedImport)
+          .map((error) =>
+            stripVTControlCharacters(error.message)
+              .split("\n", 1)[0]!
+              .replaceAll(`${process.cwd()}${path.sep}`, "")
+          )
+      : [];
   if (unresolved.length === 0) return `Vite build failed. ${buildHint}`;
   return [
     "Vite build failed:",

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -74,6 +75,10 @@ describe("repo publish recovery", () => {
     [
       "vite.config.ts",
       'export default { plugins: [{ name: "marker", transform() { throw new Error("private-diagnostic-marker"); } }] };'
+    ],
+    [
+      "vite.config.ts",
+      'export default { plugins: [{ name: "marker", config() { throw { errors: [{ code: "UNRESOLVED_IMPORT", message: "private-diagnostic-marker" }] }; } }] };'
     ]
   ])("keeps %s failure diagnostics out of the public envelope", async (file, source) => {
     const instance = await stubInstance(projectHandler);
@@ -88,7 +93,16 @@ describe("repo publish recovery", () => {
     for (const command of file === "patchy.config.ts" ? ["publish", "refresh"] : ["publish"]) {
       const result = await runCli([command, "--json"], options);
       expect(result).toMatchObject({ status: 1, stdout: "" });
-      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        ok: false,
+        kind: "local",
+        ...(file === "vite.config.ts"
+          ? {
+              error:
+                "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing."
+            }
+          : {})
+      });
       expect(result.stderr).not.toContain("private-diagnostic-marker");
     }
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
@@ -120,13 +134,17 @@ describe("repo publish recovery", () => {
     expect(json).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(json.stderr)).toMatchObject({ ok: false, kind: "local", error });
     expect(await runCli(["publish"], options)).toMatchObject({ status: 1, stderr: `${error}\n` });
+    const root = realpathSync(dir);
     writeFileSync(
       path.join(dir, "src/main.tsx"),
-      ["a", "b", "c", "d", "e"].map((name) => `import "./missing-${name}";`).join("\n")
+      ["a", "b", "c", "d", "e"].map((name) => `import "${root}/src/missing-${name}";`).join("\n")
     );
     const many = (await runCli(["publish"], options)).stderr;
-    expect(many.match(/^- \[UNRESOLVED_IMPORT\]/gm)).toHaveLength(3);
+    expect(many.match(/^- \[UNRESOLVED_IMPORT\] Could not resolve 'src\/missing-/gm)).toHaveLength(
+      3
+    );
     expect(many).toContain("\n- and 2 more\n");
+    expect(many).not.toContain(root);
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
   });
 
