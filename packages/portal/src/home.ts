@@ -12,7 +12,7 @@ import {
   searchField
 } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
-import { isNew, matches } from "./allPatches.js";
+import { isNew, manages, matches } from "./allPatches.js";
 import { firstClause } from "./render.js";
 
 /** Home's layout; components come from the shell. */
@@ -26,9 +26,8 @@ export const homeStyles = `
   .home-shelf-head > * { margin: 0; }
   .home-usual { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
   .home-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-  .home-pages { padding: 18px 18px 8px; border: 2px solid var(--ink); border-radius: var(--radius); }
-  .home-pages ul { display: grid; gap: 2px; margin: 0 -8px 8px; padding: 0; list-style: none; }
-  .home-group { margin: 14px 0 4px; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; }
+  .home-pages .list { display: grid; gap: 2px; margin: 0 -8px 8px; }
+  .home-group { margin: 14px 0 4px; }
   .home-foot { margin: 28px 0 0; }
   .home-matches { margin: 12px 0 0; }
   .home-solo > .note .copy-line { margin: 12px 0; }
@@ -108,17 +107,34 @@ export const renderHome = (input: HomeInput): string => {
   const tags = (row: Patches.ReadPatch) =>
     `${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}${isNew(row, viewer, opens, now) ? '<span class="tag">New</span>' : ""}`;
   const clause = (row: Patches.ReadPatch) => firstClause(row.patch.description) || "No description";
+  // While searching, a row's line shows where it matched: the first clause, else the description
+  // around the match, else the title. A name or owner match shows in place, so the clause stands.
+  const line = (row: Patches.ReadPatch) => {
+    if (query === "") return escapeHtml(clause(row));
+    const needle = query.toLowerCase();
+    const { description, title } = row.patch;
+    const at = description.toLowerCase().indexOf(needle);
+    if (clause(row).toLowerCase().includes(needle) || at === -1)
+      return title.toLowerCase().includes(needle) && at === -1
+        ? highlight(title, query)
+        : highlight(clause(row), query);
+    const from = Math.max(0, at - 30);
+    const to = Math.min(description.length, at + needle.length + 50);
+    return `${from > 0 ? "…" : ""}${highlight(description.slice(from, to), query)}${to < description.length ? "…" : ""}`;
+  };
   const toolRow = (row: Patches.ReadPatch) =>
-    `<a class="tile-row" href="${escapeAttribute(address(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-body"><span class="tile-name">${highlight(row.patch.name, query)}${tags(row)}</span><span class="tile-text">${highlight(clause(row), query)}</span></span></a>`;
+    `<a class="tile-row" href="${escapeAttribute(address(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-body"><span class="tile-name">${highlight(row.patch.name, query)}${tags(row)}</span><span class="tile-text">${line(row)}</span>${query && row.owner.name.toLowerCase().includes(query.toLowerCase()) ? `<span class="tile-meta">${highlight(row.owner.name, query)}</span>` : ""}</span></a>`;
   const pageRow = (row: Patches.ReadPatch, unread: boolean) =>
-    `<li><a class="tile-row tile-row-plain home-page" href="${escapeAttribute(address(row.patch))}">${patchMark(row.patch.name, 0)}<span class="tile-body"><span class="tile-name">${highlight(row.patch.name, query)}${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}</span><span class="tile-text">${highlight(clause(row), query)}</span><span class="tile-meta">${escapeHtml(row.owner.name)} · ${escapeHtml(ago(row.publishedAt, now))}</span></span>${unread ? '<span class="whats-new-dot" role="img" aria-label="New to you"></span>' : ""}</a></li>`;
+    `<li><a class="tile-row tile-row-plain home-page" href="${escapeAttribute(address(row.patch))}">${patchMark(row.patch.name, 0)}<span class="tile-body"><span class="tile-name">${highlight(row.patch.name, query)}${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}</span><span class="tile-text">${line(row)}</span><span class="tile-meta">${highlight(row.owner.name, query)} · ${escapeHtml(ago(row.publishedAt, now))}</span></span>${unread ? '<span class="whats-new-dot" role="img" aria-label="New to you"></span>' : ""}</a></li>`;
   const tile = (row: Patches.ReadPatch, meta: string) => {
     const { patch } = row;
     const url = `${base}${address(patch)}`;
+    const card = `/patches/${encodeURIComponent(patch.name)}`;
     const menu = rowMenu(patch.id, patch.name, [
-      menuLink(`/patches/${encodeURIComponent(patch.name)}`, "About this patch"),
+      menuLink(card, "About this patch"),
       `<a class="menu-item" href="${escapeAttribute(address(patch))}" target="_blank" rel="noopener">Open in a new tab</a>`,
-      menuCopy(url, "Copy link")
+      menuCopy(url, "Copy link"),
+      ...(manages(row, viewer) ? [menuLink(card, "Settings")] : [])
     ]);
     return `<div class="tile"><a class="tile-link" href="${escapeAttribute(address(patch))}">${patchMark(patch.name, row.tier)}<span class="tile-name">${escapeHtml(patch.name)}${tags(row)}</span><span class="tile-text">${escapeHtml(clause(row))}</span><span class="tile-meta">${escapeHtml(meta)}</span></a>${menu}</div>`;
   };
@@ -142,7 +158,7 @@ export const renderHome = (input: HomeInput): string => {
   const page = (body: string) =>
     `${input.note ?? ""}${search}${body}${foot}<script defer src="${copyScriptPath}"></script>`;
 
-  if (live.length === 0)
+  if (live.length === 0 && query === "")
     return page(
       `<section class="home-shelf"><h1 class="page-heading">Nothing is live</h1><p>None of ${escapeHtml(company)}’s patches is live right now.${off > 0 ? " Retired and deleted patches can be restored from All patches." : ""}</p></section>`
     );
@@ -164,7 +180,7 @@ export const renderHome = (input: HomeInput): string => {
       ? `<section class="home-shelf">${shelfHead("Tools", foundTools.length, "")}<div class="home-tools">${foundTools.slice(0, TOOLS).map(toolRow).join("")}</div>${more(foundTools.length, TOOLS, `/patches?show=tools&q=${encoded}`, `All ${foundTools.length} matching tools`)}</section>`
       : "";
     const pageShelf = foundPages.length
-      ? `<aside class="home-pages" aria-label="Pages">${shelfHead("Pages", foundPages.length, "")}<ul>${foundPages
+      ? `<aside class="side-panel home-pages" aria-label="Pages">${shelfHead("Pages", foundPages.length, "")}<ul class="list">${foundPages
           .slice(0, PAGES * 2)
           .map((row) => pageRow(row, false))
           .join(
@@ -235,10 +251,10 @@ export const renderHome = (input: HomeInput): string => {
     .slice(0, PAGES);
   const group = (title: string, list: readonly Patches.ReadPatch[], dot: boolean) =>
     list.length
-      ? `<h3 class="home-group supporting-text">${title}</h3><ul>${list.map((row) => pageRow(row, dot)).join("")}</ul>`
+      ? `<h3 class="home-group supporting-text">${title}</h3><ul class="list">${list.map((row) => pageRow(row, dot)).join("")}</ul>`
       : "";
   const pageShelf = pages.length
-    ? `<aside class="home-pages" aria-label="Pages">${shelfHead(
+    ? `<aside class="side-panel home-pages" aria-label="Pages">${shelfHead(
         "Pages",
         pages.length,
         `<a href="/patches?show=pages">All ${plural(pages.length, "page", "pages")}</a>`

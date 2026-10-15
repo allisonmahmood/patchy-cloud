@@ -727,6 +727,78 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
+  it.effect("marks where each search result matched, by name, description, title or owner", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      yield* publish(workspace.owner, "rota", { description: "Who covers the December reports." });
+      yield* publish(workspace.owner, "lunch", { title: "Team lunch REPORT" });
+      yield* publish(workspace.owner, "desk-map", {
+        description: "Find a desk. Book the quiet room for writing reports too."
+      });
+      yield* publish(workspace.admin, "budget", { description: "Spend by month." });
+      const found = yield* (yield* request("/?q=report", workspace.member)).text;
+      const rows = Object.fromEntries(
+        [
+          ...found.matchAll(
+            /<a class="tile-row tile-row-plain home-page" href="\/[^/"]+\/([a-z0-9-]+)">([\s\S]*?)<\/a>/g
+          )
+        ].map((match) => [match[1]!, match[2]!])
+      );
+      assert.sameMembers(Object.keys(rows), ["rota", "lunch", "desk-map"]);
+      assert.include(rows.rota, "December <mark>report</mark>s");
+      assert.include(rows.lunch, "Team lunch <mark>REPORT</mark>");
+      assert.include(rows["desk-map"], "…");
+      assert.include(rows["desk-map"], "writing <mark>report</mark>s too");
+      const byOwner = yield* (yield* request("/?q=sam", workspace.member)).text;
+      assert.include(byOwner, "<mark>Sam</mark>");
+    })
+  );
+
+  it.effect(
+    "keeps a search whole when it is cut to 200 characters, and searches with nothing live",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const query = `${"a".repeat(199)}🙂`;
+        for (const path of ["/", "/patches"]) {
+          const response = yield* request(
+            `${path}?q=${encodeURIComponent(query)}`,
+            workspace.member
+          );
+          assert.strictEqual(response.status, 200);
+        }
+        // An owner whose patches are all off can still search and ask an agent.
+        const shelved = yield* publish(workspace.owner, "shelved-tool");
+        yield* (yield* Patches.Patches).retire(shelved.patchId, actor(workspace.owner));
+        const miss = yield* (yield* request("/?q=freelancer", workspace.owner)).text;
+        assert.include(miss, 'data-copy="Build us a Patchy tool for freelancer"');
+        assert.isTrue(
+          links(miss).some((link) => link.href === "/patches?show=off&amp;q=freelancer")
+        );
+      })
+  );
+
+  it.effect("offers Settings in a tile's menu only to its owner and admins", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "office-map");
+      for (const [person, shown] of [
+        [workspace.member, false],
+        [workspace.owner, true],
+        [workspace.admin, true]
+      ] as const) {
+        const html = yield* (yield* request("/", person)).text;
+        const menu = text(
+          html.match(
+            new RegExp(`<div class="menu" id="menu-${patch.patchId}"[\\s\\S]*?</div>`)
+          )?.[0] ?? ""
+        );
+        assert.include(menu, "About this patch");
+        assert.strictEqual(menu.includes("Settings"), shown);
+      }
+    })
+  );
+
   it.effect("marks a deactivated owner on the card and warns admins", () =>
     Effect.gen(function* () {
       const workspace = yield* company();

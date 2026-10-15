@@ -15,7 +15,7 @@ import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
-import { listStyles, renderAllPatches, shows } from "./allPatches.js";
+import { listStyles, renderAllPatches, searchQuery, shows } from "./allPatches.js";
 import { firstPatch, renderFirstPatchNote, renderGuide } from "./guide.js";
 import { homeStyles, renderHome } from "./home.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
@@ -227,9 +227,7 @@ const guideBody = Effect.fn("PortalPages.guideBody")(function* () {
 const home = Effect.fn("PortalPages.home")(function* () {
   const { viewer, session, access } = yield* context;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const query = (new URL(request.url, session.publicBaseUrl).searchParams.get("q") ?? "")
-    .trim()
-    .slice(0, 200);
+  const query = searchQuery(new URL(request.url, session.publicBaseUrl).searchParams.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const now = yield* Clock.currentTimeMillis;
@@ -637,7 +635,7 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const params = new URL(request.url, session.publicBaseUrl).searchParams;
   const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
-  const query = (params.get("q") ?? "").trim().slice(0, 200);
+  const query = searchQuery(params.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const opens = yield* patches.opens(viewer.user.id);

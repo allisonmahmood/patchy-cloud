@@ -749,6 +749,8 @@ export function htmlPage(options: {
     /* tile-row-plain: a row in a list rather than a shelf of cards, so it has no frame until hovered, and its text wraps. */
     .tile-row-plain { min-height: 0; padding: 8px; border-color: transparent; background: transparent; }
     .tile-row-plain .tile-text { white-space: normal; }
+    /* side-panel: a framed column beside a page's main content, such as Home's Pages. */
+    .side-panel { min-width: 0; padding: 18px 18px 8px; border: 2px solid var(--ink); border-radius: var(--radius); }
     mark { padding: 0 2px; border-radius: 3px; background: rgba(255, 191, 53, .6); color: var(--ink); }
     .page-mark::after { content: ""; position: absolute; inset: 7px 5px 6px; background: repeating-linear-gradient(transparent 0 4px, var(--line-strong) 4px 6px); }
     /* tag: a small label after a name, such as You. */
