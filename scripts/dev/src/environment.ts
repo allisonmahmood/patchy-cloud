@@ -326,8 +326,10 @@ export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layou
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+  // Claude Code walks up from the resolved working directory, past any symlink.
   const above: Array<string> = [];
-  for (let dir = layout.dir; !above.includes(dir); dir = path.dirname(dir)) above.push(dir);
+  for (let dir = yield* fs.realPath(layout.dir); !above.includes(dir); dir = path.dirname(dir))
+    above.push(dir);
   // Each folder's CLAUDE.md, CLAUDE.local.md and AGENTS.md, those in its
   // .claude, and its .claude/rules. Claude Code's patterns take no escapes, so
   // a glob character in a folder's name becomes `?`, matching any one character.
