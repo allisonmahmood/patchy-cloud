@@ -36,6 +36,7 @@ import {
   CURRENT_RELEASE,
   type DeclarationMetadata,
   type Generated,
+  type LookRestore,
   GenerateRequest,
   ForceRequest,
   DescriptionRequest,
@@ -402,8 +403,8 @@ export const embeddedFontLook = (() => {
 
 /**
  * Only the instance metadata is stubbed: these are the shipped client generators. `look` stands
- * in for the company's current look, `revision` its stamp, absent for the Patchy look; skills
- * are served as their release templates.
+ * in for the company's current look, `revision` its stamp, absent for the Patchy look, and
+ * `restored` the restore that set it; skills are served as their release templates.
  */
 export const generateProjectResponse = (
   body: unknown,
@@ -411,6 +412,7 @@ export const generateProjectResponse = (
     readonly "look.css": string;
     readonly "logo.svg"?: string;
     readonly revision?: ReturnType<typeof lookRevision>;
+    readonly restored?: typeof LookRestore.Encoded;
   } = patchyLookFiles
 ): typeof Generated.Type => {
   const { manifest, serverModules } = decodeGenerateRequest(body);
@@ -506,7 +508,8 @@ export const generateProjectResponse = (
         capabilities: sdkCapabilities,
         uses,
         skills: [...skills].sort(),
-        look: look.revision ?? null
+        look: look.revision ?? null,
+        lookRestore: look.restored ?? null
       })
     }
   );

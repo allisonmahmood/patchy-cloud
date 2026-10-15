@@ -12,6 +12,7 @@ import {
   MANIFEST_VERSION,
   isManagedOutputPath,
   type LookFiles,
+  type LookRestore,
   type LookRevision,
   type TableDefinition
 } from "@patchy/api";
@@ -156,14 +157,19 @@ const root = "patchy/_generated";
 const templateMarker = /<!-- [a-z-]+ -->/g;
 const shipped = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 
+/** Who restored the current look, when and why, as the `patchy-look` skill says it. */
+const restoreState = (restored: Looks.Restore, what: string) =>
+  `${restored.by.name} restored ${what} on ${restored.at.toISOString().slice(0, 10)}${restored.note === null ? "" : `: ${restored.note}`}.`;
+
 /**
  * What the `patchy-look` skill says the repo's look is: the company's current revision, or the
- * Patchy look as Patchy's default, which is no company's and carries no logo.
+ * Patchy look as Patchy's default, which is no company's and carries no logo, and who restored
+ * it when a restore set it.
  */
-const lookState = (look: Looks.Current | null) =>
+const lookState = (look: Looks.Current | null, restored: Looks.Restore | null) =>
   look === null
-    ? "The company has no look yet, so pages start in the Patchy look, Patchy's default, whose brief is below. It isn't the company's: it comes without a logo, so leave out the logo wherever the brief shows one, its recipes included, because Patchy's mark is not the company's. `patchy refresh` or a new `patchy dev` start brings in the company's own look once an admin publishes one."
-    : `This is the company's look, revision ${look.revision}, published by ${look.author.name}: ${look.note}. Pages start in it, and its brief is below. ${look.files["logo.svg"] === undefined ? "It has no logo." : "Its logo is `patchy/_generated/logo.svg`."}`;
+    ? `${restored === null ? "" : `${restoreState(restored, "the company to no look")} `}The company has no look yet, so pages start in the Patchy look, Patchy's default, whose brief is below. It isn't the company's: it comes without a logo, so leave out the logo wherever the brief shows one, its recipes included, because Patchy's mark is not the company's. \`patchy refresh\` or a new \`patchy dev\` start brings in the company's own look once an admin publishes one.`
+    : `This is the company's look, revision ${look.revision}, published by ${look.author.name}: ${look.note}.${restored === null ? "" : ` ${restoreState(restored, "it")}`} Pages start in it, and its brief is below. ${look.files["logo.svg"] === undefined ? "It has no logo." : "Its logo is `patchy/_generated/logo.svg`."}`;
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const columnType = (
@@ -455,7 +461,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   }
   // The look's three managed files ride every generation, so refresh and dev start pick up a new
   // revision. With no company look, the Patchy look stands in without a logo or a stamp.
-  const { current: look } = yield* looks
+  const { current: look, restored } = yield* looks
     .read(companyId)
     .pipe(Effect.catchTags({ SqlError: Effect.die }));
   const lookFiles: typeof LookFiles.Type = look?.files ?? looks.patchyLook;
@@ -467,7 +473,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     [
       "patchy-look",
       new Map([
-        ["<!-- look-state -->", () => lookState(look)],
+        ["<!-- look-state -->", () => lookState(look, restored)],
         ["<!-- look-brief -->", () => lookFiles["LOOK.md"].trim()]
       ])
     ]
@@ -515,7 +521,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   }
   files.set(
     `${root}/README.md`,
-    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills, contexts and release capabilities. look.css, and logo.svg when the look has one, are the look a page starts in: the company's, or the Patchy look when it has none. .agents/skills/patchy-look/SKILL.md explains them; index.json's look names their revision, null for the Patchy look. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
+    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills, contexts and release capabilities. look.css, and logo.svg when the look has one, are the look a page starts in: the company's, or the Patchy look when it has none. .agents/skills/patchy-look/SKILL.md explains them; index.json's look names their revision, null for the Patchy look, and its lookRestore who last restored the look, when and why. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
   );
   files.set(
     `${root}/index.json`,
@@ -536,7 +542,15 @@ export const generate = Effect.fn("Generation.generate")(function* (
               author: look.author,
               createdAt: look.createdAt.toISOString(),
               note: look.note
-            } satisfies typeof LookRevision.Encoded)
+            } satisfies typeof LookRevision.Encoded),
+      // The company's latest restore, as `patchy look --json` shows it; null after a publish.
+      lookRestore:
+        restored === null
+          ? null
+          : ({
+              ...restored,
+              at: restored.at.toISOString()
+            } satisfies typeof LookRestore.Encoded)
     })
   );
   for (const path of files.keys()) {

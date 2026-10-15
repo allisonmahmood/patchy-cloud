@@ -1,8 +1,9 @@
 /**
  * The `look` group of the Patchy API, over `Looks` and `Users`: any active member reads the
  * company's look, or the Patchy look standing in for none, and admins publish and restore it.
- * The read and a member's refusal both name the admins, so an agent can say who to ask. Publish
- * and restore report business events after commit.
+ * The read and a member's refusal both name the admins, so an agent can say who to ask. A
+ * restore records its caller and note, which the read and the restore return as `restored`.
+ * Publish and restore report business events after commit.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -51,6 +52,8 @@ const wireRevision = (revision: Looks.Revision) => ({
   createdAt: revision.createdAt.toISOString(),
   note: revision.note
 });
+const wireRestore = (restore: Looks.Restore | null) =>
+  restore === null ? null : { ...restore, at: restore.at.toISOString() };
 const utf8Bytes = (text: string) => new TextEncoder().encode(text).byteLength;
 
 /** "Ada", "Ada or Cleo", "Ada, Cleo or Dot". */
@@ -103,7 +106,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
                     : { ...wireRevision(look.current), files: look.current.files },
                 revisions: look.revisions.map(wireRevision),
                 patchyLook: look.current === null ? looks.patchyLook : null,
-                admins: yield* activeAdmins(identity.company.id)
+                admins: yield* activeAdmins(identity.company.id),
+                restored: wireRestore(look.restored)
               })
             ),
             noStore
@@ -173,7 +177,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const restored = yield* reported(
-            looks.restore({ companyId: identity.company.id, revision: payload.revision }),
+            looks.restore({
+              companyId: identity.company.id,
+              revision: payload.revision,
+              restoredBy: identity.user.id,
+              note: payload.note ?? null
+            }),
             ({ current, from }) =>
               Effect.gen(function* () {
                 const revision = current?.revision ?? null;
@@ -200,7 +209,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
           if (HttpServerResponse.isHttpServerResponse(restored)) return restored;
           return new LookRestored({
             ok: true,
-            current: restored.current === null ? null : wireRevision(restored.current)
+            current: restored.current === null ? null : wireRevision(restored.current),
+            restored: wireRestore(restored.restored)
           });
         }).pipe(Effect.orDie)
       );

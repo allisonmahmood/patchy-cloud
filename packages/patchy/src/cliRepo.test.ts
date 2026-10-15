@@ -290,11 +290,21 @@ describe("patch-repo commands", () => {
     expect(await warnings()).toEqual([
       `Patchy Dev's look changed, rev 7 → 8 by Sam: darker green. ${follow}`
     ]);
+    // A restore credits whoever restored, not the revision's author.
+    const restored = {
+      by: { id: "usr_ada", name: "Ada" },
+      at: "2026-10-08T10:00:00.000Z",
+      note: "rev 8 failed dark mode"
+    };
+    look = { ...patchyLookFiles, revision: lookRevision(7, "first green"), restored };
+    expect(await warnings()).toEqual([
+      `Patchy Dev's look changed, rev 8 → 7, restored by Ada: rev 8 failed dark mode. ${follow}`
+    ]);
     // The notice is advisory: without the company's name it still lands, and so does the look.
     identityRefused = true;
-    look = { ...patchyLookFiles, revision: lookRevision(7, "first green") };
+    look = { ...patchyLookFiles, revision: lookRevision(8, "darker green") };
     expect((await refresh()).split("\n")[0]).toBe(
-      `The company's look changed, rev 8 → 7 by Sam: first green. ${follow}`
+      `The company's look changed, rev 7 → 8 by Sam: darker green. ${follow}`
     );
 
     // A page that swapped the import for its own stylesheet hears nothing.

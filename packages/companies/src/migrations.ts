@@ -2,8 +2,8 @@
  * The companies capability's schema, id 1 in the global migration sequence
  * (`packages/sql/GLOSSARY.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
- * id 9 adds each person's What's new marker, id 10 the company look and id 15
- * names the people stored without one.
+ * id 9 adds each person's What's new marker, id 10 the company look, id 15
+ * names the people stored without one and id 16 records the look's latest restore.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -113,5 +113,17 @@ export const migrations: Migrations = {
     `UPDATE users
       SET name = COALESCE(NULLIF(regexp_replace(lower(email), '@[^@]*$', ''), ''), lower(email))
       WHERE name ~ '^[\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]*$'`
+  ),
+  // The company's latest look restore: who moved the pointer, when and an optional note. A
+  // later restore overwrites it and a publish clears it; it is not a history.
+  "0016_look_restore": ddl(
+    `ALTER TABLE companies
+      ADD COLUMN look_restored_by TEXT REFERENCES users(id),
+      ADD COLUMN look_restored_at TIMESTAMPTZ,
+      ADD COLUMN look_restore_note TEXT,
+      ADD CONSTRAINT companies_look_restore_check CHECK (
+        (look_restored_by IS NULL) = (look_restored_at IS NULL)
+        AND (look_restore_note IS NULL OR look_restored_by IS NOT NULL)
+      )`
   )
 };

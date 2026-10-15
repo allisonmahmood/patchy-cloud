@@ -361,7 +361,10 @@ had, and a non-comment line of the page's source names
 `patchy/_generated/look.css` or `logo.svg`, a `warnings` entry reads "Acme's
 look changed, rev 7 → 8 by Sam: darker green. Colours and fonts follow; to
 restyle this tool's components, ask your agent to update it to the current
-look." Repo `publish` never pulls a revision: for such a page behind the
+look." When a restore set the incoming look, `index.json`'s `lookRestore` names
+the restorer instead of the revision's author: "Acme's look changed, rev 8 → 7,
+restored by Ada: rev 8 failed dark mode.", or "…, restored by Ada." without a
+note. Repo `publish` never pulls a revision: for such a page behind the
 company's current revision it ships the repo's own, exits 0 and adds a
 `warnings` entry naming `patchy refresh`. These checks are advisory: a failed
 look or identity read becomes a warning or a nameless notice, never a failure.
@@ -649,18 +652,23 @@ module without dynamic imports, separate from the HTML.
 
 ### The company look
 
-| command                                     | behaviour                                                                                                                                                                      | `--json` success                                                                                           |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `patchy look`                               | Current revision's number, author, date, note and file sizes, then every revision newest first, and the admins. Any member.                                                    | Wire body `{ current \| null, revisions, patchyLook, admins }`, with the files' contents, no `ok` wrapper. |
-| `patchy look publish <dir> --note "<text>"` | Admins: check the folder's `look.css`, `LOOK.md` and optional `logo.svg`, publish them as the next revision and make it current. Other files are named in a warning, not sent. | `{ ok, current, warnings? }`                                                                               |
-| `patchy look restore <n\|none>`             | Admins: make revision `n` current, or leave the company with no look. Moves the pointer only.                                                                                  | `{ ok, current }`, `current` null for `none`                                                               |
-| `patchy look preview [<dir>] [--compare]`   | Write the specimen as one self-contained HTML file and print its path: in the folder's look, the company's look, or the folder beside the company's with `--compare`.          | `{ ok, path, failures, warnings? }`                                                                        |
+| command                                           | behaviour                                                                                                                                                                      | `--json` success                                                                                                     |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `patchy look`                                     | Current revision's number, author, date, note and file sizes, who restored it, then every revision newest first, and the admins. Any member.                                   | Wire body `{ current \| null, revisions, patchyLook, admins, restored }`, with the files' contents, no `ok` wrapper. |
+| `patchy look publish <dir> --note "<text>"`       | Admins: check the folder's `look.css`, `LOOK.md` and optional `logo.svg`, publish them as the next revision and make it current. Other files are named in a warning, not sent. | `{ ok, current, warnings? }`                                                                                         |
+| `patchy look restore <n\|none> [--note "<text>"]` | Admins: make revision `n` current, or leave the company with no look. Moves the pointer and records who restored it, when and the optional note.                               | `{ ok, current, restored }`, `current` null for `none`                                                               |
+| `patchy look preview [<dir>] [--compare]`         | Write the specimen as one self-contained HTML file and print its path: in the folder's look, the company's look, or the folder beside the company's with `--compare`.          | `{ ok, path, failures, warnings? }`                                                                                  |
 
 These commands run anywhere with the saved login; they never read `patchy.json`.
 `patchy look --json` names the look a static page starts from: `current.files`,
 or with no company look `patchyLook`, the Patchy look's `look.css` and `LOOK.md`
 with no logo. `patchyLook` is null whenever `current` is not. `admins` lists who
 can change the look, `{ id, name }` each, the same list a refusal carries.
+`restored` is the company's latest restore, `{ by: { id, name }, at, note }`,
+null after a publish and absent from an instance that predates it; the text
+prints it under the byline as "Restored by Ada on 2026-10-07: rev 8 failed dark
+mode.". `look restore --note` takes the same one-line note as publish and
+refuses a blank or over-long one locally.
 `look publish` runs `@patchy/core/look` before any request: a failing look is
 `invalid_look`, local exit 1, its message one line per failure, and an empty or
 over-long note is a local refusal too. A passing look from a CLI whose release

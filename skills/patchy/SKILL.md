@@ -610,7 +610,8 @@ alone. Read the person's role from `patchy whoami --json`.
   frames scroll on their own, so open it for the person, or screenshot each look alone
   (`patchy look preview <dir>`, then `patchy look preview`). Publish once they agree:
   `patchy look publish <dir> --note "<why>" --json`. `patchy look restore <n>` brings
-  back an earlier revision, and `restore none` leaves the company with no look.
+  back an earlier revision, and `restore none` leaves the company with no look; pass
+  the reason the person gave as `--note "<why>"`, so the notices name it.
 
 A patch repo picks up a new revision at its next `refresh` or new `dev` start; a running
 dev session takes it with `refresh`. A static page keeps the look it was published with

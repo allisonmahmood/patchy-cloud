@@ -1205,14 +1205,20 @@ login and accept `--json`.
 company look, `current.files` holds it and `patchyLook` is null. With none,
 `current` is null and `patchyLook` holds the Patchy look's `look.css` and
 `LOOK.md`, the release's own and without a logo, which stands in. `admins`,
-each `{ id, name }`, are who can change it.
+each `{ id, name }`, are who can change it. `restored` is the company's latest
+restore, `{ by: { id, name }, at, note }` with `note` null when none was given,
+and null once a later publish sets the look; an instance from before restores
+were recorded leaves it out. The text shows it under the byline, also after
+`restore none`: "Restored by Ada on 2026-10-07: rev 8 failed dark mode." Pass
+the reason the person gave with `look restore --note`; it is optional, and the
+CLI refuses a blank or over-long note before sending.
 
-| command                                     | behaviour                                                                                                                                                                                                | `--json` success                                                                                                                        |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `patchy look`                               | Prints the current revision's number, author, date, note and file sizes, then every revision newest first, and who the admins are.                                                                       | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions, patchyLook, admins }`, files' contents included. |
-| `patchy look publish <dir> --note "<text>"` | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent; a warning names them. | `{ ok, current, warnings? }`                                                                                                            |
-| `patchy look restore <n\|none>`             | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer and adds no revision.                                                                          | `{ ok, current }`, with `current` null for `none`                                                                                       |
-| `patchy look preview [<dir>] [--compare]`   | Writes the specimen as one HTML file and prints its path: in the look in `<dir>`, in the company's look without one, or with `--compare` the folder beside the company's look.                           | `{ ok, path, failures, warnings? }`                                                                                                     |
+| command                                           | behaviour                                                                                                                                                                                                | `--json` success                                                                                                                                  |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `patchy look`                                     | Prints the current revision's number, author, date, note and file sizes, who restored it when a restore set it, then every revision newest first, and who the admins are.                                | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions, patchyLook, admins, restored }`, files' contents included. |
+| `patchy look publish <dir> --note "<text>"`       | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent; a warning names them. | `{ ok, current, warnings? }`                                                                                                                      |
+| `patchy look restore <n\|none> [--note "<text>"]` | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer, adds no revision and records who restored it, when and why.                                   | `{ ok, current, restored }`, with `current` null for `none`                                                                                       |
+| `patchy look preview [<dir>] [--compare]`         | Writes the specimen as one HTML file and prints its path: in the look in `<dir>`, in the company's look without one, or with `--compare` the folder beside the company's look.                           | `{ ok, path, failures, warnings? }`                                                                                                               |
 
 `look publish` checks the folder before sending anything, and the instance runs
 the same checks again. A failing look is `invalid_look`, its message one line per
@@ -1280,7 +1286,9 @@ project skill, which holds the order to style by and the revision's brief. With
 no company look it writes the Patchy look instead, with no logo. In
 `patchy/_generated/index.json`, `look` records the revision the files came from
 as `patchy look` shows it, `{ revision, author: { id, name }, createdAt, note }`,
-or `null` for the Patchy look. A new repo's tier 1 and 2 `src/main.tsx` imports
+or `null` for the Patchy look, and `lookRestore` the company's latest restore as
+`patchy look --json`'s `restored` carries it, `null` after a publish. A new repo's
+tier 1 and 2 `src/main.tsx` imports
 `look.css` and its tier 0 `index.html` links it, so the first page is already in
 the look; the single-file build inlines it, embedded fonts included. A page that
 doesn't import it keeps its own style, and refresh never edits page source. A
@@ -1296,9 +1304,13 @@ When `refresh` (including `add` and `remove`) or a new `dev` start brings in a
 revision other than the one `index.json` had, such a page hears it in text and
 in JSON `warnings`: "Acme's look changed, rev 7 → 8 by Sam: darker green.
 Colours and fonts follow; to restyle this tool's components, ask your agent to
-update it to the current look." A restore reads `rev 8 → 7`, a first look
-`none → rev 1`, and a return to no look `rev 1 → none, so the Patchy look
-stands in`. When the new look has no logo and the page names `logo.svg`, the
+update it to the current look." A first look reads `none → rev 1` and a
+return to no look `rev 1 → none, so the Patchy look stands in`. When a restore
+set the incoming look, `index.json`'s `lookRestore` names the restorer and
+their note instead of the revision's author, whichever way the number moves:
+"Acme's look changed, rev 8 → 7, restored by Ada: rev 8 failed dark mode.", or
+"rev 8 → none, restored by Ada. The Patchy look stands in." A restore that
+leaves the repo on the revision it has stays silent. When the new look has no logo and the page names `logo.svg`, the
 notice adds that the reference must go, since the next build fails on it. A dev
 start whose first build then fails keeps the notice in its failure. If
 `/api/me` doesn't answer, the notice says "The company's look changed".

@@ -20,6 +20,12 @@ const first = {
   note: "first capture"
 };
 const admins = [ada, { id: "usr_cleo", name: "Cleo Park" }];
+const restoredByCleo = (note: string | null) => ({
+  by: { id: "usr_cleo", name: "Cleo Park" },
+  at: "2026-10-08T10:00:00.000Z",
+  note
+});
+const byCleo = restoredByCleo("rev 2 failed dark mode");
 const memberRefusal = {
   ok: false,
   code: "admin_required",
@@ -66,6 +72,24 @@ describe("patchy look", () => {
       "The company has no look. New patches start from the Patchy look, whose files are in patchy look --json."
     );
     expect(text.stdout).toContain("1  2026-10-06  Ada Lovelace  first capture");
+  });
+
+  it("names who restored the current look and why, also after a restore to none", async () => {
+    let look = {
+      ...companyLook({ ...first, files: readLookFixture("patchy") }, [second, first]),
+      restored: byCleo
+    };
+    const instance = await stubInstance((_request, respond) => respond(200, look));
+    const json = await runCli(["look", "--json"], { env: env(instance.url) });
+    expect(JSON.parse(json.stdout)).toEqual(look);
+    const text = await runCli(["look"], { env: env(instance.url) });
+    expect(text.stdout).toContain(
+      "By Ada Lovelace on 2026-10-06: first capture\nRestored by Cleo Park on 2026-10-08: rev 2 failed dark mode.\n"
+    );
+
+    look = { ...companyLook(null, [second, first]), restored: restoredByCleo(null) };
+    const none = await runCli(["look"], { env: env(instance.url) });
+    expect(none.stdout).toContain("Restored by Cleo Park on 2026-10-08.\n");
   });
 });
 
@@ -185,6 +209,7 @@ describe("patchy look restore", () => {
     });
     const one = await runCli(["look", "restore", "1", "--json"], { env: env(instance.url) });
     expect(one, one.stderr).toMatchObject({ status: 0, stderr: "" });
+    // An instance from before restores were recorded sends no `restored`.
     expect(JSON.parse(one.stdout)).toEqual({ ok: true, current: first });
     const none = await runCli(["look", "restore", "none"], { env: env(instance.url) });
     expect(none, none.stderr).toMatchObject({ status: 0, stderr: "" });
@@ -200,6 +225,30 @@ describe("patchy look restore", () => {
     const invalid = await runCli(["look", "restore", "latest"], { env: env(instance.url) });
     expect(invalid.status).toBe(1);
     expect(invalid.stderr).toContain("Pass a revision number, or none");
+  });
+
+  it("sends the reason with --note and prints who restored it", async () => {
+    const instance = await stubInstance((_request, respond) =>
+      respond(200, { ok: true, current: first, restored: byCleo })
+    );
+    const text = await runCli(["look", "restore", "1", "--note", "rev 2 failed  dark mode"], {
+      env: env(instance.url)
+    });
+    expect(text, text.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(text.stdout).toBe(
+      "Revision 1 is the company's look again.\nBy Ada Lovelace on 2026-10-06: first capture\nRestored by Cleo Park on 2026-10-08: rev 2 failed dark mode.\n"
+    );
+    const json = await runCli(["look", "restore", "1", "--note", "why", "--json"], {
+      env: env(instance.url)
+    });
+    expect(JSON.parse(json.stdout)).toEqual({ ok: true, current: first, restored: byCleo });
+    const blank = await runCli(["look", "restore", "1", "--note", " "], { env: env(instance.url) });
+    expect(blank.status).toBe(1);
+    expect(blank.stderr).toContain("A look note must not be empty.");
+    expect(instance.requests.map(({ body }) => body)).toEqual([
+      { revision: 1, note: "rev 2 failed dark mode" },
+      { revision: 1, note: "why" }
+    ]);
   });
 });
 

@@ -166,7 +166,9 @@ A page uses the look when its source names `patchy/_generated/look.css` or
 outside that rule. When refresh, add, remove or a new dev start brings in another
 company look revision, such a page gets a notice: "Acme's look changed, rev 7 → 8
 by Sam: darker green. Colours and fonts follow; to restyle this tool's
-components, ask your agent to update it to the current look." Relay it, and
+components, ask your agent to update it to the current look." After a restore it
+names the restorer instead: "Acme's look changed, rev 8 → 7, restored by Ada:
+rev 8 failed dark mode." Relay it, and
 restyle components only when the person asks you to update the tool to the
 current look. Publish never pulls a revision: it ships the repo's own and warns
 when that isn't the company's current one. Run `pnpm patchy refresh` first if

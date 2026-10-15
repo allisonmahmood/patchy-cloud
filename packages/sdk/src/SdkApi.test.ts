@@ -636,22 +636,42 @@ it.layer(layer)("SDK company generation", (it) => {
           createdAt: second.current.createdAt.toISOString(),
           note
         });
+        assert.isNull(current.index.lookRestore);
         assert.include(current.skill, note);
         assert.lengthOf(current.skill.split(duolingo["LOOK.md"].trim()), 2);
         assert.notInclude(current.skill, "no look yet");
+        assert.notInclude(current.skill, "restored");
 
-        yield* looks.restore({ companyId, revision: first.current.revision });
+        // A restore credits whoever made it, beside the revision's own byline.
+        const restorer = { id: identity.user.id, name: identity.user.name };
+        const { restored: record } = yield* looks.restore({
+          companyId,
+          revision: first.current.revision,
+          restoredBy: authorId,
+          note: "the new green failed dark mode"
+        });
         const restored = yield* generate(0);
         assert.strictEqual(restored.css, linear["look.css"]);
         assert.strictEqual(restored.logo, logo);
         assert.strictEqual(restored.index.look.revision, first.current.revision);
+        assert.deepStrictEqual(restored.index.lookRestore, {
+          by: restorer,
+          at: record?.at.toISOString(),
+          note: "the new green failed dark mode"
+        });
         assert.include(restored.skill, linear["LOOK.md"].trim());
+        assert.include(
+          restored.skill,
+          `published by ${restorer.name}: first capture. ${restorer.name} restored it on ${record?.at.toISOString().slice(0, 10)}: the new green failed dark mode.`
+        );
 
-        yield* looks.restore({ companyId, revision: null });
+        yield* looks.restore({ companyId, revision: null, restoredBy: authorId, note: null });
         const cleared = yield* generate();
         assert.strictEqual(cleared.css, patchy["look.css"]);
         assert.isUndefined(cleared.logo);
         assert.isNull(cleared.index.look);
+        assert.deepInclude(cleared.index.lookRestore, { by: restorer, note: null });
+        assert.include(cleared.skill, `${restorer.name} restored the company to no look on `);
       })
   );
 

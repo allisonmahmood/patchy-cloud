@@ -42,6 +42,7 @@ import {
   LookPublishRequest,
   LookRestored,
   LookRestoreRequest,
+  type LookRestore,
   type LookRevision
 } from "@patchy/api";
 import { newInternalId, sha256, validateHtml } from "@patchy/core";
@@ -60,7 +61,7 @@ import { requireCurrentCli } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
 import * as Setup from "./Setup.js";
 import { prepareRepoPublish } from "./repoBuild.js";
-import { publishLookWarnings } from "./lookNotices.js";
+import { publishLookWarnings, sentence } from "./lookNotices.js";
 import * as Dev from "./devLifecycle.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
@@ -1042,6 +1043,15 @@ const NO_LOOK = "New patches start from the Patchy look.";
 const kib = (text: string) => `${(Buffer.byteLength(text) / 1024).toFixed(1)} KiB`;
 const byline = (revision: LookRevision) =>
   `By ${revision.author.name} on ${revision.createdAt.slice(0, 10)}: ${revision.note}`;
+/** The line under the byline when a restore set the current look; none from an older instance. */
+const restoreLine = (restored: typeof LookRestore.Type | null | undefined) =>
+  restored == null
+    ? []
+    : [
+        sentence(
+          `Restored by ${restored.by.name} on ${restored.at.slice(0, 10)}${restored.note === null ? "" : `: ${restored.note}`}`
+        )
+      ];
 
 const LOOK_FILE_NAMES = new Set(["look.css", "LOOK.md", "logo.svg"]);
 
@@ -1135,11 +1145,20 @@ const lookRestore = Command.make(
   {
     revision: Argument.String("revision").pipe(
       Argument.withDescription("A revision number, or none for no look")
+    ),
+    note: Flag.String("note").pipe(
+      Flag.withDescription("Why, as the person gave it, such as rev 8 failed dark mode"),
+      Flag.optional
     )
   },
   (options) =>
     run(
       Effect.gen(function* () {
+        const note = Option.isSome(options.note)
+          ? yield* decodeLookNote(options.note.value).pipe(
+              Effect.mapError((cause) => new LocalError({ message: cause.message, cause }))
+            )
+          : undefined;
         const revision =
           options.revision === "none"
             ? null
@@ -1150,22 +1169,25 @@ const lookRestore = Command.make(
                 });
         const client = yield* Api.client(yield* requiredToken());
         const restored = yield* client
-          .restoreLook({ payload: new LookRestoreRequest({ revision }) })
+          .restoreLook({
+            payload: new LookRestoreRequest({ revision, ...(note === undefined ? {} : { note }) })
+          })
           .pipe(Effect.catch((error) => refused(error, "Look restore failed.")));
         yield* Output.report(
           encodeLookRestored(restored),
           restored.current === null
-            ? [`The company has no look now. ${NO_LOOK}`]
+            ? [`The company has no look now. ${NO_LOOK}`, ...restoreLine(restored.restored)]
             : [
                 `Revision ${restored.current.revision} is the company's look again.`,
-                byline(restored.current)
+                byline(restored.current),
+                ...restoreLine(restored.restored)
               ]
         );
       })
     )
 ).pipe(
   Command.withDescription(
-    "Admins: make an earlier look revision current, or none to leave the company with no look."
+    "Admins: make an earlier look revision current, or none to leave the company with no look; --note says why."
   )
 );
 
@@ -1256,11 +1278,13 @@ const look = Command.make("look", {}, () =>
       yield* Output.report(encodeCompanyLook(look), [
         ...(current === null
           ? [
-              "The company has no look. New patches start from the Patchy look, whose files are in patchy look --json."
+              "The company has no look. New patches start from the Patchy look, whose files are in patchy look --json.",
+              ...restoreLine(look.restored)
             ]
           : [
               `Revision ${current.revision} is the company's look.`,
               byline(current),
+              ...restoreLine(look.restored),
               `Files: ${Object.entries(current.files)
                 .map(([name, text]) => `${name} (${kib(text)})`)
                 .join(", ")}`,
