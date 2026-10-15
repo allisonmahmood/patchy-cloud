@@ -24,16 +24,17 @@ export const FAILED = "error: ";
 
 /**
  * What the supervisor with this pid logged as the reason it stopped: the last
- * marked line after its own `supervisor pid=` line, so an earlier run's failure
- * is never reported for this one. `start` prints it when the supervisor exits
- * before the server is healthy.
+ * marked line between its own `supervisor pid=` line and the next run's, so
+ * another run's failure is never reported for this one. `start` prints it when
+ * the supervisor exits before the server is healthy.
  */
 export const failureOf = (log: string, pid: number) => {
   const start = log.lastIndexOf(`[dev] supervisor pid=${pid} `);
   if (start === -1) return undefined;
+  const next = log.indexOf("[dev] supervisor pid=", start + 1);
   const marker = `[dev] ${FAILED}`;
   const line = log
-    .slice(start)
+    .slice(start, next === -1 ? undefined : next)
     .split("\n")
     .filter((entry) => entry.includes(marker))
     .at(-1);

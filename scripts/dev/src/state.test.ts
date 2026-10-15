@@ -12,8 +12,9 @@ const log = [
   ""
 ].join("\n");
 
-it("reads only the failure the latest supervisor logged in its own run", () => {
+it("reads only the failure a supervisor logged in its own run", () => {
   assert.strictEqual(failureOf(log, 200), "The dev database failed to migrate: this run");
+  assert.strictEqual(failureOf(log, 100), "The dev database failed to migrate: an earlier run");
   assert.isUndefined(
     failureOf(`${log}2026-10-15T11:00:00.000Z [dev] supervisor pid=300 worktree=/w\n`, 300)
   );

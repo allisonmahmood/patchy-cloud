@@ -61,9 +61,13 @@ export class DatabaseSetupError extends Schema.TaggedError<DatabaseSetupError>()
   }
 }
 
-/** A failure's message, then its root cause's: a failed step names itself, Postgres says why. */
+/**
+ * A failure's message, then its root cause's: a failed step names itself,
+ * Postgres says why. On one line, so `failureOf` reads all of it.
+ */
 const reasonOf = (failure: unknown) => {
-  const message = (value: unknown) => (value instanceof Error ? value.message : String(value));
+  const message = (value: unknown) =>
+    (value instanceof Error ? value.message : String(value)).replace(/\s*\n\s*/g, " ");
   let root = failure;
   for (let depth = 0; depth < 8 && root instanceof Error && root.cause !== undefined; depth++) {
     root = root.cause;
