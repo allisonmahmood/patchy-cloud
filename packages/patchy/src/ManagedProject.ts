@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isManagedOutputPath } from "@patchy/api";
 import * as Schema from "effect/Schema";
-import { claim, release } from "./ownerLock.js";
+import { birth, claim, release } from "./ownerLock.js";
 
 export const ConfigEdit = Schema.Struct({ before: Schema.String, after: Schema.String });
 
@@ -119,7 +119,8 @@ export class ManagedProject {
     const local = await safePath(root, ".patchy");
     await fs.mkdir(local, { recursive: true });
     const slot = await safePath(root, ".patchy/refresh-lock");
-    const claimed = await claim(slot);
+    // Where this process's birth cannot be read (Windows), its claim is taken but never reclaimed.
+    const claimed = await claim(slot, await birth(process.pid).catch(() => undefined));
     if ("holder" in claimed) throw new ProjectLocked({ holder: claimed.holder });
     const lock = { slot, nonce: claimed.nonce };
     let temporary: string | undefined;

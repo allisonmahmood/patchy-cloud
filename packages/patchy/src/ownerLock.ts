@@ -18,7 +18,7 @@ const execute = promisify(execFile);
 const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
 const missingProcess = Schema.is(Schema.Struct({ code: Schema.Literals(["ENOENT", "ESRCH"]) }));
 const noSuchProcess = Schema.is(
-  Schema.Struct({ code: Schema.Literal(1), stdout: Schema.Literal("") })
+  Schema.Struct({ code: Schema.Literal(1), stdout: Schema.Literal(""), stderr: Schema.Literal("") })
 );
 const occupied = Schema.is(Schema.Struct({ code: Schema.Literals(["EEXIST", "ENOTEMPTY"]) }));
 // Windows refuses a rename onto an existing directory with EPERM.
@@ -45,9 +45,11 @@ export async function birth(pid: number): Promise<string | undefined> {
   }
   try {
     const result = await execute("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="]);
-    return result.stdout.trim() || undefined;
+    const stamp = result.stdout.trim();
+    if (!stamp) throw new Error(`ps printed no identity for ${pid}: ${result.stderr.trim()}`);
+    return stamp;
   } catch (error) {
-    // ps exits 1 without output when no such process exists; any other failure cannot tell.
+    // Only a silent exit 1 means no such process; a diagnostic or any other failure cannot tell.
     if (noSuchProcess(error)) return undefined;
     throw error;
   }
@@ -57,17 +59,18 @@ export const sameProcess = async (record: { readonly pid: number; readonly birth
   (await birth(record.pid)) === record.birth;
 
 /**
- * Claim the directory `slot` (already resolved with `safePath`) for this process. The owner file
- * is staged in a hidden sibling and renamed onto the slot, so a held slot always names one complete
- * owner. A held slot is reclaimed only when its owner is proven gone; one whose owner cannot be
- * identified (empty, malformed, without a birth, or unreadable now) is never reclaimed. Returns the
- * nonce `release` needs, or who holds the slot.
+ * Claim the directory `slot` (already resolved with `safePath`) for this process, recording
+ * `ownBirth`. The owner file is staged in a hidden sibling and renamed onto the slot, so a held
+ * slot always names one complete owner. A held slot is reclaimed only when its owner is proven
+ * gone; one whose owner cannot be identified (empty, malformed, recorded without a birth, or
+ * unreadable now) is never reclaimed. Returns the nonce `release` needs, or who holds the slot.
  */
 export async function claim(
-  slot: string
+  slot: string,
+  ownBirth: string | undefined
 ): Promise<{ readonly nonce: string } | { readonly holder: "live" | "unknown" }> {
   const nonce = randomUUID();
-  const owner = { pid: process.pid, birth: await birth(process.pid).catch(() => undefined), nonce };
+  const owner = { pid: process.pid, birth: ownBirth, nonce };
   const staging = path.join(path.dirname(slot), `.${path.basename(slot)}-${nonce}`);
   await fs.mkdir(staging, { mode: 0o700 });
   try {

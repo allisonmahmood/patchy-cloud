@@ -65,9 +65,10 @@ export const lock = (stateDir: string) =>
   Effect.acquireRelease(
     io("Another dev command is starting or stopping this repo. Retry shortly.", async () => {
       // Dev signals and reclaims by birth, so it never runs without its own.
-      if (!(await birth(process.pid))) throw new Error("Could not identify this process.");
+      const own = await birth(process.pid);
+      if (!own) throw new Error("Could not identify this process.");
       const slot = await safePath(stateDir, "lock");
-      const claimed = await claim(slot);
+      const claimed = await claim(slot, own);
       if ("holder" in claimed) throw new Error(`Dev state is held by a ${claimed.holder} owner.`);
       return { slot, nonce: claimed.nonce };
     }),
