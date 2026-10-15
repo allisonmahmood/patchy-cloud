@@ -1277,8 +1277,9 @@ passes `patchy validate`, so a member's agent can publish it as a page to show a
 admin. A folder alone needs
 no login and sends nothing; the company's look is read with `patchy look`'s
 request. `--compare` frames each look separately, labelled, so neither's element
-styles reach the other; when the company has no look it shows the folder alone
-and says so.
+styles reach the other, and each frame fits its look, so one full-page
+screenshot shows both whole; when the company has no look it shows the folder
+alone and says so.
 
 Preview never refuses a look it can read. `failures` lists every reason `look
 publish` would refuse the folder, each line exactly as publish words it, and is

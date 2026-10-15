@@ -320,6 +320,7 @@ describe("patchy look preview", () => {
     const page = preview(alone.stateDir);
     expect(page).not.toContain("<iframe");
     expect(page).toContain("The company has no look yet.");
+    expect(validateHtml(page)).toMatchObject({ ok: true });
   });
 
   it("renders the company's look without a folder, and says when there is none", async () => {
