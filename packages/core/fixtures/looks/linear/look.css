@@ -116,7 +116,7 @@
     font: 510 13px/32px var(--look-font-body);
     cursor: pointer;
   }
-  button:hover {
+  button:hover:not(:disabled) {
     background: color-mix(in srgb, var(--look-accent), white 12%);
   }
   button:disabled {
@@ -124,7 +124,7 @@
     cursor: not-allowed;
   }
 
-  input,
+  input:not([type="checkbox"], [type="radio"]),
   select,
   textarea {
     box-sizing: border-box;
@@ -140,6 +140,21 @@
   input::placeholder,
   textarea::placeholder {
     color: var(--look-muted);
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--look-accent);
+  }
+  input[aria-invalid="true"],
+  select[aria-invalid="true"],
+  textarea[aria-invalid="true"] {
+    border-color: var(--look-danger);
+  }
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   label {
