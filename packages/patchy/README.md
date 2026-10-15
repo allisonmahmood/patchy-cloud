@@ -1251,6 +1251,12 @@ naming the installer line, before the look is sent.
   in `image-set()` or `src()` is a `data:` URL. Fonts are embedded in `look.css`.
   The logo is one `<svg>` that embeds what it shows (`#fragment` links are fine),
   with no `<script>`, `<foreignObject>` or `on*` handlers.
+- `logo.svg` is read as strict XML 1.0, the way a browser reads an image:
+  well-formed, its `svg` root in the SVG namespace
+  (`xmlns="http://www.w3.org/2000/svg"`), every prefix such as `xlink:` declared,
+  no HTML entities such as `&nbsp;`, no `<!DOCTYPE>`, nesting at most 64 elements
+  deep, and namespaces written without surrounding spaces in at most 256
+  characters. An inline `<svg>` copied from a page passes once serialized as XML.
 - No file holds a NUL character.
 - `LOOK.md` is not empty and at most 32 KiB, and the three files together are at
   most 512 KiB (`look.brief.bytes` and `look.bytes` in [the limits](../../docs/limits.md)).

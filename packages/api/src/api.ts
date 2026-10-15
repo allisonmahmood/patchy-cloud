@@ -552,7 +552,11 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
           "but `@font-face` and a leading `@charset` outside `@layer look`, no backslash-escaped " +
           "names, 4.5:1 contrast for every text colour on bg and on surface and for accent-fg on " +
           "accent, no `@import` and only `data:` URLs (in `url()`, `image-set()` and `src()`), a " +
-          "logo with no `<script>`, `<foreignObject>` or `on*` handlers, no NUL characters, a " +
+          "logo that is well-formed, namespace-valid XML 1.0 with no DOCTYPE, nested at most 64 " +
+          "elements deep, its namespaces written without surrounding spaces in at most 256 " +
+          "characters, and an `svg` root in the `http://www.w3.org/2000/svg` namespace, as " +
+          "browsers read an image, with no `<script>`, " +
+          "`<foreignObject>` or `on*` handlers, no NUL characters, a " +
           "non-empty LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The " +
           "note is one line of 1–200 characters. The JSON body is limited to three times " +
           "`look.bytes`: a declared overflow answers 413; streaming bodies are cut off at the cap."

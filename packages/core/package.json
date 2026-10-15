@@ -32,7 +32,8 @@
     "@patchy/limits": "workspace:*",
     "css-tree": "^3.2.1",
     "effect": "catalog:",
-    "parse5": "catalog:"
+    "parse5": "catalog:",
+    "saxes": "^6.0.0"
   },
   "devDependencies": {
     "@types/css-tree": "^3.2.0"

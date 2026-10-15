@@ -257,20 +257,141 @@ describe("checkLook", () => {
     ]);
   });
 
-  it("refuses a logo past the bounds a static page is held to", () => {
+  describe("reads logo.svg as strict XML, as browsers do when they show it as an image", () => {
     const logo = (svg: string) => checkLook(look({}, "", { "logo.svg": svg }));
-    const attributes = Array.from({ length: 300 }, (_, index) => ` a${index}`).join("");
-    expect(logo(`<svg${attributes}></svg>`)).toEqual([
-      "logo.svg: An element has more than 256 attributes."
-    ]);
-    expect(logo(`<svg>${"<g>".repeat(5000)}</svg>`)).toEqual([
-      "logo.svg: HTML nests elements more than 512 deep."
-    ]);
-    // A <desc> holds HTML, whose formatting tags are cloned into each block they stay open across.
-    const style = `<b style="${"color: red; ".repeat(1000)}">`;
-    expect(logo(`<svg><desc><p>${style}${"x<p>".repeat(2200)}</desc></svg>`)).toEqual([
-      "logo.svg: HTML needs too much repair to check: close elements in the order they were opened, and keep table content inside cells."
-    ]);
+    const xmlns = 'xmlns="http://www.w3.org/2000/svg"';
+    const unnamespaced =
+      'logo.svg\'s <svg> is not in the SVG namespace; set xmlns="http://www.w3.org/2000/svg" on it.';
+    const malformed = (at: string, problem: string) =>
+      `logo.svg:${at} is not well-formed XML (${problem}); a logo is XML, not HTML, so quote every attribute, close every tag, declare prefixes such as xmlns:xlink, and write & as &amp; and &nbsp; as &#160;. For an inline <svg> copied from a page, serialize it with new XMLSerializer().serializeToString(svg) in a browser.`;
+
+    it.each([
+      ["no xmlns", '<svg viewBox="0 0 8 8"/>', unnamespaced],
+      ["an https xmlns", '<svg xmlns="https://www.w3.org/2000/svg"/>', unnamespaced],
+      [
+        "a space-padded xmlns",
+        '<svg xmlns=" http://www.w3.org/2000/svg "/>',
+        "logo.svg's xmlns has spaces around its namespace; delete them."
+      ],
+      [
+        "a space-padded xmlns:xml",
+        `<svg ${xmlns} xmlns:xml=" http://www.w3.org/XML/1998/namespace "/>`,
+        "logo.svg's xmlns:xml has spaces around its namespace; delete them."
+      ],
+      [
+        "a namespace over 256 characters",
+        `<svg ${xmlns} xmlns:a="urn:${"x".repeat(300)}"/>`,
+        "logo.svg's xmlns:a is longer than 256 characters; a namespace is a short URI, so shorten it."
+      ],
+      [
+        "only xmlns:svg on an unprefixed root",
+        '<svg xmlns:svg="http://www.w3.org/2000/svg"/>',
+        unnamespaced
+      ],
+      [
+        "an undeclared xlink: prefix",
+        `<svg ${xmlns}><use xlink:href="#m"/></svg>`,
+        malformed("1:62", 'unbound namespace prefix: "xlink"')
+      ],
+      [
+        "&nbsp;",
+        `<svg ${xmlns}><title>Acme&nbsp;Inc</title></svg>`,
+        malformed("1:57", "undefined entity")
+      ],
+      [
+        "a bare & in <title>",
+        `<svg ${xmlns}><title>Smith & Co</title></svg>`,
+        malformed("1:71", "unclosed tag: title")
+      ],
+      [
+        "an unquoted attribute",
+        `<svg ${xmlns} viewBox=0></svg>`,
+        malformed("1:49", "unquoted attribute value")
+      ],
+      ["an unclosed tag", `<svg ${xmlns}><g></svg>`, malformed("1:49", "unexpected close tag")],
+      [
+        "a duplicate attribute",
+        `<svg ${xmlns}><path fill="#000" fill="#111"/></svg>`,
+        malformed("1:71", "duplicate attribute: fill")
+      ],
+      [
+        "a <!DOCTYPE>",
+        `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg ${xmlns}/>`,
+        "logo.svg has a <!DOCTYPE>; delete it, since a logo needs none."
+      ],
+      [
+        "an XML 1.1 declaration",
+        `<?xml version="1.1"?><svg ${xmlns}/>`,
+        'logo.svg declares XML 1.1; write version="1.0", which every browser reads.'
+      ]
+    ])("refuses %s", (_, svg, message) => {
+      expect(logo(svg)).toEqual([message]);
+    });
+
+    it("refuses an inline <svg> read back from a page, and accepts it serialized as XML", () => {
+      expect(
+        logo(
+          '<svg viewBox="0 0 120 32" class="logo"><title>Acme&nbsp;Inc</title><use xlink:href="#m"></use><path d="M0,0h10v10z" fill="#123"></path></svg>'
+        )
+      ).toEqual([malformed("1:56", "undefined entity")]);
+      // What Chromium's XMLSerializer writes for the same element.
+      expect(
+        logo(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32" class="logo"><title>Acme Inc</title><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#m"/><path d="M0,0h10v10z" fill="#123"/></svg>'
+        )
+      ).toEqual([]);
+    });
+
+    it("accepts an XML declaration, a prefixed root, and & in comments and CDATA", () => {
+      const illustrator = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<!-- Generator: Adobe Illustrator 28.0.0 -->",
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 120 32">',
+        "  <style>.cls-1{fill:#123}</style>",
+        '  <defs><path id="m" d="M0,0h10v10z"/></defs>',
+        '  <use class="cls-1" xlink:href="#m"/>',
+        "</svg>"
+      ].join("\n");
+      expect(logo(illustrator)).toEqual([]);
+      expect(
+        logo(
+          '<svg:svg xmlns:svg="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><svg:path d="M0,0h8v8z"/></svg:svg>'
+        )
+      ).toEqual([]);
+      expect(
+        logo(`<svg ${xmlns}><!-- Smith & Co --><title><![CDATA[Smith & Co]]></title></svg>`)
+      ).toEqual([]);
+      expect(
+        logo(`<svg ${xmlns} xmlns:href="http://www.w3.org/1999/xlink" xmlns:on="urn:meta"/>`)
+      ).toEqual([]);
+    });
+
+    it("matches attribute names in any case, as the HTML parser did", () => {
+      expect(
+        logo(
+          `<svg ${xmlns}><rect STYLE="fill:url(#g)"/><image HREF="https://example.com/mark.png"/></svg>`
+        )
+      ).toEqual(["logo.svg references https://example.com/mark.png; embed it as a data: URL."]);
+    });
+
+    it("checks a <style>'s CDATA like its text", () => {
+      expect(
+        logo(
+          `<svg ${xmlns}><style><![CDATA[@import url(https://example.com/logo.css);]]></style></svg>`
+        )
+      ).toEqual(["logo.svg references https://example.com/logo.css; embed it as a data: URL."]);
+    });
+    it("refuses a logo nested more than 64 deep, and parses no logo past the size limit", () => {
+      const nested = (depth: number) =>
+        `<svg ${xmlns}>${"<g>".repeat(depth - 1)}${"</g>".repeat(depth - 1)}</svg>`;
+      expect(logo(nested(64))).toEqual([]);
+      expect(logo(nested(65))).toEqual([
+        "logo.svg nests elements more than 64 deep; flatten its groups."
+      ]);
+      expect(logo(`<svg>${"&".repeat(513 * 1024)}`)).toEqual([
+        "The look is 513.5 KiB; the limit is 512 KiB, embedded fonts included."
+      ]);
+    });
   });
 
   it("refuses NUL characters, which no file of a look needs", () => {
