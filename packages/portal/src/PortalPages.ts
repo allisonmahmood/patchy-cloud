@@ -182,6 +182,8 @@ const render = Effect.fn("PortalPages.render")(function* (
     notice?: string;
     submittedDescription?: string;
     descriptionError?: string;
+    /** No forms at all, for a refusal of a form that was rendered for another patch. */
+    readOnly?: boolean;
   } = {}
 ) {
   const { viewer, session, access } = yield* context;
@@ -222,6 +224,7 @@ const render = Effect.fn("PortalPages.render")(function* (
         publicBaseUrl: session.publicBaseUrl,
         tab,
         notice: refused ? settingsForbidden : options.notice,
+        readOnly: options.readOnly,
         body
       }),
       styles,
@@ -482,6 +485,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   if (form.expectedPatchId !== selected.patch.id)
     return yield* render(name, {
       status: 409,
+      readOnly: true,
       notice: form.expectedPatchId
         ? "This name now belongs to a different patch. Nothing was done."
         : "This form is out of date. Nothing was done."
@@ -567,6 +571,8 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       { status: 303, headers: { "cache-control": "private, no-store" } }
     );
   });
+  // A refused description keeps the person's draft, whatever refused it.
+  const draft = action === "description" ? { submittedDescription: form.description ?? "" } : {};
   const stale = Effect.fn("PortalPages.stale")(function* (state?: Patches.Patch["state"]) {
     const fresh = yield* patches.portalCard(selected.patch.id, access);
     const when =
@@ -576,6 +582,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
     return yield* render(name, {
       tab,
       status: 409,
+      ...draft,
       notice: `${state === undefined ? "" : `This patch is ${state}. `}This patch changed while you had this page open: ${fresh.lastChangedAction ?? "updated"} by ${fresh.actorNames.lastChanged ?? fresh.owner.name}${when}. Nothing was done.`
     });
   });
@@ -596,9 +603,9 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       AdminRequired: () => render(name, { status: 403, notice: adminRequired }),
       WrongState: (error) => stale(error.state),
       PatchDeleted: (error) =>
-        render(name, { tab, status: 409, notice: `${error.message} Nothing was done.` }),
+        render(name, { tab, status: 409, ...draft, notice: `${error.message} Nothing was done.` }),
       PatchRetired: (error) =>
-        render(name, { tab, status: 409, notice: `${error.message} Nothing was done.` }),
+        render(name, { tab, status: 409, ...draft, notice: `${error.message} Nothing was done.` }),
       SourcesOff: () => redisplay(409, "Some sources are off. Nothing was done."),
       InvalidDescription: (error) => invalid(`${error.message} Nothing was done.`),
       Tier2NotPublic: (error) => invalid(`${error.message} Nothing was done.`),

@@ -1234,7 +1234,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
           const html = yield* response.text;
           assert.include(text(html), notice);
           assert.strictEqual(heading(html), original.name);
-          assert.notInclude(html, 'class="confirmation-form"');
+          // No form at all, not even the replacement's Restore: any would act on another patch.
+          assert.deepStrictEqual(
+            forms(html).filter((path) => path.startsWith("/patches/")),
+            []
+          );
           assert.notInclude(html, original.patchId);
           assert.deepStrictEqual(
             [
@@ -1523,6 +1527,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const html = yield* response.text;
         assert.strictEqual(heading(html), patch.name);
         assertStale(html, changed);
+        if (action === "description") assert.include(html, ">Overwritten</textarea>");
         const expectedName = {
           description: "expectedDescriptionUpdatedAt",
           scope: "expectedScope",
@@ -1562,6 +1567,25 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(response.status, 409);
       assertStale(yield* response.text, "restored");
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+    })
+  );
+
+  it.effect("keeps a description refused because its patch was deleted, to copy", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "deleted-draft");
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      yield* (yield* Patches.Patches).delete(patch.patchId, actor(workspace.admin));
+      const response = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
+        expectedPatchId: patch.patchId,
+        description: "A <draft> worth keeping",
+        expectedDescriptionUpdatedAt: before.patch.descriptionUpdatedAt ?? ""
+      });
+      assert.strictEqual(response.status, 409);
+      const html = yield* response.text;
+      assert.include(text(html), "Your description, not saved");
+      assert.include(html, '<pre class="code-panel">A &lt;draft&gt; worth keeping</pre>');
+      assert.notInclude(forms(html), `${cardPath(patch.name)}/description`);
     })
   );
 

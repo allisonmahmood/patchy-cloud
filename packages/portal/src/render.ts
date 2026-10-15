@@ -195,6 +195,8 @@ export const renderCardFrame = (input: {
   readonly publicBaseUrl: string;
   readonly tab: CardTab;
   readonly notice?: string;
+  /** Leave out the header's Restore form, as when refusing a form rendered for another patch. */
+  readonly readOnly?: boolean;
   readonly body: string;
 }): string => {
   const { card, viewer, now } = input;
@@ -202,7 +204,7 @@ export const renderCardFrame = (input: {
   const live = patch.state === "live";
   const address = `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
   const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${address}`;
-  const restore = offState(card, viewer, now)?.restoreControl ?? "";
+  const restore = input.readOnly ? "" : (offState(card, viewer, now)?.restoreControl ?? "");
   const act = live
     ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>`
     : restore;
@@ -292,7 +294,14 @@ export const renderSettings = (input: {
     : patch.state === "retired"
       ? `<section class="note note-warn"><span class="note-title">Delete</span><p>It is retired. Delete starts the 30-day clock, then it is gone for good.</p><div class="actions"><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "delete"))}">Delete…</a></div></section>`
       : "";
-  return `${adminLine}${deactivated}${owner}${patch.state === "deleted" ? "" : descriptionForm(card, input.submittedDescription, input.descriptionError)}${live ? scopeForm(card) : ""}${stop}`;
+  // A deleted patch's description can't be edited; a draft refused for that is still shown to copy.
+  const description =
+    patch.state !== "deleted"
+      ? descriptionForm(card, input.submittedDescription, input.descriptionError)
+      : input.submittedDescription
+        ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
+        : "";
+  return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card) : ""}${stop}`;
 };
 
 /** The card's Versions: every retained version, with rollback for a live patch's owner and admins. */
