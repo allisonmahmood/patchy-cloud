@@ -27,7 +27,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@clerk/backend": "3.23.0",
+    "@clerk/backend": "3.23.2",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/core": "workspace:*",
@@ -38,6 +38,6 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.4"
   }
 }
