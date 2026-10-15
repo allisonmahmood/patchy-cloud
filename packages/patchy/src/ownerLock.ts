@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 // A process that cannot read its own birth (Windows has no procfs or ps) records none.
 const Owner = Schema.Struct({
-  pid: Schema.Int,
+  pid: Schema.Int.check(Schema.isGreaterThan(0)),
   birth: Schema.optionalKey(Schema.String),
   nonce: Schema.String
 });
@@ -17,11 +17,17 @@ const decodeOwner = Schema.decodeUnknownSync(Schema.fromJsonString(Owner));
 const execute = promisify(execFile);
 const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
 const missingProcess = Schema.is(Schema.Struct({ code: Schema.Literals(["ENOENT", "ESRCH"]) }));
+const noSuchProcess = Schema.is(
+  Schema.Struct({ code: Schema.Literal(1), stdout: Schema.Literal("") })
+);
 const occupied = Schema.is(Schema.Struct({ code: Schema.Literals(["EEXIST", "ENOTEMPTY"]) }));
 // Windows refuses a rename onto an existing directory with EPERM.
 const taken = Schema.is(Schema.Struct({ code: Schema.Literals(["EEXIST", "ENOTEMPTY", "EPERM"]) }));
 
-/** A PID alone is never authority to signal a process or reclaim its lock. */
+/**
+ * A PID alone is never authority to signal a process or reclaim its lock. Undefined means the
+ * process is gone; a throw means its identity cannot be read, which never counts as gone.
+ */
 export async function birth(pid: number): Promise<string | undefined> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   if (process.platform === "linux") {
@@ -40,8 +46,10 @@ export async function birth(pid: number): Promise<string | undefined> {
   try {
     const result = await execute("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="]);
     return result.stdout.trim() || undefined;
-  } catch {
-    return undefined;
+  } catch (error) {
+    // ps exits 1 without output when no such process exists; any other failure cannot tell.
+    if (noSuchProcess(error)) return undefined;
+    throw error;
   }
 }
 
@@ -52,14 +60,14 @@ export const sameProcess = async (record: { readonly pid: number; readonly birth
  * Claim the directory `slot` (already resolved with `safePath`) for this process. The owner file
  * is staged in a hidden sibling and renamed onto the slot, so a held slot always names one complete
  * owner. A held slot is reclaimed only when its owner is proven gone; one whose owner cannot be
- * identified (empty, malformed, or without a birth) is never reclaimed. Returns the nonce `release`
- * needs, or who holds the slot.
+ * identified (empty, malformed, without a birth, or unreadable now) is never reclaimed. Returns the
+ * nonce `release` needs, or who holds the slot.
  */
 export async function claim(
   slot: string
 ): Promise<{ readonly nonce: string } | { readonly holder: "live" | "unknown" }> {
   const nonce = randomUUID();
-  const owner = { pid: process.pid, birth: await birth(process.pid), nonce };
+  const owner = { pid: process.pid, birth: await birth(process.pid).catch(() => undefined), nonce };
   const staging = path.join(path.dirname(slot), `.${path.basename(slot)}-${nonce}`);
   await fs.mkdir(staging, { mode: 0o700 });
   try {
@@ -74,7 +82,8 @@ export async function claim(
         names = await fs.readdir(slot);
       } catch (error) {
         if (!missing(error)) throw error;
-        // A rename replaces an empty directory, so only an absent slot is renamed onto.
+        // A rename replaces an empty directory, so only an absent slot is renamed onto; an older
+        // CLI's bare mkdir landing between the readdir and the rename goes unseen.
         try {
           await fs.rename(staging, slot);
           return { nonce };
@@ -102,8 +111,13 @@ export async function claim(
       }
       if (name !== `${previous.nonce}.json` || previous.birth === undefined)
         return { holder: "unknown" };
-      if (await sameProcess({ pid: previous.pid, birth: previous.birth }))
-        return { holder: "live" };
+      let alive: boolean;
+      try {
+        alive = await sameProcess({ pid: previous.pid, birth: previous.birth });
+      } catch {
+        return { holder: "unknown" };
+      }
+      if (alive) return { holder: "live" };
       await fs.rm(file, { force: true });
       await fs.rmdir(slot).catch((cause: unknown) => {
         if (!missing(cause) && !occupied(cause)) throw cause;

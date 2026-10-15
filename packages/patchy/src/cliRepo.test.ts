@@ -736,6 +736,12 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       JSON.stringify({ pid: process.pid, birth: "stale", nonce: "dead" })
     );
     mkdirSync(path.join(dir, ".patchy/refresh-orphan/node_modules"), { recursive: true });
+    // Roots the killed run had not swapped yet still hold the previous generation.
+    const stale = ["patchy/_generated/client.ts", ".agents/skills/patchy-loop/SKILL.md"];
+    for (const file of stale) {
+      mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      writeFileSync(path.join(dir, file), "previous generation\n");
+    }
     const store = tempDir();
     const result = await runCli(["refresh", "--json"], {
       cwd: dir,
@@ -751,6 +757,8 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, changed: { pin: false } });
     expect(existsSync(path.join(dir, "pnpm-lock.yaml"))).toBe(true);
     expect(readdirSync(path.join(dir, ".patchy"))).toEqual([]);
+    for (const file of stale)
+      expect(readFileSync(path.join(dir, file), "utf8")).not.toBe("previous generation\n");
   }, 30_000); // One isolated pnpm install of the real release archive.
 
   it("checks the toolchain with the newly installed release, whichever CLI refreshes across a digest change", async () => {

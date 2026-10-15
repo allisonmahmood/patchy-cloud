@@ -218,6 +218,10 @@ it("reclaims a dead owner's lock and clears its transaction only after a reinsta
   expect(dev.interrupted).toBe(true);
   await dev.finish(true);
   expect(await readdir(join(root, ".patchy"))).toEqual(["refresh-orphan"]);
+  const failed = await ManagedProject.begin(root);
+  await failed.prepareInstall();
+  await failed.finish(false);
+  expect(await readdir(join(root, ".patchy"))).toEqual(["refresh-orphan"]);
   const refresh = await ManagedProject.begin(root);
   expect(refresh.interrupted).toBe(true);
   await refresh.prepareInstall();

@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 import { safePath } from "./ManagedProject.js";
-import { claim, release } from "./ownerLock.js";
+import { birth, claim, release } from "./ownerLock.js";
 
 export { birth, sameProcess } from "./ownerLock.js";
 
@@ -64,6 +64,8 @@ export async function atomicJson(stateDir: string, name: string, value: unknown)
 export const lock = (stateDir: string) =>
   Effect.acquireRelease(
     io("Another dev command is starting or stopping this repo. Retry shortly.", async () => {
+      // Dev signals and reclaims by birth, so it never runs without its own.
+      if (!(await birth(process.pid))) throw new Error("Could not identify this process.");
       const slot = await safePath(stateDir, "lock");
       const claimed = await claim(slot);
       if ("holder" in claimed) throw new Error(`Dev state is held by a ${claimed.holder} owner.`);
