@@ -294,7 +294,7 @@ describe("patchy look preview", () => {
     expect(instance.requests).toEqual([]);
   });
 
-  it("shows the candidate beside the current look, or alone when the company has none", async () => {
+  it("shows the candidate beside the company's look, or beside the Patchy look when it has none", async () => {
     let current: unknown = { ...second, files: readLookFixture("linear") };
     const instance = await stubInstance((request, respond) =>
       request.method === "GET" && request.url === "/api/look"
@@ -302,38 +302,46 @@ describe("patchy look preview", () => {
         : respond(404, { ok: false, error: "Not found." })
     );
     const dir = lookDir();
+    const frames = (stateDir: string) =>
+      [...preview(stateDir).matchAll(/<iframe title="([^"]*)"/g)].map(([, title]) => title);
     const beside = await runCli(["look", "preview", dir, "--compare", "--json"], {
       env: env(instance.url)
     });
     expect(beside, beside.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(beside.stdout)).toMatchObject({ ok: true, failures: [] });
-    const frames = [...preview(beside.stateDir).matchAll(/<iframe title="([^"]*)"/g)];
-    expect(frames.map(([, title]) => title)).toEqual([
-      "Candidate",
-      "Revision 2, the company&#39;s look"
-    ]);
+    expect(frames(beside.stateDir)).toEqual(["Candidate", "Revision 2, the company&#39;s look"]);
     expect(instance.requests.at(-1)?.patchyCli).toMatch(/^\S+ look \S+$/);
 
     current = null;
-    const alone = await runCli(["look", "preview", dir, "--compare"], { env: env(instance.url) });
-    expect(alone, alone.stderr).toMatchObject({ status: 0, stderr: "" });
-    const page = preview(alone.stateDir);
-    expect(page).not.toContain("<iframe");
-    expect(page).toContain("The company has no look yet.");
-    expect(validateHtml(page)).toMatchObject({ ok: true });
+    const patchy = await runCli(["look", "preview", dir, "--compare", "--json"], {
+      env: env(instance.url)
+    });
+    expect(patchy, patchy.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(patchy.stdout)).toMatchObject({ ok: true, failures: [] });
+    expect(frames(patchy.stateDir)).toEqual(["Candidate", "The Patchy look"]);
   });
 
-  it("renders the company's look without a folder, and says when there is none", async () => {
-    let current: unknown = { ...second, files: readLookFixture("linear") };
-    const instance = await stubInstance((_request, respond) =>
-      respond(200, companyLook(current, [second]))
-    );
+  it("renders the company's look without a folder, or the Patchy look when it has none", async () => {
+    let body: unknown = companyLook({ ...second, files: readLookFixture("linear") }, [second]);
+    const instance = await stubInstance((_request, respond) => respond(200, body));
     const json = await runCli(["look", "preview", "--json"], { env: env(instance.url) });
     expect(json, json.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(json.stdout)).toMatchObject({ ok: true, failures: [] });
     expect(preview(json.stateDir)).toContain("<strong>Revision 2, the company's look</strong>");
 
-    current = null;
+    body = companyLook(null, [second]);
+    const patchy = await runCli(["look", "preview", "--json"], { env: env(instance.url) });
+    expect(patchy, patchy.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(patchy.stdout)).toMatchObject({ ok: true, failures: [] });
+    const page = preview(patchy.stateDir);
+    expect(page).toContain("<strong>The Patchy look</strong>");
+    expect(page).toContain("The company has no look yet. New tools start from this one.");
+    // Patchy's own mark never stands in for a company's; the wordmark is the brief's heading.
+    expect(page).not.toContain("data:image/svg+xml");
+    expect(validateHtml(page)).toMatchObject({ ok: true });
+
+    // The server always sends the Patchy look with no company look; without it there is nothing to show.
+    body = { ...companyLook(null, [second]), patchyLook: null };
     const none = await runCli(["look", "preview"], { env: env(instance.url) });
     expect(none.status).toBe(1);
     expect(none.stderr).toContain("The company has no look yet.");

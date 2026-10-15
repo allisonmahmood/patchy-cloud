@@ -606,11 +606,12 @@ alone. Read the person's role from `patchy whoami --json`.
   passes `validate`.
 - **An admin's** new look is captured by `references/look-capture.md`, or for a small
   change, `current.files` copied into a folder and edited. Before publishing,
-  `patchy look preview <dir> --compare` writes it beside the current look; a full-page
-  screenshot shows both looks whole. Publish once they agree:
-  `patchy look publish <dir> --note "<why>" --json`. `patchy look restore <n>` brings
-  back an earlier revision, and `restore none` leaves the company with no look; pass
-  the reason the person gave as `--note "<why>"`, so the notices name it.
+  `patchy look preview <dir> --compare` writes it beside the company's look, or the
+  Patchy look when there is none; a full-page screenshot shows both looks whole.
+  Publish once they agree: `patchy look publish <dir> --note "<why>" --json`.
+  `patchy look restore <n>` brings back an earlier revision, and `restore none`
+  leaves the company with no look; pass the reason the person gave as
+  `--note "<why>"`, so the notices name it.
 
 A patch repo picks up a new revision at its next `refresh` or new `dev` start; a running
 dev session takes it with `refresh`. A static page keeps the look it was published with

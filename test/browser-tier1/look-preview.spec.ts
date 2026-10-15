@@ -191,7 +191,7 @@ const fittedHeights = (page: Page) =>
     })
   );
 
-// The compare page needs a current look, so it renders through the pure page rather than the CLI.
+// Comparing reads the look from an instance, so it renders through the pure page rather than the CLI.
 test("a compare page frames each look alone, fits each frame to its look, and its frames refuse requests too", async ({
   page
 }) => {

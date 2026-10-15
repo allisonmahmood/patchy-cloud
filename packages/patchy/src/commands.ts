@@ -1203,11 +1203,15 @@ const lookPreview = Command.make(
   "preview",
   {
     dir: Argument.String("dir").pipe(
-      Argument.withDescription("A candidate look folder; without one, the company's look"),
+      Argument.withDescription(
+        "A candidate look folder; without one, the company's look, or the Patchy look when it has none"
+      ),
       Argument.optional
     ),
     compare: Flag.Boolean("compare").pipe(
-      Flag.withDescription("Show the candidate beside the company's current look"),
+      Flag.withDescription(
+        "Show the candidate beside the company's current look, or the Patchy look when it has none"
+      ),
       Flag.withDefault(false)
     )
   },
@@ -1226,25 +1230,29 @@ const lookPreview = Command.make(
           : undefined;
         yield* Output.rememberWarnings(candidate?.warnings ?? []);
         // Only the company's look needs the instance; a candidate alone previews offline.
-        const current =
-          candidate === undefined || options.compare ? (yield* readCompanyLook).current : null;
-        const currentPane =
-          current === null
-            ? undefined
-            : { files: current.files, label: `Revision ${current.revision}, the company's look` };
-        const candidatePane = candidate && {
-          files: candidate.files,
-          label: "Candidate",
-          ...(options.compare && current === null ? { note: "The company has no look yet." } : {})
-        };
-        const first = candidatePane ?? currentPane;
+        const look = candidate === undefined || options.compare ? yield* readCompanyLook : null;
+        // With no company look, the Patchy look stands in, as it does for the company's tools.
+        const companyPane = look?.current
+          ? {
+              files: look.current.files,
+              label: `Revision ${look.current.revision}, the company's look`
+            }
+          : look?.patchyLook
+            ? {
+                files: look.patchyLook,
+                label: "The Patchy look",
+                note: "The company has no look yet. New tools start from this one."
+              }
+            : undefined;
+        const candidatePane = candidate && { files: candidate.files, label: "Candidate" };
+        const first = candidatePane ?? companyPane;
         if (first === undefined)
           return yield* new LocalError({
             message: `The company has no look yet. ${NO_LOOK}\nPreview a candidate folder: patchy look preview <dir>`
           });
         const failures = candidate === undefined ? [] : checkLook(candidate.files);
         const file = yield* state.writeLookPreview(
-          previewPage(first, candidatePane && currentPane)
+          previewPage(first, candidatePane && companyPane)
         );
         const warnings = candidate?.warnings ?? [];
         yield* Output.report(
@@ -1266,7 +1274,7 @@ const lookPreview = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Write the look specimen as a local HTML file: in a candidate folder's look, the company's look, or both with --compare."
+    "Write the look specimen as a local HTML file: in a candidate folder's look, the company's look (the Patchy look when it has none), or both with --compare."
   )
 );
 

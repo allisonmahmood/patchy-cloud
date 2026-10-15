@@ -1227,7 +1227,7 @@ CLI refuses a blank or over-long note before sending.
 | `patchy look`                                     | Prints the current revision's number, author, date, note and file sizes, who restored it when a restore set it, then every revision newest first, and who the admins are.                                | Wire body `{ current: { revision, author, createdAt, note, files } \| null, revisions, patchyLook, admins, restored }`, files' contents included. |
 | `patchy look publish <dir> --note "<text>"`       | Admins: checks `look.css`, `LOOK.md` and an optional `logo.svg` in `<dir>`, then publishes them as the next revision and makes it current. Other files in the folder are not sent; a warning names them. | `{ ok, current, warnings? }`                                                                                                                      |
 | `patchy look restore <n\|none> [--note "<text>"]` | Admins: makes revision `n` current again, or `none` leaves the company with no look. It moves the pointer, adds no revision and records who restored it, when and why.                                   | `{ ok, current, restored }`, with `current` null for `none`                                                                                       |
-| `patchy look preview [<dir>] [--compare]`         | Writes the specimen as one HTML file and prints its path: in the look in `<dir>`, in the company's look without one, or with `--compare` the folder beside the company's look.                           | `{ ok, path, failures, warnings? }`                                                                                                               |
+| `patchy look preview [<dir>] [--compare]`         | Writes the specimen as one HTML file and prints its path: in the look in `<dir>`, without one in the company's look or the Patchy look standing in, or with `--compare` the folder beside it.            | `{ ok, path, failures, warnings? }`                                                                                                               |
 
 `look publish` checks the folder before sending anything, and the instance runs
 the same checks again. A failing look is `invalid_look`, its message one line per
@@ -1278,16 +1278,17 @@ admin. A folder alone needs
 no login and sends nothing; the company's look is read with `patchy look`'s
 request. `--compare` frames each look separately, labelled, so neither's element
 styles reach the other, and each frame fits its look, so one full-page
-screenshot shows both whole; when the company has no look it shows the folder
-alone and says so.
+screenshot shows both whole. With no company look, the Patchy look that stands
+in for it is shown instead, labelled "The Patchy look" with a note that the
+company has none; it carries no logo, so its masthead shows the brief's heading.
 
 Preview never refuses a look it can read. `failures` lists every reason `look
 publish` would refuse the folder, each line exactly as publish words it, and is
-empty when it would publish; the company's look is never checked. Text mode
+empty when it would publish; neither the company's nor the Patchy look is
+checked. Text mode
 prints them after the path. A folder missing `look.css` or `LOOK.md` is a local
 refusal, exit 1, as for publish, and `warnings` names any other file in it.
-`look preview` with no folder when the company has no look, or `--compare` with
-no folder, is local, exit 1.
+`--compare` with no folder is local, exit 1.
 
 Every generation, at `init`, `refresh` and a new `dev` start, writes the company's
 current look into the patch repo as managed files: `patchy/_generated/look.css`,
@@ -1410,7 +1411,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--all` includes offered integrations and their state on `list connections` only, not connection detail.
 - `--foreground` — on `dev`, wait and stream logs after readiness; interruption stops only a session this invocation started.
 - `--note <text>` — on `look publish`, required: why this revision exists, such as `darker green`.
-- `--compare` — on `look preview`: the folder's look beside the company's.
+- `--compare` — on `look preview`: the folder's look beside the company's, or the Patchy look when it has none.
 
 ## Environment variables
 
