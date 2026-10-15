@@ -209,6 +209,7 @@ it.layer(
       });
       const shared = by(administrator);
       const rolledBack = by(owner);
+      const restored = by(owner);
       assert.deepStrictEqual(reported(patchId), [
         {
           name: "patch.shared",
@@ -221,7 +222,11 @@ it.layer(
           properties: { ...rolledBack.properties, versionNumber: 1, fromVersionNumber: 2 }
         },
         { name: "patch.retired", ...by(administrator) },
-        { name: "patch.restored", ...by(owner) },
+        {
+          name: "patch.restored",
+          ...restored,
+          properties: { ...restored.properties, from: "retired" }
+        },
         {
           name: "patch.reassigned",
           principalId: administrator.userId,

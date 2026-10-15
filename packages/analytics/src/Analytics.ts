@@ -118,7 +118,10 @@ export type AnalyticsCatalogue = Catalogue<{
   readonly "patch.retired": PatchChange;
 
   /** A retired or deleted patch went back into service. Principal: the user who restored it. */
-  readonly "patch.restored": PatchChange;
+  readonly "patch.restored": PatchChange & {
+    /** The state the restore brought it back from; a retired patch later deleted is `deleted`. */
+    readonly from: "retired" | "deleted";
+  };
 
   /** A live patch now serves an earlier version. Principal: the user who rolled it back. */
   readonly "patch.rolled_back": PatchChange & {
