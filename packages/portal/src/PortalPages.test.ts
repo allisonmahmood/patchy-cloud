@@ -2387,6 +2387,78 @@ it.layer(layer)("all patches on a socket", (it) => {
   );
 });
 
+/** A tier 2 patch, as tier 2 publishes: a server artifact beside the page. */
+const publishTier2 = Effect.fn("PortalPagesTest.publishTier2")(function* (
+  person: Person,
+  name: string
+) {
+  const ordinal = ++counter;
+  return yield* publish(person, name, {
+    filename: null,
+    manifest: { ...manifest, name, tier: 2, handlers: {} },
+    server: {
+      objectKey: `patches/tier2-${ordinal}/server.js`,
+      sha256: sha256(String(ordinal)),
+      bytes: 0
+    }
+  });
+});
+
+it.layer(layer)("patch health on a socket", (it) => {
+  it.effect("tells owners and admins which tier 2 patches failed in the last day", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const failing = yield* publishTier2(workspace.owner, "client-health");
+      const fine = yield* publishTier2(workspace.owner, "web-analytics");
+      const page = yield* publish(workspace.owner, "weekly-recap");
+      const old = seedOf(workspace.id, failing);
+      yield* invoke(old, workspace.member, {
+        handler: "accounts.burn",
+        kind: "action",
+        outcome: "failure"
+      });
+      yield* TestClock.adjust(2 * DAY);
+      for (let index = 0; index < 3; index++)
+        yield* invoke(seedOf(workspace.id, failing), workspace.member, {
+          handler: "accounts.burn",
+          kind: "action",
+          outcome: "handler_error",
+          outcomeCode: "warehouse_timeout"
+        });
+      yield* invoke(seedOf(workspace.id, fine), workspace.member, {
+        handler: "visits.load",
+        kind: "action"
+      });
+
+      // The owner's Home names the failing tool, counting only the last day, with its failed log.
+      const home = yield* (yield* request("/", workspace.owner)).text;
+      assert.include(text(home), "One of your tools is failing");
+      assert.include(text(home), "client-health : 3 calls failed in the last day");
+      assert.isTrue(
+        links(home).some((link) => link.href === "/patches/client-health/log?outcome=failed")
+      );
+      for (const person of [workspace.member, workspace.admin])
+        assert.notInclude(text(yield* (yield* request("/", person)).text), "is failing");
+
+      // All patches: health beside the tier 2 rows the viewer manages, and a reason to look.
+      for (const person of [workspace.owner, workspace.admin]) {
+        const all = yield* (yield* request("/patches", person)).text;
+        assert.include(text(all), "Health");
+        assert.include(text(all), "3 failed");
+        assert.include(all, '<span class="pill pill-done">OK</span>');
+        const attention = yield* (yield* request("/patches?show=attention", person)).text;
+        assert.deepStrictEqual(listed(attention), [failing.name]);
+        assert.include(text(attention), "3 calls failed in the last day");
+      }
+      const member = yield* (yield* request("/patches", workspace.member)).text;
+      assert.notInclude(member, '<th scope="col">Health</th>');
+      assert.notInclude(text(member), "3 failed");
+      assert.notInclude(text(member), "Needs attention");
+      assert.include(listed(member), page.name);
+    })
+  );
+});
+
 it.layer(layer)("patch log on a socket", (it) => {
   it.effect("shows an owner the tree of a failed action and refuses another owner's log", () =>
     Effect.gen(function* () {

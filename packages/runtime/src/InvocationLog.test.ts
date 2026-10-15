@@ -49,6 +49,61 @@ const rolledBack = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   });
 
 it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("InvocationLog", (it) => {
+  it.effect(
+    "counts each patch's failed top-level entries of the last day as the Failed filter does",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const log = yield* InvocationLog.InvocationLog;
+        const HOUR = 3_600_000;
+        const entry = (
+          id: string,
+          patchId: string,
+          startedAt: number,
+          outcome: InvocationLog.Finish["outcome"] | null,
+          parentId: string | null = null
+        ) =>
+          Effect.gen(function* () {
+            yield* log.begin({
+              ...begin(id),
+              patchId,
+              parentId,
+              startedAt,
+              deadline: startedAt + 5_000
+            });
+            if (outcome !== null)
+              yield* log.finish({
+                ...finish(id),
+                outcome,
+                outcomeCode: outcome === "success" ? null : "boom"
+              });
+          });
+        yield* entry("fail-a1", "failpatch-a", NOW - 2 * HOUR, "handler_error");
+        yield* entry("fail-a2", "failpatch-a", NOW - HOUR, "failure");
+        yield* entry("fail-a3", "failpatch-a", NOW - 25 * HOUR, "handler_error");
+        yield* entry("fail-a4", "failpatch-a", NOW - HOUR, null);
+        yield* entry("fail-a5", "failpatch-a", NOW - HOUR, "handler_error", "fail-a2");
+        yield* entry("fail-b1", "failpatch-b", NOW - HOUR, "success");
+        const failures = yield* log.failures({
+          companyId: DEV_SEED.companyId,
+          since: NOW - 24 * HOUR
+        });
+        // Too old, unknown (overdue and pending), nested and successful entries don't count.
+        assert.strictEqual(failures.get("failpatch-a"), 2);
+        assert.isFalse(failures.has("failpatch-b"));
+        const filtered = yield* log.page({
+          companyId: DEV_SEED.companyId,
+          patchId: "failpatch-a",
+          filter: { outcome: "failed" },
+          limit: 10
+        });
+        assert.sameMembers(
+          filtered.entries.map((item) => item.invocation.id),
+          ["fail-a1", "fail-a2", "fail-a3"]
+        );
+      })
+  );
+
   it.effect("persists admission and settlement independently of the service lifetime", () =>
     Effect.gen(function* () {
       const log = yield* InvocationLog.InvocationLog;

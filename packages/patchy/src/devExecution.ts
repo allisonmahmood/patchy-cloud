@@ -37,6 +37,7 @@ const journals = Layer.mergeAll(
     reconcileMutation: () => Effect.void,
     find: () => Effect.succeed(null),
     page: () => Effect.succeed({ entries: [], next: null, windowEnded: false }),
+    failures: () => Effect.succeed(new Map()),
     choices: () => Effect.succeed({ handlers: [], viewerIds: [] })
   }),
   Layer.succeed(RuntimeLog.RuntimeLog, {

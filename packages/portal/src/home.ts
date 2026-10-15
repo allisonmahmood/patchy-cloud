@@ -12,7 +12,7 @@ import {
   searchField
 } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
-import { isNew, manages, matches } from "./allPatches.js";
+import { failedLog, isNew, manages, matches } from "./allPatches.js";
 import { firstClause } from "./render.js";
 
 /** Home's layout; components come from the shell. */
@@ -77,6 +77,8 @@ export interface HomeInput {
   readonly query: string;
   /** "Your first patch is live", while it applies. */
   readonly note?: string;
+  /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
+  readonly failures?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -155,8 +157,20 @@ export const renderHome = (input: HomeInput): string => {
     className: "home-search"
   })}<a class="btn" href="/patches">All patches</a></div>`;
   const foot = `<p class="supporting-text home-foot"><a href="/patches">All patches</a>${off > 0 ? ` · ${plural(off, "patch is", "patches are")} retired or deleted · <a href="/patches?show=off">See them</a>` : ""}</p>`;
+  // An owner hears about their own tools' failures here; admins see everyone's in All patches.
+  const failing = live.filter(
+    (row) => row.owner.id === viewer.user.id && (input.failures?.get(row.patch.id) ?? 0) > 0
+  );
+  const warning = failing.length
+    ? `<section class="note note-warn" role="status"><span class="note-title">${failing.length === 1 ? "One of your tools is failing" : "Some of your tools are failing"}</span><ul class="list list-compact">${failing
+        .map(
+          (row) =>
+            `<li class="list-row"><a href="${escapeAttribute(failedLog(row.patch))}">${escapeHtml(row.patch.name)}</a>: ${plural(input.failures!.get(row.patch.id)!, "call", "calls")} failed in the last day</li>`
+        )
+        .join("")}</ul></section>`
+    : "";
   const page = (body: string) =>
-    `${input.note ?? ""}${search}${body}${foot}<script defer src="${copyScriptPath}"></script>`;
+    `${input.note ?? ""}${warning}${search}${body}${foot}<script defer src="${copyScriptPath}"></script>`;
 
   if (live.length === 0 && query === "")
     return page(
