@@ -207,8 +207,9 @@ moment of the event. `token.minted`, `patch.created` and `patch.updated` add
 the CLI's `cliVersion` and `agent` when their request's `Patchy-Cli` header
 named them, under the request event's rules. Properties are ids, sizes, counts
 and states. The only names are identifiers a patch's manifest declares, such as
-its table and store keys; never a person's or company's name, an email address,
-a URL or free text.
+its table and store keys, and the SDK entry points it imports, kept only when
+they are in `SDK_ENTRY_POINTS` (`packages/api`); never a person's or company's
+name, an email address, a URL or free text.
 
 The events, by area:
 

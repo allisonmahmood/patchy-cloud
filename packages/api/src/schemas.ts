@@ -555,6 +555,27 @@ const distinctPrimitiveNames = Schema.makeFilter(
     );
   }
 );
+
+/**
+ * The SDK's entry points, by the code that may import them. The CLI builds
+ * only from these and records the ones a patch imports as the manifest's
+ * `sdkImports`; publish events report only listed entries, since the
+ * manifest is client supplied.
+ */
+export const SDK_ENTRY_POINTS: {
+  readonly [Graph in "page" | "server" | "generated"]: ReadonlyArray<string>;
+} = {
+  page: [
+    "patchy/preact",
+    "patchy/preact/jsx-runtime",
+    "patchy/preact/jsx-dev-runtime",
+    "patchy/csv"
+  ],
+  server: ["patchy/server", "patchy/csv"],
+  /** Imported only by the generated client under `patchy/_generated`. */
+  generated: ["patchy/client"]
+};
+
 export const Manifest = Schema.Struct({
   manifestVersion: Schema.Int.check(Schema.isGreaterThan(0)),
   release: NonEmptyText,
