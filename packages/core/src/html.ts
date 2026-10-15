@@ -674,6 +674,8 @@ export function htmlPage(options: {
     .field-group > input:focus-visible { outline: none; }
     .field-group:has(> input:focus-visible) { outline: 3px solid var(--blue); outline-offset: 3px; }
     .field-group:has(> [aria-invalid="true"]) { border-color: var(--danger); }
+    /* field-search: searchField's group, its prefix the search icon rather than text, so it keeps a gap. */
+    .field-search > .field-prefix { margin-right: 8px; }
     .field-prefix { flex: 0 1 auto; align-self: center; min-width: 0; padding-block: 6px; color: var(--muted); font-family: var(--font-mono); font-size: .85rem; overflow-wrap: anywhere; cursor: text; }
     /* field-rule: a hint stating its field's rule, which turns into the warning while the value breaks the field's
        own constraints (pattern, length, required). CSS only; Patchy names the exact problem on submit. */
@@ -752,6 +754,8 @@ export function htmlPage(options: {
     .menu-item { display: flex; align-items: center; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--field-radius); background: transparent; color: var(--ink); font: inherit; font-size: .9rem; font-weight: 750; line-height: 1.3; text-align: left; text-decoration: none; cursor: pointer; }
     .menu-item:hover { background: var(--paper-blue); }
     .menu-item-danger { color: var(--danger); }
+    /* A Copy item waits hidden for the page's copy script, so a menu without script offers only what works. */
+    .menu-item[hidden] { display: none; }
     .menu-rule { margin: 4px 0; border: 0; border-top: 1px solid var(--line-strong); }
     .copy-address { user-select: all; overflow-wrap: anywhere; }
     .code-panel { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }

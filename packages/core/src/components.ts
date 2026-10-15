@@ -68,4 +68,4 @@ export const searchField = (input: {
     )
     .join(
       ""
-    )}<div class="field field-group"><label class="field-prefix" for="${escapeAttribute(input.id)}">${searchIcon}</label><input id="${escapeAttribute(input.id)}" type="search" name="q" value="${escapeAttribute(input.query)}" maxlength="200" placeholder="${escapeAttribute(input.placeholder)}" aria-label="${escapeAttribute(input.label)}"></div></form>`;
+    )}<div class="field field-group field-search"><label class="field-prefix" for="${escapeAttribute(input.id)}">${searchIcon}</label><input id="${escapeAttribute(input.id)}" type="search" name="q" value="${escapeAttribute(input.query)}" maxlength="200" placeholder="${escapeAttribute(input.placeholder)}" aria-label="${escapeAttribute(input.label)}"></div></form>`;

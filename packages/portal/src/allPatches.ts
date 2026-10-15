@@ -21,7 +21,6 @@ import { firstClause, hidden } from "./render.js";
 export const listStyles = `
   .portal-list-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
   .portal-list-search { width: min(100%, 320px); }
-  .portal-list-search .field-prefix { margin-right: 8px; }
   .portal-list-matches { margin-top: 12px; }
   /* Cells keep words whole, so on a phone the table scrolls in portal-table rather than splitting names. */
   .portal-list .table { min-width: 860px; overflow-wrap: break-word; }
@@ -98,12 +97,7 @@ const attentionOf = (
 ): Attention | undefined => {
   const { patch } = row;
   if (!manages(row, viewer)) return undefined;
-  if (patch.state === "live" && row.owner.deactivated && viewer.role === "admin")
-    return {
-      title: "Its owner is deactivated",
-      detail: "Nobody can publish to it until someone else owns it.",
-      act: `<a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>`
-    };
+  // A deletion about to be reclaimed is the more urgent of the two.
   if (patch.state === "deleted" && patch.purgeAt !== null) {
     const deadline = epoch(patch.purgeAt);
     if (now < deadline && deadline <= now + RECENT)
@@ -113,6 +107,12 @@ const attentionOf = (
         act: `<form method="post" action="${escapeAttribute(cardPath(patch, "restore"))}">${restoreForm(patch)}<button class="btn" type="submit">Restore</button></form>`
       };
   }
+  if (row.owner.deactivated && viewer.role === "admin")
+    return {
+      title: "Its owner is deactivated",
+      detail: "Nobody can publish to it until someone else owns it.",
+      act: `<a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>`
+    };
   return undefined;
 };
 
@@ -130,9 +130,8 @@ const actions = (row: Patches.ReadPatch, viewer: Viewer, url: string, now: numbe
   ];
   if (!manages(row, viewer)) return rowMenu(patch.id, patch.name, items);
   const manage = [
-    ...(viewer.role === "admin" && patch.state !== "deleted"
-      ? [menuLink(cardPath(patch, "reassign"), "Reassign…")]
-      : []),
+    menuLink(cardPath(patch), "Settings"),
+    ...(viewer.role === "admin" ? [menuLink(cardPath(patch, "reassign"), "Reassign…")] : []),
     ...(patch.state === "live" ? [menuLink(cardPath(patch, "retire"), "Retire…", true)] : []),
     ...(patch.state !== "live" && recoverable(patch, now)
       ? [menuPost(cardPath(patch, "restore"), "Restore", restoreForm(patch))]

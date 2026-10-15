@@ -57,7 +57,6 @@ export const styles = `
     .company-invite-row { display: grid; grid-template-columns: minmax(0, 1fr) 10rem auto; gap: 10px; align-items: start; }
     .company-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; }
     .company-search { width: min(100%, 300px); }
-    .company-search .field-prefix { margin-right: 8px; }
     .company-matches { margin-top: 12px; }
     .company-table { overflow-x: auto; }
     /* Cells keep words whole, so on a phone the table scrolls here rather than splitting "Member". */

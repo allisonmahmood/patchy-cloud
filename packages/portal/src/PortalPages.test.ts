@@ -2122,11 +2122,11 @@ it.layer(layer)("all patches on a socket", (it) => {
       assert.strictEqual(menus.get(workspace.member), "office-map Open Copy link About this patch");
       assert.strictEqual(
         menus.get(workspace.owner),
-        "office-map Open Copy link About this patch Retire… Delete…"
+        "office-map Open Copy link About this patch Settings Retire… Delete…"
       );
       assert.strictEqual(
         menus.get(workspace.admin),
-        "office-map Open Copy link About this patch Reassign… Retire… Delete…"
+        "office-map Open Copy link About this patch Settings Reassign… Retire… Delete…"
       );
       const html = yield* (yield* request("/patches", workspace.admin)).text;
       assert.include(html, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/office-map"`);
@@ -2141,37 +2141,51 @@ it.layer(layer)("all patches on a socket", (it) => {
       const patches = yield* Patches.Patches;
       const sql = yield* SqlClient.SqlClient;
       const deleted = yield* publish(workspace.owner, "lunch-poll");
+      const theirs = yield* publish(workspace.admin, "admin-poll");
       const orphan = yield* publish(workspace.member, "asset-library");
+      const shelved = yield* publish(workspace.member, "old-crm");
       yield* patches.delete(deleted.patchId, actor(workspace.owner));
+      yield* patches.delete(theirs.patchId, actor(workspace.admin));
+      yield* patches.retire(shelved.patchId, actor(workspace.member));
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${workspace.member.id}`;
       yield* TestClock.adjust(24 * DAY);
 
+      // An owner sees their own deletion, never a colleague's or an orphan.
       const owner = yield* (yield* request("/patches?show=attention", workspace.owner)).text;
       assert.deepStrictEqual(listed(owner), [deleted.name]);
       assert.include(text(owner), "Gone for good in 6 days");
       assert.include(forms(owner), `${cardPath(deleted.name)}/restore`);
+      assert.include(
+        text(yield* (yield* request("/patches", workspace.owner)).text),
+        "Needs attention 1"
+      );
+      // An admin sees every deactivated owner's patch, in any state, and every deletion.
       const admin = yield* (yield* request("/patches?show=attention", workspace.admin)).text;
-      assert.deepStrictEqual(listed(admin), [orphan.name, deleted.name]);
+      assert.deepStrictEqual(listed(admin), [theirs.name, orphan.name, deleted.name, shelved.name]);
       assert.include(text(admin), "Its owner is deactivated");
       assert.isTrue(links(admin).some((link) => link.href === `${cardPath(orphan.name)}/reassign`));
+      assert.isTrue(
+        links(admin).some((link) => link.href === `${cardPath(shelved.name)}/reassign`)
+      );
       assert.include(
         text(yield* (yield* request("/patches", workspace.admin)).text),
-        "Needs attention 2"
+        "Needs attention 4"
       );
-
-      const theirs = yield* (yield* request("/patches?show=attention", outsider.member)).text;
-      assert.include(text(theirs), "Nothing needs your attention.");
+      // Reassigning a deletion moves who sees it.
+      yield* patches.reassign(deleted.patchId, actor(workspace.admin), workspace.admin.id);
       assert.notInclude(
-        text(yield* (yield* request("/patches", outsider.member)).text),
+        text(yield* (yield* request("/patches", workspace.owner)).text),
         "Needs attention"
       );
 
+      const theirsOnly = yield* (yield* request("/patches?show=attention", outsider.member)).text;
+      assert.include(text(theirsOnly), "Nothing needs your attention.");
+
       yield* TestClock.adjust(7 * DAY);
-      const ended = yield* (yield* request("/patches?show=off", workspace.owner)).text;
+      const ended = yield* (yield* request("/patches?show=off", workspace.admin)).text;
       assert.include(text(ended), "Recovery ended");
-      assert.notInclude(menuItems(ended, deleted.patchId), "Restore");
-      const later = yield* (yield* request("/patches", workspace.owner)).text;
-      assert.notInclude(text(later), "Needs attention");
+      assert.notInclude(menuItems(ended, theirs.patchId), "Restore");
+      assert.include(menuItems(ended, theirs.patchId), "Reassign…");
     })
   );
 });
