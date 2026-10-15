@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the isolated builder-toolchain process entrypoint.
 import { writeFile } from "node:fs/promises";
 import * as path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import * as Schema from "effect/Schema";
 import { ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
@@ -10,6 +11,37 @@ import { buildServer } from "./serverBuild.js";
 const decodeToolchain = Schema.decodeUnknownSync(Schema.fromJsonString(ReleaseToolchain));
 const decodeModules = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const isLocalError = Schema.is(LocalError);
+const isBuildFailure = Schema.is(Schema.Struct({ errors: Schema.Array(Schema.Unknown) }));
+const isUnresolvedImport = Schema.is(
+  Schema.Struct({ code: Schema.Literal("UNRESOLVED_IMPORT"), message: Schema.String })
+);
+const buildHint = "Run `pnpm exec vite build` and fix the single-file build before publishing.";
+
+/**
+ * The reply's error for a failed build. Unresolved imports are named by their diagnostic's first
+ * line, `[UNRESOLVED_IMPORT] Could not resolve '<import>' in <file>`, with the repo's own path
+ * removed; any other tool output, a plugin's thrown text included, stays in this process.
+ */
+const failure = (cause: unknown) => {
+  if (isLocalError(cause)) return cause.message;
+  const unresolved =
+    cause instanceof Error && isBuildFailure(cause)
+      ? cause.errors
+          .filter(isUnresolvedImport)
+          .map((error) =>
+            stripVTControlCharacters(error.message)
+              .split("\n", 1)[0]!
+              .replaceAll(`${process.cwd()}${path.sep}`, "")
+          )
+      : [];
+  if (unresolved.length === 0) return `Vite build failed. ${buildHint}`;
+  return [
+    "Vite build failed:",
+    ...unresolved.slice(0, 3).map((line) => `- ${line}`),
+    ...(unresolved.length > 3 ? [`- and ${unresolved.length - 3} more`] : []),
+    buildHint
+  ].join("\n");
+};
 const output = process.stdout.write.bind(process.stdout);
 // Builder config and plugin progress cannot corrupt the parent's JSON reply.
 process.stdout.write = process.stderr.write.bind(process.stderr);
@@ -49,9 +81,7 @@ try {
   output(
     JSON.stringify({
       ok: false,
-      error: isLocalError(cause)
-        ? cause.message
-        : "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing.",
+      error: failure(cause),
       ...(isLocalError(cause) && cause.code ? { code: cause.code } : {})
     })
   );

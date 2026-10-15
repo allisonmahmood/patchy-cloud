@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -70,7 +71,15 @@ describe("repo publish recovery", () => {
   it.each([
     ["patchy.config.ts", 'throw new Error("private-diagnostic-marker");'],
     ["src/main.ts", 'import { value } from "private-diagnostic-marker"; console.log(value);'],
-    ["vite.config.ts", 'throw new Error("private-diagnostic-marker"); export default {};']
+    ["vite.config.ts", 'throw new Error("private-diagnostic-marker"); export default {};'],
+    [
+      "vite.config.ts",
+      'export default { plugins: [{ name: "marker", transform() { throw new Error("private-diagnostic-marker"); } }] };'
+    ],
+    [
+      "vite.config.ts",
+      'export default { plugins: [{ name: "marker", config() { throw { errors: [{ code: "UNRESOLVED_IMPORT", message: "private-diagnostic-marker" }] }; } }] };'
+    ]
   ])("keeps %s failure diagnostics out of the public envelope", async (file, source) => {
     const instance = await stubInstance(projectHandler);
     const dir = publishTree(instance.url);
@@ -84,13 +93,59 @@ describe("repo publish recovery", () => {
     for (const command of file === "patchy.config.ts" ? ["publish", "refresh"] : ["publish"]) {
       const result = await runCli([command, "--json"], options);
       expect(result).toMatchObject({ status: 1, stdout: "" });
-      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        ok: false,
+        kind: "local",
+        ...(file === "vite.config.ts"
+          ? {
+              error:
+                "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing."
+            }
+          : {})
+      });
       expect(result.stderr).not.toContain("private-diagnostic-marker");
     }
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
     expect(existsSync(path.join(dir, ".patchy/publish", sha256(instance.url), "attempt"))).toBe(
       false
     );
+  });
+
+  it("names the imports the build cannot resolve and the files that import them", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    // The look generated no logo, as after a revision that dropped it.
+    writeFileSync(
+      path.join(dir, "src/main.tsx"),
+      'import logo from "../patchy/_generated/logo.svg";\nconsole.log(logo);\n'
+    );
+    const error = [
+      "Vite build failed:",
+      "- [UNRESOLVED_IMPORT] Could not resolve '../patchy/_generated/logo.svg' in src/main.tsx",
+      "Run `pnpm exec vite build` and fix the single-file build before publishing."
+    ].join("\n");
+    const json = await runCli(["publish", "--json"], options);
+    expect(json).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(json.stderr)).toMatchObject({ ok: false, kind: "local", error });
+    expect(await runCli(["publish"], options)).toMatchObject({ status: 1, stderr: `${error}\n` });
+    const root = realpathSync(dir);
+    writeFileSync(
+      path.join(dir, "src/main.tsx"),
+      ["a", "b", "c", "d", "e"].map((name) => `import "${root}/src/missing-${name}";`).join("\n")
+    );
+    const many = (await runCli(["publish"], options)).stderr;
+    expect(many.match(/^- \[UNRESOLVED_IMPORT\] Could not resolve 'src\/missing-/gm)).toHaveLength(
+      3
+    );
+    expect(many).toContain("\n- and 2 more\n");
+    expect(many).not.toContain(root);
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
   });
 
   it("reapplies a moved update's legacy receipt and retains a conflicting author selection", async () => {
