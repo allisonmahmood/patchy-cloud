@@ -639,6 +639,7 @@ Blocked or unsafe:
 - inline event handlers such as `onclick`
 - meta refresh redirects
 - unsafe inline CSS patterns
+- fonts from anything but a `data:` URL, and CSS `@import`: neither ever loads
 - secrets, private URLs, and local paths
 
 Past what any page needs, the checker also refuses markup that nests more than 510
