@@ -2741,8 +2741,13 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           ...Fixtures.manifest,
           tier: 2 as const,
           handlers: tier2Handlers,
-          // The manifest is client supplied; analytics reports only SDK entry points.
-          sdkImports: ["patchy/server", "Jane <jane@example.com>"]
+          // The manifest is client supplied; analytics reports only listed SDK entry points,
+          // not every path shaped like one.
+          sdkImports: [
+            "patchy/customer-jane-doe/private-project",
+            "patchy/server",
+            "Jane <jane@example.com>"
+          ]
         };
         const payload = publishRequest({ html: page, server, manifest });
         const created = yield* api.publish({ payload });

@@ -31,6 +31,7 @@ import {
   PatchSourceState,
   PublishCreated,
   PublishUpdated,
+  SDK_ENTRY_POINTS,
   SharingScope,
   type SharedTableDeclaration,
   TableDefinition,
@@ -515,11 +516,8 @@ export interface Recorded extends PublishUpdated {
   readonly responseBody: string;
 }
 
-/**
- * The shape of an SDK entry point, such as `patchy/server`. A manifest's
- * `sdkImports` is client supplied, so analytics drops anything else.
- */
-const SDK_ENTRY_POINT = /^patchy\/[a-z][a-z0-9/-]*$/;
+/** A manifest's `sdkImports` is client supplied, so analytics keeps only the SDK's entry points. */
+const sdkEntryPoints = new Set(Object.values(SDK_ENTRY_POINTS).flat());
 
 /**
  * What `patch.created` and `patch.updated` say about a recorded version.
@@ -536,7 +534,7 @@ const publication = (input: RecordInput, versionNumber: number, scope: Patch["sc
     tier: input.manifest.tier,
     htmlBytes: input.fileSize,
     serverBytes: input.server?.bytes ?? 0,
-    sdkImports: (input.manifest.sdkImports ?? []).filter((source) => SDK_ENTRY_POINT.test(source)),
+    sdkImports: (input.manifest.sdkImports ?? []).filter((source) => sdkEntryPoints.has(source)),
     tables: Object.keys(input.manifest.tables),
     stores: Object.keys(input.manifest.files),
     integrations: Object.entries(input.manifest.uses).map(([alias, use]) => `${use.kind}:${alias}`),

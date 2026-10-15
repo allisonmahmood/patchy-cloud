@@ -55,6 +55,7 @@ type Publication = PatchSubject & {
   readonly tier: number;
   readonly htmlBytes: number;
   readonly serverBytes: number;
+  /** The SDK entry points the patch imports, only those in `@patchy/api`'s `SDK_ENTRY_POINTS`. */
   readonly sdkImports: ReadonlyArray<string>;
   readonly tables: ReadonlyArray<string>;
   readonly stores: ReadonlyArray<string>;

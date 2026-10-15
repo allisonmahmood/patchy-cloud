@@ -6,15 +6,9 @@ import * as CssTree from "css-tree";
 import * as parse5 from "parse5";
 import ts from "typescript";
 import type { Plugin, ResolveFn } from "vite";
+import { SDK_ENTRY_POINTS } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 
-const pageEntries = [
-  "patchy/preact",
-  "patchy/preact/jsx-runtime",
-  "patchy/preact/jsx-dev-runtime",
-  "patchy/csv"
-];
-const serverEntries = ["patchy/server", "patchy/csv"];
 const modulePreloadPolyfill = "vite/modulepreload-polyfill";
 
 /** Check each authored graph before aliases, tree shaking, or resolution hide imports. */
@@ -25,7 +19,7 @@ export function pageImports(
 ): Plugin {
   const sdkDirectory = realpathSync(path.join(root, "node_modules/patchy"));
   const graph = options.graph ?? "page";
-  const entries = graph === "page" ? pageEntries : serverEntries;
+  const entries = SDK_ENTRY_POINTS[graph];
   const sdkDirectories = [
     sdkDirectory,
     ...(graph === "page"
@@ -78,7 +72,9 @@ export function pageImports(
     }
     if (
       entries.includes(source) ||
-      (graph === "page" && source === "patchy/client" && importer.startsWith(generatedDirectory))
+      (graph === "page" &&
+        SDK_ENTRY_POINTS.generated.includes(source) &&
+        importer.startsWith(generatedDirectory))
     ) {
       options.sdkImports?.add(source);
       return;
