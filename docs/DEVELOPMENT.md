@@ -192,7 +192,10 @@ An environment is this instance plus what a multi-person check or demo needs:
 - **An agent workspace** under `$XDG_DATA_HOME/patchy-dev/<label>/`, outside the
   worktree so this repo's `CLAUDE.md` never loads there. Its `agent` launcher
   starts Claude Code with only the Patchy skill and pre-approved `patchy` and
-  `pnpm` commands; arguments pass through, e.g. `…/agent -p "<task>"`.
+  `pnpm` commands; arguments pass through, e.g. `…/agent -p "<task>"`. It loads
+  no `CLAUDE.md`, `AGENTS.md` or rules from the folders above the workspace,
+  your HOME's included, and ignores your shell's `PATCHY_API_URL` and
+  `PATCHY_API_TOKEN`, so it publishes here as the scenario's publisher.
 
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
 is three people and no patches; `brightline` is a five-person agency with tier 0,

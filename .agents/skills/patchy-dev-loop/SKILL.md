@@ -43,6 +43,11 @@ Done when `pnpm dev status` exits 0.
   writes a full-page PNG and prints the final URL, status and the browser's
   errors. Read the PNG to look at it. `<person>` is any email, or an
   environment person's key or first name.
+- **The environment's agent.** `pnpm dev up` prints an `agent` launcher:
+  Claude Code in the environment's workspace with the Patchy skill, publishing
+  as the scenario's publisher. It ignores the shell's `PATCHY_API_URL` and
+  `PATCHY_API_TOKEN` and loads no `CLAUDE.md` from the folders above its
+  workspace. Give it a task with `…/agent -p "<task>"`.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
   Postgres declarations read invented fixtures. PostHog declarations have none:
   `patchy dev` reads the real connection through this instance, as the CLI's
