@@ -674,6 +674,8 @@ export function htmlPage(options: {
     .field-group > input:focus-visible { outline: none; }
     .field-group:has(> input:focus-visible) { outline: 3px solid var(--blue); outline-offset: 3px; }
     .field-group:has(> [aria-invalid="true"]) { border-color: var(--danger); }
+    /* field-search: searchField's group, its prefix the search icon rather than text, so it keeps a gap. */
+    .field-search > .field-prefix { margin-right: 8px; }
     .field-prefix { flex: 0 1 auto; align-self: center; min-width: 0; padding-block: 6px; color: var(--muted); font-family: var(--font-mono); font-size: .85rem; overflow-wrap: anywhere; cursor: text; }
     /* field-rule: a hint stating its field's rule, which turns into the warning while the value breaks the field's
        own constraints (pattern, length, required). CSS only; Patchy names the exact problem on submit. */
@@ -719,6 +721,14 @@ export function htmlPage(options: {
     .avatar-amber { background: var(--paper-amber); }
     .avatar-waiting { border-style: dashed; border-color: var(--line-strong); background: transparent; color: var(--muted); }
     .avatar-off { border-color: var(--line-strong); background: transparent; color: var(--muted); }
+    /* mono: a tool's two-letter mark, tinted from its name and turned like the glyph; mono-blue, mono-green and
+       mono-amber vary the tint. page-mark: a tier 0 page's ruled sheet in the same footprint. */
+    .mono { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); font-size: .72rem; font-weight: 900; letter-spacing: .02em; line-height: 1; transform: rotate(-3deg); }
+    .mono-blue { background: var(--paper-blue); }
+    .mono-green { background: var(--paper-green); }
+    .mono-amber { background: var(--paper-amber); }
+    .page-mark { position: relative; flex: none; width: 26px; height: 32px; margin-inline: 4px; border: 2px solid var(--ink); border-radius: 3px 9px 3px 3px; background: var(--white); }
+    .page-mark::after { content: ""; position: absolute; inset: 7px 5px 6px; background: repeating-linear-gradient(transparent 0 4px, var(--line-strong) 4px 6px); }
     /* tag: a small label after a name, such as You. */
     .tag { display: inline-flex; align-items: center; min-height: 20px; margin-left: 6px; padding: 1px 7px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--ink-soft); font-size: .7rem; font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; vertical-align: 2px; }
     /* tabs: links that narrow one list, the current one marked like the app nav, each label followed by its count. */
@@ -744,6 +754,8 @@ export function htmlPage(options: {
     .menu-item { display: flex; align-items: center; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--field-radius); background: transparent; color: var(--ink); font: inherit; font-size: .9rem; font-weight: 750; line-height: 1.3; text-align: left; text-decoration: none; cursor: pointer; }
     .menu-item:hover { background: var(--paper-blue); }
     .menu-item-danger { color: var(--danger); }
+    /* A Copy item waits hidden for the page's copy script, so a menu without script offers only what works. */
+    .menu-item[hidden] { display: none; }
     .menu-rule { margin: 4px 0; border: 0; border-top: 1px solid var(--line-strong); }
     .copy-address { user-select: all; overflow-wrap: anywhere; }
     .code-panel { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }

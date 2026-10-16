@@ -5,7 +5,16 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
-import { dateLabel, escapeAttribute, escapeHtml } from "@patchy/core";
+import {
+  avatar,
+  dateLabel,
+  escapeAttribute,
+  escapeHtml,
+  menuLink,
+  menuPost,
+  rowMenu,
+  searchField
+} from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
@@ -48,7 +57,6 @@ export const styles = `
     .company-invite-row { display: grid; grid-template-columns: minmax(0, 1fr) 10rem auto; gap: 10px; align-items: start; }
     .company-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; }
     .company-search { width: min(100%, 300px); }
-    .company-search .field-prefix { margin-right: 8px; }
     .company-matches { margin-top: 12px; }
     .company-table { overflow-x: auto; }
     /* Cells keep words whole, so on a phone the table scrolls here rather than splitting "Member". */
@@ -126,30 +134,6 @@ const sentenceList = (items: readonly string[]) => {
 };
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
-const tints = ["", " avatar-green", " avatar-amber"] as const;
-const avatar = (key: string, label: string, variant?: "waiting" | "off") => {
-  const words = label.trim().split(/\s+/);
-  const picked = words.length > 1 ? [words[0], words.at(-1)] : [words[0]];
-  const letters = picked.map((word) => Array.from(word ?? "")[0]?.toUpperCase() ?? "").join("");
-  const tint =
-    variant === undefined
-      ? tints[Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0) % tints.length]
-      : ` avatar-${variant}`;
-  return `<span class="avatar${tint}" aria-hidden="true">${escapeHtml(letters)}</span>`;
-};
-
-const dots =
-  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
-const searchIcon =
-  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>';
-
-const postItem = (path: string, label: string, fields = "", danger = false) =>
-  `<form method="post" action="${escapeAttribute(path)}">${fields}<button class="menu-item${danger ? " menu-item-danger" : ""}" type="submit">${escapeHtml(label)}</button></form>`;
-const linkItem = (path: string, label: string, danger = false) =>
-  `<a class="menu-item${danger ? " menu-item-danger" : ""}" href="${escapeAttribute(path)}">${escapeHtml(label)}</a>`;
-/** One row's actions behind a quiet button; the popover's id is the row's own. */
-const menu = (id: string, label: string, items: readonly string[]) =>
-  `<button class="btn btn-quiet btn-icon" type="button" popovertarget="${escapeAttribute(`menu-${id}`)}" aria-label="${escapeAttribute(`Actions for ${label}`)}">${dots}</button><div class="menu" id="${escapeAttribute(`menu-${id}`)}" popover aria-label="${escapeAttribute(label)}"><p class="menu-head">${escapeHtml(label)}</p>${items.join("")}</div>`;
 const time = (date: Date) => {
   const iso = date.toISOString();
   return `<time datetime="${iso}">${escapeHtml(dateLabel(iso))}</time>`;
@@ -227,13 +211,13 @@ const render = Effect.fn("CompanyPage.render")(function* (
       : `<span class="supporting-text">Joined ${time(user.createdAt)}</span>`;
     const role = user.role === "admin" ? "member" : "admin";
     const lifecycle = user.deactivatedAt
-      ? linkItem(`${path}/reactivate`, "Reactivate…")
+      ? menuLink(`${path}/reactivate`, "Reactivate…")
       : user.id === viewer.user.id
         ? ""
-        : linkItem(`${path}/deactivate`, "Deactivate…", true);
+        : menuLink(`${path}/deactivate`, "Deactivate…", true);
     const actions = admin
-      ? `<td class="company-row-actions">${menu(user.id, label, [
-          postItem(
+      ? `<td class="company-row-actions">${rowMenu(user.id, label, [
+          menuPost(
             `${path}/role`,
             role === "admin" ? "Make admin" : "Make member",
             `<input type="hidden" name="role" value="${role}">`
@@ -256,14 +240,14 @@ const render = Effect.fn("CompanyPage.render")(function* (
           : '<span class="pill pill-progress">Invited</span>';
     const stuck = state !== "waiting";
     const actions = admin
-      ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit">Resend</button></form>` : ""}${menu(
+      ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit">Resend</button></form>` : ""}${rowMenu(
           invite.id,
           invite.email,
           [
             ...(stuck
               ? []
-              : [postItem(`${path}/resend`, "Resend invite"), '<hr class="menu-rule">']),
-            postItem(`${path}/revoke`, "Revoke invite", "", true)
+              : [menuPost(`${path}/resend`, "Resend invite"), '<hr class="menu-rule">']),
+            menuPost(`${path}/revoke`, "Revoke invite", "", true)
           ]
         )}</div></td>`
       : "";
@@ -284,7 +268,15 @@ const render = Effect.fn("CompanyPage.render")(function* (
         `<a href="${escapeAttribute(filterHref(tab, query))}"${tab === show ? ' aria-current="page"' : ""}>${showLabels[tab]} <span class="count">${counts[tab]}</span></a>`
     )
     .join("");
-  const search = `<form class="company-search" method="get" action="/company" role="search">${show === "all" ? "" : `<input type="hidden" name="show" value="${show}">`}<div class="field field-group"><label class="field-prefix" for="company-search">${searchIcon}</label><input id="company-search" type="search" name="q" value="${escapeAttribute(query)}" maxlength="200" placeholder="Search name or email" aria-label="Search people"></div></form>`;
+  const search = searchField({
+    action: "/company",
+    id: "company-search",
+    query,
+    placeholder: "Search name or email",
+    label: "Search people",
+    keep: show === "all" ? {} : { show },
+    className: "company-search"
+  });
   const matches = query
     ? `<p class="supporting-text company-matches">${plural(entries.length, "match", "matches")} for “${escapeHtml(query)}” · <a href="${escapeAttribute(filterHref(show, ""))}">Clear search</a></p>`
     : "";

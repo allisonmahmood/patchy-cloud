@@ -15,6 +15,7 @@ import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
+import { listStyles, renderAllPatches, shows } from "./allPatches.js";
 import { firstPatch, renderFirstPatchNote, renderGuide, renderGuideRow } from "./guide.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
@@ -576,6 +577,38 @@ const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRespon
     })
   );
 
+/** All patches at `/patches`: every patch the viewer can open, in `?show=` tabs, searched by `?q=`. */
+const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
+  const { viewer, session, access } = yield* context;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const params = new URL(request.url, session.publicBaseUrl).searchParams;
+  const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
+  const query = (params.get("q") ?? "").trim().slice(0, 200);
+  const patches = yield* Patches.Patches;
+  const rows = yield* patches.read({ ...access, state: "all" });
+  const opens = yield* patches.opens(viewer.user.id);
+  const members = yield* (yield* Users.Users).list(viewer.company.id);
+  return pageResponse(
+    {
+      title: "All patches",
+      heading: "",
+      body: renderAllPatches({
+        rows,
+        viewer,
+        show,
+        query,
+        now: yield* Clock.currentTimeMillis,
+        publicBaseUrl: session.publicBaseUrl,
+        opens: new Map(opens.map((open) => [open.patchId, open])),
+        names: new Map(members.map((member) => [member.id, member.name]))
+      }),
+      styles: styles + listStyles,
+      app: { viewer, section: "patches" }
+    },
+    session
+  );
+});
+
 /** The server owns GET / and its signed-out door alongside the catch-all. */
 export const index = render().pipe(pageErrors);
 
@@ -660,16 +693,19 @@ export const layer: Layer.Layer<
         errors(route.method === "POST" ? RequireSession.sameOrigin(handler) : handler)
       );
     }
+    // The wildcard also answers `/patches` itself, which is All patches.
     yield* router.add(
       "GET",
       "/patches/*",
       errors(
         RequireSession.withViewer(
-          Effect.flatMap(HttpRouter.params, (params) =>
-            (params["*"]?.split("/", 1)[0] ?? "").length > maxNameLength
+          Effect.flatMap(HttpRouter.params, (params) => {
+            const rest = params["*"] ?? "";
+            if (rest === "") return allPatchesPage();
+            return rest.split("/", 1)[0]!.length > maxNameLength
               ? overlongName
-              : errorPage(404, "Patch not found", "The requested patch is unavailable.")
-          ).pipe(pageErrors)
+              : errorPage(404, "Patch not found", "The requested patch is unavailable.");
+          }).pipe(pageErrors)
         )
       )
     );
