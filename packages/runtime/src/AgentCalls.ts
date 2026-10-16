@@ -100,6 +100,11 @@ export class AgentCalls extends Context.Service<
       readonly patchId: string;
       /** The handler's full name, `agent.<export>`. */
       readonly handler: string;
+      /**
+       * What the caller asked for: a read runs only a query. Checked against the version
+       * actually invoked, so a publish between listing and calling can't turn a read into a write.
+       */
+      readonly expect: "read" | "change";
       readonly args: unknown;
     }) => Effect.Effect<ServerCallReply, AgentCallError>;
   }
@@ -143,7 +148,8 @@ export const make = Effect.gen(function* () {
     if (version.manifest.tier !== 2)
       return yield* new TierTwoRequired({ tier: version.manifest.tier });
     const tool = agentTools(version.manifest).find(({ handler }) => handler === input.handler);
-    if (tool === undefined) return yield* new UnknownTool();
+    if (tool === undefined || (tool.descriptor.kind === "query") !== (input.expect === "read"))
+      return yield* new UnknownTool();
     // Its own budget beside the person's pages, so a busy agent never stalls their open tabs.
     yield* runtime.admitCall({
       key: `agent:${input.identity.user.id}:${version.patchId}`,

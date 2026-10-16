@@ -29,8 +29,11 @@ import { AgentAuth } from "@patchy/auth";
 import { Patches, PatchesConfig } from "@patchy/patches";
 import { AgentCalls, Runtime } from "@patchy/runtime";
 
-/** Newest first; an unknown requested version is answered with the newest stateful one. */
-const SUPPORTED_VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"] as const;
+/**
+ * Newest first; an unknown requested version is answered with the newest. The stateless
+ * 2026-07-28 revision needs its own result envelopes and isn't offered yet.
+ */
+const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
 const DEFAULT_VERSION = "2025-11-25";
 /** A tool's arguments are capped at 1 MiB by the runtime; this leaves room for the envelope. */
 const MAX_BODY_BYTES = 1024 * 1024 + 64 * 1024;
@@ -198,14 +201,15 @@ const kindOf = (descriptor: HandlerDescriptor) => (descriptor.kind === "query" ?
  * A patch reference as people paste it: a name, an id, or an address. An address names its
  * company too; another company's address resolves to nothing rather than a namesake here.
  */
-const patchRef = (raw: string, companyHandle: string): string | undefined => {
+const patchRef = (raw: string, companyHandle: string, origin: string): string | undefined => {
   const path = raw
     .trim()
     .replace(/[?#].*$/, "")
     .replace(/\/+$/, "");
-  const segments = (/^[a-z]+:\/\//i.test(path) ? new URL(path).pathname : path)
-    .split("/")
-    .filter((segment) => segment.length > 0);
+  const url = /^[a-z]+:\/\//i.test(path) ? URL.parse(path) : null;
+  // Another instance's address is never this one's patch, whatever its name.
+  if (url !== null && url.origin !== origin) return undefined;
+  const segments = (url?.pathname ?? path).split("/").filter((segment) => segment.length > 0);
   const [company, name] = segments.length >= 2 ? segments.slice(-2) : [undefined, segments[0]];
   return company === undefined || company === companyHandle ? name : undefined;
 };
@@ -329,7 +333,7 @@ export const layer = HttpRouter.use((router) =>
       identity: AgentAuth.AgentPrincipal["identity"],
       raw: string
     ) {
-      const ref = patchRef(raw, identity.company.handle);
+      const ref = patchRef(raw, identity.company.handle, ownOrigin);
       if (ref === undefined)
         return refusal(
           `"${raw}" isn't one of ${identity.company.name}'s patches. Use find_patches to see what exists.`
@@ -414,6 +418,7 @@ export const layer = HttpRouter.use((router) =>
           agent: { name: identity.machine.name },
           patchId: row.patch.id,
           handler: tool.handler,
+          expect: expected,
           args: call.args ?? {},
           reauthorize: agentAuth.authenticate(authorization).pipe(
             Effect.map(({ identity }) => toRuntimeMe(identity)),
@@ -551,19 +556,10 @@ export const layer = HttpRouter.use((router) =>
             instructions: instructions(identity)
           });
         }
-        case "server/discover":
-          return rpcResult(id, {
-            supportedVersions: SUPPORTED_VERSIONS,
-            capabilities,
-            serverInfo,
-            instructions: instructions(identity),
-            ttlMs: 0,
-            cacheScope: "private"
-          });
         case "ping":
           return rpcResult(id, {});
         case "tools/list":
-          return rpcResult(id, { tools: TOOLS, ttlMs: 0, cacheScope: "private" });
+          return rpcResult(id, { tools: TOOLS });
         case "tools/call": {
           const result = yield* callTool(access, authorization, params);
           return Option.match(result, {

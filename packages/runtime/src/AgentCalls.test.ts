@@ -143,6 +143,7 @@ it.layer(services)("AgentCalls", (it) => {
         agent,
         patchId: version.patchId,
         handler: "agent.addNote",
+        expect: "change",
         args: { title: "From the agent" }
       });
       assert.deepStrictEqual(reply, { ok: true, value: { saved: true } });
@@ -159,10 +160,15 @@ it.layer(services)("AgentCalls", (it) => {
     })
   );
 
-  it.effect("refuses undescribed and non-agent handlers alike, before any code runs", () =>
+  it.effect("refuses undescribed and non-agent handlers, and a write asked for as a read", () =>
     Effect.gen(function* () {
       const { invokes, agents } = yield* doors;
-      for (const handler of ["agent.draft", "notes.add", "agent.missing"]) {
+      for (const [handler, expect] of [
+        ["agent.draft", "change"],
+        ["notes.add", "change"],
+        ["agent.missing", "change"],
+        ["agent.addNote", "read"]
+      ] as const) {
         const error = yield* agents
           .call({
             identity: viewer,
@@ -170,6 +176,7 @@ it.layer(services)("AgentCalls", (it) => {
             agent,
             patchId: version.patchId,
             handler,
+            expect,
             args: {}
           })
           .pipe(Effect.flip);
