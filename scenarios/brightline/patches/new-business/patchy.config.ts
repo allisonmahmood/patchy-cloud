@@ -28,13 +28,15 @@ export default defineConfig({
     ),
     activity: table(
       "One event on a deal's timeline; deal links the deal. kind is created, moved, assigned, edited, note or imported; " +
-        "actor is the member who acted; fromStage/toStage are set on moves; assignee is the new owner on assignments " +
+        "actor is the member who acted; agent names the agent client (such as Claude Code) that acted for them through " +
+        "Patchy's MCP, null when they acted in the page; fromStage/toStage are set on moves; assignee is the new owner on assignments " +
         "(null when unassigned); note holds note text, an edit summary, or the lost reason on a move to lost; " +
         "at is when it happened.",
       {
         deal: t.ref("deals"),
         kind: t.text(),
         actor: t.member(),
+        agent: t.text().optional(),
         fromStage: t.text().optional(),
         toStage: t.text().optional(),
         assignee: t.member().optional(),

@@ -5,8 +5,9 @@
  * never loads the repo's CLAUDE.md: `$XDG_DATA_HOME/patchy-dev/<worktree>/`
  * holds the CLI installed from the instance's release, that CLI's own state
  * (logged in as the scenario's publisher), the agent workspace with the
- * scenario's patch repos, browser profiles per person, the `agent` launcher
- * and `environment.json`, the manifest the card is printed from.
+ * scenario's patch repos, browser profiles per person, the `agent` launcher,
+ * the worker launchers and their empty `workers` folder, and
+ * `environment.json`, the manifest the card is printed from.
  */
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -132,6 +133,11 @@ export const layoutOf = (dir: string, path: Path.Path) => ({
   workspace: path.join(dir, "workspace"),
   browsers: path.join(dir, "browsers"),
   agent: path.join(dir, "agent"),
+  /** Where worker agents start: empty but for Grok's project config. */
+  workers: path.join(dir, "workers"),
+  worker: path.join(dir, "worker"),
+  workerCodex: path.join(dir, "worker-codex"),
+  workerGrok: path.join(dir, "worker-grok"),
   manifest: path.join(dir, "environment.json")
 });
 type Layout = ReturnType<typeof layoutOf>;
@@ -308,10 +314,36 @@ const ALLOWED_TOOLS = [
   "Bash(wc:*)"
 ];
 
-/** The settings the launcher passes to Claude Code with `--settings`. */
+/** The settings the launchers pass to Claude Code with `--settings`. */
 const encodeAgentSettings = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ claudeMdExcludes: Schema.Array(Schema.String) }))
 );
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
+/**
+ * Settings that keep Claude Code from loading instruction files above the
+ * environment. Claude Code walks up from the resolved working directory, past
+ * any symlink, loading each folder's CLAUDE.md, CLAUDE.local.md and AGENTS.md,
+ * those in its .claude, and its .claude/rules. Its patterns take no escapes, so
+ * a glob character in a folder's name becomes `?`, matching any one character.
+ */
+const instructionExcludes = Effect.fn("instructionExcludes")(function* (layout: Layout) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const above: Array<string> = [];
+  for (let dir = yield* fs.realPath(layout.dir); !above.includes(dir); dir = path.dirname(dir))
+    above.push(dir);
+  return encodeAgentSettings({
+    claudeMdExcludes: above
+      .map((dir) => dir.replace(/[*?[\]{}()\\]/g, "?"))
+      .flatMap((dir) => [
+        path.join(dir, "*.md"),
+        path.join(dir, ".claude", "*.md"),
+        path.join(dir, ".claude", "rules", "**")
+      ])
+  });
+});
 
 /**
  * `agent`: Claude Code in the workspace as a Patchy user who has already set
@@ -328,24 +360,7 @@ const encodeAgentSettings = Schema.encodeSync(
  */
 export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layout) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-  // Claude Code walks up from the resolved working directory, past any symlink.
-  const above: Array<string> = [];
-  for (let dir = yield* fs.realPath(layout.dir); !above.includes(dir); dir = path.dirname(dir))
-    above.push(dir);
-  // Each folder's CLAUDE.md, CLAUDE.local.md and AGENTS.md, those in its
-  // .claude, and its .claude/rules. Claude Code's patterns take no escapes, so
-  // a glob character in a folder's name becomes `?`, matching any one character.
-  const settings = encodeAgentSettings({
-    claudeMdExcludes: above
-      .map((dir) => dir.replace(/[*?[\]{}()\\]/g, "?"))
-      .flatMap((dir) => [
-        path.join(dir, "*.md"),
-        path.join(dir, ".claude", "*.md"),
-        path.join(dir, ".claude", "rules", "**")
-      ])
-  });
+  const settings = yield* instructionExcludes(layout);
   yield* fs.writeFileString(
     layout.agent,
     [
@@ -353,12 +368,111 @@ export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layou
       "# Claude Code in this Patchy environment's workspace, as a Patchy user who has set up.",
       "# Its commands run as you: never give it the portal's setup line or `patchy setup`.",
       "unset PATCHY_API_URL PATCHY_API_TOKEN",
-      `export PATH=${quote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
-      `export PATCHY_STATE_DIR=${quote(layout.state)}`,
-      `cd ${quote(layout.workspace)} || exit 1`,
-      `exec claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir /tmp --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
+      `export PATH=${shellQuote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
+      `export PATCHY_STATE_DIR=${shellQuote(layout.state)}`,
+      `cd ${shellQuote(layout.workspace)} || exit 1`,
+      `exec claude "$@" --setting-sources project --settings ${shellQuote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir /tmp --allowedTools ${ALLOWED_TOOLS.map(shellQuote).join(" ")}`,
       ""
     ].join("\n"),
+    { mode: 0o755 }
+  );
+});
+
+/** Patchy's MCP tools that only read; workers run them unasked and ask before `change_patch`. */
+const READ_TOOLS = ["find_patches", "open_patch", "read_patch"] as const;
+
+const encodeMcpConfig = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      mcpServers: Schema.Struct({
+        patchy: Schema.Struct({ type: Schema.Literal("http"), url: Schema.String })
+      })
+    })
+  )
+);
+
+/**
+ * The worker launchers: the agents people bring to Patchy, using the
+ * environment's patches only through its MCP endpoint, never the CLI or a
+ * skill. Each starts in the empty `workers` folder with the shell's PATCHY_*
+ * cleared and the environment's bin off PATH; arguments pass through.
+ *
+ * `worker` is Claude Code with Patchy's MCP as its only server and no
+ * personal settings, skills or instruction files. Its first use runs Claude
+ * Code's own OAuth flow, where the person signs in on the consent page as
+ * anyone in the environment. Reads run unasked; it asks before every change.
+ *
+ * `worker-codex [person]` and `worker-grok [person]` stand in for clients
+ * that can't do OAuth: each launch mints a fresh `use` token named Codex or
+ * Grok for the person (the publisher unless named) with `pnpm dev mcp-token`,
+ * replacing that person's earlier one, and passes it in PATCHY_MCP_TOKEN.
+ * Codex gets the server as `-c` overrides; Grok reads `workers/.grok/config.toml`,
+ * with folder trust off for that process so nothing is recorded in `~/.grok`.
+ * Neither writes the developer's own config, but both still load their
+ * personal settings and instructions, which no flag turns off.
+ */
+export const writeWorkerLaunchers = Effect.fn("writeWorkerLaunchers")(function* (
+  layout: Layout,
+  environment: { readonly apiUrl: string; readonly worktree: string; readonly publisher: string }
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const url = `${environment.apiUrl}/mcp`;
+  yield* fs.makeDirectory(path.join(layout.workers, ".grok"), { recursive: true });
+  yield* fs.writeFileString(
+    path.join(layout.workers, ".grok", "config.toml"),
+    [
+      "# Patchy's MCP for worker-grok, which sets PATCHY_MCP_TOKEN on each launch.",
+      "[mcp_servers.patchy]",
+      `url = "${url}"`,
+      "enabled = true",
+      'headers = { Authorization = "Bearer ${PATCHY_MCP_TOKEN}" }',
+      ""
+    ].join("\n")
+  );
+  const script = (client: string, lines: ReadonlyArray<string>) =>
+    [
+      "#!/usr/bin/env bash",
+      `# ${client} as someone's own agent, using this environment's patches only through Patchy's MCP.`,
+      "unset PATCHY_API_URL PATCHY_API_TOKEN PATCHY_STATE_DIR",
+      ...lines,
+      ""
+    ].join("\n");
+  const minted = (client: string) => [
+    `# [person] [arguments…]: connects as the person, ${environment.publisher} unless named, with a fresh token.`,
+    `person=\${1:-${environment.publisher}}`,
+    "if [ $# -gt 0 ]; then shift; fi",
+    `PATCHY_MCP_TOKEN=$(cd ${shellQuote(environment.worktree)} && pnpm --silent dev mcp-token "$person" --client ${client}) || exit 1`,
+    "export PATCHY_MCP_TOKEN"
+  ];
+  const enter = `cd ${shellQuote(layout.workers)} || exit 1`;
+  const mcpConfig = encodeMcpConfig({ mcpServers: { patchy: { type: "http", url } } });
+  yield* fs.writeFileString(
+    layout.worker,
+    script("Claude Code", [
+      "# Its first use asks you to connect: sign in on the consent page as anyone here.",
+      enter,
+      `exec claude "$@" --setting-sources project --settings ${shellQuote(yield* instructionExcludes(layout))} --mcp-config ${shellQuote(mcpConfig)} --strict-mcp-config --allowedTools ${READ_TOOLS.map((tool) => shellQuote(`mcp__patchy__${tool}`)).join(" ")}`
+    ]),
+    { mode: 0o755 }
+  );
+  yield* fs.writeFileString(
+    layout.workerCodex,
+    script("Codex", [
+      ...minted("Codex"),
+      enter,
+      `exec codex -c ${shellQuote(`mcp_servers.patchy.url="${url}"`)} -c ${shellQuote('mcp_servers.patchy.bearer_token_env_var="PATCHY_MCP_TOKEN"')} "$@"`
+    ]),
+    { mode: 0o755 }
+  );
+  yield* fs.writeFileString(
+    layout.workerGrok,
+    script("Grok", [
+      ...minted("Grok"),
+      "export GROK_FOLDER_TRUST=0",
+      enter,
+      `exec grok ${READ_TOOLS.map((tool) => `--allow ${shellQuote(`MCPTool(patchy__${tool})`)}`).join(" ")} "$@"`
+    ]),
     { mode: 0o755 }
   );
 });
@@ -542,6 +656,11 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   const existing = yield* readManifest(layout);
   if (Option.isSome(existing) && existing.value.complete) {
     yield* writeLauncher(layout);
+    yield* writeWorkerLaunchers(layout, {
+      apiUrl: plan.apiUrl,
+      worktree: plan.worktree,
+      publisher: existing.value.publisher
+    });
     if (existing.value.release === release) return existing.value;
     yield* Console.error("The instance's release changed; updating the CLI and workspace repos.");
     yield* installCli(layout, release);
@@ -577,6 +696,11 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   );
   yield* writeWorkspace(layout);
   yield* writeLauncher(layout);
+  yield* writeWorkerLaunchers(layout, {
+    apiUrl: plan.apiUrl,
+    worktree: plan.worktree,
+    publisher: scenario.publisher
+  });
   // Repos published before an interruption are bound to the release they were
   // built on; move them to this one before the manifest records it.
   if (started.release !== release)
@@ -606,8 +730,16 @@ export const printCard = (manifest: Manifest, layout: Layout) => {
       ...people,
       ...(patches.length === 0 ? [] : ["", "  Patches", ...patches]),
       "",
-      `  Agent        ${layout.agent}`,
+      `  Agent        ${layout.agent}  (builds patches: try "make a patch where agents can …")`,
       `  Workspace    ${layout.workspace}`,
+      "",
+      `  MCP          ${manifest.apiUrl}/mcp  (an admin turns on agent access at /company first)`,
+      "  Workers      people's own agents, using patches only through the MCP",
+      `    ${layout.worker}  Claude Code, connecting through OAuth`,
+      `    ${layout.workerCodex} [person]  Codex, as ${manifest.publisher} unless you name someone`,
+      `    ${layout.workerGrok} [person]  Grok, the same way`,
+      "    pnpm dev mcp-token <person> [--client <name>]  a token for any other client",
+      "",
       "  End          pnpm dev down"
     ].join("\n")
   );

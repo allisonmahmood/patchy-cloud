@@ -66,6 +66,7 @@ export const refusals = {
   admins_only: "Only admins can mark requests as paid.",
   not_submitted: "This request has already been decided.",
   not_approved: "Only approved requests can be marked as paid.",
+  draft_missing: "That draft was already submitted or discarded.",
   not_empty: "Sample data can only be loaded into an empty tool."
 } as const;
 export type Refusal = keyof typeof refusals;

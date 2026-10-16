@@ -10,6 +10,7 @@ import {
   refusals,
   type Category
 } from "../helpers/spend.js";
+import type { Draft } from "./data.js";
 import { amountInput, fileSize, messageOf, parseAmount } from "./format.js";
 import { Banner, Icon } from "./ui.js";
 
@@ -19,20 +20,27 @@ interface Kept {
   readonly file: File;
 }
 
-/** The "New request" dialog. Submits through the submit action, which applies every rule again. */
+/**
+ * The "New request" dialog. Submits through the submit action, which applies every rule again.
+ * Given one of the viewer's agent drafts, it starts from the draft and submitting consumes it.
+ */
 export function NewRequest({
   projects,
+  draft,
   onClose,
   onCreated
 }: {
   projects: readonly string[];
+  draft: Draft | null;
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [project, setProject] = useState("");
-  const [category, setCategory] = useState<Category | null>(null);
-  const [amount, setAmount] = useState("");
+  const [title, setTitle] = useState(draft?.title ?? "");
+  const [project, setProject] = useState(draft?.project ?? "");
+  const [category, setCategory] = useState<Category | null>(
+    categories.find((option) => option === draft?.category) ?? null
+  );
+  const [amount, setAmount] = useState(draft === null ? "" : amountInput(draft.amountCents));
   const [file, setFile] = useState<File | null>(null);
   const [kept, setKept] = useState<Kept | null>(null);
   const [error, setError] = useState("");
@@ -82,7 +90,13 @@ export function NewRequest({
     }
     setSaving(true);
     setError("");
-    const fields = { title, project, category, amountCents: Number.isFinite(cents) ? cents : 0 };
+    const fields = {
+      title,
+      project,
+      category,
+      amountCents: Number.isFinite(cents) ? cents : 0,
+      ...(draft === null ? {} : { draft: draft.id })
+    };
     let upload: Upload | undefined;
     try {
       if (kept !== null) {
@@ -127,9 +141,13 @@ export function NewRequest({
         <header class="dialog-head">
           <div>
             <h2 id="new-request-title" class="dialog-title">
-              New spend request
+              {draft === null ? "New spend request" : "Finish your agent's draft"}
             </h2>
-            <p class="muted">It goes to the team for approval. You'll see every step here.</p>
+            <p class="muted">
+              {draft === null
+                ? "It goes to the team for approval. You'll see every step here."
+                : `Drafted by ${draft.agent}. Check it and submit; it then goes to the team for approval.`}
+            </p>
           </div>
           <button
             type="button"

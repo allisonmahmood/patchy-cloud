@@ -1301,3 +1301,26 @@ button:disabled {
     align-items: flex-start;
   }
 }
+
+/* Drafts from the viewer's agent */
+
+.drafts {
+  margin-bottom: 20px;
+}
+
+.drafts .section-title {
+  margin-bottom: 4px;
+}
+
+.drafts .muted {
+  font-size: 13px;
+}
+
+.table-row.draft-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.draft-actions {
+  display: flex;
+  gap: 8px;
+}
