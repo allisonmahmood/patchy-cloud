@@ -396,7 +396,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         yield* publish(workspace.owner, patch.name, { intent: "update", patchId: patch.patchId });
       }
       for (const person of [workspace.member, workspace.owner, workspace.admin]) {
-        const response = yield* request(`${cardPath(patch.name)}?all=1`, person);
+        const response = yield* request(`${cardPath(patch.name)}`, person);
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["cache-control"], "private, no-store");
         const html = yield* response.text;
@@ -412,31 +412,41 @@ it.layer(layer)("portal pages on a socket", (it) => {
           )
         );
         assert.include(html, `${PUBLIC_BASE_URL}/${workspace.handle}/${patch.name}`);
-        const controls = forms(html).filter((path) => path.startsWith(cardPath(patch.name)));
+        // Overview holds no forms; the tabs say where they are.
+        assert.deepStrictEqual(
+          forms(html).filter((path) => path.startsWith(cardPath(patch.name))),
+          []
+        );
+        const tabs = links(html)
+          .filter((link) => link.href.startsWith(cardPath(patch.name)))
+          .map((link) => link.text);
+        const settings = yield* request(`${cardPath(patch.name)}/settings`, person);
         if (person === workspace.member) {
-          assert.deepStrictEqual(controls, []);
-          assert.notInclude(text(html), "Manage");
-          assert.notInclude(html, `${cardPath(patch.name)}/reassign`);
-        } else {
-          for (const action of ["description", "scope", "rollback"])
-            assert.include(controls, `${cardPath(patch.name)}/${action}?all=1`);
-          for (const action of ["retire", "delete", "versions"])
-            assert.isTrue(
-              links(html).some((link) => link.href === `${cardPath(patch.name)}/${action}?all=1`)
-            );
-          assert.include(text(html), "All 5 versions");
-          assert.deepStrictEqual(
-            [...html.matchAll(/name="versionNumber"\s+value="(\d+)"/g)].map((match) => match[1]),
-            ["4", "3", "2"]
+          assert.deepStrictEqual(tabs, ["Overview", "Versions 5"]);
+          assert.strictEqual(settings.status, 403);
+          assert.include(
+            text(yield* settings.text),
+            "Only the owner or an admin can change this patch's settings."
           );
-          assert.strictEqual(hidden(html, "expectedScope"), "company");
-          assert.isDefined(hidden(html, "expectedDescriptionUpdatedAt"));
-          assert.isDefined(hidden(html, "expectedCurrentVersionId"));
+        } else {
+          assert.deepStrictEqual(tabs, ["Overview", "Log", "Versions 5", "Settings"]);
+          assert.strictEqual(settings.status, 200);
+          const manage = yield* settings.text;
+          const controls = forms(manage).filter((path) => path.startsWith(cardPath(patch.name)));
+          for (const action of ["description", "scope"])
+            assert.include(controls, `${cardPath(patch.name)}/${action}`);
+          for (const action of ["retire", "delete"])
+            assert.isTrue(
+              links(manage).some((link) => link.href === `${cardPath(patch.name)}/${action}`)
+            );
+          assert.strictEqual(hidden(manage, "expectedScope"), "company");
+          assert.isDefined(hidden(manage, "expectedDescriptionUpdatedAt"));
+          assert.strictEqual(
+            links(manage).some((link) => link.href === `${cardPath(patch.name)}/reassign`),
+            person === workspace.admin
+          );
         }
-        if (person === workspace.admin) {
-          assert.include(html, `${cardPath(patch.name)}/reassign?all=1`);
-        }
-        const versions = yield* request(`${cardPath(patch.name)}/versions?all=1`, person);
+        const versions = yield* request(`${cardPath(patch.name)}/versions`, person);
         assert.strictEqual(versions.status, 200);
         const history = yield* versions.text;
         for (const version of [5, 4, 3, 2, 1])
@@ -444,7 +454,14 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.include(text(history), "Priya");
         if (person === workspace.member)
           assert.isFalse(forms(history).some((path) => path.includes("/rollback")));
-        else assert.include(forms(history), `${cardPath(patch.name)}/rollback?all=1`);
+        else {
+          assert.include(forms(history), `${cardPath(patch.name)}/rollback`);
+          assert.deepStrictEqual(
+            [...history.matchAll(/name="versionNumber"\s+value="(\d+)"/g)].map((match) => match[1]),
+            ["4", "3", "2", "1"]
+          );
+          assert.isDefined(hidden(history, "expectedCurrentVersionId"));
+        }
       }
     })
   );
@@ -480,14 +497,22 @@ it.layer(layer)("portal pages on a socket", (it) => {
               ["State"]
             );
           } else {
-            assert.include(controls, `${cardPath(patch.name)}/restore`);
+            // Restore leads the card; the rest of managing is under Settings.
+            assert.deepStrictEqual(controls, [`${cardPath(patch.name)}/restore`]);
             assert.strictEqual(hidden(html, "expectedState"), state);
+            const manage = yield* (yield* request(`${cardPath(patch.name)}/settings`, person)).text;
+            const settings = forms(manage).filter((path) => path.startsWith(cardPath(patch.name)));
+            assert.notInclude(manage, `${cardPath(patch.name)}/scope`);
+            assert.notInclude(manage, `${cardPath(patch.name)}/retire`);
             if (state === "retired") {
-              assert.include(controls, `${cardPath(patch.name)}/description`);
-              assert.include(html, `${cardPath(patch.name)}/delete`);
-            } else assert.notInclude(html, `${cardPath(patch.name)}/description`);
+              assert.include(settings, `${cardPath(patch.name)}/description`);
+              assert.include(manage, `${cardPath(patch.name)}/delete`);
+            } else assert.notInclude(manage, `${cardPath(patch.name)}/description`);
+            assert.strictEqual(
+              manage.includes(`${cardPath(patch.name)}/reassign`),
+              person === workspace.admin
+            );
           }
-          if (person === workspace.admin) assert.include(html, `${cardPath(patch.name)}/reassign`);
         }
       }
     })
@@ -825,9 +850,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const patch = yield* publish(workspace.owner, name, { title });
         const html = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
         assert.strictEqual(heading(html), name);
-        const secondary = text(html.split(/<\/h1>/)[1] ?? "")
-          .split("Find the right person.")[0]!
-          .trim();
+        const secondary = html.match(/<\/h1><p class="supporting-text">([^<]*)<\/p>/)?.[1] ?? "";
         assert.strictEqual(secondary, shown ? title : "");
       }
       const description = "Find a desk. Keep the second sentence on the card.";
@@ -851,13 +874,13 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const before = yield* readPatch(workspace.owner, patch.patchId);
       yield* TestClock.adjust(1_000);
       yield* (yield* Patches.Patches).rollback(patch.patchId, actor(workspace.admin), 1);
-      const response = yield* post(`${cardPath(patch.name)}/description?all=1`, workspace.owner, {
+      const response = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
         expectedPatchId: patch.patchId,
         description: "  Find\n a desk <quickly>  ",
         expectedDescriptionUpdatedAt: before.patch.descriptionUpdatedAt ?? ""
       });
       assert.strictEqual(response.status, 303);
-      assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+      assert.strictEqual(response.headers.location, `${cardPath(patch.name)}/settings`);
       const saved = yield* readPatch(workspace.owner, patch.patchId);
       assert.strictEqual(saved.patch.description, "Find a desk <quickly>");
       assert.strictEqual(saved.currentVersion, 1);
@@ -872,13 +895,13 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const workspace = yield* company();
       const patch = yield* publish(workspace.owner, "scope-save");
       const before = yield* readPatch(workspace.owner, patch.patchId);
-      const response = yield* post(`${cardPath(patch.name)}/scope?all=1`, workspace.admin, {
+      const response = yield* post(`${cardPath(patch.name)}/scope`, workspace.admin, {
         expectedPatchId: patch.patchId,
         scope: "public",
         expectedScope: "company"
       });
       assert.strictEqual(response.status, 303);
-      assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+      assert.strictEqual(response.headers.location, `${cardPath(patch.name)}/settings`);
       const saved = yield* readPatch(workspace.owner, patch.patchId);
       assert.strictEqual(saved.patch.scope, "public");
       assert.deepStrictEqual(reported(patch.patchId), [
@@ -954,13 +977,13 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const before = yield* readPatch(workspace.owner, patch.patchId);
         const service = yield* Patches.Patches;
         const inventory = yield* service.inventory(patch.patchId, workspace.owner.id);
-        const response = yield* post(`${cardPath(patch.name)}/rollback?all=1`, workspace.owner, {
+        const response = yield* post(`${cardPath(patch.name)}/rollback`, workspace.owner, {
           expectedPatchId: patch.patchId,
           versionNumber: "1",
           expectedCurrentVersionId: before.patch.currentVersionId ?? ""
         });
         assert.strictEqual(response.status, 303);
-        assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+        assert.strictEqual(response.headers.location, `${cardPath(patch.name)}/versions`);
         const saved = yield* readPatch(workspace.owner, patch.patchId);
         assert.strictEqual(saved.currentVersion, 1);
         assert.deepStrictEqual(reported(patch.patchId), [
@@ -995,7 +1018,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           const workspace = yield* company();
           for (const person of [workspace.owner, workspace.admin]) {
             const patch = yield* publish(workspace.owner, `${action}-${person.role}`);
-            const path = `${cardPath(patch.name)}/${action}?all=1`;
+            const path = `${cardPath(patch.name)}/${action}`;
             const before = yield* readPatch(workspace.owner, patch.patchId);
             const page = yield* request(path, person);
             assert.strictEqual(page.status, 200);
@@ -1009,7 +1032,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
             assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
             assert.include(
               links(html).map((link) => link.href),
-              `${cardPath(patch.name)}?all=1`
+              `${cardPath(patch.name)}`
             );
             assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
             const response = yield* post(path, person, {
@@ -1018,7 +1041,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
               ...(action === "delete" ? { confirm: patch.name } : {})
             });
             assert.strictEqual(response.status, 303);
-            assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+            assert.strictEqual(response.headers.location, `${cardPath(patch.name)}`);
             const saved = yield* readPatch(workspace.owner, patch.patchId);
             assert.strictEqual(saved.patch.state, action === "retire" ? "retired" : "deleted");
             assert.deepStrictEqual(reported(patch.patchId), [
@@ -1039,8 +1062,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
               person.id
             );
             assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
-            const card = yield* (yield* request(`${cardPath(patch.name)}?all=1`, workspace.member))
-              .text;
+            const card = yield* (yield* request(`${cardPath(patch.name)}`, workspace.member)).text;
             assert.include(
               text(card),
               `${action === "retire" ? "Retired" : "Deleted"} by ${person.name}`
@@ -1062,7 +1084,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
               source.patchId,
               kind
             );
-            const path = `${cardPath(source.name)}/${action}?all=1`;
+            const path = `${cardPath(source.name)}/${action}`;
             const page = yield* request(path, workspace.owner);
             assert.strictEqual(page.status, 200);
             const html = yield* page.text;
@@ -1098,7 +1120,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
             }
             const accepted = yield* post(path, workspace.admin, { ...fields, ack: "1" });
             assert.strictEqual(accepted.status, 303);
-            assert.strictEqual(accepted.headers.location, `${cardPath(source.name)}?all=1`);
+            assert.strictEqual(accepted.headers.location, `${cardPath(source.name)}`);
             const saved = yield* readPatch(workspace.owner, source.patchId);
             assert.strictEqual(saved.patch.state, action === "retire" ? "retired" : "deleted");
             assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
@@ -1115,7 +1137,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const workspace = yield* company();
         const service = yield* Patches.Patches;
         const patch = yield* publish(workspace.owner, `stale-${action}-confirmation`);
-        const path = `${cardPath(patch.name)}/${action}?all=1`;
+        const path = `${cardPath(patch.name)}/${action}`;
         const page = yield* request(path, workspace.owner);
         assert.strictEqual(page.status, 200);
         const fields = {
@@ -1168,8 +1190,17 @@ it.layer(layer)("portal pages on a socket", (it) => {
           });
         if (action === "restore") yield* service.retire(original.patchId, actor(workspace.owner));
         const path = `${cardPath(original.name)}/${action}`;
-        const onCard = action !== "retire" && action !== "delete" && action !== "reassign";
-        const page = yield* (yield* request(onCard ? cardPath(original.name) : path, person)).text;
+        // Each form's page: its card tab, or its confirmation page.
+        const formPage = {
+          description: `${cardPath(original.name)}/settings`,
+          scope: `${cardPath(original.name)}/settings`,
+          rollback: `${cardPath(original.name)}/versions`,
+          restore: cardPath(original.name),
+          retire: path,
+          delete: path,
+          reassign: path
+        }[action];
+        const page = yield* (yield* request(formPage, person)).text;
         const entered: Record<typeof action, FormFields> = {
           description: { description: "Overwritten" },
           scope: { scope: "public" },
@@ -1203,7 +1234,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
           const html = yield* response.text;
           assert.include(text(html), notice);
           assert.strictEqual(heading(html), original.name);
-          assert.notInclude(html, 'class="confirmation-form"');
+          // No form at all, not even the replacement's Restore: any would act on another patch.
+          assert.deepStrictEqual(
+            forms(html).filter((path) => path.startsWith("/patches/")),
+            []
+          );
           assert.notInclude(html, original.patchId);
           assert.deepStrictEqual(
             [
@@ -1222,7 +1257,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const workspace = yield* company();
       const original = yield* publish(workspace.owner, "reused-by-alex");
       const path = `${cardPath(original.name)}/scope`;
-      const page = yield* (yield* request(cardPath(original.name), workspace.owner)).text;
+      const page = yield* (yield* request(`${cardPath(original.name)}/settings`, workspace.owner))
+        .text;
       const fields = { ...formFields(page, path), scope: "public" };
       yield* publish(workspace.owner, "kept-by-priya", {
         intent: "update",
@@ -1302,7 +1338,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         );
         yield* service.retire(source.patchId, actor(workspace.owner), true);
         yield* TestClock.adjust(7 * DAY);
-        const path = `${cardPath(source.name)}/delete?all=1`;
+        const path = `${cardPath(source.name)}/delete`;
         const page = yield* request(path, workspace.owner);
         assert.strictEqual(page.status, 200);
         const html = yield* page.text;
@@ -1334,7 +1370,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const patch = yield* publish(workspace.owner, "exact-delete-name");
       const before = yield* readPatch(workspace.owner, patch.patchId);
       const submitted = '<script>alert("wrong")</script>';
-      const path = `${cardPath(patch.name)}/delete?all=1`;
+      const path = `${cardPath(patch.name)}/delete`;
       const response = yield* post(path, workspace.owner, {
         expectedPatchId: patch.patchId,
         expectedState: "not-deleted",
@@ -1407,16 +1443,16 @@ it.layer(layer)("portal pages on a socket", (it) => {
           else yield* service.delete(patch.patchId, actor(workspace.owner));
           const before = yield* readPatch(workspace.owner, patch.patchId);
           for (const viewer of [workspace.owner, workspace.admin]) {
-            const page = yield* request(`${cardPath(patch.name)}/restore?all=1`, viewer);
+            const page = yield* request(`${cardPath(patch.name)}/restore`, viewer);
             assert.strictEqual(page.status, 303);
-            assert.strictEqual(page.headers.location, `${cardPath(patch.name)}?all=1`);
+            assert.strictEqual(page.headers.location, `${cardPath(patch.name)}`);
           }
-          const response = yield* post(`${cardPath(patch.name)}/restore?all=1`, person, {
+          const response = yield* post(`${cardPath(patch.name)}/restore`, person, {
             expectedPatchId: patch.patchId,
             expectedState: state
           });
           assert.strictEqual(response.status, 303);
-          assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+          assert.strictEqual(response.headers.location, `${cardPath(patch.name)}`);
           const saved = yield* readPatch(workspace.owner, patch.patchId);
           assert.strictEqual(saved.patch.state, "live");
           // After the setup's own retirement or deletion, the restore reports once.
@@ -1483,7 +1519,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         }
         const before = yield* readPatch(workspace.owner, patch.patchId);
         yield* TestClock.adjust(2 * 60 * 1_000);
-        const response = yield* post(`${cardPath(patch.name)}/${action}?all=1`, workspace.owner, {
+        const response = yield* post(`${cardPath(patch.name)}/${action}`, workspace.owner, {
           expectedPatchId: patch.patchId,
           ...fields
         });
@@ -1491,6 +1527,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const html = yield* response.text;
         assert.strictEqual(heading(html), patch.name);
         assertStale(html, changed);
+        if (action === "description") assert.include(html, ">Overwritten</textarea>");
         const expectedName = {
           description: "expectedDescriptionUpdatedAt",
           scope: "expectedScope",
@@ -1504,7 +1541,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           restore: before.patch.state
         }[action];
         assert.strictEqual(hidden(html, expectedName), expectedValue);
-        assert.include(forms(html), `${cardPath(patch.name)}/${action}?all=1`);
+        assert.include(forms(html), `${cardPath(patch.name)}/${action}`);
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       })
     );
@@ -1519,9 +1556,9 @@ it.layer(layer)("portal pages on a socket", (it) => {
       yield* service.restore(patch.patchId, actor(workspace.admin));
       yield* TestClock.adjust(2 * 60 * 1_000);
       const before = yield* readPatch(workspace.owner, patch.patchId);
-      const redirect = yield* request(`${cardPath(patch.name)}/restore?all=1`, workspace.owner);
+      const redirect = yield* request(`${cardPath(patch.name)}/restore`, workspace.owner);
       assert.strictEqual(redirect.status, 303);
-      assert.strictEqual(redirect.headers.location, `${cardPath(patch.name)}?all=1`);
+      assert.strictEqual(redirect.headers.location, `${cardPath(patch.name)}`);
       const response = yield* post(
         `${cardPath(patch.name)}/restore`,
         workspace.owner,
@@ -1530,6 +1567,25 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(response.status, 409);
       assertStale(yield* response.text, "restored");
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+    })
+  );
+
+  it.effect("keeps a description refused because its patch was deleted, to copy", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "deleted-draft");
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      yield* (yield* Patches.Patches).delete(patch.patchId, actor(workspace.admin));
+      const response = yield* post(`${cardPath(patch.name)}/description`, workspace.owner, {
+        expectedPatchId: patch.patchId,
+        description: "A <draft> worth keeping",
+        expectedDescriptionUpdatedAt: before.patch.descriptionUpdatedAt ?? ""
+      });
+      assert.strictEqual(response.status, 409);
+      const html = yield* response.text;
+      assert.include(text(html), "Your description, not saved");
+      assert.include(html, '<pre class="code-panel">A &lt;draft&gt; worth keeping</pre>');
+      assert.notInclude(forms(html), `${cardPath(patch.name)}/description`);
     })
   );
 
@@ -1645,9 +1701,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const gone = yield* publishSource(workspace.owner, "source-gone");
       const consumer = yield* publishDependant(workspace.owner, "reads-sources", gone.patchId);
       yield* service.retire(consumer.patchId, actor(workspace.owner));
-      const drawn = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
-        .text;
-      assert.include(forms(drawn), `${cardPath(consumer.name)}/restore?all=1`);
+      const drawn = yield* (yield* request(`${cardPath(consumer.name)}`, workspace.owner)).text;
+      assert.include(forms(drawn), `${cardPath(consumer.name)}/restore`);
       yield* service.delete(gone.patchId, actor(workspace.owner));
       yield* TestClock.adjust(30 * DAY);
       yield* service.purgeDeleted(gone.patchId);
@@ -1656,7 +1711,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         ["deleted", workspace.admin]
       ] as const) {
         if (state === "deleted") yield* service.delete(consumer.patchId, actor(workspace.owner));
-        const path = `${cardPath(consumer.name)}/restore?all=1`;
+        const path = `${cardPath(consumer.name)}/restore`;
         const before = yield* readPatch(workspace.owner, consumer.patchId);
         const refused = yield* post(path, person, {
           expectedPatchId: consumer.patchId,
@@ -1675,13 +1730,12 @@ it.layer(layer)("portal pages on a socket", (it) => {
             assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
             assert.include(
               links(html).map((link) => link.href),
-              `${cardPath(consumer.name)}?all=1`
+              `${cardPath(consumer.name)}`
             );
           }
         }
         assert.deepStrictEqual(yield* readPatch(workspace.owner, consumer.patchId), before);
-        const fresh = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
-          .text;
+        const fresh = yield* (yield* request(`${cardPath(consumer.name)}`, workspace.owner)).text;
         assert.notInclude(forms(fresh), path);
         assert.include(
           links(fresh).map((link) => link.href),
@@ -1693,7 +1747,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           ack: "1"
         });
         assert.strictEqual(restored.status, 303);
-        assert.strictEqual(restored.headers.location, `${cardPath(consumer.name)}?all=1`);
+        assert.strictEqual(restored.headers.location, `${cardPath(consumer.name)}`);
         const saved = yield* readPatch(workspace.owner, consumer.patchId);
         assert.strictEqual(saved.patch.state, "live");
         assert.strictEqual(saved.patch.lastChangedBy, person.id);
@@ -1711,7 +1765,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const users = yield* Users.Users;
         const patch = yield* publish(workspace.owner, "reassign-picker");
         const path = `${cardPath(patch.name)}/reassign`;
-        const page = yield* request(`${path}?all=1`, workspace.admin);
+        const page = yield* request(`${path}`, workspace.admin);
         assert.strictEqual(page.status, 200);
         const html = yield* page.text;
         assert.sameMembers(radioValues(html), [
@@ -1723,9 +1777,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.match(html, /<form\b[^>]*method="get"/i);
         assert.match(html, /<form\b[^>]*method="post"/i);
         assert.strictEqual(inputs(html, "q", "search").length, 1);
-        assert.strictEqual(hidden(html, "all"), "1");
         assert.strictEqual(hidden(html, "expectedOwnerUserId"), workspace.owner.id);
-        const matching = yield* request(`${path}?q=aLeX&all=1`, workspace.admin);
+        const matching = yield* request(`${path}?q=aLeX`, workspace.admin);
         assert.strictEqual(matching.status, 200);
         assert.deepStrictEqual(radioValues(yield* matching.text), [workspace.member.id]);
         const emailMatch = yield* request(
@@ -1733,7 +1786,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           workspace.admin
         );
         assert.deepStrictEqual(radioValues(yield* emailMatch.text), [workspace.owner.id]);
-        const noMatch = yield* request(`${path}?q=nobody-has-this-name&all=1`, workspace.admin);
+        const noMatch = yield* request(`${path}?q=nobody-has-this-name`, workspace.admin);
         assert.strictEqual(noMatch.status, 200);
         const empty = yield* noMatch.text;
         assert.deepStrictEqual(radioValues(empty), []);
@@ -1742,7 +1795,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         yield* users.deactivate({ companyId: workspace.id, userId: workspace.member.id });
         const before = yield* readPatch(workspace.owner, patch.patchId);
         for (const target of [workspace.member.id, foreign.owner.id, "usr_missing"]) {
-          const refused = yield* post(`${path}?q=Alex&all=1`, workspace.admin, {
+          const refused = yield* post(`${path}?q=Alex`, workspace.admin, {
             expectedPatchId: patch.patchId,
             expectedOwnerUserId: workspace.owner.id,
             user: target
@@ -1753,10 +1806,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.strictEqual(hidden(fresh, "q"), "");
           assert.sameMembers(radioValues(fresh), [workspace.owner.id, workspace.admin.id]);
           assert.notMatch(fresh, /<button\b[^>]*\bdisabled/);
-          assert.include(forms(fresh), `${path}?all=1`);
+          assert.include(forms(fresh), `${path}`);
           assert.include(
             links(fresh).map((link) => link.href),
-            `${cardPath(patch.name)}?all=1`
+            `${cardPath(patch.name)}`
           );
           assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
         }
@@ -1765,7 +1818,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           workspace.owner.id,
           workspace.admin.id
         ]);
-        const recovered = yield* post(`${path}?all=1`, workspace.admin, {
+        const recovered = yield* post(`${path}`, workspace.admin, {
           expectedPatchId: patch.patchId,
           expectedOwnerUserId: workspace.owner.id,
           user: workspace.admin.id
@@ -1787,10 +1840,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const patch = yield* publish(workspace.owner, "reassign-deleted");
       yield* service.delete(patch.patchId, actor(workspace.owner));
       const original = yield* readPatch(workspace.owner, patch.patchId);
-      const path = `${cardPath(patch.name)}/reassign?all=1`;
+      const path = `${cardPath(patch.name)}/reassign`;
       let currentOwner = workspace.owner.id;
       for (const next of [workspace.member, workspace.admin]) {
-        const card = yield* (yield* request(`${cardPath(patch.name)}?all=1`, workspace.admin)).text;
+        const card = yield* (yield* request(`${cardPath(patch.name)}/settings`, workspace.admin))
+          .text;
         assert.include(
           links(card).map((link) => link.href),
           path
@@ -1807,7 +1861,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           user: next.id
         });
         assert.strictEqual(response.status, 303);
-        assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+        assert.strictEqual(response.headers.location, `${cardPath(patch.name)}`);
         const saved = yield* readPatch(workspace.owner, patch.patchId);
         assert.strictEqual(saved.owner.id, next.id);
         assert.strictEqual(saved.patch.reassignedBy, workspace.admin.id);
@@ -1842,7 +1896,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const workspace = yield* company();
       const service = yield* Patches.Patches;
       const patch = yield* publish(workspace.owner, "stale-reassign");
-      const path = `${cardPath(patch.name)}/reassign?all=1`;
+      const path = `${cardPath(patch.name)}/reassign`;
       const page = yield* request(path, workspace.admin);
       assert.strictEqual(page.status, 200);
       const expectedOwner = hidden(yield* page.text, "expectedOwnerUserId")!;
@@ -2386,7 +2440,7 @@ it.layer(layer)("patch log on a socket", (it) => {
       assert.strictEqual(response.headers["cache-control"], "private, no-store");
       const html = yield* response.text;
       const page = text(html);
-      assert.strictEqual(heading(html), "Log of sales-crm");
+      assert.strictEqual(heading(html), "sales-crm");
       assert.include(page, "This is an attribution record, not an access audit.");
       assert.include(page, "Log lines are written by the patch itself.");
       assert.notInclude(page, "secret.export");

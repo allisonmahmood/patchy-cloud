@@ -2,11 +2,25 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
-import { ago, dateLabel, escapeAttribute, escapeHtml, renderOffPatch } from "@patchy/core";
+import {
+  ago,
+  dateLabel,
+  escapeAttribute,
+  escapeHtml,
+  patchMark,
+  renderOffPatch
+} from "@patchy/core";
 import { Patches } from "@patchy/patches";
 
 export const styles = `
   .portal-card { min-width: 0; max-width: 920px; }
+  .portal-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+  .portal-card-head > div:nth-child(2) { flex: 1; min-width: min(100%, 240px); }
+  .portal-card-head .page-heading { margin: 0; }
+  .portal-card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+  .portal-card-tags .tag { margin: 0; }
+  .portal-card-act form { margin: 0; }
+  .portal-card-tabs { margin: 18px 0 20px; }
   .portal-stop-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .portal-stop-actions > div { display: grid; align-content: start; }
   .portal-address { align-items: center; }
@@ -37,8 +51,8 @@ export const firstClause = (description: string): string => {
   return points.length > 80 ? `${points.slice(0, 79).join("").trimEnd()}…` : clause;
 };
 
-const cardPath = (patch: Patches.Patch, all: boolean, action = "") =>
-  `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}${all ? "?all=1" : ""}`;
+const cardPath = (patch: Patches.Patch, action = "") =>
+  `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
   card.owner.id === viewer.user.id || viewer.role === "admin";
 export const hidden = (name: string, value: string | number | null) =>
@@ -52,13 +66,8 @@ export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
 export type PatchAction = "description" | "scope" | "rollback" | ConfirmationAction;
 
 /** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
-const actionForm = (
-  patch: Patches.Patch,
-  all: boolean,
-  action: PatchAction,
-  className?: string
-): string =>
-  `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(cardPath(patch, all, action))}">${hidden("expectedPatchId", patch.id)}`;
+const actionForm = (patch: Patches.Patch, action: PatchAction, className?: string): string =>
+  `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(cardPath(patch, action))}">${hidden("expectedPatchId", patch.id)}`;
 
 const titleLine = (patch: Patches.Patch): string => {
   const normalized = (text: string) =>
@@ -106,38 +115,32 @@ const dependantGroups = (card: Patches.PortalCard) => {
   return Array.from(groups.values());
 };
 
-const dependantsFact = (groups: readonly DependantGroup[], all: boolean): string => {
+const dependantsFact = (groups: readonly DependantGroup[]): string => {
   if (groups.length === 0) return "Nothing else reads this patch";
   const shown = groups
     .slice(0, 3)
     .map(
       (group) =>
-        `<li class="list-row"><a href="${escapeAttribute(`/patches/${encodeURIComponent(group.name)}${all ? "?all=1" : ""}`)}">${escapeHtml(group.name)}</a> (${escapeHtml(group.ownerName)}) reads ${group.resources.map((resource) => `<code>${escapeHtml(resource)}</code>`).join(", ")}</li>`
+        `<li class="list-row"><a href="${escapeAttribute(`/patches/${encodeURIComponent(group.name)}`)}">${escapeHtml(group.name)}</a> (${escapeHtml(group.ownerName)}) reads ${group.resources.map((resource) => `<code>${escapeHtml(resource)}</code>`).join(", ")}</li>`
     )
     .join("");
   return `<p>${escapeHtml(groups.length)} ${groups.length === 1 ? "patch" : "patches"}</p><ul class="list list-compact">${shown}</ul>${groups.length > 3 ? `<p class="supporting-text">and ${escapeHtml(groups.length - 3)} more</p>` : ""}`;
 };
 
-const descriptionForm = (
-  card: Patches.PortalCard,
-  all: boolean,
-  submitted?: string,
-  error?: string
-): string =>
+const descriptionForm = (card: Patches.PortalCard, submitted?: string, error?: string): string =>
   // Native maxlength counts UTF-16 units, not the server's Unicode code-point bound.
-  `<section class="section">${actionForm(card.patch, all, "description")}${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
+  `<section class="section">${actionForm(card.patch, "description")}${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
 
-const scopeForm = (card: Patches.PortalCard, all: boolean): string => {
+const scopeForm = (card: Patches.PortalCard): string => {
   const radio = (scope: Patches.Patch["scope"], label: string) =>
     `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${escapeAttribute(scope)}"${card.patch.scope === scope ? " checked" : ""}>${escapeHtml(label)}</label>`;
-  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3>${actionForm(card.patch, all, "scope")}${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables and stores other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
+  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3>${actionForm(card.patch, "scope")}${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables and stores other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
 };
 
 const versionsTable = (
   card: Patches.PortalCard,
   versions: Patches.PortalCard["versions"],
   viewer: RequireSession.Viewer["Service"],
-  all: boolean,
   now: number
 ): string => {
   const manage = canManage(card, viewer) && card.patch.state === "live";
@@ -146,129 +149,168 @@ const versionsTable = (
     const action = current
       ? '<span class="pill pill-done">current</span>'
       : manage
-        ? `${actionForm(card.patch, all, "rollback")}${hidden("expectedCurrentVersionId", card.patch.currentVersionId)}${hidden("versionNumber", version.versionNumber)}<button class="btn" type="submit">Show this version at the address</button></form>`
+        ? `${actionForm(card.patch, "rollback")}${hidden("expectedCurrentVersionId", card.patch.currentVersionId)}${hidden("versionNumber", version.versionNumber)}<button class="btn" type="submit">Show this version at the address</button></form>`
         : "";
     return `<tr><th scope="row">v${escapeHtml(version.versionNumber)}</th><td><time datetime="${escapeAttribute(version.createdAt)}">${escapeHtml(dateLabel(version.createdAt))}</time><br><span class="supporting-text">${escapeHtml(ago(version.createdAt, now))}</span></td><td>${escapeHtml(version.publisherName)}</td><td>${action}</td></tr>`;
   });
   return `<div class="portal-table"><table class="table" aria-label="Patch versions"><thead><tr><th scope="col">Version</th><th scope="col">Published</th><th scope="col">Published by</th><th scope="col">At the address</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
 };
 
-const versionsSection = (
-  card: Patches.PortalCard,
-  viewer: RequireSession.Viewer["Service"],
-  all: boolean,
-  now: number
-): string => {
-  const current = card.versions.find((version) => version.id === card.patch.currentVersionId);
-  const shown = current === undefined ? [] : [current];
-  for (const version of card.versions) {
-    if (version.id !== card.patch.currentVersionId) shown.push(version);
-    if (shown.length === 4) break;
-  }
-  return `<section class="section"><h3 class="section-heading">Versions</h3>${versionsTable(card, shown, viewer, all, now)}<p class="supporting-text">The address changes for everyone now. Tables, files, sharing and the description do not move.</p><p><a href="${escapeAttribute(cardPath(card.patch, all, "versions"))}">All ${escapeHtml(card.versions.length)} versions</a></p></section>`;
+export type CardTab = "overview" | "log" | "versions" | "settings";
+
+type Viewer = RequireSession.Viewer["Service"];
+
+/** The off-patch note and restore control for a retired or deleted card, or null while live. */
+const offState = (card: Patches.PortalCard, viewer: Viewer, now: number) => {
+  const { patch } = card;
+  return patch.state === "live"
+    ? null
+    : renderOffPatch({
+        name: patch.name,
+        state: patch.state,
+        actorName: patch.state === "retired" ? card.actorNames.retired : card.actorNames.deleted,
+        stateAt: patch.state === "retired" ? patch.retiredAt : patch.deletedAt,
+        purgeAt: patch.purgeAt,
+        now,
+        restore: canManage(card, viewer)
+          ? {
+              href: cardPath(patch, "restore"),
+              patchId: patch.id,
+              sourcesOff: card.offSources.length > 0,
+              currentVersion: card.currentVersion
+            }
+          : null
+      });
 };
 
-const renderCard = (input: {
+/**
+ * One patch's card at `/patches/<name>`: its mark, name, tags and the act that matters most (Open,
+ * or Restore for a manager while recovery is open), then its tabs over `body`. Log and Settings
+ * are the owner's and admins'.
+ */
+export const renderCardFrame = (input: {
   readonly card: Patches.PortalCard;
-  readonly viewer: RequireSession.Viewer["Service"];
-  readonly all: boolean;
+  readonly viewer: Viewer;
   readonly now: number;
   readonly publicBaseUrl: string;
+  readonly tab: CardTab;
+  readonly notice?: string;
+  /** Leave out the header's Restore form, as when refusing a form rendered for another patch. */
+  readonly readOnly?: boolean;
+  readonly body: string;
+}): string => {
+  const { card, viewer, now } = input;
+  const { patch } = card;
+  const live = patch.state === "live";
+  const address = `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
+  const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${address}`;
+  const restore = input.readOnly ? "" : (offState(card, viewer, now)?.restoreControl ?? "");
+  const act = live
+    ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>`
+    : restore;
+  const tags = [
+    card.tier === 0 ? "Page" : "Tool",
+    patch.scope === "public" ? "Public" : "Company only",
+    `v${card.currentVersion}`,
+    ...(live ? [] : [patch.state === "retired" ? "Retired" : "Deleted"])
+  ]
+    .map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`)
+    .join("");
+  const tabs = (
+    [
+      ["overview", "Overview", true],
+      ["log", "Log", canManage(card, viewer)],
+      ["versions", `Versions <span class="count">${escapeHtml(card.versions.length)}</span>`, true],
+      ["settings", "Settings", canManage(card, viewer)]
+    ] as const
+  )
+    .filter(([, , shown]) => shown)
+    .map(
+      ([tab, label]) =>
+        `<a href="${escapeAttribute(cardPath(patch, tab === "overview" ? "" : tab))}"${tab === input.tab ? ' aria-current="page"' : ""}>${label}</a>`
+    )
+    .join("");
+  return `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(patch.name)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier)}<div><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}<p class="portal-card-tags">${tags}</p></div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(patch.name)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
+};
+
+/** The card's Overview: the description, its facts, an off patch's note and the recent log. */
+export const renderOverview = (input: {
+  readonly card: Patches.PortalCard;
+  readonly viewer: Viewer;
+  readonly now: number;
   /** Recent activity, rendered only for the owner and admins. */
   readonly activity: string;
-  readonly submittedDescription?: string;
-  readonly descriptionError?: string;
 }): string => {
-  const { card, viewer, all, now } = input;
+  const { card, viewer, now } = input;
   const { patch } = card;
   const live = patch.state === "live";
   const manage = canManage(card, viewer);
-  const groups = dependantGroups(card);
-  const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
-  const open = live
-    ? `<div class="actions portal-address"><a class="btn btn-primary" href="${escapeAttribute(`/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`)}">Open</a><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></div>`
-    : "";
+  const off = offState(card, viewer, now);
   const current = card.versions.find((version) => version.id === patch.currentVersionId);
   const versionFact = `v${card.currentVersion}, published ${ago(card.publishedAt, now)}${current === undefined ? "" : ` by ${current.publisherName}`}`;
-  const owner = `${escapeHtml(card.owner.name)}${card.owner.deactivated ? " (deactivated)" : ""}${viewer.role === "admin" ? ` <a href="${escapeAttribute(cardPath(patch, all, "reassign"))}">Reassign…</a>` : ""}`;
   const audience =
     patch.scope === "company"
       ? `Anyone at ${viewer.company.name} who signs in. Not the public.`
       : "Anyone on the internet. No sign-in.";
-  const off =
-    patch.state === "live"
-      ? null
-      : renderOffPatch({
-          name: patch.name,
-          state: patch.state,
-          actorName: patch.state === "retired" ? card.actorNames.retired : card.actorNames.deleted,
-          stateAt: patch.state === "retired" ? patch.retiredAt : patch.deletedAt,
-          purgeAt: patch.purgeAt,
-          now,
-          restore: manage
-            ? {
-                href: cardPath(patch, all, "restore"),
-                patchId: patch.id,
-                sourcesOff: card.offSources.length > 0,
-                currentVersion: card.currentVersion
-              }
-            : null
-        });
   const stateFact = off?.stateFact ?? "";
   const facts =
     !live && !manage
       ? `<dl class="facts">${stateFact}</dl>`
-      : `<dl class="facts">${stateFact}<dt>Owner</dt><dd>${owner}</dd><dt>Current version</dt><dd>${escapeHtml(versionFact)}</dd>${live ? `<dt>Who can open it</dt><dd>${escapeHtml(audience)}</dd>` : ""}<dt>Used by other patches</dt><dd>${dependantsFact(groups, all)}</dd></dl>`;
-  const offNote = off?.note ?? "";
-  let restoreActions = "";
-  if (manage && off !== null) {
-    const deleteLink =
-      patch.state === "retired"
-        ? `<a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a>`
-        : "";
-    const deleteHint = patch.state === "retired" ? " Delete starts the 30-day clock." : "";
-    restoreActions =
-      off.recoveryEnded ||
-      `<div class="actions">${off.restoreControl}${deleteLink}</div><p class="supporting-text">${off.restoreHint}${deleteHint}</p>`;
-  }
+      : `<dl class="facts">${stateFact}<dt>Owner</dt><dd>${escapeHtml(card.owner.name)}${card.owner.deactivated ? " (deactivated)" : ""}</dd><dt>Current version</dt><dd>${escapeHtml(versionFact)}</dd>${live ? `<dt>Who can open it</dt><dd>${escapeHtml(audience)}</dd>` : ""}<dt>Used by other patches</dt><dd>${dependantsFact(dependantGroups(card))}</dd><dt>Visits</dt><dd>${escapeHtml(card.visits)}</dd></dl>`;
+  const restoreHint =
+    off === null || !manage
+      ? ""
+      : off.recoveryEnded ||
+        (off.restoreHint ? `<p class="supporting-text">${off.restoreHint}</p>` : "");
   const deactivated =
     viewer.role === "admin" && card.owner.deactivated
       ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
       : "";
+  return `${descriptionBlock(card)}${facts}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
+};
+
+/** The card's Settings, for the owner and admins: owner, description, who can open it, stopping or deleting. */
+export const renderSettings = (input: {
+  readonly card: Patches.PortalCard;
+  readonly viewer: Viewer;
+  readonly submittedDescription?: string;
+  readonly descriptionError?: string;
+}): string => {
+  const { card, viewer } = input;
+  const { patch } = card;
+  const live = patch.state === "live";
+  const groups = dependantGroups(card);
   const adminLine =
     viewer.role === "admin" && viewer.user.id !== card.owner.id
       ? '<p class="supporting-text">You can do everything an owner can from here, except publish.</p>'
       : "";
-  const stop =
-    live && manage
-      ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables or stores and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
+  const deactivated =
+    viewer.role === "admin" && card.owner.deactivated
+      ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
       : "";
-  const management = manage
-    ? `${adminLine}<section class="section" aria-labelledby="manage-heading"><h2 class="section-heading" id="manage-heading">Manage</h2>${restoreActions}${patch.state === "deleted" ? "" : descriptionForm(card, all, input.submittedDescription, input.descriptionError)}${live ? scopeForm(card, all) + versionsSection(card, viewer, all, now) + stop : ""}</section>`
-    : "";
-  return `<article class="portal-card"><p class="supporting-text">${escapeHtml(patch.companyHandle)} / ${escapeHtml(patch.name)}</p><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}${descriptionBlock(card)}${open}${facts}${offNote}${deactivated}${input.activity}${management}</article>`;
+  const owner = `<section class="section"><h2 class="section-heading">Owner</h2><p>${escapeHtml(card.owner.name)}${card.owner.deactivated ? " (deactivated)" : ""}</p>${viewer.role === "admin" ? `<div class="actions"><a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a></div>` : ""}</section>`;
+  const stop = live
+    ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables or stores and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
+    : patch.state === "retired"
+      ? `<section class="note note-warn"><span class="note-title">Delete</span><p>It is retired. Delete starts the 30-day clock, then it is gone for good.</p><div class="actions"><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "delete"))}">Delete…</a></div></section>`
+      : "";
+  // A deleted patch's description can't be edited; a draft refused for that is still shown to copy.
+  const description =
+    patch.state !== "deleted"
+      ? descriptionForm(card, input.submittedDescription, input.descriptionError)
+      : input.submittedDescription
+        ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
+        : "";
+  return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card) : ""}${stop}`;
 };
 
-/** One patch's card on its own page, under any refusal or status note. */
-export const renderCardPage = (input: {
-  readonly card: Patches.PortalCard;
-  readonly viewer: RequireSession.Viewer["Service"];
-  readonly all: boolean;
-  readonly now: number;
-  readonly publicBaseUrl: string;
-  readonly activity: string;
-  readonly notice?: string;
-  readonly submittedDescription?: string;
-  readonly descriptionError?: string;
-}): string => `${refusal(input.notice)}${renderCard(input)}`;
-
+/** The card's Versions: every retained version, with rollback for a live patch's owner and admins. */
 export const renderVersions = (input: {
   readonly card: Patches.PortalCard;
-  readonly viewer: RequireSession.Viewer["Service"];
-  readonly all: boolean;
+  readonly viewer: Viewer;
   readonly now: number;
 }): string =>
-  `<article class="portal-subpage"><p><a href="${escapeAttribute(cardPath(input.card.patch, input.all))}">Back to ${escapeHtml(input.card.patch.name)}</a></p><h1 class="page-heading">Versions of ${escapeHtml(input.card.patch.name)}</h1>${versionsTable(input.card, input.card.versions, input.viewer, input.all, input.now)}${canManage(input.card, input.viewer) && input.card.patch.state === "live" ? '<p class="supporting-text">The address changes for everyone now. Tables, files, sharing and the description do not move.</p>' : ""}</article>`;
+  `${versionsTable(input.card, input.card.versions, input.viewer, input.now)}${canManage(input.card, input.viewer) && input.card.patch.state === "live" ? '<p class="supporting-text">Showing a version changes the address for everyone now. Tables, files, sharing and the description do not move.</p>' : ""}`;
 
 const confirmationDependants = (groups: readonly DependantGroup[]): string =>
   groups.length === 0
@@ -286,7 +328,6 @@ export const confirmationAcknowledgement = (text: string, checked: boolean): str
 export const renderConfirmation = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: RequireSession.Viewer["Service"];
-  readonly all: boolean;
   readonly now: number;
   readonly action: ConfirmationAction;
   readonly members: readonly Users.User[];
@@ -297,9 +338,9 @@ export const renderConfirmation = (input: {
   readonly selectedOwnerId?: string;
   readonly acknowledged?: boolean;
 }): string => {
-  const { card, viewer, all, action } = input;
+  const { card, viewer, action } = input;
   const { patch } = card;
-  const cancelPath = cardPath(patch, all);
+  const cancelPath = cardPath(patch);
   const acknowledged = input.acknowledged === true;
   let verb: string;
   let fields: string;
@@ -362,7 +403,7 @@ export const renderConfirmation = (input: {
           member.name.toLowerCase().includes(needle) ||
           member.email.toLowerCase().includes(needle)
       );
-      filter = `<form method="get" action="${escapeAttribute(cardPath(patch, false, action))}">${all ? hidden("all", "1") : ""}<label class="field-label" for="member-query">Find a member</label><input class="field" type="search" id="member-query" name="q" value="${escapeAttribute(input.query)}"><div class="actions"><button class="btn" type="submit">Filter members</button></div></form>`;
+      filter = `<form method="get" action="${escapeAttribute(cardPath(patch, action))}"><label class="field-label" for="member-query">Find a member</label><input class="field" type="search" id="member-query" name="q" value="${escapeAttribute(input.query)}"><div class="actions"><button class="btn" type="submit">Filter members</button></div></form>`;
       const choices = members
         .map(
           (member, index) =>
@@ -375,5 +416,5 @@ export const renderConfirmation = (input: {
     }
   }
 
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">${verb} ${escapeHtml(patch.name)}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, all, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${escapeHtml(patch.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
+  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">${verb} ${escapeHtml(patch.name)}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${escapeHtml(patch.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };
