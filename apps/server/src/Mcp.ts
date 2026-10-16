@@ -11,6 +11,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -193,11 +194,41 @@ const toRuntimeMe = (
 
 const kindOf = (descriptor: HandlerDescriptor) => (descriptor.kind === "query" ? "read" : "change");
 
-/** A patch reference as people paste it: a name, an id, or an address ending in the name. */
-const patchRef = (raw: string) => {
-  const trimmed = raw.trim().replace(/\/+$/, "");
-  const last = trimmed.split("/").at(-1) ?? trimmed;
-  return last.split("?")[0] ?? last;
+/**
+ * A patch reference as people paste it: a name, an id, or an address. An address names its
+ * company too; another company's address resolves to nothing rather than a namesake here.
+ */
+const patchRef = (raw: string, companyHandle: string): string | undefined => {
+  const path = raw
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "");
+  const segments = (/^[a-z]+:\/\//i.test(path) ? new URL(path).pathname : path)
+    .split("/")
+    .filter((segment) => segment.length > 0);
+  const [company, name] = segments.length >= 2 ? segments.slice(-2) : [undefined, segments[0]];
+  return company === undefined || company === companyHandle ? name : undefined;
+};
+
+/** A patch's own refusal: its message first, then whatever else it said, for the agent to act on. */
+const handlerRefusal = (
+  patch: string,
+  tool: string,
+  failure: { readonly code: string; readonly details?: unknown }
+) => {
+  const { details } = failure;
+  const record = Predicate.isObject(details) ? details : undefined;
+  const message = typeof record?.["message"] === "string" ? record["message"] : undefined;
+  const rest =
+    record === undefined
+      ? details
+      : Object.fromEntries(Object.entries(record).filter(([key]) => key !== "message"));
+  const extra =
+    rest === undefined ||
+    (typeof rest === "object" && rest !== null && Object.keys(rest).length === 0)
+      ? ""
+      : `\nDetails: ${JSON.stringify(rest)}`;
+  return `${patch} refused ${tool} (${failure.code})${message === undefined ? "." : `: ${message}`}${extra}`;
 };
 
 /** Plain words for a refusal the agent can act on or relay. */
@@ -298,7 +329,11 @@ export const layer = HttpRouter.use((router) =>
       identity: AgentAuth.AgentPrincipal["identity"],
       raw: string
     ) {
-      const ref = patchRef(raw);
+      const ref = patchRef(raw, identity.company.handle);
+      if (ref === undefined)
+        return refusal(
+          `"${raw}" isn't one of ${identity.company.name}'s patches. Use find_patches to see what exists.`
+        );
       const found = yield* catalogue(identity, ref).pipe(
         Effect.map((entries) => Option.fromNullishOr(entries[0])),
         Effect.catchTags({
@@ -388,8 +423,7 @@ export const layer = HttpRouter.use((router) =>
         .pipe(
           Effect.map((value) => {
             if (value.ok) return answer({ result: value.value });
-            const details = value.details === undefined ? "" : ` ${JSON.stringify(value.details)}`;
-            return refusal(`${row.patch.name} refused ${call.tool}: ${value.code}.${details}`);
+            return refusal(handlerRefusal(row.patch.name, call.tool, value));
           }),
           Effect.catchTags({
             UnknownTool: () =>

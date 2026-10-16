@@ -53,16 +53,29 @@ export interface AgentTool {
 }
 
 /**
- * A manifest's agent tools: the described handlers of its agent area, in manifest order. An
- * undescribed export stays page-only, so describing it is how a patch offers it to agents.
+ * A manifest's agent tools: the described handlers of its agent area, reads first, then by
+ * name. Stored manifests don't keep the builder's key order. An undescribed export stays
+ * page-only, so describing it is how a patch offers it to agents.
  */
 export const agentTools = (manifest: typeof Manifest.Type): ReadonlyArray<AgentTool> =>
-  Object.entries(manifest.handlers ?? {}).flatMap(([handler, descriptor]) => {
-    const { description } = descriptor;
-    return handler.startsWith(area) && description !== undefined
-      ? [{ name: handler.slice(area.length), handler, descriptor: { ...descriptor, description } }]
-      : [];
-  });
+  Object.entries(manifest.handlers ?? {})
+    .flatMap(([handler, descriptor]) => {
+      const { description } = descriptor;
+      return handler.startsWith(area) && description !== undefined
+        ? [
+            {
+              name: handler.slice(area.length),
+              handler,
+              descriptor: { ...descriptor, description }
+            }
+          ]
+        : [];
+    })
+    .sort(
+      (a, b) =>
+        Number(a.descriptor.kind !== "query") - Number(b.descriptor.kind !== "query") ||
+        a.name.localeCompare(b.name)
+    );
 
 const encodeArgs = Schema.encodeUnknownEffect(Schema.fromJsonString(ServerCall.fields.args));
 const textEncoder = new TextEncoder();
