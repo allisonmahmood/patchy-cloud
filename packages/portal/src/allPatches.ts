@@ -49,6 +49,12 @@ const RECENT = 7 * DAY;
 type Viewer = RequireSession.Viewer["Service"];
 const epoch = (iso: string) => Date.parse(iso);
 
+/** A `?q=` as searched: trimmed and cut to 200 code points, never mid-character. */
+export const searchQuery = (raw: string | null) =>
+  Array.from((raw ?? "").trim())
+    .slice(0, 200)
+    .join("");
+
 /** A search over live or off patches: case-insensitive, across name, title, description and owner name. */
 export const matches = (row: Patches.ReadPatch, query: string): boolean => {
   const needle = query.toLowerCase();

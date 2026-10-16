@@ -15,14 +15,15 @@ import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
-import { listStyles, renderAllPatches, shows } from "./allPatches.js";
-import { firstPatch, renderFirstPatchNote, renderGuide, renderGuideRow } from "./guide.js";
+import { listStyles, renderAllPatches, searchQuery, shows } from "./allPatches.js";
+import { firstPatch, renderFirstPatchNote, renderGuide } from "./guide.js";
+import { homeStyles, renderHome } from "./home.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
   type ConfirmationAction,
   type PatchAction,
+  renderCardPage,
   renderConfirmation,
-  renderPortal,
   renderVersions,
   styles
 } from "./render.js";
@@ -158,8 +159,9 @@ const newestMachine = Effect.fn("PortalPages.newestMachine")(function* (userId: 
   return newest === undefined ? null : { name: newest.name, createdAt: newest.createdAt };
 });
 
+/** One patch's card, or its versions page, at `/patches/<name>`. */
 const render = Effect.fn("PortalPages.render")(function* (
-  name?: string,
+  name: string,
   options: {
     status?: number;
     notice?: string;
@@ -169,64 +171,114 @@ const render = Effect.fn("PortalPages.render")(function* (
   } = {}
 ) {
   const { viewer, session, all, access } = yield* context;
-  if (name !== undefined && name.length > maxNameLength) return yield* overlongName;
-  if (name !== undefined && !isName(name))
+  if (name.length > maxNameLength) return yield* overlongName;
+  if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const patches = yield* Patches.Patches;
-  const rows = yield* patches.read({ ...access, state: "all" });
-  // Until the viewer owns a patch, the root's card is the guide to their first one.
-  const guided = !rows.some((row) => row.owner.id === viewer.user.id);
-  const ordered =
-    name === undefined ? [...rows].sort((a, b) => a.patch.name.localeCompare(b.patch.name)) : rows;
-  const selected =
-    name === undefined
-      ? guided
-        ? undefined
-        : (ordered.find((row) => row.patch.state === "live" && row.owner.id === viewer.user.id) ??
-          ordered.find((row) => row.patch.state === "live"))
-      : rows.find((row) => row.patch.name === name);
-  if (name !== undefined && selected === undefined)
+  const selected = (yield* patches.read({ ...access, state: "all" })).find(
+    (row) => row.patch.name === name
+  );
+  if (selected === undefined)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  if (name !== undefined && selected !== undefined)
-    yield* WideEvents.enrich(Patches.eventFields(selected.patch));
-  const card = selected ? yield* patches.portalCard(selected.patch.id, access) : null;
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+  const card = yield* patches.portalCard(selected.patch.id, access);
   const now = yield* Clock.currentTimeMillis;
-  const guide =
-    guided && !options.versions ? { machine: yield* newestMachine(viewer.user.id) } : null;
-  const first = card === null ? undefined : firstPatch(rows, viewer.user.id, now);
-  const body =
-    options.versions && card
-      ? renderVersions({ card, viewer, all, now })
-      : renderPortal({
-          rows,
-          card,
-          viewer,
-          all,
-          now,
-          publicBaseUrl: session.publicBaseUrl,
-          activity: card === null ? "" : yield* recentActivity(card, all, now),
-          notice: options.notice,
-          submittedDescription: options.submittedDescription,
-          descriptionError: options.descriptionError,
-          guide:
-            guide === null
-              ? undefined
-              : {
-                  row: renderGuideRow({ guide, selected: card === null, all }),
-                  card: renderGuide({ guide, viewer, publicBaseUrl: session.publicBaseUrl, now })
-                },
-          note:
-            first !== undefined && first.patch.id === card?.patch.id
-              ? renderFirstPatchNote(first, viewer)
-              : undefined
-        });
+  const body = options.versions
+    ? renderVersions({ card, viewer, all, now })
+    : renderCardPage({
+        card,
+        viewer,
+        all,
+        now,
+        publicBaseUrl: session.publicBaseUrl,
+        activity: yield* recentActivity(card, all, now),
+        notice: options.notice,
+        submittedDescription: options.submittedDescription,
+        descriptionError: options.descriptionError
+      });
   return pageResponse(
     {
-      title: card ? `${card.patch.name}${options.versions ? " versions" : ""}` : "Patches",
+      title: `${card.patch.name}${options.versions ? " versions" : ""}`,
       heading: "",
       body,
       styles,
       status: options.status ?? 200,
+      app: { viewer, section: "patches" }
+    },
+    session
+  );
+});
+
+/** The guide to a first patch, with its progress from the viewer's newest machine. */
+const guideBody = Effect.fn("PortalPages.guideBody")(function* () {
+  const { viewer, session } = yield* context;
+  return renderGuide({
+    guide: { machine: yield* newestMachine(viewer.user.id) },
+    viewer,
+    publicBaseUrl: session.publicBaseUrl,
+    now: yield* Clock.currentTimeMillis
+  });
+});
+
+/**
+ * Home at `/`: search, the viewer's usual patches, the company's tools and pages. With nothing
+ * live and nothing of their own, it is the guide to a first patch.
+ */
+const home = Effect.fn("PortalPages.home")(function* () {
+  const { viewer, session, access } = yield* context;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const query = searchQuery(new URL(request.url, session.publicBaseUrl).searchParams.get("q"));
+  const patches = yield* Patches.Patches;
+  const rows = yield* patches.read({ ...access, state: "all" });
+  const now = yield* Clock.currentTimeMillis;
+  const owns = rows.some((row) => row.owner.id === viewer.user.id);
+  const off = rows.filter((row) => row.patch.state !== "live").length;
+  const page = (title: string, body: string) =>
+    pageResponse(
+      {
+        title,
+        heading: "",
+        body,
+        styles: styles + homeStyles,
+        app: { viewer, section: "patches" }
+      },
+      session
+    );
+  if (!owns && off === rows.length)
+    return page(
+      "Your first patch",
+      `${yield* guideBody()}${off > 0 ? `<p class="supporting-text home-foot"><a href="/patches?show=off">${off} retired or deleted</a></p>` : ""}`
+    );
+  const first = firstPatch(rows, viewer.user.id, now);
+  return page(
+    "Home",
+    renderHome({
+      rows,
+      viewer,
+      opens: new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])),
+      now,
+      publicBaseUrl: session.publicBaseUrl,
+      query,
+      note: first === undefined ? undefined : renderFirstPatchNote(first, viewer)
+    })
+  );
+});
+
+/** `/guide`, the guide on its own page. Owning any patch ends it, so an owner goes Home. */
+const guidePage = Effect.fn("PortalPages.guidePage")(function* () {
+  const { viewer, session, access } = yield* context;
+  const rows = yield* (yield* Patches.Patches).read({ ...access, state: "all", mine: true });
+  if (rows.length > 0)
+    return HttpServerResponse.redirect("/", {
+      status: 303,
+      headers: { "cache-control": "private, no-store" }
+    });
+  return pageResponse(
+    {
+      title: "Your first patch",
+      heading: "",
+      body: yield* guideBody(),
+      styles,
       app: { viewer, section: "patches" }
     },
     session
@@ -583,7 +635,7 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const params = new URL(request.url, session.publicBaseUrl).searchParams;
   const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
-  const query = (params.get("q") ?? "").trim().slice(0, 200);
+  const query = searchQuery(params.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const opens = yield* patches.opens(viewer.user.id);
@@ -610,7 +662,7 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
 });
 
 /** The server owns GET / and its signed-out door alongside the catch-all. */
-export const index = render().pipe(pageErrors);
+export const index = home().pipe(pageErrors);
 
 const patchRoutes = [
   {
@@ -693,6 +745,11 @@ export const layer: Layer.Layer<
         errors(route.method === "POST" ? RequireSession.sameOrigin(handler) : handler)
       );
     }
+    yield* router.add(
+      "GET",
+      "/guide",
+      errors(RequireSession.withViewer(guidePage().pipe(pageErrors)))
+    );
     // The wildcard also answers `/patches` itself, which is All patches.
     yield* router.add(
       "GET",

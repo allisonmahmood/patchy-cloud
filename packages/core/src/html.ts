@@ -728,6 +728,30 @@ export function htmlPage(options: {
     .mono-green { background: var(--paper-green); }
     .mono-amber { background: var(--paper-amber); }
     .page-mark { position: relative; flex: none; width: 26px; height: 32px; margin-inline: 4px; border: 2px solid var(--ink); border-radius: 3px 9px 3px 3px; background: var(--white); }
+    .mono-placeholder { border-style: dashed; border-color: var(--line-strong); background: transparent; box-shadow: none; color: var(--muted); font-size: 1.1rem; transform: none; }
+    /* tile: one patch to open, with its mark, name, first clause and why it is here; the corner button opens its menu.
+       tile-row is the compact form for a longer shelf; tile-row-placeholder dashes one standing in for something to make. */
+    .tile { position: relative; min-width: 0; }
+    .tile-link { display: grid; align-content: start; gap: 6px; height: 100%; min-height: 160px; padding: 16px 16px 14px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 3px 3px 0 var(--ink); color: var(--ink-soft); font-weight: 450; text-decoration: none; }
+    .tile-link:hover { box-shadow: var(--shadow-hard); }
+    .tile-link > :is(.mono, .page-mark) { margin-bottom: 8px; }
+    .tile > .btn-icon { position: absolute; top: 6px; right: 6px; }
+    .tile-name { color: var(--ink); font-weight: 850; line-height: 1.25; overflow-wrap: anywhere; }
+    .tile-text { font-size: .85rem; line-height: 1.4; }
+    .tile-meta { margin-top: auto; padding-top: 6px; color: var(--muted); font-size: .8rem; font-weight: 650; }
+    .tile-row { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 60px; padding: 10px 12px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); font-weight: 450; text-decoration: none; }
+    .tile-row:hover { border-color: var(--ink); background: var(--paper-blue); }
+    .tile-body { display: grid; flex: 1; gap: 1px; min-width: 0; }
+    .tile-row .tile-text { overflow: hidden; color: var(--muted); font-size: .8rem; white-space: nowrap; text-overflow: ellipsis; }
+    .tile-row .tile-meta { margin: 0; padding: 0; font-size: .75rem; }
+    .tile-row > .whats-new-dot { position: static; align-self: start; margin-top: 6px; }
+    .tile-row-placeholder { border: 2px dashed var(--line-strong); background: transparent; }
+    /* tile-row-plain: a row in a list rather than a shelf of cards, so it has no frame until hovered, and its text wraps. */
+    .tile-row-plain { min-height: 0; padding: 8px; border-color: transparent; background: transparent; }
+    .tile-row-plain .tile-text { white-space: normal; }
+    /* side-panel: a framed column beside a page's main content, such as Home's Pages. */
+    .side-panel { min-width: 0; padding: 18px 18px 8px; border: 2px solid var(--ink); border-radius: var(--radius); }
+    mark { padding: 0 2px; border-radius: 3px; background: rgba(255, 191, 53, .6); color: var(--ink); }
     .page-mark::after { content: ""; position: absolute; inset: 7px 5px 6px; background: repeating-linear-gradient(transparent 0 4px, var(--line-strong) 4px 6px); }
     /* tag: a small label after a name, such as You. */
     .tag { display: inline-flex; align-items: center; min-height: 20px; margin-left: 6px; padding: 1px 7px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--ink-soft); font-size: .7rem; font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; vertical-align: 2px; }
