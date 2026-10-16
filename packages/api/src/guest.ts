@@ -28,6 +28,12 @@ const viewer = Schema.Struct({
   company: Identity.fields.company,
   admin: Schema.Boolean
 });
+/**
+ * The agent client a person connected through Patchy's MCP, present only on calls it
+ * started. Optional and omitted when absent: bundles built before it decode strictly.
+ */
+export const InvocationAgent = Schema.Struct({ name: Schema.NonEmptyString });
+export type InvocationAgent = typeof InvocationAgent.Type;
 
 export const BundleBinding = Schema.Struct({
   companyId: identity,
@@ -66,6 +72,7 @@ export const Invoke = Schema.Struct({
   handler: HandlerName,
   args,
   viewer,
+  agent: Schema.optionalKey(InvocationAgent),
   callback: Schema.Struct({ url: identity, capability: identity })
 });
 export type Invoke = typeof Invoke.Type;
@@ -76,7 +83,8 @@ export const GuestRequest = Schema.Union([
     type: Schema.Literal("invoke"),
     handler: HandlerName,
     args,
-    viewer
+    viewer,
+    agent: Schema.optionalKey(InvocationAgent)
   })
 ]);
 export type GuestRequest = typeof GuestRequest.Type;

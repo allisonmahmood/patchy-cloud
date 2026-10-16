@@ -27,9 +27,18 @@ export type HandlerSchema = (
   | { readonly kind: "nullable"; readonly value: HandlerSchema }
   | { readonly kind: "row"; readonly table: string }
   | { readonly kind: "fileHandle" | "upload" }
-) & { readonly optional?: true };
+) & { readonly optional?: true; readonly description?: string };
 
-const modifiers = { optional: Schema.optionalKey(Schema.Literal(true)) };
+/** What an agent reads about a handler or a field: plain words, never a permission. */
+export const HandlerDescription = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(2000)
+);
+
+const modifiers = {
+  optional: Schema.optionalKey(Schema.Literal(true)),
+  description: Schema.optionalKey(HandlerDescription)
+};
 // Preserve only `default` for the check; other unknown keys retain normal parser behavior.
 // A pattern-keyed rest schema keeps this forbidden key out of the declared wire properties.
 const forbiddenDefault = Schema.Record(
@@ -124,6 +133,7 @@ const schemaProblem = (
 
 export const HandlerDescriptor = Schema.Struct({
   kind: HandlerKind,
+  description: Schema.optionalKey(HandlerDescription),
   args: fields(HandlerSchema),
   result: HandlerSchema,
   errors: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isMinLength(1))))
