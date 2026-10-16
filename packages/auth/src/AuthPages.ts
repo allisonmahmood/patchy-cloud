@@ -9,6 +9,7 @@ import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "
 import * as DevicePages from "./DevicePages.js";
 import type * as DeviceLogins from "./DeviceLogins.js";
 import type * as MachineTokens from "./MachineTokens.js";
+import * as OAuthPages from "./OAuthPages.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
@@ -128,8 +129,9 @@ export const layer: Layer.Layer<
       | MachineTokens.MachineTokens
       | Analytics.Analytics
     >
-> = Layer.merge(
+> = Layer.mergeAll(
   DevicePages.layer,
+  OAuthPages.layer,
   HttpRouter.use((router) =>
     Effect.gen(function* () {
       yield* router.add(
@@ -194,6 +196,11 @@ export const layer: Layer.Layer<
         "POST",
         "/company/invites",
         errors(RequireSession.sameOrigin(RequireSession.withViewer(company({ kind: "invite" }))))
+      );
+      yield* router.add(
+        "POST",
+        "/company/agents",
+        errors(RequireSession.sameOrigin(RequireSession.withViewer(company({ kind: "agents" }))))
       );
       for (const [path, kind] of [
         ["/company/invites/:id/revoke", "revoke"],

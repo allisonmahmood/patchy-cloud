@@ -31,8 +31,8 @@ export type HandlerSchema = (
 
 /** What an agent reads about a handler or a field: plain words, never a permission. */
 export const HandlerDescription = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(2000)
+  Schema.isMaxLength(2000),
+  Schema.makeFilter((value) => value.trim().length > 0 || "A description must not be blank.")
 );
 
 const modifiers = {

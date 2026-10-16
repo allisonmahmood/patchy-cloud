@@ -184,7 +184,9 @@ async function invoke(
           type: "invoke",
           handler: request.handler,
           args: request.args,
-          viewer: request.viewer
+          viewer: request.viewer,
+          // Bundles built before agents decode strictly; they only ever receive page calls.
+          ...(request.agent === undefined ? {} : { agent: request.agent })
         } satisfies GuestProtocol.GuestRequest)
       });
     const reply = decodeGuestReply(await response.json());

@@ -161,15 +161,17 @@ const machines = Effect.gen(function* () {
   const tokens = yield* (yield* MachineTokens.MachineTokens).list(viewer.user.id);
   const time = (iso: string) =>
     `<time datetime="${escapeAttribute(iso)}">${escapeHtml(iso.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"))}</time>`;
-  const rows = tokens.map(
-    (token) =>
-      `<li class="list-row"><h2 class="section-heading">${escapeHtml(token.name)}</h2><dl class="facts"><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form class="actions" method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="btn btn-danger" type="submit" aria-label="Revoke ${escapeAttribute(token.name)}">Revoke</button></form></li>`
-  );
+  // An agent connection is a `use` token: the same row, named for its client, and disconnected.
+  const rows = tokens.map((token) => {
+    const agent = token.purpose === "use";
+    const verb = agent ? "Disconnect" : "Revoke";
+    return `<li class="list-row"><h2 class="section-heading">${escapeHtml(token.name)}${agent ? '<span class="tag">Agent</span>' : ""}</h2>${agent ? '<p class="supporting-text">Uses patches through Patchy’s MCP</p>' : ""}<dl class="facts"><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form class="actions" method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="btn btn-danger" type="submit" aria-label="${verb} ${escapeAttribute(token.name)}">${verb}</button></form></li>`;
+  });
   return pageResponse(
     {
       title: "Your machines",
       app: { viewer, section: "machines" },
-      body: `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
+      body: `<p>Machines publishing and agents using patches at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
     },
     session
   );

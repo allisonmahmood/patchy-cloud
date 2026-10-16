@@ -212,6 +212,7 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
       assert.strictEqual(own?.userId, null);
       assert.strictEqual(own?.effectivePrincipal, "patch");
       assert.strictEqual(own?.invocationId, invocationId);
+      assert.strictEqual(own?.agentName, null);
       assert.strictEqual(own?.outcome, "handler_error");
       assert.strictEqual(own?.outcomeCode, "approval_required");
 
@@ -229,8 +230,17 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
         durationMs: 7,
         rowCount: 1
       });
+      // The invocation's row names the agent that started it; its calls read the name there.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO runtime_invocations (id, company_id, patch_id, version_id, handler,
+          kind, initiating_viewer_id, agent_name, effective_principal, correlation_id, started_at,
+          deadline, args_bytes)
+        VALUES (${invocationId}, ${companyId}, 'runtimepatch', 'ver_runtime', 'agent.report',
+          'action', ${DEV_SEED.userId}, 'Claude Code', 'patch', 'invocation-correlation',
+          to_timestamp(${NOW / 1_000}), to_timestamp(${(NOW + 5_000) / 1_000}), 2)`;
       const recent = yield* log.recent({ companyId, connectionId: "callback-connection" });
       assert.strictEqual(recent.length, 1);
+      assert.strictEqual(recent[0]?.agentName, "Claude Code");
       assert.strictEqual(recent[0]?.userId, DEV_SEED.userId);
       assert.strictEqual(recent[0]?.effectivePrincipal, DEV_SEED.userId);
       assert.strictEqual(recent[0]?.invocationId, invocationId);

@@ -132,7 +132,7 @@ it.live(
               stdin: {
                 contents: `import { query, action, createGuest, t } from "patchy/server";
       const quiet = query({args:{},result:t.json(),handler:async ctx => await ctx.tables.notes.list()});
-      const read = query({args:{},result:t.json(),handler:async ctx => { ctx.log("Reading own notes"); return {viewer:ctx.viewer.user.id, page:await ctx.tables.notes.list()}; }});
+      const read = query({args:{},result:t.json(),handler:async ctx => { ctx.log("Reading own notes"); return {viewer:ctx.viewer.user.id, agent:ctx.agent, page:await ctx.tables.notes.list()}; }});
       const fail = query({args:{},result:t.json(),handler:async () => { throw new Error("private diagnostic 397"); }});
       const write = action({args:{},result:t.json(),handler:async ctx => await ctx.tables.notes.insert({title:"Attributed write"})});
       const nested = action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.read({})});
@@ -209,17 +209,29 @@ it.live(
             args: { handler, args: {} }
           })
           .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request));
-      const read = yield* call("demo.read").pipe(
-        Effect.flatMap(
-          Schema.decodeUnknownEffect(
-            Schema.Struct({
-              ok: Schema.Literal(true),
-              value: Schema.Struct({ viewer: Schema.String, page: TablePage })
-            })
-          )
-        )
+      const decodeRead = Schema.decodeUnknownEffect(
+        Schema.Struct({
+          ok: Schema.Literal(true),
+          value: Schema.Struct({
+            viewer: Schema.String,
+            agent: Schema.NullOr(Schema.Struct({ name: Schema.String })),
+            page: TablePage
+          })
+        })
       );
+      const read = yield* call("demo.read").pipe(Effect.flatMap(decodeRead));
       assert.strictEqual(read.value.viewer, "usr_dev");
+      assert.isNull(read.value.agent);
+      // An agent's call reaches the handler as the same viewer, naming its client.
+      const agentRead = yield* invocations
+        .call(
+          { handler: "demo.read", args: {} },
+          { ...binding, agent: { name: "Claude Code" }, correlationId: newInternalId("call") },
+          Effect.succeed(viewer)
+        )
+        .pipe(Effect.flatMap(decodeRead));
+      assert.strictEqual(agentRead.value.viewer, "usr_dev");
+      assert.deepStrictEqual(agentRead.value.agent, { name: "Claude Code" });
       assert.deepStrictEqual(
         read.value.page.rows.map((row) => row.title),
         ["Gateway proof"]

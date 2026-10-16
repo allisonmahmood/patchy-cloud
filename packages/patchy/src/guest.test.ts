@@ -45,7 +45,8 @@ const viewer = {
 const invoke = async (
   definition: unknown,
   call: (operation: unknown) => Promise<unknown>,
-  sharedStores: readonly string[] = []
+  sharedStores: readonly string[] = [],
+  agent?: GuestProtocol.InvocationAgent
 ) => {
   const guest = createGuest({ demo: { run: definition } }, sharedStores);
   const response = await guest.fetch(
@@ -56,7 +57,8 @@ const invoke = async (
         type: "invoke",
         handler: "demo.run",
         args: {},
-        viewer
+        viewer,
+        ...(agent === undefined ? {} : { agent })
       })
     }),
     undefined,
@@ -64,6 +66,25 @@ const invoke = async (
   );
   return (await response.json()) as unknown;
 };
+
+it("tells handlers which agent is calling as the viewer, and null for a page", async () => {
+  const definition = server.query({
+    args: {},
+    result: t.json(),
+    handler: (ctx) => ({ viewer: ctx.viewer.user.id, agent: ctx.agent })
+  });
+  const call = async () => {
+    throw new Error("This handler does not call the host.");
+  };
+  assert.deepStrictEqual(await invoke(definition, call), {
+    ok: true,
+    value: { viewer: "usr_test", agent: null }
+  });
+  assert.deepStrictEqual(await invoke(definition, call, [], { name: "Claude Code" }), {
+    ok: true,
+    value: { viewer: "usr_test", agent: { name: "Claude Code" } }
+  });
+});
 
 it.each([
   { name: "a reference builder", column: t.ref("accounts") },

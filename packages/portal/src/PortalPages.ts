@@ -149,12 +149,14 @@ const overlongName = errorPage(
   `Patch names have at most ${maxNameLength} characters.`
 );
 
-/** The machine most recently logged in as this user, while any is live. */
+/** The machine most recently logged in as this user to build, while any is live; agents don't count. */
 const newestMachine = Effect.fn("PortalPages.newestMachine")(function* (userId: string) {
   const machines = yield* (yield* MachineTokens.MachineTokens).list(userId);
   const newest = machines.reduce<(typeof machines)[number] | undefined>(
     (latest, machine) =>
-      latest === undefined || machine.createdAt > latest.createdAt ? machine : latest,
+      machine.purpose === "build" && (latest === undefined || machine.createdAt > latest.createdAt)
+        ? machine
+        : latest,
     undefined
   );
   return newest === undefined ? null : { name: newest.name, createdAt: newest.createdAt };

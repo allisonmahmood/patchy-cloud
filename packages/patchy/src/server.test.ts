@@ -9,7 +9,7 @@ import {
 import { build } from "esbuild";
 import * as Schema from "effect/Schema";
 import { defineConfig, files, t, table } from "./config.js";
-import { extractHandlerDescriptors } from "./handlerDescriptors.js";
+import { checkAgentArea, extractHandlerDescriptors } from "./handlerDescriptors.js";
 import { InvalidManifestError } from "./invalidManifestError.js";
 import { bindServer, HandlerError, isHandlerError, query } from "./server.js";
 import type * as Server from "./server.js";
@@ -224,6 +224,145 @@ it("refuses table modifiers and misplaced handler schemas at builder time", () =
     );
   }
   assert.throws(() => t.enum(["duplicate", "duplicate"]));
+});
+
+it("describes handlers and their values for agents, leaving table columns as they were", () => {
+  const title = t.text();
+  const add = server.mutation({
+    description: "Adds leads and returns how many were added.",
+    args: {
+      leads: t
+        .array(
+          t.object({
+            name: title.describe("Full name."),
+            email: t.text().optional().describe("Work email."),
+            stage: t.enum(["open", "closed"]).describe("Pipeline stage.").optional()
+          })
+        )
+        .describe("Leads to add."),
+      owner: t.nullable(t.text().describe("A colleague's email.")).describe("Who owns them.")
+    },
+    result: t.integer().describe("How many were added."),
+    handler: () => 0
+  });
+  const added: HandlerDescriptor = {
+    kind: "mutation",
+    description: "Adds leads and returns how many were added.",
+    args: {
+      leads: {
+        kind: "array",
+        description: "Leads to add.",
+        element: {
+          kind: "object",
+          fields: {
+            name: { kind: "text", description: "Full name." },
+            email: { kind: "text", description: "Work email.", optional: true },
+            stage: {
+              kind: "enum",
+              values: ["open", "closed"],
+              description: "Pipeline stage.",
+              optional: true
+            }
+          }
+        }
+      },
+      owner: {
+        kind: "nullable",
+        value: { kind: "text", description: "A colleague's email." },
+        description: "Who owns them."
+      }
+    },
+    result: { kind: "integer", description: "How many were added." }
+  };
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(add)), added);
+  assert.deepStrictEqual(
+    decodeDescriptors(JSON.parse(JSON.stringify(extractHandlerDescriptors({ agent: { add } })))),
+    { "agent.add": added }
+  );
+  // Describing returns a handler value; the column itself, and every table, keep their JSON.
+  assert.deepStrictEqual(title.toJSON(), { kind: "text" });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(config.tables.leads.columns)), {
+    name: { kind: "text" },
+    note: { kind: "text", optional: true },
+    active: { kind: "boolean", default: true }
+  });
+  // Types refuse these too; untyped code gets the same refusal at definition time.
+  for (const column of [t.ref("leads"), t.member(), t.text().default("default")] as unknown[])
+    assert.throws(() => (column as typeof title).describe("Table-only."));
+  for (const description of ["", " "])
+    assert.throws(
+      () => query({ description, args: {}, result: t.boolean(), handler: () => true }),
+      InvalidManifestError
+    );
+  assert.throws(
+    () =>
+      query({
+        args: { search: t.text().describe(" ") },
+        result: t.boolean(),
+        handler: () => true
+      }),
+    InvalidManifestError
+  );
+});
+
+it("refuses agent tools an agent cannot use, and only in server/agent.ts", () => {
+  const described = { kind: "query", description: "Lists open deals.", args: {} } as const;
+  assert.deepStrictEqual(
+    checkAgentArea({
+      "agent.deals": { ...described, result: { kind: "json" } },
+      // Page handlers keep every capability and need no description.
+      "deals.list": { kind: "query", args: {}, result: { kind: "fileHandle" } },
+      "deals.attach": {
+        kind: "action",
+        args: { file: { kind: "upload" } },
+        result: { kind: "json" }
+      }
+    }),
+    { refusal: undefined, warnings: [] }
+  );
+  const refused = checkAgentArea({
+    "agent.undescribed": { kind: "query", args: {}, result: { kind: "json" } },
+    "agent.attach": {
+      kind: "action",
+      description: "Attaches files to a deal.",
+      args: {
+        files: {
+          kind: "array",
+          description: "Files to attach.",
+          element: { kind: "object", fields: { upload: { kind: "upload" } } }
+        }
+      },
+      result: { kind: "json" }
+    },
+    "agent.export": {
+      ...described,
+      result: { kind: "nullable", value: { kind: "fileHandle" } }
+    }
+  }).refusal;
+  assert.include(refused, "agent.undescribed needs a description");
+  assert.include(refused, "agent.attach uses t.upload() or t.fileHandle()");
+  assert.include(refused, "agent.export uses t.upload() or t.fileHandle()");
+  assert.include(refused, "uploads and file handles stay on the page");
+  assert.deepStrictEqual(
+    checkAgentArea({
+      "agent.move": {
+        kind: "mutation",
+        description: "Moves a deal to a stage.",
+        args: {
+          deal: { kind: "text", description: "The deal's name." },
+          stage: { kind: "text" },
+          note: { kind: "text", optional: true }
+        },
+        result: { kind: "json" }
+      }
+    }),
+    {
+      refusal: undefined,
+      warnings: [
+        "Agent tool agent.move has undescribed arguments: stage, note. Add .describe() to each so agents know what to send."
+      ]
+    }
+  );
 });
 
 it("distinguishes handler errors from platform errors and preserves JSON details", () => {

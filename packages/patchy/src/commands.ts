@@ -493,6 +493,9 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey, repo);
   const allWarnings =
     warnings.length === 0 ? published.warnings : [...published.warnings, ...warnings];
+  const agentTools = (published.handlers ?? []).flatMap(({ name }) =>
+    name.startsWith("agent.") ? [name.slice("agent.".length)] : []
+  );
   yield* Output.report(
     warnings.length === 0 ? document : Object.assign({}, document, { warnings: allWarnings }),
     [
@@ -507,7 +510,12 @@ const sendPublish = Effect.fn("sendPublish")(function* (
           ([resource, names]) =>
             `${kind === "provisioned" ? "Provisioned" : "Unused"} ${resource}: ${names.length ? names.join(", ") : "none"}.`
         )
-      )
+      ),
+      ...(agentTools.length
+        ? [
+            `Agent tools: ${agentTools.join(", ")}. People's agents can use these through Patchy's MCP (${instance.apiUrl}/mcp).`
+          ]
+        : [])
     ]
   );
   for (const warning of allWarnings) yield* Output.warn(`Warning: ${warning}`);

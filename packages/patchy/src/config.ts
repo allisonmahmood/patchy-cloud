@@ -29,7 +29,7 @@ export type ValueDescriptor = (
   | { readonly kind: "nullable"; readonly value: ValueDescriptor }
   | { readonly kind: "row"; readonly table: string }
   | { readonly kind: "fileHandle" | "upload" }
-) & { readonly optional?: true };
+) & { readonly optional?: true; readonly description?: string };
 type ColumnDescriptor<
   K extends ColumnKind,
   Optional extends boolean,
@@ -46,7 +46,7 @@ export type Descriptor = (
   | { readonly kind: "enum"; readonly values: readonly string[] }
   | { readonly kind: "nullable"; readonly value: Descriptor }
   | { readonly kind: "fileHandle" | "upload" }
-) & { readonly optional?: true; readonly default?: unknown };
+) & { readonly optional?: true; readonly default?: unknown; readonly description?: string };
 export interface SchemaInput {
   readonly isOptional: boolean;
   toJSON(): Descriptor;
@@ -69,6 +69,11 @@ export class ValueSchema<D extends object, Optional extends boolean = false> {
     return new ValueSchema(this.descriptor, true);
   }
 
+  /** What an agent reads about this value: what it means and which values work. */
+  describe(description: string): ValueSchema<D & { readonly description: string }, Optional> {
+    return new ValueSchema({ ...this.descriptor, description }, this.isOptional);
+  }
+
   toJSON(): D & (Optional extends true ? { readonly optional: true } : unknown) {
     return {
       ...this.descriptor,
@@ -87,6 +92,8 @@ export type Upload = {
   readonly contentType: string;
   readonly [uploadBrand]: true;
 };
+
+const tableOnlyKinds: ReadonlySet<ColumnKind> = new Set(["ref", "member"]);
 
 export class Column<
   K extends ColumnKind = ColumnKind,
@@ -128,6 +135,22 @@ export class Column<
     if (value === null || value === undefined)
       throw new Error("A default cannot be null or undefined.");
     return new Column(this.kind, false, true, this.table, value);
+  }
+
+  /**
+   * What an agent reads about this handler value. Tables take no column descriptions, so a
+   * described value is a handler schema, never a table column.
+   */
+  describe(
+    this: Column<K & ScalarKind, Optional, false, Target>,
+    description: string
+  ): ValueSchema<{ readonly kind: K & ScalarKind; readonly description: string }, Optional> {
+    // Types already refuse these; untyped code must not silently drop a table-only modifier.
+    if (tableOnlyKinds.has(this.kind) || this.hasDefault)
+      throw new Error(
+        "Only handler values take a description; references, members and defaults are table-only."
+      );
+    return new ValueSchema({ kind: this.kind, description }, this.isOptional);
   }
 
   /** Only JSON descriptors cross the process and wire boundary. */

@@ -8,6 +8,14 @@ Who a caller is: Clerk sessions and viewers, user-owned machine tokens, device l
 The credential a machine holds to act as one user, shared by the agents on it and named for the machine. It expires 90 days after minting or after 30 idle days, whichever comes first; a version keeps the machine token that published it as provenance.
 _Avoid_: API key, personal access token, agent token (an agent has no identity of its own)
 
+**Purpose**:
+What a machine token is for: `build`, the CLI's, which opens every bearer door except the MCP one, or `use`, an [agent connection](#language)'s, which opens only the MCP door. A token of the wrong purpose is refused as an unknown one.
+_Avoid_: scope (OAuth's word, granted as `patches` and nothing finer), token type
+
+**Agent connection**:
+A person's own agent, such as Claude Code, connected through OAuth to use their company's patches as them. Each connected client holds its own `use` machine token named for it; connecting the same client again replaces it. It is listed, disconnected and revoked by deactivation like any machine, and works only while the company's [agent access](../companies/GLOSSARY.md) is on.
+_Avoid_: integration, bot, app (the client, not the connection)
+
 **Identity**:
 The user, their company and role, and the machine acting for them on a bearer-authenticated request. Every bearer is a user; a different machine token for that user reaches the same patches.
 _Avoid_: account, principal (on the wire), permission set
@@ -33,5 +41,5 @@ The authorization of a machine through a short-lived URL and code that the perso
 _Avoid_: device flow (the protocol), OAuth, paste your token
 
 **Your machines**:
-The user's list of live machine tokens — name, creation, last use and expiry — with revoke-one and revoke-all. The user's control over which machines may act for them; browser sign-out lives here too.
+The user's list of live machine tokens — name, creation, last use and expiry — with revoke-one and revoke-all; agent connections are marked and disconnected the same way. The user's control over which machines may act for them; browser sign-out lives here too.
 _Avoid_: sessions (a browser's), API keys

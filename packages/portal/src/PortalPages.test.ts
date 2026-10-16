@@ -2151,6 +2151,8 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
     readonly outcome?: Exclude<InvocationLog.Outcome, "pending">;
     readonly outcomeCode?: string | null;
     readonly parentId?: string;
+    /** The agent client that started it through Patchy's MCP. */
+    readonly agentName?: string;
     readonly durationMs?: number;
     readonly attempts?: number;
     readonly logLines?: InvocationLog.Finish["logLines"];
@@ -2176,6 +2178,7 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
     handler: input.handler,
     kind: input.kind,
     initiatingViewerId: viewer.id,
+    ...(input.agentName === undefined ? {} : { agentName: input.agentName }),
     parentId: input.parentId ?? null,
     correlationId: `correlation-${id}`,
     startedAt,
@@ -2579,6 +2582,7 @@ it.layer(layer)("patch log on a socket", (it) => {
       yield* invoke(seed, workspace.member, {
         handler: "leads.export",
         kind: "action",
+        agentName: "Claude Code",
         durationMs: 1_800,
         replyDelivered: false
       });
@@ -2601,7 +2605,7 @@ it.layer(layer)("patch log on a socket", (it) => {
             "Recent activity",
             "Sam · Busy Tool v1 · pipeline.summary (query) Succeeded 1 Jan 00:00 UTC · 30 ms",
             "Priya · Busy Tool v1 · deals.moveStage (mutation) Refused write_conflict 1 Jan 00:00 UTC · 30 ms · 3 attempts",
-            "Alex · Busy Tool v1 · leads.export (action) Succeeded 1 Jan 00:00 UTC · 1.8 s · reply not delivered",
+            "Alex via Claude Code · Busy Tool v1 · leads.export (action) Succeeded 1 Jan 00:00 UTC · 1.8 s · reply not delivered",
             "See the full log"
           ].join(" ")
         );
@@ -2610,6 +2614,17 @@ it.layer(layer)("patch log on a socket", (it) => {
           logPath(patch.name)
         );
       }
+      // The person filter keeps their agent's entries beside their own.
+      const theirs = yield* (yield* request(
+        logPath(patch.name, `?person=${workspace.member.id}`),
+        workspace.owner
+      )).text;
+      assert.deepStrictEqual(
+        [...theirs.matchAll(/<tr id="entry-[^"]+"><td>.*?<\/td><td>([^<]+)<\/td>/g)].map(
+          (match) => match[1]
+        ),
+        ["Alex via Claude Code", "Alex"]
+      );
       const member = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
       assert.notInclude(text(member), "Recent activity");
       assert.notInclude(member, logPath(patch.name));

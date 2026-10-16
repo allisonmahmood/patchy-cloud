@@ -38,14 +38,18 @@ export const RESERVED_HANDLES: ReadonlyArray<string> = [
   "invite",
   "signup",
   "signin",
-  "whats-new"
+  "whats-new",
+  "mcp",
+  "oauth"
 ];
 
 export class Company extends Schema.Class<Company>("Company")({
   id: Schema.String,
   handle: Schema.String,
   name: Schema.String,
-  createdAt: Schema.Date
+  createdAt: Schema.Date,
+  /** Whether people's agents may use the company's patches through Patchy's MCP; admins switch it. */
+  agentsEnabled: Schema.Boolean
 }) {}
 
 // Clerk's application invitation default: https://clerk.com/docs/reference/backend/invitations/create-invitation
@@ -137,6 +141,11 @@ export class Companies extends Context.Service<
     readonly findById: (companyId: string) => Effect.Effect<Company | null, SqlError>;
     /** Whether a company already holds this handle; create still settles a race by its unique insert. */
     readonly isHandleTaken: (handle: string) => Effect.Effect<boolean, SqlError>;
+    /** Turns agent access on or off; the caller has checked the actor is the company's admin. */
+    readonly setAgentsEnabled: (input: {
+      readonly companyId: string;
+      readonly enabled: boolean;
+    }) => Effect.Effect<Company, CompanyNotFound | SqlError>;
     readonly createInvite: (
       input: InviteInput
     ) => Effect.Effect<Invite, CompanyNotFound | AlreadyInCompany | AlreadyInvited | SqlError>;
@@ -155,7 +164,8 @@ export class Companies extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
-  const companyColumns = sql`id, handle, name, created_at AS "createdAt"`;
+  const companyColumns = sql`id, handle, name, created_at AS "createdAt",
+    agents_enabled AS "agentsEnabled"`;
   const userColumns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
     email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
     whats_new_seen AS "whatsNewSeen"`;
@@ -171,6 +181,13 @@ export const make = Effect.gen(function* () {
     Request: Schema.String,
     Result: Company,
     execute: (handle) => sql`SELECT ${companyColumns} FROM companies WHERE handle = ${handle}`
+  });
+  const updateAgentsEnabled = SqlSchema.findOneOption({
+    Request: Schema.Struct({ companyId: Schema.String, enabled: Schema.Boolean }),
+    Result: Company,
+    execute: ({ companyId, enabled }) => sql`
+      UPDATE companies SET agents_enabled = ${enabled} WHERE id = ${companyId}
+      RETURNING ${companyColumns}`
   });
   const insertCompany = SqlSchema.findOneOption({
     Request: Schema.Struct({
@@ -269,6 +286,14 @@ export const make = Effect.gen(function* () {
   const isHandleTaken = Effect.fn("Companies.isHandleTaken")((handle: string) =>
     companyByHandle(handle).pipe(Effect.catchTags(dieOnSchemaError), Effect.map(Option.isSome))
   );
+  const setAgentsEnabled = Effect.fn("Companies.setAgentsEnabled")(function* (input: {
+    readonly companyId: string;
+    readonly enabled: boolean;
+  }) {
+    const company = yield* updateAgentsEnabled(input).pipe(Effect.catchTags(dieOnSchemaError));
+    if (Option.isNone(company)) return yield* new CompanyNotFound({ companyId: input.companyId });
+    return company.value;
+  });
   const create = Effect.fn("Companies.create")((input: CreateInput) =>
     sql.withTransaction(
       Effect.gen(function* () {
@@ -375,6 +400,7 @@ export const make = Effect.gen(function* () {
     create,
     findById,
     isHandleTaken,
+    setAgentsEnabled,
     createInvite,
     listInvites,
     findInvitesByEmail,
