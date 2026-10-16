@@ -21,6 +21,8 @@ export const homeStyles = `
   .home-search { flex: 1; min-width: min(100%, 280px); }
   .home { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 36px; align-items: start; margin-top: 28px; }
   .home-solo { grid-template-columns: minmax(0, 1fr); }
+  /* The shelves fit the column they get, which the Pages panel narrows, rather than the window. */
+  .home-main { container-type: inline-size; }
   .home-shelf + .home-shelf { margin-top: 32px; }
   .home-shelf-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 12px; }
   .home-shelf-head > * { margin: 0; }
@@ -32,11 +34,18 @@ export const homeStyles = `
   .home-solo > .note .copy-line { margin: 12px 0; }
   @media (max-width: 960px) {
     .home { grid-template-columns: minmax(0, 1fr); }
-    .home-usual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container (max-width: 700px) {
     .home-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-  @media (max-width: 520px) {
-    .home-usual, .home-tools { grid-template-columns: minmax(0, 1fr); }
+  @container (max-width: 620px) {
+    .home-usual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container (max-width: 440px) {
+    .home-tools { grid-template-columns: minmax(0, 1fr); }
+  }
+  @container (max-width: 280px) {
+    .home-usual { grid-template-columns: minmax(0, 1fr); }
   }
 `;
 
@@ -127,6 +136,7 @@ export const renderHome = (input: HomeInput): string => {
     `<a class="tile-row" href="${escapeAttribute(address(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-body"><span class="tile-name">${highlight(row.patch.name, query)}${tags(row)}</span><span class="tile-text">${line(row)}</span>${query && row.owner.name.toLowerCase().includes(query.toLowerCase()) ? `<span class="tile-meta">${highlight(row.owner.name, query)}</span>` : ""}</span></a>`;
   const pageRow = (row: Patches.ReadPatch, unread: boolean) =>
     `<li><a class="tile-row tile-row-plain home-page" href="${escapeAttribute(address(row.patch))}">${patchMark(row.patch.name, 0)}<span class="tile-body"><span class="tile-name">${highlight(row.patch.name, query)}${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}</span><span class="tile-text">${line(row)}</span><span class="tile-meta">${highlight(row.owner.name, query)} · ${escapeHtml(ago(row.publishedAt, now))}</span></span>${unread ? '<span class="whats-new-dot" role="img" aria-label="New to you"></span>' : ""}</a></li>`;
+  // A usual tile is something the viewer already knows, so it has no description or You tag.
   const tile = (row: Patches.ReadPatch, meta: string) => {
     const { patch } = row;
     const url = `${base}${address(patch)}`;
@@ -137,7 +147,7 @@ export const renderHome = (input: HomeInput): string => {
       menuCopy(url, "Copy link"),
       ...(manages(row, viewer) ? [menuLink(`${card}/settings`, "Settings")] : [])
     ]);
-    return `<div class="tile"><a class="tile-link" href="${escapeAttribute(address(patch))}">${patchMark(patch.name, row.tier)}<span class="tile-name">${escapeHtml(patch.name)}${tags(row)}</span><span class="tile-text">${escapeHtml(clause(row))}</span><span class="tile-meta">${escapeHtml(meta)}</span></a>${menu}</div>`;
+    return `<div class="tile"><a class="tile-link" href="${escapeAttribute(address(patch))}">${patchMark(patch.name, row.tier)}<span class="tile-name">${escapeHtml(patch.name)}${isNew(row, viewer, opens, now) ? '<span class="tag tag-new">New</span>' : ""}</span><span class="tile-meta">${escapeHtml(meta)}</span></a>${menu}</div>`;
   };
   const shelfHead = (title: string, count: number | null, aside: string) =>
     `<div class="home-shelf-head"><h2 class="section-heading">${escapeHtml(title)}${count === null ? "" : ` <span class="count">${count}</span>`}</h2>${aside}</div>`;
@@ -201,7 +211,7 @@ export const renderHome = (input: HomeInput): string => {
           )}</ul>${more(foundPages.length, PAGES * 2, `/patches?show=pages&q=${encoded}`, `All ${foundPages.length} matching pages`)}</aside>`
       : "";
     return page(
-      `${summary}<div class="home${toolShelf && pageShelf ? "" : " home-solo"}">${toolShelf ? `<div>${toolShelf}</div>` : ""}${pageShelf}</div>`
+      `${summary}<div class="home${toolShelf && pageShelf ? "" : " home-solo"}">${toolShelf ? `<div class="home-main">${toolShelf}</div>` : ""}${pageShelf}</div>`
     );
   }
 
@@ -220,12 +230,7 @@ export const renderHome = (input: HomeInput): string => {
     .slice(0, USUAL - usual.length);
   const popular = `Popular at ${company}`;
   const usualTiles = [
-    ...usual.map((row) =>
-      tile(
-        row,
-        `${row.tier === 0 ? "Page · opened" : "Opened"} ${ago(opens.get(row.patch.id)!.lastOpenedAt, now)}`
-      )
-    ),
+    ...usual.map((row) => tile(row, `Opened ${ago(opens.get(row.patch.id)!.lastOpenedAt, now)}`)),
     ...padding.map((row) =>
       tile(row, usual.length === 0 ? plural(row.visits, "visit", "visits") : popular)
     )
@@ -275,6 +280,6 @@ export const renderHome = (input: HomeInput): string => {
     : "";
 
   return page(
-    `<div class="home${pageShelf ? "" : " home-solo"}"><div>${usualShelf}${toolShelf}</div>${pageShelf}</div>`
+    `<div class="home${pageShelf ? "" : " home-solo"}"><div class="home-main">${usualShelf}${toolShelf}</div>${pageShelf}</div>`
   );
 };
