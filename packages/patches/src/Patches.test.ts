@@ -165,10 +165,16 @@ it.layer(
       const restored = Option.getOrThrow(yield* service.find(request.patchId));
       assert.strictEqual(restored.version.id, request.versionId);
       assert.strictEqual(restored.patch.lifecycleRevision, "9");
+      yield* service.recordOpen(reader.user.id, request.patchId, request.versionId);
       yield* service.delete(request.patchId, owner);
       yield* TestClock.adjust(30 * DAY);
       yield* service.purgeDeleted(request.patchId);
       assert.deepStrictEqual(revisions, ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "-1"]);
+      // Reclaiming a patch forgets who opened it.
+      assert.notInclude(
+        (yield* service.opens(reader.user.id)).map((open) => open.patchId),
+        request.patchId
+      );
     }).pipe(Effect.scoped)
   );
 
@@ -600,6 +606,81 @@ it.layer(
         yield* sql`SELECT visit_count::int AS count FROM patches WHERE id = ${patch.patchId}`,
         [{ count: 2 }]
       );
+    })
+  );
+
+  it.effect("remembers each member's opens of live patches, halving every week", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 9, 1));
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      const open = (userId: string) =>
+        Effect.map(service.opens(userId), (opens) =>
+          opens.find((entry) => entry.patchId === patch.patchId)
+        );
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
+      assert.isUndefined(yield* open(quota.user.id));
+
+      yield* TestClock.adjust(7 * DAY);
+      assert.closeTo((yield* open(reader.user.id))!.score, 1, 1e-9);
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
+
+      // An open stamped earlier than the last one, from a clock behind or a slow request,
+      // counts at its age and never moves the last open back.
+      yield* TestClock.setTime(Date.UTC(2026, 9, 1));
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      yield* TestClock.setTime(Date.UTC(2026, 9, 8));
+      const late = (yield* open(reader.user.id))!;
+      assert.closeTo(late.score, 2.5, 1e-9);
+      assert.strictEqual(late.lastOpenedAt, new Date(Date.UTC(2026, 9, 8)).toISOString());
+
+      // Reading v1 while v2 is current records nothing.
+      const next = yield* update(patch.patchId);
+      yield* service.recordOpen(quota.user.id, patch.patchId, patch.versionId);
+      assert.isUndefined(yield* open(quota.user.id));
+      yield* service.recordOpen(quota.user.id, patch.patchId, next.versionId);
+      assert.closeTo((yield* open(quota.user.id))!.score, 1, 1e-9);
+
+      yield* service.retire(patch.patchId, administrator);
+      yield* service.recordOpen(reader.user.id, patch.patchId, next.versionId);
+      assert.closeTo((yield* open(reader.user.id))!.score, 2.5, 1e-9);
+    })
+  );
+
+  it.effect("reads a decade-old open as nearly nothing and still counts the next one", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 9, 1));
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO patch_opens (user_id, patch_id, last_opened_at, score)
+        VALUES (${reader.user.id}, ${patch.patchId}, '2000-01-01T00:00:00Z', 50)`;
+      const scoreOf = Effect.map(
+        service.opens(reader.user.id),
+        (opens) => opens.find((entry) => entry.patchId === patch.patchId)!.score
+      );
+      assert.isBelow(yield* scoreOf, 1e-6);
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      assert.closeTo(yield* scoreOf, 1, 1e-9);
+    })
+  );
+
+  it.effect("counts visits for the company's patch reads", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      yield* service.recordVisit(patch.patchId);
+      const rows = yield* service.read({
+        companyId: uploader.company.id,
+        userId: uploader.user.id,
+        canOpen: () => true,
+        state: "all",
+        patchRef: patch.patchId
+      });
+      assert.strictEqual(rows[0]?.visits, 1);
     })
   );
 

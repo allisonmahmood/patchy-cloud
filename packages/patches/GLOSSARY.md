@@ -1,6 +1,6 @@
 # Patches
 
-What the company holds and how it is published: patches and versions, user ownership, sharing, visits, owner quotas and the lifecycle. Product decisions live in [the product](../../docs/product.md#patches).
+What the company holds and how it is published: patches and versions, user ownership, sharing, visits and members' opens, owner quotas and the lifecycle. Product decisions live in [the product](../../docs/product.md#patches).
 
 ## Language
 
@@ -111,6 +111,10 @@ _Avoid_: cleanup job, garbage collection, reaper, purge
 **Visit**:
 One successful serving of a patch from the instance, at its latest or a version URL. Recording its count is best-effort and never costs the reader the page if it fails; it is never an analytics event.
 _Avoid_: view, hit, page load (a visit is a serving that succeeded, not a request that arrived)
+
+**Open**:
+One member's record of opening a live patch's address while signed in: when they last opened it and a score where each open counts 1 and halves every week. Only the current version counts, so reading an older version leaves a newer one unread. It exists only to build that member's own Home; nobody else reads it, and owners and admins see only the visit count. Public patches are served without a session, so opening one records none.
+_Avoid_: view history, recently viewed, tracking (it records the member's own use for the member)
 
 **Live patch**:
 A patch that has been neither retired nor deleted. A separate operator take-down can prevent it serving without changing its lifecycle state.
