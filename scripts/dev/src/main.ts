@@ -8,6 +8,8 @@
  *   pnpm dev up [scenario]    an environment: personas, a CLI, an agent workspace
  *   pnpm dev open <person>    a browser window signed in as one of its people
  *   pnpm dev shot <person> [path]  a full-page PNG as that person, with the page's errors
+ *   pnpm dev compare <person> <path>...  before/after PNGs for a PR, from the base and this worktree
+ *   pnpm dev film <person> <flow>        a flow recorded on the base and this worktree, as mp4
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -40,6 +42,16 @@ import {
   Shot,
   tearDown
 } from "./environment.js";
+import {
+  compareMarkdown,
+  resolveBase,
+  scenarioFor,
+  serveBase,
+  serveHead,
+  shootAll,
+  tearDownBase
+} from "./compare.js";
+import { film as filmTake, sideBySide, sizeMb, type Take } from "./film.js";
 import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
 import { alive, signal } from "./process.js";
@@ -578,6 +590,227 @@ const shot = Command.make(
   )
 );
 
+// ---- Before and after ----------------------------------------------------
+
+const baseFlag = Flag.String("base").pipe(
+  Flag.withDescription(
+    'What "before" is: any git ref; where this branch left origin/main when omitted'
+  ),
+  Flag.optional
+);
+
+const scenarioFlag = Flag.String("scenario").pipe(
+  Flag.withDescription("The scenario both sides run; this environment's, or team, when omitted"),
+  Flag.optional
+);
+
+/** Both sides served on one scenario, and the person on them. */
+const bothSides = Effect.fn("bothSides")(function* (
+  root: string,
+  person: string,
+  base: Option.Option<string>,
+  requested: Option.Option<string>
+) {
+  const scenario = yield* scenarioFor(root, requested);
+  const resolved = yield* resolveBase(root, base);
+  const before = yield* serveBase(root, resolved, scenario);
+  const after = yield* serveHead(root, scenario);
+  return { base: resolved, before, after, person: yield* findPerson(after, person) };
+});
+
+const compare = Command.make(
+  "compare",
+  {
+    person: Argument.String("person").pipe(
+      Argument.withDescription("A person's key, email or first name, from the scenario")
+    ),
+    targets: Argument.String("path").pipe(
+      Argument.withDescription("Pages to capture, such as / or /acme/new-business"),
+      Argument.atLeast(1)
+    ),
+    width: Flag.String("width").pipe(
+      Flag.withDescription("Comma-separated viewport widths"),
+      Flag.withDefault("1280,390")
+    ),
+    base: baseFlag,
+    scenario: scenarioFlag
+  },
+  Effect.fn(function* ({ person, targets, width, base, scenario }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* worktree;
+    const widths = width.split(",").map((w) => Number.parseInt(w.trim(), 10));
+    const sides = yield* bothSides(root, person, base, scenario);
+    const dir = path.join(root, ".local", "shots", "compare");
+    yield* fs.remove(dir, { recursive: true, force: true });
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* Console.error(
+      `Shooting ${targets.length} page(s) at ${widths.join(", ")}px as ${sides.person.name}`
+    );
+    const shots = yield* shootAll(
+      [
+        { side: "before", apiUrl: sides.before.apiUrl },
+        { side: "after", apiUrl: sides.after.apiUrl }
+      ],
+      sides.person.email,
+      targets,
+      widths,
+      dir
+    );
+    const bytes = new Map<string, Uint8Array>();
+    for (const shot of shots) bytes.set(shot.file, yield* fs.readFile(shot.file));
+    const identical = (target: string, w: number) => {
+      const of = (side: string) =>
+        shots.find((shot) => shot.target === target && shot.width === w && shot.side === side);
+      const a = of("before");
+      const b = of("after");
+      if (a === undefined || b === undefined) return false;
+      return Buffer.from(bytes.get(a.file) ?? []).equals(Buffer.from(bytes.get(b.file) ?? []));
+    };
+    const markdown = compareMarkdown({
+      person: sides.person,
+      base: sides.base,
+      shots: shots.map((shot) => ({ ...shot, relative: path.relative(root, shot.file) })),
+      identical
+    });
+    const mdFile = path.join(dir, "compare.md");
+    yield* fs.writeFileString(mdFile, markdown);
+    const attach = shots
+      .filter((shot) => shot.side === "after" || !identical(shot.target, shot.width))
+      .map((shot) => `--attach ${path.relative(root, shot.file)}`);
+    yield* Console.log(
+      [
+        markdown,
+        "",
+        `Wrote ${path.relative(root, mdFile)}. Put it in the PR body, then from ${root}:`,
+        `  gh pr edit <number> --body-file <body.md> ${attach.join(" ")}`
+      ].join("\n")
+    );
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Screenshot pages on the PR's base and on this worktree, as one person, and write a Before/After table for the PR"
+  )
+);
+
+const film = Command.make(
+  "film",
+  {
+    person: Argument.String("person").pipe(
+      Argument.withDescription("A person's key, email or first name, from the scenario")
+    ),
+    flow: Argument.String("flow").pipe(
+      Argument.withDescription(
+        "A module whose default export drives the page: async ({ page, step }) => {}"
+      )
+    ),
+    start: Flag.String("path").pipe(
+      Flag.withDescription("Where the flow starts, signed in"),
+      Flag.withDefault("/")
+    ),
+    width: Flag.Int("width").pipe(Flag.withDescription("Viewport width"), Flag.withDefault(1280)),
+    afterOnly: Flag.Boolean("after-only").pipe(
+      Flag.withDescription("Skip the base: film this worktree only"),
+      Flag.withDefault(false)
+    ),
+    base: baseFlag,
+    scenario: scenarioFlag
+  },
+  Effect.fn(function* ({ person, flow, start, width, afterOnly, base, scenario }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* worktree;
+    const flowFile = path.resolve(flow);
+    const name = path.basename(flowFile).replace(/\.[^.]+$/, "");
+    const dir = path.join(root, ".local", "shots", "film", name);
+    yield* fs.remove(dir, { recursive: true, force: true });
+    yield* fs.makeDirectory(dir, { recursive: true });
+    let takes: Array<Take>;
+    let label: string;
+    let who: { name: string; role: string };
+    if (afterOnly) {
+      const scenarioName = yield* scenarioFor(root, scenario);
+      const after = yield* serveHead(root, scenarioName);
+      const found = yield* findPerson(after, person);
+      who = found;
+      label = "";
+      yield* Console.error(`Filming ${name} as ${found.name}`);
+      takes = [
+        yield* filmTake({
+          side: "after",
+          apiUrl: after.apiUrl,
+          email: found.email,
+          start,
+          flowFile,
+          width,
+          label: "After: this PR",
+          dir
+        })
+      ];
+    } else {
+      const sides = yield* bothSides(root, person, base, scenario);
+      who = sides.person;
+      label = sides.base.label;
+      yield* Console.error(`Filming ${name} as ${sides.person.name}, before and after`);
+      takes = [
+        yield* filmTake({
+          side: "before",
+          apiUrl: sides.before.apiUrl,
+          email: sides.person.email,
+          start,
+          flowFile,
+          width,
+          label: `Before: ${sides.base.label}`,
+          dir
+        }),
+        yield* filmTake({
+          side: "after",
+          apiUrl: sides.after.apiUrl,
+          email: sides.person.email,
+          start,
+          flowFile,
+          width,
+          label: "After: this PR",
+          dir
+        })
+      ];
+    }
+    const both = takes.length === 2 ? path.join(dir, "side-by-side.mp4") : undefined;
+    if (both !== undefined) yield* sideBySide(takes[0]!, takes[1]!, both);
+    const lines: Array<string> = [`#### Flow: ${name}, as ${who.name} (${who.role})`, ""];
+    for (const take of takes) {
+      const status =
+        take.failure === null
+          ? "finished"
+          : `stopped${take.failure.step === "" ? "" : ` at "${take.failure.step}"`}: ${take.failure.message}`;
+      lines.push(
+        `- ${take.side === "before" ? `Before (${label})` : "After"}: ${status}, ${take.seconds.toFixed(1)}s`
+      );
+    }
+    const shown = both ?? takes[0]!.file;
+    lines.push("", path.relative(root, shown), "");
+    const markdown = lines.join("\n");
+    yield* fs.writeFileString(path.join(dir, "film.md"), markdown);
+    const sizes: Array<string> = [];
+    for (const file of [...takes.map((take) => take.file), ...(both === undefined ? [] : [both])])
+      sizes.push(`  ${path.relative(root, file)}  ${(yield* sizeMb(file)).toFixed(1)} MB`);
+    yield* Console.log(
+      [
+        markdown,
+        "Videos:",
+        ...sizes,
+        "",
+        `Wrote ${path.relative(root, path.join(dir, "film.md"))}. Put it in the PR body, then from ${root}:`,
+        `  gh pr edit <number> --body-file <body.md> --attach ${path.relative(root, shown)}`
+      ].join("\n")
+    );
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Record a Playwright flow on the PR's base and on this worktree, as one person, as captioned mp4s"
+  )
+);
+
 const down = Command.make(
   "down",
   {},
@@ -585,6 +818,7 @@ const down = Command.make(
     const fs = yield* FileSystem.FileSystem;
     const root = yield* worktree;
     const stateDir = yield* stateDirOf(root);
+    const baseRemoved = yield* tearDownBase(root);
     const environmentRemoved = yield* tearDown(root);
     const recorded = yield* readPlan(stateDir).pipe(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
@@ -593,8 +827,8 @@ const down = Command.make(
     const instanceRemoved = yield* fs.exists(stateDir);
     yield* fs.remove(stateDir, { recursive: true, force: true });
     yield* Console.log(
-      environmentRemoved || instanceRemoved
-        ? `Removed ${[instanceRemoved ? stateDir : "", environmentRemoved ? (yield* layoutFor(root)).dir : ""].filter(Boolean).join(" and ")}. Close any agent sessions you started in the workspace.`
+      environmentRemoved || instanceRemoved || baseRemoved
+        ? `Removed ${[instanceRemoved ? stateDir : "", environmentRemoved ? (yield* layoutFor(root)).dir : "", baseRemoved ? "the compare base" : ""].filter(Boolean).join(" and ")}. Close any agent sessions you started in the workspace.`
         : "Nothing to take down."
     );
   }, userFacing)
@@ -620,7 +854,19 @@ const CliSurface = Layer.mergeAll(
 );
 
 dev.pipe(
-  Command.withSubcommands([status, stop, logs, reset, up, open, shot, down, superviseCommand]),
+  Command.withSubcommands([
+    status,
+    stop,
+    logs,
+    reset,
+    up,
+    open,
+    shot,
+    compare,
+    film,
+    down,
+    superviseCommand
+  ]),
   Command.run({ version: "0.0.0" }),
   Effect.scoped,
   Effect.provide([NodeServices.layer, FetchHttpClient.layer, CliSurface]),
