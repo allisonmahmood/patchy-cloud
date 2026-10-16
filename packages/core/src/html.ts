@@ -7,6 +7,11 @@ export const shellStyles = `
       --paper-blue: #eaf5ff;
       --paper-green: #eff9e8;
       --paper-amber: #fff7e4;
+      /* Mark tints: stronger than the papers, so a patch's mark reads at a glance beside its name. */
+      --tint-green: #cdeebb;
+      --tint-blue: #cfe4ff;
+      --tint-amber: #ffe2a8;
+      --tint-pink: #f6d3e4;
       --white: #fffefa;
       --ink: #12110f;
       --ink-soft: #36332d;
@@ -724,9 +729,12 @@ export function htmlPage(options: {
     /* mono: a tool's two-letter mark, tinted from its name and turned like the glyph; mono-blue, mono-green and
        mono-amber vary the tint. page-mark: a tier 0 page's ruled sheet in the same footprint. */
     .mono { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); font-size: .72rem; font-weight: 900; letter-spacing: .02em; line-height: 1; transform: rotate(-3deg); }
-    .mono-blue { background: var(--paper-blue); }
-    .mono-green { background: var(--paper-green); }
-    .mono-amber { background: var(--paper-amber); }
+    .mono-blue { background: var(--tint-blue); }
+    .mono-green { background: var(--tint-green); }
+    .mono-amber { background: var(--tint-amber); }
+    .mono-pink { background: var(--tint-pink); }
+    /* mono-lg and page-mark-lg: the mark at a page heading's size, as on a patch's card. */
+    .mono-lg { width: 56px; height: 56px; border-radius: 14px; box-shadow: 3px 3px 0 var(--ink); font-size: 1.05rem; }
     .page-mark { position: relative; flex: none; width: 26px; height: 32px; margin-inline: 4px; border: 2px solid var(--ink); border-radius: 3px 9px 3px 3px; background: var(--white); }
     .mono-placeholder { border-style: dashed; border-color: var(--line-strong); background: transparent; box-shadow: none; color: var(--muted); font-size: 1.1rem; transform: none; }
     /* tile: one patch to open, with its mark, name, first clause and why it is here; the corner button opens its menu.
@@ -735,6 +743,8 @@ export function htmlPage(options: {
     .tile-link { display: grid; align-content: start; gap: 6px; height: 100%; min-height: 160px; padding: 16px 16px 14px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 3px 3px 0 var(--ink); color: var(--ink-soft); font-weight: 450; text-decoration: none; }
     .tile-link:hover { box-shadow: var(--shadow-hard); }
     .tile-link > :is(.mono, .page-mark) { margin-bottom: 8px; }
+    /* A tile's mark is a size up from a row's. */
+    .tile-link > .mono { width: 44px; height: 44px; border-radius: 10px; font-size: .85rem; }
     .tile > .btn-icon { position: absolute; top: 6px; right: 6px; }
     .tile-name { color: var(--ink); font-weight: 850; line-height: 1.25; overflow-wrap: anywhere; }
     .tile-text { font-size: .85rem; line-height: 1.4; }
@@ -750,11 +760,18 @@ export function htmlPage(options: {
     .tile-row-plain { min-height: 0; padding: 8px; border-color: transparent; background: transparent; }
     .tile-row-plain .tile-text { white-space: normal; }
     /* side-panel: a framed column beside a page's main content, such as Home's Pages. */
-    .side-panel { min-width: 0; padding: 18px 18px 8px; border: 2px solid var(--ink); border-radius: var(--radius); }
+    .side-panel { min-width: 0; padding: 18px 18px 8px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper); box-shadow: 3px 3px 0 var(--ink); }
+    /* shelf-label: a small capitalised label over a group inside a shelf or panel, such as New to you. */
+    .shelf-label { margin: 14px 0 4px; color: var(--muted); font-size: .74rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
     mark { padding: 0 2px; border-radius: 3px; background: rgba(255, 191, 53, .6); color: var(--ink); }
     .page-mark::after { content: ""; position: absolute; inset: 7px 5px 6px; background: repeating-linear-gradient(transparent 0 4px, var(--line-strong) 4px 6px); }
+    /* After the base rules, which would otherwise win at equal specificity. */
+    .page-mark-lg { width: 44px; height: 54px; margin-inline: 6px; border-radius: 4px 14px 4px 4px; box-shadow: 3px 3px 0 var(--ink); }
+    .page-mark-lg::after { inset: 12px 9px 10px; background: repeating-linear-gradient(transparent 0 6px, var(--line-strong) 6px 8px); }
     /* tag: a small label after a name, such as You. */
     .tag { display: inline-flex; align-items: center; min-height: 20px; margin-left: 6px; padding: 1px 7px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--ink-soft); font-size: .7rem; font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; vertical-align: 2px; }
+    /* tag-new: something new to the viewer, in the brand's highlighter yellow. */
+    .tag-new { border-color: var(--ink); background: var(--yellow); color: var(--ink); }
     /* tabs: links that narrow one list, the current one marked like the app nav, each label followed by its count. */
     .tabs { display: flex; flex-wrap: wrap; gap: 4px; }
     .tabs a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); font-size: .9rem; font-weight: 750; text-decoration: none; }

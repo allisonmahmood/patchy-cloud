@@ -27,7 +27,6 @@ export const homeStyles = `
   .home-usual { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
   .home-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .home-pages .list { display: grid; gap: 2px; margin: 0 -8px 8px; }
-  .home-group { margin: 14px 0 4px; }
   .home-foot { margin: 28px 0 0; }
   .home-matches { margin: 12px 0 0; }
   .home-solo > .note .copy-line { margin: 12px 0; }
@@ -107,7 +106,7 @@ export const renderHome = (input: HomeInput): string => {
     epoch(b.publishedAt) - epoch(a.publishedAt) || byName(a, b);
 
   const tags = (row: Patches.ReadPatch) =>
-    `${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}${isNew(row, viewer, opens, now) ? '<span class="tag">New</span>' : ""}`;
+    `${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}${isNew(row, viewer, opens, now) ? '<span class="tag tag-new">New</span>' : ""}`;
   const clause = (row: Patches.ReadPatch) => firstClause(row.patch.description) || "No description";
   // While searching, a row's line shows where it matched: the first clause, else the description
   // around the match, else the title. A name or owner match shows in place, so the clause stands.
@@ -265,7 +264,7 @@ export const renderHome = (input: HomeInput): string => {
     .slice(0, PAGES);
   const group = (title: string, list: readonly Patches.ReadPatch[], dot: boolean) =>
     list.length
-      ? `<h3 class="home-group supporting-text">${title}</h3><ul class="list">${list.map((row) => pageRow(row, dot)).join("")}</ul>`
+      ? `<h3 class="shelf-label">${title}</h3><ul class="list">${list.map((row) => pageRow(row, dot)).join("")}</ul>`
       : "";
   const pageShelf = pages.length
     ? `<aside class="side-panel home-pages" aria-label="Pages">${shelfHead(

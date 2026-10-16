@@ -16,13 +16,17 @@ export const avatar = (key: string, label: string, variant?: "waiting" | "off") 
   return `<span class="avatar${tint}" aria-hidden="true">${escapeHtml(letters)}</span>`;
 };
 
-/** A patch's mark: two letters from its name on a tint picked from it, or a ruled sheet for a tier 0 page. */
-export const patchMark = (name: string, tier: number) => {
-  if (tier === 0) return '<span class="page-mark" aria-hidden="true"></span>';
+/**
+ * A patch's mark: two letters from its name on a tint picked from it, or a ruled sheet for a
+ * tier 0 page. `large` is the size beside a page heading.
+ */
+export const patchMark = (name: string, tier: number, large = false) => {
+  if (tier === 0)
+    return `<span class="page-mark${large ? " page-mark-lg" : ""}" aria-hidden="true"></span>`;
   const words = name.split("-").filter((word) => word !== "");
   const letters = words.length > 1 ? `${words[0]![0]}${words[1]![0]}` : name.slice(0, 2);
-  const tint = pick(name, ["", " mono-blue", " mono-green", " mono-amber"]);
-  return `<span class="mono${tint}" aria-hidden="true">${escapeHtml(letters.toUpperCase())}</span>`;
+  const tint = pick(name, ["", " mono-blue", " mono-green", " mono-amber", " mono-pink"]);
+  return `<span class="mono${tint}${large ? " mono-lg" : ""}" aria-hidden="true">${escapeHtml(letters.toUpperCase())}</span>`;
 };
 
 const dots =
