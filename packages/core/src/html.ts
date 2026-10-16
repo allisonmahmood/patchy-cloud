@@ -737,14 +737,16 @@ export function htmlPage(options: {
     .mono-lg { width: 56px; height: 56px; border-radius: 14px; box-shadow: 3px 3px 0 var(--ink); font-size: 1.05rem; }
     .page-mark { position: relative; flex: none; width: 26px; height: 32px; margin-inline: 4px; border: 2px solid var(--ink); border-radius: 3px 9px 3px 3px; background: var(--white); }
     .mono-placeholder { border-style: dashed; border-color: var(--line-strong); background: transparent; box-shadow: none; color: var(--muted); font-size: 1.1rem; transform: none; }
-    /* tile: one patch to open, with its mark, name, first clause and why it is here; the corner button opens its menu.
-       tile-row is the compact form for a longer shelf; tile-row-placeholder dashes one standing in for something to make. */
+    /* tile: one patch someone already knows, with its mark, name and why it is here; the corner button opens its menu.
+       tile-row is the compact form for a longer shelf, with a line of what the patch does; tile-row-placeholder dashes
+       one standing in for something to make. */
     .tile { position: relative; min-width: 0; }
-    .tile-link { display: grid; align-content: start; gap: 6px; height: 100%; min-height: 160px; padding: 16px 16px 14px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 3px 3px 0 var(--ink); color: var(--ink-soft); font-weight: 450; text-decoration: none; }
+    .tile-link { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; height: 100%; padding: 16px 16px 14px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 3px 3px 0 var(--ink); color: var(--ink-soft); font-weight: 450; text-decoration: none; }
     .tile-link:hover { box-shadow: var(--shadow-hard); }
-    .tile-link > :is(.mono, .page-mark) { margin-bottom: 8px; }
-    /* A tile's mark is a size up from a row's. */
+    .tile-link > :is(.mono, .page-mark) { margin-bottom: 10px; }
+    /* A tile's mark is a size up from a row's, a page's sheet in the same footprint. */
     .tile-link > .mono { width: 44px; height: 44px; border-radius: 10px; font-size: .85rem; }
+    .tile-link > .page-mark { width: 34px; height: 44px; margin-inline: 5px; }
     .tile > .btn-icon { position: absolute; top: 6px; right: 6px; }
     .tile-name { color: var(--ink); font-weight: 850; line-height: 1.25; overflow-wrap: anywhere; }
     .tile-text { font-size: .85rem; line-height: 1.4; }

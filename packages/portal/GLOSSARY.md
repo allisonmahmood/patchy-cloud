@@ -13,7 +13,7 @@ The signed-in landing at `/`, for opening patches rather than managing them: a s
 _Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
 
 **Your usual**:
-Home's first shelf: the four live patches the viewer opened most in the last 30 days, by their opens' halving score, padded with the company's most-visited. With no opens yet it is titled "Popular at" the company. It reads only the viewer's own opens.
+Home's first shelf: the four live patches the viewer opened most in the last 30 days, by their opens' halving score, padded with the company's most-visited. With no opens yet it is titled "Popular at" the company. Its tiles carry only the mark and name, since the viewer already knows them. It reads only the viewer's own opens.
 _Avoid_: favourites, pinned (pins are not built), recent
 
 **Tools** and **Pages**:

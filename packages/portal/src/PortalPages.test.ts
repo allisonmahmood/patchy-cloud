@@ -647,7 +647,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const usual = yield* (yield* request("/", workspace.member)).text;
       assert.include(text(usual), "Your usual");
       assert.deepStrictEqual(shelf(usual, "tile-link"), ["bravo", "echo", "delta", "alpha"]);
-      assert.include(text(usual), "Page · opened just now");
+      assert.include(text(usual), "Opened just now");
       assert.include(text(usual), "Popular at Northwind");
 
       // A rename keeps the opens; retiring takes the patch off every shelf.
