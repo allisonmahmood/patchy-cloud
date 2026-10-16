@@ -735,8 +735,6 @@ export function htmlPage(options: {
     .mono-pink { background: var(--tint-pink); }
     /* mono-lg and page-mark-lg: the mark at a page heading's size, as on a patch's card. */
     .mono-lg { width: 56px; height: 56px; border-radius: 14px; box-shadow: 3px 3px 0 var(--ink); font-size: 1.05rem; }
-    .page-mark-lg { width: 44px; height: 54px; margin-inline: 6px; border-radius: 4px 14px 4px 4px; box-shadow: 3px 3px 0 var(--ink); }
-    .page-mark-lg::after { inset: 12px 9px 10px; background: repeating-linear-gradient(transparent 0 6px, var(--line-strong) 6px 8px); }
     .page-mark { position: relative; flex: none; width: 26px; height: 32px; margin-inline: 4px; border: 2px solid var(--ink); border-radius: 3px 9px 3px 3px; background: var(--white); }
     .mono-placeholder { border-style: dashed; border-color: var(--line-strong); background: transparent; box-shadow: none; color: var(--muted); font-size: 1.1rem; transform: none; }
     /* tile: one patch to open, with its mark, name, first clause and why it is here; the corner button opens its menu.
@@ -767,6 +765,9 @@ export function htmlPage(options: {
     .shelf-label { margin: 14px 0 4px; color: var(--muted); font-size: .74rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
     mark { padding: 0 2px; border-radius: 3px; background: rgba(255, 191, 53, .6); color: var(--ink); }
     .page-mark::after { content: ""; position: absolute; inset: 7px 5px 6px; background: repeating-linear-gradient(transparent 0 4px, var(--line-strong) 4px 6px); }
+    /* After the base rules, which would otherwise win at equal specificity. */
+    .page-mark-lg { width: 44px; height: 54px; margin-inline: 6px; border-radius: 4px 14px 4px 4px; box-shadow: 3px 3px 0 var(--ink); }
+    .page-mark-lg::after { inset: 12px 9px 10px; background: repeating-linear-gradient(transparent 0 6px, var(--line-strong) 6px 8px); }
     /* tag: a small label after a name, such as You. */
     .tag { display: inline-flex; align-items: center; min-height: 20px; margin-left: 6px; padding: 1px 7px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--ink-soft); font-size: .7rem; font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; vertical-align: 2px; }
     /* tag-new: something new to the viewer, in the brand's highlighter yellow. */
