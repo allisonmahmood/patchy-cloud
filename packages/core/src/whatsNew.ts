@@ -50,6 +50,80 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 13,
+    date: "2026-10-16",
+    through: "c9b8fc48622ddff2a02251f4415dcbbcbe841ec6",
+    changes: [
+      {
+        kind: "New",
+        title: "Home puts the patches you use first",
+        detail:
+          "Signing in now opens Home. Your usual shows the four patches you open most, so you're one click from them, then come your company's tools and its pages, with new pages marked until you read them. Search covers every patch by name, what it does or who made it, and when nothing matches, Home gives you a line to ask your AI agent to build it.",
+        prs: [713, 716, 719]
+      },
+      {
+        kind: "New",
+        title: "Every patch in one list",
+        detail:
+          "All patches lists everything your company has published, with tabs for tools, pages, your own, and retired and deleted ones, plus a search. Each row's menu holds its actions. Owners and admins also get a Needs attention tab for patches whose owner has left or that are about to be deleted for good.",
+        prs: [715]
+      },
+      {
+        kind: "Improved",
+        title: "Each patch's page leads with Open",
+        detail:
+          "A patch's page now starts with Open and its address, then tabs: Overview and Versions for everyone, and Log and Settings for its owner and admins. Settings holds the description, who can open it, and retiring or deleting it.",
+        prs: [717]
+      },
+      {
+        kind: "New",
+        title: "See when your tools are failing",
+        detail:
+          "If a tool you own with server code had calls fail in the last day, Home tells you which, with a link to the failures in its log. Owners and admins also see each tool's health in All patches.",
+        prs: [718]
+      },
+      {
+        kind: "Fixed",
+        title: "Everyone has a name",
+        detail:
+          'People who signed up with only an email used to show as a blank name in Patchy, as in "Description edited by on…". They now go by the first part of their email until they set a name.',
+        prs: [687]
+      },
+      {
+        kind: "Improved",
+        title: "Your company's look is easier to get right",
+        detail:
+          "When your agent previews a first company look, it can now compare it with the look your tools use today, both shown whole in one screenshot. A logo that browsers can't show is refused when the look is published instead of appearing broken in every tool. Restoring an earlier look now records who restored it and why.",
+        prs: [697, 696, 703, 688]
+      },
+      {
+        kind: "Improved",
+        title: "Forms follow your look's error states",
+        detail:
+          "Tools your agent builds now show a field with a problem, and a disabled one, the way your company's look styles them. The example looks your agent learns from got the same fix.",
+        prs: [691, 692]
+      },
+      {
+        kind: "Improved",
+        title: "Clearer answers when a publish goes wrong",
+        detail:
+          "When a page can't be built because something it uses is missing, your agent is told exactly what. A page whose font or stylesheet won't load is published with a note naming it, and a file too big to save says so.",
+        prs: [686, 685, 689]
+      },
+      {
+        kind: "Fixed",
+        title: "Your agent's Patchy commands are steadier",
+        detail:
+          "An update to a tool's project that was cut off halfway no longer locks it. Previewing a tool on your computer no longer crashes on Node.js 24, it says when it's joining a preview already running, and every command's help explains each option.",
+        prs: [695, 704, 680, 681]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy checks static pages and tools' database requests more strictly, and logs a malformed request instead of failing it silently.",
+      "Patchy's own usage numbers now count every publish, sharing change and restore, and keep less of what a tool imports."
+    ]
+  },
+  {
     id: 12,
     date: "2026-10-15",
     through: "b58b8996619cfaf48670e3a86d5555bb680e7f25",
