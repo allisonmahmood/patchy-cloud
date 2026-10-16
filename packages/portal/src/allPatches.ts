@@ -234,7 +234,7 @@ export const renderAllPatches = (input: {
 
   const patchCell = (row: Patches.ReadPatch) => {
     const { patch } = row;
-    const tags = `${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}${isNew(row, viewer, input.opens, now) ? '<span class="tag">New</span>' : ""}`;
+    const tags = `${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}${isNew(row, viewer, input.opens, now) ? '<span class="tag tag-new">New</span>' : ""}`;
     return `<td><div class="portal-list-patch">${patchMark(patch.name, row.tier)}<div><a href="${escapeAttribute(cardPath(patch))}"><strong>${escapeHtml(patch.name)}</strong></a>${tags}<br><span class="supporting-text">${escapeHtml(firstClause(patch.description) || "No description")}</span></div></div></td>`;
   };
   const ownerCell = (row: Patches.ReadPatch) =>

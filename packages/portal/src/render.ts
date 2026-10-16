@@ -230,7 +230,7 @@ export const renderCardFrame = (input: {
         `<a href="${escapeAttribute(cardPath(patch, tab === "overview" ? "" : tab))}"${tab === input.tab ? ' aria-current="page"' : ""}>${label}</a>`
     )
     .join("");
-  return `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(patch.name)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier)}<div><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}<p class="portal-card-tags">${tags}</p></div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(patch.name)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
+  return `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(patch.name)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}<p class="portal-card-tags">${tags}</p></div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(patch.name)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
 };
 
 /** The card's Overview: the description, its facts, an off patch's note and the recent log. */
