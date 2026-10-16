@@ -11,6 +11,7 @@ import {
   renderOffPatch
 } from "@patchy/core";
 import { Patches } from "@patchy/patches";
+import type { AgentCalls } from "@patchy/runtime";
 
 export const styles = `
   .portal-card { min-width: 0; max-width: 920px; }
@@ -240,6 +241,8 @@ export const renderOverview = (input: {
   readonly now: number;
   /** Recent activity, rendered only for the owner and admins. */
   readonly activity: string;
+  /** The served version's agent area, what people's agents may call through Patchy's MCP. */
+  readonly agentTools: ReadonlyArray<AgentCalls.AgentTool>;
 }): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
@@ -266,8 +269,21 @@ export const renderOverview = (input: {
     viewer.role === "admin" && card.owner.deactivated
       ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
       : "";
-  return `${descriptionBlock(card)}${facts}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
+  return `${descriptionBlock(card)}${facts}${agentToolsBlock(input.agentTools)}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
 };
+
+/** What agents can do here: each tool's name, whether it changes data, and its description. */
+const agentToolsBlock = (tools: ReadonlyArray<AgentCalls.AgentTool>) =>
+  tools.length === 0
+    ? ""
+    : `<section class="section" aria-labelledby="agent-tools-heading"><h2 class="section-heading" id="agent-tools-heading">What agents can do</h2><ul class="list list-compact">${tools
+        .map(
+          ({ name, descriptor }) =>
+            `<li class="list-row"><code>${escapeHtml(name)}</code> <span class="tag">${descriptor.kind === "query" ? "Reads" : "Changes data"}</span><p class="supporting-text">${escapeHtml(descriptor.description)}</p></li>`
+        )
+        .join(
+          ""
+        )}</ul><p class="supporting-text">People’s agents use these through Patchy’s MCP, acting as the person who connected them. <a href="/machines">Connect yours</a>.</p></section>`;
 
 /** The card's Settings, for the owner and admins: owner, description, who can open it, stopping or deleting. */
 export const renderSettings = (input: {
