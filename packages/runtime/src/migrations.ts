@@ -121,5 +121,12 @@ export const migrations: Migrations = {
         THEN machine_id IS NOT NULL AND machine_name IS NOT NULL
           AND patch_id IS NULL AND version_id IS NULL
         ELSE machine_id IS NULL AND machine_name IS NULL END)`
+  ),
+  // A company's recent top-level entries across its patches, for the portal's failure counts
+  // (InvocationLog.failures); the patch index leads with the patch and the parent index skips them.
+  "0018_invocations_top_level_recent": ddl(
+    `CREATE INDEX runtime_invocations_top_level_recent
+      ON runtime_invocations (company_id, started_at)
+      WHERE parent_id IS NULL`
   )
 };

@@ -94,12 +94,17 @@ const cardPath = (patch: Patches.Patch, action = "") =>
 const restoreForm = (patch: Patches.Patch) =>
   `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", patch.state)}`;
 
+/** The log filtered to its failed entries. */
+export const failedLog = (patch: Patches.Patch) =>
+  `/patches/${encodeURIComponent(patch.name)}/log?outcome=failed`;
+
 /** Why a patch needs its owner's or an admin's attention, if it does and the viewer may act. */
 const attentionOf = (
   row: Patches.ReadPatch,
   viewer: Viewer,
   names: ReadonlyMap<string, string>,
-  now: number
+  now: number,
+  failures: ReadonlyMap<string, number> | undefined
 ): Attention | undefined => {
   const { patch } = row;
   if (!manages(row, viewer)) return undefined;
@@ -118,6 +123,13 @@ const attentionOf = (
       title: "Its owner is deactivated",
       detail: "Nobody can publish to it until someone else owns it.",
       act: `<a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>`
+    };
+  const failed = failures?.get(patch.id) ?? 0;
+  if (patch.state === "live" && failed > 0)
+    return {
+      title: `${plural(failed, "call", "calls")} failed in the last day`,
+      detail: "Its log says which, and why.",
+      act: `<a class="btn" href="${escapeAttribute(failedLog(patch))}">See the log</a>`
     };
   return undefined;
 };
@@ -168,6 +180,8 @@ export const renderAllPatches = (input: {
   readonly opens: ReadonlyMap<string, Patches.Open>;
   /** Company members' names by id, for who retired or deleted a patch. */
   readonly names: ReadonlyMap<string, string>;
+  /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
+  readonly failures?: ReadonlyMap<string, number>;
 }): string => {
   const { viewer, now, show, query, names } = input;
   const base = input.publicBaseUrl.replace(/\/+$/u, "");
@@ -180,7 +194,7 @@ export const renderAllPatches = (input: {
   const live = input.rows.filter((row) => row.patch.state === "live");
   const attention = new Map(
     input.rows.flatMap((row) => {
-      const found = attentionOf(row, viewer, names, now);
+      const found = attentionOf(row, viewer, names, now, input.failures);
       return found === undefined ? [] : [[row.patch.id, found] as const];
     })
   );
@@ -230,12 +244,20 @@ export const renderAllPatches = (input: {
   const time = (iso: string) =>
     `<time datetime="${escapeAttribute(iso)}">${escapeHtml(ago(iso, now))}</time>`;
 
+  const healthy = input.failures !== undefined && show !== "pages";
+  const health = (row: Patches.ReadPatch) => {
+    const failed = input.failures?.get(row.patch.id);
+    if (failed === undefined) return "<td></td>";
+    return failed === 0
+      ? '<td><span class="pill pill-done">OK</span></td>'
+      : `<td><a href="${escapeAttribute(failedLog(row.patch))}"><span class="pill pill-failed">${escapeHtml(failed)} failed</span></a></td>`;
+  };
   const columns =
     show === "attention"
       ? ["Patch", "Owner", "Why it’s here"]
       : show === "off"
         ? ["Patch", "Owner", "State"]
-        : ["Patch", "Owner", "Updated", "Visits", "Who can open"];
+        : ["Patch", "Owner", "Updated", "Visits", "Who can open", ...(healthy ? ["Health"] : [])];
   const row = (entry: Patches.ReadPatch) => {
     const { patch } = entry;
     if (show === "attention") {
@@ -252,7 +274,7 @@ export const renderAllPatches = (input: {
           : "Recovery ended";
       return `<tr>${patchCell(entry)}${ownerCell(entry)}<td><span class="pill${retired ? "" : " pill-failed"}">${escapeHtml(state)}</span>${at === null ? "" : `<br><span class="supporting-text">${escapeHtml(dateLabel(at))}</span>`}</td>${menuCell(entry)}</tr>`;
     }
-    return `<tr>${patchCell(entry)}${ownerCell(entry)}<td>v${escapeHtml(entry.currentVersion)} · ${time(entry.publishedAt)}</td><td>${escapeHtml(entry.visits)}</td><td>${patch.scope === "public" ? "<strong>Public</strong>" : "Company"}</td>${menuCell(entry)}</tr>`;
+    return `<tr>${patchCell(entry)}${ownerCell(entry)}<td>v${escapeHtml(entry.currentVersion)} · ${time(entry.publishedAt)}</td><td>${escapeHtml(entry.visits)}</td><td>${patch.scope === "public" ? "<strong>Public</strong>" : "Company"}</td>${healthy ? health(entry) : ""}${menuCell(entry)}</tr>`;
   };
   const empty: Record<Show, string> = {
     all: "No live patches.",

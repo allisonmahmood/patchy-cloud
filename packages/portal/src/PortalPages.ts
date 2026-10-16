@@ -285,7 +285,8 @@ const home = Effect.fn("PortalPages.home")(function* () {
       now,
       publicBaseUrl: session.publicBaseUrl,
       query,
-      note: first === undefined ? undefined : renderFirstPatchNote(first, viewer)
+      note: first === undefined ? undefined : renderFirstPatchNote(first, viewer),
+      failures: yield* recentFailures(rows)
     })
   );
 });
@@ -666,6 +667,30 @@ const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRespon
     })
   );
 
+const DAY = 86_400_000;
+
+/**
+ * The last day's failed calls for each live tier 2 patch the viewer manages, or nothing when they
+ * manage none, so a member's pages never query the log.
+ */
+const recentFailures = Effect.fn("PortalPages.recentFailures")(function* (
+  rows: readonly Patches.ReadPatch[]
+) {
+  const { viewer } = yield* context;
+  const managed = rows.filter(
+    (row) =>
+      row.patch.state === "live" &&
+      row.tier >= 2 &&
+      (viewer.role === "admin" || row.owner.id === viewer.user.id)
+  );
+  if (managed.length === 0) return undefined;
+  const counts = yield* (yield* InvocationLog.InvocationLog).failures({
+    companyId: viewer.company.id,
+    since: (yield* Clock.currentTimeMillis) - DAY
+  });
+  return new Map(managed.map((row) => [row.patch.id, counts.get(row.patch.id) ?? 0]));
+});
+
 /** All patches at `/patches`: every patch the viewer can open, in `?show=` tabs, searched by `?q=`. */
 const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
   const { viewer, session, access } = yield* context;
@@ -689,7 +714,8 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
         now: yield* Clock.currentTimeMillis,
         publicBaseUrl: session.publicBaseUrl,
         opens: new Map(opens.map((open) => [open.patchId, open])),
-        names: new Map(members.map((member) => [member.id, member.name]))
+        names: new Map(members.map((member) => [member.id, member.name])),
+        failures: yield* recentFailures(rows)
       }),
       styles: styles + listStyles,
       app: { viewer, section: "patches" }

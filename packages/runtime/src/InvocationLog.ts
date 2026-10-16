@@ -164,6 +164,14 @@ export class InvocationLog extends Context.Service<
       },
       SqlError
     >;
+    /**
+     * Per patch, how many of a company's top-level entries started since `since` and settled as
+     * the Failed filter counts them. Unknown outcomes are not failures. Patches with none are absent.
+     */
+    readonly failures: (input: {
+      readonly companyId: string;
+      readonly since: number;
+    }) => Effect.Effect<ReadonlyMap<string, number>, SqlError>;
     /** The handlers and initiating viewers among a patch's newest entries, for filtering. */
     readonly choices: (input: {
       readonly companyId: string;
@@ -205,6 +213,9 @@ export const make = Effect.gen(function* () {
       FROM runtime_invocations
       WHERE company_id = ${companyId} AND id = ${invocationId}`
   });
+  // The outcomes the Failed filter shows: every settled outcome but success and unknown.
+  const failed = (now: number) =>
+    sql`${outcomeOf(now)} IN ('handler_error', 'failure', 'handler_timeout')`;
   const Filters = Schema.Struct({
     companyId: Schema.String,
     patchId: Schema.String,
@@ -255,7 +266,7 @@ export const make = Effect.gen(function* () {
                 ? sql`AND ${outcomeOf(now)} = 'success'`
                 : outcome === "unknown"
                   ? sql`AND ${outcomeOf(now)} = 'unknown_outcome'`
-                  : sql`AND ${outcomeOf(now)} IN ('handler_error', 'failure', 'handler_timeout')`
+                  : sql`AND ${failed(now)}`
           }
         ORDER BY started_at DESC, id DESC LIMIT ${limit}`;
     }
@@ -313,6 +324,16 @@ export const make = Effect.gen(function* () {
           AND c.credential_kind IN ${sql.in(credentialKinds)}
         ORDER BY c.at, c.id LIMIT parent.lim)
       ) step`
+  });
+  // Served by runtime_invocations_top_level_recent: one range scan over the company's last day.
+  const failureCounts = SqlSchema.findAll({
+    Request: Schema.Struct({ companyId: Schema.String, since: Schema.Number, now: Schema.Number }),
+    Result: Schema.Struct({ patchId: Schema.String, count: Schema.Int }),
+    execute: ({ companyId, since, now }) => sql`
+      SELECT patch_id AS "patchId", count(*)::int AS count FROM runtime_invocations
+      WHERE company_id = ${companyId} AND parent_id IS NULL
+        AND started_at >= to_timestamp(${since / 1_000}) AND ${failed(now)}
+      GROUP BY patch_id`
   });
   const recentChoices = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, patchId: Schema.String }),
@@ -485,7 +506,16 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  return InvocationLog.of({ begin, finish, reconcileMutation, find, page, choices });
+  const failures = Effect.fn("InvocationLog.failures")(function* (
+    input: Parameters<InvocationLog["Service"]["failures"]>[0]
+  ) {
+    const rows = yield* failureCounts({ ...input, now: yield* Clock.currentTimeMillis }).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return new Map(rows.map((row) => [row.patchId, row.count]));
+  });
+
+  return InvocationLog.of({ begin, finish, reconcileMutation, find, page, failures, choices });
 });
 
 export const layer = Layer.effect(InvocationLog, make);

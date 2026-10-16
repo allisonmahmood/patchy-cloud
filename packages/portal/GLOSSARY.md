@@ -9,7 +9,7 @@ Where a signed-in person finds and manages their company's patches: Home at `/`,
 _Avoid_: dashboard, directory
 
 **Home**:
-The signed-in landing at `/`, for opening patches rather than managing them: a search over every live patch, **Your usual**, **Tools** and **Pages**, with a way to All patches and to what is off. With nothing live and nothing of the viewer's own, Home is the guide. A search that matches nothing offers a line to hand an agent, built from the query.
+The signed-in landing at `/`, for opening patches rather than managing them: a search over every live patch, **Your usual**, **Tools** and **Pages**, with a way to All patches and to what is off. With nothing live and nothing of the viewer's own, Home is the guide. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries.
 _Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
 
 **Your usual**:
@@ -21,7 +21,7 @@ Home's split of live patches by their current version's tier: **Tools** are tier
 _Avoid_: apps, documents, docs, kinds (nothing is declared; the tier decides)
 
 **All patches**:
-The table at `/patches` of every patch the viewer can open: tabs for All, Tools (tiers 1 and 2), Pages (tier 0), Yours, Needs attention and Retired and deleted, a search over name, title, description and owner, and each row's acts in its menu. **Needs attention** lists a patch only to its owner and admins: an admin sees live patches whose owner is deactivated, and both see deletions within a week of reclamation, each with the act that resolves it.
+The table at `/patches` of every patch the viewer can open: tabs for All, Tools (tiers 1 and 2), Pages (tier 0), Yours, Needs attention and Retired and deleted, a search over name, title, description and owner, and each row's acts in its menu. **Needs attention** lists a patch only to its owner and admins: an admin sees live patches whose owner is deactivated, and both see deletions within a week of reclamation, each with the act that resolves it. For the tier 2 patches a viewer manages, a **Health** column shows the last day's failed calls, counted as the log's Failed filter counts them, and Needs attention lists any that failed.
 _Avoid_: dashboard, directory, admin list
 
 **Card**:
