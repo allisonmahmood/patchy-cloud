@@ -788,7 +788,8 @@ const film = Command.make(
       );
     }
     const shown = both ?? takes[0]!.file;
-    lines.push("", path.relative(root, shown), "");
+    // gh rewrites an image reference to a video into a bare URL, which GitHub plays inline.
+    lines.push("", `![${name}](${path.relative(root, shown)})`, "");
     const markdown = lines.join("\n");
     yield* fs.writeFileString(path.join(dir, "film.md"), markdown);
     const sizes: Array<string> = [];

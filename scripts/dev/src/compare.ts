@@ -319,7 +319,9 @@ export const shootAll = Effect.fn("Compare.shootAll")(function* (
 });
 
 /**
- * The PR body section: per page, a Width | Before | After table, with paths
+ * The PR body section, per page. A desktop width shows "after" at the full
+ * width of the PR column, readable without clicking, with "before" one click
+ * away; a phone width fits both side by side at about true size. Paths are
  * relative to the worktree so `gh pr edit --attach <path>` rewrites each one
  * to its upload. A width whose two PNGs are byte-identical says so instead.
  */
@@ -333,30 +335,47 @@ export const compareMarkdown = (input: {
   const targets = [...new Set(input.shots.map((shot) => shot.target))];
   for (const target of targets) {
     const ofTarget = input.shots.filter((shot) => shot.target === target);
-    lines.push(
-      `#### \`${target}\` as ${input.person.name} (${input.person.role})`,
-      "",
-      `| Width | Before: ${input.base.label} | After: this PR |`,
-      "| --- | --- | --- |"
-    );
-    for (const width of [...new Set(ofTarget.map((shot) => shot.width))]) {
-      const at = (side: Capture["side"]) =>
-        ofTarget.find((shot) => shot.width === width && shot.side === side);
-      const before = at("before");
-      const after = at("after");
-      const cell = (shot: (typeof ofTarget)[number] | undefined) =>
-        shot === undefined
-          ? "—"
-          : `![${shot.side === "before" ? "Before" : "After"}: ${target} at ${width}px](${shot.relative})`;
-      lines.push(identicalRow(width, input.identical(target, width), cell(before), cell(after)));
+    const image = (shot: (typeof ofTarget)[number]) =>
+      `![${shot.side === "before" ? "Before" : "After"}: ${target} at ${shot.width}px](${shot.relative})`;
+    lines.push(`#### \`${target}\` as ${input.person.name} (${input.person.role})`, "");
+    const widths = [...new Set(ofTarget.map((shot) => shot.width))];
+    for (const width of widths.filter((w) => w > PHONE)) {
+      const before = ofTarget.find((shot) => shot.width === width && shot.side === "before");
+      const after = ofTarget.find((shot) => shot.width === width && shot.side === "after");
+      if (after === undefined) continue;
+      lines.push(`**${width}px, after**`, "", image(after), "");
+      if (before === undefined) continue;
+      lines.push(
+        input.identical(target, width)
+          ? `No visible change from ${input.base.label}.`
+          : `<details><summary>${width}px, before: ${input.base.label}</summary>\n\n${image(before)}\n\n</details>`,
+        ""
+      );
+    }
+    const phones = widths.filter((w) => w <= PHONE);
+    if (phones.length > 0) {
+      lines.push(`| Width | Before: ${input.base.label} | After: this PR |`, "| --- | --- | --- |");
+      for (const width of phones) {
+        const at = (side: Capture["side"]) =>
+          ofTarget.find((shot) => shot.width === width && shot.side === side);
+        const before = at("before");
+        const after = at("after");
+        const cell = (shot: (typeof ofTarget)[number] | undefined) =>
+          shot === undefined ? "—" : image(shot);
+        lines.push(
+          input.identical(target, width)
+            ? `| ${width} | No visible change | ${cell(after)} |`
+            : `| ${width} | ${cell(before)} | ${cell(after)} |`
+        );
+      }
+      lines.push("");
     }
     const errors = ofTarget.filter((shot) => shot.side === "after" && shot.errors.length > 0);
     for (const shot of errors)
-      lines.push("", `Browser errors after, at ${shot.width}px: ${shot.errors.join("; ")}`);
-    lines.push("");
+      lines.push(`Browser errors after, at ${shot.width}px: ${shot.errors.join("; ")}`, "");
   }
   return lines.join("\n");
 };
 
-const identicalRow = (width: number, identical: boolean, before: string, after: string) =>
-  identical ? `| ${width} | No visible change | ${after} |` : `| ${width} | ${before} | ${after} |`;
+/** At or below this width, before and after fit side by side in a PR. */
+const PHONE = 480;
