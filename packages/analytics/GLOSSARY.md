@@ -25,7 +25,7 @@ The request event for one subscription POST. It names the desired-set change (`s
 _Avoid_: control log
 
 **Re-run event**:
-The wide event for one subscription run. Its duration covers the read and what follows the admission and revision checks; `slotOccupancyMs` covers the whole time the run held its re-run slot, checks included. It names its `documentId`, its stream generation (`streamId`), the admitted `taskId` with the process generation, its trigger, its disposition and its waits. A slot that ends at the revision check without a read, almost always an up-to-date answer, emits none while its document is open: the stream event counts those checks (`checks`) and the slot time they occupied (`checkMs`). One still holding its slot when the document closes reports itself as a `discarded` re-run event with its `slotOccupancyMs`.
+The wide event for one subscription run. Its duration covers the work after the admission and revision checks, the read and its delivery; `slotOccupancyMs` covers the whole time the run held its re-run slot, checks included. It names its `documentId`, its stream generation (`streamId`), the admitted `taskId` with the process generation, its trigger, its disposition and its waits. A slot that ends at the revision check without a read, almost always an up-to-date answer, emits none while its document is open: the stream event counts those checks (`checks`) and the slot time they occupied (`checkMs`). One still holding its slot when the document closes reports itself as a `discarded` re-run event with its `slotOccupancyMs`.
 _Avoid_: query event, job
 
 **Slot wait**:
