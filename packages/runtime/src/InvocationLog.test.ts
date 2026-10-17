@@ -107,7 +107,11 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
   it.effect("persists admission and settlement independently of the service lifetime", () =>
     Effect.gen(function* () {
       const log = yield* InvocationLog.InvocationLog;
-      const input = { ...begin("invocation-roundtrip"), parentId: "invocation-parent" };
+      const input = {
+        ...begin("invocation-roundtrip"),
+        parentId: "invocation-parent",
+        agentName: "Claude Code"
+      };
       assert.strictEqual(yield* log.begin(input), input.id);
       const restarted = yield* InvocationLog.make;
       const lookup = { companyId: input.companyId, invocationId: input.id };

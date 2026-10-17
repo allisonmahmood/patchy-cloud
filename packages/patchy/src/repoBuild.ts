@@ -13,6 +13,7 @@ import * as Api from "./Api.js";
 import * as Instance from "./Instance.js";
 import { LocalError, ReleaseMismatch } from "./CliError.js";
 import { configFailure, executeConfig } from "./executeConfig.js";
+import { checkAgentArea } from "./handlerDescriptors.js";
 import { safePath } from "./ManagedProject.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import { RELEASE } from "./release.js";
@@ -341,6 +342,9 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
               })
           )
         );
+  const agentArea = checkAgentArea(handlers ?? {});
+  if (agentArea.refusal !== undefined)
+    return yield* new LocalError({ message: agentArea.refusal, code: "invalid_manifest" });
   const manifest = decodeManifest({
     ...configured,
     sdkImports: built.sdkImports,
@@ -348,6 +352,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   });
   if (handlers !== undefined && Object.keys(handlers).length === 0)
     warnings.push("Tier 2 has no handlers. Add query, mutation or action exports under server/.");
+  warnings.push(...agentArea.warnings);
   yield* validateRepoBundle(cwd, manifest, built.html);
   return { manifest, html: built.html, server: built.server, warnings };
 });

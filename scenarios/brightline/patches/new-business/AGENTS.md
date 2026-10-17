@@ -28,8 +28,13 @@ Run `pnpm typecheck` and, when `package.json` declares it, `pnpm lint` before pu
 
 - `helpers/pipeline.ts`: stages, services, sources, stage odds and the stage rules (`missingFor`, `needsOwnerOrAdmin`), shared by page and server.
 - `helpers/dealInput.ts`: validation of the editable deal fields; the page's forms and CSV preview use the same check as the server.
-- `server/deals.ts`: the board and timeline queries and every deal mutation. Each mutation writes its `activity` row in the same transaction. `deals.move` is the only way a deal changes stage.
+- `server/deals.ts`: the board and timeline queries and the page's deal mutations. Each mutation writes its `activity` row in the same transaction.
+- `helpers/dealRules.ts`: the checks and writes the page's handlers and the agent area share; `moveStage` is the only way a deal changes stage.
 - `server/sample.ts`: "Load sample data" for an empty board. `server/team.ts`: member search for owner pickers.
 - `src/App.tsx`: page state; `moveDeal` sends every stage change (drag and drop and the drawer) to `deals.move`.
 - `src/components/StageMover.tsx`: the drawer's stage controls (stepper and "Mark as lost"). `Board.tsx`: columns, cards and drag and drop. `DealDrawer.tsx`: owner, details, notes and the timeline sentences (`describeEvent`).
 - `src/errors.ts`: the plain-language message for each handler refusal. `src/styles.css`: all styling, driven by the tokens in `:root`.
+
+# Agent area
+
+`server/agent.ts` is the agent area: its exports, and nothing else, are the tools people's own agents call through Patchy's MCP, acting as the person. Each needs a `description` and described arguments, and exchanges JSON only. Agents get `findDeals`, `addLeads`, `moveDeal` and `addNote`; every change goes through `helpers/dealRules.ts`, so an agent can never do what its person couldn't, and agents are held to more than people: `addLeads` refuses any lead missing a field, where the page accepts blanks. Writes stamp `ctx.agent`'s name on `activity.agent`, and the timeline reads "Allison Mahmood's agent (Codex)".

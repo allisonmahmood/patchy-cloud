@@ -423,6 +423,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           handler: input.handler,
           kind: descriptor.kind,
           initiatingViewerId: viewer.user.id,
+          ...(binding.agent === undefined ? {} : { agentName: binding.agent.name }),
           parentId: parent?.capability.attempt.invocationId ?? null,
           correlationId: binding.correlationId,
           startedAt,
@@ -563,6 +564,8 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                     handler: input.handler,
                     args: input.args,
                     viewer,
+                    // Earlier loaders and bundles decode strictly, so a page's call omits the key.
+                    ...(binding.agent === undefined ? {} : { agent: binding.agent }),
                     callback: { url: options.callbackUrl, capability: capability.token }
                   },
                   admission?.lease.binding

@@ -204,7 +204,8 @@ export const make = Effect.gen(function* () {
             INSERT INTO device_logins (user_code, device_code_hash, state, machine_name_hint,
               old_token_id, expires_at, created_at)
             VALUES (${userCode}, ${sha256(deviceCode)}, 'pending', ${input.machineNameHint},
-              (SELECT id FROM machine_tokens WHERE id = ${input.previousMachineTokenId ?? null}),
+              (SELECT id FROM machine_tokens
+                WHERE id = ${input.previousMachineTokenId ?? null} AND purpose = 'build'),
               to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}))
             ON CONFLICT DO NOTHING RETURNING user_code`;
             if (inserted.length !== 0) {

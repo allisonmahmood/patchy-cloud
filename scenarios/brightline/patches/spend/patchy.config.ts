@@ -33,6 +33,18 @@ export default defineConfig({
         at: t.timestamp()
       }
     ),
+    drafts: table(
+      "One spend request a person's agent drafted through Patchy's MCP, waiting for that person (requester) to check it, attach a receipt if it needs one and submit it in the page. Fields match requests; agent names the agent client that drafted it. Submitting or discarding the draft deletes it.",
+      {
+        title: t.text(),
+        project: t.text(),
+        category: t.text(),
+        amountCents: t.integer(),
+        requester: t.member(),
+        agent: t.text()
+      },
+      { indexes: { byRequester: ["requester"] } }
+    ),
     receiptFiles: table(
       "One receipt or quote adopted by the submit action, before a request uses it. name is its key in the receipts store; uploader attached it; request links the request that claimed it, null until then.",
       {

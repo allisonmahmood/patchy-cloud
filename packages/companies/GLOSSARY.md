@@ -24,6 +24,10 @@ _Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, whatever the user's r
 A user with the role that manages the company's invitations, roles, deactivation, reactivation, [connections](../integrations/GLOSSARY.md) and look, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
+**Agent access**:
+The company switch that lets people's [agent connections](../auth/GLOSSARY.md) use its patches, off until an admin turns it on. Turning it off refuses connected agents and new connections without revoking them, so turning it back on restores them.
+_Avoid_: AI access, MCP mode, agent permission
+
 **Directory revision**:
 The company's durable record that its directory has changed, advanced with each join, departure, reactivation or change to a user's name, email or role. It lets readers detect changes to [candidates and resolved users](../primitives/GLOSSARY.md#language), including changes whose notification they missed.
 _Avoid_: roster version, membership timestamp

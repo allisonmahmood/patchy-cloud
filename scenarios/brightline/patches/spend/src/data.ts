@@ -6,6 +6,8 @@ export type Board = Awaited<ReturnType<typeof patchy.server.requests.list>>;
 export type SpendRequest = Board["requests"][number];
 export type Person = Board["people"][number];
 export type Detail = NonNullable<Awaited<ReturnType<typeof patchy.server.requests.detail>>>;
+/** A request the viewer's agent drafted, waiting for them to finish and submit it. */
+export type Draft = Awaited<ReturnType<typeof patchy.server.drafts.mine>>[number];
 export type Viewer = Me;
 
 /** Members by id, for resolving the ids stored on rows. */

@@ -6,6 +6,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { sha256 } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
 import * as MachineTokens from "./MachineTokens.js";
+import * as OAuth from "./OAuth.js";
 import { DEV_SEED } from "./seed.js";
 
 const HOUR = 60 * 60 * 1_000;
@@ -185,6 +186,7 @@ it.layer(MachineTokens.layer.pipe(Layer.provideMerge(Testing.layer())))("Machine
         {
           id: live.id,
           name: "Live laptop",
+          purpose: "build",
           createdAt: new Date(NOW).toISOString(),
           lastUsedAt: new Date(NOW).toISOString(),
           expiresAt: live.expiresAt
@@ -198,6 +200,45 @@ it.layer(MachineTokens.layer.pipe(Layer.provideMerge(Testing.layer())))("Machine
       );
       yield* sql`UPDATE users SET deactivated_at = to_timestamp(${NOW / 1_000}) WHERE id = ${userId}`;
       assert.deepStrictEqual(yield* tokens.list(userId), []);
+    })
+  );
+
+  it.effect("opens each door to its own purpose and replaces a client's earlier connection", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const tokens = yield* MachineTokens.MachineTokens;
+      const client = yield* OAuth.register({
+        redirect_uris: ["http://127.0.0.1:4567/callback"],
+        client_name: "Claude Code"
+      });
+      const connect = tokens.mint({
+        userId: DEV_SEED.userId,
+        name: client.name,
+        oauthClientId: client.id
+      });
+      const build = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Laptop" });
+      const first = yield* connect;
+      // A wrong-purpose token is refused exactly as an unknown one.
+      assert.isNull(yield* tokens.authenticate(first.token));
+      assert.isNull(yield* tokens.authenticate(build.token, "use"));
+      assert.strictEqual((yield* tokens.authenticate(build.token))?.machine.id, build.id);
+      assert.deepStrictEqual((yield* tokens.authenticate(first.token, "use"))?.machine, {
+        id: first.id,
+        name: "Claude Code"
+      });
+      const second = yield* connect;
+      assert.isNull(yield* tokens.authenticate(first.token, "use"));
+      assert.strictEqual((yield* tokens.authenticate(second.token, "use"))?.machine.id, second.id);
+      const listed = (yield* tokens.list(DEV_SEED.userId)).filter((token) =>
+        [build.id, first.id, second.id].includes(token.id)
+      );
+      assert.deepStrictEqual(
+        listed.map(({ id, purpose }) => ({ id, purpose })).sort((a, b) => a.id.localeCompare(b.id)),
+        [
+          { id: build.id, purpose: "build" },
+          { id: second.id, purpose: "use" }
+        ].sort((a, b) => a.id.localeCompare(b.id))
+      );
     })
   );
 

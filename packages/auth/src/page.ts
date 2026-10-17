@@ -9,6 +9,11 @@ export interface Page {
   readonly styles?: string;
   readonly heading?: string;
   readonly app?: AppShell;
+  /**
+   * CSP sources a form may end at besides this origin. Browsers check the redirect after a
+   * form POST too, so a page whose answer redirects elsewhere names that place here.
+   */
+  readonly formTargets?: ReadonlyArray<string>;
 }
 
 /** A page's session scripts come from Clerk when it signs people in; dev personas need none. */
@@ -87,7 +92,7 @@ export function pageResponse(
           "style-src 'unsafe-inline'",
           "img-src https: data:",
           "base-uri 'none'",
-          "form-action 'self'",
+          ["form-action 'self'", ...(page.formTargets ?? [])].join(" "),
           "frame-ancestors 'none'",
           // App pages run the shell's own What's new script, which posts back here.
           ...(clerk

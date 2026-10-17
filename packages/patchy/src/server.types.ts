@@ -138,6 +138,31 @@ export const sync = action({
   }
 });
 
+export const addLeads = mutation({
+  description: "Adds leads and returns how many were added.",
+  args: {
+    leads: t
+      .array(
+        t.object({
+          name: t.text().describe("The lead's full name."),
+          email: t.text().optional().describe("Work email."),
+          note: t.nullable(t.text()).describe("Context for the owner.").optional()
+        })
+      )
+      .describe("Leads to add, at most 100.")
+  },
+  result: t.integer().describe("How many leads were added."),
+  handler: async (ctx, args) => {
+    const agent: { readonly name: string } | null = ctx.agent;
+    for (const lead of args.leads)
+      await ctx.tables.leads.insert({
+        name: lead.name,
+        note: lead.note ?? (agent === null ? null : `Added by ${agent.name}`)
+      });
+    return args.leads.length;
+  }
+});
+
 export type ServerAssertions = [
   Assert<Equal<HandlerKind<typeof list>, "query">>,
   Assert<Equal<HandlerErrors<typeof save>, "duplicate">>,
@@ -148,7 +173,11 @@ export type ServerAssertions = [
   Assert<Equal<HandlerResult<typeof list>[number]["id"], Id<"leads">>>,
   Assert<Equal<HandlerResult<typeof list>[number]["owner"], string | null>>,
   Assert<Equal<HandlerResult<typeof sync>, FileHandle | null>>,
-  Assert<Equal<HandlerArgs<typeof sync>["upload"], Upload>>
+  Assert<Equal<HandlerArgs<typeof sync>["upload"], Upload>>,
+  Assert<Equal<HandlerArgs<typeof addLeads>["leads"][number]["name"], string>>,
+  Assert<Equal<HandlerArgs<typeof addLeads>["leads"][number]["email"], string | undefined>>,
+  Assert<Equal<HandlerArgs<typeof addLeads>["leads"][number]["note"], string | null | undefined>>,
+  Assert<Equal<HandlerResult<typeof addLeads>, number>>
 ];
 
 const consumer = async (

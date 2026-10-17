@@ -416,6 +416,14 @@ export class Runtime extends Context.Service<
     readonly drain: Effect.Effect<void>;
     /** True once `drain` ran; other doors into the same work refuse new calls with it. */
     readonly draining: Effect.Effect<boolean>;
+    /**
+     * Admits one call from another door into a company's patch: the caller's per-minute budget
+     * under `key`, the company's operating admission, then the drain. Pages admit the same way.
+     */
+    readonly admitCall: (input: {
+      readonly key: string;
+      readonly companyId: string;
+    }) => Effect.Effect<void, RuntimeError>;
     readonly maxCallBytes: number;
     readonly maxCallLimitId: RuntimeBodyLimitId;
     readonly fileBytes: number;
@@ -497,6 +505,44 @@ export const make = (
             : maxCallBytes === settings.postgresBytes
               ? "runtime.postgres.bytes"
               : "runtime.posthog.bytes";
+
+    // Anonymous public reads have no company to admit; every signed-in caller does.
+    const admitCall = (key: string, companyId: string | null) =>
+      Effect.gen(function* () {
+        const attempt = yield* limits.consume({
+          key,
+          limit: settings.callsPerMinute,
+          window: "1 minute"
+        });
+        yield* WideEvents.enrich({
+          limits: [
+            {
+              limitId:
+                !attempt.allowed && attempt.reason === "capacity"
+                  ? "rate.trackedKeys"
+                  : "runtime.calls.perMinute",
+              value:
+                !attempt.allowed && attempt.reason === "capacity"
+                  ? Limits.MAX_TRACKED_KEYS
+                  : settings.callsPerMinute,
+              peak:
+                !attempt.allowed && attempt.reason === "capacity"
+                  ? Limits.MAX_TRACKED_KEYS
+                  : settings.callsPerMinute - attempt.remaining,
+              configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+            }
+          ]
+        });
+        if (!attempt.allowed)
+          return yield* new RateLimited({
+            retryAfterSeconds: attempt.retryAfterSeconds,
+            limitId: attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
+            value: attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
+          });
+        if (companyId !== null && options.admitCompany !== undefined)
+          yield* options.admitCompany(companyId);
+        if (draining) return yield* new Draining();
+      });
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -687,41 +733,10 @@ export const make = (
           if (input.op === "files.inspectUpload") return yield* new AccessDenied({});
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
             return yield* new ServerRequired();
-          const attempt = yield* limits.consume({
-            key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
-            limit: settings.callsPerMinute,
-            window: "1 minute"
-          });
-          yield* WideEvents.enrich({
-            limits: [
-              {
-                limitId:
-                  !attempt.allowed && attempt.reason === "capacity"
-                    ? "rate.trackedKeys"
-                    : "runtime.calls.perMinute",
-                value:
-                  !attempt.allowed && attempt.reason === "capacity"
-                    ? Limits.MAX_TRACKED_KEYS
-                    : settings.callsPerMinute,
-                peak:
-                  !attempt.allowed && attempt.reason === "capacity"
-                    ? Limits.MAX_TRACKED_KEYS
-                    : settings.callsPerMinute - attempt.remaining,
-                configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
-              }
-            ]
-          });
-          if (!attempt.allowed)
-            return yield* new RateLimited({
-              retryAfterSeconds: attempt.retryAfterSeconds,
-              limitId:
-                attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
-              value:
-                attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
-            });
-          if (identity !== null && options.admitCompany !== undefined)
-            yield* options.admitCompany(version.companyId);
-          if (draining) return yield* new Draining();
+          yield* admitCall(
+            `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
+            identity === null ? null : version.companyId
+          );
         });
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.
@@ -802,6 +817,7 @@ export const make = (
         draining = true;
       }),
       draining: Effect.sync(() => draining),
+      admitCall: ({ key, companyId }) => admitCall(key, companyId),
       call: (input, byteLength) =>
         dispatch(
           input,

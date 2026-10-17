@@ -2,25 +2,25 @@
 // changes deals only through the mutations below; every mutation writes its activity row in
 // the same transaction.
 import type { Id } from "patchy/config";
-import {
-  HandlerError,
-  mutation,
-  query,
-  t,
-  type MutationContext
-} from "../patchy/_generated/server.js";
+import { HandlerError, mutation, query, t } from "../patchy/_generated/server.js";
 import { checkDeal, type DealDraft, type DealFields } from "../helpers/dealInput.js";
+import {
+  assigning,
+  moveStage,
+  requireCandidate,
+  requireDeal,
+  requireOwnerOrAdmin,
+  writeNote
+} from "../helpers/dealRules.js";
 import { personSchema, resolvePeople } from "../helpers/people.js";
 import {
   COMMITTED_STAGES,
   LOST_REASONS,
   MAX_IMPORT_ROWS,
-  MAX_NOTE,
   SERVICES,
   SOURCES,
   STAGES,
   missingFor,
-  needsOwnerOrAdmin,
   type Stage
 } from "../helpers/pipeline.js";
 
@@ -104,50 +104,13 @@ export const create = mutation({
   }
 });
 
-/**
- * The one way a deal changes stage, used by drag and drop and the drawer alike.
- * Rule 2: entering or leaving Won/Lost needs the owner or an admin.
- * Rule 1: Proposal, Negotiation and Won need a value above zero and an owner.
- * Rule 3: Lost needs a reason, kept on the deal and in the move's timeline note; any other
- * stage clears it, so reopening a deal forgets why it was lost.
- */
+/** The one way the page changes a deal's stage, from drag and drop or the drawer; see moveStage. */
 export const move = mutation({
   args: { deal: t.text(), stage: t.enum(STAGES), reason: t.enum(LOST_REASONS).optional() },
   errors: ["not_found", "owner_or_admin_only", "needs_value_and_owner", "reason_required"],
   result: t.row("deals"),
-  handler: async (ctx, args) => {
-    const deal = await requireDeal(ctx, args.deal);
-    if (deal.stage === args.stage) return deal;
-    const lostReason = args.stage === "lost" ? (args.reason ?? null) : null;
-    if (args.stage === "lost" && lostReason === null) throw new HandlerError("reason_required", {});
-    if (needsOwnerOrAdmin(deal.stage, args.stage))
-      await requireOwnerOrAdmin(
-        ctx,
-        deal,
-        args.stage === "won" || args.stage === "lost" ? "close" : "reopen"
-      );
-    const missing = missingFor(args.stage, deal);
-    if (missing.length > 0)
-      throw new HandlerError("needs_value_and_owner", { stage: args.stage, missing });
-
-    const now = new Date().toISOString();
-    const updated = await ctx.tables.deals.update(deal.id, {
-      stage: args.stage,
-      lostReason,
-      stageEnteredAt: now,
-      lastActivityAt: now
-    });
-    await ctx.tables.activity.insert({
-      deal: deal.id,
-      kind: "moved",
-      actor: ctx.viewer.user.id,
-      fromStage: deal.stage,
-      toStage: args.stage,
-      note: lostReason,
-      at: now
-    });
-    return updated;
-  }
+  handler: async (ctx, args) =>
+    moveStage(ctx, await requireDeal(ctx, args.deal), args.stage, args.reason ?? null)
 });
 
 /** Saves the drawer's details form. A committed deal keeps its value (rule 1 stays true). */
@@ -216,26 +179,7 @@ export const addNote = mutation({
   args: { deal: t.text(), note: t.text() },
   errors: ["not_found", "invalid_input"],
   result: t.row("activity"),
-  handler: async (ctx, args) => {
-    const deal = await requireDeal(ctx, args.deal);
-    const note = args.note.trim();
-    if (note === "")
-      throw new HandlerError("invalid_input", { field: "note", message: "Write a note first." });
-    if (note.length > MAX_NOTE)
-      throw new HandlerError("invalid_input", {
-        field: "note",
-        message: "Keep notes under 2,000 characters."
-      });
-    const now = new Date().toISOString();
-    await ctx.tables.deals.update(deal.id, { lastActivityAt: now });
-    return ctx.tables.activity.insert({
-      deal: deal.id,
-      kind: "note",
-      actor: ctx.viewer.user.id,
-      note,
-      at: now
-    });
-  }
+  handler: async (ctx, args) => writeNote(ctx, (await requireDeal(ctx, args.deal)).id, args.note)
 });
 
 /**
@@ -308,41 +252,7 @@ export const importLeads = mutation({
 });
 
 // ---------------------------------------------------------------------------------------------
-// Rules and helpers
-
-async function requireDeal(ctx: MutationContext, id: string) {
-  const deal = await ctx.tables.deals.get(id as Id<"deals">);
-  if (deal === null) throw new HandlerError("not_found", { deal: id });
-  return deal;
-}
-
-/** Rule 2's check, naming the owner so the page can say who may act. */
-async function requireOwnerOrAdmin(
-  ctx: MutationContext,
-  deal: { readonly owner: string | null },
-  action: "close" | "reopen" | "reassign"
-) {
-  if (ctx.viewer.admin || deal.owner === ctx.viewer.user.id) return;
-  const owner = deal.owner === null ? null : await ctx.members.get(deal.owner);
-  throw new HandlerError("owner_or_admin_only", { action, owner: owner?.name ?? null });
-}
-
-/** Rule 4, checked up front for a clear message; the member column check is the backstop. */
-async function requireCandidate(ctx: MutationContext, id: string) {
-  const member = await ctx.members.get(id);
-  if (member === null || !member.active) throw new HandlerError("not_a_member", { owner: id });
-}
-
-/** Maps the platform's refusal of a member assignment to the patch's own business error. */
-async function assigning<T>(write: () => Promise<T>) {
-  try {
-    return await write();
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "invalid_row")
-      throw new HandlerError("not_a_member", { message: error.message });
-    throw error;
-  }
-}
+// Helpers; the rules every write shares live in helpers/dealRules.ts
 
 function checked(draft: DealDraft): DealFields {
   const result = checkDeal(draft);

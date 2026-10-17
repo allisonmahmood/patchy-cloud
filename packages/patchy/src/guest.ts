@@ -430,6 +430,7 @@ export function createGuest(
       const kind = entry.descriptor.kind;
       const context = {
         viewer: input.viewer,
+        agent: input.agent ?? null,
         tables: names((name) => table(call, name, kind !== "query")),
         members: members(call),
         log(message: string, details?: Json): void {

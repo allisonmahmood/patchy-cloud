@@ -8,9 +8,9 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
-import type { Companies, Users } from "@patchy/companies";
+import { Companies, type Users } from "@patchy/companies";
 import { BodyTooLarge } from "@patchy/api";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { copyLine, copyScriptPath, escapeAttribute, escapeHtml } from "@patchy/core";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
@@ -155,21 +155,35 @@ const postDevice = Effect.gen(function* () {
   );
 });
 
+/**
+ * How a person points their own agent at Patchy's MCP door, or why they can't yet.
+ * Each client confirms in this browser, then lists below as an agent connection.
+ */
+const connectAgent = (mcp: string, company: string, agentsEnabled: boolean, admin: boolean) =>
+  `<section class="connect-agent" aria-labelledby="connect-agent"><h2 class="section-heading" id="connect-agent">Connect an agent</h2>${
+    agentsEnabled
+      ? `<p>Your own agent can use ${escapeHtml(company)}’s patches as you, through the agent tools their builders added. Give it Patchy’s address:</p>${copyLine(mcp, "Patchy’s MCP address, select to copy")}<dl class="facts"><dt>Claude Code</dt><dd><code>claude mcp add --transport http patchy ${escapeHtml(mcp)}</code></dd><dt>Codex</dt><dd><code>codex mcp add patchy --url ${escapeHtml(mcp)}</code>, then <code>codex mcp login patchy</code></dd><dt>Claude, ChatGPT and others</dt><dd>Add a custom connector with this address.</dd></dl><p class="supporting-text">It asks you to confirm here in your browser, then shows below. Disconnect ends it.</p><script defer src="${copyScriptPath}"></script>`
+      : `<p>Agent access is off at ${escapeHtml(company)}, so agents can’t use its patches yet.${admin ? ' <a href="/company">Turn it on</a> on the Company page.' : " An admin can turn it on on the Company page."}</p>`
+  }</section>`;
+
 const machines = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
   const tokens = yield* (yield* MachineTokens.MachineTokens).list(viewer.user.id);
+  const company = yield* (yield* Companies.Companies).findById(viewer.company.id);
   const time = (iso: string) =>
     `<time datetime="${escapeAttribute(iso)}">${escapeHtml(iso.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"))}</time>`;
-  const rows = tokens.map(
-    (token) =>
-      `<li class="list-row"><h2 class="section-heading">${escapeHtml(token.name)}</h2><dl class="facts"><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form class="actions" method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="btn btn-danger" type="submit" aria-label="Revoke ${escapeAttribute(token.name)}">Revoke</button></form></li>`
-  );
+  // An agent connection is a `use` token: the same row, named for its client, and disconnected.
+  const rows = tokens.map((token) => {
+    const agent = token.purpose === "use";
+    const verb = agent ? "Disconnect" : "Revoke";
+    return `<li class="list-row"><h2 class="section-heading">${escapeHtml(token.name)}${agent ? '<span class="tag">Agent</span>' : ""}</h2>${agent ? '<p class="supporting-text">Uses patches through Patchy’s MCP</p>' : ""}<dl class="facts"><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form class="actions" method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="btn btn-danger" type="submit" aria-label="${verb} ${escapeAttribute(token.name)}">${verb}</button></form></li>`;
+  });
   return pageResponse(
     {
       title: "Your machines",
       app: { viewer, section: "machines" },
-      body: `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
+      body: `<p>Machines publishing and agents using patches at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${connectAgent(`${session.publicBaseUrl}/mcp`, viewer.company.name, company?.agentsEnabled === true, viewer.role === "admin")}${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
     },
     session
   );

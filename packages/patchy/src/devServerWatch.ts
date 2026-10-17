@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { LocalError } from "./CliError.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
+import { checkAgentArea } from "./handlerDescriptors.js";
 import { watchServer, type BuiltServer } from "./serverBuild.js";
 import { discoverServerModules } from "./serverModules.js";
 
@@ -185,7 +186,14 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
                   "Could not inspect the server bundle. Its modules must load and export only valid handlers; the last successful binding stays served.",
                 cause
               })
-          )
+          ),
+          // Publish refuses the same agent area; its warnings wait for publish.
+          Effect.flatMap((handlers) => {
+            const { refusal } = checkAgentArea(handlers);
+            return refusal === undefined
+              ? Effect.succeed(handlers)
+              : Effect.fail(new LocalError({ code: "invalid_manifest", message: refusal }));
+          })
         )
       };
     }

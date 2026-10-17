@@ -1,4 +1,9 @@
-import { HandlerDescriptor, HandlerModuleName, HandlerName } from "@patchy/api/handlers";
+import {
+  HandlerDescriptor,
+  HandlerModuleName,
+  HandlerName,
+  type HandlerSchema
+} from "@patchy/api/handlers";
 import * as Schema from "effect/Schema";
 import { InvalidManifestError } from "./invalidManifestError.js";
 
@@ -56,4 +61,57 @@ export function extractHandlerDescriptors(
     }
   }
   return descriptors;
+}
+
+const exchangesFiles = (schema: HandlerSchema): boolean => {
+  switch (schema.kind) {
+    case "upload":
+    case "fileHandle":
+      return true;
+    case "object":
+      return Object.values(schema.fields).some(exchangesFiles);
+    case "array":
+      return exchangesFiles(schema.element);
+    case "nullable":
+      return exchangesFiles(schema.value);
+    default:
+      return false;
+  }
+};
+
+/**
+ * The agent area is server/agent.ts: its exports, and nothing else, are tools people's agents
+ * call through Patchy's MCP. Publish and watched dev builds refuse a tool an agent cannot use;
+ * publish also warns about undescribed arguments.
+ */
+export function checkAgentArea(handlers: Readonly<Record<string, HandlerDescriptor>>): {
+  readonly refusal: string | undefined;
+  readonly warnings: readonly string[];
+} {
+  const problems: string[] = [];
+  const warnings: string[] = [];
+  for (const [name, handler] of Object.entries(handlers)) {
+    if (!name.startsWith("agent.")) continue;
+    if (handler.description === undefined)
+      problems.push(
+        `${name} needs a description: it is all an agent knows about the tool. Say what it does, what it changes and when it refuses.`
+      );
+    if ([...Object.values(handler.args), handler.result].some(exchangesFiles))
+      problems.push(
+        `${name} uses t.upload() or t.fileHandle(). Agent tools exchange JSON only; uploads and file handles stay on the page.`
+      );
+    const undescribed = Object.entries(handler.args)
+      .filter(([, field]) => field.description === undefined)
+      .map(([field]) => field);
+    if (undescribed.length)
+      warnings.push(
+        `Agent tool ${name} has undescribed arguments: ${undescribed.join(", ")}. Add .describe() to each so agents know what to send.`
+      );
+  }
+  return {
+    refusal: problems.length
+      ? `server/agent.ts holds tools for people's agents, and they cannot use these:\n- ${problems.join("\n- ")}`
+      : undefined,
+    warnings
+  };
 }

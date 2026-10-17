@@ -87,6 +87,18 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "Queries share a read-only snapshot with a 3-second deadline; resource-free queries need no company database. Mutations use one SERIALIZABLE transaction, up to three attempts in 5 seconds and a keyed retry() for unknown outcomes. Actions have 60 seconds, declared connections and nested queries or mutations. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB, mutation results 64 KiB and query/action results 8 MiB. Local dev uses the same engine and callback path with live server rebinding and a colleague mount, not production scheduling, operating capacity or containment."
   },
   {
+    id: "core.agent-tools",
+    group: "Core",
+    name: "Agent tools",
+    entrypoints: [
+      "server/agent.ts",
+      "patchy/_generated/server.ts: description, .describe() and ctx.agent"
+    ],
+    runs: "Tier 2, called by people's own agents through Patchy's MCP once a company admin turns on agent access",
+    limits:
+      "Every export of server/agent.ts is a tool, and nothing else is. Each tool needs a description; arguments and results are JSON only, with no uploads or file handles. A call acts as the person who connected the agent; ctx.agent names the client and is null for page calls."
+  },
+  {
     id: "core.server-subscriptions",
     group: "Core",
     name: "Live server queries",

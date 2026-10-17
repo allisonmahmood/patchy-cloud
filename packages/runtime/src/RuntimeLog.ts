@@ -65,6 +65,8 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   userId: Schema.NullOr(Schema.String),
   effectivePrincipal: Schema.String,
   invocationId: Schema.NullOr(Schema.String),
+  /** The agent client whose invocation made the call, read from that invocation's row. */
+  agentName: Schema.NullOr(Schema.String),
   credentialKind: Schema.Literals(credentialKinds),
   /** Only for `machine`, which never names a patch or version. */
   machine: Schema.NullOr(Machine),
@@ -117,7 +119,10 @@ export const make = Effect.gen(function* () {
   const columns = (now: number) => sql`
     id, at, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
     user_id AS "userId", effective_principal AS "effectivePrincipal",
-    invocation_id AS "invocationId", credential_kind AS "credentialKind",
+    invocation_id AS "invocationId",
+    (SELECT i.agent_name FROM runtime_invocations i WHERE i.company_id = runtime_calls.company_id
+      AND i.id = runtime_calls.invocation_id) AS "agentName",
+    credential_kind AS "credentialKind",
     CASE WHEN machine_id IS NULL THEN NULL
       ELSE json_build_object('id', machine_id, 'name', machine_name) END AS machine, op, resource,
     connection_id AS "connectionId",

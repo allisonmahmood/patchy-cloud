@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -14,7 +15,7 @@ import { ago, copyScript, copyScriptPath, escapeHtml } from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
-import { InvocationLog } from "@patchy/runtime";
+import { AgentCalls, InvocationLog } from "@patchy/runtime";
 import { listStyles, renderAllPatches, searchQuery, shows } from "./allPatches.js";
 import { firstPatch, renderFirstPatchNote, renderGuide } from "./guide.js";
 import { homeStyles, renderHome } from "./home.js";
@@ -149,12 +150,14 @@ const overlongName = errorPage(
   `Patch names have at most ${maxNameLength} characters.`
 );
 
-/** The machine most recently logged in as this user, while any is live. */
+/** The machine most recently logged in as this user to build, while any is live; agents don't count. */
 const newestMachine = Effect.fn("PortalPages.newestMachine")(function* (userId: string) {
   const machines = yield* (yield* MachineTokens.MachineTokens).list(userId);
   const newest = machines.reduce<(typeof machines)[number] | undefined>(
     (latest, machine) =>
-      latest === undefined || machine.createdAt > latest.createdAt ? machine : latest,
+      machine.purpose === "build" && (latest === undefined || machine.createdAt > latest.createdAt)
+        ? machine
+        : latest,
     undefined
   );
   return newest === undefined ? null : { name: newest.name, createdAt: newest.createdAt };
@@ -212,7 +215,19 @@ const render = Effect.fn("PortalPages.render")(function* (
         })
       : tab === "versions"
         ? renderVersions({ card, viewer, now })
-        : renderOverview({ card, viewer, now, activity: yield* recentActivity(card, now) });
+        : renderOverview({
+            card,
+            viewer,
+            now,
+            activity: yield* recentActivity(card, now),
+            agentTools:
+              card.patch.state === "live" && card.tier === 2
+                ? Option.match(yield* patches.find(card.patch.id), {
+                    onNone: () => [],
+                    onSome: ({ version }) => AgentCalls.agentTools(version.manifest)
+                  })
+                : []
+          });
   return pageResponse(
     {
       title: `${card.patch.name}${tab === "overview" ? "" : ` ${tab}`}`,

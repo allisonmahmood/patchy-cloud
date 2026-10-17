@@ -23,3 +23,7 @@ Installation already ran. Do not reinstall to start building. Run `pnpm patchy -
 - Read declaration skills when using their resources: `.agents/skills/patchy-postgres/SKILL.md`, `.agents/skills/patchy-shared-tables/SKILL.md`, or `.agents/skills/patchy-shared-stores/SKILL.md`.
 
 Run `pnpm typecheck` and, when `package.json` declares it, `pnpm lint` before publishing. Run `pnpm patchy refresh` after editing declarations, changing tier or adding, removing or renaming server modules. Refresh never edits `src/`, `server/` or `helpers/`. Deleting `.patchy/` destroys local rows and files.
+
+# Agent area
+
+`server/agent.ts` is the agent area: its exports, and nothing else, are the tools people's own agents call through Patchy's MCP, acting as the person. Each needs a `description` and described arguments, and exchanges JSON only. Agents get `myRequests` and `draftRequest`, and spending stays a human act: a draft lands in `drafts` and waits on the page (`src/Drafts.tsx`) until its person finishes it in the New request dialog, which submits through `requests.submit` and deletes the draft, or discards it (`server/drafts.ts`). Receipts are uploads, which agent tools can't carry, and approve, reject and mark paid deliberately have no agent tools.

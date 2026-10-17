@@ -8,6 +8,7 @@
  *   pnpm dev up [scenario]    an environment: personas, a CLI, an agent workspace
  *   pnpm dev open <person>    a browser window signed in as one of its people
  *   pnpm dev shot <person> [path]  a full-page PNG as that person, with the page's errors
+ *   pnpm dev mcp-token <person>  a `use` token for Patchy's MCP, as that person
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -24,10 +25,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { Argument, CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { MachineTokens } from "@patchy/auth";
+import { layerFromUrl } from "@patchy/sql";
+import { mintAgentToken } from "./agentTokens.js";
 import {
   encodeManifest,
   findPerson,
@@ -43,7 +48,7 @@ import {
 import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
 import { alive, signal } from "./process.js";
-import { loadScenario } from "./scenario.js";
+import { loadScenario, personIds } from "./scenario.js";
 import { failureOf, layout, readPlan, writePlan } from "./state.js";
 import { supervise } from "./supervisor.js";
 
@@ -578,6 +583,48 @@ const shot = Command.make(
   )
 );
 
+/**
+ * Prints a token for agent clients that can't do OAuth (the environment's
+ * `worker-codex` and `worker-grok` launch with one); the line on stderr says
+ * whose it is. Minting again for the same person and client replaces the
+ * earlier token, as reconnecting would.
+ */
+const mcpToken = Command.make(
+  "mcp-token",
+  {
+    person: Argument.String("person").pipe(
+      Argument.withDescription("An environment person's key, email or first name")
+    ),
+    client: Flag.String("client").pipe(
+      Flag.withDescription(
+        "The agent client it is for, as Your machines and handlers' ctx.agent name it"
+      ),
+      Flag.withDefault("Dev client")
+    )
+  },
+  Effect.fn(function* ({ person, client }) {
+    const plan = yield* recordedPlan;
+    const manifest = yield* readManifest(yield* layoutFor(plan.worktree));
+    if (Option.isNone(manifest)) return yield* new NoEnvironment({ worktree: plan.worktree });
+    if (!(yield* healthy(plan))) return yield* new NotHealthy({ apiUrl: plan.apiUrl });
+    const found = yield* findPerson(manifest.value, person);
+    const { userId } = personIds(manifest.value.company.handle, found);
+    const minted = yield* mintAgentToken(userId, client).pipe(
+      Effect.provide(
+        MachineTokens.layer.pipe(Layer.provideMerge(layerFromUrl(Redacted.make(plan.databaseUrl))))
+      )
+    );
+    yield* Console.error(
+      `${client} connected as ${found.name} until ${minted.expiresAt.slice(0, 10)}; revoke it on Your machines.`
+    );
+    yield* Console.log(minted.token);
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Mint a `use` token for Patchy's MCP as one of the environment's people, as OAuth would"
+  )
+);
+
 const down = Command.make(
   "down",
   {},
@@ -620,7 +667,18 @@ const CliSurface = Layer.mergeAll(
 );
 
 dev.pipe(
-  Command.withSubcommands([status, stop, logs, reset, up, open, shot, down, superviseCommand]),
+  Command.withSubcommands([
+    status,
+    stop,
+    logs,
+    reset,
+    up,
+    open,
+    shot,
+    mcpToken,
+    down,
+    superviseCommand
+  ]),
   Command.run({ version: "0.0.0" }),
   Effect.scoped,
   Effect.provide([NodeServices.layer, FetchHttpClient.layer, CliSurface]),

@@ -20,6 +20,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
 import {
+  AgentAuth,
   AuthApi,
   AuthPages,
   Authorization,
@@ -55,6 +56,7 @@ import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
+  AgentCalls,
   InvocationLog,
   Runtime,
   RuntimeProduction,
@@ -74,6 +76,7 @@ import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
 import * as FleetInvocation from "./FleetInvocation.js";
+import * as Mcp from "./Mcp.js";
 import * as MemberDirectory from "./MemberDirectory.js";
 import { migrations } from "./migrations.js";
 import * as RequestEvents from "./RequestEvents.js";
@@ -152,6 +155,7 @@ const ownedPatches = Layer.effect(
 
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
 const services = Layer.mergeAll(
+  AgentAuth.layer,
   Artifact.layer,
   Content.layer,
   DeletionSweep.layer,
@@ -165,8 +169,9 @@ const services = Layer.mergeAll(
       const postgres = yield* PostgresOperations.makeHandlers;
       const posthog = yield* PostHogOperations.makeHandlers;
       const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog };
+      // The MCP door's agent calls share the one Invocation and company admission with pages.
       const runtime = Layer.merge(
-        RuntimeProduction.layer(handlers),
+        AgentCalls.layer.pipe(Layer.provideMerge(RuntimeProduction.layer(handlers))),
         RuntimeStream.layer.pipe(
           Layer.provide(Subscriptions.layer),
           Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
@@ -308,7 +313,8 @@ const app = Layer.mergeAll(
     Layer.unwrap(
       Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
     ),
-    ConnectionPages.layer
+    ConnectionPages.layer,
+    Mcp.layer
   ).pipe(Layer.provide(RequestEvents.layer)),
   middleware
 );

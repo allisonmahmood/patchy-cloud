@@ -349,7 +349,9 @@ function Timeline({
           <Avatar person={people.get(event.actor) ?? null} />
           <div class="event-body">
             <p class="event-text">
-              <strong>{name(event.actor)}</strong> {describeEvent(event, name)}
+              <strong>{actorLabel(name(event.actor), event.agent)}</strong>
+              {event.agent !== null && <span class="muted"> ({event.agent})</span>}{" "}
+              {describeEvent(event, name)}
             </p>
             {event.kind === "note" && event.note !== null && (
               <p class="event-quote">{event.note}</p>
@@ -373,6 +375,10 @@ function StageName({ stage }: { stage: string | null }) {
     </span>
   );
 }
+
+/** "Allison Mahmood's agent" when an agent acted for the person through Patchy's MCP. */
+const actorLabel = (who: string, agent: string | null) =>
+  agent === null ? who : who === "You" ? "Your agent" : `${who}'s agent`;
 
 function describeEvent(event: Activity, name: (id: string | null) => string): ComponentChildren {
   switch (event.kind) {

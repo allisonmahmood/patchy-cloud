@@ -113,19 +113,26 @@ const requestFields = {
  * The submit action runs this after adopting the receipt. Called directly, it
  * still only accepts a receipt the viewer adopted through submit and nobody
  * has claimed, so the receipt rule cannot be satisfied with a made-up name.
+ * Submitting one of the viewer's drafts (see agent.ts) deletes the draft in the
+ * same transaction and notes on the audit trail which agent drafted it.
  */
 export const create = mutation({
-  args: { ...requestFields, receiptFile: t.nullable(t.text()) },
+  args: { ...requestFields, receiptFile: t.nullable(t.text()), draft: t.nullable(t.text()) },
   result: t.row("requests"),
   errors: [
     "missing_title",
     "missing_project",
     "invalid_amount",
     "receipt_required",
-    "receipt_unavailable"
+    "receipt_unavailable",
+    "draft_missing"
   ],
   handler: async (ctx, args) => {
     const me = ctx.viewer.user.id;
+    const draft =
+      args.draft === null ? null : await ctx.tables.drafts.get(args.draft as Id<"drafts">);
+    if (args.draft !== null && (draft === null || draft.requester !== me))
+      throw refuse("draft_missing");
     const claim =
       args.receiptFile === null
         ? null
@@ -149,13 +156,24 @@ export const create = mutation({
       submittedAt: now
     });
     if (claim !== null) await ctx.tables.receiptFiles.update(claim.id, { request: request.id });
-    await ctx.tables.events.insert({ request: request.id, kind: "submitted", actor: me, at: now });
+    await ctx.tables.events.insert({
+      request: request.id,
+      kind: "submitted",
+      actor: me,
+      note:
+        draft === null
+          ? null
+          : `Drafted by ${ctx.viewer.user.name.split(" ")[0]}'s agent (${draft.agent}).`,
+      at: now
+    });
+    if (draft !== null) await ctx.tables.drafts.delete(draft.id);
     return request;
   }
 });
 
 /**
- * Submit a request as the signed-in viewer. A staged receipt is checked and
+ * Submit a request as the signed-in viewer, optionally finishing one of their
+ * agent's drafts. A staged receipt is checked and
  * adopted into the receipts store first, then the create mutation runs.
  * Adoption and the mutation are not one transaction: if the mutation fails the
  * file stays stored, and not_saved hands back keptReceipt so the person can
@@ -166,7 +184,8 @@ export const submit = action({
     ...requestFields,
     receipt: t.upload().optional(),
     fileName: t.text().optional(),
-    keptReceipt: t.text().optional()
+    keptReceipt: t.text().optional(),
+    draft: t.text().optional()
   },
   result: t.object({ id: t.text() }),
   errors: [
@@ -177,6 +196,7 @@ export const submit = action({
     "receipt_type",
     "receipt_too_large",
     "receipt_unavailable",
+    "draft_missing",
     "not_saved"
   ],
   handler: async (ctx, args) => {
@@ -195,7 +215,8 @@ export const submit = action({
     if (args.receipt === undefined) {
       const request = await ctx.run.requests.create({
         ...fields,
-        receiptFile: args.keptReceipt ?? null
+        receiptFile: args.keptReceipt ?? null,
+        draft: args.draft ?? null
       });
       return { id: request.id };
     }
@@ -207,7 +228,11 @@ export const submit = action({
     await ctx.files.receipts.put(name, args.receipt);
     const claim = await ctx.tables.receiptFiles.insert({ name, uploader: me });
     try {
-      const request = await ctx.run.requests.create({ ...fields, receiptFile: claim.id });
+      const request = await ctx.run.requests.create({
+        ...fields,
+        receiptFile: claim.id,
+        draft: args.draft ?? null
+      });
       return { id: request.id };
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause);

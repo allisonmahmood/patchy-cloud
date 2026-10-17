@@ -690,6 +690,32 @@ it.layer(services)("company page and actions", (it) => {
       })
   );
 
+  it.effect("shows everyone the agent access switch and lets only an admin turn it", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-agents");
+      const member = yield* addUser(owner, "member");
+      const companies = yield* Companies.Companies;
+      const page = Effect.fn(function* (user: Users.User) {
+        const response = yield* send("/company", { headers: { cookie: cookie(user) } });
+        return yield* Effect.promise(() => response.text());
+      });
+      const memberView = yield* page(member);
+      assert.include(memberView, 'Agent access <span class="tag">Off</span>');
+      assert.include(memberView, "Only an admin can turn it on.");
+      assert.notInclude(memberView, 'action="/company/agents"');
+      const refused = yield* send("/company/agents", post(member, { enabled: "true" }));
+      assert.strictEqual(refused.status, 403);
+      assert.isFalse((yield* companies.findById(owner.company.id))?.agentsEnabled);
+      assert.include(yield* page(owner.user), ">Turn on</button>");
+      redirected(yield* send("/company/agents", post(owner.user, { enabled: "true" })));
+      assert.isTrue((yield* companies.findById(owner.company.id))?.agentsEnabled);
+      assert.include(yield* page(member), 'Agent access <span class="tag">On</span>');
+      assert.include(yield* page(owner.user), ">Turn off</button>");
+      redirected(yield* send("/company/agents", post(owner.user, { enabled: "false" })));
+      assert.isFalse((yield* companies.findById(owner.company.id))?.agentsEnabled);
+    })
+  );
+
   it.effect("checks Origin on all company actions even with an administrator's valid session", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("company-origin");

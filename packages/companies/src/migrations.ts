@@ -3,7 +3,8 @@
  * (`packages/sql/GLOSSARY.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
- * names the people stored without one and id 16 records the look's latest restore.
+ * names the people stored without one, id 16 records the look's latest restore and
+ * id 20 the company's agent access switch.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -125,5 +126,10 @@ export const migrations: Migrations = {
         (look_restored_by IS NULL) = (look_restored_at IS NULL)
         AND (look_restore_note IS NULL OR look_restored_by IS NOT NULL)
       )`
+  ),
+  // Whether people's agents may use the company's patches through Patchy's MCP. Off until an
+  // admin turns it on; turning it off refuses connected agents without revoking their tokens.
+  "0020_agent_access": ddl(
+    `ALTER TABLE companies ADD COLUMN agents_enabled BOOLEAN NOT NULL DEFAULT false`
   )
 };

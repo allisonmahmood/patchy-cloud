@@ -202,6 +202,16 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   table("Notes identified by id.", { file: t.fileHandle() });
   // @ts-expect-error composite schemas have no table default modifier
   t.object({ title: t.text() }).default({});
+  // @ts-expect-error descriptions are for handler values; a described value is not a table column
+  table("Notes identified by id.", { title: t.text().describe("The note's title.") });
+  // @ts-expect-error defaults are table-only, so a defaulted column takes no description
+  t.text().default("x").describe("A title.");
+  // @ts-expect-error references are table-only, so they take no description
+  t.ref("notes").describe("The parent note.");
+  // @ts-expect-error member columns are table-only, so they take no description
+  t.member().describe("The note's owner.");
+  // @ts-expect-error a described handler value has no table default modifier
+  t.text().describe("A title.").default("x");
   return {
     insert,
     update,

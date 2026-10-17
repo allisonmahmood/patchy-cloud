@@ -1,6 +1,6 @@
 ---
 name: patchy-server
-description: "Build tier 2 queries, mutations and actions; type helpers, handle refusals and mutation retries, and render subscribed results."
+description: "Build tier 2 queries, mutations and actions; type helpers, handle refusals and mutation retries, render subscribed results, and expose tools to people's agents."
 ---
 
 # Server handlers
@@ -59,8 +59,8 @@ must be a `query`, `mutation` or `action`; its name is `<module>.<export>`.
 Keep reusable company code in `helpers/`, outside handler discovery. Import
 builders and bound context types from `patchy/_generated/server.js`, and `t` and
 `HandlerError` from `patchy/server`.
-Each builder takes `{ args, result, errors?, handler }`. `args` is a field map;
-`result` is one descriptor. The handler receives `(ctx, args)`.
+Each builder takes `{ description?, args, result, errors?, handler }`. `args` is
+a field map; `result` is one descriptor. The handler receives `(ctx, args)`.
 
 The generated builders bind the config's table types. A helper can accept
 `QueryContext`, `MutationContext` or `ActionContext` without repeating generics.
@@ -74,7 +74,8 @@ Scalar descriptors are `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`,
 `t.timestamp()` and `t.json()`. Compose them with `t.object(fields)`,
 `t.array(element)`, `t.enum(values)` and `t.nullable(value)`. `t.row("table")`
 validates the full row, including its columns and system fields, not just its id.
-Results are readonly.
+Results are readonly. Any handler value takes `.describe(text)`, what an agent
+reads about it; table columns take no description.
 
 An argument field's `.optional()` permits an omitted key. It does not permit
 null; use `t.nullable(...)` for null. A table column's `.optional()` instead means
@@ -103,9 +104,11 @@ All three kinds expose `ctx.members` when `uses.members` is declared. Read
 the assignment check. Only queries track directory dependencies. Directory
 reads use the platform database, outside the query's company-database snapshot.
 
-`ctx.viewer` is never null. Owned resources act as the patch, company data as
-the viewer. Server code holds no credential and has no direct network path;
-reach outside systems through declared company integrations in actions.
+`ctx.viewer` is never null. `ctx.agent` is `{ name }` when a person's agent
+calls as the viewer through Patchy's MCP, and null for page calls; see the agent
+area below. Owned resources act as the patch, company data as the viewer. Server
+code holds no credential and has no direct network path; reach outside systems
+through declared company integrations in actions.
 Handler memory is not durable state, and handlers cannot schedule background work.
 
 ### Query snapshots and live access
@@ -254,6 +257,41 @@ Company call-rate admission returns `limit_exceeded`; connection or execution
 capacity returns `busy`. Respect the supplied `retryAfter` before a new attempt.
 Disable submit controls while a call is pending. For an action's lost reply,
 inspect the resulting state before deciding which remaining steps to perform.
+
+## The agent area
+
+`server/agent.ts` is the agent area. Each export is a tool that a colleague's
+own agent, such as Claude Code or Codex, calls through Patchy's MCP at
+`<instance>/mcp`. Nothing else is exposed: other modules stay page-only, and
+tiers 0 and 1 have no agent area. Write it when the person asks for agents to
+use the patch; offer it when people would hand the patch's work to their agents.
+Agent access is off until a company admin turns it on at `<instance>/company`.
+
+A tool runs as the person who connected the agent. `ctx.viewer` is that person,
+and every access rule that binds their page calls binds the tool. `ctx.agent.name`
+is the client's name as it introduced itself. Agents can be held to stricter
+rules than people, such as requiring every field. `ctx.agent` also lets a patch
+record provenance, such as storing the client's name or "added by Ana's agent"
+on rows a tool writes, or refuse agents outright.
+
+Descriptions are the agent's only interface. `patchy dev` and publish refuse a
+tool without `description`; publish warns about top-level arguments without
+`.describe()`. Say what the tool does, what it changes and when it refuses, in
+at most 2,000 characters. Describe nested values too: object fields, array
+elements and nullable values take their own, and `.describe()` composes with
+`.optional()` in either order.
+
+Design tools for agents, not pages. Accept what a person would say, such as
+names and emails, rather than row ids. Take lists for bulk work, and return
+compact results that confirm what changed. Declare business errors whose code
+and details say how to fix the call. Agent tools exchange JSON only: publish
+and `patchy dev` refuse `t.upload()` and `t.fileHandle()` anywhere in their
+arguments or results, so files stay on the page. Share logic with page handlers
+through `helpers/`; never re-export a page handler from `agent.ts`, which
+exposes it unchanged.
+
+To check the tools, publish, then from an MCP client connected to the instance
+call `find_patches`, `open_patch` and the patch's tools as a person would.
 
 ## Bound concurrent work
 

@@ -11,6 +11,7 @@ export * as MutationTransaction from "./MutationTransaction.js";
 export * as CallbackGateway from "./CallbackGateway.js";
 export * as CallbackGatewayApi from "./CallbackGatewayApi.js";
 export * as Runtime from "./Runtime.js";
+export * as AgentCalls from "./AgentCalls.js";
 export * as RuntimeProduction from "./RuntimeProduction.js";
 export * as RuntimeApi from "./RuntimeApi.js";
 export * as RuntimeLog from "./RuntimeLog.js";

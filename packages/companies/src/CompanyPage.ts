@@ -27,7 +27,7 @@ interface Viewer {
   readonly role: Users.Role;
 }
 export type Action =
-  | { readonly kind: "view" | "invite" }
+  | { readonly kind: "view" | "invite" | "agents" }
   | {
       readonly kind: "revoke" | "resend" | "role";
       readonly id: string;
@@ -65,6 +65,7 @@ export const styles = `
     .company-table .company-row-actions { text-align: right; white-space: nowrap; }
     .company-person { display: flex; align-items: center; gap: 12px; }
     .company-actions { display: inline-flex; align-items: center; gap: 6px; }
+    .company-agents { margin-top: 40px; }
     @media (max-width: 640px) {
       .company-invite-row { grid-template-columns: minmax(0, 1fr) auto; }
       .company-invite-row > textarea { grid-column: 1 / -1; }
@@ -107,6 +108,9 @@ const isEmail = Schema.is(
   Schema.String.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/))
 );
 const decodeRole = Schema.decodeUnknownEffect(Schema.Struct({ role: Users.Role }));
+const decodeAgents = Schema.decodeUnknownEffect(
+  Schema.Struct({ enabled: Schema.Literals(["true", "false"]) })
+);
 
 /** A pasted list: commas, semicolons and whitespace separate addresses; repeats count once. */
 const addresses = (text: string) => {
@@ -152,7 +156,9 @@ const render = Effect.fn("CompanyPage.render")(function* (
   view: View = {}
 ): Effect.fn.Return<Page, SqlError, Users.Users | Companies.Companies> {
   const users = yield* (yield* Users.Users).list(viewer.company.id);
-  const invites = yield* (yield* Companies.Companies).listInvites(viewer.company.id);
+  const companies = yield* Companies.Companies;
+  const invites = yield* companies.listInvites(viewer.company.id);
+  const agentsEnabled = (yield* companies.findById(viewer.company.id))?.agentsEnabled ?? false;
   const ownedPatches = yield* OwnedPatches;
   const owned =
     ownedPatches === undefined
@@ -297,9 +303,19 @@ const render = Effect.fn("CompanyPage.render")(function* (
     ? `<div class="note note-warn" role="alert">${view.notice.message}</div>`
     : "";
   const admins = active.filter((user) => user.role === "admin").length;
+  // Everyone sees the switch's state; only an admin gets the button.
+  const agents = `<section class="company-agents"><h2 class="section-heading">Agent access <span class="tag">${agentsEnabled ? "On" : "Off"}</span></h2><p class="supporting-text">${
+    agentsEnabled
+      ? "People can connect their own agents, like Claude Code, to use the company’s patches as themselves. Turning it off stops every connected agent until it is back on."
+      : `Turn it on to let people connect their own agents, like Claude Code, to use the company’s patches as themselves.${admin ? "" : " Only an admin can turn it on."}`
+  }</p>${
+    admin
+      ? `<form class="actions" method="post" action="/company/agents"><input type="hidden" name="enabled" value="${agentsEnabled ? "false" : "true"}"><button class="btn" type="submit">${agentsEnabled ? "Turn off" : "Turn on"}</button></form>`
+      : ""
+  }</section>`;
   return {
     title: viewer.company.name,
-    body: `<p class="supporting-text">${escapeHtml(viewer.company.handle)} · ${plural(active.length, "person", "people")} · ${plural(admins, "admin", "admins")}</p>${notice}${inviteForm}<div class="company-tools"><nav class="tabs" aria-label="Show">${tabs}</nav>${search}</div>${matches}${table}`,
+    body: `<p class="supporting-text">${escapeHtml(viewer.company.handle)} · ${plural(active.length, "person", "people")} · ${plural(admins, "admin", "admins")}</p>${notice}${inviteForm}<div class="company-tools"><nav class="tabs" aria-label="Show">${tabs}</nav>${search}</div>${matches}${table}${agents}`,
     status: view.notice?.status ?? (draft?.problem ? 422 : undefined)
   };
 });
@@ -327,6 +343,17 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     // A refused action fails before its event. Invitations deliver uninterruptibly,
     // so each reports in the same region; the role change reports with its commit.
     const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
+    if (action.kind === "agents") {
+      const form = yield* decodeAgents(Object.fromEntries(yield* request.urlParamsBody)).pipe(
+        Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
+      );
+      if (form === null) return yield* refuse(viewer, "Choose on or off.", 422);
+      yield* (yield* Companies.Companies).setAgentsEnabled({
+        companyId: viewer.company.id,
+        enabled: form.enabled === "true"
+      });
+      return { title: viewer.company.name, body: "", redirect: "/company" };
+    }
     if (action.kind === "invite") {
       const fields = Object.fromEntries(yield* request.urlParamsBody);
       const text = fields.email ?? "";

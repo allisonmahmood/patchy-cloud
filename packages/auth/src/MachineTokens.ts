@@ -14,6 +14,13 @@ import { newInternalId, randomToken, sha256 } from "@patchy/core";
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
 
+/**
+ * What a machine token is for. A `build` token is the CLI's and opens every bearer door but
+ * the MCP one; a `use` token is an agent connected through OAuth and opens only the MCP door.
+ */
+export const Purpose = Schema.Literals(["build", "use"]);
+export type Purpose = typeof Purpose.Type;
+
 export class InvalidMachineName extends Schema.TaggedError<InvalidMachineName>()(
   "InvalidMachineName",
   { length: Schema.Int }
@@ -49,6 +56,7 @@ const RevocationRow = Schema.Struct({ alreadyRevoked: Schema.Boolean });
 const MachineRow = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
+  purpose: Purpose,
   createdAt: Schema.Date,
   lastUsedAt: Schema.Date,
   expiresAt: Schema.Date
@@ -57,8 +65,20 @@ const MachineRow = Schema.Struct({
 export class MachineTokens extends Context.Service<
   MachineTokens,
   {
-    readonly authenticate: (token: string) => Effect.Effect<Identity | null, SqlError>;
-    readonly mint: (input: { readonly userId: string; readonly name: string }) => Effect.Effect<
+    /** The identity behind a live token of this purpose, `build` unless said otherwise. */
+    readonly authenticate: (
+      token: string,
+      purpose?: Purpose
+    ) => Effect.Effect<Identity | null, SqlError>;
+    /**
+     * A `build` token, or with `oauthClientId` a `use` token for that OAuth client, which
+     * replaces the user's earlier live one for the same client.
+     */
+    readonly mint: (input: {
+      readonly userId: string;
+      readonly name: string;
+      readonly oauthClientId?: string;
+    }) => Effect.Effect<
       {
         readonly token: string;
         readonly id: string;
@@ -74,6 +94,7 @@ export class MachineTokens extends Context.Service<
       ReadonlyArray<{
         readonly id: string;
         readonly name: string;
+        readonly purpose: Purpose;
         readonly createdAt: string;
         readonly lastUsedAt: string;
         readonly expiresAt: string;
@@ -105,9 +126,10 @@ export const make = Effect.gen(function* () {
 
   // One join decides every bearer refusal; no credential state is cached.
   const findIdentity = SqlSchema.findOneOption({
-    Request: Schema.Struct({ tokenHash: Schema.String, now: Schema.Number }),
+    Request: Schema.Struct({ tokenHash: Schema.String, purpose: Purpose, now: Schema.Number }),
     Result: AuthenticationRow,
-    execute: ({ tokenHash, now }) => sql`
+    // A token of the other purpose is refused exactly as an unknown one is.
+    execute: ({ tokenHash, purpose, now }) => sql`
       SELECT json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', c.id, 'handle', c.handle, 'name', c.name),
@@ -117,7 +139,7 @@ export const make = Effect.gen(function* () {
       FROM machine_tokens t
       JOIN users u ON u.id = t.user_id
       JOIN companies c ON c.id = u.company_id
-      WHERE t.token_hash = ${tokenHash} AND t.revoked_at IS NULL
+      WHERE t.token_hash = ${tokenHash} AND t.purpose = ${purpose} AND t.revoked_at IS NULL
         AND t.expires_at >= to_timestamp(${now / 1_000})
         AND t.last_used_at >= to_timestamp(${(now - 30 * DAY_MS) / 1_000})
         AND u.deactivated_at IS NULL`
@@ -146,7 +168,7 @@ export const make = Effect.gen(function* () {
     Request: Schema.Struct({ userId: Schema.String, now: Schema.Number }),
     Result: MachineRow,
     execute: ({ userId, now }) => sql`
-      SELECT t.id, t.name, t.created_at AS "createdAt", t.last_used_at AS "lastUsedAt",
+      SELECT t.id, t.name, t.purpose, t.created_at AS "createdAt", t.last_used_at AS "lastUsedAt",
         t.expires_at AS "expiresAt" FROM machine_tokens t
       JOIN users u ON u.id = t.user_id
       WHERE t.user_id = ${userId} AND t.revoked_at IS NULL AND u.deactivated_at IS NULL
@@ -155,9 +177,12 @@ export const make = Effect.gen(function* () {
       ORDER BY t.created_at DESC, t.id`
   });
 
-  const authenticate = Effect.fn("MachineTokens.authenticate")(function* (token: string) {
+  const authenticate = Effect.fn("MachineTokens.authenticate")(function* (
+    token: string,
+    purpose: Purpose = "build"
+  ) {
     const now = yield* Clock.currentTimeMillis;
-    const found = yield* findIdentity({ tokenHash: sha256(token), now }).pipe(
+    const found = yield* findIdentity({ tokenHash: sha256(token), purpose, now }).pipe(
       Effect.catchTags({ SchemaError: Effect.die })
     );
     if (Option.isNone(found)) return null;
@@ -176,6 +201,7 @@ export const make = Effect.gen(function* () {
   const mint = Effect.fn("MachineTokens.mint")(function* (input: {
     readonly userId: string;
     readonly name: string;
+    readonly oauthClientId?: string;
   }) {
     yield* validateMachineName(input.name);
     const now = yield* Clock.currentTimeMillis;
@@ -188,10 +214,18 @@ export const make = Effect.gen(function* () {
         const users = yield* sql`
         SELECT id FROM users WHERE id = ${input.userId} AND deactivated_at IS NULL FOR UPDATE`;
         if (users.length === 0) return yield* new UserUnavailable({ userId: input.userId });
+        const client = input.oauthClientId ?? null;
+        // Connecting a client again replaces its connection rather than adding a second.
+        if (client !== null)
+          yield* sql`
+          UPDATE machine_tokens SET revoked_at = to_timestamp(${now / 1_000})
+          WHERE user_id = ${input.userId} AND oauth_client_id = ${client} AND revoked_at IS NULL`;
         yield* sql`
-        INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+        INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at,
+          last_used_at, purpose, oauth_client_id)
         VALUES (${id}, ${input.userId}, ${input.name}, ${sha256(token)},
-          to_timestamp(${now / 1_000}), to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}))`;
+          to_timestamp(${now / 1_000}), to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}),
+          ${client === null ? "build" : "use"}, ${client})`;
         return {
           token,
           id,
@@ -217,6 +251,7 @@ export const make = Effect.gen(function* () {
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
+      purpose: row.purpose,
       createdAt: DateTime.formatIso(DateTime.makeUnsafe(row.createdAt)),
       lastUsedAt: DateTime.formatIso(DateTime.makeUnsafe(row.lastUsedAt)),
       expiresAt: DateTime.formatIso(DateTime.makeUnsafe(row.expiresAt))

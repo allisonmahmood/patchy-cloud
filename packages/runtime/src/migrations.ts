@@ -128,5 +128,8 @@ export const migrations: Migrations = {
     `CREATE INDEX runtime_invocations_top_level_recent
       ON runtime_invocations (company_id, started_at)
       WHERE parent_id IS NULL`
-  )
+  ),
+  // A person's agent client, named as it connected, on every invocation it started: the log
+  // reads "<person> via <agent>". Null for a page's calls.
+  "0021_invocations_agent": ddl(`ALTER TABLE runtime_invocations ADD COLUMN agent_name TEXT`)
 };

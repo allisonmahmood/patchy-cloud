@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useQuery, useState } from "patchy/prea
 import { stringify } from "patchy/csv";
 import { isPatchyError, patchy } from "../patchy/_generated/client.js";
 import { formatMoney } from "../helpers/spend.js";
-import { byId, type Person, type SpendRequest, type Viewer } from "./data.js";
+import { byId, type Draft, type Person, type SpendRequest, type Viewer } from "./data.js";
+import { Drafts } from "./Drafts.js";
 import { asStatus, messageOf, statusLabel } from "./format.js";
 import { NewRequest } from "./NewRequest.js";
 import { RequestDrawer } from "./RequestDrawer.js";
@@ -26,10 +27,13 @@ const emptyTab: Record<Tab, string> = {
 
 export function App() {
   const board = useQuery(patchy.server.requests.list, {});
+  const drafts = useQuery(patchy.server.drafts.mine, {});
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [chosenTab, setTab] = useState<Tab | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [finishing, setFinishing] = useState<Draft | null>(null);
+  const [discarding, setDiscarding] = useState<string | null>(null);
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -58,7 +62,10 @@ export function App() {
         : requests;
   const projects = useMemo(() => [...new Set(requests.map((row) => row.project))], [requests]);
   const closeDrawer = useCallback(() => setSelected(null), []);
-  const closeDialog = useCallback(() => setCreating(false), []);
+  const closeDialog = useCallback(() => {
+    setCreating(false);
+    setFinishing(null);
+  }, []);
 
   async function loadSamples() {
     setLoadingSamples(true);
@@ -69,6 +76,18 @@ export function App() {
       setNotice(messageOf(cause));
     } finally {
       setLoadingSamples(false);
+    }
+  }
+
+  async function discardDraft(draft: Draft) {
+    setDiscarding(draft.id);
+    setNotice("");
+    try {
+      await patchy.server.drafts.discard({ id: draft.id });
+    } catch (cause) {
+      setNotice(messageOf(cause));
+    } finally {
+      setDiscarding(null);
     }
   }
 
@@ -132,6 +151,14 @@ export function App() {
 
       {notice && <Banner tone="danger">{notice}</Banner>}
       {board.error && <Banner tone="danger">{messageOf(board.error)}</Banner>}
+      {ready && drafts.data !== undefined && drafts.data.length > 0 && (
+        <Drafts
+          drafts={drafts.data}
+          busy={discarding}
+          onFinish={setFinishing}
+          onDiscard={(draft) => void discardDraft(draft)}
+        />
+      )}
 
       {!ready ? (
         <p class="loading">Loading requests…</p>
@@ -210,12 +237,14 @@ export function App() {
       {selected !== null && viewer !== null && (
         <RequestDrawer key={selected} id={selected} viewer={viewer} onClose={closeDrawer} />
       )}
-      {creating && (
+      {(creating || finishing !== null) && (
         <NewRequest
+          key={finishing?.id ?? "new"}
           projects={projects}
+          draft={finishing}
           onClose={closeDialog}
           onCreated={(id) => {
-            setCreating(false);
+            closeDialog();
             setTab("mine");
             setSelected(id);
           }}

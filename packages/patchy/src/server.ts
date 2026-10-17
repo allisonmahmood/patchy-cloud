@@ -150,6 +150,7 @@ export interface MutationUnknownOutcome<Result> extends Error {
 
 export interface HandlerDescriptor {
   readonly kind: HandlerKindName;
+  readonly description?: string;
   readonly args: Readonly<Record<string, ValueDescriptor>>;
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
@@ -199,6 +200,11 @@ export interface Members {
 }
 export interface ContextBase {
   readonly viewer: Me;
+  /**
+   * The agent client calling as the viewer through Patchy's MCP, named as it introduced
+   * itself (such as "Claude Code"); null when a page called.
+   */
+  readonly agent: { readonly name: string } | null;
   log(message: string, details?: Json): void;
 }
 export type QueryContext<C extends Config, Shared = Empty> = ContextBase &
@@ -293,6 +299,8 @@ export interface HandlerBuilder<K extends HandlerKindName, C extends Config, Con
     const R extends SchemaInput,
     const E extends readonly string[] = readonly []
   >(definition: {
+    /** What the handler does, its effects and refusals. Required on agent area tools. */
+    readonly description?: string;
     readonly args: A & CheckFields<A, K, C>;
     readonly result: R & CheckSchema<R, K, "result", C, false>;
     readonly errors?: E;
@@ -330,6 +338,7 @@ export interface ServerBuilders<
 const makeBuilder =
   <K extends HandlerKindName>(kind: K) =>
   (definition: {
+    readonly description?: string;
     readonly args: Fields;
     readonly result: SchemaInput;
     readonly errors?: readonly string[];
@@ -346,6 +355,7 @@ const makeBuilder =
     }
     const descriptor = decodeHandlerDescriptor({
       kind,
+      ...(definition.description === undefined ? {} : { description: definition.description }),
       args,
       result: definition.result.toJSON(),
       ...(definition.errors === undefined ? {} : { errors: definition.errors })

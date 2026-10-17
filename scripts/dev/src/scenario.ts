@@ -102,11 +102,11 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
   return { name, dir, scenario };
 });
 
-/** Stable ids, so seeding twice updates the same rows. */
-const ids = (scenario: Scenario, person: Person) => ({
-  userId: `usr_env_${scenario.company.handle}_${person.key}`,
-  clerkUserId: `env_${scenario.company.handle}_${person.key}`,
-  tokenId: `tok_env_${scenario.company.handle}_${person.key}`
+/** Stable ids, so seeding twice updates the same rows and the runner can find a person's user. */
+export const personIds = (handle: string, person: Pick<Person, "key">) => ({
+  userId: `usr_env_${handle}_${person.key}`,
+  clerkUserId: `env_${handle}_${person.key}`,
+  tokenId: `tok_env_${handle}_${person.key}`
 });
 
 /** The publisher's machine token; dev-only and loopback-only, like the seed's. */
@@ -128,7 +128,7 @@ export const seedScenario = Effect.fn("seedScenario")(function* (
           VALUES (${companyId}, ${scenario.company.handle}, ${scenario.company.name}, now())
           ON CONFLICT (id) DO UPDATE SET handle = EXCLUDED.handle, name = EXCLUDED.name`;
         for (const person of scenario.people) {
-          const { userId, clerkUserId, tokenId } = ids(scenario, person);
+          const { userId, clerkUserId, tokenId } = personIds(scenario.company.handle, person);
           yield* sql`
             INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
             VALUES (${userId}, ${clerkUserId}, ${companyId}, ${person.email.toLowerCase()},

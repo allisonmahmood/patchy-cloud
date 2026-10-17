@@ -72,8 +72,13 @@ describe("handler descriptors", () => {
       handlers: {
         "leads.list": {
           kind: "query" as const,
+          description: "Lists leads, newest first.",
           args: {
-            search: { kind: "text" as const, optional: true as const },
+            search: {
+              kind: "text" as const,
+              optional: true as const,
+              description: "Part of a lead's name."
+            },
             count: { kind: "integer" as const },
             amount: { kind: "number" as const },
             active: { kind: "boolean" as const },
@@ -101,7 +106,7 @@ describe("handler descriptors", () => {
     expect(encodeManifest(decodeManifest(wire))).toEqual(wire);
   });
 
-  it("rejects table-only modifiers and misplaced capabilities at every nesting depth", () => {
+  it("rejects table-only modifiers, misplaced capabilities and blank descriptions at every nesting depth", () => {
     for (const args of [
       { value: { kind: "text", default: "hidden default" } },
       { value: { kind: "text", optional: true, default: undefined } },
@@ -112,10 +117,13 @@ describe("handler descriptors", () => {
       { value: { kind: "array", element: { kind: "fileHandle" } } },
       { value: { kind: "object", fields: { upload: { kind: "upload" } } } },
       { value: { kind: "array", element: { kind: "text", optional: true } } },
-      { value: { kind: "nullable", value: { kind: "text", optional: true } } }
+      { value: { kind: "nullable", value: { kind: "text", optional: true } } },
+      { value: { kind: "object", fields: { child: { kind: "text", description: " " } } } }
     ]) {
       expect(decodeDescriptor({ ...query, args })._tag).toBe("Failure");
     }
+    for (const description of ["", "  ", "x".repeat(2001)])
+      expect(decodeDescriptor({ ...query, description })._tag).toBe("Failure");
     for (const kind of ["query", "mutation"]) {
       expect(decodeDescriptor({ ...query, kind, args: { upload: { kind: "upload" } } })._tag).toBe(
         "Failure"
