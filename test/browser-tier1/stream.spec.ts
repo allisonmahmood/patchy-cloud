@@ -657,3 +657,98 @@ test("a lost admitted frame repairs the desired set without replacing the live c
     instance.pauseStreams(false);
   }
 });
+
+// One live query per limit, each rendering its row count into #rows-<limit>.
+const subscribeLimit = (frame: Frame, limit: number) =>
+  frame.evaluate((limit) => {
+    const output = Object.assign(document.createElement("p"), { id: `rows-${limit}` });
+    document.body.append(output);
+    (window as unknown as FixtureWindow).harness.client.tables.rows!.list.subscribe(
+      { limit },
+      (snapshot) => {
+        if (snapshot.data) output.textContent = String(snapshot.data.rows.length);
+      }
+    );
+  }, limit);
+const admittedSequences = (frame: Frame) =>
+  frame.evaluate(() =>
+    (window as unknown as FixtureWindow).harness.replies.flatMap((reply) =>
+      reply.event === "stream" && reply.data?.type === "admitted" ? [reply.data.sequence] : []
+    )
+  );
+
+test("admitted subscriptions wait the reconcile interval for their answers before a replace", async ({
+  page,
+  instance
+}) => {
+  await page.clock.install();
+  const commands: RuntimeSubscriptionRequest[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/runtime/subscriptions")
+      commands.push(decodeSubscriptionRequest(request.postDataJSON()));
+  });
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  const pill = page.locator('[data-stream-status="reconnecting"]');
+  const replaces = () =>
+    commands.flatMap((command) => (command.type === "replace" ? [command.sequence] : []));
+  // Pause ahead of real time; no reconciliation timer is armed for the reconciled empty set.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  // Like a server still running the queries: every POST is admitted, no answer arrives.
+  instance.holdStreamFrames("answers");
+  try {
+    for (const limit of [1, 2, 3]) await subscribeLimit(frame, limit);
+    await expect.poll(() => admittedSequences(frame)).toContain(3);
+    // A timer replace would also raise the pill two seconds later.
+    await page.clock.runFor(29_000);
+    await expect(pill).toBeHidden();
+    // Missing answers are still repaired, on the slow path.
+    await page.clock.runFor(1_000);
+    await expect.poll(replaces).toEqual([0, 3]);
+  } finally {
+    instance.holdStreamFrames(false);
+  }
+  for (const limit of [1, 2, 3]) await expect(frame.locator(`#rows-${limit}`)).toHaveText("0");
+  await expect(pill).toBeHidden();
+  expect(replaces()).toEqual([0, 3]);
+});
+
+test("a lost subscribe POST or admitted frame is repaired within a second", async ({
+  page,
+  instance
+}) => {
+  await page.clock.install();
+  const commands: RuntimeSubscriptionRequest[] = [];
+  let lost = false;
+  await page.route("**/api/runtime/subscriptions", async (route) => {
+    const command = decodeSubscriptionRequest(route.request().postDataJSON());
+    commands.push(command);
+    if (command.type === "subscribe" && !lost) {
+      lost = true;
+      await route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+    } else await route.continue();
+  });
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  const sent = () => commands.map((command) => `${command.type} ${command.sequence}`);
+  // Pause ahead of real time; no reconciliation timer is armed for the reconciled empty set.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+
+  await subscribeLimit(frame, 1);
+  await expect.poll(sent).toEqual(["replace 0", "subscribe 1"]);
+  await page.clock.runFor(1_000);
+  await expect.poll(sent).toEqual(["replace 0", "subscribe 1", "replace 1"]);
+  await expect(frame.locator("#rows-1")).toHaveText("0");
+
+  const dropped = instance.loseNextAdmitted(2);
+  await subscribeLimit(frame, 2);
+  await dropped;
+  await page.clock.runFor(1_000);
+  await expect
+    .poll(sent)
+    .toEqual(["replace 0", "subscribe 1", "replace 1", "subscribe 2", "replace 2"]);
+  await expect(frame.locator("#rows-2")).toHaveText("0");
+  await page.clock.resume();
+  await expect(page.locator('[data-stream-status="reconnecting"]')).toBeHidden();
+  await page.unroute("**/api/runtime/subscriptions");
+});

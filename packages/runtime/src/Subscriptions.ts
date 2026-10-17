@@ -504,6 +504,7 @@ export const make = Effect.gen(function* () {
       for (const sub of doc.subscriptions.values()) {
         if (subscriptionsLeft-- === 0) break;
         if (!sub.dirty || sub.running || sub.retryAt > now) continue;
+        // Separate limits: a patch runs at the lesser of its own and its company's cap.
         if (
           (companyRunning.get(binding.companyId) ?? 0) >= doc.companyRuns ||
           (patchRunning.get(patchKey) ?? 0) >= doc.patchRuns

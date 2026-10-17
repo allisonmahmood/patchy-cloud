@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -473,7 +474,7 @@ it.effect("refuses the newest query at the document limit without evicting its p
   )
 );
 
-it.effect("bounds admission and reads to two company runs and one run per patch", () =>
+it.effect("bounds admission and reads to two company runs, which one patch may fill", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
     f.state.admissionGate = yield* Deferred.make<void>();
@@ -546,6 +547,119 @@ it.effect("bounds admission and reads to two company runs and one run per patch"
     let snapshots = 0;
     while (snapshots < 4) if ((yield* f.next).type === "snapshot") snapshots++;
     assert.strictEqual(f.state.reads, 4);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("starts two runs at once for a document with several dirty subscriptions", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    f.state.gate = yield* Deferred.make<void>();
+    const ids = ["first", "second", "third", "fourth"];
+    yield* f.update({
+      type: "replace",
+      sequence: 0,
+      subscriptions: ids.map((id) => ({ ...query, id }))
+    });
+    yield* f.next;
+    yield* Queue.take(f.started);
+    yield* Queue.take(f.started);
+    yield* Effect.yieldNow;
+    assert.strictEqual(f.state.reads, 2);
+    const gate = f.state.gate;
+    f.state.gate = undefined;
+    yield* Deferred.succeed(gate, undefined);
+    const delivered = new Set<string>();
+    while (delivered.size < ids.length) {
+      const frame = yield* f.next;
+      if (frame.type === "snapshot") delivered.add(frame.id);
+    }
+    assert.strictEqual(f.state.reads, ids.length);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("serves every document of two patches under sustained invalidation", () =>
+  Effect.gen(function* () {
+    const scope = yield* Scope.Scope;
+    const readMs = 100;
+    let revision = 0;
+    const running = new Map<string, number>();
+    const peaks = { company: 0, patch: 0 };
+    const starts = new Map<string, number[]>();
+    const reader: SubscriptionReads.SubscriptionReads["Service"] = {
+      admit: () => Effect.succeed([key]),
+      revisions: () => Effect.sync(() => ({ [key]: String(revision) })),
+      read: (input) => {
+        const patchId = input.binding.patchId;
+        const label = `${patchId}/${String(input.args.label)}`;
+        return Effect.gen(function* () {
+          const vector = { [key]: String(revision) };
+          starts.set(label, [...(starts.get(label) ?? []), yield* Clock.currentTimeMillis]);
+          running.set(patchId, (running.get(patchId) ?? 0) + 1);
+          peaks.patch = Math.max(peaks.patch, running.get(patchId)!);
+          peaks.company = Math.max(
+            peaks.company,
+            [...running.values()].reduce((sum, count) => sum + count, 0)
+          );
+          yield* Effect.sleep(readMs);
+          return { result: vector[key], vector };
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => running.set(patchId, running.get(patchId)! - 1)))
+        );
+      }
+    };
+    const registry = yield* Subscriptions.make.pipe(
+      Effect.provideService(SubscriptionReads.SubscriptionReads, reader),
+      Effect.provide(StreamLimits.layerLocal),
+      Effect.provide(WideEvents.layerNoop)
+    );
+    // Two documents of one patch and one of another, all in one company.
+    const documents = ["alpha", "alpha", "beta"].map((patchId, index) => {
+      const generation = `generation-${index}`;
+      const document = registry.attach({
+        generation,
+        binding: () => ({ ...binding, patchId }),
+        check: Effect.void,
+        scope,
+        send: () => {}
+      });
+      const subscriptions = ["one", "two", "three"].map((name) => ({
+        ...query,
+        id: name,
+        args: { ...query.args, label: `${index}-${name}` }
+      }));
+      return { document, patchId, generation, subscriptions };
+    });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        for (const { document } of documents) document.close();
+      })
+    );
+    for (const { document, patchId, generation, subscriptions } of documents)
+      yield* document.update({
+        type: "replace",
+        sequence: 0,
+        subscriptions,
+        patchId,
+        versionId: binding.versionId,
+        documentId: generation,
+        generation
+      });
+    // Writes land four times per read, so every subscription stays dirty throughout.
+    const durationMs = 3_000;
+    for (let elapsed = 0; elapsed < durationMs; elapsed += readMs / 4) {
+      revision++;
+      for (const { document } of documents) yield* document.reconcile([key]);
+      yield* TestClock.adjust(readMs / 4);
+    }
+    assert.deepStrictEqual(peaks, { company: 2, patch: 2 });
+    assert.strictEqual(starts.size, 9);
+    // Documents take turns with both slots, and a turn runs two of its document's three
+    // subscriptions, so none waits more than two rounds. Patches share by document count.
+    for (const [label, times] of starts) {
+      const gaps = times.slice(1).map((time, index) => time - times[index]!);
+      assert.isAtMost(Math.max(...gaps), 2 * documents.length * readMs, label);
+      assert.isAtLeast(times.length, 6, label);
+    }
   }).pipe(Effect.scoped)
 );
 
