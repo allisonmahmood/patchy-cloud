@@ -281,6 +281,10 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`manifest.description` or file mode's `metadata.description` updates the description; omitted, the " +
           "cloud text remains. Descriptions collapse whitespace, permit at most 500 Unicode code points and " +
           "no control characters, and are returned with `descriptionUpdatedAt`. " +
+          "`metadata.look` names the look a repo's page builds in, null for the Patchy look or " +
+          "`{ revision, createdAt }` for a company revision; when it isn't the company's current look, " +
+          "`warnings` names the current revision and how to catch up. The check is advisory: a failed " +
+          "read warns and the publish goes ahead. Absent `metadata.look` skips the check. " +
           "`address` and `publicUrl` both name the absolute `/<company>/<name>` address. " +
           "The JSON body cap is three times the sum of the larger configured HTML or bundle cap and the server bundle cap."
       )

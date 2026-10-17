@@ -3,7 +3,8 @@
  * versions and its served version. Publishing runs the look checks whoever calls it, so no
  * stored revision fails them. A restore that moves the pointer records who made it, when and
  * why, and the next publish clears that record. Callers authorize the admin; generation reads
- * `read(...).current` and `restored`, and `patchyLook` when the current revision is null.
+ * `read(...).current` and `restored`, and `patchyLook` when the current revision is null; patch
+ * publish reads `current` alone.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -106,19 +107,22 @@ const restoreOf = (row: typeof RestoreRow.Type | undefined): Restore | null =>
         note: row.restoreNote
       };
 
-const Row = Schema.Struct({
+const RevisionRow = Schema.Struct({
   revision: Schema.Int,
   authorId: Schema.String,
   authorName: Schema.String,
   createdAt: Schema.Date,
-  note: Schema.String,
+  note: Schema.String
+});
+const Row = Schema.Struct({
+  ...RevisionRow.fields,
   current: Schema.Boolean,
   css: Schema.NullOr(Schema.String),
   brief: Schema.NullOr(Schema.String),
   logo: Schema.NullOr(Schema.String),
   ...RestoreRow.fields
 });
-const revision = (row: typeof Row.Type): Revision => ({
+const revision = (row: typeof RevisionRow.Type): Revision => ({
   revision: row.revision,
   author: { id: row.authorId, name: row.authorName },
   createdAt: row.createdAt,
@@ -131,6 +135,11 @@ export class Looks extends Context.Service<
   Looks,
   {
     readonly read: (companyId: string) => Effect.Effect<Look, SqlError>;
+    /**
+     * The current revision without its files, or null when the company has no look: one plain
+     * read, no history or lock. Publish uses it to warn a repo behind the company's look.
+     */
+    readonly current: (companyId: string) => Effect.Effect<Revision | null, SqlError>;
     /**
      * The Patchy look, Patchy's own, which stands in while a company has none: `look.css` and
      * `LOOK.md` from `looks/patchy/`, shipped with the release. It is no company's revision and
@@ -194,6 +203,17 @@ export const make = Effect.gen(function* () {
       LEFT JOIN users ru ON ru.id = c.look_restored_by
       WHERE c.id = ${companyId} AND (${only}::integer IS NULL OR r.revision = ${only})
       ORDER BY r.revision DESC`
+  });
+  const currentRow = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: RevisionRow,
+    execute: (companyId) => sql`
+      SELECT r.revision, u.id AS "authorId", u.name AS "authorName", r.created_at AS "createdAt",
+        r.note
+      FROM companies c
+      JOIN look_revisions r ON r.company_id = c.id AND r.revision = c.current_look_revision
+      JOIN users u ON u.id = r.author_id
+      WHERE c.id = ${companyId}`
   });
   const lastRestore = SqlSchema.findOneOption({
     Request: Schema.String,
@@ -271,6 +291,11 @@ export const make = Effect.gen(function* () {
     } satisfies Look;
   });
 
+  const current = Effect.fn("Looks.current")(function* (companyId: string) {
+    const row = yield* currentRow(companyId).pipe(Effect.catchTags(dieOnSchemaError));
+    return Option.isNone(row) ? null : revision(row.value);
+  });
+
   const publish = Effect.fn("Looks.publish")(function* (input: PublishInput) {
     const errors = checkLook(input.files);
     if (errors.length > 0) return yield* new InvalidLook({ errors });
@@ -315,7 +340,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return Looks.of({ read, patchyLook, publish, restore });
+  return Looks.of({ read, current, patchyLook, publish, restore });
 });
 
 export const layer = Layer.effect(Looks, make);

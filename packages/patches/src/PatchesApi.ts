@@ -59,9 +59,11 @@ import {
   PublishRequest,
   PublishRefused,
   PublishKeyConflict,
+  type PublishMetadata,
   MANIFEST_VERSION,
   WIRE_VERSION
 } from "@patchy/api";
+import { Looks } from "@patchy/companies";
 import { contentHash, documentTitle, validateHtml } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as Content from "./Content.js";
@@ -247,6 +249,9 @@ const keyConflict = () =>
     error: "Publish key was already used with a different payload."
   });
 
+/** Ends `text` with a full stop unless it already ends a sentence. */
+const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+
 /** Where the publication came from, as far as the request says. */
 const requestOrigin = Effect.map(HttpServerRequest.HttpServerRequest, (request) => ({
   sourceIp: Option.getOrNull(request.remoteAddress),
@@ -259,6 +264,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const patches = yield* Patches.Patches;
     const openability = yield* Patches.Openability;
     const limits = yield* Limits.Limits;
+    const looks = yield* Looks.Looks;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const maxHtmlBytes = yield* PatchesConfig.maxHtmlBytes;
     const maxBundleBytes = yield* PatchesConfig.maxBundleBytes;
@@ -290,6 +296,47 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
       if (row === undefined) return notFound();
       yield* WideEvents.enrich(Patches.eventFields(row.patch));
       return row;
+    });
+
+    /**
+     * A repo publish ships the look its page builds in and never a newer one, so it hears when
+     * that isn't the company's current look, and how to catch up. Advisory: a failed read warns
+     * too. An absent stamp checks nothing.
+     */
+    const lookWarnings = Effect.fn("PatchesApi.lookWarnings")(function* (
+      own: PublishMetadata["look"],
+      company: CurrentIdentity["Service"]["company"]
+    ) {
+      if (own === undefined) return [];
+      return yield* looks.current(company.id).pipe(
+        Effect.map((current) => {
+          // Revision numbers restart in every company, so a revision is its number and its time.
+          const same =
+            own === null || current === null
+              ? own === current
+              : own.revision === current.revision &&
+                Date.parse(own.createdAt) === current.createdAt.getTime();
+          if (same) return [];
+          const has =
+            own === null ? "the Patchy look" : `${company.name}'s look rev ${own.revision}`;
+          const now =
+            current === null
+              ? `${company.name} has no look now.`
+              : `the current look is rev ${current.revision} by ${current.author.name}: ${sentence(current.note)}`;
+          return [
+            `This repo has ${has}, but ${now} This version keeps the repo's look; run patchy refresh to bring it up to date.`
+          ];
+        }),
+        Effect.catchTags({
+          SqlError: (error) =>
+            Effect.logWarning("Publish could not read the company look.", error).pipe(
+              Effect.annotateLogs({ companyId: company.id }),
+              Effect.as([
+                "Could not check whether this repo's look is current: The look could not be read."
+              ])
+            )
+        })
+      );
     });
 
     return handlers
@@ -454,6 +501,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           }
           const origin = yield* requestOrigin;
           const metadata = payload.metadata;
+          // Before the version is recorded, so the stored response a same-key retry replays has it.
+          warnings.push(...(yield* lookWarnings(metadata.look, identity.company)));
           const recorded = yield* content
             .publish({
               patchId,
