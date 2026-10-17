@@ -76,12 +76,23 @@ const protectedResource = Effect.gen(function* () {
   });
 });
 
+/**
+ * Where clients exchange codes. Clients send credentials over plain http only to loopback
+ * addresses, and Claude Code's exemption covers `127.0.0.1` but not a dev instance's
+ * `<name>.localhost` host, so such an instance names the same port on `127.0.0.1`.
+ */
+const tokenEndpoint = (base: string) => {
+  const url = new URL(`${base}/oauth/token`);
+  if (url.protocol === "http:" && url.hostname.endsWith(".localhost")) url.hostname = "127.0.0.1";
+  return url.href;
+};
+
 const authorizationServer = Effect.gen(function* () {
   const base = (yield* Session.Session).publicBaseUrl;
   return json({
     issuer: base,
     authorization_endpoint: `${base}/oauth/authorize`,
-    token_endpoint: `${base}/oauth/token`,
+    token_endpoint: tokenEndpoint(base),
     registration_endpoint: `${base}/oauth/register`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code"],
