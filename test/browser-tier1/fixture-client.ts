@@ -119,15 +119,17 @@ const client = createClient(
 client.route.subscribe((path) => {
   document.querySelector("#route")!.textContent = path;
 });
-void client.me().then(
-  (me) => {
-    harness.ready = true;
-    document.querySelector("#identity")!.textContent = me?.user.id ?? "anonymous";
-  },
-  (error: unknown) => {
-    document.querySelector("#identity")!.textContent = String(error);
-  }
-);
+// A page published with `<body data-me="lazy">` leaves `me` to its test.
+if (document.body.dataset.me !== "lazy")
+  void client.me().then(
+    (me) => {
+      harness.ready = true;
+      document.querySelector("#identity")!.textContent = me?.user.id ?? "anonymous";
+    },
+    (error: unknown) => {
+      document.querySelector("#identity")!.textContent = String(error);
+    }
+  );
 document.querySelector("#route-next")!.addEventListener("click", async () => {
   await client.route.set("/items/3");
 });
