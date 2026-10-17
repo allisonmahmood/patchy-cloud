@@ -11,6 +11,7 @@ import {
 } from "@patchy/api";
 import { registry } from "@patchy/limits/registry";
 import * as Schema from "effect/Schema";
+import { createReconciliation } from "./reconciliation.js";
 import { createStreamStatus } from "./stream-status.js";
 
 const decodeFrame = Schema.decodeUnknownSync(RuntimeStreamFrame);
@@ -66,8 +67,6 @@ export function openDocumentStream(options: {
   let controller: AbortController | undefined;
   let retryTimer: number | undefined;
   let hiddenTimer: number | undefined;
-  let reconciliationTimer: number | undefined;
-  let reconciliationAttempts = 0;
   let failures = 0;
   let refreshAttempts = 0;
   let bindingFailures = 0;
@@ -85,20 +84,21 @@ export function openDocumentStream(options: {
     string,
     { subscription: RuntimeSubscription; answered: boolean; fenceSequence: number; bytes: number }
   >();
+  const reconciliation = createReconciliation(() => replace());
+  // Tells the reconciliation timer where the desired set stands after any change to it.
   const reconciled = () => {
-    if (generation === undefined || admitted !== sequence) {
-      scheduleReconciliation();
+    if (closed || suspended || generation === undefined) return;
+    if (admitted < sequence) {
+      reconciliation.update("unadmitted");
       return;
     }
     for (const entry of desired.values()) {
       if (!entry.answered) {
-        scheduleReconciliation();
+        reconciliation.update("unanswered");
         return;
       }
     }
-    clearTimeout(reconciliationTimer);
-    reconciliationTimer = undefined;
-    reconciliationAttempts = 0;
+    reconciliation.update("reconciled");
     status.connected();
   };
   const forget = (id: string) => {
@@ -163,19 +163,7 @@ export function openDocumentStream(options: {
       type: "replace",
       subscriptions: Array.from(desired.values(), (entry) => entry.subscription)
     });
-    scheduleReconciliation();
-  };
-  const scheduleReconciliation = () => {
-    if (closed || suspended || generation === undefined || reconciliationTimer !== undefined)
-      return;
-    const delay = Math.min(
-      registry["subscriptions.reconcile.interval"].default,
-      1_000 * 2 ** Math.min(reconciliationAttempts++, 5)
-    );
-    reconciliationTimer = window.setTimeout(() => {
-      reconciliationTimer = undefined;
-      replace();
-    }, delay);
+    reconciled();
   };
   const startExecution = () => {
     if (options.tier !== 2) return;
@@ -200,9 +188,7 @@ export function openDocumentStream(options: {
     if (execution !== "ready") startExecution();
     generation = undefined;
     admitted = -1;
-    clearTimeout(reconciliationTimer);
-    reconciliationTimer = undefined;
-    reconciliationAttempts = 0;
+    reconciliation.stop();
     status.connecting();
     const current = new AbortController();
     controller = current;
@@ -360,8 +346,7 @@ export function openDocumentStream(options: {
         controller = undefined;
         generation = undefined;
         admitted = -1;
-        clearTimeout(reconciliationTimer);
-        reconciliationTimer = undefined;
+        reconciliation.stop();
         for (const entry of desired.values()) entry.answered = false;
         if (!closed && !suspended) {
           status.connecting();
@@ -391,8 +376,7 @@ export function openDocumentStream(options: {
         suspended = true;
         clearTimeout(retryTimer);
         retryTimer = undefined;
-        clearTimeout(reconciliationTimer);
-        reconciliationTimer = undefined;
+        reconciliation.stop();
         controller?.abort();
         // The company can be released while this document is suspended.
         if (options.tier === 2) {
@@ -444,7 +428,7 @@ export function openDocumentStream(options: {
         sequence++;
         void post({ ...envelope(), type: "subscribe", subscription });
       }
-      scheduleReconciliation();
+      reconciled();
     },
     unsubscribe(id) {
       if (!forget(id)) return;
@@ -467,7 +451,7 @@ export function openDocumentStream(options: {
       closed = true;
       clearTimeout(retryTimer);
       clearTimeout(hiddenTimer);
-      clearTimeout(reconciliationTimer);
+      reconciliation.stop();
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("online", online);
       controller?.abort();
