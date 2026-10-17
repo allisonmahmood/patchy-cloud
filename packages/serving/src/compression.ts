@@ -23,17 +23,25 @@ export const precompress = (body: Uint8Array): Precompressed => ({
   gzip: gzipSync(body)
 });
 
+/** RFC 9110 §12.4.2's weight: `0` with up to three decimals, or `1` with up to three zeros. */
+const qvalue = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;
+
 /**
  * The coding to send for a request's `Accept-Encoding`: the higher-weighted of `br` and `gzip`,
  * `br` on a tie, unless the reader weights `identity` above it. No header, `identity` alone, or
  * `q=0` on both compressed codings means identity.
+ *
+ * A header refusing everything, identity included (`*;q=0`), still gets identity rather than a
+ * 406: RFC 9110 §12.4.1 lets a server disregard such a header, and refusing the shell's own
+ * script would break the page. An entry whose weight breaks §12.4.2's grammar (`q=2`,
+ * `q=0.0001`) is ignored, as if it weren't listed.
  */
 export const negotiate = (acceptEncoding: string | undefined): ContentCoding => {
   const weights = new Map<string, number>();
   for (const entry of acceptEncoding?.split(",") ?? []) {
     const [coding = "", ...parameters] = entry.split(";").map((part) => part.trim().toLowerCase());
-    const q = parameters.find((parameter) => parameter.startsWith("q="));
-    if (coding !== "") weights.set(coding, q === undefined ? 1 : Number(q.slice(2)) || 0);
+    const q = parameters.find((parameter) => parameter.startsWith("q="))?.slice(2) ?? "1";
+    if (coding !== "" && qvalue.test(q)) weights.set(coding, Number(q));
   }
   const weight = (coding: string) => weights.get(coding) ?? weights.get("*") ?? 0;
   const best = codings.reduce((preferred, coding) =>
