@@ -18,11 +18,12 @@ import { Client, escapeIdentifier } from "pg";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { applyDevSeed } from "@patchy/auth/seed";
 import * as LocalTaskProvider from "../../packages/execution/src/localTaskProvider.js";
 import type { BrowserContext } from "@playwright/test";
-import type { Manifest } from "../../packages/api/src/index.js";
+import { RuntimeStreamFrame, type Manifest } from "../../packages/api/src/index.js";
 import { migrations } from "../../apps/server/src/migrations.js";
 import { layerFromUrl, migrate } from "../../packages/sql/src/index.js";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
@@ -31,6 +32,7 @@ import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.j
 import { escapeAttribute } from "../../packages/core/src/html.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
+const decodeFrame = Schema.decodeUnknownSync(RuntimeStreamFrame);
 const seed = { companyId: "cmp_dev", userId: "usr_dev", token: "patchy-dev-token" };
 export const manifest = {
   manifestVersion: 1,
@@ -85,8 +87,11 @@ export interface Instance {
   /** A second real host sharing this instance's databases, storage and session verifier. */
   startReplica(): Promise<{ origin: string; stop(signal?: "SIGTERM" | "SIGKILL"): Promise<void> }>;
   pauseStreams(paused: boolean): void;
-  /** Hold real SSE bytes at ingress, without fabricating lifecycle frames. */
-  holdStreamFrames(held: boolean): void;
+  /**
+   * Hold real SSE bytes at ingress, without fabricating lifecycle frames. `"answers"` holds only
+   * snapshot, up-to-date and error frames, like a server still running admitted queries.
+   */
+  holdStreamFrames(held: boolean | "answers"): void;
   /** Drop the next stream's first bytes but retain its upstream socket until released. */
   loseNextStreamHello(): () => void;
   /** Drop one admitted frame without interrupting either side of the live stream. */
@@ -370,7 +375,7 @@ export async function startInstance(options: {
     const streamConnections = new Set<string>();
     const streamClosers = new Set<() => void>();
     let streamsPaused = false;
-    let streamFramesHeld = false;
+    let streamFramesHeld: boolean | "answers" = false;
     const releaseStreamFrames = new Set<() => void>();
     let abandonNextStream: ((release: () => void) => void) | undefined;
     let dropAdmitted: { readonly sequence: number; readonly dropped: () => void } | undefined;
@@ -533,23 +538,25 @@ export async function startInstance(options: {
                     const event = buffered.slice(0, boundary.index + boundary[0].length);
                     buffered = buffered.slice(event.length);
                     const data = event.split(/\r?\n/).find((line) => line.startsWith("data:"));
-                    if (dropAdmitted && data) {
-                      const frame: unknown = JSON.parse(data.slice(5));
-                      if (
-                        frame !== null &&
-                        typeof frame === "object" &&
-                        "type" in frame &&
-                        frame.type === "admitted" &&
-                        "sequence" in frame &&
-                        frame.sequence === dropAdmitted.sequence
-                      ) {
-                        const dropped = dropAdmitted.dropped;
-                        dropAdmitted = undefined;
-                        dropped();
-                        continue;
-                      }
+                    const frame = data ? decodeFrame(JSON.parse(data.slice(5))) : undefined;
+                    if (
+                      dropAdmitted &&
+                      frame?.type === "admitted" &&
+                      frame.sequence === dropAdmitted.sequence
+                    ) {
+                      const dropped = dropAdmitted.dropped;
+                      dropAdmitted = undefined;
+                      dropped();
+                      continue;
                     }
-                    if (streamFramesHeld) heldFrames.push(event);
+                    if (
+                      streamFramesHeld === true ||
+                      (streamFramesHeld === "answers" &&
+                        (frame?.type === "snapshot" ||
+                          frame?.type === "up-to-date" ||
+                          frame?.type === "error"))
+                    )
+                      heldFrames.push(event);
                     else this.push(event);
                   }
                   callback();
