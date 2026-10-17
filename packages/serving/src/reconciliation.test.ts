@@ -60,6 +60,8 @@ it("stops once reconciled or stopped", () => {
   const { timer, replaces } = reconciliation();
   timer.update("unadmitted");
   timer.update("reconciled");
+  vi.advanceTimersByTime(60_000);
+  expect(replaces).toEqual([]);
   timer.update("unanswered");
   timer.stop();
   vi.advanceTimersByTime(60_000);
