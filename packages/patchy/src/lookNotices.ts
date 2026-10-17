@@ -6,10 +6,7 @@ import { LookRestore, LookRevision } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Api from "./Api.js";
-import * as Output from "./Output.js";
 
 const INDEX = "patchy/_generated/index.json";
 const LOOK_CSS = "patchy/_generated/look.css";
@@ -136,39 +133,12 @@ export const lookNotices = Effect.fn("lookNotices")(function* <R>(
 });
 
 /**
- * Repo publish ships the repo's own revision and never pulls a newer one: a page using the look
- * hears when that isn't the company's current revision, and how to catch up. The check is
- * advisory, so a failed read becomes a warning too.
+ * Repo publish ships the repo's own revision and never pulls a newer one. A page using the look
+ * sends the revision `index.json` names, null for the Patchy look, and the publish response warns
+ * when that isn't the company's current look. A page that doesn't use it sends no stamp.
  */
-export const publishLookWarnings = Effect.fn("publishLookWarnings")(function* (
-  root: string,
-  token: Redacted.Redacted,
-  company: string
-) {
-  if (!(yield* pageLook(root)).uses) return [];
+export const publishLookStamp = Effect.fn("publishLookStamp")(function* (root: string) {
+  if (!(yield* pageLook(root)).uses) return {};
   const own = yield* readIndexLook(root);
-  const client = yield* Api.client(token);
-  const warnings = yield* client.getLook().pipe(
-    Effect.map(({ current }) => {
-      if (sameLook(own, current)) return [];
-      const has = own === null ? "the Patchy look" : `${company}'s look rev ${own.revision}`;
-      const now =
-        current === null
-          ? `${company} has no look now.`
-          : `the current look is rev ${current.revision} by ${current.author.name}: ${sentence(current.note)}`;
-      return [
-        `This repo has ${has}, but ${now} This version keeps the repo's look; run patchy refresh to bring it up to date.`
-      ];
-    }),
-    Effect.catch((error) =>
-      Api.classify(error, "The look could not be read.").pipe(
-        Effect.flip,
-        Effect.map((failure) => [
-          `Could not check whether this repo's look is current: ${failure.message.split("\n")[0]}`
-        ])
-      )
-    )
-  );
-  yield* Output.rememberWarnings(warnings);
-  return warnings;
+  return { look: own === null ? null : { revision: own.revision, createdAt: own.createdAt } };
 });

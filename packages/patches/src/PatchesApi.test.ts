@@ -1,7 +1,9 @@
 import { assert, expect, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { sha256 } from "@patchy/core";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -23,6 +25,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
@@ -42,6 +45,7 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
+import { Looks } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
@@ -53,10 +57,12 @@ import * as PatchesApi from "./PatchesApi.js";
 import * as PatchesConfig from "./PatchesConfig.js";
 import * as DeletionSweep from "./DeletionSweep.js";
 import * as Fixtures from "./test/fixtures.js";
+import { readLookFixture } from "../../../test/look-fixtures.js";
 
 const { admin, reader, sibling, uploader } = Fixtures.identities;
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => Fixtures.memoryStore().service);
+const looks = Looks.layer.pipe(Layer.provide([NodeFileSystem.layer, NodePath.layer]));
 
 const client = Fixtures.ownRouter(HttpApiTest.groups(PatchyApi, ["patches"]));
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
@@ -96,7 +102,7 @@ const lifecycleEvents = (patchId: string) =>
 const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
+  Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
@@ -364,7 +370,7 @@ const publishConfig = (
 const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
+  Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
@@ -2981,5 +2987,146 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         assert.isDefined(empty.artifacts.server);
       }),
     30_000
+  );
+});
+
+it.layer(Layer.fresh(publishLayer))("publish look check", (it) => {
+  const company = uploader.company;
+  const behind = (has: string, now: string) =>
+    `This repo has ${has}, but ${now} This version keeps the repo's look; run patchy refresh to bring it up to date.`;
+  const rev = (revision: number) => `${company.name}'s look rev ${revision}`;
+  const stamp = (revision: Looks.Revision) => ({
+    revision: revision.revision,
+    createdAt: revision.createdAt.toISOString()
+  });
+  const publishLook = Effect.fn("publishLook")(function* (note: string) {
+    const looks = yield* Looks.Looks;
+    const { current } = yield* looks.publish({
+      companyId: company.id,
+      authorId: uploader.user.id,
+      note,
+      files: readLookFixture("linear")
+    });
+    return current;
+  });
+  const restoreLook = Effect.fn("restoreLook")(function* (revision: number | null) {
+    const looks = yield* Looks.Looks;
+    yield* looks.restore({
+      companyId: company.id,
+      revision,
+      restoredBy: uploader.user.id,
+      note: null
+    });
+  });
+
+  it.effect("warns a repo whose look isn't the company's current one, and only then", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const { patchId } = yield* owner.publish({ payload: publishRequest({ html: html("Look") }) });
+      const warnings = (look?: PublishRequest["metadata"]["look"]) =>
+        owner
+          .publish({
+            payload: publishRequest({
+              html: html("Look"),
+              patchId,
+              metadata: look === undefined ? {} : { look }
+            })
+          })
+          .pipe(Effect.map((published) => published.warnings));
+
+      // The Patchy look on both sides is current.
+      assert.deepStrictEqual(yield* warnings(null), []);
+      const first = yield* publishLook("first green");
+      assert.deepStrictEqual(yield* warnings(null), [
+        behind("the Patchy look", "the current look is rev 1 by Uploader: first green.")
+      ]);
+      assert.deepStrictEqual(yield* warnings(stamp(first)), []);
+      // Revision numbers restart in every company, so the same number from another time differs.
+      assert.deepStrictEqual(
+        yield* warnings({ revision: first.revision, createdAt: "2020-01-01T00:00:00.000Z" }),
+        [behind(rev(1), "the current look is rev 1 by Uploader: first green.")]
+      );
+      const second = yield* publishLook("darker green.");
+      assert.deepStrictEqual(yield* warnings(stamp(first)), [
+        behind(rev(1), "the current look is rev 2 by Uploader: darker green.")
+      ]);
+      // No stamp, as from a page without the look or an attempt saved by an older CLI, checks nothing.
+      assert.deepStrictEqual(yield* warnings(), []);
+      yield* restoreLook(first.revision);
+      assert.deepStrictEqual(yield* warnings(stamp(second)), [
+        behind(rev(2), "the current look is rev 1 by Uploader: first green.")
+      ]);
+      yield* restoreLook(null);
+      assert.deepStrictEqual(yield* warnings(stamp(second)), [
+        behind(rev(2), `${company.name} has no look now.`)
+      ]);
+      assert.deepStrictEqual(yield* warnings(null), []);
+    })
+  );
+
+  it.effect(
+    "replays the warning a publish was given after the look changes, and refuses a changed stamp under its key",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const older = yield* publishLook("older");
+        const newer = yield* publishLook("newer");
+        const payload = publishRequest({
+          html: html("Retried look"),
+          metadata: { look: stamp(older) }
+        });
+        const [published, response] = yield* owner.publish({
+          payload,
+          responseMode: "decoded-and-response"
+        });
+        assert.deepStrictEqual(published.warnings, [
+          behind(
+            rev(older.revision),
+            `the current look is rev ${newer.revision} by Uploader: newer.`
+          )
+        ]);
+        // The repo's look is current again, but a retry gets the answer its publish was given.
+        yield* restoreLook(older.revision);
+        const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
+        assert.strictEqual(yield* replayed.text, yield* response.text);
+        const changed = yield* owner.publish({
+          payload: new PublishRequest({ ...payload, metadata: { look: stamp(newer) } }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(changed.status, 409);
+        assert.include(yield* changed.json, { code: "publish_key_conflict" });
+      })
+  );
+
+  it.effect("publishes with a warning when the company's look can't be read", () =>
+    Effect.gen(function* () {
+      const looks = yield* Looks.Looks;
+      const offline = new SqlError({
+        reason: new ConnectionError({ cause: new Error("database offline") })
+      });
+      const owner = yield* client.pipe(
+        Effect.provide(Fixtures.as(uploader)),
+        Effect.provide(
+          Layer.fresh(
+            PatchesApi.layer.pipe(
+              Layer.provide(
+                Layer.succeed(
+                  Looks.Looks,
+                  Looks.Looks.of({ ...looks, current: () => Effect.fail(offline) })
+                )
+              ),
+              Layer.provide(publishConfig())
+            )
+          )
+        )
+      );
+      const published = yield* owner.publish({
+        payload: publishRequest({ html: html("Unchecked look"), metadata: { look: null } })
+      });
+      assert.deepStrictEqual(published.warnings, [
+        "Could not check whether this repo's look is current: The look could not be read."
+      ]);
+      assert.strictEqual(published.versionNumber, 1);
+    })
   );
 });
