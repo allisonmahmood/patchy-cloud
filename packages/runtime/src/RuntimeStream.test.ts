@@ -676,6 +676,70 @@ it.layer(layer)("document streams", (it) => {
     }).pipe(Effect.scoped)
   );
 
+  it.effect("reports a check still holding its slot after the stream's summary on its own", () =>
+    Effect.gen(function* () {
+      const recorded = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const authority = yield* versionAuthority;
+      authority.state.current = authority.latest.versionId;
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(recorded, event).pipe(Effect.asVoid)
+        })
+      );
+      const checking = yield* Deferred.make<void>();
+      const settle = yield* Deferred.make<void>();
+      const vector = { [`table:${Fixtures.patchId}:items`]: "1" };
+      const streams = yield* makeStreams.pipe(
+        Effect.provide(authority.layer),
+        Effect.provideService(WideEvents.WideEvents, events),
+        Effect.provideService(SubscriptionReads.SubscriptionReads, {
+          admit: () => Effect.succeed(Object.keys(vector)),
+          revisions: () =>
+            Deferred.succeed(checking, undefined).pipe(
+              Effect.andThen(Deferred.await(settle)),
+              Effect.as(vector)
+            ),
+          read: () => Effect.die("An equal-vector resume answers without a read.")
+        })
+      );
+      const document = { ...input("late_check_document"), versionId: authority.latest.versionId };
+      const pull = yield* Stream.toPull(yield* streams.open(document));
+      const hello = frame(yield* pull);
+      assert(hello.type === "hello");
+      yield* pull;
+      yield* streams.update({
+        ...document,
+        generation: hello.generation,
+        sequence: 1,
+        type: "subscribe",
+        subscription: {
+          id: "items",
+          op: "tables.list",
+          args: { table: "items" },
+          vector,
+          revision: "1"
+        }
+      });
+      yield* Deferred.await(checking);
+      yield* TestClock.adjust("100 millis");
+      yield* streams.drain;
+      while (Exit.isSuccess(yield* Effect.exit(pull))) {
+        /* read the admission and the drained end */
+      }
+      const summary = yield* Queue.take(recorded);
+      assert.include(summary, { type: "stream", closeReason: "draining", checks: 0, checkMs: 0 });
+      yield* TestClock.adjust("100 millis");
+      yield* Deferred.succeed(settle, undefined);
+      assert.include(yield* Queue.take(recorded), {
+        type: "re-run",
+        documentId: "late_check_document",
+        trigger: "initial",
+        disposition: "discarded",
+        slotOccupancyMs: 200
+      });
+    }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.scoped)
+  );
+
   it.effect("orders an in-flight initial snapshot before a racing publish notification", () =>
     Effect.gen(function* () {
       const authority = yield* versionAuthority;

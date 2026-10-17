@@ -98,14 +98,16 @@ const rerunFields = {
   trigger: Schema.optionalKey(RerunTrigger),
   disposition: Schema.optionalKey(RerunDisposition),
   /**
-   * First dirty transition (the oldest, when coalesced) to slot acquisition. Excludes the
-   * wait for execution ready and a retry's backoff, which the next two fields record.
+   * From the oldest pending dirty transition (a recoverable failure is one) to taking a slot,
+   * less the time before execution was ready and any retry backoff, recorded in the next two.
    */
   slotWaitMs: Schema.optionalKey(Schema.Number),
   /** Time spent dirty before the document's execution was ready. */
   readyWaitMs: Schema.optionalKey(Schema.Number),
-  /** On a retry, the backoff it waited after the failure before it was dirty again. */
-  backoffMs: Schema.optionalKey(Schema.Number)
+  /** Time a retry backoff held the run back, until it ended or a wake, replace or rebind ended it. */
+  backoffMs: Schema.optionalKey(Schema.Number),
+  /** From taking the slot to releasing it, including the checks before the read. */
+  slotOccupancyMs: Schema.optionalKey(Schema.Number)
 };
 const streamMetrics = {
   peakSubscriptions: Schema.optionalKey(Schema.Number),

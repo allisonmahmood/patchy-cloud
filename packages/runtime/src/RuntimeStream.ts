@@ -435,8 +435,10 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           },
           Deferred.await(done).pipe(
             Effect.ensuring(
-              Effect.suspend(() =>
-                WideEvents.enrich({
+              Effect.suspend(() => {
+                // Closed before its totals are read, so a check settling later reports itself.
+                close("disconnected");
+                return WideEvents.enrich({
                   ...documentSubscriptions.metrics(),
                   bytes,
                   closeReason: closeReason ?? "disconnected",
@@ -454,8 +456,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
                       configRevision: buffer.configRevision
                     }
                   ]
-                })
-              )
+                });
+              })
             )
           )
         )

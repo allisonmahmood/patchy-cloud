@@ -230,6 +230,7 @@ it.effect("keeps subscription telemetry on the event types that own it", () =>
         slotWaitMs: 40,
         readyWaitMs: 30,
         backoffMs: 250,
+        slotOccupancyMs: 70,
         checks: 2,
         checkMs: 9,
         subscriptionRequest: "replace",
@@ -253,7 +254,8 @@ it.effect("keeps subscription telemetry on the event types that own it", () =>
             "disposition",
             "slotWaitMs",
             "readyWaitMs",
-            "backoffMs"
+            "backoffMs",
+            "slotOccupancyMs"
           ]
         ],
         ["stream", ["documentId", "checks", "checkMs"]],

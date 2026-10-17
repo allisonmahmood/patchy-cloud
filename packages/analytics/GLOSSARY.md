@@ -25,15 +25,15 @@ The request event for one subscription POST. It names the desired-set change (`s
 _Avoid_: control log
 
 **Re-run event**:
-The wide event for one subscription run, from taking a re-run slot to releasing it, so its duration includes the admission and revision checks before the read. It names its `documentId`, its stream generation (`streamId`), the admitted `taskId` with the process generation, its trigger, its disposition and its waits. A slot that ends at the revision check without a read, almost always an up-to-date answer, emits none; the stream event counts those checks (`checks`) and the slot time they occupied (`checkMs`).
+The wide event for one subscription run. Its duration covers the read and what follows the admission and revision checks; `slotOccupancyMs` covers the whole time the run held its re-run slot, checks included. It names its `documentId`, its stream generation (`streamId`), the admitted `taskId` with the process generation, its trigger, its disposition and its waits. A slot that ends at the revision check without a read, almost always an up-to-date answer, emits none while its document is open: the stream event counts those checks (`checks`) and the slot time they occupied (`checkMs`). One still holding its slot when the document closes reports itself as a `discarded` re-run event with its `slotOccupancyMs`.
 _Avoid_: query event, job
 
 **Slot wait**:
-`slotWaitMs`: how long a dirty subscription waited for a re-run slot, from its first dirty transition to taking the slot. Coalesced dirt keeps the oldest. It includes time behind capped runs and behind the subscription's own previous run. Its clock starts no earlier than the document's execution becoming ready or a retry's backoff ending; `readyWaitMs` records the wait for ready and `backoffMs` a retry's backoff. It is not `queueWaitMs`, the connection and callback waits inside a run.
+`slotWaitMs`: how long a dirty subscription waited for a re-run slot, from its oldest pending dirty transition to taking the slot, less the time before its document's execution was ready (`readyWaitMs`) and the time a retry backoff held it back (`backoffMs`). A recoverable failure is a dirty transition, and a wake for a dependency the run only discovers counts from when the wake arrived. It includes time behind capped runs and behind the subscription's own previous run. It is not `queueWaitMs`, the connection and callback waits inside a run.
 _Avoid_: queue wait (the waits inside a run), latency
 
 **Trigger**:
-What first made a run's subscription dirty: `initial` (newly installed), `replace` (re-sent unchanged in a desired set), `invalidation` (a wake, including one received during its previous run), `retry` (a recoverable failure's backoff ended, or a read fell behind its fence), `periodic` (durable reconciliation), `rebind` (a development handler swap) or `ready` (execution became ready). `ready` is rare: subscriptions installed while execution starts are already dirty, so they keep `initial` and report `readyWaitMs`.
+What first made a run's subscription dirty: `initial` (newly installed), `replace` (re-sent unchanged in a desired set), `invalidation` (a wake, including one received during its previous run), `retry` (a recoverable failure, which first waits out its backoff, or a read that fell behind its fence), `periodic` (durable reconciliation), `rebind` (a development handler swap) or `ready` (execution became ready). `ready` is rare: subscriptions installed while execution starts are already dirty, so they keep `initial` and report `readyWaitMs`.
 _Avoid_: cause (`causedByEventId` names the write behind a wake)
 
 **Disposition**:

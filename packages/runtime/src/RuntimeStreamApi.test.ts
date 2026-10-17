@@ -329,10 +329,23 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
         yield* post({}, 1, `; patchy_stream_affinity=${affinity}; AWSALBAPP-0=balancer-value`),
         yield* post({}, 0, "; patchy_stream_affinity=replica_elsewhere"),
         yield* post({ generation: stale }, 2),
-        yield* post({ documentId: "unknown_document_id" }, 2)
+        yield* post({ documentId: "unknown_document_id" }, 2),
+        yield* client.subscriptions({
+          payload: {
+            ...query,
+            documentId,
+            generation: hello.generation,
+            sequence: 2,
+            type: "replace",
+            subscriptions: []
+          },
+          headers: { ...headers, cookie: "" },
+          responseMode: "response-only"
+        })
       ].map((response) => response.status);
-      assert.deepStrictEqual(statuses, [200, 409, 409, 409]);
-      const [accepted, superseded, replaced, elsewhere] = [
+      assert.deepStrictEqual(statuses, [200, 409, 409, 409, 401]);
+      const [accepted, superseded, replaced, elsewhere, signedOut] = [
+        yield* Queue.take(requests),
         yield* Queue.take(requests),
         yield* Queue.take(requests),
         yield* Queue.take(requests),
@@ -387,7 +400,16 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
       });
       for (const key of ["currentStreamId", "patchId", "versionId"])
         assert.notProperty(elsewhere, key);
-      const recorded = JSON.stringify([accepted, superseded, replaced, elsewhere]);
+      // Refused before admission: only what the request's cookies say, nothing it claims.
+      assert.include(signedOut, {
+        outcome: "refused",
+        code: "session_expired",
+        affinityCookie: false,
+        balancerCookie: false
+      });
+      for (const key of ["documentId", "streamId", "subscriptionRequest", "viewerId", "refusal"])
+        assert.notProperty(signedOut, key);
+      const recorded = JSON.stringify([accepted, superseded, replaced, elsewhere, signedOut]);
       for (const value of [affinity, "balancer-value", "replica_elsewhere", headers.cookie])
         assert.notInclude(recorded, value);
     }).pipe(Effect.scoped)

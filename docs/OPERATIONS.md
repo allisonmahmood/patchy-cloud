@@ -186,20 +186,22 @@ Then filter on its `traceId` to see the events nested under that request.
 
 #### Following a page's subscriptions
 
-Each subscription run emits a `type: "re-run"` event that spans its re-run slot,
-from acquisition to release, so `durationMs` includes the admission and revision
-checks. `slotWaitMs` is how long it waited for that slot, `trigger` says why it ran
-and `disposition` whether its result was delivered, unchanged or discarded; the
-[Analytics glossary](../packages/analytics/GLOSSARY.md) defines each field. A
-check that ends without a read, almost always answering up-to-date, emits no
-event: the document's `stream` event, at close, counts those checks in `checks`
-and their slot time in `checkMs`. Every `POST /api/runtime/subscriptions` emits a `request` event naming
-its desired-set change, the generation it named and what this host held for the
-document. `documentId` joins a document's runs, controls and streams across
+Each subscription run emits a `type: "re-run"` event. `slotWaitMs` is how long it
+waited for a re-run slot, `slotOccupancyMs` how long it held that slot, admission
+and revision checks included, `trigger` why it ran and `disposition` whether its
+result was delivered, unchanged or discarded; `durationMs` still covers the read
+after the checks. The [Analytics glossary](../packages/analytics/GLOSSARY.md)
+defines each field. A check that ends without a read, almost always answering
+up-to-date, emits no event while its document is open: the document's `stream`
+event, at close, counts those checks in `checks` and their slot time in `checkMs`.
+A check still running when the document closes reports itself as a `discarded`
+re-run event. Every `POST /api/runtime/subscriptions` emits a `request` event
+naming its desired-set change, the generation it named and what this host held
+for the document. `documentId` joins a document's runs, controls and streams across
 reconnects. To see why a screen took long to fill:
 
 ```
-fields @timestamp, handler, trigger, slotWaitMs, readyWaitMs, durationMs, disposition, taskId
+fields @timestamp, handler, trigger, slotWaitMs, readyWaitMs, backoffMs, slotOccupancyMs, disposition, taskId
 | filter type = "re-run" and documentId = "…"
 | sort @timestamp asc
 ```
