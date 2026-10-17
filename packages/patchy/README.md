@@ -565,6 +565,7 @@ patchy.config.ts              definitions and uses declarations
 patchy.json                   instance, patch description and sync stamp; optional patch id
 package.json, pnpm-lock.yaml   managed pins; install already ran with scripts disabled
 index.html, src/main.tsx, src/App.tsx  tiers 1 and 2 Preact page
+src/styles.css                the page's layout: a centred main column, after the look
 server/                       tier 2 starter handlers
 vite.config.ts, tsconfig.json  single-file build, JSX settings, typechecking
 eslint.config.js              tiers 1 and 2 import and hooks lint
@@ -1307,7 +1308,9 @@ or `null` for the Patchy look, and `lookRestore` the company's latest restore as
 `patchy look --json`'s `restored` carries it, `null` after a publish. A new repo's
 tier 1 and 2 `src/main.tsx` imports
 `look.css` and its tier 0 `index.html` links it, so the first page is already in
-the look; the single-file build inlines it, embedded fonts included. A page that
+the look; the single-file build inlines it, embedded fonts included. Its
+`src/styles.css`, loaded after the look at every tier, holds only the layout: the
+page's `<main>` centred at 960px and padded from `--look-space`. A page that
 doesn't import it keeps its own style, and refresh never edits page source. A
 `dev` that joins a running session generates nothing; `refresh` brings a new
 revision into it.

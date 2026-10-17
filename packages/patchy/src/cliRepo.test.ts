@@ -217,10 +217,7 @@ describe("patch-repo commands", () => {
     // A repo from before the look: its page has its own style and never imported look.css.
     const dir = publishTree(instance.url);
     const main = path.join(dir, "src/main.tsx");
-    writeFileSync(
-      main,
-      readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, 'import "./styles.css";\n')
-    );
+    writeFileSync(main, readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, ""));
     writeFileSync(path.join(dir, "src/styles.css"), "body { background: #fff0f5; }\n");
     const page = () => ({
       src: treeBytes(path.join(dir, "src")),
@@ -310,10 +307,7 @@ describe("patch-repo commands", () => {
 
     // A page that swapped the import for its own stylesheet hears nothing.
     const main = path.join(dir, "src/main.tsx");
-    writeFileSync(
-      main,
-      readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, 'import "./styles.css";\n')
-    );
+    writeFileSync(main, readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, ""));
     writeFileSync(path.join(dir, "src/styles.css"), "body { background: #fff0f5; }\n");
     look = { ...patchyLookFiles, revision: lookRevision(9, "rebrand") };
     expect(await warnings()).toEqual([]);
@@ -936,6 +930,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       "vite.config.ts",
       "src/main.tsx",
       "src/App.tsx",
+      "src/styles.css",
       "index.html",
       "AGENTS.md",
       "CLAUDE.md"

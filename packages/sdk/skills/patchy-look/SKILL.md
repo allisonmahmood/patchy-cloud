@@ -38,6 +38,9 @@ and that changing it is its own request, which only an admin can carry out.
   imports it and its tier 0 `index.html` links it; the build inlines it, fonts included, so the
   published page carries it in its own bytes. A page that doesn't import it keeps its own style
   (rule 2); add the import when the person asks for the company look.
+- A new repo's `src/styles.css`, loaded after the look, starts with one `main` rule: the
+  starter's layout. It is scaffolding, not this patch's style, so adapt it to the brief's layout
+  when you build the page. Other CSS in that file is the patch's own style (rule 2).
 - Write your CSS outside any layer. Unlayered CSS always beats `@layer look`, whatever its
   specificity.
 - Use the tokens for every colour, font, radius and gap they cover, so the patch follows when
