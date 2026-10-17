@@ -263,7 +263,7 @@ Default company bounds, counted per host replica, can refuse work earlier:
 - 4 company database connections, shared by both tiers; at most 32 queued
   acquisitions wait up to 1 second within the caller's deadline, then `busy`.
 - 8 actions in flight per company and 2 per viewer per patch, then `busy`.
-- At most 2 company connections for subscription re-runs and 1 re-run per patch.
+- At most 2 company connections for subscription re-runs and 2 re-runs per patch.
 - 100 admitted calls per second with a burst of 200, then `limit_exceeded`.
 
 Company operating bounds may have overrides. Coalesce screen reads and use
@@ -375,8 +375,8 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `company.connections.pools` | operating | 100 | pools | host | Retained company pools per host replica | `busy` | No | legacy |
 | `company.connections.waiters` | operating | 32 | waiters | company | Queued company connection acquisitions per host replica | `busy` | Yes | deployment |
 | `company.connections.wait` | operating | 1000 | milliseconds | company | Maximum connection queue wait within caller deadline | `busy` | Yes | deployment |
-| `subscriptions.reruns.company` | operating | 2 | connections | company | Company connections occupied by subscription re-runs per host replica | `busy` | Yes | deployment |
-| `subscriptions.reruns.patch` | operating | 1 | runs | patch | Simultaneous subscription re-runs per patch per host replica | None | Yes | deployment |
+| `subscriptions.reruns.company` | operating | 2 | connections | company | Company connections occupied by subscription re-runs per host replica, across all its patches; set independently of `subscriptions.reruns.patch` | `busy` | Yes | deployment |
+| `subscriptions.reruns.patch` | operating | 2 | runs | patch | Simultaneous subscription re-runs per patch per host replica, within `subscriptions.reruns.company`; an override of either leaves the other unchanged | None | Yes | deployment |
 | `tier2.actions.company` | operating | 8 | actions | company | Actions in flight per company per host replica | `busy` | Yes | deployment |
 | `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
 | `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |

@@ -444,16 +444,18 @@ export const registry = {
     default: 2,
     unit: "connections",
     scope: "company",
-    measure: "Company connections occupied by subscription re-runs per host replica",
+    measure:
+      "Company connections occupied by subscription re-runs per host replica, across all its patches; set independently of `subscriptions.reruns.patch`",
     refusal: "busy",
     overridable: true
   },
   "subscriptions.reruns.patch": {
     kind: "operating",
-    default: 1,
+    default: 2,
     unit: "runs",
     scope: "patch",
-    measure: "Simultaneous subscription re-runs per patch per host replica",
+    measure:
+      "Simultaneous subscription re-runs per patch per host replica, within `subscriptions.reruns.company`; an override of either leaves the other unchanged",
     refusal: null,
     overridable: true
   },

@@ -1085,7 +1085,7 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "from the subscription rather than replaying a mutation result into its data. " +
           "The newest subscription is refused at 64 per document, 256 per patch or 1024 per " +
           "company; snapshots are at most 8 MiB. Re-runs occupy at most two slots per company " +
-          "and one per patch. Hosted query slots remain occupied until invocation resources settle, " +
+          "and two per patch, each bound set separately. Hosted query slots remain occupied until invocation resources settle, " +
           "including after a timeout or document disconnect; `unknown_outcome` is retryable. " +
           "Periodic durable reconciliation repairs missed wakes."
       )
