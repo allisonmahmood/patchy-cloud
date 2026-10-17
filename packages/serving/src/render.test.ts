@@ -236,7 +236,7 @@ describe("patch pages", () => {
     );
     expect(html).toContain('data-route="/items/first"');
     expect(html).toContain('data-base="/acme/report/~v/2"');
-    expect(html).toContain('src="/~shell/broker.js"');
+    expect(html).toMatch(/src="\/~shell\/broker\.js\?v=[0-9a-f]{64}"/);
     expect(html).not.toContain("srcdoc=");
     expect(html).not.toContain("window.secret");
   });

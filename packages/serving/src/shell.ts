@@ -7,9 +7,16 @@ import {
   shellStyles
 } from "@patchy/core/html";
 import type { HandlerKind } from "@patchy/api";
+import { brokerDigest } from "./generated/broker-script.js";
 
-export { brokerScript } from "./generated/broker-script.js";
+export { brokerScript, brokerDigest } from "./generated/broker-script.js";
 export * from "./shell-headers.js";
+
+/**
+ * The broker as a scripted shell loads it. `v` names its bytes, so a host serving those bytes
+ * lets the browser keep them; any host, of any release, answers the path.
+ */
+export const brokerSrc = `/~shell/broker.js?v=${brokerDigest}`;
 
 interface PatchPage {
   readonly patch: { readonly id: string; readonly title: string };
@@ -48,7 +55,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   <title>${title}</title>
   ${faviconLink}
   ${options.head ?? ""}
-  ${scripted ? '<script defer src="/~shell/broker.js"></script>' : ""}
+  ${scripted ? `<script defer src="${brokerSrc}"></script>` : ""}
   <style>
     ${scripted ? shellStyles : ""}
     html, body { height: 100%; margin: 0; background: #ffffff; }

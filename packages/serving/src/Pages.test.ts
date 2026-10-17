@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
@@ -38,6 +39,7 @@ import { Tables } from "@patchy/primitives";
 import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
 import { servingHeaders } from "./serving-headers.js";
+import { brokerScript, brokerSrc } from "./shell.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const CSP =
@@ -700,6 +702,104 @@ it.layer(unreachableDatabase)("health without a database", (it) => {
 });
 
 it.layer(services)("pages in memory", (it) => {
+  const IMMUTABLE = "public, max-age=31536000, immutable";
+  const script = new TextEncoder().encode(brokerScript);
+  const decoded = Effect.fn(function* (response: Response) {
+    const body = new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()));
+    const coding = response.headers.get("content-encoding");
+    return coding === "br"
+      ? brotliDecompressSync(body)
+      : coding === "gzip"
+        ? gunzipSync(body)
+        : body;
+  });
+
+  it.effect("names the broker's bytes in a scripted shell's URL", () =>
+    Effect.gen(function* () {
+      const { path, versionId } = yield* publish("Scripted shell", "public");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
+      const shell = yield* send(path);
+      const src =
+        (yield* Effect.promise(() => shell.text())).match(/<script defer src="([^"]+)">/)?.[1] ??
+        "";
+      assert.strictEqual(src, brokerSrc);
+      const broker = yield* send(src);
+      assert.strictEqual(broker.headers.get("cache-control"), IMMUTABLE);
+      assert.strictEqual(
+        createHash("sha256")
+          .update(yield* decoded(broker))
+          .digest("hex"),
+        new URL(src, PUBLIC_BASE_URL).searchParams.get("v")
+      );
+    })
+  );
+
+  it.effect("compresses the broker by Accept-Encoding, immutable under its own digest", () =>
+    Effect.gen(function* () {
+      for (const [accept, coding] of [
+        ["gzip, deflate, br, zstd", "br"],
+        ["gzip", "gzip"],
+        ["br;q=0.5, gzip", "gzip"],
+        ["identity", "identity"],
+        ["br;q=0, gzip;q=0", "identity"],
+        [undefined, "identity"]
+      ] as const) {
+        const response = yield* send(
+          brokerSrc,
+          accept === undefined ? {} : { headers: { "accept-encoding": accept } }
+        );
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers.get("cache-control"), IMMUTABLE);
+        assert.strictEqual(response.headers.get("vary"), "Accept-Encoding");
+        assert.strictEqual(
+          response.headers.get("content-encoding"),
+          coding === "identity" ? null : coding,
+          accept
+        );
+        assert.isTrue(Buffer.from(yield* decoded(response)).equals(script), accept);
+      }
+    })
+  );
+
+  it.effect("revalidates the broker under a foreign or missing digest", () =>
+    Effect.gen(function* () {
+      for (const url of ["/~shell/broker.js", `/~shell/broker.js?v=${"0".repeat(64)}`]) {
+        const response = yield* send(url, { headers: { "accept-encoding": "br" } });
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers.get("cache-control"), "no-cache", url);
+        assert.isTrue(Buffer.from(yield* decoded(response)).equals(script), url);
+      }
+    })
+  );
+
+  it.effect("loads a new shell's broker from a host still on the previous release", () =>
+    Effect.gen(function* () {
+      // The previous release's route, on the same router: it never read the query.
+      const previous = yield* HttpRouter.toHttpEffect(
+        HttpRouter.add(
+          "GET",
+          "/~shell/broker.js",
+          HttpServerResponse.text("previous broker", {
+            contentType: "text/javascript",
+            headers: { "cache-control": "no-store" }
+          })
+        )
+      );
+      const response = HttpServerResponse.toWeb(
+        yield* previous.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(new Request(new URL(brokerSrc, PUBLIC_BASE_URL)))
+          )
+        )
+      );
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers.get("cache-control"), "no-store");
+      assert.strictEqual(yield* Effect.promise(() => response.text()), "previous broker");
+    })
+  );
+
   it.effect("serves UTF-8 content without requiring a meta tag or changing its BOM", () =>
     Effect.gen(function* () {
       const { patchId, versionId } = yield* publish("Unicode content", "public");
