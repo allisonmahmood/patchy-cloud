@@ -524,6 +524,7 @@ export const make = Effect.gen(function* () {
               let wokenAt: number | undefined;
               for (const [key, at] of sub.duringRun)
                 if (sub.dependencies.has(key)) wokenAt = Math.min(wokenAt ?? at, at);
+              sub.duringRun.clear();
               if (present(doc, sub) && wokenAt !== undefined)
                 markDirty(sub, "invalidation", wokenAt);
               if (present(doc, sub)) {
