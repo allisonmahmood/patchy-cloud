@@ -67,6 +67,11 @@ interface Subscription {
   revision: bigint;
   epoch: number;
   dirty: boolean;
+  /** The first dirty transition since the last slot, and why. Coalesced dirt keeps them. */
+  dirtyAt: number;
+  trigger: WideEvents.RerunTrigger;
+  /** A retry's backoff, carried from its failure to the run it schedules. */
+  backoffMs: number | undefined;
   running: boolean;
   failures: number;
   retryAt: number;
@@ -74,6 +79,7 @@ interface Subscription {
 }
 interface Document {
   readonly generation: string;
+  readonly documentId: string;
   readonly binding: () => Binding.Binding["Service"];
   readonly check: Effect.Effect<void, Runtime.RuntimeError>;
   readonly send: (frame: RuntimeStreamFrame) => void;
@@ -87,18 +93,44 @@ interface Document {
   gap: number;
   resync: boolean;
   active: boolean;
+  /** When execution became ready, from the `ready` reconcile. Unset for ungated documents. */
+  readyAt: number | undefined;
   peak: number;
   reruns: number;
+  /** Slots that ended at the revision check without a read, and their total occupancy. */
+  checks: number;
+  checkMs: number;
   companyRuns: number;
   patchRuns: number;
+}
+/** What a run waited for, read when it takes its slot and before new dirt can replace it. */
+interface Slot {
+  readonly acquiredAt: number;
+  readonly trigger: WideEvents.RerunTrigger;
+  readonly slotWaitMs: number;
+  readonly readyWaitMs?: number;
+  readonly backoffMs?: number;
 }
 export interface DocumentSubscriptions {
   readonly update: (
     request: RuntimeSubscriptionRequest
   ) => Effect.Effect<void, Runtime.RuntimeError>;
   readonly close: () => void;
-  readonly metrics: () => { readonly peakSubscriptions: number; readonly reruns: number };
-  readonly reconcile: (keys?: readonly string[], cause?: string) => Effect.Effect<void>;
+  readonly metrics: () => {
+    readonly peakSubscriptions: number;
+    readonly reruns: number;
+    readonly checks: number;
+    readonly checkMs: number;
+  };
+  /**
+   * Marks subscriptions dirty: those depending on `keys`, or all of them when `keys` is empty.
+   * A wake is an `invalidation`; the stream also reconciles on its interval and on `ready`.
+   */
+  readonly reconcile: (
+    trigger: Extract<WideEvents.RerunTrigger, "invalidation" | "periodic" | "ready">,
+    keys?: readonly string[],
+    cause?: string
+  ) => Effect.Effect<void>;
 }
 
 export class Subscriptions extends Context.Service<
@@ -107,7 +139,14 @@ export class Subscriptions extends Context.Service<
     readonly attach: (
       options: Pick<
         Document,
-        "generation" | "binding" | "check" | "checkOperation" | "send" | "scope" | "ready"
+        | "generation"
+        | "documentId"
+        | "binding"
+        | "check"
+        | "checkOperation"
+        | "send"
+        | "scope"
+        | "ready"
       >
     ) => DocumentSubscriptions;
     /** Invalidates snapshots, including reads already in flight, after a dev binding swap. */
@@ -129,6 +168,35 @@ const reachesFence = (vector: RevisionVector, fence: RevisionVector) =>
 const encodeResult = Schema.encodeUnknownEffect(Schema.Json);
 const encoder = new TextEncoder();
 const isCallbackRefusal = Schema.is(Invocation.CallbackRefusal);
+const codeOf = (error: Runtime.RuntimeError | SubscriptionReads.HandlerRefusal) =>
+  SubscriptionReads.isHandlerRefusal(error) ? error.failure.code : error.code;
+/** Dirt landing on a subscription that already waits keeps the oldest wait and its trigger. */
+const markDirty = (
+  sub: Subscription,
+  trigger: WideEvents.RerunTrigger,
+  at: number,
+  backoffMs?: number
+) => {
+  if (sub.dirty) return;
+  sub.dirty = true;
+  sub.dirtyAt = at;
+  sub.trigger = trigger;
+  sub.backoffMs = backoffMs;
+};
+/**
+ * The slot wait counts from the latest of the first dirty transition, the document's
+ * execution becoming ready and the end of a retry backoff; the ready wait is reported apart.
+ */
+const slotOf = (doc: Document, sub: Subscription, acquiredAt: number): Slot => {
+  const readyAt = doc.readyAt ?? 0;
+  return {
+    acquiredAt,
+    trigger: sub.trigger,
+    slotWaitMs: Math.max(0, acquiredAt - Math.max(sub.dirtyAt, readyAt, sub.retryAt)),
+    ...(readyAt > sub.dirtyAt ? { readyWaitMs: readyAt - sub.dirtyAt } : {}),
+    ...(sub.backoffMs === undefined ? {} : { backoffMs: sub.backoffMs })
+  };
+};
 const recoverable: Readonly<Record<string, true>> = {
   busy: true,
   rate_limited: true,
@@ -194,7 +262,7 @@ export const make = Effect.gen(function* () {
       }
     });
   };
-  const run = Effect.fnUntraced(function* (doc: Document, sub: Subscription) {
+  const run = Effect.fnUntraced(function* (doc: Document, sub: Subscription, slot: Slot) {
     if (!present(doc, sub)) return;
     const epoch = sub.epoch;
     let binding = doc.binding();
@@ -207,9 +275,13 @@ export const make = Effect.gen(function* () {
       attempted.add(key);
       sub.dependencies.add(key);
     };
+    const { acquiredAt, ...waits } = slot;
     const event: WideEvents.EventSeed = {
       type: "re-run",
+      // The event starts with the slot, so its duration includes the admission and revision checks.
+      startedAt: acquiredAt,
       streamId: doc.generation,
+      documentId: doc.documentId,
       parentId: doc.generation,
       ...(sub.cause === undefined ? {} : { causedByEventId: sub.cause }),
       companyId: binding.companyId,
@@ -218,20 +290,29 @@ export const make = Effect.gen(function* () {
       ...(binding.principal === null ? {} : { viewerId: binding.principal.userId }),
       tier: binding.manifest.tier,
       handler: sub.input.op === "server.call" ? String(sub.input.args.handler) : sub.input.op,
-      kind: "query"
+      kind: "query",
+      ...waits
     };
+    const discarded = WideEvents.enrich({ disposition: "discarded" });
+    // A check that ends the slot without a read emits no event; the stream event sums its time.
+    const checked = Effect.map(Clock.currentTimeMillis, (now) => {
+      doc.checks++;
+      doc.checkMs += now - acquiredAt;
+    });
     const failed = Effect.fnUntraced(function* (
       attemptError: Runtime.RuntimeError | SubscriptionReads.HandlerRefusal
     ) {
-      if (!present(doc, sub) || sub.epoch !== epoch) return;
+      const dropped = (error: Runtime.RuntimeError | SubscriptionReads.HandlerRefusal) =>
+        WideEvents.enrich({ outcome: "failure", code: codeOf(error), disposition: "discarded" });
+      if (!present(doc, sub) || sub.epoch !== epoch) return yield* dropped(attemptError);
       const error = yield* check.pipe(
         Effect.as(attemptError),
         Effect.catch((refusal) => Effect.succeed(refusal))
       );
-      if (!present(doc, sub) || sub.epoch !== epoch) return;
+      if (!present(doc, sub) || sub.epoch !== epoch) return yield* dropped(error);
       for (const key of attempted) sub.dependencies.add(key);
       const handlerRefusal = SubscriptionReads.isHandlerRefusal(error);
-      const code = handlerRefusal ? error.failure.code : error.code;
+      const code = codeOf(error);
       const permanent = !handlerRefusal && !isCallbackRefusal(error) && recoverable[code] !== true;
       doc.send({
         type: "error",
@@ -252,11 +333,10 @@ export const make = Effect.gen(function* () {
         );
         sub.retryAt = (yield* Clock.currentTimeMillis) + delay;
         yield* Effect.sleep(delay).pipe(
-          Effect.andThen(
-            Effect.sync(() => {
-              if (present(doc, sub)) sub.dirty = true;
-            })
-          ),
+          Effect.andThen(Clock.currentTimeMillis),
+          Effect.map((now) => {
+            if (present(doc, sub)) markDirty(sub, "retry", now, delay);
+          }),
           Effect.andThen(Effect.suspend(() => schedule)),
           Effect.forkIn(doc.scope)
         );
@@ -281,10 +361,10 @@ export const make = Effect.gen(function* () {
       input = { ...input, binding };
       const keys = yield* reads.admit(input);
       const fence = yield* reads.revisions(binding.companyId, keys);
-      if (!present(doc, sub) || sub.epoch !== epoch) return;
+      if (!present(doc, sub) || sub.epoch !== epoch) return yield* checked;
       if (sub.failures === 0 && equalVector(sub.vector, fence)) {
         yield* check;
-        if (!present(doc, sub) || sub.epoch !== epoch) return;
+        if (!present(doc, sub) || sub.epoch !== epoch) return yield* checked;
         sub.dependencies.clear();
         for (const key of keys) sub.dependencies.add(key);
         sub.failures = 0;
@@ -294,7 +374,7 @@ export const make = Effect.gen(function* () {
           revision: String(sub.revision),
           vector: fence
         });
-        return;
+        return yield* checked;
       }
       return fence;
     }).pipe(
@@ -332,7 +412,7 @@ export const make = Effect.gen(function* () {
             }
           ]
         });
-        if (!present(doc, sub) || sub.epoch !== epoch) return;
+        if (!present(doc, sub) || sub.epoch !== epoch) return yield* discarded;
         if (size > snapshotLimit) {
           refuse(doc, sub.input.id, "subscriptions.snapshot.bytes", snapshotLimit);
           doc.subscriptions.delete(sub.input.id);
@@ -344,14 +424,14 @@ export const make = Effect.gen(function* () {
           return;
         }
         yield* check;
-        if (!present(doc, sub) || sub.epoch !== epoch) return;
+        if (!present(doc, sub) || sub.epoch !== epoch) return yield* discarded;
         sub.dependencies.clear();
         for (const key of Object.keys(snapshot.vector)) sub.dependencies.add(key);
         // The pre-read watermark is a fence, not evidence that a stale snapshot is fresh.
         if (!reachesFence(snapshot.vector, fence)) {
           sub.vector = undefined;
-          sub.dirty = true;
-          return;
+          markDirty(sub, "retry", yield* Clock.currentTimeMillis);
+          return yield* discarded;
         }
         sub.vector = snapshot.vector;
         sub.failures = 0;
@@ -363,6 +443,7 @@ export const make = Effect.gen(function* () {
             revision: String(sub.revision),
             vector: snapshot.vector
           });
+          yield* WideEvents.enrich({ disposition: "unchanged" });
         } else {
           sub.result = json;
           sub.revision++;
@@ -373,6 +454,7 @@ export const make = Effect.gen(function* () {
             result,
             vector: snapshot.vector
           });
+          yield* WideEvents.enrich({ disposition: "delivered" });
         }
       }).pipe(Effect.catch(failed))
     );
@@ -399,14 +481,14 @@ export const make = Effect.gen(function* () {
         sub.duringRun.clear();
         adjust(companyRunning, binding.companyId, 1);
         adjust(patchRunning, patchKey, 1);
-        yield* run(doc, sub).pipe(
+        yield* run(doc, sub, slotOf(doc, sub, now)).pipe(
           Effect.ensuring(
             Effect.gen(function* () {
               sub.running = false;
               adjust(companyRunning, binding.companyId, -1);
               adjust(patchRunning, patchKey, -1);
               if (present(doc, sub) && [...sub.duringRun].some((key) => sub.dependencies.has(key)))
-                sub.dirty = true;
+                markDirty(sub, "invalidation", yield* Clock.currentTimeMillis);
               if (present(doc, sub)) {
                 // Rotate after completion so subscriptions added during the run get a turn.
                 doc.subscriptions.delete(sub.input.id);
@@ -442,7 +524,14 @@ export const make = Effect.gen(function* () {
   const attach = (
     options: Pick<
       Document,
-      "generation" | "binding" | "check" | "checkOperation" | "send" | "scope" | "ready"
+      | "generation"
+      | "documentId"
+      | "binding"
+      | "check"
+      | "checkOperation"
+      | "send"
+      | "scope"
+      | "ready"
     >
   ): DocumentSubscriptions => {
     const doc: Document = {
@@ -454,8 +543,11 @@ export const make = Effect.gen(function* () {
       gap: 0,
       resync: false,
       active: true,
+      readyAt: undefined,
       peak: 0,
       reruns: 0,
+      checks: 0,
+      checkMs: 0,
       companyRuns: registry["subscriptions.reruns.company"].default,
       patchRuns: registry["subscriptions.reruns.patch"].default
     };
@@ -466,15 +558,20 @@ export const make = Effect.gen(function* () {
       doc.gap++;
       doc.send({ type: "resync_required", sequence: doc.sequence });
     };
+    // The subscription POST's request event says why it was refused and how far this host got.
+    const stale = WideEvents.enrich({ refusal: "stale_sequence" }).pipe(
+      Effect.andThen(Effect.fail(new StaleSequence()))
+    );
     const update = (request: RuntimeSubscriptionRequest) =>
       doc.gate.withPermits(1)(
         Effect.gen(function* () {
-          if (!doc.active) return yield* new StaleSequence();
+          yield* WideEvents.enrich({ currentSequence: doc.sequence });
+          if (!doc.active) return yield* stale;
           if (
             request.sequence < doc.sequence ||
             (request.type !== "replace" && request.sequence === 0)
           )
-            return yield* new StaleSequence();
+            return yield* stale;
           if (request.type !== "replace" && request.sequence <= doc.sequence) {
             doc.send({ type: "admitted", sequence: doc.sequence });
             return;
@@ -512,12 +609,13 @@ export const make = Effect.gen(function* () {
               patchRuns: "subscriptions.reruns.patch"
             }
           });
-          if (!doc.active) return yield* new StaleSequence();
+          if (!doc.active) return yield* stale;
           for (const other of documents) {
             if (other.binding().companyId !== binding.companyId) continue;
             other.companyRuns = bounds.companyRuns.value;
             other.patchRuns = bounds.patchRuns.value;
           }
+          const now = yield* Clock.currentTimeMillis;
           const install = (input: RuntimeSubscription) => {
             const signature = `${input.op}:${canonicalArgs(input.args)}`;
             const previous = doc.subscriptions.get(input.id);
@@ -527,7 +625,7 @@ export const make = Effect.gen(function* () {
               if (input.revision === undefined || BigInt(input.revision) !== previous.revision)
                 previous.result = undefined;
               previous.epoch++;
-              previous.dirty = true;
+              markDirty(previous, "replace", now);
               previous.retryAt = 0;
               return;
             }
@@ -563,6 +661,9 @@ export const make = Effect.gen(function* () {
               result: undefined,
               revision: BigInt(input.revision ?? "0"),
               dirty: true,
+              dirtyAt: now,
+              trigger: "initial",
+              backoffMs: undefined,
               running: false,
               failures: 0,
               retryAt: 0,
@@ -605,9 +706,18 @@ export const make = Effect.gen(function* () {
         doc.buffered.clear();
         documents.delete(doc);
       },
-      metrics: () => ({ peakSubscriptions: doc.peak, reruns: doc.reruns }),
-      reconcile: (keys: readonly string[] = [], cause?: string) =>
+      metrics: () => ({
+        peakSubscriptions: doc.peak,
+        reruns: doc.reruns,
+        checks: doc.checks,
+        checkMs: doc.checkMs
+      }),
+      reconcile: (trigger, keys = [], cause) =>
         Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          // Recorded before the limit lookup, so runs the opened gate releases meanwhile
+          // still measure their slot waits from ready.
+          if (trigger === "ready") doc.readyAt ??= now;
           if (keys.length === 0) {
             const companyId = doc.binding().companyId;
             yield* limits
@@ -634,7 +744,7 @@ export const make = Effect.gen(function* () {
           for (const sub of doc.subscriptions.values()) {
             if (sub.running) for (const key of keys) sub.duringRun.add(key);
             if (keys.length === 0 || keys.some((key) => sub.dependencies.has(key))) {
-              sub.dirty = true;
+              markDirty(sub, trigger, now);
               sub.retryAt = 0;
               sub.cause = cause;
             }
@@ -648,6 +758,7 @@ export const make = Effect.gen(function* () {
     handlerKinds: (patchId) => handlerKinds.get(patchId),
     rebind: (patchId, kinds) =>
       Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
         handlerKinds.set(patchId, kinds);
         for (const doc of documents) {
           if (doc.binding().patchId !== patchId) continue;
@@ -655,7 +766,7 @@ export const make = Effect.gen(function* () {
           for (const sub of doc.subscriptions.values()) {
             sub.epoch++;
             sub.vector = undefined;
-            sub.dirty = true;
+            markDirty(sub, "rebind", now);
             sub.retryAt = 0;
           }
         }

@@ -194,6 +194,45 @@ it.layer(services)("Invocation", (it) => {
     })
   );
 
+  it.effect("names the admitted task beside the process generation on the root event", () =>
+    Effect.gen(function* () {
+      const invocations = yield* makeInvocation(() =>
+        Effect.succeed({
+          outcome: "returned" as const,
+          reply: { ok: true as const, value: 7 },
+          guestMs: 1
+        })
+      ).pipe(
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () => Effect.void,
+          acquire: () =>
+            Effect.succeed({
+              binding: { taskId: "admitted-task", bindingEpoch: 3 },
+              release: Effect.void
+            })
+        })
+      );
+      const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+        })
+      );
+      yield* events.withEvent(
+        { type: "re-run" },
+        invocations.call(
+          { handler: "demo.query", args: { id: 1 } },
+          binding,
+          Effect.succeed(viewer)
+        )
+      );
+      assert.include(yield* Queue.take(records), {
+        taskId: "admitted-task",
+        processGeneration: bound.processGeneration
+      });
+    })
+  );
+
   it.effect("validates loaded descriptors and refuses undeclared and forged handler failures", () =>
     Effect.gen(function* () {
       const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();

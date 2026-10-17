@@ -668,6 +668,8 @@ it.layer(layer)("document streams", (it) => {
         hello[0].byteLength + served[0].byteLength + denied[0].byteLength
       );
       assert.strictEqual(event.closeReason, "access_denied");
+      assert.strictEqual(event.documentId, "wide_event_document");
+      assert.strictEqual(event.checks, 0);
       assert.strictEqual(event.companyId, DEV_SEED.companyId);
       assert.strictEqual(event.patchId, Fixtures.patchId);
       assert.strictEqual(yield* Queue.size(recorded), 0);

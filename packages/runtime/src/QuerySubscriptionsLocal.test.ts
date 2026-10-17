@@ -212,6 +212,7 @@ it.live(
       const frames = yield* Queue.unbounded<RuntimeStreamFrame>();
       const document = registry.attach({
         generation: "generation",
+        documentId: "local_query_document",
         binding: () => binding,
         check: Effect.void,
         scope: yield* Scope.Scope,
@@ -220,7 +221,9 @@ it.live(
         }
       });
       yield* Effect.addFinalizer(() => Effect.sync(document.close));
-      yield* (yield* Wakes.Wakes).subscribe(document.reconcile);
+      yield* (yield* Wakes.Wakes).subscribe((keys, cause) =>
+        document.reconcile("invalidation", keys, cause)
+      );
       const next = Queue.take(frames);
       let sequence = 0;
       const subscribe = Effect.fnUntraced(function* (

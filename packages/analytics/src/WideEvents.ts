@@ -76,15 +76,60 @@ const cliFields = {
   cliCommand: Schema.optionalKey(Schema.String),
   agent: Schema.optionalKey(Schema.String)
 };
+/** Why a subscription ran: what made it dirty first, while it waited for a slot. */
+export const RerunTrigger = Schema.Literals([
+  "initial",
+  "replace",
+  "invalidation",
+  "retry",
+  "periodic",
+  "rebind",
+  "ready"
+]);
+export type RerunTrigger = typeof RerunTrigger.Type;
+/** What a run's result became: a snapshot, an up-to-date answer, or nothing. */
+export const RerunDisposition = Schema.Literals(["delivered", "unchanged", "discarded"]);
+export type RerunDisposition = typeof RerunDisposition.Type;
+/** The shell's document nonce, which outlives each stream generation. */
+const documentFields = { documentId: Schema.optionalKey(Schema.String) };
 const rerunFields = {
   streamId: Schema.optionalKey(Schema.String),
-  causedByEventId: Schema.optionalKey(Schema.String)
+  causedByEventId: Schema.optionalKey(Schema.String),
+  trigger: Schema.optionalKey(RerunTrigger),
+  disposition: Schema.optionalKey(RerunDisposition),
+  /**
+   * First dirty transition (the oldest, when coalesced) to slot acquisition. Excludes the
+   * wait for execution ready and a retry's backoff, which the next two fields record.
+   */
+  slotWaitMs: Schema.optionalKey(Schema.Number),
+  /** Time spent dirty before the document's execution was ready. */
+  readyWaitMs: Schema.optionalKey(Schema.Number),
+  /** On a retry, the backoff it waited after the failure before it was dirty again. */
+  backoffMs: Schema.optionalKey(Schema.Number)
 };
 const streamMetrics = {
   peakSubscriptions: Schema.optionalKey(Schema.Number),
   reruns: Schema.optionalKey(Schema.Number),
+  checks: Schema.optionalKey(Schema.Number),
+  checkMs: Schema.optionalKey(Schema.Number),
   bytes: Schema.optionalKey(Schema.Number),
   closeReason: Schema.optionalKey(Schema.String)
+};
+/**
+ * A subscription POST's desired-set change and what this host knew of its document.
+ * Cookies are recorded as booleans, never values.
+ */
+const subscriptionRequestFields = {
+  subscriptionRequest: Schema.optionalKey(Schema.Literals(["subscribe", "unsubscribe", "replace"])),
+  sequence: Schema.optionalKey(Schema.Number),
+  currentSequence: Schema.optionalKey(Schema.Number),
+  streamId: rerunFields.streamId,
+  currentStreamId: Schema.optionalKey(Schema.String),
+  documentConnected: Schema.optionalKey(Schema.Boolean),
+  refusal: Schema.optionalKey(Schema.Literals(["stream_replaced", "stale_sequence"])),
+  affinityCookie: Schema.optionalKey(Schema.Boolean),
+  affinityMatched: Schema.optionalKey(Schema.Boolean),
+  balancerCookie: Schema.optionalKey(Schema.Boolean)
 };
 const processMetrics = {
   cause: Schema.optionalKey(Schema.String),
@@ -105,7 +150,9 @@ export const EventFields = Schema.Struct({
   ...invocationMetrics,
   ...routeFields,
   ...cliFields,
+  ...documentFields,
   ...rerunFields,
+  ...subscriptionRequestFields,
   ...streamMetrics,
   ...processMetrics,
   ...bindingMetrics
@@ -132,6 +179,8 @@ export const RequestEvent = Schema.Struct({
   ...invocationMetrics,
   ...routeFields,
   ...cliFields,
+  ...documentFields,
+  ...subscriptionRequestFields,
   ...operations
 });
 export type RequestEvent = typeof RequestEvent.Type;
@@ -140,6 +189,7 @@ export const RerunEvent = Schema.Struct({
   type: Schema.Literal("re-run"),
   ...attribution,
   ...invocationMetrics,
+  ...documentFields,
   ...rerunFields,
   ...operations
 });
@@ -152,6 +202,7 @@ export const StreamEvent = Schema.Struct({
   versionId: attribution.versionId,
   viewerId: attribution.viewerId,
   tier: attribution.tier,
+  ...documentFields,
   ...streamMetrics
 });
 export type StreamEvent = typeof StreamEvent.Type;
