@@ -1332,14 +1332,18 @@ notice adds that the reference must go, since the next build fails on it. A dev
 start whose first build then fails keeps the notice in its failure. If
 `/api/me` doesn't answer, the notice says "The company's look changed".
 
-Repo `publish` never pulls a revision. For such a page it reads the company's
-current look (`GET /api/look`) before building, and when the repo's revision
-differs, it publishes the repo's own revision unchanged, exits 0 and warns:
-"This repo has Acme's look rev 7, but the current look is rev 8 by Sam: darker
-green. This version keeps the repo's look; run patchy refresh to bring it up to
-date." The check is advisory: a failed read is the warning "Could not check
-whether this repo's look is current: …" and the publish goes ahead. A page that
-names neither file hears nothing and publish sends no look request.
+Repo `publish` never pulls a revision. For such a page it sends the revision
+`index.json` names with the publish (`metadata.look`, null for the Patchy look),
+and when that isn't the company's current look the instance publishes the repo's
+own revision unchanged and its response warns, exit 0: "This repo has Acme's
+look rev 7, but the current look is rev 8 by Sam: darker green. This version
+keeps the repo's look; run patchy refresh to bring it up to date." The check is
+advisory: a failed read is the warning "Could not check whether this repo's
+look is current: …" and the publish goes ahead. The warning comes from the
+publish response, so a failed local build or an unsuccessful upload carries
+none; once the instance accepts a publish, its warnings are reported even if a
+local write afterwards fails. A page that names neither file sends no look and
+hears nothing.
 
 ## Exit codes
 

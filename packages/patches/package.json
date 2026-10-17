@@ -22,6 +22,7 @@
   "dependencies": {
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
+    "@patchy/companies": "workspace:*",
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",

@@ -364,10 +364,14 @@ restyle this tool's components, ask your agent to update it to the current
 look." When a restore set the incoming look, `index.json`'s `lookRestore` names
 the restorer instead of the revision's author: "Acme's look changed, rev 8 → 7,
 restored by Ada: rev 8 failed dark mode.", or "…, restored by Ada." without a
-note. Repo `publish` never pulls a revision: for such a page behind the
-company's current revision it ships the repo's own, exits 0 and adds a
-`warnings` entry naming `patchy refresh`. These checks are advisory: a failed
-look or identity read becomes a warning or a nameless notice, never a failure.
+note. Repo `publish` never pulls a revision: for such a page it sends the
+repo's revision with the publish and ships the repo's own, and when that isn't
+the company's current revision the publish response adds a `warnings` entry
+naming `patchy refresh`, exit 0. That entry comes from the publish response, so
+a failed local build or an unsuccessful upload carries none; the warnings of a
+publish the instance accepted are reported even when a later local write fails.
+These checks are advisory: a failed look or identity read becomes a warning or a
+nameless notice, never a failure.
 
 `patchy add postgres` or `patchy add posthog` chooses that integration's sole
 connected connection; with several it lists copy-ready choices from
