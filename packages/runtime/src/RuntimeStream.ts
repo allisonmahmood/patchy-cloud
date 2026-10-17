@@ -339,6 +339,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       };
       const documentSubscriptions = subscriptions.attach({
         generation,
+        documentId: input.documentId,
         binding: () => binding,
         scope,
         ready: () => executionReady,
@@ -429,12 +430,15 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             patchId: input.patchId,
             versionId: input.versionId,
             viewerId: identity.viewerId,
-            tier: loaded.manifest.tier
+            tier: loaded.manifest.tier,
+            documentId: input.documentId
           },
           Deferred.await(done).pipe(
             Effect.ensuring(
-              Effect.suspend(() =>
-                WideEvents.enrich({
+              Effect.suspend(() => {
+                // Closed before its totals are read, so a check settling later reports itself.
+                close("disconnected");
+                return WideEvents.enrich({
                   ...documentSubscriptions.metrics(),
                   bytes,
                   closeReason: closeReason ?? "disconnected",
@@ -452,8 +456,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
                       configRevision: buffer.configRevision
                     }
                   ]
-                })
-              )
+                });
+              })
             )
           )
         )
@@ -495,7 +499,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             if (closeReason !== undefined) return;
             executionReady = true;
             entry.send({ type: "ready" });
-            yield* documentSubscriptions.reconcile();
+            yield* documentSubscriptions.reconcile("ready");
             yield* Deferred.await(lifecycleClosed);
           }).pipe(
             Effect.catch((error) =>
@@ -537,7 +541,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           yield* Effect.sleep(interval);
           if (closeReason !== undefined) return;
           yield* withPatch(input.patchId, refresh(input.patchId, [entry]));
-          if (closeReason === undefined) yield* documentSubscriptions.reconcile();
+          if (closeReason === undefined) yield* documentSubscriptions.reconcile("periodic");
         }
       }).pipe(Effect.forkIn(scope));
       yield* Effect.gen(function* () {
@@ -570,7 +574,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       function* (keys: readonly string[], cause?: string) {
         const patches = new Set<string>();
         for (const entry of entries.values()) {
-          yield* entry.subscriptions.reconcile(keys, cause);
+          yield* entry.subscriptions.reconcile("invalidation", keys, cause);
           if (keys.length === 0 || keys.includes(`patch:${entry.patchId}`))
             patches.add(entry.patchId);
         }
@@ -632,13 +636,35 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         return yield* new Runtime.PrincipalChanged({});
       const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
       const entry = entries.get(key);
+      // Whether this host holds the document, and under which generation, tells a request
+      // routed to the wrong replica from one naming a replaced stream. The patch and version
+      // come from the admitted stream, never the request; a generation is kept only in
+      // the form this host mints.
+      yield* WideEvents.enrich({
+        companyId: identity.companyId,
+        viewerId: identity.viewerId,
+        documentId: input.documentId,
+        ...(/^stream_[a-z0-9]{24}$/.test(input.generation) ? { streamId: input.generation } : {}),
+        subscriptionRequest: input.type,
+        sequence: input.sequence,
+        documentConnected: entry !== undefined,
+        ...(entry === undefined
+          ? {}
+          : {
+              patchId: entry.patchId,
+              versionId: entry.versionId,
+              currentStreamId: entry.generation
+            })
+      });
       if (
         entry === undefined ||
         entry.generation !== input.generation ||
         entry.viewerId !== identity.viewerId ||
         entry.versionId !== input.versionId
-      )
+      ) {
+        yield* WideEvents.enrich({ refusal: "stream_replaced" });
         return yield* new StreamReplaced();
+      }
       // Share the call budget across documents and generations for this viewer and patch.
       const attempt = yield* limits.consume({
         key: `runtime:${identity.viewerId}:${input.patchId}`,

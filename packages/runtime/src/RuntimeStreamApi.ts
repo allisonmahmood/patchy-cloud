@@ -6,6 +6,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { PatchyApi } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -15,11 +16,13 @@ import * as Runtime from "./Runtime.js";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isTooLarge = Schema.is(Runtime.TooLarge);
+const affinityCookieName = "patchy_stream_affinity";
 
 const layerFor = (secure: boolean) =>
   HttpApiBuilder.group(PatchyApi, "runtimeStream", (handlers) =>
     Effect.gen(function* () {
       const streams = yield* RuntimeStream.RuntimeStream;
+      const events = yield* WideEvents.WideEvents;
       const affinity = newInternalId("replica");
       return handlers
         .handleRaw("stream", ({ query }) =>
@@ -33,7 +36,7 @@ const layerFor = (secure: boolean) =>
                   "x-content-type-options": "nosniff"
                 }
               }).pipe(
-                HttpServerResponse.setCookieUnsafe("patchy_stream_affinity", affinity, {
+                HttpServerResponse.setCookieUnsafe(affinityCookieName, affinity, {
                   path: "/api/runtime",
                   httpOnly: true,
                   sameSite: "strict",
@@ -47,6 +50,14 @@ const layerFor = (secure: boolean) =>
         .handleRaw("subscriptions", () =>
           Effect.gen(function* () {
             const request = yield* HttpServerRequest.HttpServerRequest;
+            // Whether the balancer kept this document on its stream's host. Never the values.
+            yield* WideEvents.enrich({
+              affinityCookie: request.cookies[affinityCookieName] !== undefined,
+              affinityMatched: request.cookies[affinityCookieName] === affinity,
+              balancerCookie: Object.keys(request.cookies).some((name) =>
+                name.startsWith("AWSALBAPP")
+              )
+            });
             const callBytes = yield* ContractLimits.get("runtime.call.bytes");
             const serverArgsBytes = yield* ContractLimits.get("tier2.args.bytes");
             const documents = yield* ContractLimits.get("subscriptions.document");
@@ -80,7 +91,11 @@ const layerFor = (secure: boolean) =>
                 headers: { "cache-control": "no-store" }
               }
             );
-          }).pipe(Effect.catch((error) => Effect.succeed(RuntimeApi.failure(error))))
+          }).pipe(
+            Effect.catch(RuntimeApi.recordFailure),
+            // The server's request middleware leaves runtime routes to record their own events.
+            (work) => events.withEvent({ type: "request" }, work)
+          )
         );
     })
   );

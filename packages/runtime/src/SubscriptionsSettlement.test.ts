@@ -159,6 +159,7 @@ const fixture = Effect.gen(function* () {
     };
     const document = registry.attach({
       generation,
+      documentId: generation,
       binding: () => binding,
       check: Effect.void,
       scope: documentScope,

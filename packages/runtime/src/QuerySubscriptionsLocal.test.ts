@@ -217,6 +217,7 @@ it.live(
       const frames = yield* Queue.unbounded<RuntimeStreamFrame>();
       const document = registry.attach({
         generation: "generation",
+        documentId: "local_query_document",
         binding: () => binding,
         check: Effect.void,
         scope: yield* Scope.Scope,
@@ -225,7 +226,9 @@ it.live(
         }
       });
       yield* Effect.addFinalizer(() => Effect.sync(document.close));
-      yield* (yield* Wakes.Wakes).subscribe(document.reconcile);
+      yield* (yield* Wakes.Wakes).subscribe((keys, cause) =>
+        document.reconcile("invalidation", keys, cause)
+      );
       const next = Queue.take(frames);
       let sequence = 0;
       const subscribe = Effect.fnUntraced(function* (
@@ -490,6 +493,7 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
     const counts = { snapshots: 0 };
     const document = registry.attach({
       generation,
+      documentId: generation,
       binding: () => loaded,
       check: Effect.void,
       scope: yield* Scope.Scope,
@@ -502,7 +506,7 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
       }
     });
     yield* Effect.addFinalizer(() => Effect.sync(document.close));
-    yield* wakes.subscribe(document.reconcile);
+    yield* wakes.subscribe((keys, cause) => document.reconcile("invalidation", keys, cause));
     yield* document.update({
       type: "replace",
       patchId: loaded.patchId,

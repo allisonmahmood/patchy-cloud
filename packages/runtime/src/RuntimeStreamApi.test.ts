@@ -1,7 +1,9 @@
 import { assert, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -20,15 +22,17 @@ import * as StreamAdmission from "./StreamAdmission.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as Subscriptions from "./Subscriptions.js";
 
-const layer = RuntimeStreamApi.layer.pipe(
-  Layer.provideMerge(RuntimeStream.layer),
-  Layer.provide(Subscriptions.layer),
-  Layer.provide(StreamAdmission.layer),
-  Layer.provide(StreamLimits.layer),
-  Layer.provideMerge(Fixtures.streamPorts),
-  Layer.provide(WideEvents.layerNoop),
-  Layer.provideMerge(Fixtures.layer())
-);
+const layerWith = <Events>(events: Layer.Layer<Events>) =>
+  RuntimeStreamApi.layer.pipe(
+    Layer.provideMerge(RuntimeStream.layer),
+    Layer.provide(Subscriptions.layer),
+    Layer.provide(StreamAdmission.layer),
+    Layer.provide(StreamLimits.layer),
+    Layer.provideMerge(Fixtures.streamPorts),
+    Layer.provideMerge(events),
+    Layer.provideMerge(Fixtures.layer())
+  );
+const layer = layerWith(WideEvents.layerNoop);
 const api = HttpApiTest.groups(HttpApi.make("patchy").add(RuntimeStreamGroup), ["runtimeStream"], {
   baseUrl: PUBLIC_BASE_URL
 });
@@ -43,6 +47,25 @@ const headers = {
   "sec-fetch-site": "same-origin",
   cookie: signedInCookies()
 };
+
+/**
+ * Over HttpApiTest a streamed body ends after its first chunk, so documents are opened on
+ * the shared RuntimeStream and only their controls go over HTTP.
+ */
+const openDocument = Effect.fnUntraced(function* (documentId: string) {
+  const body = yield* (yield* RuntimeStream.RuntimeStream)
+    .open({ ...query, documentId })
+    .pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(new Request(`${PUBLIC_BASE_URL}/api/runtime/stream`, { headers }))
+      )
+    );
+  const pull = yield* Stream.toPull(body);
+  return Effect.map(pull, (chunks) =>
+    decodeFrame(new TextDecoder().decode(chunks[0]).slice(6).trim())
+  );
+});
 
 it.layer(layer)("stream HTTP admission", (it) => {
   it.effect("uses cookie admission and runtime refusals before opening SSE", () =>
@@ -81,22 +104,7 @@ it.layer(layer)("stream HTTP admission", (it) => {
       Effect.gen(function* () {
         const client = yield* api;
         const document = { ...query, documentId: "controlled_document" };
-        // Over HttpApiTest a streamed body ends after its first chunk, so the document
-        // is opened on the shared RuntimeStream and only its control goes over HTTP.
-        const body = yield* (yield* RuntimeStream.RuntimeStream)
-          .open(document)
-          .pipe(
-            Effect.provideService(
-              HttpServerRequest.HttpServerRequest,
-              HttpServerRequest.fromWeb(
-                new Request(`${PUBLIC_BASE_URL}/api/runtime/stream`, { headers })
-              )
-            )
-          );
-        const pull = yield* Stream.toPull(body);
-        const next = Effect.map(pull, (chunks) =>
-          decodeFrame(new TextDecoder().decode(chunks[0]).slice(6).trim())
-        );
+        const next = yield* openDocument(document.documentId);
         const hello = yield* next;
         assert(hello.type === "hello");
         assert.strictEqual((yield* next).type, "served");
@@ -261,5 +269,149 @@ it.layer(layer)("stream HTTP admission", (it) => {
           assert.strictEqual(hello.type, "hello");
         }
       }).pipe(Effect.scoped)
+  );
+});
+
+/** The request events a suite's sink received, in delivery order. */
+class Requests extends Context.Service<Requests, Queue.Queue<WideEvents.RequestEvent>>()(
+  "@patchy/runtime/RuntimeStreamApi.test/Requests"
+) {}
+const recording = WideEvents.layerWithSink.pipe(
+  Layer.provide(
+    Layer.effect(
+      WideEvents.Sink,
+      Effect.gen(function* () {
+        const queue = yield* Requests;
+        return WideEvents.Sink.of({
+          write: (event) =>
+            event.type === "request" ? Queue.offer(queue, event).pipe(Effect.asVoid) : Effect.void
+        });
+      })
+    )
+  ),
+  Layer.provideMerge(Layer.effect(Requests, Queue.unbounded<WideEvents.RequestEvent>()))
+);
+
+it.layer(layerWith(recording))("subscription request events", (it) => {
+  it.effect("record each POST's outcome, its document on this host and cookie booleans", () =>
+    Effect.gen(function* () {
+      const client = yield* api;
+      const requests = yield* Requests;
+      const opened = yield* client.stream({ query, headers, responseMode: "response-only" });
+      const affinity = Option.getOrThrow(
+        Cookies.get(opened.cookies, "patchy_stream_affinity")
+      ).value;
+      const documentId = "recorded_document";
+      const next = yield* openDocument(documentId);
+      const hello = yield* next;
+      assert(hello.type === "hello");
+      yield* next;
+      const post = (
+        changes: { readonly documentId?: string; readonly generation?: string },
+        sequence: number,
+        cookies = ""
+      ) =>
+        client.subscriptions({
+          payload: {
+            ...query,
+            documentId,
+            generation: hello.generation,
+            ...changes,
+            sequence,
+            type: "replace",
+            subscriptions: []
+          },
+          headers: { ...headers, cookie: `${headers.cookie}${cookies}` },
+          responseMode: "response-only"
+        });
+      const stale = `stream_${"a".repeat(24)}`;
+      const statuses = [
+        yield* post({}, 1, `; patchy_stream_affinity=${affinity}; AWSALBAPP-0=balancer-value`),
+        yield* post({}, 0, "; patchy_stream_affinity=replica_elsewhere"),
+        yield* post({ generation: stale }, 2),
+        yield* post({ documentId: "unknown_document_id" }, 2),
+        yield* client.subscriptions({
+          payload: {
+            ...query,
+            documentId,
+            generation: hello.generation,
+            sequence: 2,
+            type: "replace",
+            subscriptions: []
+          },
+          headers: { ...headers, cookie: "" },
+          responseMode: "response-only"
+        })
+      ].map((response) => response.status);
+      assert.deepStrictEqual(statuses, [200, 409, 409, 409, 401]);
+      const [accepted, superseded, replaced, elsewhere, signedOut] = [
+        yield* Queue.take(requests),
+        yield* Queue.take(requests),
+        yield* Queue.take(requests),
+        yield* Queue.take(requests),
+        yield* Queue.take(requests)
+      ];
+      const document = {
+        companyId: DEV_SEED.companyId,
+        viewerId: DEV_SEED.userId,
+        patchId: Fixtures.patchId,
+        versionId: Fixtures.versionId,
+        documentId,
+        subscriptionRequest: "replace",
+        documentConnected: true,
+        currentStreamId: hello.generation
+      } as const;
+      assert.include(accepted, {
+        ...document,
+        outcome: "success",
+        streamId: hello.generation,
+        sequence: 1,
+        currentSequence: 0,
+        affinityCookie: true,
+        affinityMatched: true,
+        balancerCookie: true
+      });
+      assert.notProperty(accepted, "refusal");
+      assert.include(superseded, {
+        ...document,
+        outcome: "refused",
+        code: "invalid_request",
+        refusal: "stale_sequence",
+        sequence: 0,
+        currentSequence: 1,
+        affinityCookie: true,
+        affinityMatched: false,
+        balancerCookie: false
+      });
+      assert.include(replaced, {
+        ...document,
+        outcome: "refused",
+        code: "invalid_request",
+        refusal: "stream_replaced",
+        streamId: stale,
+        affinityCookie: false,
+        affinityMatched: false
+      });
+      assert.notProperty(replaced, "currentSequence");
+      assert.include(elsewhere, {
+        refusal: "stream_replaced",
+        documentId: "unknown_document_id",
+        documentConnected: false
+      });
+      for (const key of ["currentStreamId", "patchId", "versionId"])
+        assert.notProperty(elsewhere, key);
+      // Refused before admission: only what the request's cookies say, nothing it claims.
+      assert.include(signedOut, {
+        outcome: "refused",
+        code: "session_expired",
+        affinityCookie: false,
+        balancerCookie: false
+      });
+      for (const key of ["documentId", "streamId", "subscriptionRequest", "viewerId", "refusal"])
+        assert.notProperty(signedOut, key);
+      const recorded = JSON.stringify([accepted, superseded, replaced, elsewhere, signedOut]);
+      for (const value of [affinity, "balancer-value", "replica_elsewhere", headers.cookie])
+        assert.notInclude(recorded, value);
+    }).pipe(Effect.scoped)
   );
 });

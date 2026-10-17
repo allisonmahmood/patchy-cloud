@@ -110,6 +110,7 @@ const fixture = Effect.gen(function* () {
   );
   const document = registry.attach({
     generation: "generation",
+    documentId: "query_document",
     binding: () => binding,
     check: Effect.void,
     scope: yield* Scope.Scope,
@@ -181,7 +182,7 @@ it.effect("discards unrelated resume keys before reading revisions and repairs t
       assert.isAtMost(keys.length, allowed.size);
       for (const key of keys) assert.isTrue(allowed.has(key), key);
     }
-    yield* f.document.reconcile([ownStore, sharedTable, sourcePatch]);
+    yield* f.document.reconcile("invalidation", [ownStore, sharedTable, sourcePatch]);
     yield* Effect.yieldNow;
     assert.strictEqual(f.state.calls, 1);
   }).pipe(Effect.scoped)
@@ -202,7 +203,7 @@ it.effect("resumes equal owned and canonical shared revisions without invoking t
     assert.deepStrictEqual(new Set(f.revisionReads[0]), new Set(Object.keys(f.state.revisions)));
     f.state.dependencies = [sharedStore, storeSource];
     f.state.revisions[sharedStore] = "7";
-    yield* f.document.reconcile([sharedStore]);
+    yield* f.document.reconcile("invalidation", [sharedStore]);
     assert.deepStrictEqual(yield* f.next, {
       type: "snapshot",
       id: "query",
@@ -237,7 +238,7 @@ for (const [resource, source] of [
         assert.deepStrictEqual(f.revisionReads[0], []);
         assert.strictEqual(f.state.calls, 1);
         f.state.failure = undefined;
-        yield* f.document.reconcile([source]);
+        yield* f.document.reconcile("invalidation", [source]);
         assert.deepStrictEqual(yield* f.next, {
           type: "snapshot",
           id: "query",
