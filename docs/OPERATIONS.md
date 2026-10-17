@@ -184,6 +184,38 @@ fields @timestamp, status, outcome, code, patchId, versionId, durationMs, deploy
 
 Then filter on its `traceId` to see the events nested under that request.
 
+#### Following a page's subscriptions
+
+Each subscription run emits a `type: "re-run"` event. `slotWaitMs` is how long it
+waited for a re-run slot, `slotOccupancyMs` how long it held that slot, admission
+and revision checks included, `trigger` why it ran and `disposition` whether its
+result was delivered, unchanged or discarded; `durationMs` still covers the read
+after the checks. The [Analytics glossary](../packages/analytics/GLOSSARY.md)
+defines each field. A check that ends without a read, almost always answering
+up-to-date, emits no event while its document is open: the document's `stream`
+event, at close, counts those checks in `checks` and their slot time in `checkMs`.
+A check still running when the document closes reports itself as a `discarded`
+re-run event. Every `POST /api/runtime/subscriptions` emits a `request` event
+naming its desired-set change, the generation it named and what this host held
+for the document. `documentId` joins a document's runs, controls and streams across
+reconnects. To see why a screen took long to fill:
+
+```
+fields @timestamp, handler, trigger, slotWaitMs, readyWaitMs, backoffMs, slotOccupancyMs, disposition, taskId
+| filter type = "re-run" and documentId = "…"
+| sort @timestamp asc
+```
+
+A refused control names its `refusal`. `documentConnected = false` with
+`affinityMatched = false` is a request the balancer sent to a host without its
+stream:
+
+```
+fields @timestamp, replica, refusal, documentConnected, streamId, currentStreamId, sequence, currentSequence, affinityCookie, affinityMatched, balancerCookie
+| filter type = "request" and ispresent(subscriptionRequest) and outcome = "refused"
+| sort @timestamp desc
+```
+
 The patch repo's local runtime uses the same record with compact stdout output.
 `@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and
 `layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs
