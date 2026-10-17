@@ -13,6 +13,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -21,6 +22,7 @@ import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
+import * as Inventory from "../../company-database/src/Inventory.js";
 import * as Testing from "../../company-database/src/testing.js";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as TableOperations from "../../primitives/src/TableOperations.js";
@@ -39,6 +41,7 @@ import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import { mint } from "./MutationTransaction.js";
+import * as QuerySnapshotPort from "./QuerySnapshot.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as ServerBundles from "./ServerBundles.js";
 import * as StreamLimits from "./StreamLimits.js";
@@ -317,78 +320,80 @@ it.live(
   30_000
 );
 
-it.live(
-  "serves every document of two shared-table patches through sustained writes, which still get connections",
-  () =>
-    Effect.gen(function* () {
-      const platform = yield* SqlClient.SqlClient;
-      const databases = yield* CompanyDatabases.CompanyDatabases;
-      const tables = yield* Tables.Tables;
-      const company = binding.companyId;
-      const source: Binding.Binding["Service"] = {
-        ...binding,
-        patchId: "fairsource",
-        manifest: {
-          ...binding.manifest,
-          tier: 1,
-          tables: { notes: { ...table, shared: true } },
-          handlers: {}
+/**
+ * Two tier 2 patches whose queries read one shared table, on real workerd and Postgres.
+ * Each query run leases its snapshot connection with an authority reserve, then takes a
+ * second connection for every shared read's access check. Setting `authority.hold` keeps
+ * those checks waiting inside their connection.
+ */
+const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
+  const platform = yield* SqlClient.SqlClient;
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const tables = yield* Tables.Tables;
+  const company = binding.companyId;
+  const source: Binding.Binding["Service"] = {
+    ...binding,
+    patchId: `${prefix}source`,
+    manifest: {
+      ...binding.manifest,
+      tier: 1,
+      tables: { notes: { ...table, shared: true } },
+      handlers: {}
+    }
+  };
+  const reader = (patchId: string, versionId: string): Binding.Binding["Service"] => ({
+    ...binding,
+    patchId,
+    versionId,
+    manifest: {
+      ...binding.manifest,
+      tables: { marks: table },
+      uses: {
+        notes: {
+          kind: "sharedTable",
+          patchId: source.patchId,
+          table: "notes",
+          id: sharedTableId(source.patchId, "notes"),
+          revision: 1
         }
-      };
-      // Both readers lease with an authority reserve, and each shared read takes a second connection.
-      const reader = (patchId: string, versionId: string): Binding.Binding["Service"] => ({
-        ...binding,
-        patchId,
-        versionId,
-        manifest: {
-          ...binding.manifest,
-          tables: { marks: table },
-          uses: {
-            notes: {
-              kind: "sharedTable",
-              patchId: source.patchId,
-              table: "notes",
-              id: sharedTableId(source.patchId, "notes"),
-              revision: 1
-            }
-          },
-          handlers: {
-            "demo.count": { kind: "query", args: {}, result: { kind: "text" } },
-            "demo.mark": {
-              kind: "mutation",
-              args: { title: { kind: "text" } },
-              result: { kind: "text" }
-            }
-          }
+      },
+      handlers: {
+        "demo.count": { kind: "query", args: {}, result: { kind: "text" } },
+        "demo.mark": {
+          kind: "mutation",
+          args: { title: { kind: "text" } },
+          result: { kind: "text" }
         }
-      });
-      const readers = [
-        reader("fairalpha", "ver_bbbbbbbbbbbbbbbbbbbbbbbb"),
-        reader("fairbeta", "ver_cccccccccccccccccccccccc")
-      ];
-      yield* databases.ensureReady(company);
-      for (const patch of [source, ...readers]) {
-        yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
-        VALUES (${patch.patchId}, ${company}, 'usr_dev', ${patch.patchId}, ${patch.patchId})`;
-        yield* databases.withCompany(company)(
-          databases.withPatchLock(patch.patchId)(tables.provision(patch.patchId, patch.manifest))
-        );
       }
-      const handlers = yield* TableOperations.make;
-      const write = (title: string) =>
-        handlers["tables.insert"]
-          .run({ table: "notes", row: { title } })
-          .pipe(Effect.provideService(Binding.Binding, source));
-      const gateway = yield* CallbackGateway.make(handlers);
-      const listener = yield* CallbackGatewayApi.listen().pipe(
-        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
-      );
-      const script = yield* Effect.promise(
-        async () =>
-          (
-            await build({
-              stdin: {
-                contents: `import { query, mutation, createGuest, t } from "patchy/server";
+    }
+  });
+  const readers = [
+    reader(`${prefix}alpha`, "ver_bbbbbbbbbbbbbbbbbbbbbbbb"),
+    reader(`${prefix}beta`, "ver_cccccccccccccccccccccccc")
+  ] as const;
+  yield* databases.ensureReady(company);
+  for (const patch of [source, ...readers]) {
+    yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+    VALUES (${patch.patchId}, ${company}, 'usr_dev', ${patch.patchId}, ${patch.patchId})`;
+    yield* databases.withCompany(company)(
+      databases.withPatchLock(patch.patchId)(tables.provision(patch.patchId, patch.manifest))
+    );
+  }
+  const handlers = yield* TableOperations.make;
+  const write = (title: string) =>
+    handlers["tables.insert"]
+      .run({ table: "notes", row: { title } })
+      .pipe(Effect.provideService(Binding.Binding, source));
+  const gateway = yield* CallbackGateway.make(handlers);
+  const listener = yield* CallbackGatewayApi.listen().pipe(
+    Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+  );
+  const script = yield* Effect.promise(
+    async () =>
+      (
+        await build({
+          stdin: {
+            contents: `import { query, mutation, createGuest, t } from "patchy/server";
           const count = query({args:{}, result:t.text(), handler:async ctx => {
             await new Promise(resolve => setTimeout(resolve, 20));
             return String((await ctx.shared.notes.list({limit:1000})).rows.length);
@@ -396,137 +401,205 @@ it.live(
           const mark = mutation({args:{title:t.text()}, result:t.text(), handler:async (ctx,args) =>
             (await ctx.tables.marks.insert({title:args.title})).title});
           export default createGuest({demo:{count,mark}});`,
-                resolveDir: new URL("../../patchy", import.meta.url).pathname,
-                sourcefile: "subscription-fairness-fixture.ts"
-              },
-              bundle: true,
-              write: false,
-              platform: "browser",
-              format: "esm",
-              target: "es2022",
-              conditions: ["development"]
-            })
-          ).outputFiles[0]!.text
-      );
-      const executor = yield* Local.make({
-        companyId: company,
-        callbackUrls: [listener.url],
-        environment: "test"
-      });
-      const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
-        Effect.provideService(Executor.Executor, executor),
-        Effect.provideService(ServerBundles.ServerBundles, {
-          load: (loaded) =>
-            Effect.succeed({
-              companyId: loaded.companyId,
-              patchId: loaded.patchId,
-              versionId: loaded.versionId,
-              sha256: sha256(script),
-              bundle: script
-            })
+            resolveDir: new URL("../../patchy", import.meta.url).pathname,
+            sourcefile: "subscription-shared-readers.ts"
+          },
+          bundle: true,
+          write: false,
+          platform: "browser",
+          format: "esm",
+          target: "es2022",
+          conditions: ["development"]
         })
-      );
-      // Subscription runs pass an observation; direct mutation calls do not.
-      const running = new Map<string, number>();
-      const peaks = { company: 0, patch: new Map<string, number>() };
-      const tracked = Invocation.Invocation.of({
-        call: (args, loaded, reauthorize, observation) =>
-          observation === undefined
-            ? invocations.call(args, loaded, reauthorize)
-            : Effect.sync(() => {
-                running.set(loaded.patchId, (running.get(loaded.patchId) ?? 0) + 1);
-                const total = [...running.values()].reduce((sum, count) => sum + count, 0);
-                peaks.company = Math.max(peaks.company, total);
-                peaks.patch.set(
-                  loaded.patchId,
-                  Math.max(peaks.patch.get(loaded.patchId) ?? 0, running.get(loaded.patchId)!)
-                );
-              }).pipe(
-                Effect.andThen(invocations.call(args, loaded, reauthorize, observation)),
-                Effect.ensuring(
-                  Effect.sync(() => running.set(loaded.patchId, running.get(loaded.patchId)! - 1))
-                )
+      ).outputFiles[0]!.text
+  );
+  const executor = yield* Local.make({
+    companyId: company,
+    callbackUrls: [listener.url],
+    environment: "test"
+  });
+  const authority = {
+    hold: undefined as Deferred.Deferred<void> | undefined,
+    reached: yield* Queue.unbounded<void>()
+  };
+  const inventory = yield* Inventory.Inventory;
+  const snapshots = yield* QuerySnapshot.make.pipe(
+    Effect.provideService(Inventory.Inventory, {
+      ...inventory,
+      read: (patchId) =>
+        Effect.suspend(() =>
+          authority.hold === undefined
+            ? Effect.void
+            : Queue.offer(authority.reached, undefined).pipe(
+                Effect.andThen(Deferred.await(authority.hold))
               )
-      });
-      const registry = yield* Subscriptions.make.pipe(
-        Effect.provideService(Invocation.Invocation, tracked),
-        Effect.provide(SubscriptionReads.layer),
-        Effect.provide(StreamLimits.layerLocal),
-        Effect.provide(WideEvents.layerNoop)
-      );
-      const wakes = yield* Wakes.Wakes;
-      const errors: RuntimeStreamFrame[] = [];
-      const documents = yield* Effect.forEach(
-        [readers[0]!, readers[0]!, readers[1]!],
-        (loaded, index) =>
-          Effect.gen(function* () {
-            const generation = `fair-${index}`;
-            const latest = new Map<string, string>();
-            const counts = { snapshots: 0 };
-            const document = registry.attach({
-              generation,
-              binding: () => loaded,
-              check: Effect.void,
-              scope: yield* Scope.Scope,
-              send: (encoded) => {
-                const frame = decodeFrame(encoded);
-                if (frame.type === "error") errors.push(frame);
-                if (frame.type !== "snapshot") return;
-                counts.snapshots++;
-                latest.set(frame.id, String(frame.result));
-              }
-            });
-            yield* Effect.addFinalizer(() => Effect.sync(document.close));
-            yield* wakes.subscribe(document.reconcile);
-            yield* document.update({
-              type: "replace",
-              patchId: loaded.patchId,
-              versionId: loaded.versionId,
-              documentId: generation,
-              generation,
-              sequence: 1,
-              subscriptions: ["one", "two", "three"].map((id) => ({
-                id,
-                op: "server.call",
-                args: { handler: "demo.count", args: {} }
-              }))
-            });
-            return { loaded, latest, counts };
-          })
-      );
-      // Each round writes the shared table while one patch commits a mutation, faster than
-      // nine reads drain through two slots, so every subscription stays dirty.
-      const mutate = Effect.fnUntraced(function* (
-        loaded: Binding.Binding["Service"],
-        title: string
-      ) {
-        const reply = yield* invocations.call(
-          { handler: "demo.mark", args: { title }, mutationKey: yield* mint },
-          { ...loaded, correlationId: newInternalId("call") },
-          Effect.succeed(viewer)
-        );
-        assert.deepInclude(reply, { ok: true, value: title });
-      });
+        ).pipe(Effect.andThen(inventory.read(patchId)))
+    })
+  );
+  const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+    Effect.provideService(Executor.Executor, executor),
+    Effect.provideService(QuerySnapshotPort.QuerySnapshot, snapshots),
+    Effect.provideService(ServerBundles.ServerBundles, {
+      load: (loaded) =>
+        Effect.succeed({
+          companyId: loaded.companyId,
+          patchId: loaded.patchId,
+          versionId: loaded.versionId,
+          sha256: sha256(script),
+          bundle: script
+        })
+    })
+  );
+  // Subscription runs pass an observation; direct mutation calls do not.
+  const running = new Map<string, number>();
+  const peaks = { company: 0, patch: new Map<string, number>() };
+  const tracked = Invocation.Invocation.of({
+    call: (args, loaded, reauthorize, observation) =>
+      observation === undefined
+        ? invocations.call(args, loaded, reauthorize)
+        : Effect.sync(() => {
+            running.set(loaded.patchId, (running.get(loaded.patchId) ?? 0) + 1);
+            const total = [...running.values()].reduce((sum, count) => sum + count, 0);
+            peaks.company = Math.max(peaks.company, total);
+            peaks.patch.set(
+              loaded.patchId,
+              Math.max(peaks.patch.get(loaded.patchId) ?? 0, running.get(loaded.patchId)!)
+            );
+          }).pipe(
+            Effect.andThen(invocations.call(args, loaded, reauthorize, observation)),
+            Effect.ensuring(
+              Effect.sync(() => running.set(loaded.patchId, running.get(loaded.patchId)! - 1))
+            )
+          )
+  });
+  const registry = yield* Subscriptions.make.pipe(
+    Effect.provideService(Invocation.Invocation, tracked),
+    Effect.provide(SubscriptionReads.layer),
+    Effect.provide(StreamLimits.layerLocal),
+    Effect.provide(WideEvents.layerNoop)
+  );
+  const wakes = yield* Wakes.Wakes;
+  const errors: RuntimeStreamFrame[] = [];
+  /** A document subscribed to `demo.count` once per id, recording each id's latest result. */
+  const open = Effect.fnUntraced(function* (
+    loaded: Binding.Binding["Service"],
+    generation: string,
+    ids: readonly string[]
+  ) {
+    const latest = new Map<string, string>();
+    const counts = { snapshots: 0 };
+    const document = registry.attach({
+      generation,
+      binding: () => loaded,
+      check: Effect.void,
+      scope: yield* Scope.Scope,
+      send: (encoded) => {
+        const frame = decodeFrame(encoded);
+        if (frame.type === "error") errors.push(frame);
+        if (frame.type !== "snapshot") return;
+        counts.snapshots++;
+        latest.set(frame.id, String(frame.result));
+      }
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(document.close));
+    yield* wakes.subscribe(document.reconcile);
+    yield* document.update({
+      type: "replace",
+      patchId: loaded.patchId,
+      versionId: loaded.versionId,
+      documentId: generation,
+      generation,
+      sequence: 1,
+      subscriptions: ids.map((id) => ({
+        id,
+        op: "server.call",
+        args: { handler: "demo.count", args: {} }
+      }))
+    });
+    return { latest, counts };
+  });
+  const mutate = Effect.fnUntraced(function* (loaded: Binding.Binding["Service"], title: string) {
+    const reply = yield* invocations.call(
+      { handler: "demo.mark", args: { title }, mutationKey: yield* mint },
+      { ...loaded, correlationId: newInternalId("call") },
+      Effect.succeed(viewer)
+    );
+    assert.deepInclude(reply, { ok: true, value: title });
+  });
+  /** Waits until every document shows `value` for each of its `ids`. */
+  const settle = Effect.fnUntraced(function* (
+    documents: ReadonlyArray<{ readonly latest: ReadonlyMap<string, string> }>,
+    ids: number,
+    value: string
+  ) {
+    const settled = ({ latest }: { readonly latest: ReadonlyMap<string, string> }) =>
+      latest.size === ids && [...latest.values()].every((current) => current === value);
+    for (let waited = 0; !documents.every(settled); waited += 10) {
+      assert.isBelow(waited, 10_000, `a document never showed ${value}`);
+      yield* Effect.sleep("10 millis");
+    }
+  });
+  return { readers, write, mutate, open, settle, authority, peaks, errors };
+});
+
+it.live(
+  "serves every document of two shared-table patches while writes and mutations keep committing",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* sharedReaders("fair");
+      const [alpha, beta] = f.readers;
+      const ids = ["one", "two", "three"];
+      const documents = [
+        yield* f.open(alpha, "fair-0", ids),
+        yield* f.open(alpha, "fair-1", ids),
+        yield* f.open(beta, "fair-2", ids)
+      ];
+      // Every round invalidates all nine subscriptions with a shared-table write and commits
+      // one patch's mutation, until each document has six fresh snapshots.
       let notes = 0;
       const before = documents.map(({ counts }) => counts.snapshots);
       while (documents.some(({ counts }, index) => counts.snapshots - before[index]! < 6)) {
         assert.isBelow(notes, 500, "a document stopped receiving snapshots");
         const round = ++notes;
-        yield* Effect.all([write(`note-${round}`), mutate(readers[round % 2]!, `mark-${round}`)], {
-          concurrency: "unbounded",
-          discard: true
-        });
+        yield* Effect.all(
+          [f.write(`note-${round}`), f.mutate(f.readers[round % 2]!, `mark-${round}`)],
+          {
+            concurrency: "unbounded",
+            discard: true
+          }
+        );
       }
-      const settled = (latest: ReadonlyMap<string, string>) =>
-        latest.size === 3 && [...latest.values()].every((value) => value === String(notes));
-      for (let waited = 0; !documents.every(({ latest }) => settled(latest)); waited += 10) {
-        assert.isBelow(waited, 10_000, "a document never saw the last write");
-        yield* Effect.sleep("10 millis");
-      }
-      assert.deepStrictEqual(errors, []);
-      assert.strictEqual(peaks.company, 2);
-      assert.strictEqual(peaks.patch.get("fairalpha"), 2);
-      assert.isAtMost(peaks.patch.get("fairbeta")!, 2);
+      yield* f.settle(documents, ids.length, String(notes));
+      assert.deepStrictEqual(f.errors, []);
+      assert.strictEqual(f.peaks.company, 2);
+      assert.strictEqual(f.peaks.patch.get(alpha.patchId), 2);
+      assert.isAtMost(f.peaks.patch.get(beta.patchId)!, 2);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  60_000
+);
+
+it.live(
+  "a mutation waits for, then gets, a connection while one patch's two shared-table re-runs hold all four",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* sharedReaders("held");
+      const [alpha] = f.readers;
+      const hold = yield* Deferred.make<void>();
+      f.authority.hold = hold;
+      const ids = ["one", "two"];
+      const document = yield* f.open(alpha, "held-0", ids);
+      // Each run holds its snapshot connection while its access check holds another.
+      yield* Queue.takeN(f.authority.reached, ids.length).pipe(Effect.timeout("10 seconds"));
+      const mutation = yield* Effect.forkChild(f.mutate(alpha, "while-full"));
+      // It queues: it cannot commit while all four are held, and this hold stays inside the
+      // one-second connection wait, so it must not be refused either.
+      yield* Effect.sleep("200 millis");
+      assert.isUndefined(mutation.pollUnsafe());
+      f.authority.hold = undefined;
+      yield* Deferred.succeed(hold, undefined);
+      yield* Fiber.join(mutation);
+      yield* f.settle([document], ids.length, "0");
+      assert.deepStrictEqual(f.errors, []);
     }).pipe(Effect.scoped, Effect.provide(services)),
   60_000
 );

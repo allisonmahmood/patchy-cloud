@@ -442,10 +442,10 @@ export const registry = {
   "subscriptions.reruns.company": {
     kind: "operating",
     default: 2,
-    unit: "connections",
+    unit: "runs",
     scope: "company",
     measure:
-      "Company connections occupied by subscription re-runs per host replica, across all its patches; set independently of `subscriptions.reruns.patch`",
+      "Simultaneous subscription re-runs per company per host replica, across its patches; set independently of `subscriptions.reruns.patch`. A re-run reading tables or stores holds a company connection, and one reading shared ones briefly takes a second for its access check, so re-runs can occupy every connection; none are reserved for writes",
     refusal: "busy",
     overridable: true
   },
