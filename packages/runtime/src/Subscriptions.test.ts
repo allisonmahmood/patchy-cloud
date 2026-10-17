@@ -617,6 +617,7 @@ it.effect("serves every document of two patches under sustained invalidation", (
       const generation = `generation-${index}`;
       const document = registry.attach({
         generation,
+        documentId: generation,
         binding: () => ({ ...binding, patchId }),
         check: Effect.void,
         scope,
@@ -648,7 +649,7 @@ it.effect("serves every document of two patches under sustained invalidation", (
     const durationMs = 3_000;
     for (let elapsed = 0; elapsed < durationMs; elapsed += readMs / 4) {
       revision++;
-      for (const { document } of documents) yield* document.reconcile([key]);
+      for (const { document } of documents) yield* document.reconcile("invalidation", [key]);
       yield* TestClock.adjust(readMs / 4);
     }
     assert.deepStrictEqual(peaks, { company: 2, patch: 2 });

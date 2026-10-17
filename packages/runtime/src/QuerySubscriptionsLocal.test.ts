@@ -493,6 +493,7 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
     const counts = { snapshots: 0 };
     const document = registry.attach({
       generation,
+      documentId: generation,
       binding: () => loaded,
       check: Effect.void,
       scope: yield* Scope.Scope,
@@ -505,7 +506,7 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
       }
     });
     yield* Effect.addFinalizer(() => Effect.sync(document.close));
-    yield* wakes.subscribe(document.reconcile);
+    yield* wakes.subscribe((keys, cause) => document.reconcile("invalidation", keys, cause));
     yield* document.update({
       type: "replace",
       patchId: loaded.patchId,
