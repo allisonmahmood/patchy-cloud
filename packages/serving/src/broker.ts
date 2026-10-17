@@ -191,6 +191,9 @@ function routePath(path: string): string {
 function mount(frame: HTMLIFrameElement): void {
   const { patchId, versionId, nonce, base, contentSrc } = frame.dataset;
   const wire = Number(frame.dataset.wire);
+  // Company and local shells render their admitted viewer. Their stream authenticates each open
+  // and subscription update against it, so subscriptions never wait for `me`.
+  const pinned = frame.dataset.scope === "company" || frame.dataset.scope === "local";
   let port: MessagePort | undefined;
   let issued = false;
   let ready = false;
@@ -617,8 +620,8 @@ function mount(frame: HTMLIFrameElement): void {
       ready = true;
       clearTimeout(bootstrapTimer);
       stream?.replay();
-      // Company streams already check identity independently of the frame's first operation.
-      if (frame.dataset.scope !== "company") void identify().catch(identifyFailure);
+      // Pinned streams already check identity independently of the frame's first operation.
+      if (!pinned) void identify().catch(identifyFailure);
       return;
     }
     const id = message.id;
@@ -776,7 +779,8 @@ function mount(frame: HTMLIFrameElement): void {
         if (closed) return;
         if (subscription) startStream();
       }
-      const me = await identify();
+      // A pinned document's subscriptions authenticate through its stream, not `me`.
+      const me = pinned && subscriptionOperation ? undefined : await identify();
       if (closed) return;
       if (request?.op === "server.call" && execution !== "ready") await awaitExecution();
       if (closed) return;
@@ -909,7 +913,7 @@ function mount(frame: HTMLIFrameElement): void {
       release
     });
   };
-  if (frame.dataset.scope === "company" || frame.dataset.scope === "local") {
+  if (pinned) {
     const viewerId = frame.dataset.viewerId;
     if (!viewerId) return notice("bootstrap_failed");
     principal = { userId: viewerId };
