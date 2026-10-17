@@ -640,7 +640,7 @@ const browserBinary = Effect.fn("browserBinary")(function* () {
 });
 
 /** One of the environment's people, by key, email or the start of their name. */
-export const findPerson = (manifest: Manifest, query: string) => {
+export const findPerson = (manifest: { readonly people: ReadonlyArray<Person> }, query: string) => {
   const needle = query.toLowerCase();
   const person =
     manifest.people.find((p) => p.key === needle || p.email.toLowerCase() === needle) ??
