@@ -374,6 +374,27 @@ describe("checkLook", () => {
       ).toEqual(["logo.svg references https://example.com/mark.png; embed it as a data: URL."]);
     });
 
+    it("refuses an attribute with url( that does not read as CSS, rather than crashing on it", () => {
+      expect(
+        logo(
+          [
+            `<svg ${xmlns}>`,
+            '<g aria-label="a url(x) b ;}"/>',
+            `<g data-name='url("a" b'/>`,
+            '<g fill="url(x)) {"/>',
+            // Brackets nested past the stack, which css-tree could otherwise read.
+            `<g fill="url(#g) ${"(".repeat(20_000)}${")".repeat(20_000)}"/>`,
+            "</svg>"
+          ].join("")
+        )
+      ).toEqual(
+        ["aria-label", "data-name", "fill", "fill"].map(
+          (name) =>
+            `logo.svg's ${name} has url( but does not read as CSS, so what it points at cannot be checked; take the url( out, or write plain CSS such as url(#paint).`
+        )
+      );
+    });
+
     it("checks a <style>'s CDATA like its text", () => {
       expect(
         logo(
