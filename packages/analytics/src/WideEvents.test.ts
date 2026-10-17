@@ -217,6 +217,81 @@ it.effect("keeps attribution on the hop that can own it", () =>
   })
 );
 
+it.effect("keeps subscription telemetry on the event types that own it", () =>
+  Effect.gen(function* () {
+    const sink = yield* recording;
+    yield* Effect.gen(function* () {
+      const events = yield* WideEvents.WideEvents;
+      const fields = {
+        documentId: "document",
+        streamId: "stream",
+        trigger: "replace",
+        disposition: "discarded",
+        slotWaitMs: 40,
+        readyWaitMs: 30,
+        backoffMs: 250,
+        slotOccupancyMs: 70,
+        checks: 2,
+        checkMs: 9,
+        subscriptionRequest: "replace",
+        sequence: 4,
+        currentSequence: 5,
+        currentStreamId: "current",
+        documentConnected: true,
+        refusal: "stale_sequence",
+        affinityCookie: true,
+        affinityMatched: false,
+        balancerCookie: true
+      } as const;
+      // Each type's schema keeps its own fields, in the order listed above, and drops the rest.
+      const owned = [
+        [
+          "re-run",
+          [
+            "documentId",
+            "streamId",
+            "trigger",
+            "disposition",
+            "slotWaitMs",
+            "readyWaitMs",
+            "backoffMs",
+            "slotOccupancyMs"
+          ]
+        ],
+        ["stream", ["documentId", "checks", "checkMs"]],
+        [
+          "request",
+          [
+            "documentId",
+            "streamId",
+            "subscriptionRequest",
+            "sequence",
+            "currentSequence",
+            "currentStreamId",
+            "documentConnected",
+            "refusal",
+            "affinityCookie",
+            "affinityMatched",
+            "balancerCookie"
+          ]
+        ],
+        ["process", []]
+      ] as const;
+      for (const [type] of owned) yield* events.withEvent({ type }, WideEvents.enrich(fields));
+      yield* Effect.forEach(owned, () => sink.take);
+      for (const [type, keys] of owned) {
+        const event = sink.records.find((record) => record.type === type)!;
+        assert.deepStrictEqual(
+          Object.keys(fields).filter((key) => key in event),
+          [...keys]
+        );
+        assert.include(event, Object.fromEntries(keys.map((key) => [key, fields[key]])));
+        assert.deepStrictEqual(decodeEvent(WideEvents.formatJson(event)), event);
+      }
+    }).pipe(Effect.provide(sink.layer));
+  })
+);
+
 it.effect("keeps peak usage per limit configuration and unique operations", () =>
   Effect.gen(function* () {
     const sink = yield* recording;

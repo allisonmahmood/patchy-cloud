@@ -502,7 +502,10 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
               )
                 return yield* new HandlerFailed({ correlationId: binding.correlationId });
               if (parent === undefined)
-                yield* WideEvents.enrich({ processGeneration: bound.processGeneration });
+                yield* WideEvents.enrich({
+                  processGeneration: bound.processGeneration,
+                  ...(admission === undefined ? {} : { taskId: admission.lease.binding.taskId })
+                });
               capability = yield* capabilities.issue({
                 binding: { ...binding, invocationId: id, effectivePrincipal: "patch" },
                 attempt: {
