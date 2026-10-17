@@ -154,7 +154,11 @@ Refused reads retain observed source dependencies so restore and reshare can rec
 
 Each document allows 64 subscriptions, each patch 256 and each company 1024;
 each snapshot is bounded to 8 MiB. Reruns are limited to two
-per company and one per patch. Overflow and stale-generation work never leave
+per company and two per patch, so one patch can use the company's whole re-run
+allowance. The two bounds are set separately; overriding one does not move the
+other. They count runs, not connections: a run reading shared resources briefly
+takes a second company connection for its access check, and none are reserved
+for writes. Overflow and stale-generation work never leave
 unbounded listeners or queues.
 
 Tier 2 streams now emit `starting` while the fleet binds the company, `ready` on

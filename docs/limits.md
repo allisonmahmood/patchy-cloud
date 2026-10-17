@@ -64,8 +64,8 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `company.connections.pools` | operating | 100 | pools | host | Retained company pools per host replica | `busy` | No | legacy |
 | `company.connections.waiters` | operating | 32 | waiters | company | Queued company connection acquisitions per host replica | `busy` | Yes | deployment |
 | `company.connections.wait` | operating | 1000 | milliseconds | company | Maximum connection queue wait within caller deadline | `busy` | Yes | deployment |
-| `subscriptions.reruns.company` | operating | 2 | connections | company | Company connections occupied by subscription re-runs per host replica | `busy` | Yes | deployment |
-| `subscriptions.reruns.patch` | operating | 1 | runs | patch | Simultaneous subscription re-runs per patch per host replica | None | Yes | deployment |
+| `subscriptions.reruns.company` | operating | 2 | runs | company | Simultaneous subscription re-runs per company per host replica, across its patches; set independently of `subscriptions.reruns.patch`. A re-run reading tables or stores holds a company connection, and one reading shared ones briefly takes a second for its access check, so re-runs can occupy every connection; none are reserved for writes | `busy` | Yes | deployment |
+| `subscriptions.reruns.patch` | operating | 2 | runs | patch | Simultaneous subscription re-runs per patch per host replica, within `subscriptions.reruns.company`; an override of either leaves the other unchanged | None | Yes | deployment |
 | `tier2.actions.company` | operating | 8 | actions | company | Actions in flight per company per host replica | `busy` | Yes | deployment |
 | `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
 | `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
