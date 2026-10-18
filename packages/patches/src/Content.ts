@@ -194,8 +194,11 @@ export type ArtifactLoad = "cached" | "read" | "joined";
  *
  * A miss starts one job, which reads the artifact and keeps it. Simultaneous misses join it.
  * The job runs in the host's scope until it settles, even when every load waiting on it stops,
- * so a retry joins it or finds what it kept instead of starting the work again. A job not
- * settled within 30 seconds fails, so a hung read can't hold its identity.
+ * so a retry joins it or finds what it kept instead of starting the work again. Its read is
+ * stopped after 30 seconds, so a hung read can't hold its identity; work the read can't
+ * interrupt, such as native compression, finishes first, and a job past its deadline keeps
+ * nothing. A job settles when its fiber ends however it ends, even if the host's scope closes
+ * before it runs.
  *
  * The server bundles below and Serving's content documents each make their own.
  */
@@ -235,25 +238,19 @@ export const makeArtifactCache = Effect.fnUntraced(function* <K, A, E>(options: 
     }
   };
   /**
-   * Reads, then keeps and settles in one step however the read ends, so a load finds either
-   * the job or its result.
+   * Keeps a job's artifact and settles its loads in one step when its fiber ends, so a load
+   * finds either the job or its result.
    */
-  const run = (key: K, id: string, job: Deferred.Deferred<A, E | Cause.TimeoutError>) => {
-    const keeping = size(key) <= maxBytes / 4;
-    return read(key, keeping).pipe(
-      Effect.timeout("30 seconds"),
-      Effect.onExit((exit) =>
-        Effect.suspend(() => {
-          jobs.delete(id);
-          if (keeping && Exit.isSuccess(exit)) keep(id, exit.value.value, exit.value.bytes);
-          return Deferred.done(
-            job,
-            Exit.map(exit, (artifact) => artifact.value)
-          );
-        })
-      )
-    );
-  };
+  const settle =
+    (id: string, job: Deferred.Deferred<A, E | Cause.TimeoutError>, keeping: boolean) =>
+    (exit: Exit.Exit<{ readonly value: A; readonly bytes: number }, E | Cause.TimeoutError>) => {
+      jobs.delete(id);
+      if (keeping && Exit.isSuccess(exit)) keep(id, exit.value.value, exit.value.bytes);
+      Deferred.doneUnsafe(
+        job,
+        Exit.map(exit, (artifact) => artifact.value)
+      );
+    };
   // Each load decides in one synchronous step: kept, joined or started. Only waiting is
   // interruptible, so a started job is always forked.
   return (key: K) =>
@@ -271,9 +268,12 @@ export const makeArtifactCache = Effect.fnUntraced(function* <K, A, E>(options: 
           return Effect.andThen(loaded("joined"), restore(Deferred.await(pending)));
         const job = Deferred.makeUnsafe<A, E | Cause.TimeoutError>();
         jobs.set(id, job);
+        const keeping = size(key) <= maxBytes / 4;
         return loaded("read").pipe(
-          // Interruptible again, so its deadline and the host's scope can stop it.
-          Effect.andThen(Effect.forkIn(Effect.interruptible(run(key, id, job)), scope)),
+          Effect.andThen(Effect.forkIn(Effect.timeout(read(key, keeping), "30 seconds"), scope)),
+          // The fiber's exit settles the job: it also sees one interrupted before it ran, and
+          // one that ended before this observer was added.
+          Effect.tap((fiber) => Effect.sync(() => fiber.addObserver(settle(id, job, keeping)))),
           Effect.andThen(restore(Deferred.await(job)))
         );
       })

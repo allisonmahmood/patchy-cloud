@@ -1452,6 +1452,39 @@ it.layer(services)("pages in memory", (it) => {
     })
   );
 
+  it.effect("prepares four cold documents at a time, even when their loads are abandoned", () =>
+    Effect.gen(function* () {
+      const { watch, compression, opened } = yield* watchedCompression();
+      yield* Deferred.succeed(opened, undefined);
+      const { control, request } = yield* host({ compression });
+      const documents: Array<{ readonly url: string; readonly html: string }> = [];
+      for (const title of ["One", "Two", "Three", "Four", "Five", "Six"])
+        documents.push(yield* scripted(`Burst ${title}`));
+      const fourReading = yield* Deferred.make<void>();
+      const readsOpened = yield* Deferred.make<void>();
+      control.beforeRead = Effect.suspend(() =>
+        control.reads === 4 ? Deferred.succeed(fourReading, undefined) : Effect.void
+      ).pipe(Effect.andThen(Deferred.await(readsOpened)));
+      const loads: Array<Fiber.Fiber<Response, unknown>> = [];
+      for (const document of documents)
+        loads.push(yield* request(document.url).pipe(Effect.forkScoped));
+      yield* Deferred.await(fourReading);
+      // The other two wait their turn without reading; given turns, they still don't read.
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      assert.strictEqual(control.reads, 4);
+      // Every request goes away; the work it started still finishes and keeps each document.
+      for (const load of loads) yield* Fiber.interrupt(load);
+      yield* Deferred.succeed(readsOpened, undefined);
+      for (const document of documents) {
+        const response = yield* request(document.url);
+        assert.strictEqual(yield* Effect.promise(() => response.text()), document.html);
+      }
+      assert.strictEqual(control.reads, 6);
+      assert.strictEqual(watch.calls, 6);
+      assert.strictEqual(watch.most, 1);
+    })
+  );
+
   it.effect("charges a kept document's raw, brotli and gzip bytes against the bound", () =>
     Effect.gen(function* () {
       const documents = [yield* scripted("Budget one"), yield* scripted("Budget two")];

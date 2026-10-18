@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scheduler from "effect/Scheduler";
+import * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
@@ -1573,3 +1574,31 @@ it.layer(
     }
   );
 });
+
+it.effect("settles a job whose host closes before it runs, so no load is left waiting", () =>
+  Effect.gen(function* () {
+    const host = yield* Scope.make();
+    let reads = 0;
+    const load = yield* Content.makeArtifactCache({
+      maxBytes: 1024,
+      maxEntries: 8,
+      identity: (key: string) => key,
+      size: () => 1,
+      read: () =>
+        Effect.sync(() => {
+          reads++;
+          return { value: "kept", bytes: 1 };
+        }),
+      loaded: () => Effect.void
+    }).pipe(Effect.provideService(Scope.Scope, host));
+    // The load forks its job, which is only scheduled, then waits on it.
+    const waiting = yield* Effect.exit(load("a")).pipe(
+      Effect.forkScoped({ startImmediately: true })
+    );
+    yield* Scope.close(host, Exit.void);
+    assert.isTrue(Exit.hasInterrupts(yield* Fiber.join(waiting)));
+    // A later load of the same identity starts afresh rather than joining the stopped job.
+    assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(load("a"))));
+    assert.strictEqual(reads, 0);
+  })
+);

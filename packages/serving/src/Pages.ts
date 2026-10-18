@@ -97,34 +97,37 @@ export const DocumentCompression = Context.Reference<
  * body suits them all: the nonce stays in the URL and every header is computed per request. A
  * miss checks the bytes against the version's recorded digest before anyone receives them.
  *
- * The host compresses one document at a time, leaving the rest of libuv's threadpool to file,
- * crypto and DNS work. Reads stay concurrent: a cold host after a deploy reads every patch its
- * viewers open at once.
+ * A host reads and prepares at most four documents at a time, from the read through keeping
+ * them, so documents waiting their turn hold no bytes; their wait counts against the job's
+ * deadline. Within those four, it compresses one at a time, leaving the rest of libuv's
+ * threadpool to file, crypto and DNS work, while the others' storage reads overlap.
  */
 const makeDocuments = Effect.gen(function* () {
   const content = yield* Content.Content;
   const deployment = yield* DeploymentConfig.load;
   const compressDocument = yield* DocumentCompression;
+  const preparing = yield* Semaphore.make(4);
   const compressing = yield* Semaphore.make(1);
+  const prepare = Effect.fnUntraced(function* (stored: StoredDocument, keep: boolean) {
+    const html = yield* content.read(stored);
+    if (contentHash(html) !== stored.contentHash)
+      return yield* new StoredDocumentMismatch({ objectKey: stored.objectKey });
+    const identity = encoder.encode(html);
+    // One that won't be kept goes out as stored, rather than compressed on every load. The
+    // permit is held until zlib finishes, so the bound counts native work, not waiting fibers.
+    const document: Document = keep
+      ? yield* compressing.withPermits(1)(Effect.uninterruptible(compressDocument(identity)))
+      : { identity };
+    // Every coding it holds counts against the byte bound.
+    const bytes = Object.values(document).reduce((sum, body) => sum + body.byteLength, 0);
+    return { value: document, bytes };
+  });
   return yield* Content.makeArtifactCache({
     maxBytes: deployment.get("serving.contentCache.bytes"),
     maxEntries: deployment.get("serving.contentCache.entries"),
     identity: (stored: StoredDocument) => `${stored.objectKey}#${stored.contentHash}`,
     size: (stored) => stored.fileSize,
-    read: Effect.fnUntraced(function* (stored, keep) {
-      const html = yield* content.read(stored);
-      if (contentHash(html) !== stored.contentHash)
-        return yield* new StoredDocumentMismatch({ objectKey: stored.objectKey });
-      const identity = encoder.encode(html);
-      // One that won't be kept goes out as stored, rather than compressed on every load. The
-      // permit is held until zlib finishes, so the bound counts native work, not waiting fibers.
-      const document: Document = keep
-        ? yield* compressing.withPermits(1)(Effect.uninterruptible(compressDocument(identity)))
-        : { identity };
-      // Every coding it holds counts against the byte bound.
-      const bytes = Object.values(document).reduce((sum, body) => sum + body.byteLength, 0);
-      return { value: document, bytes };
-    }),
+    read: (stored, keep) => preparing.withPermits(1)(prepare(stored, keep)),
     loaded: (contentLoad) => WideEvents.enrich({ contentLoad })
   });
 });
