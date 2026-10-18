@@ -44,6 +44,10 @@ _Avoid_: outcome (whether the work succeeded)
 `bundleLoad`: where a tier 2 call or re-run's last load to reach the bundle cache got its version's server bundle: `cached` from the host's memory, `read` from object storage by this call, or `joined` by waiting on another call's lookup of the same artifact. That lookup usually reads storage but may reuse a bundle kept a moment before. A failed read keeps `read` or `joined`. A load the retained-version checks refuse never reaches the cache, records nothing and leaves an earlier attempt's value in place. An action's nested calls reuse its bundle. A retried mutation loads again on each attempt that passes those checks and reports the last, usually `cached`; an earlier attempt's read shows only in its duration.
 _Avoid_: cache hit (`joined` is neither a hit nor its own read)
 
+**Content load**:
+`contentLoad`: where a content URL request got its version's document: `cached` from the host's memory, `read` from object storage by this request, or `joined` by waiting on another request's lookup of the same document, which may reuse one kept a moment before. A failed read keeps `read` or `joined`. A request the door or a notice answers never reaches the documents and records none. `contentEncoding` is the `Content-Encoding` the document went out in: `br`, `gzip` or `identity`, which a document too large to keep always is.
+_Avoid_: cache hit (`joined` is neither a hit nor its own read)
+
 **Limit peak**:
 The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.
 _Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)

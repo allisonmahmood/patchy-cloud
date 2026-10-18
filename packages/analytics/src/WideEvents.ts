@@ -71,6 +71,14 @@ const invocationMetrics = {
    */
   bundleLoad: Schema.optionalKey(Schema.Literals(["cached", "read", "joined"]))
 };
+/**
+ * How a content URL's document reached its reader: from the host's memory, its own read, or
+ * another request's read of it, and the `Content-Encoding` it was sent in.
+ */
+const contentFields = {
+  contentLoad: Schema.optionalKey(Schema.Literals(["cached", "read", "joined"])),
+  contentEncoding: Schema.optionalKey(Schema.Literals(["br", "gzip", "identity"]))
+};
 /** A routed request's matched template, never its path, and the status the client received. */
 const routeFields = {
   route: Schema.optionalKey(Schema.String),
@@ -157,6 +165,7 @@ export const EventFields = Schema.Struct({
   ...attribution,
   ...outcomeFields,
   ...invocationMetrics,
+  ...contentFields,
   ...routeFields,
   ...cliFields,
   ...documentFields,
@@ -186,6 +195,7 @@ export const RequestEvent = Schema.Struct({
   type: Schema.Literal("request"),
   ...attribution,
   ...invocationMetrics,
+  ...contentFields,
   ...routeFields,
   ...cliFields,
   ...documentFields,

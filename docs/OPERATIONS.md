@@ -135,7 +135,9 @@ and `companyId` name the signed-in user, or the user a machine token belongs to;
 the token itself is never recorded. Routes about one patch add `patchId` and a
 `versionId`: the version a page served, a publish created or a rollback made
 current, and otherwise the patch's current version.
-`requestBytes` is the declared length, and `responseBytes` is the body sent.
+`requestBytes` is the declared length, and `responseBytes` is the body sent,
+compressed when it was. A content URL request adds where its document came from
+and how it was encoded, `contentLoad` and `contentEncoding`.
 Health probes (`/healthz`, `/healthz/deep`) emit nothing.
 
 A request from the `patchy` CLI names the CLI in its `Patchy-Cli` header,
