@@ -26,24 +26,25 @@ const onThreadpool = (
   });
 
 /**
- * Compresses `body` in every coding, both at once on libuv's threadpool, so the event loop keeps
- * serving while it runs: about 20 ms for a 230 KB patch document and 40 ms for the broker, but
- * never per request. Brotli quality 9 is about 8% larger than quality 11 for a fiftieth of its CPU
- * (the broker: 89 KB in 30 ms against 83 KB in 1.5 s).
+ * Compresses `body` in every coding, one after the other on libuv's threadpool, so the event loop
+ * keeps serving and only one pool thread is busy: about 30 ms for a 230 KB patch document and
+ * 50 ms for the broker, but never per request. A host task has half a vCPU, so running the
+ * codings at once would finish no sooner. Brotli quality 9 is about 8% larger than quality 11 for
+ * a fiftieth of its CPU (the broker: 89 KB in 30 ms against 83 KB in 1.5 s).
+ *
+ * Interrupting it stops the wait, not zlib: a caller bounding this work holds its permit until
+ * the codings finish.
  */
 export const compress = (body: Uint8Array): Effect.Effect<Precompressed> =>
-  Effect.all(
-    {
-      identity: Effect.succeed(body),
-      br: onThreadpool(
-        (input, done) =>
-          brotliCompress(input, { params: { [constants.BROTLI_PARAM_QUALITY]: 9 } }, done),
-        body
-      ),
-      gzip: onThreadpool(gzip, body)
-    },
-    { concurrency: "unbounded" }
-  );
+  Effect.all({
+    identity: Effect.succeed(body),
+    br: onThreadpool(
+      (input, done) =>
+        brotliCompress(input, { params: { [constants.BROTLI_PARAM_QUALITY]: 9 } }, done),
+      body
+    ),
+    gzip: onThreadpool(gzip, body)
+  });
 
 /** RFC 9110 §12.4.2's weight: `0` with up to three decimals, or `1` with up to three zeros. */
 const qvalue = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;

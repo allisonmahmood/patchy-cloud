@@ -9,10 +9,11 @@
  * Failures retain the intent for reclamation after its lease; a transaction
  * that committed despite a lost response consumes it and preserves the bytes.
  */
-import * as Cache from "effect/Cache";
+import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -182,14 +183,19 @@ export const make = Effect.gen(function* () {
 /** Over `Patches` and the content store. */
 export const layer = Layer.effect(Content, make);
 
-/** Where a load got its artifact: memory, its own read, or another load's lookup of it. */
+/** Where a load got its artifact: memory, the read it started, or another load's read. */
 export type ArtifactLoad = "cached" | "read" | "joined";
 
 /**
  * Verified artifacts in memory by identity, for stored bytes that never change. Least
  * recently used go first past either bound, and an artifact whose recorded size is over a
- * quarter of the byte bound is never kept. Simultaneous misses share one read; failures are
- * never kept. This replaces only the read: callers check admission before every load.
+ * quarter of the byte bound is never kept. Failures are never kept. This replaces only the
+ * read: callers check admission before every load.
+ *
+ * A miss starts one job, which reads the artifact and keeps it. Simultaneous misses join it.
+ * The job runs in the host's scope until it settles, even when every load waiting on it stops,
+ * so a retry joins it or finds what it kept instead of starting the work again. A job not
+ * settled within 30 seconds fails, so a hung read can't hold its identity.
  *
  * The server bundles below and Serving's content documents each make their own.
  */
@@ -212,22 +218,14 @@ export const makeArtifactCache = Effect.fnUntraced(function* <K, A, E>(options: 
   readonly loaded: (load: ArtifactLoad) => Effect.Effect<void>;
 }) {
   const { maxBytes, maxEntries, identity, size, read, loaded } = options;
+  const scope = yield* Effect.scope;
   // Insertion order is recency: a hit moves its entry to the end.
   const kept = new Map<string, { readonly value: A; readonly bytes: number }>();
   let keptBytes = 0;
-  /** The kept entry, now the most recently used, recorded as the call's `cached` load. */
-  const recall = (id: string) =>
-    Effect.suspend(() => {
-      const hit = kept.get(id);
-      if (hit === undefined) return Effect.undefined;
-      kept.delete(id);
-      kept.set(id, hit);
-      return Effect.as(loaded("cached"), hit);
-    });
+  /** Each miss in flight, until its job settles. */
+  const jobs = new Map<string, Deferred.Deferred<A, E | Cause.TimeoutError>>();
+  // A job only starts for an identity neither kept nor in flight, so it never replaces one.
   const keep = (id: string, value: A, bytes: number) => {
-    // Replacing an entry releases its bytes and moves it to the end.
-    keptBytes -= kept.get(id)?.bytes ?? 0;
-    kept.delete(id);
     kept.set(id, { value, bytes });
     keptBytes += bytes;
     for (const [oldest, entry] of kept) {
@@ -236,29 +234,50 @@ export const makeArtifactCache = Effect.fnUntraced(function* <K, A, E>(options: 
       keptBytes -= entry.bytes;
     }
   };
-  // A zero lifetime keeps no result here: this only joins simultaneous misses to one read.
-  const reads = yield* Cache.make({
-    capacity: Number.POSITIVE_INFINITY,
-    timeToLive: Duration.zero,
-    lookup: Effect.fnUntraced(function* (key: K) {
-      const id = identity(key);
-      // A miss can arrive here just after another call's read settled and kept the artifact.
-      const settled = yield* recall(id);
-      if (settled !== undefined) return settled.value;
-      yield* loaded("read");
-      const keeping = size(key) <= maxBytes / 4;
-      const artifact = yield* read(key, keeping);
-      if (keeping) keep(id, artifact.value, artifact.bytes);
-      return artifact.value;
-    })
-  });
-  return Effect.fnUntraced(function* (key: K) {
-    const hit = yield* recall(identity(key));
-    if (hit !== undefined) return hit.value;
-    // The lookup runs in the context of the call that starts it and relabels that call.
-    yield* loaded("joined");
-    return yield* Cache.get(reads, key);
-  });
+  /**
+   * Reads, then keeps and settles in one step however the read ends, so a load finds either
+   * the job or its result.
+   */
+  const run = (key: K, id: string, job: Deferred.Deferred<A, E | Cause.TimeoutError>) => {
+    const keeping = size(key) <= maxBytes / 4;
+    return read(key, keeping).pipe(
+      Effect.timeout("30 seconds"),
+      Effect.onExit((exit) =>
+        Effect.suspend(() => {
+          jobs.delete(id);
+          if (keeping && Exit.isSuccess(exit)) keep(id, exit.value.value, exit.value.bytes);
+          return Deferred.done(
+            job,
+            Exit.map(exit, (artifact) => artifact.value)
+          );
+        })
+      )
+    );
+  };
+  // Each load decides in one synchronous step: kept, joined or started. Only waiting is
+  // interruptible, so a started job is always forked.
+  return (key: K) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        const id = identity(key);
+        const hit = kept.get(id);
+        if (hit !== undefined) {
+          kept.delete(id);
+          kept.set(id, hit);
+          return Effect.as(loaded("cached"), hit.value);
+        }
+        const pending = jobs.get(id);
+        if (pending !== undefined)
+          return Effect.andThen(loaded("joined"), restore(Deferred.await(pending)));
+        const job = Deferred.makeUnsafe<A, E | Cause.TimeoutError>();
+        jobs.set(id, job);
+        return loaded("read").pipe(
+          // Interruptible again, so its deadline and the host's scope can stop it.
+          Effect.andThen(Effect.forkIn(Effect.interruptible(run(key, id, job)), scope)),
+          Effect.andThen(restore(Deferred.await(job)))
+        );
+      })
+    );
 });
 
 /** A retained version's server artifact, with the version a failure names. */

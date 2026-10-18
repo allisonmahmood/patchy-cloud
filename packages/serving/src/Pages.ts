@@ -9,10 +9,12 @@
  */
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -84,15 +86,26 @@ type Document = Precompressed | Pick<Precompressed, "identity">;
 
 const encoder = new TextEncoder();
 
+/** How a kept document is compressed: `compress`, which tests replace to watch it run. */
+export const DocumentCompression = Context.Reference<
+  (body: Uint8Array) => Effect.Effect<Precompressed>
+>("@patchy/serving/Pages/DocumentCompression", { defaultValue: () => compress });
+
 /**
  * Content URL documents in memory, within the `serving.contentCache.*` bounds. The body is the
  * stored bytes verbatim, the same for every viewer who passes the door, so a kept or compressed
  * body suits them all: the nonce stays in the URL and every header is computed per request. A
  * miss checks the bytes against the version's recorded digest before anyone receives them.
+ *
+ * The host compresses one document at a time, leaving the rest of libuv's threadpool to file,
+ * crypto and DNS work. Reads stay concurrent: a cold host after a deploy reads every patch its
+ * viewers open at once.
  */
 const makeDocuments = Effect.gen(function* () {
   const content = yield* Content.Content;
   const deployment = yield* DeploymentConfig.load;
+  const compressDocument = yield* DocumentCompression;
+  const compressing = yield* Semaphore.make(1);
   return yield* Content.makeArtifactCache({
     maxBytes: deployment.get("serving.contentCache.bytes"),
     maxEntries: deployment.get("serving.contentCache.entries"),
@@ -103,8 +116,11 @@ const makeDocuments = Effect.gen(function* () {
       if (contentHash(html) !== stored.contentHash)
         return yield* new StoredDocumentMismatch({ objectKey: stored.objectKey });
       const identity = encoder.encode(html);
-      // One that won't be kept goes out as stored, rather than compressed on every load.
-      const document: Document = keep ? yield* compress(identity) : { identity };
+      // One that won't be kept goes out as stored, rather than compressed on every load. The
+      // permit is held until zlib finishes, so the bound counts native work, not waiting fibers.
+      const document: Document = keep
+        ? yield* compressing.withPermits(1)(Effect.uninterruptible(compressDocument(identity)))
+        : { identity };
       // Every coding it holds counts against the byte bound.
       const bytes = Object.values(document).reduce((sum, body) => sum + body.byteLength, 0);
       return { value: document, bytes };
@@ -240,7 +256,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           Effect.catchTags({
             InvalidObjectKey: Effect.die,
             StoreUnavailable: Effect.die,
-            StoredDocumentMismatch: Effect.die
+            StoredDocumentMismatch: Effect.die,
+            TimeoutError: Effect.die
           })
         )
       : undefined;

@@ -48,6 +48,7 @@ import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
 import { servingHeaders } from "./serving-headers.js";
 import { brokerScript, brokerSrc } from "./shell.js";
+import { compress } from "./compression.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const CSP =
@@ -672,6 +673,32 @@ it.layer(layer)("pages", (it) => {
       assert.deepStrictEqual(after, before);
     })
   );
+
+  it.effect("answers HEAD on content with the compressed body's headers", () =>
+    Effect.gen(function* () {
+      const { patchId, versionId } = yield* publish("Head content");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
+      const url = `/~content/${patchId}/${versionId}`;
+      const headers = { cookie: signedInCookies(), "accept-encoding": "br" };
+      const full = yield* get(url, headers);
+      assert.strictEqual(full.headers["content-encoding"], "br");
+      const client = yield* HttpClient.HttpClient;
+      const head = yield* client.execute(
+        HttpClientRequest.head(url).pipe(HttpClientRequest.setHeaders(headers))
+      );
+      assert.strictEqual(head.status, 200);
+      assert.strictEqual(head.headers["content-encoding"], "br");
+      assert.strictEqual(head.headers["vary"], "Accept-Encoding");
+      // The length of the brotli body a GET sends, which no HEAD body follows.
+      assert.strictEqual(head.headers["content-length"], full.headers["content-length"]);
+      const stored = yield* (yield* ContentStore.ContentStore).get(
+        Content.objectKey(patchId, versionId)
+      );
+      assert.isBelow(Number(head.headers["content-length"]), Buffer.byteLength(stored));
+      assert.strictEqual((yield* head.arrayBuffer).byteLength, 0);
+    })
+  );
 });
 
 const send = Effect.fn(function* (path: string, options: RequestInit = {}) {
@@ -1055,9 +1082,12 @@ it.layer(services)("pages in memory", (it) => {
    * run inside request events whose `contentLoad` and `contentEncoding` `loads` takes in order.
    */
   const host = Effect.fn(function* (
-    limits: Partial<
-      Record<"serving.contentCache.bytes" | "serving.contentCache.entries", number>
-    > = {}
+    options: {
+      readonly limits?: Partial<
+        Record<"serving.contentCache.bytes" | "serving.contentCache.entries", number>
+      >;
+      readonly compression?: Pages.DocumentCompression["Service"];
+    } = {}
   ) {
     const memory = yield* ContentStore.ContentStore;
     const control = {
@@ -1092,9 +1122,13 @@ it.layer(services)("pages in memory", (it) => {
     );
     const app = yield* HttpRouter.toHttpEffect(routes).pipe(
       Effect.provide(context),
+      Effect.provideService(Pages.DocumentCompression, options.compression ?? compress),
       Effect.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromUnknown({ ...clerkEnv(), PATCHY_LIMITS_JSON: JSON.stringify(limits) })
+          ConfigProvider.fromUnknown({
+            ...clerkEnv(),
+            PATCHY_LIMITS_JSON: JSON.stringify(options.limits ?? {})
+          })
         )
       )
     );
@@ -1301,7 +1335,7 @@ it.layer(services)("pages in memory", (it) => {
         const large = yield* scripted("Too large to keep");
         // A quarter of the byte bound is one byte short of this document.
         const tight = yield* host({
-          "serving.contentCache.bytes": (Buffer.byteLength(large.html) - 1) * 4
+          limits: { "serving.contentCache.bytes": (Buffer.byteLength(large.html) - 1) * 4 }
         });
         for (let load = 0; load < 2; load++) {
           const response = yield* tight.request(large.url, {
@@ -1314,7 +1348,7 @@ it.layer(services)("pages in memory", (it) => {
         }
         assert.strictEqual(tight.control.reads, 2);
 
-        const { control, request } = yield* host({ "serving.contentCache.entries": 2 });
+        const { control, request } = yield* host({ limits: { "serving.contentCache.entries": 2 } });
         const [one, two, three] = [
           yield* scripted("One"),
           yield* scripted("Two"),
@@ -1328,5 +1362,129 @@ it.layer(services)("pages in memory", (it) => {
         yield* request(two.url);
         assert.strictEqual(control.reads, 4);
       })
+  );
+
+  /**
+   * The real compressor, counting its calls and the most running at once. Each call reports
+   * `entered`, then waits for `opened`.
+   */
+  const watchedCompression = Effect.fn(function* () {
+    const entered = yield* Queue.unbounded<void>();
+    const opened = yield* Deferred.make<void>();
+    const watch = { calls: 0, running: 0, most: 0 };
+    const compression = (body: Uint8Array) =>
+      Effect.suspend(() => {
+        watch.calls++;
+        watch.most = Math.max(watch.most, ++watch.running);
+        return Queue.offer(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(opened)),
+          Effect.andThen(compress(body)),
+          Effect.ensuring(Effect.sync(() => watch.running--))
+        );
+      });
+    return { watch, compression, entered, opened };
+  });
+
+  it.effect("compresses one document at a time across the host", () =>
+    Effect.gen(function* () {
+      const { watch, compression, entered, opened } = yield* watchedCompression();
+      const { control, request } = yield* host({ compression });
+      const documents = [yield* scripted("Cold one"), yield* scripted("Cold two")];
+      documents.push(yield* scripted("Cold three"));
+      // The three reads finish together, so all three documents are ready to compress at once.
+      const allReading = yield* Deferred.make<void>();
+      const readsOpened = yield* Deferred.make<void>();
+      control.beforeRead = Effect.suspend(() =>
+        control.reads === 3 ? Deferred.succeed(allReading, undefined) : Effect.void
+      ).pipe(Effect.andThen(Deferred.await(readsOpened)));
+      const all = yield* Effect.all(
+        documents.map((document) =>
+          request(document.url, { cookie: signedInCookies(), "accept-encoding": "br" })
+        ),
+        { concurrency: "unbounded" }
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(allReading);
+      yield* Deferred.succeed(readsOpened, undefined);
+      yield* Queue.take(entered);
+      // The other two run only up to the permit; given turns, they still don't compress.
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      assert.strictEqual(watch.calls, 1);
+      yield* Deferred.succeed(opened, undefined);
+      const responses = yield* Fiber.join(all);
+      for (const [index, response] of responses.entries()) {
+        assert.strictEqual(response.headers.get("content-encoding"), "br");
+        assert.strictEqual(
+          new TextDecoder().decode(yield* decoded(response)),
+          documents[index]!.html
+        );
+      }
+      assert.deepStrictEqual(watch, { calls: 3, running: 0, most: 1 });
+    })
+  );
+
+  it.effect("finishes an abandoned load's work, so an immediate retry joins it", () =>
+    Effect.gen(function* () {
+      const { url, html } = yield* scripted("Abandoned");
+      const { watch, compression, entered, opened } = yield* watchedCompression();
+      const { control, request, loads } = yield* host({ compression });
+      const abandoned = yield* request(url).pipe(Effect.forkScoped);
+      yield* Queue.take(entered);
+      yield* Fiber.interrupt(abandoned);
+      // The retry waits on the abandoned load's work before it is allowed to finish.
+      const found = yield* Deferred.make<void>();
+      control.afterFind = Deferred.succeed(found, undefined).pipe(Effect.asVoid);
+      const retry = yield* request(url).pipe(
+        Effect.provideService(Scheduler.PreventSchedulerYield, true),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(found);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(opened, undefined);
+      const retried = yield* Fiber.join(retry);
+      assert.strictEqual(yield* Effect.promise(() => retried.text()), html);
+      yield* request(url);
+      assert.strictEqual(control.reads, 1);
+      assert.strictEqual(watch.calls, 1);
+      assert.deepStrictEqual(
+        [(yield* loads)?.load, (yield* loads)?.load, (yield* loads)?.load],
+        ["read", "joined", "cached"]
+      );
+    })
+  );
+
+  it.effect("charges a kept document's raw, brotli and gzip bytes against the bound", () =>
+    Effect.gen(function* () {
+      const documents = [yield* scripted("Budget one"), yield* scripted("Budget two")];
+      // Each document's body in every coding, measured on a host of its own.
+      const probe = yield* host();
+      const held: Array<number> = [];
+      const raw: Array<number> = [];
+      for (const document of documents) {
+        const sizes: Array<number> = [];
+        for (const accept of ["identity", "br", "gzip"]) {
+          const response = yield* probe.request(document.url, {
+            cookie: signedInCookies(),
+            "accept-encoding": accept
+          });
+          sizes.push((yield* Effect.promise(() => response.arrayBuffer())).byteLength);
+        }
+        raw.push(sizes[0]!);
+        held.push(sizes.reduce((sum, size) => sum + size, 0));
+      }
+      // Each fits alone and both fit by raw bytes, but not by everything they hold.
+      const bound = 4 * Math.max(...raw);
+      assert.isAtMost(Math.max(...held), bound);
+      assert.isAtMost(raw[0]! + raw[1]!, bound);
+      assert.isAbove(held[0]! + held[1]!, bound);
+      const { control, request } = yield* host({
+        limits: { "serving.contentCache.bytes": bound }
+      });
+      const [one, two] = documents;
+      for (const document of [one!, two!, two!]) yield* request(document.url);
+      assert.strictEqual(control.reads, 2);
+      // Keeping `two` evicted `one`, the least recently used.
+      yield* request(one!.url);
+      assert.strictEqual(control.reads, 3);
+    })
   );
 });
