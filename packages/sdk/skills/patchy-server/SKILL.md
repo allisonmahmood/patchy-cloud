@@ -375,6 +375,8 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `tier2.capability.tombstone` | operating | 300000 | milliseconds | host | Expired capability replay tombstone lifetime | None | No | deployment |
 | `tier2.bundleCache.bytes` | operating | 67108864 | bytes | host | Verified server bundles kept in memory per host replica, least recently used evicted first; a bundle over a quarter of this is read from storage on every call | None | No | deployment |
 | `tier2.bundleCache.entries` | operating | 256 | bundles | host | Server bundles kept in memory per host replica, within `tier2.bundleCache.bytes` | None | No | deployment |
+| `serving.contentCache.bytes` | operating | 67108864 | bytes | host | Content URL documents kept in memory per host replica, raw, brotli and gzip bytes together, least recently used evicted first; a document over a quarter of this is read and sent uncompressed on every load | None | No | deployment |
+| `serving.contentCache.entries` | operating | 256 | documents | host | Content URL documents kept in memory per host replica, within `serving.contentCache.bytes` | None | No | deployment |
 | `company.connections` | operating | 4 | connections | company | Company connections per host replica | `busy` | Yes | deployment |
 | `company.connections.hostBackends` | operating | 200 | connections | host | Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |
 | `company.connections.pools` | operating | 100 | pools | host | Retained company pools per host replica | `busy` | No | legacy |

@@ -64,8 +64,8 @@ const invocationMetrics = {
     Schema.Literals(["committed", "rolled_back", "unknown_outcome"])
   ),
   /**
-   * Where a tier 2 call's last load to reach the bundle cache got its server bundle: memory, its
-   * own read, or waiting on another call's lookup, which may itself reuse a just-kept bundle.
+   * Where a tier 2 call's last load to reach the bundle cache got its server bundle: memory, a
+   * read it started, or waiting on a read another call started.
    * A mutation retry that passes the retained-version checks loads again; one refused before
    * the cache leaves the field as it was.
    */
@@ -75,6 +75,14 @@ const invocationMetrics = {
    * dispatch, its process reaped or replaced since bind. Set whatever came of that.
    */
   rebound: Schema.optionalKey(Schema.Boolean)
+};
+/**
+ * How a content URL's document reached its reader: from the host's memory, a read it started,
+ * or a read another request started, and the `Content-Encoding` it was sent in.
+ */
+const contentFields = {
+  contentLoad: Schema.optionalKey(Schema.Literals(["cached", "read", "joined"])),
+  contentEncoding: Schema.optionalKey(Schema.Literals(["br", "gzip", "identity"]))
 };
 /** A routed request's matched template, never its path, and the status the client received. */
 const routeFields = {
@@ -195,6 +203,7 @@ export const EventFields = Schema.Struct({
   ...attribution,
   ...outcomeFields,
   ...invocationMetrics,
+  ...contentFields,
   ...routeFields,
   ...cliFields,
   ...documentFields,
@@ -225,6 +234,7 @@ export const RequestEvent = Schema.Struct({
   type: Schema.Literal("request"),
   ...attribution,
   ...invocationMetrics,
+  ...contentFields,
   ...routeFields,
   ...cliFields,
   ...documentFields,
