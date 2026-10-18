@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -67,14 +69,18 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         Effect.gen(function* () {
           const users = yield* Users.Users;
           const sql = yield* SqlClient.SqlClient;
-          const { admin } = yield* companyWithMember("claim-refresh");
+          const { company, admin } = yield* companyWithMember("claim-refresh");
           yield* auditClaimRefresh;
           const claims = {
             clerkUserId: admin.clerkUserId,
             email: admin.email.toUpperCase(),
             name: admin.name
           };
-          assert.deepStrictEqual(yield* users.refreshClaims(claims), admin);
+          const theirCompany = { id: company.id, handle: company.handle, name: company.name };
+          assert.deepStrictEqual(yield* users.refreshClaims(claims), {
+            user: admin,
+            company: theirCompany
+          });
           assert.deepStrictEqual(
             yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${admin.id}`,
             []
@@ -84,8 +90,11 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             email: "Changed@Example.COM",
             name: "Changed Name"
           });
-          assert.strictEqual(changed?.email, "changed@example.com");
-          assert.strictEqual(changed?.name, "Changed Name");
+          assert.deepStrictEqual(changed, {
+            user: new Users.User({ ...admin, email: "changed@example.com", name: "Changed Name" }),
+            company: theirCompany
+          });
+          assert.deepStrictEqual(changed?.user, yield* users.findByClerkId(admin.clerkUserId));
           assert.isNull(yield* users.findByEmail(admin.email));
           assert.strictEqual((yield* users.findByEmail("CHANGED@example.com"))?.id, admin.id);
           assert.strictEqual((yield* users.findByClerkId(admin.clerkUserId))?.name, "Changed Name");
@@ -116,19 +125,62 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         yield* auditClaimRefresh;
         const updates = sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`;
         const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "" };
-        assert.strictEqual((yield* users.refreshClaims(claims))?.name, "nameless-refresh-member");
+        assert.strictEqual(
+          (yield* users.refreshClaims(claims))?.user.name,
+          "nameless-refresh-member"
+        );
         assert.strictEqual((yield* updates).length, 1);
         yield* users.refreshClaims({ ...claims, name: " \t" });
         yield* users.refreshClaims({ ...claims, email: member.email.toUpperCase() });
         assert.strictEqual((yield* updates).length, 1);
         assert.strictEqual(
-          (yield* users.refreshClaims({ ...claims, name: "Grace Hopper" }))?.name,
+          (yield* users.refreshClaims({ ...claims, name: "Grace Hopper" }))?.user.name,
           "Grace Hopper"
         );
-        assert.strictEqual((yield* users.refreshClaims(claims))?.name, "nameless-refresh-member");
+        assert.strictEqual(
+          (yield* users.refreshClaims(claims))?.user.name,
+          "nameless-refresh-member"
+        );
         const moved = yield* users.refreshClaims({ ...claims, email: "Grace@Example.com" });
-        assert.deepInclude(moved, { email: "grace@example.com", name: "grace" });
+        assert.deepInclude(moved?.user, { email: "grace@example.com", name: "grace" });
       })
+    );
+
+    it.effect("writes once and answers the new claims when two refreshes race", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { member } = yield* companyWithMember("claim-race");
+        yield* auditClaimRefresh;
+        const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "Raced" };
+        const written = yield* Deferred.make<void>();
+        const commit = yield* Deferred.make<void>();
+        const first = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* users.refreshClaims(claims);
+              yield* Deferred.succeed(written, undefined);
+              yield* Deferred.await(commit);
+            })
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(written);
+        const second = yield* users.refreshClaims(claims).pipe(Effect.forkScoped);
+        // The second refresh has its snapshot from before the first commits, and waits on its row.
+        yield* sql`SELECT pid FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
+          Effect.repeat({ until: (rows) => rows.length === 1 }),
+          Effect.timeout("10 seconds"),
+          TestClock.withLive
+        );
+        yield* Deferred.succeed(commit, undefined);
+        yield* Fiber.join(first);
+        assert.deepInclude((yield* Fiber.join(second))?.user, { name: "Raced" });
+        assert.lengthOf(
+          yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`,
+          1
+        );
+      }).pipe(Effect.scoped)
     );
 
     it.effect(

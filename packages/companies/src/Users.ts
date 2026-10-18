@@ -80,7 +80,22 @@ export class Users extends Context.Service<
     readonly findByClerkId: (clerkUserId: string) => Effect.Effect<User | null, SqlError>;
     readonly findByEmail: (email: string) => Effect.Effect<User | null, SqlError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<User>, SqlError>;
-    readonly refreshClaims: (claims: Claims) => Effect.Effect<User | null, SqlError>;
+    /**
+     * The signed-in user and their company, in one statement that brings the user's email and
+     * name up to `claims`, writing only when either changed. `company` is null only when its
+     * row is missing.
+     */
+    readonly refreshClaims: (claims: Claims) => Effect.Effect<
+      {
+        readonly user: User;
+        readonly company: {
+          readonly id: string;
+          readonly handle: string;
+          readonly name: string;
+        } | null;
+      } | null,
+      SqlError
+    >;
     /** `changed` is false when the user already had the role. */
     readonly setRole: (
       input: UserRef & { readonly role: Role }
@@ -147,18 +162,33 @@ export const make = Effect.gen(function* () {
       SELECT count(*)::int AS count FROM users
       WHERE company_id = ${companyId} AND role = 'admin' AND deactivated_at IS NULL`
   });
+  // One round trip per viewer resolve. The UPDATE writes only when the claims changed. The
+  // SELECT sees the statement's snapshot, from before that UPDATE, so it answers the claims as
+  // the email and name: the row holds them once the statement ends, whether the UPDATE wrote
+  // them or they already matched. The LEFT JOIN answers a missing company as nulls, not as no user.
   const refresh = SqlSchema.findOneOption({
     Request: Schema.Struct({
       clerkUserId: Schema.String,
       email: Schema.String,
       name: Schema.String
     }),
-    Result: User,
+    Result: Schema.Struct({
+      ...User.fields,
+      companyHandle: Schema.NullOr(Schema.String),
+      companyName: Schema.NullOr(Schema.String)
+    }),
     execute: ({ clerkUserId, email, name }) => sql`
-      UPDATE users SET email = ${email}, name = ${name}
-      WHERE clerk_user_id = ${clerkUserId}
-        AND (email IS DISTINCT FROM ${email} OR name IS DISTINCT FROM ${name})
-      RETURNING ${columns}`
+      WITH refreshed AS (
+        UPDATE users SET email = ${email}, name = ${name}
+        WHERE clerk_user_id = ${clerkUserId}
+          AND (email IS DISTINCT FROM ${email} OR name IS DISTINCT FROM ${name})
+      )
+      SELECT u.id, u.clerk_user_id AS "clerkUserId", u.company_id AS "companyId",
+        ${email}::text AS email, ${name}::text AS name, u.role, u.created_at AS "createdAt",
+        u.deactivated_at AS "deactivatedAt", u.whats_new_seen AS "whatsNewSeen",
+        c.handle AS "companyHandle", c.name AS "companyName"
+      FROM users u LEFT JOIN companies c ON c.id = u.company_id
+      WHERE u.clerk_user_id = ${clerkUserId}`
   });
 
   const findByClerkId = Effect.fn("Users.findByClerkId")((clerkUserId: string) =>
@@ -177,12 +207,17 @@ export const make = Effect.gen(function* () {
   // requests compare equal and write nothing.
   const refreshClaims = Effect.fn("Users.refreshClaims")(function* (claims: Claims) {
     const email = claims.email.toLowerCase();
-    const updated = yield* refresh({
+    const found = yield* refresh({
       clerkUserId: claims.clerkUserId,
       email,
       name: displayName({ name: claims.name, email })
     }).pipe(Effect.catchTags(dieOnSchemaError));
-    return Option.isSome(updated) ? updated.value : yield* findByClerkId(claims.clerkUserId);
+    if (Option.isNone(found)) return null;
+    const { companyHandle: handle, companyName: name, ...user } = found.value;
+    return {
+      user: new User(user),
+      company: handle === null || name === null ? null : { id: user.companyId, handle, name }
+    };
   });
 
   // Lock the company before reading any user's role. Locking only the target
