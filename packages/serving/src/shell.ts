@@ -151,10 +151,31 @@ export function isShellNotice(code: string): code is ShellNotice {
 
 /** First-party notices never render uploaded markup or a patch-controlled error message. */
 export function renderShellNotice(code: ShellNotice, returnTo: string): string {
-  const notice = notices[code];
+  const { signIn, ...copy } = notices[code];
+  return renderNoticePage({
+    ...copy,
+    code,
+    action: signIn
+      ? { label: "Sign in", href: `/login?return=${encodeURIComponent(returnTo)}` }
+      : undefined
+  });
+}
+
+/**
+ * The shared notice card: brand, kicker, heading, one message and at most one link. The shell
+ * notices and the 404 compose it.
+ */
+export function renderNoticePage(notice: {
+  readonly kicker: string;
+  readonly title: string;
+  readonly message: string;
+  /** Marks a stopping notice, which the browser tests look for; the 404 has none. */
+  readonly code?: ShellNotice;
+  readonly action?: { readonly label: string; readonly href: string } | undefined;
+}): string {
   return htmlPage({
     title: notice.title,
     styles: ".auth-card p:last-child { margin-bottom: 0; }",
-    body: `<main class="auth-card" data-notice="${code}"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><p class="auth-kicker">${escapeHtml(notice.kicker)}</p><h1 class="page-heading">${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.signIn ? `<div class="actions"><a class="btn btn-primary" href="/login?return=${escapeAttribute(encodeURIComponent(returnTo))}">Sign in</a></div>` : ""}</main>`
+    body: `<main class="auth-card"${notice.code === undefined ? "" : ` data-notice="${notice.code}"`}><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><p class="auth-kicker">${escapeHtml(notice.kicker)}</p><h1 class="page-heading">${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.action === undefined ? "" : `<div class="actions"><a class="btn btn-primary" href="${escapeAttribute(notice.action.href)}">${escapeHtml(notice.action.label)}</a></div>`}</main>`
   });
 }

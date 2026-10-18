@@ -5,6 +5,19 @@ import type { Patches } from "@patchy/patches";
 import { sessionScripts } from "@patchy/auth";
 import { renderPatchWrapper, renderShellNotice } from "./shell.js";
 import { renderAddressNotice } from "./address-notice.js";
+import { renderNotFound } from "./render.js";
+
+describe("renderNotFound", () => {
+  it("is the shared notice card with one link home and nothing that needs a form or script", () => {
+    const html = renderNotFound();
+    expect(html).toContain('<main class="auth-card"><div class="brand">');
+    expect(html).toContain(`<h1 class="page-heading">This page isn't available</h1>`);
+    expect(html.match(/<a\b[^>]*>[^<]*<\/a>/g)).toEqual([
+      '<a class="btn btn-primary" href="/">Go to Patchy</a>'
+    ]);
+    expect(html).not.toMatch(/<(form|script|iframe)\b|data-notice/);
+  });
+});
 
 describe("renderShellNotice", () => {
   it("preserves a deep return address without allowing it to become notice markup", () => {
