@@ -81,9 +81,9 @@ export class Users extends Context.Service<
     readonly findByEmail: (email: string) => Effect.Effect<User | null, SqlError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<User>, SqlError>;
     /**
-     * The signed-in user and their company, in one statement that brings the user's email and
-     * name up to `claims`, writing only when either changed. `company` is null only when its
-     * row is missing.
+     * The signed-in user and their company, with the user's email and name brought up to
+     * `claims`. Unchanged claims cost one read and write nothing. `company` is null only when
+     * its row is missing.
      */
     readonly refreshClaims: (claims: Claims) => Effect.Effect<
       {
@@ -162,33 +162,37 @@ export const make = Effect.gen(function* () {
       SELECT count(*)::int AS count FROM users
       WHERE company_id = ${companyId} AND role = 'admin' AND deactivated_at IS NULL`
   });
-  // One round trip per viewer resolve. The UPDATE writes only when the claims changed. The
-  // SELECT sees the statement's snapshot, from before that UPDATE, so it answers the claims as
-  // the email and name: the row holds them once the statement ends, whether the UPDATE wrote
-  // them or they already matched. The LEFT JOIN answers a missing company as nulls, not as no user.
+  // A fresh read that takes no locks. The LEFT JOIN answers a missing company as nulls, not
+  // as no user.
+  const signedIn = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      ...User.fields,
+      companyHandle: Schema.NullOr(Schema.String),
+      companyName: Schema.NullOr(Schema.String)
+    }),
+    execute: (clerkUserId) => sql`
+      SELECT u.*, c.handle AS "companyHandle", c.name AS "companyName"
+      FROM (SELECT ${columns} FROM users WHERE clerk_user_id = ${clerkUserId}) u
+      LEFT JOIN companies c ON c.id = u."companyId"`
+  });
+  const companyById = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ id: Schema.String, handle: Schema.String, name: Schema.String }),
+    execute: (id) => sql`SELECT id, handle, name FROM companies WHERE id = ${id}`
+  });
   const refresh = SqlSchema.findOneOption({
     Request: Schema.Struct({
       clerkUserId: Schema.String,
       email: Schema.String,
       name: Schema.String
     }),
-    Result: Schema.Struct({
-      ...User.fields,
-      companyHandle: Schema.NullOr(Schema.String),
-      companyName: Schema.NullOr(Schema.String)
-    }),
+    Result: User,
     execute: ({ clerkUserId, email, name }) => sql`
-      WITH refreshed AS (
-        UPDATE users SET email = ${email}, name = ${name}
-        WHERE clerk_user_id = ${clerkUserId}
-          AND (email IS DISTINCT FROM ${email} OR name IS DISTINCT FROM ${name})
-      )
-      SELECT u.id, u.clerk_user_id AS "clerkUserId", u.company_id AS "companyId",
-        ${email}::text AS email, ${name}::text AS name, u.role, u.created_at AS "createdAt",
-        u.deactivated_at AS "deactivatedAt", u.whats_new_seen AS "whatsNewSeen",
-        c.handle AS "companyHandle", c.name AS "companyName"
-      FROM users u LEFT JOIN companies c ON c.id = u.company_id
-      WHERE u.clerk_user_id = ${clerkUserId}`
+      UPDATE users SET email = ${email}, name = ${name}
+      WHERE clerk_user_id = ${clerkUserId}
+        AND (email IS DISTINCT FROM ${email} OR name IS DISTINCT FROM ${name})
+      RETURNING ${columns}`
   });
 
   const findByClerkId = Effect.fn("Users.findByClerkId")((clerkUserId: string) =>
@@ -204,20 +208,40 @@ export const make = Effect.gen(function* () {
     companyUsers(companyId).pipe(Effect.catchTags(dieOnSchemaError))
   );
   // The stored name is settled before the change check, so a nameless person's repeat
-  // requests compare equal and write nothing.
+  // requests compare equal and write nothing. Changed claims keep the write path a resolve
+  // always took, in its own statements: the UPDATE waits out a concurrent change to the row,
+  // such as a deactivation, and answers the row as that change left it; if a concurrent
+  // refresh already wrote these claims, a fresh read answers instead. The first read's
+  // snapshot predates any such wait, so it answers only when nothing needs writing.
   const refreshClaims = Effect.fn("Users.refreshClaims")(function* (claims: Claims) {
     const email = claims.email.toLowerCase();
-    const found = yield* refresh({
-      clerkUserId: claims.clerkUserId,
-      email,
-      name: displayName({ name: claims.name, email })
-    }).pipe(Effect.catchTags(dieOnSchemaError));
-    if (Option.isNone(found)) return null;
-    const { companyHandle: handle, companyName: name, ...user } = found.value;
-    return {
-      user: new User(user),
-      company: handle === null || name === null ? null : { id: user.companyId, handle, name }
-    };
+    const name = displayName({ name: claims.name, email });
+    const read = signedIn(claims.clerkUserId).pipe(
+      Effect.catchTags(dieOnSchemaError),
+      Effect.map(
+        Option.map(({ companyHandle: handle, companyName, ...user }) => ({
+          user: new User(user),
+          company:
+            handle === null || companyName === null
+              ? null
+              : { id: user.companyId, handle, name: companyName }
+        }))
+      ),
+      Effect.map(Option.getOrNull)
+    );
+    const found = yield* read;
+    if (found === null || (found.user.email === email && found.user.name === name)) return found;
+    const updated = yield* refresh({ clerkUserId: claims.clerkUserId, email, name }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    );
+    if (Option.isNone(updated)) return yield* read;
+    const user = updated.value;
+    if (user.companyId === found.user.companyId) return { user, company: found.company };
+    const company = yield* companyById(user.companyId).pipe(
+      Effect.catchTags(dieOnSchemaError),
+      Effect.map(Option.getOrNull)
+    );
+    return { user, company };
   });
 
   // Lock the company before reading any user's role. Locking only the target

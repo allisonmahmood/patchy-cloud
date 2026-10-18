@@ -49,7 +49,7 @@ it.layer(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
 )("resolveViewer", (it) => {
-  it.effect("resolves a viewer in one statement, applying changed claims", () =>
+  it.effect("resolves a viewer in one statement, and adds only the write for changed claims", () =>
     Effect.gen(function* () {
       const users = yield* Users.Users;
       const created = yield* createCompany("resolve-one");
@@ -70,7 +70,8 @@ it.layer(
       assert.lengthOf(unchanged.statements, 1);
       const changed = yield* resolve({ sub, email: "moved@example.com", name: "Grace" });
       assert.deepStrictEqual(changed.viewer, viewer("moved@example.com", "Grace"));
-      assert.lengthOf(changed.statements, 1);
+      // Changed claims add the write, which answers the row as it leaves it.
+      assert.lengthOf(changed.statements, 2);
       assert.deepInclude(yield* users.findByClerkId(sub), {
         email: "moved@example.com",
         name: "Grace"

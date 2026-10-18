@@ -50,6 +50,16 @@ const auditClaimRefresh = ddl(
   `CREATE OR REPLACE TRIGGER claim_refresh_audit AFTER UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION audit_claim_refresh()`
 );
+// Waits until `count` sessions on this test's database wait on a lock.
+const lockWaits = (count: number) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    sql`SELECT pid FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
+      Effect.repeat({ until: (rows) => rows.length === count }),
+      Effect.timeout("10 seconds"),
+      TestClock.withLive
+    )
+  );
 const outcome = {
   onSuccess: () => "ok",
   onFailure: (error: { readonly _tag: string }) => error._tag
@@ -146,11 +156,11 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
       })
     );
 
-    it.effect("writes once and answers the new claims when two refreshes race", () =>
+    it.effect("writes once and answers the stored row when two refreshes race", () =>
       Effect.gen(function* () {
         const users = yield* Users.Users;
         const sql = yield* SqlClient.SqlClient;
-        const { member } = yield* companyWithMember("claim-race");
+        const { company, member } = yield* companyWithMember("claim-race");
         yield* auditClaimRefresh;
         const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "Raced" };
         const written = yield* Deferred.make<void>();
@@ -166,20 +176,128 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           .pipe(Effect.forkScoped);
         yield* Deferred.await(written);
         const second = yield* users.refreshClaims(claims).pipe(Effect.forkScoped);
-        // The second refresh has its snapshot from before the first commits, and waits on its row.
-        yield* sql`SELECT pid FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
-          Effect.repeat({ until: (rows) => rows.length === 1 }),
-          Effect.timeout("10 seconds"),
-          TestClock.withLive
-        );
+        yield* lockWaits(1);
         yield* Deferred.succeed(commit, undefined);
         yield* Fiber.join(first);
-        assert.deepInclude((yield* Fiber.join(second))?.user, { name: "Raced" });
+        assert.deepStrictEqual(yield* Fiber.join(second), {
+          user: (yield* users.findByClerkId(member.clerkUserId))!,
+          company: { id: company.id, handle: company.handle, name: company.name }
+        });
         assert.lengthOf(
           yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`,
           1
         );
+      }).pipe(Effect.scoped)
+    );
+
+    it.effect("a refresh that waits on an admin's change answers the row that change left", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const companies = yield* Companies.Companies;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("claim-wait", "admin");
+        const ref = { companyId: company.id, userId: member.id };
+        // Holds `change` uncommitted until a refresh with new claims waits on the row.
+        const refreshDuring = <A, E>(change: Effect.Effect<A, E>, name: string) =>
+          Effect.gen(function* () {
+            const changed = yield* Deferred.make<void>();
+            const commit = yield* Deferred.make<void>();
+            const holder = yield* sql
+              .withTransaction(
+                Effect.gen(function* () {
+                  const result = yield* change;
+                  yield* Deferred.succeed(changed, undefined);
+                  yield* Deferred.await(commit);
+                  return result;
+                })
+              )
+              .pipe(Effect.forkScoped);
+            yield* Deferred.await(changed);
+            const refreshed = yield* users
+              .refreshClaims({ clerkUserId: member.clerkUserId, email: member.email, name })
+              .pipe(Effect.forkScoped);
+            yield* lockWaits(1);
+            yield* Deferred.succeed(commit, undefined);
+            const result = yield* Fiber.join(holder);
+            const answer = yield* Fiber.join(refreshed);
+            assert.deepStrictEqual(answer?.user, yield* users.findByClerkId(member.clerkUserId));
+            return { result, answer };
+          }).pipe(Effect.scoped);
+
+        const demoted = yield* refreshDuring(users.setRole({ ...ref, role: "member" }), "Demoted");
+        assert.strictEqual(demoted.answer?.user.role, "member");
+        const deactivated = yield* refreshDuring(users.deactivate(ref), "Deactivated");
+        assert.isNotNull(deactivated.answer?.user.deactivatedAt);
+        // The company the user moves to is created by the same transaction that moves them.
+        const moved = yield* refreshDuring(
+          Effect.gen(function* () {
+            const created = yield* companies.create({
+              handle: "claim-wait-moved",
+              name: "Moved Inc",
+              clerkUserId: "clerk_claim_wait_moved",
+              email: "claim-wait-moved@example.com",
+              userName: "Admin"
+            });
+            yield* sql`UPDATE users SET company_id = ${created.company.id} WHERE id = ${member.id}`;
+            return created.company;
+          }),
+          "Moved"
+        );
+        assert.deepStrictEqual(moved.answer?.company, {
+          id: moved.result.id,
+          handle: "claim-wait-moved",
+          name: "Moved Inc"
+        });
+      })
+    );
+
+    it.effect("a refresh queued behind an identical one still sees what committed first", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("claim-queue");
+        const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "Queued" };
+        // An admin's uncommitted deactivation, held until both refreshes wait on it.
+        const deactivated = yield* Deferred.make<void>();
+        const commitDeactivation = yield* Deferred.make<void>();
+        const admin = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* users.deactivate({ companyId: company.id, userId: member.id });
+              yield* Deferred.succeed(deactivated, undefined);
+              yield* Deferred.await(commitDeactivation);
+            })
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(deactivated);
+        // The first refresh stays open after it writes, so the second waits on it in turn.
+        const wrote = yield* Deferred.make<void>();
+        const commitFirst = yield* Deferred.make<void>();
+        const first = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const answer = yield* users.refreshClaims(claims);
+              yield* Deferred.succeed(wrote, undefined);
+              yield* Deferred.await(commitFirst);
+              return answer;
+            })
+          )
+          .pipe(Effect.forkScoped);
+        yield* lockWaits(1);
+        const second = yield* users.refreshClaims(claims).pipe(Effect.forkScoped);
+        yield* lockWaits(2);
+        yield* Deferred.succeed(commitDeactivation, undefined);
+        yield* Fiber.join(admin);
+        yield* Deferred.await(wrote);
+        yield* lockWaits(1);
+        yield* Deferred.succeed(commitFirst, undefined);
+        // The first wrote the claims after the deactivation; the second wrote nothing.
+        assert.isNotNull((yield* Fiber.join(first))?.user.deactivatedAt);
+        assert.deepStrictEqual(
+          (yield* Fiber.join(second))?.user,
+          yield* users.findByClerkId(member.clerkUserId)
+        );
+        assert.isNotNull((yield* users.findByClerkId(member.clerkUserId))?.deactivatedAt);
       }).pipe(Effect.scoped)
     );
 
