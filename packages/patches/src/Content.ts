@@ -9,10 +9,11 @@
  * Failures retain the intent for reclamation after its lease; a transaction
  * that committed despite a lost response consumes it and preserves the bytes.
  */
-import * as Cache from "effect/Cache";
+import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -92,7 +93,7 @@ export class Content extends Context.Service<
      * and authorized. A missing recorded object is a fault, not an absence.
      */
     readonly read: (
-      version: Patches.PatchVersion
+      version: Pick<Patches.PatchVersion, "objectKey">
     ) => Effect.Effect<string, ContentStore.InvalidObjectKey | ContentStore.StoreUnavailable>;
   }
 >()("@patchy/patches/Content") {}
@@ -172,7 +173,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const read = Effect.fn("Content.read")((version: Patches.PatchVersion) =>
+  const read = Effect.fn("Content.read")((version: Pick<Patches.PatchVersion, "objectKey">) =>
     store.get(version.objectKey).pipe(Effect.catchTags({ ObjectNotFound: Effect.die }))
   );
 
@@ -182,43 +183,53 @@ export const make = Effect.gen(function* () {
 /** Over `Patches` and the content store. */
 export const layer = Layer.effect(Content, make);
 
-/** A retained version's server artifact, with the version a failure names. */
-type StoredServer = NonNullable<Patches.PatchVersion["server"]> & {
-  readonly patchId: string;
-  readonly versionId: string;
-};
+/** Where a load got its artifact: memory, the read it started, or another load's read. */
+export type ArtifactLoad = "cached" | "read" | "joined";
 
 /**
- * Verified server bundles in memory by artifact identity, object key and digest,
- * whose stored bytes never change. Least recently used go first past either
- * `tier2.bundleCache.*` bound, and a bundle over a quarter of the byte bound is
- * never kept. Simultaneous misses share one read; failures, a hash mismatch
- * included, are never kept. Callers check retention before every load.
+ * Verified artifacts in memory by identity, for stored bytes that never change. Least
+ * recently used go first past either bound, and an artifact whose recorded size is over a
+ * quarter of the byte bound is never kept. Failures are never kept. This replaces only the
+ * read: callers check admission before every load.
+ *
+ * A miss starts one job, which reads the artifact and keeps it. Simultaneous misses join it.
+ * The job runs in the host's scope until it settles, even when every load waiting on it stops,
+ * so a retry joins it or finds what it kept instead of starting the work again. Its read is
+ * stopped after 30 seconds, so a hung read can't hold its identity; work the read can't
+ * interrupt, such as native compression, finishes first, and a job past its deadline keeps
+ * nothing. A job settles when its fiber ends however it ends, even if the host's scope closes
+ * before it runs.
+ *
+ * The server bundles below and Serving's content documents each make their own.
  */
-const makeBundleCache = Effect.gen(function* () {
-  const store = yield* ContentStore.ContentStore;
-  const deployment = yield* DeploymentConfig.load;
-  const maxBytes = deployment.get("tier2.bundleCache.bytes");
-  const maxEntries = deployment.get("tier2.bundleCache.entries");
+export const makeArtifactCache = Effect.fnUntraced(function* <K, A, E>(options: {
+  readonly maxBytes: number;
+  readonly maxEntries: number;
+  /** The same for the same stored bytes: the object key and its recorded digest. */
+  readonly identity: (key: K) => string;
+  /** The artifact's recorded size, known before the read. */
+  readonly size: (key: K) => number;
+  /**
+   * Reads and verifies a missed artifact. `keep` says whether it will be kept, so a read can
+   * skip work only a kept artifact repays; `bytes` is what the kept form holds.
+   */
+  readonly read: (
+    key: K,
+    keep: boolean
+  ) => Effect.Effect<{ readonly value: A; readonly bytes: number }, E>;
+  /** Labels the loading call's wide event with where it got the artifact. */
+  readonly loaded: (load: ArtifactLoad) => Effect.Effect<void>;
+}) {
+  const { maxBytes, maxEntries, identity, size, read, loaded } = options;
+  const scope = yield* Effect.scope;
   // Insertion order is recency: a hit moves its entry to the end.
-  const kept = new Map<string, { readonly bundle: string; readonly bytes: number }>();
+  const kept = new Map<string, { readonly value: A; readonly bytes: number }>();
   let keptBytes = 0;
-  const identity = (stored: StoredServer) => `${stored.objectKey}#${stored.sha256}`;
-  /** The kept bundle, now the most recently used, recorded as the call's `cached` load. */
-  const recall = (key: string) =>
-    Effect.suspend(() => {
-      const hit = kept.get(key);
-      if (hit === undefined) return Effect.undefined;
-      kept.delete(key);
-      kept.set(key, hit);
-      return Effect.as(WideEvents.enrich({ bundleLoad: "cached" }), hit.bundle);
-    });
-  const keep = (key: string, bundle: string, bytes: number) => {
-    if (bytes > maxBytes / 4) return;
-    // Replacing an entry releases its bytes and moves it to the end.
-    keptBytes -= kept.get(key)?.bytes ?? 0;
-    kept.delete(key);
-    kept.set(key, { bundle, bytes });
+  /** Each miss in flight, until its job settles. */
+  const jobs = new Map<string, Deferred.Deferred<A, E | Cause.TimeoutError>>();
+  // A job only starts for an identity neither kept nor in flight, so it never replaces one.
+  const keep = (id: string, value: A, bytes: number) => {
+    kept.set(id, { value, bytes });
     keptBytes += bytes;
     for (const [oldest, entry] of kept) {
       if (keptBytes <= maxBytes && kept.size <= maxEntries) break;
@@ -226,32 +237,77 @@ const makeBundleCache = Effect.gen(function* () {
       keptBytes -= entry.bytes;
     }
   };
-  // A zero lifetime keeps no result here: this only joins simultaneous misses to one read.
-  const reads = yield* Cache.make({
-    capacity: Number.POSITIVE_INFINITY,
-    timeToLive: Duration.zero,
-    lookup: Effect.fnUntraced(function* (stored: StoredServer) {
-      const key = identity(stored);
-      // A miss can arrive here just after another call's read settled and kept the bundle.
-      const settled = yield* recall(key);
-      if (settled !== undefined) return settled;
-      yield* WideEvents.enrich({ bundleLoad: "read" });
+  /**
+   * Keeps a job's artifact and settles its loads in one step when its fiber ends, so a load
+   * finds either the job or its result.
+   */
+  const settle =
+    (id: string, job: Deferred.Deferred<A, E | Cause.TimeoutError>, keeping: boolean) =>
+    (exit: Exit.Exit<{ readonly value: A; readonly bytes: number }, E | Cause.TimeoutError>) => {
+      jobs.delete(id);
+      if (keeping && Exit.isSuccess(exit)) keep(id, exit.value.value, exit.value.bytes);
+      Deferred.doneUnsafe(
+        job,
+        Exit.map(exit, (artifact) => artifact.value)
+      );
+    };
+  // Each load decides in one synchronous step: kept, joined or started. Only waiting is
+  // interruptible, so a started job is always forked.
+  return (key: K) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        const id = identity(key);
+        const hit = kept.get(id);
+        if (hit !== undefined) {
+          kept.delete(id);
+          kept.set(id, hit);
+          return Effect.as(loaded("cached"), hit.value);
+        }
+        const pending = jobs.get(id);
+        if (pending !== undefined)
+          return Effect.andThen(loaded("joined"), restore(Deferred.await(pending)));
+        const job = Deferred.makeUnsafe<A, E | Cause.TimeoutError>();
+        jobs.set(id, job);
+        const keeping = size(key) <= maxBytes / 4;
+        return loaded("read").pipe(
+          Effect.andThen(Effect.forkIn(Effect.timeout(read(key, keeping), "30 seconds"), scope)),
+          // The fiber's exit settles the job: it also sees one interrupted before it ran, and
+          // one that ended before this observer was added.
+          Effect.tap((fiber) => Effect.sync(() => fiber.addObserver(settle(id, job, keeping)))),
+          Effect.andThen(restore(Deferred.await(job)))
+        );
+      })
+    );
+});
+
+/** A retained version's server artifact, with the version a failure names. */
+type StoredServer = NonNullable<Patches.PatchVersion["server"]> & {
+  readonly patchId: string;
+  readonly versionId: string;
+};
+
+/**
+ * Verified server bundles by artifact identity, object key and digest, within the
+ * `tier2.bundleCache.*` bounds. A hash mismatch is a failure, so it is never kept.
+ */
+const makeBundleCache = Effect.gen(function* () {
+  const store = yield* ContentStore.ContentStore;
+  const deployment = yield* DeploymentConfig.load;
+  return yield* makeArtifactCache({
+    maxBytes: deployment.get("tier2.bundleCache.bytes"),
+    maxEntries: deployment.get("tier2.bundleCache.entries"),
+    identity: (stored: StoredServer) => `${stored.objectKey}#${stored.sha256}`,
+    size: (stored) => stored.bytes,
+    read: Effect.fnUntraced(function* (stored) {
       const bundle = yield* store.get(stored.objectKey);
       if (sha256(bundle) !== stored.sha256)
         return yield* new StoredServerUnavailable({
           patchId: stored.patchId,
           versionId: stored.versionId
         });
-      keep(key, bundle, stored.bytes);
-      return bundle;
-    })
-  });
-  return Effect.fnUntraced(function* (stored: StoredServer) {
-    const hit = yield* recall(identity(stored));
-    if (hit !== undefined) return hit;
-    // The lookup runs in the context of the call that starts it and relabels that call.
-    yield* WideEvents.enrich({ bundleLoad: "joined" });
-    return yield* Cache.get(reads, stored);
+      return { value: bundle, bytes: stored.bytes };
+    }),
+    loaded: (bundleLoad) => WideEvents.enrich({ bundleLoad })
   });
 });
 

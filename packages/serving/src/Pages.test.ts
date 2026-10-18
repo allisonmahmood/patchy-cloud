@@ -3,10 +3,16 @@ import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -19,6 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION, type Manifest } from "@patchy/api";
 import { AuthPages, DeviceLogins, MachineTokens, Session } from "@patchy/auth";
 import { Analytics } from "@patchy/analytics";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Limits } from "@patchy/limits";
 import {
   clerkEnv,
@@ -31,6 +38,7 @@ import {
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
+import { contentHash } from "@patchy/core";
 import { Content, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { ddl, layerFromUrl } from "@patchy/sql";
@@ -40,6 +48,7 @@ import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
 import { servingHeaders } from "./serving-headers.js";
 import { brokerScript, brokerSrc } from "./shell.js";
+import { compress } from "./compression.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const CSP =
@@ -664,6 +673,32 @@ it.layer(layer)("pages", (it) => {
       assert.deepStrictEqual(after, before);
     })
   );
+
+  it.effect("answers HEAD on content with the compressed body's headers", () =>
+    Effect.gen(function* () {
+      const { patchId, versionId } = yield* publish("Head content");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
+      const url = `/~content/${patchId}/${versionId}`;
+      const headers = { cookie: signedInCookies(), "accept-encoding": "br" };
+      const full = yield* get(url, headers);
+      assert.strictEqual(full.headers["content-encoding"], "br");
+      const client = yield* HttpClient.HttpClient;
+      const head = yield* client.execute(
+        HttpClientRequest.head(url).pipe(HttpClientRequest.setHeaders(headers))
+      );
+      assert.strictEqual(head.status, 200);
+      assert.strictEqual(head.headers["content-encoding"], "br");
+      assert.strictEqual(head.headers["vary"], "Accept-Encoding");
+      // The length of the brotli body a GET sends, which no HEAD body follows.
+      assert.strictEqual(head.headers["content-length"], full.headers["content-length"]);
+      const stored = yield* (yield* ContentStore.ContentStore).get(
+        Content.objectKey(patchId, versionId)
+      );
+      assert.isBelow(Number(head.headers["content-length"]), Buffer.byteLength(stored));
+      assert.strictEqual((yield* head.arrayBuffer).byteLength, 0);
+    })
+  );
 });
 
 const send = Effect.fn(function* (path: string, options: RequestInit = {}) {
@@ -809,6 +844,9 @@ it.layer(services)("pages in memory", (it) => {
       for (const bom of ["", "\uFEFF"]) {
         const html = `${bom}<!doctype html><html><body><p>café — 日本語</p></body></html>`;
         yield* store.put(Content.objectKey(patchId, versionId), html);
+        // Stored bytes never change once published; these are recorded as new ones.
+        yield* sql`UPDATE patch_versions SET content_hash = ${contentHash(html)},
+          file_size = ${Buffer.byteLength(html)} WHERE id = ${versionId}`;
         const response = yield* send(`/~content/${patchId}/${versionId}`);
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers.get("content-type"), "text/html; charset=utf-8");
@@ -1024,5 +1062,462 @@ it.layer(services)("pages in memory", (it) => {
           }
         }
       })
+  );
+
+  /** A published tier 1 version's content URL, with its stored document. */
+  const scripted = Effect.fn(function* (title: string) {
+    const { patchId, versionId, path } = yield* publish(title);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
+    const html = yield* (yield* ContentStore.ContentStore).get(
+      Content.objectKey(patchId, versionId)
+    );
+    return { patchId, versionId, path, html, url: `/~content/${patchId}/${versionId}?n=boot_x` };
+  });
+
+  /**
+   * One host's routes, built once so requests share its content documents, over the memory
+   * store with document reads counted. `beforeRead` runs inside each read, and `afterFind` after
+   * each retained-version lookup: a content request's last wait before the documents. Requests
+   * run inside request events whose `contentLoad` and `contentEncoding` `loads` takes in order.
+   */
+  const host = Effect.fn(function* (
+    options: {
+      readonly limits?: Partial<
+        Record<"serving.contentCache.bytes" | "serving.contentCache.entries", number>
+      >;
+      readonly compression?: typeof compress;
+    } = {}
+  ) {
+    const memory = yield* ContentStore.ContentStore;
+    const control = {
+      reads: 0,
+      beforeRead: Effect.void as Effect.Effect<void>,
+      afterFind: Effect.void as Effect.Effect<void>
+    };
+    const store = ContentStore.ContentStore.of({
+      ...memory,
+      get: (key) =>
+        Effect.suspend(() => {
+          control.reads++;
+          return control.beforeRead.pipe(Effect.andThen(memory.get(key)));
+        })
+    });
+    const patches = Layer.effect(
+      Patches.Patches,
+      Effect.map(Patches.make, (patches) =>
+        Patches.Patches.of({
+          ...patches,
+          findRetained: (...args) =>
+            patches.findRetained(...args).pipe(Effect.tap(() => control.afterFind))
+        })
+      )
+    );
+    // Fresh, so the suite's memoized `Content` over the plain store isn't reused.
+    const context = yield* Layer.build(
+      Layer.fresh(Content.layer).pipe(
+        Layer.provideMerge(patches),
+        Layer.provide(Layer.succeed(ContentStore.ContentStore, store))
+      )
+    );
+    const app = yield* HttpRouter.toHttpEffect(routes).pipe(
+      Effect.provide(context),
+      Effect.provideService(Pages.DocumentCompression, options.compression ?? compress),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            ...clerkEnv(),
+            PATCHY_LIMITS_JSON: JSON.stringify(options.limits ?? {})
+          })
+        )
+      )
+    );
+    const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+    const events = yield* WideEvents.make.pipe(
+      Effect.provideService(WideEvents.Sink, {
+        write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+      })
+    );
+    const request = (
+      path: string,
+      headers: Record<string, string> = { cookie: signedInCookies() }
+    ) =>
+      events
+        .withEvent(
+          { type: "request" },
+          app.pipe(
+            Effect.provideService(
+              HttpServerRequest.HttpServerRequest,
+              HttpServerRequest.fromWeb(new Request(new URL(path, PUBLIC_BASE_URL), { headers }))
+            ),
+            // A route's request services come from the request, as the server provides them.
+            Effect.provide(context)
+          )
+        )
+        .pipe(Effect.map(HttpServerResponse.toWeb));
+    const loads = Effect.map(Queue.take(records), (event) =>
+      event.type === "request"
+        ? { load: event.contentLoad, encoding: event.contentEncoding }
+        : undefined
+    );
+    return { control, request, loads };
+  });
+
+  it.effect("reads a content document from storage once, then sends it from memory", () =>
+    Effect.gen(function* () {
+      const { url, html } = yield* scripted("Kept once");
+      const { control, request, loads } = yield* host();
+      for (const accept of ["br", "gzip", undefined]) {
+        const response = yield* request(url, {
+          cookie: signedInCookies(),
+          ...(accept === undefined ? {} : { "accept-encoding": accept })
+        });
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(new TextDecoder().decode(yield* decoded(response)), html);
+      }
+      assert.strictEqual(control.reads, 1);
+      assert.deepStrictEqual(
+        [yield* loads, yield* loads, yield* loads],
+        [
+          { load: "read", encoding: "br" },
+          { load: "cached", encoding: "gzip" },
+          { load: "cached", encoding: "identity" }
+        ]
+      );
+    })
+  );
+
+  /** A request whose route died, which the server answers with a 500. */
+  const fault = <A, E, R>(request: Effect.Effect<A, E, R>) =>
+    Effect.map(Effect.exit(request), (exit) =>
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause))
+    );
+
+  it.effect("shares one read between simultaneous content loads and keeps no failure", () =>
+    Effect.gen(function* () {
+      const { url, html } = yield* scripted("Joined once");
+      const { control, request, loads } = yield* host();
+      let found = 0;
+      const bothFound = yield* Deferred.make<void>();
+      control.afterFind = Effect.suspend(() =>
+        ++found === 2 ? Deferred.succeed(bothFound, undefined) : Effect.void
+      );
+      const opened = yield* Deferred.make<void>();
+      control.beforeRead = Deferred.await(opened);
+      // Neither request yields on its op budget: past its lookup, the second runs straight on
+      // to wait on the first one's read before this fiber's next turn.
+      const both = yield* Effect.all([request(url), request(url)], {
+        concurrency: "unbounded"
+      }).pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true), Effect.forkScoped);
+      yield* Deferred.await(bothFound);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(opened, undefined);
+      for (const response of yield* Fiber.join(both)) {
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(yield* Effect.promise(() => response.text()), html);
+      }
+      assert.strictEqual(control.reads, 1);
+      assert.sameMembers([(yield* loads)?.load, (yield* loads)?.load], ["read", "joined"]);
+
+      // A failed read is a fault for this request (the server's 500), and the next one reads again.
+      control.afterFind = Effect.void;
+      control.beforeRead = Effect.void;
+      const missing = yield* scripted("Read again");
+      const store = yield* ContentStore.ContentStore;
+      const key = Content.objectKey(missing.patchId, missing.versionId);
+      yield* store.delete(key);
+      yield* fault(request(missing.url));
+      yield* store.put(key, missing.html);
+      const recovered = yield* request(missing.url);
+      assert.strictEqual(recovered.status, 200);
+      assert.strictEqual(yield* Effect.promise(() => recovered.text()), missing.html);
+      assert.strictEqual(control.reads, 3);
+
+      // Bytes that no longer match the recorded digest are a fault too, and never kept.
+      const tampered = yield* scripted("Tampered");
+      yield* store.put(Content.objectKey(tampered.patchId, tampered.versionId), "<p>tampered</p>");
+      yield* fault(request(tampered.url));
+      yield* fault(request(tampered.url));
+      assert.strictEqual(control.reads, 5);
+    })
+  );
+
+  it.effect("admits every content request, so a kept document is refused once access ends", () =>
+    Effect.gen(function* () {
+      const { url, html, patchId } = yield* scripted("Kept behind the door");
+      const { control, request } = yield* host();
+      const sql = yield* SqlClient.SqlClient;
+      const memberId = "usr_content_member";
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${memberId}, ${memberId}, ${DEV_SEED.companyId}, 'member@example.com', 'Member', 'member')`;
+      const member = {
+        cookie: signedInCookies(signSession({ sub: memberId, email: "member@example.com" })),
+        "accept-encoding": "br"
+      };
+      const opened = yield* request(url, member);
+      assert.strictEqual(opened.status, 200);
+      assert.strictEqual(new TextDecoder().decode(yield* decoded(opened)), html);
+      yield* (yield* Companies.Companies).create({
+        name: "Content outsider",
+        handle: "content-outsider",
+        clerkUserId: "user_content_outsider",
+        email: "content-outsider@example.com",
+        userName: "Outsider"
+      });
+      const refusals = {
+        "signed out": [{ "accept-encoding": "br" }, 401],
+        "another company": [
+          {
+            cookie: signedInCookies(
+              signSession({ sub: "user_content_outsider", email: "content-outsider@example.com" })
+            ),
+            "accept-encoding": "br"
+          },
+          404
+        ]
+      } as const;
+      const refused = Effect.fn(function* (
+        reason: string,
+        headers: Record<string, string>,
+        status: number
+      ) {
+        const response = yield* request(url, headers);
+        assert.strictEqual(response.status, status, reason);
+        // A refusal is never compressed or varied, and never the document.
+        assert.isNull(response.headers.get("content-encoding"), reason);
+        assert.isNull(response.headers.get("vary"), reason);
+        assert.notInclude(yield* Effect.promise(() => response.text()), "Kept behind the door");
+      });
+      for (const [reason, [headers, status]] of Object.entries(refusals))
+        yield* refused(reason, headers, status);
+      yield* (yield* Users.Users).deactivate({ companyId: DEV_SEED.companyId, userId: memberId });
+      yield* refused("deactivated", member, 403);
+      // An operator-disabled patch is absent even to an active colleague.
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${patchId}`;
+      yield* refused("disabled", { cookie: signedInCookies(), "accept-encoding": "br" }, 404);
+      assert.strictEqual(control.reads, 1);
+    })
+  );
+
+  it.effect("compresses content by Accept-Encoding with the stored bytes underneath", () =>
+    Effect.gen(function* () {
+      const { url, html } = yield* scripted("Compressed content");
+      const { request } = yield* host();
+      for (const [accept, coding] of [
+        ["gzip, deflate, br, zstd", "br"],
+        ["gzip", "gzip"],
+        ["br;q=0.5, gzip", "gzip"],
+        ["identity", "identity"],
+        [undefined, "identity"]
+      ] as const) {
+        const response = yield* request(url, {
+          cookie: signedInCookies(),
+          ...(accept === undefined ? {} : { "accept-encoding": accept })
+        });
+        assert.strictEqual(response.status, 200, accept);
+        assert.strictEqual(response.headers.get("vary"), "Accept-Encoding", accept);
+        assert.strictEqual(
+          response.headers.get("content-encoding"),
+          coding === "identity" ? null : coding,
+          accept
+        );
+        assert.strictEqual(response.headers.get("content-type"), "text/html; charset=utf-8");
+        assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+        assert.isTrue(Buffer.from(yield* decoded(response)).equals(Buffer.from(html)), accept);
+      }
+    })
+  );
+
+  it.effect(
+    "sends a document too large to keep as stored, and evicts the least recently used",
+    () =>
+      Effect.gen(function* () {
+        const large = yield* scripted("Too large to keep");
+        // A quarter of the byte bound is one byte short of this document.
+        const tight = yield* host({
+          limits: { "serving.contentCache.bytes": (Buffer.byteLength(large.html) - 1) * 4 }
+        });
+        for (let load = 0; load < 2; load++) {
+          const response = yield* tight.request(large.url, {
+            cookie: signedInCookies(),
+            "accept-encoding": "br"
+          });
+          assert.strictEqual(response.status, 200);
+          assert.isNull(response.headers.get("content-encoding"));
+          assert.strictEqual(yield* Effect.promise(() => response.text()), large.html);
+        }
+        assert.strictEqual(tight.control.reads, 2);
+
+        const { control, request } = yield* host({ limits: { "serving.contentCache.entries": 2 } });
+        const [one, two, three] = [
+          yield* scripted("One"),
+          yield* scripted("Two"),
+          yield* scripted("Three")
+        ];
+        for (const document of [one, two, one]) yield* request(document.url);
+        assert.strictEqual(control.reads, 2);
+        // A third document evicts `two`, now the least recently used.
+        for (const document of [three, one, three]) yield* request(document.url);
+        assert.strictEqual(control.reads, 3);
+        yield* request(two.url);
+        assert.strictEqual(control.reads, 4);
+      })
+  );
+
+  /**
+   * The real compressor, counting its calls and the most running at once. Each call reports
+   * `entered`, then waits for `opened`.
+   */
+  const watchedCompression = Effect.fn(function* () {
+    const entered = yield* Queue.unbounded<void>();
+    const opened = yield* Deferred.make<void>();
+    const watch = { calls: 0, running: 0, most: 0 };
+    const compression = (body: Uint8Array) =>
+      Effect.suspend(() => {
+        watch.calls++;
+        watch.most = Math.max(watch.most, ++watch.running);
+        return Queue.offer(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(opened)),
+          Effect.andThen(compress(body)),
+          Effect.ensuring(Effect.sync(() => watch.running--))
+        );
+      });
+    return { watch, compression, entered, opened };
+  });
+
+  it.effect("compresses one document at a time across the host", () =>
+    Effect.gen(function* () {
+      const { watch, compression, entered, opened } = yield* watchedCompression();
+      const { control, request } = yield* host({ compression });
+      const documents = [yield* scripted("Cold one"), yield* scripted("Cold two")];
+      documents.push(yield* scripted("Cold three"));
+      // The three reads finish together, so all three documents are ready to compress at once.
+      const allReading = yield* Deferred.make<void>();
+      const readsOpened = yield* Deferred.make<void>();
+      control.beforeRead = Effect.suspend(() =>
+        control.reads === 3 ? Deferred.succeed(allReading, undefined) : Effect.void
+      ).pipe(Effect.andThen(Deferred.await(readsOpened)));
+      const all = yield* Effect.all(
+        documents.map((document) =>
+          request(document.url, { cookie: signedInCookies(), "accept-encoding": "br" })
+        ),
+        { concurrency: "unbounded" }
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(allReading);
+      yield* Deferred.succeed(readsOpened, undefined);
+      yield* Queue.take(entered);
+      // The other two run only up to the permit; given turns, they still don't compress.
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      assert.strictEqual(watch.calls, 1);
+      yield* Deferred.succeed(opened, undefined);
+      const responses = yield* Fiber.join(all);
+      for (const [index, response] of responses.entries()) {
+        assert.strictEqual(response.headers.get("content-encoding"), "br");
+        assert.strictEqual(
+          new TextDecoder().decode(yield* decoded(response)),
+          documents[index]!.html
+        );
+      }
+      assert.deepStrictEqual(watch, { calls: 3, running: 0, most: 1 });
+    })
+  );
+
+  it.effect("finishes an abandoned load's work, so an immediate retry joins it", () =>
+    Effect.gen(function* () {
+      const { url, html } = yield* scripted("Abandoned");
+      const { watch, compression, entered, opened } = yield* watchedCompression();
+      const { control, request, loads } = yield* host({ compression });
+      const abandoned = yield* request(url).pipe(Effect.forkScoped);
+      yield* Queue.take(entered);
+      yield* Fiber.interrupt(abandoned);
+      // The retry waits on the abandoned load's work before it is allowed to finish.
+      const found = yield* Deferred.make<void>();
+      control.afterFind = Deferred.succeed(found, undefined).pipe(Effect.asVoid);
+      const retry = yield* request(url).pipe(
+        Effect.provideService(Scheduler.PreventSchedulerYield, true),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(found);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(opened, undefined);
+      const retried = yield* Fiber.join(retry);
+      assert.strictEqual(yield* Effect.promise(() => retried.text()), html);
+      yield* request(url);
+      assert.strictEqual(control.reads, 1);
+      assert.strictEqual(watch.calls, 1);
+      assert.deepStrictEqual(
+        [(yield* loads)?.load, (yield* loads)?.load, (yield* loads)?.load],
+        ["read", "joined", "cached"]
+      );
+    })
+  );
+
+  it.effect("prepares four cold documents at a time, even when their loads are abandoned", () =>
+    Effect.gen(function* () {
+      const { watch, compression, opened } = yield* watchedCompression();
+      yield* Deferred.succeed(opened, undefined);
+      const { control, request } = yield* host({ compression });
+      const documents: Array<{ readonly url: string; readonly html: string }> = [];
+      for (const title of ["One", "Two", "Three", "Four", "Five", "Six"])
+        documents.push(yield* scripted(`Burst ${title}`));
+      const fourReading = yield* Deferred.make<void>();
+      const readsOpened = yield* Deferred.make<void>();
+      control.beforeRead = Effect.suspend(() =>
+        control.reads === 4 ? Deferred.succeed(fourReading, undefined) : Effect.void
+      ).pipe(Effect.andThen(Deferred.await(readsOpened)));
+      const loads: Array<Fiber.Fiber<Response, unknown>> = [];
+      for (const document of documents)
+        loads.push(yield* request(document.url).pipe(Effect.forkScoped));
+      yield* Deferred.await(fourReading);
+      // The other two wait their turn without reading; given turns, they still don't read.
+      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      assert.strictEqual(control.reads, 4);
+      // Every request goes away; the work it started still finishes and keeps each document.
+      for (const load of loads) yield* Fiber.interrupt(load);
+      yield* Deferred.succeed(readsOpened, undefined);
+      for (const document of documents) {
+        const response = yield* request(document.url);
+        assert.strictEqual(yield* Effect.promise(() => response.text()), document.html);
+      }
+      assert.strictEqual(control.reads, 6);
+      assert.strictEqual(watch.calls, 6);
+      assert.strictEqual(watch.most, 1);
+    })
+  );
+
+  it.effect("charges a kept document's raw, brotli and gzip bytes against the bound", () =>
+    Effect.gen(function* () {
+      const documents = [yield* scripted("Budget one"), yield* scripted("Budget two")];
+      // Each document's body in every coding, measured on a host of its own.
+      const probe = yield* host();
+      const held: Array<number> = [];
+      const raw: Array<number> = [];
+      for (const document of documents) {
+        const sizes: Array<number> = [];
+        for (const accept of ["identity", "br", "gzip"]) {
+          const response = yield* probe.request(document.url, {
+            cookie: signedInCookies(),
+            "accept-encoding": accept
+          });
+          sizes.push((yield* Effect.promise(() => response.arrayBuffer())).byteLength);
+        }
+        raw.push(sizes[0]!);
+        held.push(sizes.reduce((sum, size) => sum + size, 0));
+      }
+      // Each fits alone and both fit by raw bytes, but not by everything they hold.
+      const bound = 4 * Math.max(...raw);
+      assert.isAtMost(Math.max(...held), bound);
+      assert.isAtMost(raw[0]! + raw[1]!, bound);
+      assert.isAbove(held[0]! + held[1]!, bound);
+      const { control, request } = yield* host({
+        limits: { "serving.contentCache.bytes": bound }
+      });
+      const [one, two] = documents;
+      for (const document of [one!, two!, two!]) yield* request(document.url);
+      assert.strictEqual(control.reads, 2);
+      // Keeping `two` evicted `one`, the least recently used.
+      yield* request(one!.url);
+      assert.strictEqual(control.reads, 3);
+    })
   );
 });

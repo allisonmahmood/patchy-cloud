@@ -411,6 +411,26 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "serving.contentCache.bytes": {
+    kind: "operating",
+    default: 67108864,
+    unit: "bytes",
+    scope: "host",
+    measure:
+      "Content URL documents kept in memory per host replica, raw, brotli and gzip bytes together, least recently used evicted first; a document over a quarter of this is read and sent uncompressed on every load",
+    refusal: null,
+    overridable: false
+  },
+  "serving.contentCache.entries": {
+    kind: "operating",
+    default: 256,
+    unit: "documents",
+    scope: "host",
+    measure:
+      "Content URL documents kept in memory per host replica, within `serving.contentCache.bytes`",
+    refusal: null,
+    overridable: false
+  },
   "company.connections": {
     kind: "operating",
     default: 4,

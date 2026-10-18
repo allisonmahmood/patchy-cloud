@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scheduler from "effect/Scheduler";
+import * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
@@ -1292,7 +1293,7 @@ it.layer(
     }).pipe(Effect.provide(serverBundles(store.service).pipe(Layer.provide(observed))));
   });
 
-  it.effect("finishes a read for its other waiters when the load that started it stops", () => {
+  it.effect("finishes a read when the loads waiting on it stop, and fails one that hangs", () => {
     const store = countingStore();
     let found: Deferred.Deferred<void> | undefined;
     const observed = observedPatches(() =>
@@ -1320,20 +1321,36 @@ it.layer(
       yield* load(loaded);
       assert.strictEqual(store.control.reads, 1);
 
-      // With no one left waiting, the read stops and keeps nothing.
+      // With no one left waiting, the read still finishes and keeps the bundle, so a retry
+      // joins it instead of reading again.
       const { loaded: alone } = yield* recordServer(store.service, "export default 5;");
       const started = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<void>();
       store.control.beforeRead = Deferred.succeed(started, undefined).pipe(
-        Effect.andThen(Effect.never)
+        Effect.andThen(Deferred.await(released))
       );
       const stopped = yield* load(alone).pipe(Effect.forkScoped);
       yield* Deferred.await(started);
-      yield* Effect.yieldNow;
       yield* Fiber.interrupt(stopped);
-      store.control.beforeRead = Effect.void;
-      assert.strictEqual((yield* load(alone)).bundle, "export default 5;");
+      const retry = yield* load(alone).pipe(Effect.forkScoped);
+      yield* Deferred.succeed(released, undefined);
+      assert.strictEqual((yield* Fiber.join(retry)).bundle, "export default 5;");
       yield* load(alone);
-      assert.strictEqual(store.control.reads, 3);
+      assert.strictEqual(store.control.reads, 2);
+
+      // A read that never settles fails at the job's deadline and keeps nothing.
+      const { loaded: hung } = yield* recordServer(store.service, "export default 7;");
+      const hanging = yield* Deferred.make<void>();
+      store.control.beforeRead = Deferred.succeed(hanging, undefined).pipe(
+        Effect.andThen(Effect.never)
+      );
+      const waiting = yield* Effect.flip(load(hung)).pipe(Effect.forkScoped);
+      yield* Deferred.await(hanging);
+      yield* TestClock.adjust("30 seconds");
+      assert.instanceOf(yield* Fiber.join(waiting), Runtime.SourceUnavailable);
+      store.control.beforeRead = Effect.void;
+      assert.strictEqual((yield* load(hung)).bundle, "export default 7;");
+      assert.strictEqual(store.control.reads, 4);
     }).pipe(Effect.provide(serverBundles(store.service).pipe(Layer.provide(observed))));
   });
 
@@ -1447,56 +1464,56 @@ it.layer(
     }).pipe(Effect.provide(serverBundles(store.service, { "tier2.bundleCache.entries": 2 })));
   });
 
-  it.effect("charges a replaced bundle once and makes it the most recently used", () => {
+  it.effect("joins a read in flight under a changed recorded size and charges it once", () => {
     const store = countingStore();
+    let found: Deferred.Deferred<void> | undefined;
+    const observed = observedPatches(() =>
+      found === undefined ? Effect.void : Deferred.succeed(found, undefined)
+    );
     return Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const kept = (label: string) =>
         Effect.map(recordServer(store.service, label.padEnd(19, ".")), ({ loaded }) => loaded);
-      const [shared, one, two, three, four, five] = yield* Effect.all([
+      const [shared, two, three, four, five] = yield* Effect.all([
         kept("shared"),
-        kept("one"),
         kept("two"),
         kept("three"),
         kept("four"),
         kept("five")
       ]);
-      const started = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
-      const opened = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
-      let next = 0;
-      store.control.beforeRead = Effect.suspend(() => {
-        const read = next++;
-        return Deferred.succeed(started[read]!, undefined).pipe(
-          Effect.andThen(Deferred.await(opened[read]!))
-        );
-      });
-      // A changed recorded size makes a second lookup of the same artifact while the first
-      // is still reading, so both keep it and the second replaces the first.
+      const started = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      store.control.beforeRead = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(opened))
+      );
+      // A second load of the same artifact, whose recorded size changed while the first reads,
+      // joins that read rather than starting another.
       const first = yield* load(shared).pipe(Effect.forkScoped);
-      yield* Deferred.await(started[0]!);
+      yield* Deferred.await(started);
       yield* sql`UPDATE patch_versions SET server_file_size = 24 WHERE id = ${shared.versionId}`;
-      const second = yield* load(shared).pipe(Effect.forkScoped);
-      yield* Deferred.await(started[1]!);
+      const events = yield* recordingEvents;
+      found = yield* Deferred.make<void>();
+      const second = yield* events
+        .within(load(shared))
+        .pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true), Effect.forkScoped);
+      yield* Deferred.await(found);
+      found = undefined;
+      yield* Effect.yieldNow;
       store.control.beforeRead = Effect.void;
-      yield* Deferred.succeed(opened[0]!, undefined);
-      yield* Fiber.join(first);
-      yield* load(one);
-      yield* Deferred.succeed(opened[1]!, undefined);
-      yield* Fiber.join(second);
-      // 24 bytes for the replacement and four of 19 fill the bound exactly; `one` is now the
-      // least recently used, so `five` evicts it alone.
+      yield* Deferred.succeed(opened, undefined);
+      assert.strictEqual((yield* Fiber.join(first)).bundle, (yield* Fiber.join(second)).bundle);
+      assert.strictEqual(yield* events.bundleLoad, "joined");
+      assert.strictEqual(store.control.reads, 1);
+      // Five bundles of 19 bytes fit the bound only if `shared` was charged once.
       for (const version of [two, three, four, five]) yield* load(version);
-      assert.strictEqual(store.control.reads, 7);
-      for (const version of [two, three, four, five, shared]) yield* load(version);
-      assert.strictEqual(store.control.reads, 7);
-      yield* load(one);
-      assert.strictEqual(store.control.reads, 8);
+      for (const version of [shared, two, three, four, five]) yield* load(version);
+      assert.strictEqual(store.control.reads, 5);
     }).pipe(
       Effect.provide(
         serverBundles(store.service, {
           "tier2.bundleCache.bytes": 100,
           "tier2.bundleCache.entries": 100
-        })
+        }).pipe(Layer.provide(observed))
       )
     );
   });
@@ -1557,3 +1574,31 @@ it.layer(
     }
   );
 });
+
+it.effect("settles a job whose host closes before it runs, so no load is left waiting", () =>
+  Effect.gen(function* () {
+    const host = yield* Scope.make();
+    let reads = 0;
+    const load = yield* Content.makeArtifactCache({
+      maxBytes: 1024,
+      maxEntries: 8,
+      identity: (key: string) => key,
+      size: () => 1,
+      read: () =>
+        Effect.sync(() => {
+          reads++;
+          return { value: "kept", bytes: 1 };
+        }),
+      loaded: () => Effect.void
+    }).pipe(Effect.provideService(Scope.Scope, host));
+    // The load forks its job, which is only scheduled, then waits on it.
+    const waiting = yield* Effect.exit(load("a")).pipe(
+      Effect.forkScoped({ startImmediately: true })
+    );
+    yield* Scope.close(host, Exit.void);
+    assert.isTrue(Exit.hasInterrupts(yield* Fiber.join(waiting)));
+    // A later load of the same identity starts afresh rather than joining the stopped job.
+    assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(load("a"))));
+    assert.strictEqual(reads, 0);
+  })
+);

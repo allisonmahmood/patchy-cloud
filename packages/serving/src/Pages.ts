@@ -3,14 +3,18 @@
  * (`/:company/:name[/~v/:n][/route]`) and exact-version content URLs.
  * The server owns the root and catch-all together. Pages read through
  * `patches`; metadata and visits go through `Patches`, and `Content` reads
- * the HTML only after admission. The serving guarantees these routes answer
- * under are `serving-headers.ts`.
+ * the HTML only after admission. A content URL's document comes from the
+ * host's memory once read, compressed by `Accept-Encoding`. The serving
+ * guarantees these routes answer under are `serving-headers.ts`.
  */
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -18,13 +22,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
-import { newInternalId } from "@patchy/core";
+import { contentHash, newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
+import { DeploymentConfig } from "@patchy/limits";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
 import * as Door from "./Door.js";
 import { renderNotFound } from "./render.js";
 import { renderAddressNotice } from "./address-notice.js";
-import { negotiate, precompress } from "./compression.js";
+import { compress, negotiate, type Precompressed } from "./compression.js";
 import {
   renderPatchWrapper,
   renderShellNotice,
@@ -42,6 +47,16 @@ import {
   PATCH_PERMISSIONS_POLICY,
   shellContentSecurityPolicy
 } from "./serving-headers.js";
+
+/** A version's stored document whose bytes no longer match its recorded digest: a fault. */
+class StoredDocumentMismatch extends Schema.TaggedError<StoredDocumentMismatch>()(
+  "StoredDocumentMismatch",
+  { objectKey: Schema.String }
+) {
+  override get message() {
+    return `The stored document at ${this.objectKey} does not match its recorded digest.`;
+  }
+}
 
 /** The HTML 404, uncached like every non-patch response. */
 export const notFound = HttpServerResponse.html(renderNotFound()).pipe(
@@ -63,7 +78,72 @@ const noticeHeaders = {
   "content-security-policy": PATCH_CONTENT_SECURITY_POLICY
 };
 
-const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "content") {
+/** What names a version's stored document: its object key and recorded digest, and its size. */
+type StoredDocument = Pick<Patches.PatchVersion, "objectKey" | "contentHash" | "fileSize">;
+
+/** A document in every coding while the host keeps it; one too large to keep has identity alone. */
+type Document = Precompressed | Pick<Precompressed, "identity">;
+
+const encoder = new TextEncoder();
+
+/** How a kept document is compressed: `compress`, which tests replace to watch it run. */
+export const DocumentCompression = Context.Reference<
+  (body: Uint8Array) => Effect.Effect<Precompressed>
+>("@patchy/serving/Pages/DocumentCompression", { defaultValue: () => compress });
+
+/**
+ * Content URL documents in memory, within the `serving.contentCache.*` bounds. The body is the
+ * stored bytes verbatim, the same for every viewer who passes the door, so a kept or compressed
+ * body suits them all: the nonce stays in the URL and every header is computed per request. A
+ * miss checks the bytes against the version's recorded digest before anyone receives them.
+ *
+ * A host reads and prepares at most four documents at a time, from the read through keeping
+ * them, so documents waiting their turn hold no bytes; their wait counts against the job's
+ * deadline. Within those four, it compresses one at a time, leaving the rest of libuv's
+ * threadpool to file, crypto and DNS work, while the others' storage reads overlap.
+ */
+const makeDocuments = Effect.gen(function* () {
+  const content = yield* Content.Content;
+  const deployment = yield* DeploymentConfig.load;
+  const compressDocument = yield* DocumentCompression;
+  const preparing = yield* Semaphore.make(4);
+  const compressing = yield* Semaphore.make(1);
+  const prepare = Effect.fnUntraced(function* (stored: StoredDocument, keep: boolean) {
+    const html = yield* content.read(stored);
+    if (contentHash(html) !== stored.contentHash)
+      return yield* new StoredDocumentMismatch({ objectKey: stored.objectKey });
+    const identity = encoder.encode(html);
+    // One that won't be kept goes out as stored, rather than compressed on every load. The
+    // permit is held until zlib finishes, so the bound counts native work, not waiting fibers.
+    const document: Document = keep
+      ? yield* compressing.withPermits(1)(Effect.uninterruptible(compressDocument(identity)))
+      : { identity };
+    // Every coding it holds counts against the byte bound.
+    const bytes = Object.values(document).reduce((sum, body) => sum + body.byteLength, 0);
+    return { value: document, bytes };
+  });
+  return yield* Content.makeArtifactCache({
+    maxBytes: deployment.get("serving.contentCache.bytes"),
+    maxEntries: deployment.get("serving.contentCache.entries"),
+    identity: (stored: StoredDocument) => `${stored.objectKey}#${stored.contentHash}`,
+    size: (stored) => stored.fileSize,
+    read: (stored, keep) => preparing.withPermits(1)(prepare(stored, keep)),
+    loaded: (contentLoad) => WideEvents.enrich({ contentLoad })
+  });
+});
+type Documents = Effect.Success<typeof makeDocuments>;
+
+/** The coding and body to send a reader whose request asked for `acceptEncoding`. */
+const negotiated = (document: Document, acceptEncoding: string | undefined) => {
+  if (!("br" in document)) return { coding: "identity", body: document.identity } as const;
+  const coding = negotiate(acceptEncoding);
+  return { coding, body: document[coding] };
+};
+
+const servePatch = Effect.fn("Pages.servePatch")(function* (
+  kind: "address" | "content",
+  documents: Documents
+) {
   const content = yield* Content.Content;
   const patches = yield* Patches.Patches;
   const { result: admission, cookies, completedHandshake } = yield* Door.Admission;
@@ -167,8 +247,26 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
       isPublic ? [] : cookies
     );
   }
+  const { version } = served.value;
+  // Simultaneous misses join on an equal key, so it holds only what names the bytes.
+  const document =
+    kind === "content"
+      ? yield* documents({
+          objectKey: version.objectKey,
+          contentHash: version.contentHash,
+          fileSize: version.fileSize
+        }).pipe(
+          Effect.catchTags({
+            InvalidObjectKey: Effect.die,
+            StoreUnavailable: Effect.die,
+            StoredDocumentMismatch: Effect.die,
+            TimeoutError: Effect.die
+          })
+        )
+      : undefined;
+  // Only a tier 0 shell embeds its document; a scripted one frames the content URL.
   const html =
-    kind === "content" || served.value.version.tier === 0
+    kind === "address" && served.value.version.tier === 0
       ? yield* content
           .read(served.value.version)
           .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }))
@@ -205,10 +303,34 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
       })
     );
 
-  const response = HttpServerResponse.text(
-    kind === "content"
-      ? html
-      : renderPatchWrapper({
+  const headers = {
+    ...patchUrlHeaders,
+    "content-security-policy":
+      kind === "content"
+        ? contentSecurityPolicy(served.value.version.tier)
+        : shellContentSecurityPolicy(
+            served.value.version.tier,
+            !isPublic || publicDirectory ? session.clerk?.frontendApiHost : undefined
+          ),
+    ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
+    "cache-control":
+      isPublic && url?.searchParams.get("__patchy_shell_reload") !== "1"
+        ? PUBLIC_PATCH_CACHE_CONTROL
+        : PRIVATE_PATCH_CACHE_CONTROL
+  };
+  const sent = document && negotiated(document, request.headers["accept-encoding"]);
+  if (sent) yield* WideEvents.enrich({ contentEncoding: sent.coding });
+  const response = sent
+    ? HttpServerResponse.uint8Array(sent.body, {
+        contentType: "text/html; charset=utf-8",
+        headers: {
+          ...headers,
+          vary: "Accept-Encoding",
+          ...(sent.coding === "identity" ? {} : { "content-encoding": sent.coding })
+        }
+      })
+    : HttpServerResponse.text(
+        renderPatchWrapper({
           ...served.value,
           html,
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
@@ -227,24 +349,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
               }
             : {})
         }),
-    { contentType: kind === "content" ? "text/html; charset=utf-8" : "text/html" }
-  ).pipe(
-    HttpServerResponse.setHeaders({
-      ...patchUrlHeaders,
-      "content-security-policy":
-        kind === "content"
-          ? contentSecurityPolicy(served.value.version.tier)
-          : shellContentSecurityPolicy(
-              served.value.version.tier,
-              !isPublic || publicDirectory ? session.clerk?.frontendApiHost : undefined
-            ),
-      ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
-      "cache-control":
-        isPublic && url?.searchParams.get("__patchy_shell_reload") !== "1"
-          ? PUBLIC_PATCH_CACHE_CONTROL
-          : PRIVATE_PATCH_CACHE_CONTROL
-    })
-  );
+        { contentType: "text/html", headers }
+      );
   return isPublic ? response : withCookies(response, cookies);
 });
 
@@ -275,15 +381,16 @@ const addressRouteOf = (suffix: string): { versionNumber?: number | null; route:
  */
 const patches = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add("GET", "/:company/:name/*", servePatch("address"));
-    yield* router.add("GET", "/~content/:patchId/:versionId", servePatch("content"));
+    const documents = yield* makeDocuments;
+    yield* router.add("GET", "/:company/:name/*", servePatch("address", documents));
+    yield* router.add("GET", "/~content/:patchId/:versionId", servePatch("content", documents));
   })
 ).pipe(Layer.provide(Door.layer));
 
 const otherPages = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
-    const broker = precompress(new TextEncoder().encode(brokerScript));
+    const broker = yield* compress(encoder.encode(brokerScript));
     yield* router.add(
       "GET",
       "/~shell/broker.js",
@@ -354,11 +461,12 @@ export const health = HttpRouter.use((router) =>
 
 export const layer: Layer.Layer<
   never,
-  Config.ConfigError,
+  Config.ConfigError | DeploymentConfig.InvalidLimit,
   | HttpRouter.HttpRouter
   | Session.Session
   | Companies.Companies
   | Users.Users
   | SqlClient.SqlClient
+  | Content.Content
   | HttpRouter.Request.From<"Requires", Content.Content | Patches.Patches | Session.Session>
 > = Layer.mergeAll(patches, otherPages, health);

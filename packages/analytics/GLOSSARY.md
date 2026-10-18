@@ -41,7 +41,11 @@ What became of a run's result: `delivered` as a snapshot, `unchanged` as up-to-d
 _Avoid_: outcome (whether the work succeeded)
 
 **Bundle load**:
-`bundleLoad`: where a tier 2 call or re-run's last load to reach the bundle cache got its version's server bundle: `cached` from the host's memory, `read` from object storage by this call, or `joined` by waiting on another call's lookup of the same artifact. That lookup usually reads storage but may reuse a bundle kept a moment before. A failed read keeps `read` or `joined`. A load the retained-version checks refuse never reaches the cache, records nothing and leaves an earlier attempt's value in place. An action's nested calls reuse its bundle. A retried mutation loads again on each attempt that passes those checks and reports the last, usually `cached`; an earlier attempt's read shows only in its duration.
+`bundleLoad`: where a tier 2 call or re-run's last load to reach the bundle cache got its version's server bundle: `cached` from the host's memory, `read` from object storage by a read this call started, or `joined` by waiting on a read of the same artifact another call started, which finishes even if that call has stopped. A failed read keeps `read` or `joined`. A load the retained-version checks refuse never reaches the cache, records nothing and leaves an earlier attempt's value in place. An action's nested calls reuse its bundle. A retried mutation loads again on each attempt that passes those checks and reports the last, usually `cached`; an earlier attempt's read shows only in its duration.
+_Avoid_: cache hit (`joined` is neither a hit nor its own read)
+
+**Content load**:
+`contentLoad`: where a content URL request got its version's document: `cached` from the host's memory, `read` from object storage by a read this request started, or `joined` by waiting on a read of the same document another request started, which finishes even if that request has stopped. A failed read keeps `read` or `joined`. A request the door or a notice answers never reaches the documents and records none. `contentEncoding` is the `Content-Encoding` the document went out in: `br`, `gzip` or `identity`, which a document too large to keep always is.
 _Avoid_: cache hit (`joined` is neither a hit nor its own read)
 
 **Rebound**:
