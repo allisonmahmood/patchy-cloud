@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Effect from "effect/Effect";
@@ -10,7 +11,9 @@ const channel = "patchy_runtime_wakes";
 const Wake = Schema.fromJsonString(
   Schema.Struct({
     keys: Schema.Array(Schema.String.check(Schema.isMaxLength(512))),
-    causedByEventId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128)))
+    causedByEventId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
+    // The publishing host. Older hosts and the directory trigger send none.
+    origin: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64)))
   })
 );
 const decodeWake = Schema.decodeUnknownEffect(Wake);
@@ -27,10 +30,14 @@ export class WakeDeliveryFailed extends Schema.TaggedError<WakeDeliveryFailed>()
   }
 }
 
-/** One LISTEN connection per host. A lost connection always forces durable reconciliation. */
+/**
+ * One LISTEN connection per host. A lost connection always forces durable reconciliation.
+ * Publish wakes this host in memory, so its listener skips the NOTIFYs it sent itself.
+ */
 export const make = Effect.gen(function* () {
   const pg = yield* PgClient.PgClient;
   const local = yield* Wakes.make;
+  const origin = yield* Effect.sync(randomUUID);
   const listen = Effect.scoped(
     Effect.gen(function* () {
       const notifications = yield* pg.listen(channel);
@@ -42,11 +49,11 @@ export const make = Effect.gen(function* () {
           const wake = yield* decodeWake(notification.payload).pipe(
             Effect.catch((cause) =>
               Effect.logWarning(new WakeDeliveryFailed({ operation: "decode", cause })).pipe(
-                Effect.as({ keys: [] as readonly string[], causedByEventId: undefined })
+                Effect.as<typeof Wake.Type>({ keys: [] })
               )
             )
           );
-          yield* local.publish(wake.keys, wake.causedByEventId);
+          if (wake.origin !== origin) yield* local.publish(wake.keys, wake.causedByEventId);
         })
       );
     })
@@ -65,13 +72,13 @@ export const make = Effect.gen(function* () {
       const causedByEventId = cause ?? (yield* WideEvents.currentEventId);
       yield* local.publish(keys, causedByEventId);
       // PostgreSQL NOTIFY accepts fewer than 8,000 bytes. Split keys, never resource data.
-      const attribution = causedByEventId === undefined ? {} : { causedByEventId };
-      const overhead = encoder.encode(encodeWake({ keys: [], ...attribution })).byteLength;
+      const envelope = causedByEventId === undefined ? { origin } : { origin, causedByEventId };
+      const overhead = encoder.encode(encodeWake({ keys: [], ...envelope })).byteLength;
       let batch: string[] = [];
       let bytes = overhead;
       const send = (values: readonly string[]) =>
         pg
-          .notify(channel, encodeWake({ keys: values, ...attribution }))
+          .notify(channel, encodeWake({ keys: values, ...envelope }))
           .pipe(
             Effect.catch((cause) =>
               Effect.logWarning(new WakeDeliveryFailed({ operation: "notify", cause }))
