@@ -1447,6 +1447,60 @@ it.layer(
     }).pipe(Effect.provide(serverBundles(store.service, { "tier2.bundleCache.entries": 2 })));
   });
 
+  it.effect("charges a replaced bundle once and makes it the most recently used", () => {
+    const store = countingStore();
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const kept = (label: string) =>
+        Effect.map(recordServer(store.service, label.padEnd(19, ".")), ({ loaded }) => loaded);
+      const [shared, one, two, three, four, five] = yield* Effect.all([
+        kept("shared"),
+        kept("one"),
+        kept("two"),
+        kept("three"),
+        kept("four"),
+        kept("five")
+      ]);
+      const started = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+      const opened = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+      let next = 0;
+      store.control.beforeRead = Effect.suspend(() => {
+        const read = next++;
+        return Deferred.succeed(started[read]!, undefined).pipe(
+          Effect.andThen(Deferred.await(opened[read]!))
+        );
+      });
+      // A changed recorded size makes a second lookup of the same artifact while the first
+      // is still reading, so both keep it and the second replaces the first.
+      const first = yield* load(shared).pipe(Effect.forkScoped);
+      yield* Deferred.await(started[0]!);
+      yield* sql`UPDATE patch_versions SET server_file_size = 24 WHERE id = ${shared.versionId}`;
+      const second = yield* load(shared).pipe(Effect.forkScoped);
+      yield* Deferred.await(started[1]!);
+      store.control.beforeRead = Effect.void;
+      yield* Deferred.succeed(opened[0]!, undefined);
+      yield* Fiber.join(first);
+      yield* load(one);
+      yield* Deferred.succeed(opened[1]!, undefined);
+      yield* Fiber.join(second);
+      // 24 bytes for the replacement and four of 19 fill the bound exactly; `one` is now the
+      // least recently used, so `five` evicts it alone.
+      for (const version of [two, three, four, five]) yield* load(version);
+      assert.strictEqual(store.control.reads, 7);
+      for (const version of [two, three, four, five, shared]) yield* load(version);
+      assert.strictEqual(store.control.reads, 7);
+      yield* load(one);
+      assert.strictEqual(store.control.reads, 8);
+    }).pipe(
+      Effect.provide(
+        serverBundles(store.service, {
+          "tier2.bundleCache.bytes": 100,
+          "tier2.bundleCache.entries": 100
+        })
+      )
+    );
+  });
+
   it.effect("records the last load's source when one event loads twice", () => {
     // A retried mutation loads again on each attempt in the same event.
     const store = countingStore();
