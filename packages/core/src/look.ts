@@ -294,16 +294,27 @@ const checkLogo = (svg: string): string[] => {
   let root: SaxesTagNS | undefined;
   const errors: string[] = [];
   const targets = new Set<string>();
-  // A logo can repeat one style on thousands of elements; each CSS text parses once.
-  const parsed = new Map<string, readonly string[]>();
-  const css = (text: string, context: string) => {
+  // A logo can repeat one style on thousands of elements; each CSS text parses once. A value
+  // css-tree cannot read is null.
+  const parsed = new Map<string, readonly string[] | null>();
+  /** Adds what `text` references to the targets; false when it is a value css-tree cannot read. */
+  const css = (text: string, context: "stylesheet" | "declarationList" | "value") => {
     const key = `${context}\u0000${text}`;
     let found = parsed.get(key);
     if (found === undefined) {
-      found = cssReferences(CssTree.parse(text, { context })).map(({ target }) => target);
+      try {
+        found = cssReferences(CssTree.parse(text, { context })).map(({ target }) => target);
+      } catch (error) {
+        // A stylesheet or declaration list recovers from what it cannot read. A value throws
+        // instead: a SyntaxError, or a RangeError for brackets nested past the stack.
+        if (context !== "value" || !(error instanceof SyntaxError || error instanceof RangeError))
+          throw error;
+        found = null;
+      }
       parsed.set(key, found);
     }
-    for (const target of found) targets.add(target);
+    for (const target of found ?? []) targets.add(target);
+    return found !== null;
   };
   // Each open element and, for a <style>, its stylesheet.
   const open: Array<{ readonly tag: string; text: string }> = [];
@@ -347,7 +358,12 @@ const checkLogo = (svg: string): string[] => {
         errors.push(`logo.svg has an ${name} attribute; a logo is a picture, not a program.`);
       else if (attribute === "href" || attribute === "src") targets.add(value);
       else if (attribute === "style") css(value, "declarationList");
-      else if (/url\(/i.test(value)) css(value, "value");
+      // Browsers read only some attributes as CSS; checking every url( spares listing them, so
+      // one that isn't CSS is refused rather than passed unchecked.
+      else if (/url\(/i.test(value) && !css(value, "value"))
+        errors.push(
+          `logo.svg's ${name} has url( but does not read as CSS, so what it points at cannot be checked; take the url( out, or write plain CSS such as url(#paint).`
+        );
     }
     if (tag === "script")
       errors.push("logo.svg has a <script>; a logo is a picture, not a program.");
