@@ -25,7 +25,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite": "0.5.10",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
@@ -42,6 +42,6 @@
     "@patchy/sql": "workspace:*",
     "@types/pg": "^8.23.1",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.4"
   }
 }
