@@ -308,7 +308,27 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
     quiesce: (taskId, bindingEpoch) =>
       bounded("quiesce", taskId, post(taskId, "quiesce", { bindingEpoch }).pipe(Effect.asVoid)),
     bind: (taskId, request) =>
-      bounded("bind", taskId, post(taskId, "bind", request).pipe(Effect.flatMap(decodeBind))),
+      bounded(
+        "bind",
+        taskId,
+        // Same checkout, same wire: a version bind always goes by hash first.
+        TaskProvider.bindByHash(request, (body) =>
+          post(taskId, "bind", body).pipe(
+            Effect.flatMap(decodeBind),
+            Effect.catchTags({
+              SchemaError: (cause) =>
+                Effect.fail(
+                  new TaskProvider.TaskProviderError({
+                    operation: "bind",
+                    taskId,
+                    reason: "protocol",
+                    cause
+                  })
+                )
+            })
+          )
+        )
+      ),
     invoke: (taskId, request) =>
       bounded(
         "invoke",

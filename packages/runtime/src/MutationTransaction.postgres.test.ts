@@ -131,7 +131,7 @@ const host = Effect.fnUntraced(function* (
   execute: (
     request: GuestProtocol.Invoke,
     gateway: CallbackGateway.CallbackGateway["Service"]
-  ) => Effect.Effect<GuestProtocol.InvokeReply>,
+  ) => Effect.Effect<GuestProtocol.InvokeReply, Executor.ExecutionError>,
   adaptSession: (session: MutationTransaction.Session) => MutationTransaction.Session = (session) =>
     session,
   adaptStorage: (
@@ -356,6 +356,68 @@ it.layer(services)("Mutation SERIALIZABLE acceptance", (it) => {
       );
       assert.deepStrictEqual(yield* fixture.value, [{ value: 30 }]);
     }).pipe(Effect.scoped, TestClock.withLive, Random.withSeed("mutation-conflict-exhaustion"))
+  );
+
+  it.effect("keeps all three conflict attempts and the mutation key after a rebind", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup("mutation40017");
+      let invokes = 0;
+      // The first invoke finds its process reaped since bind, refused before any handler ran.
+      const afterRebind =
+        (
+          run: (
+            request: GuestProtocol.Invoke,
+            gateway: CallbackGateway.CallbackGateway["Service"]
+          ) => Effect.Effect<GuestProtocol.InvokeReply>
+        ) =>
+        (request: GuestProtocol.Invoke, gateway: CallbackGateway.CallbackGateway["Service"]) =>
+          invokes++ === 0
+            ? Effect.fail(
+                new Executor.ExecutionError({ operation: "invoke", reason: "stale_generation" })
+              )
+            : run(request, gateway);
+      let writes = 0;
+      const contended = yield* host(
+        fixture,
+        afterRebind((request, gateway) =>
+          Effect.gen(function* () {
+            const read = yield* gateway.callback(request.callback.capability, request, {
+              op: "tables.get",
+              args: { table: "counter", id: fixture.id }
+            });
+            assert.isTrue(read.ok);
+            // A separate committed writer invalidates every attempt's snapshot.
+            yield* fixture.handlers["tables.update"]
+              .run({ table: "counter", id: fixture.id, patch: { value: ++writes * 10 } })
+              .pipe(Effect.provideService(Binding.Binding, fixture.binding), Effect.orDie);
+            return yield* increment(request, gateway);
+          })
+        )
+      );
+      const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+        })
+      );
+      const failure = yield* events
+        .withEvent({ type: "request" }, contended.call())
+        .pipe(Effect.flip);
+      assert.deepInclude(Runtime.toFailure(failure), { code: "write_conflict", value: 3 });
+      assert.include(yield* Queue.take(records), { attempts: 3, rebound: true });
+      assert.strictEqual(invokes, 4);
+      assert.deepStrictEqual(yield* fixture.value, [{ value: 30 }]);
+
+      invokes = 0;
+      const committing = yield* host(fixture, afterRebind(increment));
+      const key = yield* MutationTransaction.mint;
+      const committed = yield* committing.call(key);
+      assert.deepInclude(committed, { ok: true, value: 31 });
+      // The same key replays the stored reply without running the handler again.
+      assert.deepStrictEqual(yield* committing.call(key), committed);
+      assert.strictEqual(invokes, 2);
+      assert.deepStrictEqual(yield* fixture.value, [{ value: 31 }]);
+    }).pipe(Effect.scoped, TestClock.withLive, Random.withSeed("rebound-conflict-exhaustion"))
   );
 
   it.effect(

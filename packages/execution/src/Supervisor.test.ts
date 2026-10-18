@@ -272,6 +272,59 @@ it.live(
 );
 
 it.live(
+  "makes a bind by hash wait for a loading version and check its epoch after the wait",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: largeAggregate
+      });
+      // Describing takes a second, so each version stays loading while a bind by hash arrives.
+      const slow = `export default { async fetch(request) {
+        const input = await request.json();
+        if (input.type === "describe") {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          return Response.json({ ok: true, handlers: {} });
+        }
+        return Response.json({ ok: true, value: "alive" });
+      }};`;
+      const byHash = (versionId: string, bindingEpoch: number) => {
+        const { companyId, patchId, sha256 } = bundle(versionId, slow);
+        return supervisor.bind({
+          companyId,
+          bindingEpoch,
+          binding: { companyId, patchId, versionId, sha256 }
+        });
+      };
+      yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 1 });
+      const loading = yield* bind(supervisor, "ver_slow", slow).pipe(Effect.forkChild);
+      yield* statsWhen(supervisor, (stats) => stats.processes.length === 1);
+      const held = yield* byHash("ver_slow", 1);
+      expect(held).toEqual(yield* Fiber.join(loading));
+      expect(yield* supervisor.invoke(invocation(held, host.url))).toMatchObject({
+        outcome: "returned"
+      });
+
+      const replaced = yield* bind(supervisor, "ver_adopted", slow).pipe(
+        Effect.result,
+        Effect.forkChild
+      );
+      yield* statsWhen(supervisor, (stats) => stats.processes.length === 2);
+      const waiting = yield* byHash("ver_adopted", 1).pipe(Effect.result, Effect.forkChild);
+      yield* Effect.sleep(200);
+      // Adoption raises the epoch while both binds wait for the load.
+      yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 2 });
+      for (const fiber of [replaced, waiting])
+        expect(yield* Fiber.join(fiber)).toMatchObject({
+          _tag: "Failure",
+          failure: { reason: "stale_epoch" }
+        });
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
   "preserves callback transport, timeout, and file-size refusals through the fence",
   () =>
     Effect.gen(function* () {

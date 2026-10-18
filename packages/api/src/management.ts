@@ -41,11 +41,25 @@ export const BindRequest = Schema.Struct({
   companyId: identity,
   bindingEpoch: BindingEpoch,
   bundle: Schema.optionalKey(GuestProtocol.Bundle),
+  /**
+   * A bind by hash: the version without its bytes, never beside `bundle`. A supervisor that
+   * doesn't hold it refuses `bundle_required` before any effect, and the host sends the bundle.
+   * Older supervisors refuse it as an unknown key, also before any effect, and get the bundle
+   * too; fleet hosts send it only to their own release, so that costs nothing in a rollout.
+   */
+  binding: Schema.optionalKey(GuestProtocol.BundleBinding),
   operatingLimits: Schema.optionalKey(SupervisorLimits),
   configRevision: Schema.optionalKey(LimitRevision),
   /** Authenticated hosts register their private callback address during rolling replacement. */
   callbackUrls: Schema.optionalKey(CallbackUrls)
-});
+}).check(
+  Schema.makeFilter(
+    (request) =>
+      request.bundle === undefined ||
+      request.binding === undefined ||
+      "A bind names its version by bundle or by binding, not both."
+  )
+);
 export type BindRequest = typeof BindRequest.Type;
 export const BindReply = Schema.Struct({
   bindingEpoch: BindingEpoch,
