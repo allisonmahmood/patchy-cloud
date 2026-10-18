@@ -154,6 +154,10 @@ The shell sends ordered subscribe/unsubscribe changes or replaces the complete
 desired set on reconnect. Generation and sequence fences discard obsolete work;
 a persistent sequence gap requests a resync. Equal vectors receive up-to-date
 without a read, and unchanged results advance their vectors without sending data.
+A replace that names a running subscription unchanged keeps its read. The result
+answers the replace only if its revisions still match a fence taken after the
+replace; otherwise the subscription runs again, so a replace recovering a write
+whose wake was lost is never answered with older data.
 Refused reads retain observed source dependencies so restore and reshare can recover.
 
 Each document allows 64 subscriptions, each patch 256 and each company 1024;
