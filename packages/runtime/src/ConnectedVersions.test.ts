@@ -6,6 +6,8 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as ConnectedVersions from "./ConnectedVersions.js";
@@ -41,13 +43,21 @@ type Step =
     }
   | { readonly kind: "bind"; readonly versionId: string };
 
+/** How long a lost management request takes to fail: the ECS provider's own timeout. */
+const lostMs = registry["tier2.settlement.cleanup"].default + 5_000;
+
 /**
  * One host's connected versions over a supervisor that holds `resident`. Touches and binds
- * arrive in `next` in the order they reach it; `outcomes` overrides what a touch finds.
+ * arrive in `next` in the order they reach it; `outcomes` overrides what a touch finds. The
+ * touches numbered in `lost`, counting from zero, never arrive and fail after `lostMs`.
+ * `touchedAt` records when each touch was sent, `landedAt` when one restarted an idle clock.
  */
 const harness = Effect.gen(function* () {
   const steps = yield* Queue.unbounded<Step>();
   const touchedAt = new Map<string, number[]>();
+  const landedAt = new Map<string, number[]>();
+  const lost = new Set<number>();
+  let sent = 0;
   const resident = new Set<string>();
   const outcomes = new Map<string, ExecutionLifecycle.TouchOutcome>();
   const recorded = yield* Queue.unbounded<WideEvents.WideEvent>();
@@ -65,11 +75,16 @@ const harness = Effect.gen(function* () {
           release: Effect.void
         }),
       touch: Effect.fnUntraced(function* ({ versionId }) {
+        const now = yield* Clock.currentTimeMillis;
+        touchedAt.set(versionId, [...(touchedAt.get(versionId) ?? []), now]);
+        if (lost.has(sent++)) {
+          yield* Effect.sleep(lostMs);
+          yield* Queue.offer(steps, { kind: "touch", versionId, outcome: "failed" });
+          return "failed" as const;
+        }
         const outcome = outcomes.get(versionId) ?? (resident.has(versionId) ? "touched" : "absent");
-        touchedAt.set(versionId, [
-          ...(touchedAt.get(versionId) ?? []),
-          yield* Clock.currentTimeMillis
-        ]);
+        if (outcome === "touched")
+          landedAt.set(versionId, [...(landedAt.get(versionId) ?? []), now]);
         yield* Queue.offer(steps, { kind: "touch", versionId, outcome });
         return outcome;
       })
@@ -106,6 +121,8 @@ const harness = Effect.gen(function* () {
     resident,
     outcomes,
     touchedAt,
+    landedAt,
+    lost,
     next: Queue.take(steps),
     event: Queue.take(recorded)
   };
@@ -196,11 +213,11 @@ it.effect("touches each version once per turn before its idle window ends, until
     for (const versionId of ["ver_a", "ver_b"]) {
       const times = host.touchedAt.get(versionId)!;
       // Each version's touches are its own, however many documents hold it.
-      assert.isAtLeast(times.length, Math.floor(span / (idle * 0.45)), versionId);
-      assert.isAtMost(times.length, Math.ceil(span / (idle * 0.35)) + 1, versionId);
+      assert.isAtLeast(times.length, Math.floor(span / (idle * 0.4)), versionId);
+      assert.isAtMost(times.length, Math.ceil(span / (idle * 0.3)) + 1, versionId);
       // The stepped clock can register a sleep up to one step late.
       for (let index = 1; index < times.length; index++)
-        assert.isAtMost(times[index]! - times[index - 1]!, idle * 0.45 + 1_000, versionId);
+        assert.isAtMost(times[index]! - times[index - 1]!, idle * 0.4 + 1_000, versionId);
     }
     // One document leaving keeps the version touched; the last one stops it.
     yield* Scope.close(a[0]!, Exit.void);
@@ -223,5 +240,44 @@ it.effect("touches each version once per turn before its idle window ends, until
       new Map([...host.touchedAt].map(([versionId, times]) => [versionId, times.length])),
       stopped
     );
+  }).pipe(Effect.scoped)
+);
+
+it.effect("lands a touch before the reap even when the one before it is lost", () =>
+  Effect.gen(function* () {
+    const host = yield* harness;
+    host.resident.add("ver_a");
+    // Every second touch is lost and fails only at the provider's timeout.
+    for (let touch = 1; touch < 40; touch += 2) host.lost.add(touch);
+    // The widest spacing the jitter allows, the worst case for a lost touch.
+    const document = yield* host.open("ver_a", false).pipe(
+      Effect.provideService(Random.Random, {
+        nextIntUnsafe: () => 0,
+        nextDoubleUnsafe: () => 1 - 1e-9
+      })
+    );
+    for (let elapsed = 0; elapsed < 10 * 60_000; elapsed += 1_000) yield* TestClock.adjust(1_000);
+    const landed = host.landedAt.get("ver_a")!;
+    assert.isAtLeast(landed.length, 10);
+    // The supervisor reaps a process idle for `idle`; each landing restarts that clock.
+    for (let index = 1; index < landed.length; index++)
+      assert.isBelow(landed[index]! - landed[index - 1]!, idle, `landing ${index}`);
+    yield* Scope.close(document, Exit.void);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("starts one keepalive for concurrent first holders of a version", () =>
+  Effect.gen(function* () {
+    const host = yield* harness;
+    host.resident.add("ver_a");
+    // A small operation budget makes every fiber yield every few steps, so the four connects
+    // interleave wherever a step of theirs lets them.
+    const documents = yield* Effect.all(
+      Array.from({ length: 4 }, () => host.open("ver_a", true)),
+      { concurrency: "unbounded" }
+    ).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 4));
+    // One keepalive holds all four, and reports them once the last has left.
+    for (const document of documents) yield* Scope.close(document, Exit.void);
+    assert.deepInclude(yield* host.event, { type: "keepalive", peakDocuments: 4 });
   }).pipe(Effect.scoped)
 );

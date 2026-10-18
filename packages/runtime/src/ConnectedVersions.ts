@@ -1,10 +1,12 @@
 import { canonicalArgs, type GuestProtocol } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { registry } from "@patchy/limits/registry";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import type * as Scope from "effect/Scope";
 import * as Executor from "./Executor.js";
@@ -22,10 +24,29 @@ export type WarmupOutcome =
   "resident" | "loading" | "loaded" | "bound" | "paused" | "unbound" | "failed";
 
 /**
- * Each touch lands between these fractions of the company's `execution.process.idle`, so one
- * lost touch still leaves another before the supervisor reaps, and versions spread out.
+ * Fractions of the company's `execution.process.idle`. Each touch starts 30 to 40 % of it after
+ * the previous one started, whatever that one cost, and gives up after 10 %. A touch that is
+ * lost still leaves the next to land within 90 % of the window after the last that landed, so
+ * the supervisor never reaps between them; the jitter spreads versions out.
  */
-const touchSpacing = { from: 0.35, to: 0.45 } as const;
+const touchSpacing = { from: 0.3, to: 0.4 } as const;
+const touchTimeout = 0.1;
+
+/** What a warmup comes to without a bind, or `undefined` when the touch left it to bind. */
+const settled = (touched: ExecutionLifecycle.TouchOutcome): WarmupOutcome | undefined => {
+  switch (touched) {
+    case "touched":
+      return "resident";
+    case "loading":
+    case "paused":
+    case "unbound":
+      return touched;
+    case "absent":
+    case "unsupported":
+    case "failed":
+      return undefined;
+  }
+};
 
 /**
  * One version's keepalive on this host: its connected documents, and a loop that touches the
@@ -89,58 +110,72 @@ export const make = Effect.gen(function* () {
       Effect.catch(() => Effect.succeed(false))
     );
 
-  const warmup = Effect.fnUntraced(function* (
-    version: LoadedVersion,
-    touched: ExecutionLifecycle.TouchOutcome
-  ) {
-    switch (touched) {
-      case "touched":
-        return "resident" as const;
-      case "loading":
-      case "paused":
-      case "unbound":
-        return touched;
-      case "unsupported":
-        return (yield* load(version)) ? ("bound" as const) : ("failed" as const);
-      case "absent":
-      case "failed":
-        return (yield* load(version)) ? ("loaded" as const) : ("failed" as const);
-    }
-  });
-
   const run = (keepalive: Keepalive) =>
     Effect.gen(function* () {
       const { version } = keepalive;
       // A version's bundle never changes, so its hash is read once it is needed.
       let binding: GuestProtocol.BundleBinding | undefined;
-      while (true) {
-        keepalive.wake = yield* Deferred.make<void>();
-        const warm = keepalive.warm;
-        keepalive.warm = false;
-        binding ??= yield* bundles.load(version).pipe(
-          Effect.map((bundle): GuestProtocol.BundleBinding => ({
-            companyId: bundle.companyId,
-            patchId: bundle.patchId,
-            versionId: bundle.versionId,
-            sha256: bundle.sha256
-          })),
-          Effect.catch(() => Effect.undefined)
-        );
-        const touched = binding === undefined ? "failed" : yield* lifecycle.touch(binding);
-        keepalive.touches[touched] = (keepalive.touches[touched] ?? 0) + 1;
-        if (warm) {
-          const outcome = yield* warmup(version, touched);
-          keepalive.warmups[outcome] = (keepalive.warmups[outcome] ?? 0) + 1;
-        }
-        const idle = yield* limits
+      // The company's window, read within a touch's timeout of the last value it had.
+      const readIdle = (previous: number) =>
+        limits
           .getMany({ companyId: version.companyId, limits: { idle: "execution.process.idle" } })
           .pipe(
             Effect.map((limits) => limits.idle.value),
-            Effect.catch(() => Effect.succeed(registry["execution.process.idle"].default))
+            Effect.timeoutOption(previous * touchTimeout),
+            Effect.map(Option.getOrElse(() => previous)),
+            Effect.catch(() => Effect.succeed(previous))
           );
+      let idle = yield* readIdle(registry["execution.process.idle"].default);
+      let warming = false;
+      const count = (outcome: WarmupOutcome) => {
+        keepalive.warmups[outcome] = (keepalive.warmups[outcome] ?? 0) + 1;
+      };
+      while (true) {
+        const started = yield* Clock.currentTimeMillis;
+        // Replaced in the step that reads the warm request, so a later request rings the new one.
+        keepalive.wake = Deferred.makeUnsafe<void>();
+        const warm = keepalive.warm && !warming;
+        if (warm) keepalive.warm = false;
+        const touched = yield* Effect.gen(function* () {
+          binding ??= yield* bundles.load(version).pipe(
+            Effect.map((bundle): GuestProtocol.BundleBinding => ({
+              companyId: bundle.companyId,
+              patchId: bundle.patchId,
+              versionId: bundle.versionId,
+              sha256: bundle.sha256
+            }))
+          );
+          return yield* lifecycle.touch(binding);
+        }).pipe(
+          Effect.timeoutOption(idle * touchTimeout),
+          Effect.map(Option.getOrElse((): ExecutionLifecycle.TouchOutcome => "failed")),
+          Effect.catch(() => Effect.succeed("failed" as const))
+        );
+        keepalive.touches[touched] = (keepalive.touches[touched] ?? 0) + 1;
+        const outcome = warm ? settled(touched) : undefined;
+        if (outcome !== undefined) count(outcome);
+        else if (warm) {
+          // A load runs beside the touches, which keep their schedule; one warmup at a time.
+          warming = true;
+          yield* load(version).pipe(
+            Effect.flatMap((bound) =>
+              Effect.sync(() => {
+                count(bound ? (touched === "unsupported" ? "bound" : "loaded") : "failed");
+                warming = false;
+                // A warm request held back while this one ran is served at once.
+                if (keepalive.warm) Deferred.doneUnsafe(keepalive.wake, Effect.void);
+              })
+            ),
+            Effect.forkChild
+          );
+        }
+        idle = yield* readIdle(idle);
         const spacing =
           touchSpacing.from + (touchSpacing.to - touchSpacing.from) * (yield* Random.next);
-        yield* Effect.sleep(idle * spacing).pipe(Effect.raceFirst(Deferred.await(keepalive.wake)));
+        const remaining = started + idle * spacing - (yield* Clock.currentTimeMillis);
+        yield* Effect.sleep(Math.max(0, remaining)).pipe(
+          Effect.raceFirst(Deferred.await(keepalive.wake))
+        );
       }
     });
 
@@ -172,34 +207,34 @@ export const make = Effect.gen(function* () {
   return ConnectedVersions.of({
     connect: (version, options) =>
       Effect.acquireRelease(
-        Effect.gen(function* () {
+        // One synchronous step, so concurrent first holders find each other's keepalive.
+        Effect.suspend(() => {
           const key = canonicalArgs([version.companyId, version.patchId, version.versionId]);
-          let keepalive = keepalives.get(key);
-          if (keepalive === undefined) {
-            keepalive = {
-              version,
-              documents: 0,
-              peakDocuments: 0,
-              warm: options.warm,
-              wake: yield* Deferred.make<void>(),
-              closed: yield* Deferred.make<void>(),
-              touches: {},
-              warmups: {}
-            };
-            keepalives.set(key, keepalive);
-            yield* start(keepalive);
-          } else if (options.warm) {
+          const existing = keepalives.get(key);
+          const keepalive: Keepalive = existing ?? {
+            version,
+            documents: 0,
+            peakDocuments: 0,
+            warm: options.warm,
+            wake: Deferred.makeUnsafe<void>(),
+            closed: Deferred.makeUnsafe<void>(),
+            touches: {},
+            warmups: {}
+          };
+          if (existing === undefined) keepalives.set(key, keepalive);
+          else if (options.warm) {
             keepalive.warm = true;
-            yield* Deferred.succeed(keepalive.wake, undefined);
+            Deferred.doneUnsafe(keepalive.wake, Effect.void);
           }
           keepalive.documents++;
           keepalive.peakDocuments = Math.max(keepalive.peakDocuments, keepalive.documents);
-          return { key, keepalive };
+          const held = { key, keepalive };
+          return existing === undefined ? Effect.as(start(keepalive), held) : Effect.succeed(held);
         }),
         ({ key, keepalive }) =>
           Effect.suspend(() => {
             if (--keepalive.documents > 0) return Effect.void;
-            keepalives.delete(key);
+            if (keepalives.get(key) === keepalive) keepalives.delete(key);
             return Deferred.succeed(keepalive.closed, undefined);
           })
       ).pipe(Effect.asVoid)

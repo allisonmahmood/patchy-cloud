@@ -216,15 +216,18 @@ touch route, so a touch for another release's task is skipped without a request,
 and that task's release is remembered rather than asked of ECS again.
 
 A host keeps the version of each connected, ready tier 2 document loaded. One
-keepalive per company version on each host touches it right away and then every
-35 to 45 percent of the company's `execution.process.idle`, so one lost touch still
-leaves another before the reap. Each touch reads the patch's pause and the company's
+keepalive per company version on each host touches it right away; each later touch
+starts 30 to 40 percent of the company's `execution.process.idle` after the previous
+one started, and gives up after 10 percent. A lost touch therefore still leaves the
+next to land within 90 percent of the window after the last that landed, so the
+process is not reaped between them. Each touch reads the patch's pause and the company's
 current active binding, and goes to that task at that epoch; it never admits,
 claims a task or loads. A paused patch, or a company without an active binding, is
 not touched. The last document's disconnect, including a hidden document's
 suspension, ends the keepalive, and the process idles out as before. A document's
 first stream also warms its version once it is ready, while the client boots: if
-the touch finds no process, it binds the version under a normal admission. A
+the touch finds no process, it binds the version under a normal admission, beside
+the touches rather than in their way, one warmup at a time per keepalive. A
 stream that names its previous generation, as a reconnect, reauthentication or
 resume does, only touches, so a version evicted under pressure reloads on demand
 rather than on renewal. With more open versions than residency allows, touches
