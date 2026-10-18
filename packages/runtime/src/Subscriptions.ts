@@ -435,7 +435,8 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         doc.reruns++;
         // Invocation owns the query deadline and settles retained resources before returning.
-        const read = reads.read(input);
+        // The read brackets its platform sources from this fence instead of reading them again.
+        const read = reads.read(input, fence);
         const snapshot = yield* sub.input.op === "server.call"
           ? read
           : read.pipe(

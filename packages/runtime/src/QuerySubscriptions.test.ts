@@ -4,6 +4,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import type * as Binding from "./Binding.js";
 import * as Invocation from "./Invocation.js";
 import * as Runtime from "./Runtime.js";
@@ -72,6 +73,8 @@ const fixture = Effect.gen(function* () {
     calls: 0,
     dependencies: [ownTable],
     failure: undefined as Runtime.RuntimeError | undefined,
+    /** Runs after a revision read returns, standing in for a write that commits next. */
+    afterRevisions: undefined as (() => void) | undefined,
     revisions: {
       [ownTable]: "1",
       [ownStore]: "2",
@@ -88,7 +91,9 @@ const fixture = Effect.gen(function* () {
     revisions: (_companyId, keys) =>
       Effect.sync(() => {
         revisionReads.push([...keys]);
-        return Object.fromEntries(keys.map((key) => [key, state.revisions[key] ?? "0"]));
+        const vector = Object.fromEntries(keys.map((key) => [key, state.revisions[key] ?? "0"]));
+        state.afterRevisions?.();
+        return vector;
       })
   };
   const invocations: Invocation.Invocation["Service"] = {
@@ -287,11 +292,72 @@ it.effect(
         args: { handler: "demo.read", args: {} },
         reauthorize: Effect.succeed(viewer)
       };
-      assert.include(yield* readers.read(input).pipe(Effect.flip), { code: "source_unavailable" });
+      assert.include(yield* readers.read(input, {}).pipe(Effect.flip), {
+        code: "source_unavailable"
+      });
       changeDuringQuery = false;
-      assert.deepStrictEqual(yield* readers.read(input), {
+      assert.deepStrictEqual(yield* readers.read(input, {}), {
         result: "members",
         vector: { [memberDirectory]: "2" }
       });
     })
+);
+
+// Each `members:` key a revision read covers is one directory statement in production's reader.
+it.effect(
+  "starts a re-run's platform source brackets at its fence instead of reading them again",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      f.state.dependencies = [memberDirectory];
+      yield* f.subscribe();
+      assert.strictEqual((yield* f.next).type, "admitted");
+      assert.strictEqual((yield* f.next).type, "snapshot");
+      f.revisionReads.length = 0;
+      f.state.revisions[memberDirectory] = "8";
+      yield* f.document.reconcile("invalidation", [memberDirectory]);
+      assert.deepStrictEqual(yield* f.next, {
+        type: "up-to-date",
+        id: "query",
+        revision: "1",
+        vector: { [memberDirectory]: "8" }
+      });
+      // The fence, the declared sources it did not cover, then the post-read check.
+      assert.deepStrictEqual(f.revisionReads, [
+        [memberDirectory],
+        [sourcePatch, storeSource],
+        [memberDirectory]
+      ]);
+    }).pipe(Effect.scoped)
+);
+
+it.effect("refuses a re-run when the directory changes between its fence and its read", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    f.state.dependencies = [memberDirectory];
+    yield* f.subscribe();
+    assert.strictEqual((yield* f.next).type, "admitted");
+    assert.strictEqual((yield* f.next).type, "snapshot");
+    f.state.revisions[memberDirectory] = "8";
+    // The fence reads 8; a directory write commits before the read starts.
+    f.state.afterRevisions = () => {
+      f.state.revisions[memberDirectory] = "9";
+      f.state.afterRevisions = undefined;
+    };
+    yield* f.document.reconcile("invalidation", [memberDirectory]);
+    const refused = yield* f.next;
+    assert.strictEqual(refused.type, "error");
+    if (refused.type === "error") {
+      assert.isFalse(refused.permanent);
+      assert.strictEqual(refused.error.code, "source_unavailable");
+    }
+    yield* TestClock.adjust("250 millis");
+    assert.deepStrictEqual(yield* f.next, {
+      type: "up-to-date",
+      id: "query",
+      revision: "1",
+      vector: { [memberDirectory]: "9" }
+    });
+    assert.strictEqual(f.state.calls, 3);
+  }).pipe(Effect.scoped)
 );

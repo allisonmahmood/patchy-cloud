@@ -86,7 +86,14 @@ export const make = Effect.gen(function* () {
     // trace the actual dependencies, including accesses which fail.
     return input.dependencies.filter((key) => allowed.delete(key));
   });
-  const read = Effect.fn("QuerySubscriptions.read")(function* (input: SubscriptionReads.Input) {
+  /**
+   * Runs one read. `fence` holds revisions read from storage for this binding just before
+   * it, never a client's; a hosted query brackets the platform sources found there from it.
+   */
+  const read = Effect.fn("QuerySubscriptions.read")(function* (
+    input: SubscriptionReads.Input,
+    fence: Readonly<Record<string, string>>
+  ) {
     if (input.op !== "server.call") return yield* reads.read(input);
     if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
     if (input.reauthorize === undefined) return yield* new Runtime.AccessDenied({});
@@ -98,7 +105,10 @@ export const make = Effect.gen(function* () {
       if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
         sources.add(`patch:${declaration.patchId}`);
       else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
-    const before = yield* reads.revisions(binding.companyId, [...sources]);
+    // A source the fence covers starts its bracket there. A revision never returns to a value
+    // it left, so an equal `after` still proves no change from the fence through the read.
+    const unfenced = [...sources].filter((key) => fence[key] === undefined);
+    const before = { ...fence, ...(yield* reads.revisions(binding.companyId, unfenced)) };
     const attempted = new Set<string>();
     let watermark: Readonly<Record<string, string>> = {};
     const reply = yield* invocation.value.call(
