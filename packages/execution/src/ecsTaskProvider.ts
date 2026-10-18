@@ -43,6 +43,14 @@ type ManagedTask = {
   readonly taskId: string;
   readonly deploymentRevision: string;
 };
+type Endpoint = { readonly task: ManagedTask; readonly expiresAt: number };
+// Refused before the receiver acts: authentication, decoding (an older supervisor refuses `taskId`
+// as an unknown key) and the identity check. Only these prove a request had no effect.
+const unaffected: ReadonlySet<TaskProvider.TaskProviderError["reason"]> = new Set([
+  "unauthorized",
+  "invalid_request",
+  "wrong_task"
+]);
 
 export interface Revision {
   readonly deploymentRevision: string;
@@ -123,6 +131,8 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   const client = yield* Ecs.Ecs;
   const limits = yield* DeploymentConfig.load;
   const startupTimeout = limits.get("execution.pool.wait");
+  const endpointLifetime = limits.get("execution.endpoint.lifetime");
+  const endpointCapacity = limits.get("execution.fleet.budget");
   const managementTimeout = registry["tier2.settlement.cleanup"].default + 5_000;
   const managementPort = options.managementPort ?? 8788;
   const containerName = options.containerName ?? "exec";
@@ -156,6 +166,23 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   const family = familyOf(options.current.taskDefinition);
   const addresses = new Map<string, string>();
   const readiness = new Map<string, number>();
+  // Resolved tasks reused by calls, so a call need not ask ECS where its task is. A running task
+  // keeps its address, but a stopped task's address can go to a fresh task holding the same fleet
+  // secret. Only supervisors that check the task id each request names are kept, and any failure
+  // or observed stop forgets the entry.
+  const endpoints = new Map<string, Endpoint>();
+  // ECS reports the exact definition a task runs, and a definition never changes. This host's own
+  // pins this release's image, whose supervisor checks the named task. Older supervisors refuse
+  // the field, so tasks of other definitions get neither it nor a cached address.
+  const checksIdentity = (task: ManagedTask) =>
+    task.value.taskDefinitionArn === options.current.taskDefinition;
+  const remember = (task: ManagedTask, now: number) => {
+    for (const [taskId, entry] of endpoints) if (entry.expiresAt <= now) endpoints.delete(taskId);
+    endpoints.delete(task.taskId);
+    // Live tasks stay within the fleet budget; evicting the oldest only guards against a leak.
+    if (endpoints.size >= endpointCapacity) endpoints.delete(endpoints.keys().next().value!);
+    endpoints.set(task.taskId, { task, expiresAt: now + endpointLifetime });
+  };
   const bounded = <A, E>(
     operation: Operation,
     taskId: string | undefined,
@@ -242,6 +269,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     )
       return undefined;
     addresses.set(taskId, value.taskArn);
+    if (value.lastStatus === "STOPPED") endpoints.delete(taskId);
     return { value, taskId, deploymentRevision };
   };
   const describe = Effect.fn("EcsTaskProvider.describe")(function* (
@@ -355,7 +383,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     task: ManagedTask,
     operation: Operation,
     path: string,
-    body: unknown
+    body: object
   ) {
     if (task.value.lastStatus === "STOPPED")
       return yield* new TaskProvider.TaskProviderError({
@@ -385,7 +413,9 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       .execute(
         HttpClientRequest.post(`http://${address}:${managementPort}/${path}`).pipe(
           HttpClientRequest.setHeader("authorization", `Bearer ${Redacted.value(secret)}`),
-          HttpClientRequest.bodyJsonUnsafe(body)
+          HttpClientRequest.bodyJsonUnsafe(
+            checksIdentity(task) ? { ...body, taskId: task.taskId } : body
+          )
         )
       )
       .pipe(
@@ -486,13 +516,45 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       yield* Effect.sleep(500);
     }
   });
-  const call = Effect.fn("EcsTaskProvider.call")(function* (
+  const call = Effect.fn("EcsTaskProvider.call")(function* <A>(
     taskId: string,
     operation: Operation,
     path: string,
-    body: unknown
+    body: object,
+    decode: (reply: unknown) => Effect.Effect<A, Schema.SchemaError>
   ) {
-    return yield* post(yield* resolve(taskId, operation), operation, path, body);
+    const now = yield* Clock.currentTimeMillis;
+    // A malformed reply fails the request like any other failure: it is never kept or re-sent.
+    const answer = (task: ManagedTask) =>
+      post(task, operation, path, body).pipe(
+        Effect.flatMap(decode),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TaskProvider.TaskProviderError({ operation, taskId, reason: "protocol", cause })
+            )
+        })
+      );
+    // Kept only once its supervisor answered: it verified the task id before acting.
+    const fresh = Effect.gen(function* () {
+      const task = yield* resolve(taskId, operation);
+      const value = yield* answer(task);
+      if (checksIdentity(task) && task.value.lastStatus === "RUNNING") remember(task, now);
+      return value;
+    });
+    const cached = endpoints.get(taskId);
+    if (cached === undefined || cached.expiresAt <= now) return yield* fresh;
+    return yield* answer(cached.task).pipe(
+      Effect.onError(() =>
+        Effect.sync(() => {
+          if (endpoints.get(taskId) === cached) endpoints.delete(taskId);
+        })
+      ),
+      // A transport failure can follow delivery, so it is never re-sent: an invoke may have run.
+      Effect.catchTags({
+        TaskProviderError: (cause) => (unaffected.has(cause.reason) ? fresh : Effect.fail(cause))
+      })
+    );
   });
   return TaskProvider.TaskProvider.of({
     start: (input) =>
@@ -610,7 +672,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       bounded(
         "quiesce",
         taskId,
-        call(taskId, "quiesce", "stop", { bindingEpoch }).pipe(Effect.asVoid)
+        call(taskId, "quiesce", "stop", { bindingEpoch }, () => Effect.void)
       ),
     stop: (taskId) =>
       bounded(
@@ -641,10 +703,13 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       bounded(
         "bind",
         taskId,
-        call(taskId, "bind", "bind", {
-          ...request,
-          callbackUrls: options.callbackUrls
-        } satisfies Management.BindRequest).pipe(Effect.flatMap(decodeBind))
+        call(
+          taskId,
+          "bind",
+          "bind",
+          { ...request, callbackUrls: options.callbackUrls } satisfies Management.BindRequest,
+          decodeBind
+        )
       ),
     invoke: (taskId, request) =>
       Effect.gen(function* () {
@@ -652,16 +717,12 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
         return yield* bounded(
           "invoke",
           taskId,
-          call(taskId, "invoke", "invoke", request).pipe(Effect.flatMap(decodeInvoke)),
+          call(taskId, "invoke", "invoke", request, decodeInvoke),
           Math.max(1, request.request.deadline - now) + managementTimeout
         );
       }),
     stats: (taskId, request) =>
-      bounded(
-        "stats",
-        taskId,
-        call(taskId, "stats", "stats", request).pipe(Effect.flatMap(decodeStats))
-      )
+      bounded("stats", taskId, call(taskId, "stats", "stats", request, decodeStats))
   });
 });
 

@@ -28,7 +28,16 @@ export const CallbackUrls = Schema.Array(
   )
 ).check(Schema.isMaxLength(64));
 
+/**
+ * The task the host resolved, on every request. A supervisor that is not that task refuses
+ * `wrong_task` before any effect, so a reused private address cannot reach another task.
+ * Optional for rollout: older hosts omit it, and older supervisors refuse it as an unknown key,
+ * so hosts send it only to supervisors of their own release.
+ */
+const expectedTask = { taskId: Schema.optionalKey(identity) };
+
 export const BindRequest = Schema.Struct({
+  ...expectedTask,
   companyId: identity,
   bindingEpoch: BindingEpoch,
   bundle: Schema.optionalKey(GuestProtocol.Bundle),
@@ -45,16 +54,19 @@ export const BindReply = Schema.Struct({
 });
 export type BindReply = typeof BindReply.Type;
 export const InvokeRequest = Schema.Struct({
+  ...expectedTask,
   bindingEpoch: BindingEpoch,
   request: GuestProtocol.Invoke
 });
 export type InvokeRequest = typeof InvokeRequest.Type;
 export const StopRequest = Schema.Struct({
+  ...expectedTask,
   bindingEpoch: BindingEpoch,
   processGeneration: Schema.optionalKey(ProcessGeneration)
 });
 export type StopRequest = typeof StopRequest.Type;
 export const StatsRequest = Schema.Struct({
+  ...expectedTask,
   bindingEpoch: BindingEpoch,
   acknowledgeReports: Schema.optionalKey(Schema.Array(identity))
 });
@@ -168,7 +180,8 @@ export const Refusal = Schema.Struct({
     "load_failed",
     "transport",
     "protocol",
-    "production_refused"
+    "production_refused",
+    "wrong_task"
   ]),
   limits: ProcessEvent.fields.limits,
   ...limitRefusalFields

@@ -678,6 +678,16 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "execution.endpoint.lifetime": {
+    kind: "operating",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "host",
+    measure:
+      "Reuse of an ECS task's resolved address by a host of the task's release; a failed call forgets it sooner",
+    refusal: null,
+    overridable: false
+  },
   "files.handle.length": {
     kind: "contract",
     default: 57,

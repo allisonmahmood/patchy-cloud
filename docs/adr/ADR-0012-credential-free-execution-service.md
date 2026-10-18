@@ -138,7 +138,10 @@ The first bind reserves the task for one company. Retrying a bundle bind at the
 same epoch is idempotent while its resident process is alive. Rebinding after
 reap creates a new process generation, even at the same epoch. Adoption raises
 the epoch. Every management operation checks it, including report
-acknowledgements. A stopped task cannot be rebound. Loading a bundle returns
+acknowledgements. Before the epoch, each operation checks the task id the request
+names and refuses another task's request before any effect: a stopped task's
+private address can go to a fresh task holding the same deployment secret.
+A stopped task cannot be rebound. Loading a bundle returns
 its process generation, and invocation names that generation.
 The callback proxy checks the immutable attempt, capability, deadline, epoch
 and generation before forwarding and again before delivering a reply. It stamps
@@ -192,6 +195,9 @@ or per-invocation CPU and memory guarantees.
 
 `@patchy/execution/fleet` is host code, not another deployed service. Its task
 provider owns task launch, management transport, discovery and observed stop times.
+The ECS provider reuses a resolved task address only for supervisors of its own
+release, which check the named task, so a reused address is refused rather than
+served; it never re-sends a request after a transport failure.
 The execution baseline, `0008_execution`, owns task identity and deployment revision, company
 bindings and their epochs, binding history, process reports, breaker state and the
 housekeeping lease. A partial unique index permits one admission-serving binding

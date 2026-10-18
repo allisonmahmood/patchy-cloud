@@ -163,7 +163,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
   const post = Effect.fn("LocalTaskProvider.post")(function* (
     taskId: string,
     operation: "bind" | "invoke" | "stats" | "quiesce",
-    body: unknown
+    body: object
   ) {
     const record = yield* current(taskId, operation);
     if (record.task.state === "stopped")
@@ -177,7 +177,8 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
           `${record.url}/${operation === "quiesce" ? "stop" : operation}`
         ).pipe(
           HttpClientRequest.setHeader("authorization", `Bearer ${request!.secret}`),
-          HttpClientRequest.bodyJsonUnsafe(body)
+          // Local supervisors run this checkout, so each request names the task it was read for.
+          HttpClientRequest.bodyJsonUnsafe({ ...body, taskId })
         )
       )
       .pipe(

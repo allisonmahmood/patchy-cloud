@@ -157,6 +157,54 @@ it.live("returns the enforced residency bound when no process can be evicted", (
 );
 
 it.live(
+  "refuses a request naming another task before it has any effect",
+  () =>
+    Effect.gen(function* () {
+      const supervisor = yield* Supervisor.make({ callbackUrls: [callbackUrl], taskId: "task-a" });
+      const { url } = yield* Management.serve({ secret: Redacted.make(secret), port: 0 }).pipe(
+        Effect.provideService(Supervisor.Supervisor, supervisor)
+      );
+      const misdirected = Effect.fn("ManagementTest.misdirected")(function* (
+        path: string,
+        body: object
+      ) {
+        const response = yield* post(url, path, { ...body, taskId: "task-b" });
+        expect(response.status).toBe(421);
+        expect(yield* response.json).toEqual({ ok: false, code: "wrong_task" });
+      });
+      // Without `taskId`, as an older host sends it.
+      const stats = Effect.fn("ManagementTest.stats")(function* (bindingEpoch: number) {
+        return yield* decodeStats(yield* (yield* post(url, "stats", { bindingEpoch })).json);
+      });
+      yield* misdirected("bind", { companyId: bundle.companyId, bindingEpoch: 1, bundle });
+      expect(yield* stats(0)).toMatchObject({ companyId: null, bindingEpoch: 0, processes: [] });
+      const loaded = yield* decodeBind(
+        yield* (yield* post(url, "bind", {
+          companyId: bundle.companyId,
+          bindingEpoch: 1,
+          bundle,
+          taskId: "task-a"
+        })).json
+      );
+      if (loaded.binding === undefined || loaded.processGeneration === undefined)
+        return yield* Effect.die("Supervisor did not return its loaded generation.");
+      yield* misdirected("invoke", {
+        bindingEpoch: 1,
+        request: invocation(loaded.binding, loaded.processGeneration)
+      });
+      yield* misdirected("stop", { bindingEpoch: 1 });
+      yield* misdirected("stats", { bindingEpoch: 1 });
+      expect(yield* stats(1)).toMatchObject({ stopped: false, processes: [{ callsServed: 0 }] });
+      // A supervisor without an identity is no task a host can name.
+      const anonymous = yield* start();
+      expect(
+        (yield* post(anonymous.url, "stats", { bindingEpoch: 0, taskId: "task-a" })).status
+      ).toBe(421);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  15_000
+);
+
+it.live(
   "fences every management verb and transports acknowledged process reports",
   () =>
     Effect.gen(function* () {

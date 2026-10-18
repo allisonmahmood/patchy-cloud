@@ -419,7 +419,8 @@ command remains the host (`node dist/start.js`).
 
 It requires `EXECUTION_MANAGEMENT_SECRET`, `EXECUTION_CALLBACK_URLS` as a JSON
 array of trusted host callback URLs, `EXECUTION_DEPLOYMENT_REVISION` and
-`EXECUTION_TASK_ID`. `EXECUTION_MANAGEMENT_PREVIOUS_SECRET` is optional during
+`EXECUTION_TASK_ID`; the supervisor refuses a management request that names
+another task. `EXECUTION_MANAGEMENT_PREVIOUS_SECRET` is optional during
 rollout. The listener defaults to `127.0.0.1:8788`; set
 `EXECUTION_MANAGEMENT_PORT=0` for an isolated smoke run and use its printed URL.
 For deployment, `EXECUTION_MANAGEMENT_HOST` may name an RFC1918 or ULA interface
@@ -541,6 +542,18 @@ After old hosts drain, deploy a sealing revision with the same current secret
 and all three previous-revision settings removed; promote it and drain the
 overlap revision before declaring the old secret retired.
 The fleet id stays constant across releases; task ids and binding epochs do not.
+
+A host asks ECS where a task is (`DescribeTasks`) once, then reuses its address
+for `execution.endpoint.lifetime`, one minute by default. A stopped task's
+address can go to a fresh task holding the same management secret, so the host
+reuses addresses only for tasks running its own exec task definition, which pins
+its release's image: their supervisors check the task id each request names and
+refuse `wrong_task`. Older supervisors refuse that field, so tasks of other
+definitions are resolved on every call. Any
+failed request, and any ECS observation of the task stopped, forgets the address.
+A request refused before it took effect (`unauthorized`, `invalid_request` or
+`wrong_task`) is sent once more after resolving again; a transport failure never
+is, because an invoke may have run.
 In production `apps/infra` sets all of these; see [Production](#production).
 
 ## Production

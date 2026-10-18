@@ -3,6 +3,8 @@ import type { Task, TaskDefinition } from "@aws-sdk/client-ecs";
 import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { OperatingLimits } from "@patchy/limits";
+import { registry } from "@patchy/limits/registry";
+import type * as Management from "@patchy/api/management";
 import * as Testing from "@patchy/sql/testing";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -13,6 +15,7 @@ import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Ecs from "./ecs.js";
@@ -43,7 +46,9 @@ const options: EcsTaskProvider.Options = {
 const revisions = [options.current, options.previous!];
 
 // Alternate external-service layer: ECS retains tasks and idempotency tokens across host clients.
-// HTTP authentication is checked against the task's revision, not echoed from each request.
+// Each supervisor accepts the secrets its host injected and answers at the task's address; a
+// fresh task can be given a stopped task's address. "previous" models the release before
+// identity checks: it refuses `taskId` as an unknown key.
 const cloud = Effect.gen(function* () {
   const tasks = new Map<string, Task>();
   const tokens = new Map<string, string>();
@@ -65,13 +70,20 @@ const cloud = Effect.gen(function* () {
   const supervisors = new Map<
     string,
     {
+      taskId: string;
       revision: string;
+      secrets: readonly string[];
       companyId: string | null;
       bindingEpoch: number;
       stopped: boolean;
+      invokes: number;
     }
   >();
   let loseRunReply = false;
+  let loseInvokeReply = false;
+  let malformReply = false;
+  let reusedAddress: string | undefined;
+  let describes = 0;
   const ecs = Ecs.Ecs.of({
     describeTaskDefinition: (input) =>
       Effect.succeed({
@@ -92,23 +104,28 @@ const cloud = Effect.gen(function* () {
           .map(([arn]) => arn)
       })),
     describeTasks: (input) =>
-      Effect.sync(() => ({
-        $metadata: {},
-        tasks: (input.tasks ?? []).flatMap((arn) => {
-          const task = tasks.get(arn);
-          return task && !missing.has(arn) ? [task] : [];
-        }),
-        failures: (input.tasks ?? [])
-          .filter((arn) => missing.has(arn) || !tasks.has(arn))
-          .map((arn) => ({ arn, reason: "MISSING" }))
-      })),
+      Effect.sync(() => {
+        describes++;
+        return {
+          $metadata: {},
+          tasks: (input.tasks ?? []).flatMap((arn) => {
+            const task = tasks.get(arn);
+            // Each response is a fresh copy, as the SDK's is, never the stored task.
+            return task && !missing.has(arn) ? [structuredClone(task)] : [];
+          }),
+          failures: (input.tasks ?? [])
+            .filter((arn) => missing.has(arn) || !tasks.has(arn))
+            .map((arn) => ({ arn, reason: "MISSING" }))
+        };
+      }),
     runTask: Effect.fn("TestEcs.runTask")(function* (input) {
       const existing = tokens.get(input.clientToken!);
       if (existing) return { $metadata: {}, tasks: [tasks.get(existing)!] };
       const now = yield* Clock.currentTimeMillis;
       const arn = `${arnPrefix}:task/test-cluster/${tasks.size + 1}`;
-      const address = `10.0.1.${tasks.size + 1}`;
-      const revision = input.tags!.find((tag) => tag.key === "patchy:deployment-revision")!.value!;
+      const address = reusedAddress ?? `10.0.1.${tasks.size + 1}`;
+      reusedAddress = undefined;
+      const tag = (key: string) => input.tags!.find((entry) => entry.key === key)!.value!;
       const task: Task = {
         taskArn: arn,
         taskDefinitionArn: input.taskDefinition,
@@ -127,7 +144,21 @@ const cloud = Effect.gen(function* () {
       };
       tasks.set(arn, task);
       tokens.set(input.clientToken!, arn);
-      supervisors.set(address, { revision, companyId: null, bindingEpoch: 0, stopped: false });
+      supervisors.set(address, {
+        taskId: tag("patchy:execution-task"),
+        revision: tag("patchy:deployment-revision"),
+        secrets: input
+          .overrides!.containerOverrides![0]!.environment!.filter(
+            (entry) =>
+              entry.name === "EXECUTION_MANAGEMENT_SECRET" ||
+              entry.name === "EXECUTION_MANAGEMENT_PREVIOUS_SECRET"
+          )
+          .map((entry) => entry.value!),
+        companyId: null,
+        bindingEpoch: 0,
+        stopped: false,
+        invokes: 0
+      });
       if (loseRunReply) {
         loseRunReply = false;
         omitted.add(arn);
@@ -153,27 +184,46 @@ const cloud = Effect.gen(function* () {
     })
   });
   const http = HttpClient.make((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const url = new URL(request.url);
-      const supervisor = supervisors.get(url.hostname)!;
-      const accepted = supervisor.revision === "current" ? revisions : [options.previous!];
+      const supervisor = supervisors.get(url.hostname);
+      const lost = new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({ request, description: "Connection lost" })
+      });
+      if (supervisor === undefined) return yield* lost;
+      const refuse = (status: number, code: string) =>
+        HttpClientResponse.fromWeb(request, Response.json({ ok: false, code }, { status }));
       if (
-        !accepted.some(
-          (revision) =>
-            request.headers.authorization === `Bearer ${Redacted.value(revision.secret)}`
-        )
+        !supervisor.secrets.some((secret) => request.headers.authorization === `Bearer ${secret}`)
       )
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json({ ok: false, code: "unauthorized" }, { status: 401 })
-        );
+        return refuse(401, "unauthorized");
       const body =
         request.body._tag === "Uint8Array"
           ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              taskId?: string;
               companyId?: string;
               bindingEpoch: number;
             })
           : { bindingEpoch: 0 };
+      if (body.taskId !== undefined && supervisor.revision === "previous")
+        return refuse(400, "invalid_request");
+      if (body.taskId !== undefined && body.taskId !== supervisor.taskId)
+        return refuse(421, "wrong_task");
+      if (url.pathname === "/invoke") supervisor.invokes++;
+      if (malformReply) {
+        malformReply = false;
+        return HttpClientResponse.fromWeb(request, Response.json({}));
+      }
+      if (url.pathname === "/invoke") {
+        if (loseInvokeReply) {
+          loseInvokeReply = false;
+          return yield* lost;
+        }
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ outcome: "guest_failed", guestMs: 0 })
+        );
+      }
       if (url.pathname === "/bind") {
         supervisor.companyId = body.companyId!;
         supervisor.bindingEpoch = body.bindingEpoch;
@@ -201,13 +251,37 @@ const cloud = Effect.gen(function* () {
   );
   return {
     tasks,
+    supervisors,
     omitted,
     missing,
     failedStops,
     stopped,
     definitions,
+    describes: () => describes,
     loseRunReply: () => {
       loseRunReply = true;
+    },
+    loseInvokeReply: () => {
+      loseInvokeReply = true;
+    },
+    /** The next request is served, then answered 200 with a body no reply schema accepts. */
+    malformNextReply: () => {
+      malformReply = true;
+    },
+    /** Stops a task outside any host, as a crash does. Its address stops answering. */
+    crash: Effect.fn("TestEcs.crash")(function* (taskId: string) {
+      const task = [...tasks.values()].find((entry) =>
+        entry.tags!.some((tag) => tag.key === "patchy:execution-task" && tag.value === taskId)
+      )!;
+      task.lastStatus = "STOPPED";
+      task.stoppedAt = new Date(yield* Clock.currentTimeMillis);
+      const address = task.attachments![0]!.details![0]!.value!;
+      supervisors.delete(address);
+      return address;
+    }),
+    /** The next task ECS starts gets this address. */
+    reuse: (address: string) => {
+      reusedAddress = address;
     },
     layer: Layer.merge(Layer.succeed(Ecs.Ecs, ecs), Layer.succeed(HttpClient.HttpClient, http))
   };
@@ -477,6 +551,147 @@ it.effect(
         companyId: "company-current"
       });
     })
+);
+
+// Only its deadline reaches the provider; the fake supervisor answers without running it.
+const invocation = (companyId: string, deadline: number): Management.InvokeRequest => ({
+  bindingEpoch: 1,
+  request: {
+    wire: 1,
+    binding: { companyId, patchId: "pat_test", versionId: "ver_test", sha256: "0".repeat(64) },
+    processGeneration: 0,
+    invocationId: "inv_test",
+    attemptId: "attempt_test",
+    deadline,
+    handler: "demo.read",
+    args: {},
+    viewer: {
+      user: { id: "usr_test", name: "Reader", email: "reader@example.test" },
+      company: { id: companyId, name: "Example", handle: "example" },
+      admin: false
+    },
+    callback: { url: options.callbackUrls[0]!, capability: "invocation-capability" }
+  }
+});
+
+it.effect("reuses a task's address across calls until its lifetime ends", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(1_000_000);
+    const aws = yield* cloud;
+    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    yield* provider.start({ taskId: "cached", deploymentRevision: "current" });
+    const before = aws.describes();
+    yield* provider.bind("cached", { companyId: "company-cached", bindingEpoch: 1 });
+    for (let call = 0; call < 3; call++) {
+      yield* provider.bind("cached", { companyId: "company-cached", bindingEpoch: 1 });
+      yield* provider.invoke("cached", invocation("company-cached", 1_010_000));
+    }
+    // Seven management requests, one lookup.
+    assert.strictEqual(aws.describes() - before, 1);
+    yield* TestClock.adjust(registry["execution.endpoint.lifetime"].default);
+    yield* provider.stats("cached", { bindingEpoch: 1 });
+    assert.strictEqual(aws.describes() - before, 2);
+  })
+);
+
+it.effect("asks ECS on every call to a supervisor of another release", () =>
+  Effect.gen(function* () {
+    const aws = yield* cloud;
+    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
+    const before = aws.describes();
+    // The older supervisor refuses `taskId`, so these succeed only because none names its task.
+    for (let call = 0; call < 3; call++)
+      yield* provider.bind("older", { companyId: "company-older", bindingEpoch: 1 });
+    assert.strictEqual(aws.describes() - before, 3);
+  })
+);
+
+it.effect("refuses a stopped task's reused address before any effect and re-resolves", () =>
+  Effect.gen(function* () {
+    // Releases share the fleet secret, so only the named task stops either release's spare.
+    const shared = {
+      ...options,
+      previous: { ...options.previous!, secret: options.current.secret }
+    };
+    for (const revision of ["current", "previous"]) {
+      const aws = yield* cloud;
+      const provider = yield* EcsTaskProvider.make(shared).pipe(Effect.provide(aws.layer));
+      // Another host starts the spare, so this host has seen no stop.
+      const otherHost = yield* EcsTaskProvider.make(shared).pipe(Effect.provide(aws.layer));
+      yield* provider.start({ taskId: "lost", deploymentRevision: "current" });
+      yield* provider.bind("lost", { companyId: "company-lost", bindingEpoch: 1 });
+      const address = yield* aws.crash("lost");
+      aws.reuse(address);
+      yield* otherHost.start({ taskId: "spare", deploymentRevision: revision });
+      const before = aws.describes();
+      assert.include(
+        yield* provider
+          .bind("lost", { companyId: "company-lost", bindingEpoch: 1 })
+          .pipe(Effect.flip),
+        { reason: "stopped" },
+        revision
+      );
+      assert.strictEqual(aws.describes() - before, 1, revision);
+      assert.include(
+        aws.supervisors.get(address),
+        { taskId: "spare", companyId: null, bindingEpoch: 0 },
+        revision
+      );
+    }
+  })
+);
+
+it.effect("forgets a task's address once ECS reports it stopped", () =>
+  Effect.gen(function* () {
+    const aws = yield* cloud;
+    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    yield* provider.start({ taskId: "listed", deploymentRevision: "current" });
+    yield* provider.bind("listed", { companyId: "company-listed", bindingEpoch: 1 });
+    yield* aws.crash("listed");
+    assert.include((yield* provider.list)[0], { taskId: "listed", state: "stopped" });
+    // Housekeeping reads stats right after listing a stop and accepts only this refusal.
+    assert.include(yield* provider.stats("listed", { bindingEpoch: 1 }).pipe(Effect.flip), {
+      reason: "stopped"
+    });
+  })
+);
+
+it.effect("never keeps or re-sends a request whose reply was lost or malformed", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(1_000_000);
+    const aws = yield* cloud;
+    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const bind = provider.bind("uncertain", { companyId: "company-uncertain", bindingEpoch: 1 });
+    yield* provider.start({ taskId: "uncertain", deploymentRevision: "current" });
+    const supervisor = [...aws.supervisors.values()].find((entry) => entry.taskId === "uncertain")!;
+    // A malformed reply after a fresh lookup keeps no address.
+    const first = aws.describes();
+    aws.malformNextReply();
+    assert.include(yield* bind.pipe(Effect.flip), { reason: "protocol" });
+    yield* bind;
+    assert.strictEqual(aws.describes() - first, 2);
+    for (const [reason, garble] of [
+      ["transport", aws.loseInvokeReply],
+      ["protocol", aws.malformNextReply]
+    ] as const) {
+      const sent = supervisor.invokes;
+      const before = aws.describes();
+      garble();
+      assert.include(
+        yield* provider
+          .invoke("uncertain", invocation("company-uncertain", 1_010_000))
+          .pipe(Effect.flip),
+        { reason },
+        reason
+      );
+      assert.strictEqual(supervisor.invokes - sent, 1, reason);
+      assert.strictEqual(aws.describes(), before, reason);
+      // The failure forgot the address, so the next call asks ECS again.
+      yield* provider.stats("uncertain", { bindingEpoch: 1 });
+      assert.strictEqual(aws.describes() - before, 1, reason);
+    }
+  })
 );
 
 const services = OperatingLimits.layer.pipe(
