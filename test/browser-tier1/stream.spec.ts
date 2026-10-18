@@ -1,5 +1,6 @@
-import type { Frame, Route } from "@playwright/test";
+import type { Frame, Page, Route } from "@playwright/test";
 import type { FixtureWindow } from "./fixture-client.js";
+import type { Instance } from "./instance.js";
 import { test, expect, open, notice, installSessionRefreshBoundary } from "./fixtures.js";
 import { RuntimeSubscriptionRequest, type RuntimeFailure } from "../../packages/api/src/index.js";
 import * as Schema from "effect/Schema";
@@ -888,5 +889,147 @@ test("stale, session, principal and rate-limit refusals of a POST keep their han
     expect(refusals).toEqual([]);
     await expect(frame.locator(`#rows-${limit}`)).toHaveText("0");
   }
+  await page.unroute("**/api/runtime/subscriptions");
+});
+
+// The page clock when each stream opened and when the shell aborted it. With the clock paused,
+// a backoff timer opens the next stream inside `runFor`, so the gap is exactly the delay.
+interface StreamOpen {
+  readonly at: number;
+  lostAt?: number;
+}
+const recordStreamOpens = (page: Page) =>
+  page.addInitScript(() => {
+    const opens: StreamOpen[] = [];
+    const fetch = window.fetch;
+    Object.assign(window, { streamOpens: opens });
+    window.fetch = (input, init) => {
+      if (String(input).includes("/api/runtime/stream")) {
+        const open: StreamOpen = { at: Date.now() };
+        opens.push(open);
+        init?.signal?.addEventListener("abort", () => {
+          open.lostAt = Date.now();
+        });
+      }
+      return fetch(input, init);
+    };
+  });
+const streamOpens = (page: Page) =>
+  page.evaluate(() => (window as unknown as { streamOpens: StreamOpen[] }).streamOpens);
+// Whether the newest stream is lost and waiting for its backoff: the shell aborted it, and the
+// ingress saw it close, so no reconnect is in flight.
+const newestLost = async (page: Page, instance: Instance) =>
+  instance.streamConnections.size === 0 && (await streamOpens(page)).at(-1)?.lostAt !== undefined;
+// After n backoff failures in a row the shell waits 500 ms·2ⁿ, jittered down to as little as
+// half, so its delay falls in [250·2ⁿ, 500·2ⁿ): step n.
+type ReconnectStep = "at once" | number;
+const reconnectSteps = async (page: Page) => {
+  const opens = await streamOpens(page);
+  return opens.slice(1).map((open, index): ReconnectStep => {
+    const delay = open.at - (opens[index]?.lostAt ?? Number.NaN);
+    return delay === 0 ? "at once" : Math.floor(Math.log2(delay / 250));
+  });
+};
+
+for (const scenario of [
+  {
+    refused: "misrouted",
+    refusal: refusal(409, "invalid_request"),
+    // #776's one immediate reconnect, then the backoff.
+    streak: ["at once", 0, 1, 2],
+    next: ["at once", 0]
+  },
+  { refused: "rate limited", refusal: refusal(429, "rate_limited"), streak: [0, 1, 2], next: [0] }
+] as const) {
+  test(`a stream whose POSTs are all ${scenario.refused} backs off exponentially until it reconciles`, async ({
+    page,
+    instance
+  }) => {
+    await page.clock.install();
+    await recordStreamOpens(page);
+    let refusing = false;
+    await page.route("**/api/runtime/subscriptions", (route) =>
+      refusing ? route.fulfill(scenario.refusal) : route.continue()
+    );
+    const frame = await open(page, await instance.publish());
+    await expect.poll(() => generations(frame)).toHaveLength(1);
+    // Pause ahead of real time; no timer is armed for the reconciled empty set.
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+    // Runs out each lost stream's backoff, up to its step's longest delay.
+    const reconnect = async (steps: ReadonlyArray<ReconnectStep>) => {
+      for (const step of steps) {
+        if (step === "at once") continue;
+        await expect.poll(() => newestLost(page, instance)).toBe(true);
+        await page.clock.runFor(500 * 2 ** step);
+      }
+    };
+
+    // Each new stream's replace is refused, so none reconciles and the delay keeps doubling.
+    refusing = true;
+    await subscribeLimit(frame, 1);
+    await reconnect(scenario.streak);
+    // A stream that admits its replace while its answers are held has not reconciled, so
+    // losing it keeps the grown delay.
+    await expect.poll(() => newestLost(page, instance)).toBe(true);
+    refusing = false;
+    instance.holdStreamFrames("answers");
+    await reconnect([3]);
+    await expect.poll(() => admittedSinceHello(frame)).toBe(true);
+    refusing = true;
+    await subscribeLimit(frame, 2);
+    // Once a stream's answers arrive, it reconciles and the next streak starts over.
+    await expect.poll(() => newestLost(page, instance)).toBe(true);
+    refusing = false;
+    instance.holdStreamFrames(false);
+    await reconnect([4]);
+    await expect(frame.locator("#rows-1")).toHaveText("0");
+    await expect(frame.locator("#rows-2")).toHaveText("0");
+    refusing = true;
+    await subscribeLimit(frame, 3);
+    await reconnect(scenario.next);
+    expect(await reconnectSteps(page)).toEqual([...scenario.streak, 3, 4, ...scenario.next]);
+    await page.unroute("**/api/runtime/subscriptions");
+  });
+}
+
+test("a session refresh during a refused streak reconnects at once and keeps the backoff", async ({
+  page,
+  context,
+  instance
+}) => {
+  await page.clock.install();
+  await recordStreamOpens(page);
+  let refreshes = 0;
+  await installSessionRefreshBoundary(context, () => {
+    refreshes++;
+    return instance.session(context);
+  });
+  let refusing = false;
+  await page.route("**/api/runtime/subscriptions", (route) =>
+    refusing ? route.fulfill(refusal(429, "rate_limited")) : route.continue()
+  );
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+
+  refusing = true;
+  await subscribeLimit(frame, 1);
+  await expect.poll(() => newestLost(page, instance)).toBe(true);
+  await page.clock.runFor(500);
+  await expect.poll(() => newestLost(page, instance)).toBe(true);
+  // The next stream open finds a stale token: the refresh reconnects without a timer.
+  await instance.session(context, "expired");
+  const stale = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/runtime/stream" && response.status() === 401
+  );
+  await page.clock.runFor(1_000);
+  expect(await (await stale).json()).toMatchObject({ code: "session_refresh_required" });
+  // The refreshed stream's POSTs are still refused, so its backoff picks up where it was.
+  await expect.poll(() => newestLost(page, instance)).toBe(true);
+  await page.clock.runFor(2_000);
+  expect(await reconnectSteps(page)).toEqual([0, 1, "at once", 2]);
+  expect(refreshes).toBe(1);
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
   await page.unroute("**/api/runtime/subscriptions");
 });

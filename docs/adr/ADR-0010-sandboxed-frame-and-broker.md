@@ -116,11 +116,15 @@ it is not a failure and adds no backoff.
 Refresh/network failures keep the document and its backoff; no operation is replayed.
 
 EOF, a network cut and deployment drain use the same capped, jittered-backoff reconnect.
+The backoff doubles from half a second with each failure in a row, up to 30 seconds.
+It starts over only when a stream reconciles, with its latest sequence admitted and
+every subscription answered, so a stream whose subscription POSTs keep failing, such
+as a persistent misroute or rate limit, backs off to the cap.
 A subscription POST refused as `invalid_request` (409) while it still names the
 current generation and latest sequence tears the stream down, most likely sent to a
 host that does not hold it. The first such loss reconnects at once; a further one waits
-for the backoff until a stream reconciles again, with its latest sequence admitted
-and every subscription answered. A new `hello` alone does not restore the allowance.
+for the backoff until a stream reconciles again. A new `hello` alone neither resets
+the backoff nor restores the allowance.
 `pagehide` closes early; a hidden document suspends after 30 seconds and reopens
 on return. Shutdown signals fence new runtime operations and streams before the
 HTTP listener closes. Already-admitted work is not replayed.

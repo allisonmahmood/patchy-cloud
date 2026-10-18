@@ -67,6 +67,8 @@ export function openDocumentStream(options: {
   let controller: AbortController | undefined;
   let retryTimer: number | undefined;
   let hiddenTimer: number | undefined;
+  // Reconnects in a row that waited for the backoff. A reconciled stream resets them and a new
+  // hello does not: a hello proves the GET landed, not that its POSTs reach the stream's host.
   let failures = 0;
   // One reconnect may skip the backoff after a current-generation loss; see `post`. A
   // reconciled document earns it back, a new hello does not.
@@ -106,6 +108,7 @@ export function openDocumentStream(options: {
     status.connected();
     // This stream's host admitted its latest sequence and answered every subscription, so
     // its POSTs reach it.
+    failures = 0;
     reconnectAtOnce = true;
   };
   const forget = (id: string) => {
@@ -156,8 +159,8 @@ export function openDocumentStream(options: {
         // An `invalid_request` refusal of a POST that still names the current generation and
         // latest sequence is a current-generation loss: most likely the POST reached a host
         // that does not hold the stream, such as a misrouted one, or the document closed. Its
-        // stream reconnects at once, once: a further loss before a stream reconciles waits for
-        // the backoff, so a persistent misroute cannot loop. Any other refusal, including
+        // stream reconnects at once, once: further losses before a stream reconciles wait for
+        // the growing backoff, so a persistent misroute backs off. Any other refusal, including
         // session and rate limits, keeps the backoff.
         if (invalid && reconnectAtOnce) {
           reconnectAtOnce = false;
@@ -283,7 +286,8 @@ export function openDocumentStream(options: {
           if (frame.type === "hello") {
             hello = frame;
             helloAt = performance.now();
-            failures = 0;
+            // The server accepted this session, so the refresh budget starts over. The backoff
+            // waits for reconciliation.
             refreshAttempts = 0;
             generation = frame.generation;
             sequence = 0;
