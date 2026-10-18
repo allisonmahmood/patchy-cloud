@@ -565,6 +565,7 @@ patchy.config.ts              definitions and uses declarations
 patchy.json                   instance, patch description and sync stamp; optional patch id
 package.json, pnpm-lock.yaml   managed pins; install already ran with scripts disabled
 index.html, src/main.tsx, src/App.tsx  tiers 1 and 2 Preact page
+src/styles.css                the page's layout: a centred main column, after the look
 server/                       tier 2 starter handlers
 vite.config.ts, tsconfig.json  single-file build, JSX settings, typechecking
 eslint.config.js              tiers 1 and 2 import and hooks lint
@@ -1307,7 +1308,9 @@ or `null` for the Patchy look, and `lookRestore` the company's latest restore as
 `patchy look --json`'s `restored` carries it, `null` after a publish. A new repo's
 tier 1 and 2 `src/main.tsx` imports
 `look.css` and its tier 0 `index.html` links it, so the first page is already in
-the look; the single-file build inlines it, embedded fonts included. A page that
+the look; the single-file build inlines it, embedded fonts included. Its
+`src/styles.css`, loaded after the look at every tier, holds only the layout: the
+page's `<main>` centred at 960px and padded from `--look-space`. A page that
 doesn't import it keeps its own style, and refresh never edits page source. A
 `dev` that joins a running session generates nothing; `refresh` brings a new
 revision into it.
@@ -1332,14 +1335,18 @@ notice adds that the reference must go, since the next build fails on it. A dev
 start whose first build then fails keeps the notice in its failure. If
 `/api/me` doesn't answer, the notice says "The company's look changed".
 
-Repo `publish` never pulls a revision. For such a page it reads the company's
-current look (`GET /api/look`) before building, and when the repo's revision
-differs, it publishes the repo's own revision unchanged, exits 0 and warns:
-"This repo has Acme's look rev 7, but the current look is rev 8 by Sam: darker
-green. This version keeps the repo's look; run patchy refresh to bring it up to
-date." The check is advisory: a failed read is the warning "Could not check
-whether this repo's look is current: …" and the publish goes ahead. A page that
-names neither file hears nothing and publish sends no look request.
+Repo `publish` never pulls a revision. For such a page it sends the revision
+`index.json` names with the publish (`metadata.look`, null for the Patchy look),
+and when that isn't the company's current look the instance publishes the repo's
+own revision unchanged and its response warns, exit 0: "This repo has Acme's
+look rev 7, but the current look is rev 8 by Sam: darker green. This version
+keeps the repo's look; run patchy refresh to bring it up to date." The check is
+advisory: a failed read is the warning "Could not check whether this repo's
+look is current: …" and the publish goes ahead. The warning comes from the
+publish response, so a failed local build or an unsuccessful upload carries
+none; once the instance accepts a publish, its warnings are reported even if a
+local write afterwards fails. A page that names neither file sends no look and
+hears nothing.
 
 ## Exit codes
 

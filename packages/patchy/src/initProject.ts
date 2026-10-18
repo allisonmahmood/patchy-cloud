@@ -53,10 +53,21 @@ export function starterFiles(options: {
     "index.html":
       tier >= 1
         ? `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n`
-        : `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/patchy/_generated/look.css"></head><body><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></body></html>\n`,
+        : `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/patchy/_generated/look.css"><link rel="stylesheet" href="/src/styles.css"></head><body><main><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></main></body></html>\n`,
+    // Looks zero the body's margin and the patch frame has no border, so the page brings its own
+    // layout, loaded after the look. Its column and padding match the look specimen's.
+    "src/styles.css": `/* Layout only: colours, fonts and element styles come from the look. */
+main {
+  box-sizing: border-box;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: calc(var(--look-space, 8px) * 6) calc(var(--look-space, 8px) * 4);
+}
+`,
     ...(tier >= 1
       ? {
           "src/main.tsx": `import "../patchy/_generated/look.css";
+import "./styles.css";
 import { render } from "patchy/preact";
 import { App } from "./App.js";
 
@@ -104,7 +115,7 @@ ${
 
   // The sandbox blocks native form submission; save through the broker instead.
   return (
-    <>
+    <main>
       <h1>Notes</h1>
       <form id="notes" onKeyDown={(event) => {
         if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {
@@ -118,7 +129,7 @@ ${
       <p role="status">{loading ? "Loading notes..." : saving ? "Saving note..." : ""}</p>
       <p id="error" role="alert">{error}</p>
       <ul id="list">{notes.map((note) => <li key={note.id}>{note.title}</li>)}</ul>
-    </>
+    </main>
   );
 }
 `,
