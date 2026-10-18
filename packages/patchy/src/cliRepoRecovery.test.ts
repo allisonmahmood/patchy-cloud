@@ -15,7 +15,6 @@ import { describe, expect, it } from "vitest";
 import { sha256 } from "@patchy/core";
 import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
 import {
-  companyLook,
   generateProjectResponse,
   identity,
   pendingFile,
@@ -185,7 +184,10 @@ describe("repo publish recovery", () => {
     options.cwd = moved;
     const attemptPath = path.join(moved, ".patchy/publish", sha256(instance.url), "attempt");
     const legacyAttempt = JSON.parse(readFileSync(pendingFile(attemptPath), "utf8"));
+    // An older CLI saved neither warnings nor a look stamp, and absent must stay absent.
+    expect(legacyAttempt.request.metadata.look).toBeNull();
     delete legacyAttempt.warnings;
+    delete legacyAttempt.request.metadata.look;
     const original = JSON.stringify(legacyAttempt);
     writeFileSync(pendingFile(attemptPath), original);
     writeFileSync(path.join(moved, "patchy.config.ts"), "broken config");
@@ -217,11 +219,12 @@ describe("repo publish recovery", () => {
       authorField: 8
     });
     expect(existsSync(attemptPath)).toBe(false);
-    expect(
-      instance.requests
-        .filter((request) => request.url === "/api/publish")
-        .map((request) => request.body)
-    ).toEqual(Array(3).fill(JSON.parse(original).request));
+    const saved = JSON.parse(original).request;
+    const [first, ...resent] = instance.requests
+      .filter((request) => request.url === "/api/publish")
+      .map((request) => request.body);
+    expect(first).toEqual({ ...saved, metadata: { ...saved.metadata, look: null } });
+    expect(resent).toEqual(Array(2).fill(saved));
   });
 
   it.each([true, false])(
@@ -281,7 +284,6 @@ describe("repo publish recovery", () => {
           );
         if (request.url === "/api/sdk/generate")
           return respond(200, generateProjectResponse(request.body));
-        if (request.url === "/api/look") return respond(200, companyLook(null));
         if (request.url === "/api/publish") {
           if (phase === "lost") return disconnect();
           if (phase === "blocked-write") {
@@ -321,7 +323,10 @@ describe("repo publish recovery", () => {
     expect(instance.requests.filter((r) => r.url === "/api/publish")).toHaveLength(1);
     expect(readFileSync(pendingFile(attemptPath), "utf8")).toBe(original);
     phase = "blocked-write";
-    expect((await runCli(["publish", "--json"], options)).status).toBe(1);
+    const blocked = await runCli(["publish", "--json"], options);
+    expect(blocked.status).toBe(1);
+    // The instance accepted the publish, so its warnings stand beside the local failure.
+    expect(JSON.parse(blocked.stderr).warnings).toEqual(response.warnings);
     expect(readFileSync(pendingFile(attemptPath), "utf8")).toBe(original);
     rmSync(path.join(dir, "patchy.json"), { recursive: true });
     writeFileSync(

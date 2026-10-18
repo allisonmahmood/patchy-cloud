@@ -858,6 +858,12 @@ export class Release extends Schema.Class<Release>("Release")({
   toolchain: ReleaseToolchain
 }) {}
 
+/**
+ * A look revision as a repo names it. Revision numbers restart in every company, so a revision is
+ * its number and its time.
+ */
+export const LookStamp = Schema.Struct({ revision: Schema.Int, createdAt: IsoTimestamp });
+
 /** What the CLI knows about where a document came from. Every field is optional. */
 export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetadata")({
   filename: OptionalText,
@@ -867,7 +873,12 @@ export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetad
   gitCommitSha: OptionalText,
   cliVersion: OptionalText,
   fileSha256: OptionalText,
-  description: Schema.optionalKey(Schema.String)
+  description: Schema.optionalKey(Schema.String),
+  /**
+   * The look a repo's page builds in: null for the Patchy look, or a company revision. Absent
+   * means no check: a page without the look, a file publish, or an attempt from an older CLI.
+   */
+  look: Schema.optionalKey(Schema.NullOr(LookStamp))
 }) {}
 
 /** One durable attempt, resent unchanged after a lost acknowledgement. */
