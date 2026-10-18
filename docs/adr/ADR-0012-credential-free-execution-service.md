@@ -142,7 +142,11 @@ acknowledgements. Before the epoch, each operation checks the task id the reques
 names and refuses another task's request before any effect: a stopped task's
 private address can go to a fresh task holding the same deployment secret.
 A stopped task cannot be rebound. Loading a bundle returns
-its process generation, and invocation names that generation.
+its process generation, and invocation names that generation. A bind by hash
+names the version and its SHA-256 without the bundle. It makes the same checks
+and waits for a loading process the same way. A supervisor without a live process
+for that version refuses `bundle_required` before any effect, and the host sends
+the bundle; a warm call then moves no bundle bytes.
 The callback proxy checks the immutable attempt, capability, deadline, epoch
 and generation before forwarding and again before delivering a reply. It stamps
 the epoch and generation on forwarded callbacks. A process kill removes its
@@ -182,7 +186,12 @@ or `handler_timeout`; the host must classify every attempt by its commit outcome
 
 `@patchy/execution/local` implements Runtime's `Executor` without a pool.
 After a health kill, the host binds again to get a fresh process generation;
-the executor never replays the failed invocation. Construction refuses a
+the executor never replays the failed invocation. Runtime retries only an invoke
+refused before dispatch (`bundle_required` or `stale_generation`, when the
+process was reaped or replaced after bind). It binds again once and sends a fresh
+attempt for the current generation; the refused one ran nothing and does not count
+toward `tier2.mutation.attempts`. A nested call keeps its parent's generation and
+never rebinds. Construction refuses a
 production environment. The local supervisor runs in the host process, but its
 aggregate residency ceiling counts only sampled supervised workerd RSS. PGlite,
 fixtures, Vite and other host allocations do not consume the executor's budget.
@@ -197,7 +206,8 @@ or per-invocation CPU and memory guarantees.
 provider owns task launch, management transport, discovery and observed stop times.
 The ECS provider reuses a resolved task address only for supervisors of its own
 release, which check the named task, so a reused address is refused rather than
-served; it never re-sends a request after a transport failure.
+served; it never re-sends a request after a transport failure. Only those
+supervisors get a bind by hash: older ones refuse the field.
 The execution baseline, `0008_execution`, owns task identity and deployment revision, company
 bindings and their epochs, binding history, process reports, breaker state and the
 housekeeping lease. A partial unique index permits one admission-serving binding
