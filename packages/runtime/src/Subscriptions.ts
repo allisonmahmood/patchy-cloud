@@ -462,9 +462,9 @@ export const make = Effect.gen(function* () {
           ]
         });
         // A replace admitted during the read may recover a write whose wake was lost. The result
-        // answers it only if the revisions it read still match a fence taken after the replace.
-        while (sub.replaces !== replaces) {
-          if (!present(doc, sub) || sub.epoch !== epoch) return yield* discarded;
+        // answers it only if the revisions it read still match one fence taken after the replace.
+        // A replace during that fence ends the run, which then runs again and frees its slot.
+        if (sub.replaces !== replaces) {
           const seen = sub.replaces;
           const after = yield* reads.revisions(binding.companyId, Object.keys(snapshot.vector));
           if (!equalVector(snapshot.vector, after)) return yield* discarded;

@@ -37,7 +37,7 @@ What first made a run's subscription dirty: `initial` (newly installed), `replac
 _Avoid_: cause (`causedByEventId` names the write behind a wake)
 
 **Disposition**:
-What became of a run's result: `delivered` as a snapshot, `unchanged` as up-to-date, or `discarded` because a rebind overtook it, its subscription or document went away, its read fell behind its fence, or a replace admitted during it found what it read already changed. A run that sent an error or a refusal has none; its outcome says so.
+What became of a run's result: `delivered` as a snapshot, `unchanged` as up-to-date, or `discarded` because a rebind overtook it, its subscription or document went away, its read fell behind its fence, or it overlapped a replace and couldn't show its result was still current. A run that sent an error or a refusal has none; its outcome says so.
 _Avoid_: outcome (whether the work succeeded)
 
 **Bundle load**:

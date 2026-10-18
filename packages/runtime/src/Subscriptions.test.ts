@@ -49,6 +49,7 @@ const fixture = Effect.gen(function* () {
   const started = yield* Queue.make<number>();
   const admitting = yield* Queue.make<number>();
   const fencing = yield* Queue.make<void>();
+  const checking = yield* Queue.make<void>();
   const recorded = yield* Queue.make<WideEvents.WideEvent>();
   const state = {
     revision: 0,
@@ -61,9 +62,13 @@ const fixture = Effect.gen(function* () {
     gate: undefined as Deferred.Deferred<void> | undefined,
     /** Holds a revision read after taking its fence, so a write can land just after it. */
     revisionsGate: undefined as Deferred.Deferred<void> | undefined,
+    /** Holds the document's authority check. */
+    checkGate: undefined as Deferred.Deferred<void> | undefined,
     limitsGate: undefined as Deferred.Deferred<void> | undefined,
-    /** A dependency only a read's result reveals, so a wake for it waits on the run. */
-    late: undefined as string | undefined,
+    /** Dependencies only a read's result reveals, so a wake for one waits on the run. */
+    revealed: [] as string[],
+    /** Revisions beyond the source table's and its lifecycle's; a missing one reads as -1. */
+    others: {} as Record<string, string>,
     /** Revisions the next read trails its fence by. */
     readLag: 0
   };
@@ -87,7 +92,7 @@ const fixture = Effect.gen(function* () {
           vector: {
             ...vector(),
             [key]: String(state.revision - state.readLag),
-            ...(state.late === undefined ? {} : { [state.late]: "0" })
+            ...Object.fromEntries(state.revealed.map((name) => [name, state.others[name] ?? "-1"]))
           }
         };
         state.readLag = 0;
@@ -96,13 +101,15 @@ const fixture = Effect.gen(function* () {
         if (state.failure !== undefined) return yield* Effect.fail(state.failure);
         return snapshot;
       }),
-    revisions: () =>
+    revisions: (_, keys) =>
       Effect.gen(function* () {
-        const fence = vector();
+        const current: Record<string, string> = { ...vector(), ...state.others };
+        const fence = Object.fromEntries(keys.map((name) => [name, current[name] ?? "-1"]));
         if (state.revisionsGate !== undefined) {
           yield* Queue.offer(fencing, undefined);
           yield* Deferred.await(state.revisionsGate);
         }
+        if (state.failure !== undefined) return yield* Effect.fail(state.failure);
         return fence;
       })
   };
@@ -128,7 +135,12 @@ const fixture = Effect.gen(function* () {
     generation: "generation",
     documentId: "document_subscription",
     binding: () => binding,
-    check: Effect.void,
+    check: Effect.suspend(() => {
+      const gate = state.checkGate;
+      return gate === undefined
+        ? Effect.void
+        : Queue.offer(checking, undefined).pipe(Effect.andThen(Deferred.await(gate)));
+    }),
     scope,
     send: (frame) => {
       Queue.offerUnsafe(frames, frame);
@@ -163,6 +175,7 @@ const fixture = Effect.gen(function* () {
     started,
     admitting,
     fencing,
+    checking,
     recorded,
     document,
     update,
@@ -887,7 +900,7 @@ it.effect("dates a wake for a dependency the run discovers from when it arrived"
   Effect.gen(function* () {
     const f = yield* fixture;
     const late = "table:source:late";
-    f.state.late = late;
+    f.state.revealed = [late];
     const gate = yield* Deferred.make<void>();
     f.state.gate = gate;
     yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
@@ -1218,3 +1231,189 @@ it.effect("sends nothing for a replaced read whose document closed", () =>
     assert.strictEqual(f.state.reads, 1);
   }).pipe(Effect.scoped)
 );
+
+it.effect("ends a run after one freshness check so a queued document gets its slot", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const gate = yield* Deferred.make<void>();
+    f.state.gate = gate;
+    const noisy = Array.from({ length: cap }, (_, index) => ({ ...query, id: `noisy-${index}` }));
+    yield* f.update({ type: "replace", sequence: 0, subscriptions: noisy });
+    yield* f.next;
+    yield* Effect.forEach(noisy, () => Queue.take(f.started), { discard: true });
+    f.state.gate = undefined;
+    // Another document's subscription waits for a slot the noisy reads hold.
+    const quietChecks = yield* Queue.make<void>();
+    const quietFrames = yield* Queue.make<RuntimeStreamFrame>();
+    const quiet = f.registry.attach({
+      generation: "quiet",
+      documentId: "quiet_document",
+      binding: () => binding,
+      check: Queue.offer(quietChecks, undefined).pipe(Effect.asVoid),
+      scope: f.scope,
+      send: (frame) => {
+        Queue.offerUnsafe(quietFrames, frame);
+      }
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(quiet.close));
+    yield* quiet.update({
+      type: "subscribe",
+      sequence: 1,
+      subscription: query,
+      patchId: binding.patchId,
+      versionId: binding.versionId,
+      documentId: "quiet_document",
+      generation: "quiet"
+    });
+    assert.deepStrictEqual(yield* Queue.take(quietFrames), { type: "admitted", sequence: 1 });
+    // A replace during the reads sends each to a freshness check, and another lands during it.
+    yield* f.update({ type: "replace", sequence: 1, subscriptions: noisy });
+    yield* f.next;
+    const fences = yield* Deferred.make<void>();
+    f.state.revisionsGate = fences;
+    yield* Deferred.succeed(gate, undefined);
+    yield* Effect.forEach(noisy, () => Queue.take(f.fencing), { discard: true });
+    const later = yield* Deferred.make<void>();
+    f.state.revisionsGate = later;
+    yield* f.update({ type: "replace", sequence: 2, subscriptions: noisy });
+    yield* f.next;
+    yield* Deferred.succeed(fences, undefined);
+    // Checking again would hold every slot; ending frees them, so the quiet document runs.
+    const first = yield* Effect.raceFirst(
+      Queue.take(quietChecks).pipe(Effect.as("quiet")),
+      Effect.forEach(noisy, () => Queue.take(f.fencing), { discard: true }).pipe(Effect.as("noisy"))
+    );
+    assert.strictEqual(first, "quiet");
+    f.state.revisionsGate = undefined;
+    yield* Deferred.succeed(later, undefined);
+    assert.strictEqual((yield* Queue.take(quietFrames)).type, "snapshot");
+  }).pipe(Effect.scoped)
+);
+
+it.effect("discards a fresh result when a replace lands during its final authority check", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const release = yield* holdRead(f);
+    yield* f.update({ type: "replace", sequence: 1, subscriptions: [query] });
+    yield* f.next;
+    const check = yield* Deferred.make<void>();
+    f.state.checkGate = check;
+    yield* release;
+    yield* Queue.take(f.checking);
+    f.state.checkGate = undefined;
+    yield* f.update({ type: "replace", sequence: 2, subscriptions: [query] });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 2 });
+    yield* Deferred.succeed(check, undefined);
+    assert.include((yield* reruns(f.recorded, 1))[0], {
+      trigger: "initial",
+      disposition: "discarded"
+    });
+    assert.include((yield* reruns(f.recorded, 1))[0], {
+      trigger: "replace",
+      disposition: "delivered"
+    });
+    assert.strictEqual((yield* f.next).type, "snapshot");
+    assert.strictEqual(f.state.reads, 2);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("sends no revision-only up-to-date when a replace lands during its authority check", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
+    yield* f.next;
+    const received = yield* f.next;
+    assert(received.type === "snapshot");
+    // An unchanged reconcile reaches its revision check and waits at the authority check.
+    const admission = yield* Deferred.make<void>();
+    f.state.admissionGate = admission;
+    yield* f.document.reconcile("periodic");
+    while ((yield* Queue.take(f.admitting)) < 2) {
+      /* skip the first run's admission */
+    }
+    const check = yield* Deferred.make<void>();
+    f.state.checkGate = check;
+    f.state.admissionGate = undefined;
+    yield* Deferred.succeed(admission, undefined);
+    yield* Queue.take(f.checking);
+    f.state.checkGate = undefined;
+    yield* f.update({
+      type: "replace",
+      sequence: 1,
+      subscriptions: [{ ...query, vector: received.vector, revision: received.revision }]
+    });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 1 });
+    yield* Deferred.succeed(check, undefined);
+    assert.deepStrictEqual(yield* f.next, {
+      type: "up-to-date",
+      id: query.id,
+      revision: received.revision,
+      vector: f.vector()
+    });
+    // The held check sent nothing; a second revision check answered the replace.
+    assert.strictEqual(f.state.admissions, 3);
+    assert.strictEqual(f.state.reads, 1);
+  }).pipe(Effect.scoped)
+);
+
+for (const stage of ["read", "freshness check"] as const)
+  it.effect(`drops a ${stage} failure a replace overlapped and runs again at once`, () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const release = yield* holdRead(f);
+      yield* f.update({ type: "replace", sequence: 1, subscriptions: [query] });
+      yield* f.next;
+      const fence = yield* Deferred.make<void>();
+      if (stage === "freshness check") f.state.revisionsGate = fence;
+      else f.state.failure = new Runtime.SourceUnavailable({ cause: "offline" });
+      // The next run's admission waits, so the failure can clear before it reads.
+      const admission = yield* Deferred.make<void>();
+      f.state.admissionGate = admission;
+      yield* release;
+      if (stage === "freshness check") {
+        yield* Queue.take(f.fencing);
+        f.state.revisionsGate = undefined;
+        f.state.failure = new Runtime.SourceUnavailable({ cause: "offline" });
+        yield* Deferred.succeed(fence, undefined);
+      }
+      assert.include((yield* reruns(f.recorded, 1))[0], {
+        outcome: "failure",
+        code: "source_unavailable",
+        disposition: "discarded"
+      });
+      // Admitted again without any time passing: no retry backoff and no reconcile timer.
+      while ((yield* Queue.take(f.admitting)) < 2) {
+        /* skip the first run's admission */
+      }
+      f.state.failure = undefined;
+      f.state.admissionGate = undefined;
+      yield* Deferred.succeed(admission, undefined);
+      assert.strictEqual((yield* f.next).type, "snapshot");
+    }).pipe(Effect.scoped)
+  );
+
+for (const change of ["nothing", "a dependency only the read revealed", "an absent resource"])
+  it.effect(`checks a replaced read against its own dependencies when ${change} changed`, () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const revealed = "table:source:revealed";
+      const absent = "table:source:absent";
+      f.state.revealed = [revealed, absent];
+      f.state.others = { [revealed]: "4" };
+      const release = yield* holdRead(f);
+      // Each write's wake is lost; only the replace's fence can see it.
+      if (change === "a dependency only the read revealed") f.state.others = { [revealed]: "5" };
+      if (change === "an absent resource") f.state.others = { [revealed]: "4", [absent]: "0" };
+      yield* f.update({ type: "replace", sequence: 1, subscriptions: [query] });
+      yield* f.next;
+      yield* release;
+      const answer = yield* f.next;
+      assert(answer.type === "snapshot");
+      assert.deepStrictEqual(answer.vector, {
+        ...f.vector(),
+        [revealed]: f.state.others[revealed]!,
+        [absent]: f.state.others[absent] ?? "-1"
+      });
+      assert.strictEqual(f.state.reads, change === "nothing" ? 1 : 2);
+    }).pipe(Effect.scoped)
+  );
