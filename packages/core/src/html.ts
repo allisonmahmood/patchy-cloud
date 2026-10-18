@@ -404,30 +404,6 @@ export function htmlPage(options: {
     }
 
 
-    .wrap {
-      width: min(980px, calc(100% - 40px));
-      margin: 0 auto;
-      padding: 42px 0 96px;
-    }
-
-    .wrap.compact {
-      max-width: 760px;
-    }
-
-    .doc-head {
-      margin-bottom: 2.5rem;
-      padding-bottom: 1.5rem;
-      border-bottom: 2px solid var(--line-strong);
-    }
-
-    .head-line {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 18px 36px;
-      margin-bottom: 2.5rem;
-    }
-
     .brand {
       display: inline-flex;
       align-items: center;
@@ -438,7 +414,6 @@ export function htmlPage(options: {
     }
 
 
-    .kicker,
     .pill {
       display: inline-flex;
       align-items: center;
@@ -450,14 +425,6 @@ export function htmlPage(options: {
       text-transform: uppercase;
       letter-spacing: 0;
       white-space: nowrap;
-    }
-
-    .kicker {
-      min-height: 30px;
-      padding: 5px 18px;
-      background: var(--yellow);
-      box-shadow: 3px 3px 0 var(--ink);
-      font-size: .78rem;
     }
 
     .pill {
@@ -911,18 +878,9 @@ export function htmlPage(options: {
 
 
     @media (max-width: 760px) {
-      .wrap {
-        width: min(100% - 28px, 980px);
-        padding-top: 28px;
-      }
-
       h1 {
         max-width: 13ch;
         font-size: 2.45rem;
-      }
-
-      .head-line {
-        margin-bottom: 1.8rem;
       }
 
       .panel,
