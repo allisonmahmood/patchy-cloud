@@ -62,7 +62,9 @@ const invocationMetrics = {
   responseBytes: Schema.optionalKey(Schema.Number),
   commitOutcome: Schema.optionalKey(
     Schema.Literals(["committed", "rolled_back", "unknown_outcome"])
-  )
+  ),
+  /** Where a tier 2 call's server bundle came from: memory, its own read, or another call's. */
+  bundleLoad: Schema.optionalKey(Schema.Literals(["cached", "read", "joined"]))
 };
 /** A routed request's matched template, never its path, and the status the client received. */
 const routeFields = {
