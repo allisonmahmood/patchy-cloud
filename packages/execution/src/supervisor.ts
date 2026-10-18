@@ -548,16 +548,26 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
         if (companyId !== null && request.bindingEpoch < bindingEpoch)
           return yield* new SupervisorError({ operation: "bind", reason: "stale_epoch" });
-        if (request.bundle !== undefined && request.bundle.companyId !== request.companyId)
+        // A version bind names its version by bundle, or by hash with only its binding.
+        const named = request.bundle ?? request.binding;
+        if (named !== undefined && named.companyId !== request.companyId)
           return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
         if ((request.operatingLimits === undefined) !== (request.configRevision === undefined))
           return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
+        if (
+          request.operatingLimits !== undefined &&
+          (request.operatingLimits["execution.probe.interval"] ??
+            limit("execution.probe.interval")) >= registry["execution.stall"].default
+        )
+          return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
+        const existing = named === undefined ? undefined : residents.get(versionKey(named));
+        if (existing?.alive === true && existing.binding.sha256 !== named?.sha256)
+          return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
+        const held = existing?.alive === true ? existing : undefined;
+        // Refused before any effect, so the host can send the same bind with its bundle.
+        if (request.binding !== undefined && held === undefined)
+          return yield* new SupervisorError({ operation: "bind", reason: "bundle_required" });
         if (request.operatingLimits !== undefined && request.configRevision !== undefined) {
-          if (
-            (request.operatingLimits["execution.probe.interval"] ??
-              limit("execution.probe.interval")) >= registry["execution.stall"].default
-          )
-            return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
           // Late acknowledgements cannot restore an older company override snapshot.
           if (
             request.bindingEpoch > bindingEpoch ||
@@ -571,20 +581,14 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         for (const url of request.callbackUrls ?? []) callbackUrls.add(url);
         companyId = request.companyId;
         bindingEpoch = request.bindingEpoch;
-        if (request.bundle === undefined) return undefined;
+        // Loading or ready, a held version is returned as it is; the caller awaits its readiness.
+        if (held !== undefined) return held;
         const bundle = request.bundle;
+        // Only a company bind gets here without a bundle: a bind by hash was held or refused.
+        if (bundle === undefined) return undefined;
         const key = versionKey(bundle);
-        const existing = residents.get(key);
-        if (existing !== undefined && !existing.alive) {
-          yield* Deferred.await(existing.reaped);
-        } else if (existing !== undefined) {
-          if (existing.binding.sha256 !== bundle.sha256)
-            return yield* new SupervisorError({
-              operation: "bind",
-              reason: "binding_conflict"
-            });
-          return existing;
-        }
+        // A dying resident of this version finishes its reap before its replacement loads.
+        if (existing !== undefined) yield* Deferred.await(existing.reaped);
         // Eviction does not await bundle initialization. A spinning load cannot own the watchdog.
         const blockedBy = yield* evict(1);
         if (blockedBy !== undefined)

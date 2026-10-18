@@ -37,6 +37,34 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
 }
 
 /**
+ * Sends a version bind by hash first, so a supervisor already holding the version gets no bytes.
+ * One that doesn't refuses `bundle_required` before any effect, and only then does the same bind
+ * go again with its bundle. Send this only to supervisors of the host's own release: older ones
+ * refuse the `binding` key.
+ */
+export const bindByHash = <E extends { readonly reason: string }, R>(
+  request: Management.BindRequest,
+  send: (request: Management.BindRequest) => Effect.Effect<Management.BindReply, E, R>
+): Effect.Effect<Management.BindReply, E, R> => {
+  const { bundle, ...rest } = request;
+  if (bundle === undefined) return send(request);
+  return send({
+    ...rest,
+    binding: {
+      companyId: bundle.companyId,
+      patchId: bundle.patchId,
+      versionId: bundle.versionId,
+      sha256: bundle.sha256
+    }
+  }).pipe(
+    Effect.catchIf(
+      (error) => error.reason === "bundle_required",
+      () => send(request)
+    )
+  );
+};
+
+/**
  * All host clients address the same shared inventory. Identity survives ambiguous starts
  * and stops; closing a host does not stop its tasks. A stopped observation certifies actual exit.
  * Omitted tasks and management timeouts are uncertainty, never evidence that a task stopped.

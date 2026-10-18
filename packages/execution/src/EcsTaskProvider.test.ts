@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { OperatingLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
+import type * as GuestProtocol from "@patchy/api/guest";
 import type * as Management from "@patchy/api/management";
 import * as Testing from "@patchy/sql/testing";
 import * as Clock from "effect/Clock";
@@ -47,8 +48,9 @@ const revisions = [options.current, options.previous!];
 
 // Alternate external-service layer: ECS retains tasks and idempotency tokens across host clients.
 // Each supervisor accepts the secrets its host injected and answers at the task's address; a
-// fresh task can be given a stopped task's address. "previous" models the release before
-// identity checks: it refuses `taskId` as an unknown key.
+// fresh task can be given a stopped task's address. Supervisors hold the versions bound with their
+// bundle. "previous" models the release before identity checks and binds by hash: it refuses
+// `taskId` and `binding` as unknown keys.
 const cloud = Effect.gen(function* () {
   const tasks = new Map<string, Task>();
   const tokens = new Map<string, string>();
@@ -77,8 +79,13 @@ const cloud = Effect.gen(function* () {
       bindingEpoch: number;
       stopped: boolean;
       invokes: number;
+      /** Process generation by held version. */
+      held: Map<string, number>;
+      /** Binds that carried a bundle's bytes. */
+      uploads: number;
     }
   >();
+  let generations = 0;
   let loseRunReply = false;
   let loseInvokeReply = false;
   let malformReply = false;
@@ -157,7 +164,9 @@ const cloud = Effect.gen(function* () {
         companyId: null,
         bindingEpoch: 0,
         stopped: false,
-        invokes: 0
+        invokes: 0,
+        held: new Map(),
+        uploads: 0
       });
       if (loseRunReply) {
         loseRunReply = false;
@@ -203,9 +212,14 @@ const cloud = Effect.gen(function* () {
               taskId?: string;
               companyId?: string;
               bindingEpoch: number;
+              bundle?: GuestProtocol.Bundle;
+              binding?: GuestProtocol.BundleBinding;
             })
           : { bindingEpoch: 0 };
-      if (body.taskId !== undefined && supervisor.revision === "previous")
+      if (
+        (body.taskId !== undefined || body.binding !== undefined) &&
+        supervisor.revision === "previous"
+      )
         return refuse(400, "invalid_request");
       if (body.taskId !== undefined && body.taskId !== supervisor.taskId)
         return refuse(421, "wrong_task");
@@ -225,11 +239,31 @@ const cloud = Effect.gen(function* () {
         );
       }
       if (url.pathname === "/bind") {
+        const version = body.bundle ?? body.binding;
+        const key = `${version?.patchId}/${version?.versionId}`;
+        if (body.binding !== undefined && !supervisor.held.has(key))
+          return refuse(409, "bundle_required");
         supervisor.companyId = body.companyId!;
         supervisor.bindingEpoch = body.bindingEpoch;
+        if (version === undefined)
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ bindingEpoch: body.bindingEpoch })
+          );
+        if (body.bundle !== undefined) supervisor.uploads++;
+        if (!supervisor.held.has(key)) supervisor.held.set(key, ++generations);
         return HttpClientResponse.fromWeb(
           request,
-          Response.json({ bindingEpoch: body.bindingEpoch })
+          Response.json({
+            bindingEpoch: body.bindingEpoch,
+            binding: {
+              companyId: version.companyId,
+              patchId: version.patchId,
+              versionId: version.versionId,
+              sha256: version.sha256
+            },
+            processGeneration: supervisor.held.get(key)
+          })
         );
       }
       if (url.pathname === "/stop") {
@@ -283,6 +317,8 @@ const cloud = Effect.gen(function* () {
     reuse: (address: string) => {
       reusedAddress = address;
     },
+    supervisor: (taskId: string) =>
+      [...supervisors.values()].find((entry) => entry.taskId === taskId)!,
     layer: Layer.merge(Layer.succeed(Ecs.Ecs, ecs), Layer.succeed(HttpClient.HttpClient, http))
   };
 });
@@ -594,17 +630,56 @@ it.effect("reuses a task's address across calls until its lifetime ends", () =>
   })
 );
 
-it.effect("asks ECS on every call to a supervisor of another release", () =>
+// A version bind as Runtime sends it, bundle bytes included.
+const versionBind = (companyId: string): Management.BindRequest => ({
+  companyId,
+  bindingEpoch: 1,
+  bundle: {
+    companyId,
+    patchId: "pat_test",
+    versionId: "ver_test",
+    sha256: "0".repeat(64),
+    bundle: "export default {};"
+  }
+});
+
+it.effect("binds a held version by hash and sends its bundle only when the supervisor asks", () =>
   Effect.gen(function* () {
+    yield* TestClock.setTime(1_000_000);
     const aws = yield* cloud;
     const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
-    yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
+    yield* provider.start({ taskId: "hashed", deploymentRevision: "current" });
+    yield* provider.bind("hashed", { companyId: "company-hashed", bindingEpoch: 1 });
+    const supervisor = aws.supervisor("hashed");
     const before = aws.describes();
-    // The older supervisor refuses `taskId`, so these succeed only because none names its task.
-    for (let call = 0; call < 3; call++)
-      yield* provider.bind("older", { companyId: "company-older", bindingEpoch: 1 });
-    assert.strictEqual(aws.describes() - before, 3);
+    const bind = provider.bind("hashed", versionBind("company-hashed"));
+    const loaded = yield* bind;
+    for (let call = 0; call < 3; call++) assert.deepStrictEqual(yield* bind, loaded);
+    assert.strictEqual(supervisor.uploads, 1);
+    // The supervisor reaped the version, so the next bind loads a new process.
+    supervisor.held.clear();
+    assert.notStrictEqual((yield* bind).processGeneration, loaded.processGeneration);
+    assert.strictEqual(supervisor.uploads, 2);
+    // Each `bundle_required` came from the cached task, which stayed cached.
+    assert.strictEqual(aws.describes(), before);
   })
+);
+
+it.effect(
+  "asks ECS on every call to a supervisor of another release, sending only full binds",
+  () =>
+    Effect.gen(function* () {
+      const aws = yield* cloud;
+      const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+      yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
+      const before = aws.describes();
+      // The older supervisor refuses `taskId` and `binding`, so these succeed only because none
+      // names its task or binds by hash.
+      for (let call = 0; call < 3; call++)
+        yield* provider.bind("older", versionBind("company-older"));
+      assert.strictEqual(aws.describes() - before, 3);
+      assert.strictEqual(aws.supervisor("older").uploads, 3);
+    })
 );
 
 it.effect("refuses a stopped task's reused address before any effect and re-resolves", () =>

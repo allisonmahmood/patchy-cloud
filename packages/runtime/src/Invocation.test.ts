@@ -442,6 +442,136 @@ it.layer(services)("Invocation", (it) => {
     })
   );
 
+  it.effect("binds once more when the bound process is gone before dispatch", () =>
+    Effect.gen(function* () {
+      for (const reason of ["bundle_required", "stale_generation"] as const) {
+        const sent: GuestProtocol.Invoke[] = [];
+        let binds = 0;
+        const invocations = yield* makeInvocation(
+          (request) =>
+            Effect.suspend(() => {
+              sent.push(request);
+              return request.processGeneration === 1
+                ? Effect.fail(new Executor.ExecutionError({ operation: "invoke", reason }))
+                : Effect.succeed({
+                    outcome: "returned" as const,
+                    reply: { ok: true as const, value: 7 },
+                    guestMs: 1
+                  });
+            }),
+          () => Effect.sync(() => ({ ...bound, processGeneration: ++binds }))
+        );
+        const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+        const events = yield* WideEvents.make.pipe(
+          Effect.provideService(WideEvents.Sink, {
+            write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+          })
+        );
+        assert.deepStrictEqual(
+          yield* events.withEvent(
+            { type: "re-run" },
+            invocations.call(
+              { handler: "demo.query", args: { id: 1 } },
+              { ...binding, correlationId: `rebound-${reason}` },
+              Effect.succeed(viewer)
+            )
+          ),
+          { ok: true, value: 7 },
+          reason
+        );
+        assert.deepStrictEqual(
+          sent.map((request) => request.processGeneration),
+          [1, 2],
+          reason
+        );
+        assert.notStrictEqual(sent[0]!.attemptId, sent[1]!.attemptId, reason);
+        // The refused invoke ran no handler, so it is not one of the call's attempts.
+        assert.include(yield* Queue.take(records), { attempts: 1, processGeneration: 2 }, reason);
+      }
+    })
+  );
+
+  it.effect("binds again at most once and never replays an invoke whose reply was lost", () =>
+    Effect.gen(function* () {
+      for (const [reason, expected] of [
+        ["stale_generation", 2],
+        ["transport", 1]
+      ] as const) {
+        let binds = 0;
+        let invokes = 0;
+        const invocations = yield* makeInvocation(
+          () =>
+            Effect.suspend(() => {
+              invokes++;
+              return Effect.fail(new Executor.ExecutionError({ operation: "invoke", reason }));
+            }),
+          () => Effect.sync(() => ({ ...bound, processGeneration: ++binds }))
+        );
+        const failure = yield* invocations
+          .call(
+            { handler: "demo.mutation", args: {}, mutationKey: yield* MutationTransaction.mint },
+            { ...binding, correlationId: `unrecovered-${reason}` },
+            Effect.succeed(viewer)
+          )
+          .pipe(Effect.flip);
+        assert.strictEqual(failure.code, "handler_failed", reason);
+        assert.strictEqual(invokes, expected, reason);
+        assert.strictEqual(binds, expected, reason);
+      }
+    })
+  );
+
+  it.effect("keeps a nested call on its parent's process generation", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+      const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const actionDone = yield* Deferred.make<void>();
+      let binds = 0;
+      const invocations = yield* makeInvocation(
+        (request) =>
+          Queue.offer(seen, request).pipe(
+            Effect.andThen(
+              request.handler === "demo.action"
+                ? Deferred.await(actionDone).pipe(
+                    Effect.as({
+                      outcome: "returned" as const,
+                      reply: { ok: true as const, value: 42 },
+                      guestMs: 1
+                    })
+                  )
+                : Effect.fail(
+                    new Executor.ExecutionError({ operation: "invoke", reason: "stale_generation" })
+                  )
+            )
+          ),
+        () =>
+          Effect.sync(() => {
+            binds++;
+            return bound;
+          })
+      );
+      const parent = yield* invocations
+        .call(
+          { handler: "demo.action", args: {} },
+          { ...binding, correlationId: "nested-generation" },
+          Effect.succeed(viewer)
+        )
+        .pipe(Effect.forkChild);
+      const request = yield* Queue.take(seen);
+      const capability = yield* capabilities.resolve(request.callback.capability, request);
+      const child = yield* capability.run!({ handler: "demo.query", args: { id: 1 } }).pipe(
+        Effect.flip
+      );
+      assert.strictEqual(child.code, "handler_failed");
+      // One child dispatch on the parent's generation, and no bind of its own.
+      assert.strictEqual((yield* Queue.take(seen)).processGeneration, bound.processGeneration);
+      assert.strictEqual(yield* Queue.size(seen), 0);
+      assert.strictEqual(binds, 1);
+      yield* Deferred.succeed(actionDone, undefined);
+      assert.deepStrictEqual(yield* Fiber.join(parent), { ok: true, value: 42 });
+    })
+  );
+
   it.effect("does not persist a quiet successful query", () =>
     Effect.gen(function* () {
       const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();

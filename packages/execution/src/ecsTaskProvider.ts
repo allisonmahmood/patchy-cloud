@@ -45,7 +45,8 @@ type ManagedTask = {
 };
 type Endpoint = { readonly task: ManagedTask; readonly expiresAt: number };
 // Refused before the receiver acts: authentication, decoding (an older supervisor refuses `taskId`
-// as an unknown key) and the identity check. Only these prove a request had no effect.
+// as an unknown key) and the identity check. Only these prove any request had no effect; a bind by
+// hash's `bundle_required` proves it too, and `bindByHash` recovers it where it is sent.
 const unaffected: ReadonlySet<TaskProvider.TaskProviderError["reason"]> = new Set([
   "unauthorized",
   "invalid_request",
@@ -172,9 +173,10 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   // or observed stop forgets the entry.
   const endpoints = new Map<string, Endpoint>();
   // ECS reports the exact definition a task runs, and a definition never changes. This host's own
-  // pins this release's image, whose supervisor checks the named task. Older supervisors refuse
-  // the field, so tasks of other definitions get neither it nor a cached address.
-  const checksIdentity = (task: ManagedTask) =>
+  // pins this release's image, so its supervisor speaks this host's management wire: it checks
+  // the named task and takes a bind by hash. Older supervisors refuse both fields as unknown keys,
+  // so tasks of other definitions get neither, nor a cached address.
+  const sameRelease = (task: ManagedTask) =>
     task.value.taskDefinitionArn === options.current.taskDefinition;
   const remember = (task: ManagedTask, now: number) => {
     for (const [taskId, entry] of endpoints) if (entry.expiresAt <= now) endpoints.delete(taskId);
@@ -414,7 +416,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
         HttpClientRequest.post(`http://${address}:${managementPort}/${path}`).pipe(
           HttpClientRequest.setHeader("authorization", `Bearer ${Redacted.value(secret)}`),
           HttpClientRequest.bodyJsonUnsafe(
-            checksIdentity(task) ? { ...body, taskId: task.taskId } : body
+            sameRelease(task) ? { ...body, taskId: task.taskId } : body
           )
         )
       )
@@ -516,30 +518,40 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       yield* Effect.sleep(500);
     }
   });
-  const call = Effect.fn("EcsTaskProvider.call")(function* <A>(
-    taskId: string,
+  // One request and its decoded reply. A malformed reply fails like any other failure.
+  const exchange = <A>(
+    task: ManagedTask,
     operation: Operation,
     path: string,
     body: object,
     decode: (reply: unknown) => Effect.Effect<A, Schema.SchemaError>
+  ) =>
+    post(task, operation, path, body).pipe(
+      Effect.flatMap(decode),
+      Effect.catchTags({
+        SchemaError: (cause) =>
+          Effect.fail(
+            new TaskProvider.TaskProviderError({
+              operation,
+              taskId: task.taskId,
+              reason: "protocol",
+              cause
+            })
+          )
+      })
+    );
+  // `answer` sends to one resolved task. A failure it doesn't recover is never kept or re-sent.
+  const call = Effect.fn("EcsTaskProvider.call")(function* <A>(
+    taskId: string,
+    operation: Operation,
+    answer: (task: ManagedTask) => Effect.Effect<A, TaskProvider.TaskProviderError>
   ) {
     const now = yield* Clock.currentTimeMillis;
-    // A malformed reply fails the request like any other failure: it is never kept or re-sent.
-    const answer = (task: ManagedTask) =>
-      post(task, operation, path, body).pipe(
-        Effect.flatMap(decode),
-        Effect.catchTags({
-          SchemaError: (cause) =>
-            Effect.fail(
-              new TaskProvider.TaskProviderError({ operation, taskId, reason: "protocol", cause })
-            )
-        })
-      );
     // Kept only once its supervisor answered: it verified the task id before acting.
     const fresh = Effect.gen(function* () {
       const task = yield* resolve(taskId, operation);
       const value = yield* answer(task);
-      if (checksIdentity(task) && task.value.lastStatus === "RUNNING") remember(task, now);
+      if (sameRelease(task) && task.value.lastStatus === "RUNNING") remember(task, now);
       return value;
     });
     const cached = endpoints.get(taskId);
@@ -672,7 +684,9 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       bounded(
         "quiesce",
         taskId,
-        call(taskId, "quiesce", "stop", { bindingEpoch }, () => Effect.void)
+        call(taskId, "quiesce", (task) =>
+          exchange(task, "quiesce", "stop", { bindingEpoch }, () => Effect.void)
+        )
       ),
     stop: (taskId) =>
       bounded(
@@ -703,13 +717,19 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       bounded(
         "bind",
         taskId,
-        call(
-          taskId,
-          "bind",
-          "bind",
-          { ...request, callbackUrls: options.callbackUrls } satisfies Management.BindRequest,
-          decodeBind
-        )
+        call(taskId, "bind", (task) => {
+          const send = (body: Management.BindRequest) =>
+            exchange(
+              task,
+              "bind",
+              "bind",
+              { ...body, callbackUrls: options.callbackUrls } satisfies Management.BindRequest,
+              decodeBind
+            );
+          // `bundle_required` is answered after the identity check and recovered here, on the
+          // same task, so it neither forgets a cached endpoint nor asks ECS again.
+          return sameRelease(task) ? TaskProvider.bindByHash(request, send) : send(request);
+        })
       ),
     invoke: (taskId, request) =>
       Effect.gen(function* () {
@@ -717,12 +737,18 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
         return yield* bounded(
           "invoke",
           taskId,
-          call(taskId, "invoke", "invoke", request, decodeInvoke),
+          call(taskId, "invoke", (task) =>
+            exchange(task, "invoke", "invoke", request, decodeInvoke)
+          ),
           Math.max(1, request.request.deadline - now) + managementTimeout
         );
       }),
     stats: (taskId, request) =>
-      bounded("stats", taskId, call(taskId, "stats", "stats", request, decodeStats))
+      bounded(
+        "stats",
+        taskId,
+        call(taskId, "stats", (task) => exchange(task, "stats", "stats", request, decodeStats))
+      )
   });
 });
 

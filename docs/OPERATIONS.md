@@ -553,7 +553,11 @@ definitions are resolved on every call. Any
 failed request, and any ECS observation of the task stopped, forgets the address.
 A request refused before it took effect (`unauthorized`, `invalid_request` or
 `wrong_task`) is sent once more after resolving again; a transport failure never
-is, because an invoke may have run.
+is, because an invoke may have run. Version binds to tasks of the host's own
+definition go by hash first, without the bundle's bytes; older supervisors refuse
+that field too. A supervisor that doesn't hold the version refuses
+`bundle_required` before any effect, and the host sends the bundle to the same
+address, which stays cached.
 In production `apps/infra` sets all of these; see [Production](#production).
 
 ## Production
