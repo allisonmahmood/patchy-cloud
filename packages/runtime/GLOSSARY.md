@@ -221,5 +221,5 @@ The revision vector a subscription must reach for its current desired-set sequen
 _Avoid_: stream generation (connection identity), publish version
 
 **Resync**:
-Replacement of a document's desired subscriptions, with its latest vectors, after reconnect or an unrecoverable sequence gap. It fences prior work; equal vectors answer up-to-date without rerunning the read.
+Replacement of a document's desired subscriptions, with its latest vectors, after reconnect, an unrecoverable sequence gap or stalled reconciliation. It fences prior work: a read it overlaps answers it only if the revisions that read saw still match a fence taken after the replace; otherwise the subscription runs again. Equal vectors answer up-to-date without rerunning the read.
 _Avoid_: reload, mutation retry
