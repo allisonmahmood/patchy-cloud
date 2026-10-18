@@ -116,6 +116,8 @@ const failureStatus = (reason: Supervisor.SupervisorError["reason"]) => {
       return 401;
     case "busy":
       return 503;
+    case "wrong_task":
+      return 421;
     case "stale_epoch":
     case "stale_generation":
     case "stopped":

@@ -199,6 +199,12 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     epoch === bindingEpoch
       ? Effect.void
       : Effect.fail(new SupervisorError({ operation, reason: "stale_epoch" }));
+  // Every operation checks this first. A task's address can be reused by a task holding the same
+  // fleet secret, and a supervisor without an identity cannot be the task a host named.
+  const checkTask = (taskId: string | undefined, operation: SupervisorError["operation"]) =>
+    taskId === undefined || taskId === options.taskId
+      ? Effect.void
+      : Effect.fail(new SupervisorError({ operation, reason: "wrong_task" }));
   const sample = Effect.fnUntraced(function* (resident: Resident) {
     if (resident.process?.child.pid === undefined) return;
     const sampled = yield* sampleProcess(resident.process.child.pid);
@@ -534,6 +540,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         (cause) => new SupervisorError({ operation: "bind", reason: "protocol", cause })
       )
     );
+    yield* checkTask(request.taskId, "bind");
     const resident = yield* admission.withPermit(
       Effect.gen(function* () {
         if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
@@ -688,11 +695,16 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   return Supervisor.of({
     bind,
     invoke: Effect.fn("Supervisor.invoke")(function* (input) {
-      const { bindingEpoch: epoch, request } = yield* decodeInvoke(input).pipe(
+      const {
+        taskId,
+        bindingEpoch: epoch,
+        request
+      } = yield* decodeInvoke(input).pipe(
         Effect.mapError(
           (cause) => new SupervisorError({ operation: "invoke", reason: "protocol", cause })
         )
       );
+      yield* checkTask(taskId, "invoke");
       const result = yield* admission.withPermit(
         Effect.gen(function* () {
           const key = attemptKey(request);
@@ -801,6 +813,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           (cause) => new SupervisorError({ operation: "stop", reason: "protocol", cause })
         )
       );
+      yield* checkTask(request.taskId, "stop");
       yield* checkEpoch(request.bindingEpoch, "stop");
       if (request.processGeneration === undefined) {
         stopped = true;
@@ -823,6 +836,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           (cause) => new SupervisorError({ operation: "stats", reason: "protocol", cause })
         )
       );
+      yield* checkTask(request.taskId, "stats");
       yield* checkEpoch(request.bindingEpoch, "stats");
       for (const id of request.acknowledgeReports ?? []) reports.delete(id);
       return {
