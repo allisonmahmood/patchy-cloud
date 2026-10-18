@@ -85,6 +85,7 @@ describe("patch-repo builds", () => {
     );
     expect(html).toContain(embeddedFontLook.font);
     expect(html).toContain("--look-bg:#08090a");
+    expect(html).toMatch(/main\{[^}]*max-width:960px/);
   });
 
   it("publishes a repo behind the company's look with its own revision, stamped only when its page imports it", async () => {
@@ -127,10 +128,7 @@ describe("patch-repo builds", () => {
 
     // A page with its own stylesheet sends no stamp, so nothing is checked.
     const main = path.join(dir, "src/main.tsx");
-    writeFileSync(
-      main,
-      readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, 'import "./styles.css";\n')
-    );
+    writeFileSync(main, readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, ""));
     writeFileSync(path.join(dir, "src/styles.css"), "body { background: #fff0f5; }\n");
     const own = await runCli(["publish", "--json"], options);
     expect(own, own.stderr).toMatchObject({ status: 0, stderr: "" });
