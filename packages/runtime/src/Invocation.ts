@@ -749,16 +749,17 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
               isExecutionError(failure.value) &&
               failure.value.operation === "invoke" &&
               (failure.value.reason === "bundle_required" ||
-                failure.value.reason === "stale_generation") &&
-              (yield* Clock.currentTimeMillis) < deadline
+                failure.value.reason === "stale_generation")
             ) {
               // The supervisor refused before dispatch: the bound process was reaped or replaced
-              // after bind. Bind once more for the current generation, under a fresh attempt. The
-              // handler never ran, so this is not one of its attempts. A nested call keeps its
-              // parent's generation, so it never rebinds.
+              // after bind. Bind once more for the current generation, under a fresh attempt; the
+              // next pass checks the deadline first, as every pass does. The handler never ran, so
+              // this is not one of its attempts. A nested call keeps its parent's generation, so it
+              // never rebinds.
               rebound = true;
               attempts--;
               capability = undefined;
+              yield* WideEvents.enrich({ rebound: true });
               continue;
             } else if (Exit.isSuccess(raw)) outcome = Exit.succeed(raw.value);
             else if (Option.isSome(failure)) {

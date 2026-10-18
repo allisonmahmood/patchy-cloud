@@ -81,8 +81,9 @@ const cloud = Effect.gen(function* () {
       invokes: number;
       /** Process generation by held version. */
       held: Map<string, number>;
-      /** Binds that carried a bundle's bytes. */
+      /** Binds that carried a bundle's bytes, and binds by hash, refused ones included. */
       uploads: number;
+      byHash: number;
     }
   >();
   let generations = 0;
@@ -166,7 +167,8 @@ const cloud = Effect.gen(function* () {
         stopped: false,
         invokes: 0,
         held: new Map(),
-        uploads: 0
+        uploads: 0,
+        byHash: 0
       });
       if (loseRunReply) {
         loseRunReply = false;
@@ -216,6 +218,7 @@ const cloud = Effect.gen(function* () {
               binding?: GuestProtocol.BundleBinding;
             })
           : { bindingEpoch: 0 };
+      if (body.binding !== undefined) supervisor.byHash++;
       if (
         (body.taskId !== undefined || body.binding !== undefined) &&
         supervisor.revision === "previous"
@@ -655,7 +658,7 @@ it.effect("binds a held version by hash and sends its bundle only when the super
     const bind = provider.bind("hashed", versionBind("company-hashed"));
     const loaded = yield* bind;
     for (let call = 0; call < 3; call++) assert.deepStrictEqual(yield* bind, loaded);
-    assert.strictEqual(supervisor.uploads, 1);
+    assert.include(supervisor, { uploads: 1, byHash: 4 });
     // The supervisor reaped the version, so the next bind loads a new process.
     supervisor.held.clear();
     assert.notStrictEqual((yield* bind).processGeneration, loaded.processGeneration);
@@ -673,12 +676,11 @@ it.effect(
       const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
       yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
       const before = aws.describes();
-      // The older supervisor refuses `taskId` and `binding`, so these succeed only because none
-      // names its task or binds by hash.
+      // The older supervisor refuses `taskId` and `binding`; neither is ever sent to it.
       for (let call = 0; call < 3; call++)
         yield* provider.bind("older", versionBind("company-older"));
       assert.strictEqual(aws.describes() - before, 3);
-      assert.strictEqual(aws.supervisor("older").uploads, 3);
+      assert.include(aws.supervisor("older"), { uploads: 3, byHash: 0 });
     })
 );
 

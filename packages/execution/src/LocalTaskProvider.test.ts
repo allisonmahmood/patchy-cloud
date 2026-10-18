@@ -9,6 +9,9 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 import * as Store from "./localTaskStore.js";
 import type * as TaskProvider from "./TaskProvider.js";
@@ -131,6 +134,73 @@ it.live(
         .bind(input.taskId, { companyId: "other-company", bindingEpoch: 2 })
         .pipe(Effect.flip);
       assert.strictEqual(refused.reason, "stopped");
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  { timeout: 20_000 }
+);
+
+it.live(
+  "sends its bundle to a retained supervisor from before binds by hash, never after a lost reply",
+  () =>
+    Effect.gen(function* () {
+      const fetch = yield* HttpClient.HttpClient;
+      const binds: Array<"hash" | "bundle"> = [];
+      let loseNextHash = false;
+      // An owner started from an older checkout outlives its host: that supervisor's strict
+      // decoding refuses the unknown `binding` key with `invalid_request` before it acts.
+      const previousWire = HttpClient.make((request) => {
+        const body: { readonly binding?: unknown } =
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body))
+            : {};
+        if (new URL(request.url).pathname !== "/bind") return fetch.execute(request);
+        if (body.binding === undefined) {
+          binds.push("bundle");
+          return fetch.execute(request);
+        }
+        binds.push("hash");
+        if (loseNextHash) {
+          loseNextHash = false;
+          return Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                description: "Connection lost"
+              })
+            })
+          );
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ ok: false, code: "invalid_request" }, { status: 400 })
+          )
+        );
+      });
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const provider = yield* LocalTaskProvider.make(options).pipe(
+        Effect.provideService(HttpClient.HttpClient, previousWire)
+      );
+      yield* provider.start({ taskId: "previous-wire", deploymentRevision: "deployment" });
+      const source = `export default { async fetch() { return Response.json({ ok: true, handlers: {} }); } };`;
+      const bind = provider.bind("previous-wire", {
+        companyId: "company",
+        bindingEpoch: 1,
+        bundle: {
+          companyId: "company",
+          patchId: "patch",
+          versionId: "version",
+          bundle: source,
+          sha256: createHash("sha256").update(source).digest("hex")
+        }
+      });
+      const loaded = yield* bind;
+      assert.isDefined(loaded.processGeneration);
+      assert.deepStrictEqual(yield* bind, loaded);
+      assert.deepStrictEqual(binds, ["hash", "bundle", "hash", "bundle"]);
+      // The bind by hash may have arrived, so its bundle is never sent after it.
+      loseNextHash = true;
+      assert.include(yield* bind.pipe(Effect.flip), { reason: "transport" });
+      assert.deepStrictEqual(binds.slice(4), ["hash"]);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   { timeout: 20_000 }
 );

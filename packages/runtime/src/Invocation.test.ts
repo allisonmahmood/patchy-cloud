@@ -96,6 +96,17 @@ const makeInvocation = (
     Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
   );
 
+// Collects the wide events calls emit, for assertions on their fields.
+const recorder = Effect.gen(function* () {
+  const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+  const events = yield* WideEvents.make.pipe(
+    Effect.provideService(WideEvents.Sink, {
+      write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+    })
+  );
+  return { events, next: Queue.take(records) };
+});
+
 it.layer(services)("Invocation", (it) => {
   it.effect("refuses a paused patch before loading code and preserves retryAfter on HTTP", () =>
     Effect.gen(function* () {
@@ -461,12 +472,7 @@ it.layer(services)("Invocation", (it) => {
             }),
           () => Effect.sync(() => ({ ...bound, processGeneration: ++binds }))
         );
-        const records = yield* Queue.unbounded<WideEvents.WideEvent>();
-        const events = yield* WideEvents.make.pipe(
-          Effect.provideService(WideEvents.Sink, {
-            write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
-          })
-        );
+        const { events, next } = yield* recorder;
         assert.deepStrictEqual(
           yield* events.withEvent(
             { type: "re-run" },
@@ -486,7 +492,7 @@ it.layer(services)("Invocation", (it) => {
         );
         assert.notStrictEqual(sent[0]!.attemptId, sent[1]!.attemptId, reason);
         // The refused invoke ran no handler, so it is not one of the call's attempts.
-        assert.include(yield* Queue.take(records), { attempts: 1, processGeneration: 2 }, reason);
+        assert.include(yield* next, { attempts: 1, processGeneration: 2, rebound: true }, reason);
       }
     })
   );
@@ -507,16 +513,66 @@ it.layer(services)("Invocation", (it) => {
             }),
           () => Effect.sync(() => ({ ...bound, processGeneration: ++binds }))
         );
-        const failure = yield* invocations
-          .call(
-            { handler: "demo.mutation", args: {}, mutationKey: yield* MutationTransaction.mint },
-            { ...binding, correlationId: `unrecovered-${reason}` },
-            Effect.succeed(viewer)
+        const { events, next } = yield* recorder;
+        const failure = yield* events
+          .withEvent(
+            { type: "request" },
+            invocations.call(
+              { handler: "demo.mutation", args: {}, mutationKey: yield* MutationTransaction.mint },
+              { ...binding, correlationId: `unrecovered-${reason}` },
+              Effect.succeed(viewer)
+            )
           )
           .pipe(Effect.flip);
         assert.strictEqual(failure.code, "handler_failed", reason);
         assert.strictEqual(invokes, expected, reason);
         assert.strictEqual(binds, expected, reason);
+        // A rebind that fails still shows the refusal it recovered from.
+        assert.strictEqual(
+          (yield* next).rebound,
+          reason === "transport" ? undefined : true,
+          reason
+        );
+      }
+    })
+  );
+
+  it.effect("never binds or invokes again past the call's deadline", () =>
+    Effect.gen(function* () {
+      // Refused just as the deadline passes, then refused in time with a rebind that outlasts it.
+      for (const [late, expectedBinds] of [
+        ["refusal", 1],
+        ["rebind", 2]
+      ] as const) {
+        let binds = 0;
+        let invokes = 0;
+        let deadline = 0;
+        const invocations = yield* makeInvocation(
+          (request) =>
+            Effect.gen(function* () {
+              invokes++;
+              deadline = request.deadline;
+              if (late === "refusal") yield* TestClock.setTime(deadline);
+              return yield* new Executor.ExecutionError({
+                operation: "invoke",
+                reason: "stale_generation"
+              });
+            }),
+          () =>
+            ++binds === 1
+              ? Effect.succeed(bound)
+              : TestClock.setTime(deadline).pipe(Effect.andThen(Effect.never))
+        );
+        const failure = yield* invocations
+          .call(
+            { handler: "demo.query", args: { id: 1 } },
+            { ...binding, correlationId: `late-${late}` },
+            Effect.succeed(viewer)
+          )
+          .pipe(Effect.flip);
+        assert.strictEqual(failure.code, "handler_timeout", late);
+        assert.strictEqual(binds, expectedBinds, late);
+        assert.strictEqual(invokes, 1, late);
       }
     })
   );

@@ -162,7 +162,9 @@ identifies that build; `limits[].configRevision.deploymentRevision` is instead t
 automatically computed operating-limit fingerprint described in [Limits](limits.md).
 Each limit measurement also carries the company's `overrideRevision`.
 Runtime request records include known operation names, outcome, refusal code and
-limit id when present, duration, trace linkage and trusted attribution. Tier 1
+limit id when present, duration, trace linkage and trusted attribution. A tier 2
+call or re-run whose process was reaped or replaced between bind and invoke goes
+back to bind once more and records `rebound: true`, whatever came of it. Tier 1
 operations have no patch-authored handler, so `handler` and `kind` are omitted.
 Records omit tokens, cookies, session values, device and invite codes, request and
 response bodies, filenames, SQL, credentials, source addresses and URLs.
@@ -468,7 +470,10 @@ platform database. Local hosts on one Linux machine share a durable task directo
 reports and observed stop times independently of the host that launched them.
 Each task still has a separate supervisor process. Children receive only local
 management identity, a generated deployment secret and trusted callback URLs, not
-the host's database, storage or login environment.
+the host's database, storage or login environment. A task keeps the checkout it
+started from, so after an update a restarted host may reach an older supervisor:
+its bind by hash is refused `invalid_request` before any effect, and the host sends
+the bundle instead.
 
 Set these for every local-fleet host:
 

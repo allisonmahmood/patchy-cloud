@@ -37,10 +37,17 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
 }
 
 /**
+ * Refusals of a bind by hash that prove it had no effect: a supervisor without the version, and
+ * the decoding refusal a supervisor from before binds by hash gives the unknown `binding` key.
+ * A local task owner can outlive its host's checkout, so even a host's own tasks may give it.
+ */
+const withoutBundle: ReadonlySet<string> = new Set(["bundle_required", "invalid_request"]);
+
+/**
  * Sends a version bind by hash first, so a supervisor already holding the version gets no bytes.
- * One that doesn't refuses `bundle_required` before any effect, and only then does the same bind
- * go again with its bundle. Send this only to supervisors of the host's own release: older ones
- * refuse the `binding` key.
+ * Only after a decoded refusal that proves the bind by hash had no effect does the same bind go
+ * again with its bundle; a transport or protocol failure is never followed by a second bind.
+ * Fleet hosts send it only to supervisors of their own release, so older ones never pay for it.
  */
 export const bindByHash = <E extends { readonly reason: string }, R>(
   request: Management.BindRequest,
@@ -58,7 +65,7 @@ export const bindByHash = <E extends { readonly reason: string }, R>(
     }
   }).pipe(
     Effect.catchIf(
-      (error) => error.reason === "bundle_required",
+      (error) => withoutBundle.has(error.reason),
       () => send(request)
     )
   );

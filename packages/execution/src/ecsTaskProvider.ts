@@ -46,7 +46,7 @@ type ManagedTask = {
 type Endpoint = { readonly task: ManagedTask; readonly expiresAt: number };
 // Refused before the receiver acts: authentication, decoding (an older supervisor refuses `taskId`
 // as an unknown key) and the identity check. Only these prove any request had no effect; a bind by
-// hash's `bundle_required` proves it too, and `bindByHash` recovers it where it is sent.
+// hash's `bundle_required` proves it too, and `bindByHash` recovers both where it sends them.
 const unaffected: ReadonlySet<TaskProvider.TaskProviderError["reason"]> = new Set([
   "unauthorized",
   "invalid_request",
@@ -726,8 +726,8 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
               { ...body, callbackUrls: options.callbackUrls } satisfies Management.BindRequest,
               decodeBind
             );
-          // `bundle_required` is answered after the identity check and recovered here, on the
-          // same task, so it neither forgets a cached endpoint nor asks ECS again.
+          // A refused bind by hash is recovered here, on the same task. `bundle_required` comes
+          // after the identity check, so it neither forgets a cached endpoint nor asks ECS again.
           return sameRelease(task) ? TaskProvider.bindByHash(request, send) : send(request);
         })
       ),
