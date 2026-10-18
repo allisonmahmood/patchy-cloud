@@ -192,8 +192,8 @@ function mount(frame: HTMLIFrameElement): void {
   const { patchId, versionId, nonce, base, contentSrc } = frame.dataset;
   const wire = Number(frame.dataset.wire);
   // Company and local shells render their admitted viewer. Their stream authenticates each open
-  // and subscription update against it, and Runtime checks every other operation against it
-  // before running, so the shell asks `me` only for the patch and before `route.set`.
+  // and subscription update against it, and Runtime checks every other server-bound operation
+  // against it before running, so only `me` and `route.set` await `identify()`.
   const pinned = frame.dataset.scope === "company" || frame.dataset.scope === "local";
   let port: MessagePort | undefined;
   let issued = false;
@@ -780,7 +780,7 @@ function mount(frame: HTMLIFrameElement): void {
         if (closed) return;
         if (subscription) startStream();
       }
-      // Runtime checks a pinned document's operations against its viewer before running them.
+      // Runtime checks a pinned document's server-bound operations against its viewer first.
       // `route.set` changes history without asking Runtime, so it checks the account through `me`.
       const me = pinned && op !== "me" && op !== "route.set" ? undefined : await identify();
       if (closed) return;
