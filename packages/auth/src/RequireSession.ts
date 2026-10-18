@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Companies, Users } from "@patchy/companies";
+import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
@@ -139,19 +139,22 @@ export const sameOrigin = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServe
     return yield* app;
   });
 
-/** Claim refresh and deactivation are shared by enrollment and ordinary doored pages. */
+/**
+ * Claim refresh and deactivation are shared by enrollment, doored pages and tier 2 calls. Each
+ * resolve reads current state: one read when the claims are unchanged, more statements when they
+ * changed and need writing. A caller re-checks by resolving again.
+ */
 export const resolveViewer = Effect.gen(function* () {
   const claims = yield* SignedIn;
   const users = yield* Users.Users;
-  const companies = yield* Companies.Companies;
   const session = yield* Session.Session;
-  const user = yield* users.refreshClaims({
+  const found = yield* users.refreshClaims({
     clerkUserId: claims.sub,
     email: claims.email,
     name: claims.name
   });
-  if (!user) return null;
-  const company = yield* companies.findById(user.companyId);
+  if (!found) return null;
+  const { user, company } = found;
   if (!company) return yield* Effect.die(new Error("User company is missing"));
   if (user.deactivatedAt) {
     return pageResponse(
