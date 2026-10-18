@@ -40,6 +40,10 @@ _Avoid_: cause (`causedByEventId` names the write behind a wake)
 What became of a run's result: `delivered` as a snapshot, `unchanged` as up-to-date, or `discarded` because its epoch changed, its subscription or document went away, or its read fell behind its fence. A run that sent an error or a refusal has none; its outcome says so.
 _Avoid_: outcome (whether the work succeeded)
 
+**Bundle load**:
+`bundleLoad`: where a tier 2 call or re-run's last load to reach the bundle cache got its version's server bundle: `cached` from the host's memory, `read` from object storage by this call, or `joined` by waiting on another call's lookup of the same artifact. That lookup usually reads storage but may reuse a bundle kept a moment before. A failed read keeps `read` or `joined`. A load the retained-version checks refuse never reaches the cache, records nothing and leaves an earlier attempt's value in place. An action's nested calls reuse its bundle. A retried mutation loads again on each attempt that passes those checks and reports the last, usually `cached`; an earlier attempt's read shows only in its duration.
+_Avoid_: cache hit (`joined` is neither a hit nor its own read)
+
 **Limit peak**:
 The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.
 _Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)

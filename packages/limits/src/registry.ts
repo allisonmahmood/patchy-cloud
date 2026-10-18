@@ -392,6 +392,25 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "tier2.bundleCache.bytes": {
+    kind: "operating",
+    default: 67108864,
+    unit: "bytes",
+    scope: "host",
+    measure:
+      "Verified server bundles kept in memory per host replica, least recently used evicted first; a bundle over a quarter of this is read from storage on every call",
+    refusal: null,
+    overridable: false
+  },
+  "tier2.bundleCache.entries": {
+    kind: "operating",
+    default: 256,
+    unit: "bundles",
+    scope: "host",
+    measure: "Server bundles kept in memory per host replica, within `tier2.bundleCache.bytes`",
+    refusal: null,
+    overridable: false
+  },
   "company.connections": {
     kind: "operating",
     default: 4,
