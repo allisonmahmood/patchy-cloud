@@ -382,14 +382,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
       ),
     // A task owner that outlived its host's checkout may not know the route; that touch fails.
     touch: (taskId, request) =>
-      bounded(
-        "touch",
-        taskId,
-        post(taskId, "touch", request).pipe(
-          Effect.flatMap(decodeTouch),
-          Effect.map((reply) => reply.outcome)
-        )
-      )
+      bounded("touch", taskId, post(taskId, "touch", request).pipe(Effect.flatMap(decodeTouch)))
   });
 });
 

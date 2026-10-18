@@ -95,7 +95,12 @@ export const TouchReply = Schema.Struct({
    * `touched`: a ready process's idle clock restarted. `loading`: left to its initialization
    * deadline. `absent`: no live process for the version, and none was started.
    */
-  outcome: Schema.Literals(["touched", "loading", "absent"])
+  outcome: Schema.Literals(["touched", "loading", "absent"]),
+  /**
+   * The `execution.process.idle` window, in milliseconds, this supervisor reaps by: the value its
+   * last bind set, which a changed limit reaches only with the next bind.
+   */
+  idleMs: positive
 });
 export type TouchReply = typeof TouchReply.Type;
 export const StatsRequest = Schema.Struct({

@@ -591,11 +591,11 @@ it.live(
         }
       });
       const kept = yield* bind(supervisor, "ver_kept");
-      expect(yield* touch(supervisor, "ver_missing")).toEqual({ outcome: "absent" });
+      expect(yield* touch(supervisor, "ver_missing")).toEqual({ outcome: "absent", idleMs: 2_000 });
       // Touched well inside each window for more than one and a half windows.
       for (let round = 0; round < 8; round++) {
         yield* Effect.sleep(400);
-        expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "touched" });
+        expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "touched", idleMs: 2_000 });
       }
       const stats = yield* supervisor.stats({ bindingEpoch: 1 });
       expect(stats.processes).toEqual([
@@ -613,7 +613,7 @@ it.live(
       expect(yield* reportFor(supervisor, kept.processGeneration!)).toMatchObject({
         cause: "idle"
       });
-      expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "absent" });
+      expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "absent", idleMs: 2_000 });
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   20_000

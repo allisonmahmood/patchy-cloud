@@ -784,15 +784,15 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       function* (version) {
         const now = yield* Clock.currentTimeMillis;
         if (!options.dev && (yield* store.pausedUntil(version.companyId, version.patchId)) > now)
-          return "paused" as const;
+          return { outcome: "paused" as const };
         const binding = (yield* store.findCompany(version.companyId))[0];
-        if (binding?.state !== "active") return "unbound" as const;
+        if (binding?.state !== "active") return { outcome: "unbound" as const };
         return yield* provider.touch(binding.taskId, {
           bindingEpoch: binding.bindingEpoch,
           binding: version
         });
       },
-      Effect.catch(() => Effect.succeed("failed" as const))
+      Effect.catch(() => Effect.succeed({ outcome: "failed" as const }))
     )
   });
   const route = Effect.fn("Fleet.route")(

@@ -1,4 +1,5 @@
 import type * as Management from "@patchy/api/management";
+import { registry } from "@patchy/limits/registry";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as TaskProvider from "../TaskProvider.js";
@@ -96,7 +97,7 @@ export const make = (): TaskProvider.TaskProvider["Service"] => {
       const entry = yield* running("touch", taskId);
       if (request.bindingEpoch !== entry.bindingEpoch)
         return yield* refuse("touch", taskId, "stale_epoch");
-      return "absent" as const;
+      return { outcome: "absent" as const, idleMs: registry["execution.process.idle"].default };
     }),
     stats: Effect.fnUntraced(function* (taskId, request) {
       const entry = tasks.get(taskId);

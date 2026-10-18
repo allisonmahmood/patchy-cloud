@@ -949,18 +949,18 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
           )
         );
         // A company without a binding stays without one.
-        assert.strictEqual(yield* host.lifecycle.touch(version), "unbound");
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "unbound");
         assert.deepStrictEqual(
           yield* sql`SELECT task_id FROM execution_bindings WHERE company_id = ${companyId}`,
           []
         );
         const bound = yield* host.ensureBinding(companyId);
-        assert.strictEqual(yield* host.lifecycle.touch(version), "absent");
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "absent");
         // Adoption advances the epoch, and the next touch follows it.
         assert.isTrue(yield* host.adopt(bound, "touch-host"));
         const adopted = yield* host.ensureBinding(companyId);
         assert.isAbove(adopted.bindingEpoch, bound.bindingEpoch);
-        assert.strictEqual(yield* host.lifecycle.touch(version), "absent");
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "absent");
         assert.deepStrictEqual(sent, [
           { taskId: bound.taskId, bindingEpoch: bound.bindingEpoch },
           { taskId: bound.taskId, bindingEpoch: adopted.bindingEpoch }
@@ -969,7 +969,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         const now = yield* Clock.currentTimeMillis;
         yield* sql`UPDATE execution_breakers SET paused_until = ${now + 60_000}
           WHERE company_id = ${companyId} AND patch_id = ${version.patchId}`;
-        assert.strictEqual(yield* host.lifecycle.touch(version), "paused");
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "paused");
         assert.lengthOf(sent, 2);
       }).pipe(Effect.scoped)
   );

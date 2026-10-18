@@ -276,7 +276,10 @@ const cloud = Effect.gen(function* () {
         const key = `${body.binding?.patchId}/${body.binding?.versionId}`;
         return HttpClientResponse.fromWeb(
           request,
-          Response.json({ outcome: supervisor.held.has(key) ? "touched" : "absent" })
+          Response.json({
+            outcome: supervisor.held.has(key) ? "touched" : "absent",
+            idleMs: 60_000
+          })
         );
       }
       if (url.pathname === "/stop") {
@@ -704,16 +707,16 @@ it.effect("touches only its own release's supervisors and asks ECS once about an
     yield* provider.start({ taskId: "touched", deploymentRevision: "current" });
     yield* provider.bind("touched", versionBind("company-touched"));
     const before = aws.describes();
-    assert.strictEqual(
-      yield* provider.touch("touched", { bindingEpoch: 1, binding: held }),
-      "touched"
-    );
-    assert.strictEqual(
+    assert.deepStrictEqual(yield* provider.touch("touched", { bindingEpoch: 1, binding: held }), {
+      outcome: "touched",
+      idleMs: 60_000
+    });
+    assert.deepStrictEqual(
       yield* provider.touch("touched", {
         bindingEpoch: 1,
         binding: { ...held, versionId: "ver_evicted" }
       }),
-      "absent"
+      { outcome: "absent", idleMs: 60_000 }
     );
     // Its address was resolved by the bind, so neither touch asked ECS.
     assert.strictEqual(aws.describes(), before);
@@ -723,12 +726,12 @@ it.effect("touches only its own release's supervisors and asks ECS once about an
     yield* provider.bind("older", versionBind("company-older"));
     const older = aws.describes();
     for (let touch = 0; touch < 3; touch++)
-      assert.strictEqual(
+      assert.deepStrictEqual(
         yield* provider.touch("older", {
           bindingEpoch: 1,
           binding: { ...held, companyId: "company-older" }
         }),
-        "unsupported"
+        { outcome: "unsupported" }
       );
     // The older supervisor would refuse a touch; it is never sent one, and its release is known
     // after the first lookup.

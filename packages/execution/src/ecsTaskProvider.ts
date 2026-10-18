@@ -760,21 +760,23 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     touch: (taskId, request) =>
       Effect.suspend(() =>
         otherReleases.has(taskId)
-          ? Effect.succeed("unsupported" as const)
+          ? Effect.succeed({ outcome: "unsupported" as const })
           : bounded(
               "touch",
               taskId,
-              call(taskId, "touch", (task) => {
-                if (sameRelease(task))
-                  return exchange(task, "touch", "touch", request, decodeTouch).pipe(
-                    Effect.map((reply) => reply.outcome)
-                  );
-                // Live tasks stay within the fleet budget; evicting the oldest only guards a leak.
-                if (otherReleases.size >= endpointCapacity)
-                  otherReleases.delete(otherReleases.values().next().value!);
-                otherReleases.add(task.taskId);
-                return Effect.succeed("unsupported" as const);
-              })
+              call(
+                taskId,
+                "touch",
+                (task): Effect.Effect<TaskProvider.TouchResult, TaskProvider.TaskProviderError> => {
+                  if (sameRelease(task))
+                    return exchange(task, "touch", "touch", request, decodeTouch);
+                  // Live tasks stay within the fleet budget; evicting the oldest only guards a leak.
+                  if (otherReleases.size >= endpointCapacity)
+                    otherReleases.delete(otherReleases.values().next().value!);
+                  otherReleases.add(task.taskId);
+                  return Effect.succeed({ outcome: "unsupported" as const });
+                }
+              )
             )
       )
   });

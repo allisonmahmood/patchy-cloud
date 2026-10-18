@@ -24,7 +24,7 @@ export type WarmupOutcome =
   "resident" | "loading" | "loaded" | "bound" | "paused" | "unbound" | "failed";
 
 /**
- * Fractions of the company's `execution.process.idle`. Each touch starts 30 to 40 % of it after
+ * Fractions of the idle window the supervisor reaps by. Each touch starts 30 to 40 % of it after
  * the previous one started, whatever that one cost, and gives up after 10 %. A touch that is
  * lost still leaves the next to land within 90 % of the window after the last that landed, so
  * the supervisor never reaps between them; the jitter spreads versions out.
@@ -96,15 +96,19 @@ export const make = Effect.gen(function* () {
   const keepalives = new Map<string, Keepalive>();
 
   // A bind under a call's admission, so it follows the current binding and the patch's pause,
-  // and is bounded and may evict like a call's: it loads only what that first call would.
+  // and is bounded and may evict like a call's: it loads only what that first call would. As a
+  // call's, admission stays interruptible, so a keepalive that ends while it waits claims and
+  // binds nothing; once admitted, its release always runs.
   const load = (version: LoadedVersion) =>
-    Effect.acquireUseRelease(
-      lifecycle.acquire(version.companyId, version.patchId),
-      (admission) =>
-        bundles
-          .load(version)
-          .pipe(Effect.flatMap((bundle) => executor.bind(bundle, admission.binding))),
-      (admission) => admission.release
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const admission = yield* restore(lifecycle.acquire(version.companyId, version.patchId));
+        yield* restore(
+          bundles
+            .load(version)
+            .pipe(Effect.flatMap((bundle) => executor.bind(bundle, admission.binding)))
+        ).pipe(Effect.ensuring(admission.release));
+      })
     ).pipe(
       Effect.as(true),
       Effect.catch(() => Effect.succeed(false))
@@ -115,17 +119,23 @@ export const make = Effect.gen(function* () {
       const { version } = keepalive;
       // A version's bundle never changes, so its hash is read once it is needed.
       let binding: GuestProtocol.BundleBinding | undefined;
-      // The company's window, read within a touch's timeout of the last value it had.
-      const readIdle = (previous: number) =>
+      // The company's configured window, read within a touch's timeout of the window in force.
+      const readIdle = (previous: number, window: number) =>
         limits
           .getMany({ companyId: version.companyId, limits: { idle: "execution.process.idle" } })
           .pipe(
             Effect.map((limits) => limits.idle.value),
-            Effect.timeoutOption(previous * touchTimeout),
+            Effect.timeoutOption(window * touchTimeout),
             Effect.map(Option.getOrElse(() => previous)),
             Effect.catch(() => Effect.succeed(previous))
           );
-      let idle = yield* readIdle(registry["execution.process.idle"].default);
+      const fallback = registry["execution.process.idle"].default;
+      let configured = yield* readIdle(fallback, fallback);
+      // The window the supervisor last answered that it reaps by. A changed limit reaches it only
+      // with its next bind, so touches keep to the smaller of the two: a raise waits until the
+      // supervisor has it, and a cut applies from the next turn, whether or not it has.
+      let acknowledged: number | undefined;
+      let window = configured;
       let warming = false;
       const count = (outcome: WarmupOutcome) => {
         keepalive.warmups[outcome] = (keepalive.warmups[outcome] ?? 0) + 1;
@@ -136,7 +146,7 @@ export const make = Effect.gen(function* () {
         keepalive.wake = Deferred.makeUnsafe<void>();
         const warm = keepalive.warm && !warming;
         if (warm) keepalive.warm = false;
-        const touched = yield* Effect.gen(function* () {
+        const touch = yield* Effect.gen(function* () {
           binding ??= yield* bundles.load(version).pipe(
             Effect.map((bundle): GuestProtocol.BundleBinding => ({
               companyId: bundle.companyId,
@@ -147,10 +157,12 @@ export const make = Effect.gen(function* () {
           );
           return yield* lifecycle.touch(binding);
         }).pipe(
-          Effect.timeoutOption(idle * touchTimeout),
-          Effect.map(Option.getOrElse((): ExecutionLifecycle.TouchOutcome => "failed")),
-          Effect.catch(() => Effect.succeed("failed" as const))
+          Effect.timeoutOption(window * touchTimeout),
+          Effect.map(Option.getOrElse((): ExecutionLifecycle.Touch => ({ outcome: "failed" }))),
+          Effect.catch(() => Effect.succeed<ExecutionLifecycle.Touch>({ outcome: "failed" }))
         );
+        if (touch.idleMs !== undefined) acknowledged = touch.idleMs;
+        const touched = touch.outcome;
         keepalive.touches[touched] = (keepalive.touches[touched] ?? 0) + 1;
         const outcome = warm ? settled(touched) : undefined;
         if (outcome !== undefined) count(outcome);
@@ -169,10 +181,11 @@ export const make = Effect.gen(function* () {
             Effect.forkChild
           );
         }
-        idle = yield* readIdle(idle);
+        configured = yield* readIdle(configured, window);
+        window = Math.min(configured, acknowledged ?? configured);
         const spacing =
           touchSpacing.from + (touchSpacing.to - touchSpacing.from) * (yield* Random.next);
-        const remaining = started + idle * spacing - (yield* Clock.currentTimeMillis);
+        const remaining = started + window * spacing - (yield* Clock.currentTimeMillis);
         yield* Effect.sleep(Math.max(0, remaining)).pipe(
           Effect.raceFirst(Deferred.await(keepalive.wake))
         );

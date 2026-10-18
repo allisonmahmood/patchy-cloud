@@ -321,7 +321,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.gen(function* () {
               yield* Effect.acquireRelease(
@@ -459,7 +459,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.fail(
               new ExecutionLifecycle.LifecycleError({
@@ -508,7 +508,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.acquireRelease(Effect.void, () =>
               Deferred.succeed(departed, undefined).pipe(Effect.asVoid)
@@ -563,7 +563,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.gen(function* () {
               yield* Effect.acquireRelease(

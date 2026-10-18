@@ -883,15 +883,17 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       if (stopped) return yield* new SupervisorError({ operation: "touch", reason: "stopped" });
       if (request.binding.companyId !== companyId)
         return yield* new SupervisorError({ operation: "touch", reason: "binding_conflict" });
+      // The window it reaps by, so the host can space its touches within it.
+      const idleMs = limit("execution.process.idle");
       const resident = residents.get(versionKey(request.binding));
-      if (resident === undefined || !resident.alive) return { outcome: "absent" as const };
+      if (resident === undefined || !resident.alive) return { outcome: "absent" as const, idleMs };
       if (resident.binding.sha256 !== request.binding.sha256)
         return yield* new SupervisorError({ operation: "touch", reason: "binding_conflict" });
       // Initialization keeps its deadline from spawn, so a touch cannot keep a hung load alive.
-      if (resident.loading) return { outcome: "loading" as const };
+      if (resident.loading) return { outcome: "loading" as const, idleMs };
       // Only the idle clock: eviction under residency or memory pressure still picks from it.
       resident.idleSince = Date.now();
-      return { outcome: "touched" as const };
+      return { outcome: "touched" as const, idleMs };
     })
   });
 });

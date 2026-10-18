@@ -3,6 +3,7 @@ import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { registry } from "@patchy/limits/registry";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
@@ -41,7 +42,8 @@ type Step =
       readonly versionId: string;
       readonly outcome: ExecutionLifecycle.TouchOutcome;
     }
-  | { readonly kind: "bind"; readonly versionId: string };
+  | { readonly kind: "bind"; readonly versionId: string }
+  | { readonly kind: "admission"; readonly versionId: string };
 
 /** How long a lost management request takes to fail: the ECS provider's own timeout. */
 const lostMs = registry["tier2.settlement.cleanup"].default + 5_000;
@@ -51,6 +53,8 @@ const lostMs = registry["tier2.settlement.cleanup"].default + 5_000;
  * arrive in `next` in the order they reach it; `outcomes` overrides what a touch finds. The
  * touches numbered in `lost`, counting from zero, never arrive and fail after `lostMs`.
  * `touchedAt` records when each touch was sent, `landedAt` when one restarted an idle clock.
+ * `windows` holds the company's configured idle window and the one the supervisor reaps by,
+ * which its answers report. A warmup's admission waits for `admissions.gate` when it is set.
  */
 const harness = Effect.gen(function* () {
   const steps = yield* Queue.unbounded<Step>();
@@ -60,6 +64,16 @@ const harness = Effect.gen(function* () {
   let sent = 0;
   const resident = new Set<string>();
   const outcomes = new Map<string, ExecutionLifecycle.TouchOutcome>();
+  const windows: { configured: number; supervisor: number } = {
+    configured: idle,
+    supervisor: idle
+  };
+  const admissions = {
+    gate: undefined as Deferred.Deferred<void> | undefined,
+    admitted: 0,
+    interrupted: 0
+  };
+  const local = yield* StreamLimits.StreamLimits.pipe(Effect.provide(StreamLimits.layerLocal));
   const recorded = yield* Queue.unbounded<WideEvents.WideEvent>();
   const events = yield* WideEvents.make.pipe(
     Effect.provideService(WideEvents.Sink, {
@@ -69,24 +83,37 @@ const harness = Effect.gen(function* () {
   const connected = yield* ConnectedVersions.make.pipe(
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
       connect: () => Effect.void,
-      acquire: () =>
-        Effect.succeed({
-          binding: { taskId: "task_connected", bindingEpoch: 1 },
-          release: Effect.void
-        }),
+      acquire: (_companyId, patchId) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(steps, { kind: "admission", versionId: patchId });
+          if (admissions.gate !== undefined) yield* Deferred.await(admissions.gate);
+          admissions.admitted++;
+          return { binding: { taskId: "task_connected", bindingEpoch: 1 }, release: Effect.void };
+        }).pipe(
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              admissions.interrupted++;
+            })
+          )
+        ),
       touch: Effect.fnUntraced(function* ({ versionId }) {
         const now = yield* Clock.currentTimeMillis;
         touchedAt.set(versionId, [...(touchedAt.get(versionId) ?? []), now]);
         if (lost.has(sent++)) {
           yield* Effect.sleep(lostMs);
           yield* Queue.offer(steps, { kind: "touch", versionId, outcome: "failed" });
-          return "failed" as const;
+          return { outcome: "failed" as const };
         }
-        const outcome = outcomes.get(versionId) ?? (resident.has(versionId) ? "touched" : "absent");
+        const override = outcomes.get(versionId);
+        if (override !== undefined) {
+          yield* Queue.offer(steps, { kind: "touch", versionId, outcome: override });
+          return { outcome: override };
+        }
+        const outcome = resident.has(versionId) ? ("touched" as const) : ("absent" as const);
         if (outcome === "touched")
           landedAt.set(versionId, [...(landedAt.get(versionId) ?? []), now]);
         yield* Queue.offer(steps, { kind: "touch", versionId, outcome });
-        return outcome;
+        return { outcome, idleMs: windows.supervisor };
       })
     }),
     Effect.provideService(Executor.Executor, {
@@ -107,7 +134,24 @@ const harness = Effect.gen(function* () {
           bundle: "export default {};"
         })
     }),
-    Effect.provide(StreamLimits.layerLocal),
+    Effect.provideService(StreamLimits.StreamLimits, {
+      getMany: (input) =>
+        local
+          .getMany(input)
+          .pipe(
+            Effect.map(
+              (limits) =>
+                Object.fromEntries(
+                  Object.entries(limits).map(([name, limit]) => [
+                    name,
+                    limit.limitId === "execution.process.idle"
+                      ? { ...limit, value: windows.configured }
+                      : limit
+                  ])
+                ) as typeof limits
+            )
+          )
+    }),
     Effect.provideService(WideEvents.WideEvents, events)
   );
   /** A document's ready stream on this host, until `Scope.close`. */
@@ -123,8 +167,11 @@ const harness = Effect.gen(function* () {
     touchedAt,
     landedAt,
     lost,
+    windows,
+    admissions,
     next: Queue.take(steps),
-    event: Queue.take(recorded)
+    event: Queue.take(recorded),
+    pendingEvents: Queue.size(recorded)
   };
 });
 
@@ -138,6 +185,7 @@ it.effect("warms a version once per document and only touches it for renewals", 
       versionId: "ver_a",
       outcome: "absent"
     });
+    assert.deepStrictEqual(yield* host.next, { kind: "admission", versionId: "pat_connected" });
     assert.deepStrictEqual(yield* host.next, { kind: "bind", versionId: "ver_a" });
     // Another document's first stream finds it loaded, and only touches it.
     const second = yield* host.open("ver_a", true);
@@ -243,6 +291,9 @@ it.effect("touches each version once per turn before its idle window ends, until
   }).pipe(Effect.scoped)
 );
 
+/** The widest spacing the jitter allows. */
+const widestSpacing = { nextIntUnsafe: () => 0, nextDoubleUnsafe: () => 1 - 1e-9 };
+
 it.effect("lands a touch before the reap even when the one before it is lost", () =>
   Effect.gen(function* () {
     const host = yield* harness;
@@ -250,12 +301,9 @@ it.effect("lands a touch before the reap even when the one before it is lost", (
     // Every second touch is lost and fails only at the provider's timeout.
     for (let touch = 1; touch < 40; touch += 2) host.lost.add(touch);
     // The widest spacing the jitter allows, the worst case for a lost touch.
-    const document = yield* host.open("ver_a", false).pipe(
-      Effect.provideService(Random.Random, {
-        nextIntUnsafe: () => 0,
-        nextDoubleUnsafe: () => 1 - 1e-9
-      })
-    );
+    const document = yield* host
+      .open("ver_a", false)
+      .pipe(Effect.provideService(Random.Random, widestSpacing));
     for (let elapsed = 0; elapsed < 10 * 60_000; elapsed += 1_000) yield* TestClock.adjust(1_000);
     const landed = host.landedAt.get("ver_a")!;
     assert.isAtLeast(landed.length, 10);
@@ -279,5 +327,67 @@ it.effect("starts one keepalive for concurrent first holders of a version", () =
     // One keepalive holds all four, and reports them once the last has left.
     for (const document of documents) yield* Scope.close(document, Exit.void);
     assert.deepInclude(yield* host.event, { type: "keepalive", peakDocuments: 4 });
+  }).pipe(Effect.scoped)
+);
+
+/** The gaps between landings since `since`, in milliseconds. */
+const gapsSince = (landed: readonly number[], since: number) => {
+  const recent = landed.filter((at) => at >= since);
+  return recent.slice(1).map((at, index) => at - recent[index]!);
+};
+
+it.effect("spaces touches by the window the supervisor reaps by, not a limit it hasn't taken", () =>
+  Effect.gen(function* () {
+    const host = yield* harness;
+    host.resident.add("ver_a");
+    const document = yield* host
+      .open("ver_a", false)
+      .pipe(Effect.provideService(Random.Random, widestSpacing));
+    const wait = Effect.fnUntraced(function* (span: number) {
+      for (let elapsed = 0; elapsed < span; elapsed += 1_000) yield* TestClock.adjust(1_000);
+      return yield* Clock.currentTimeMillis;
+    });
+    const landed = () => host.landedAt.get("ver_a")!;
+    // A raised override the supervisor hasn't taken: it still reaps by the old window.
+    host.windows.configured = 5 * idle;
+    const raised = yield* wait(idle);
+    yield* wait(10 * idle);
+    for (const gap of gapsSince(landed(), raised)) assert.isBelow(gap, idle);
+    // Once a bind brings the supervisor the new window, its answers let touches spread out.
+    host.windows.supervisor = 5 * idle;
+    const taken = yield* wait(idle);
+    yield* wait(10 * idle);
+    const spread = gapsSince(landed(), taken);
+    assert.isAbove(Math.max(...spread), idle);
+    for (const gap of spread) assert.isBelow(gap, 5 * idle);
+    // A cut applies from the next turn, before a call's bind can bring it to the supervisor.
+    host.windows.configured = idle / 3;
+    const cut = yield* wait(5 * idle);
+    yield* wait(5 * idle);
+    for (const gap of gapsSince(landed(), cut)) assert.isBelow(gap, idle / 3);
+    yield* Scope.close(document, Exit.void);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("cancels a warmup waiting for admission when its last document leaves", () =>
+  Effect.gen(function* () {
+    const host = yield* harness;
+    host.admissions.gate = yield* Deferred.make<void>();
+    const document = yield* host.open("ver_a", true);
+    assert.deepStrictEqual(yield* host.next, {
+      kind: "touch",
+      versionId: "ver_a",
+      outcome: "absent"
+    });
+    assert.deepStrictEqual(yield* host.next, { kind: "admission", versionId: "pat_connected" });
+    yield* Scope.close(document, Exit.void);
+    // The keepalive ends at once, its warmup's admission cancelled rather than left to claim.
+    assert.deepInclude(yield* host.event, { type: "keepalive", warmups: {} });
+    assert.strictEqual(host.admissions.interrupted, 1);
+    yield* Deferred.succeed(host.admissions.gate, undefined);
+    yield* TestClock.adjust(idle);
+    assert.strictEqual(host.admissions.admitted, 0);
+    assert.isFalse(host.resident.has("ver_a"));
+    assert.strictEqual(yield* host.pendingEvents, 0);
   }).pipe(Effect.scoped)
 );

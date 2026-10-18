@@ -112,7 +112,7 @@ it.layer(services)("Invocation", (it) => {
     Effect.gen(function* () {
       const invocations = yield* makeInvocation(() => Effect.die("Paused code must not run.")).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
             Effect.fail(
@@ -169,7 +169,7 @@ it.layer(services)("Invocation", (it) => {
           })
       ).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
             Effect.sync(() => {
@@ -217,7 +217,7 @@ it.layer(services)("Invocation", (it) => {
         })
       ).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
             Effect.succeed({
@@ -668,7 +668,7 @@ it.layer(services)("Invocation", (it) => {
           Queue.offer(seen, request).pipe(Effect.andThen(Effect.never))
         ).pipe(
           Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-            touch: () => Effect.succeed("absent" as const),
+            touch: () => Effect.succeed({ outcome: "absent" as const }),
             connect: () => Effect.void,
             acquire: () =>
               Effect.sync(() => {
@@ -780,7 +780,7 @@ it.layer(services)("Invocation", (it) => {
           })
         ).pipe(
           Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-            touch: () => Effect.succeed("absent" as const),
+            touch: () => Effect.succeed({ outcome: "absent" as const }),
             connect: () => Effect.void,
             acquire: () =>
               Effect.sync(() => {
@@ -834,7 +834,7 @@ it.layer(services)("Invocation", (it) => {
         return Queue.offer(seen, request).pipe(Effect.andThen(Effect.never));
       }).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-          touch: () => Effect.succeed("absent" as const),
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
             Effect.sync(() => {

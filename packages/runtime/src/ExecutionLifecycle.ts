@@ -32,6 +32,12 @@ export interface Admission {
 export type TouchOutcome =
   "touched" | "loading" | "absent" | "unsupported" | "paused" | "unbound" | "failed";
 
+export interface Touch {
+  readonly outcome: TouchOutcome;
+  /** The idle window the supervisor reaps by, in milliseconds, whenever it answered. */
+  readonly idleMs?: number;
+}
+
 /** Absent in no-pool dev. Presence follows the stream scope; admission follows settlement. */
 export class ExecutionLifecycle extends Context.Service<
   ExecutionLifecycle,
@@ -45,6 +51,6 @@ export class ExecutionLifecycle extends Context.Service<
      * Restarts the idle clock of the version's process on the company's current task, unless
      * its patch is paused. It never admits, claims a task or loads a version.
      */
-    readonly touch: (version: GuestProtocol.BundleBinding) => Effect.Effect<TouchOutcome>;
+    readonly touch: (version: GuestProtocol.BundleBinding) => Effect.Effect<Touch>;
   }
 >()("@patchy/runtime/ExecutionLifecycle") {}

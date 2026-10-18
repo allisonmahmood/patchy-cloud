@@ -81,10 +81,10 @@ export const bindByHash = <E extends { readonly reason: string }, R>(
 };
 
 /**
- * What a touch found on the supervisor, or `unsupported` when the task runs a release without
+ * The supervisor's answer to a touch, or `unsupported` when the task runs a release without
  * touches and none was sent.
  */
-export type TouchOutcome = Management.TouchReply["outcome"] | "unsupported";
+export type TouchResult = Management.TouchReply | { readonly outcome: "unsupported" };
 
 /**
  * All host clients address the same shared inventory. Identity survives ambiguous starts
@@ -121,6 +121,6 @@ export class TaskProvider extends Context.Service<
     readonly touch: (
       taskId: string,
       request: Management.TouchRequest
-    ) => Effect.Effect<TouchOutcome, TaskProviderError>;
+    ) => Effect.Effect<TouchResult, TaskProviderError>;
   }
 >()("@patchy/execution/TaskProvider") {}
