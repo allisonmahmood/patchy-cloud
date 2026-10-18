@@ -527,12 +527,10 @@ it.layer(services)("Invocation", (it) => {
         assert.strictEqual(failure.code, "handler_failed", reason);
         assert.strictEqual(invokes, expected, reason);
         assert.strictEqual(binds, expected, reason);
-        // A rebind that fails still shows the refusal it recovered from.
-        assert.strictEqual(
-          (yield* next).rebound,
-          reason === "transport" ? undefined : true,
-          reason
-        );
+        // A rebind that fails still shows the refusal behind it; a lost reply never rebinds.
+        const event = yield* next;
+        if (reason === "transport") assert.notProperty(event, "rebound", reason);
+        else assert.include(event, { rebound: true }, reason);
       }
     })
   );
