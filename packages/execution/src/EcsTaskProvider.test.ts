@@ -81,6 +81,7 @@ const cloud = Effect.gen(function* () {
   >();
   let loseRunReply = false;
   let loseInvokeReply = false;
+  let malformReply = false;
   let reusedAddress: string | undefined;
   let describes = 0;
   const ecs = Ecs.Ecs.of({
@@ -208,8 +209,12 @@ const cloud = Effect.gen(function* () {
         return refuse(400, "invalid_request");
       if (body.taskId !== undefined && body.taskId !== supervisor.taskId)
         return refuse(421, "wrong_task");
+      if (url.pathname === "/invoke") supervisor.invokes++;
+      if (malformReply) {
+        malformReply = false;
+        return HttpClientResponse.fromWeb(request, Response.json({}));
+      }
       if (url.pathname === "/invoke") {
-        supervisor.invokes++;
         if (loseInvokeReply) {
           loseInvokeReply = false;
           return yield* lost;
@@ -258,6 +263,10 @@ const cloud = Effect.gen(function* () {
     },
     loseInvokeReply: () => {
       loseInvokeReply = true;
+    },
+    /** The next request is served, then answered 200 with a body no reply schema accepts. */
+    malformNextReply: () => {
+      malformReply = true;
     },
     /** Stops a task outside any host, as a crash does. Its address stops answering. */
     crash: Effect.fn("TestEcs.crash")(function* (taskId: string) {
@@ -648,27 +657,40 @@ it.effect("forgets a task's address once ECS reports it stopped", () =>
   })
 );
 
-it.effect("never re-sends an invoke whose reply was lost", () =>
+it.effect("never keeps or re-sends a request whose reply was lost or malformed", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000_000);
     const aws = yield* cloud;
     const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const bind = provider.bind("uncertain", { companyId: "company-uncertain", bindingEpoch: 1 });
     yield* provider.start({ taskId: "uncertain", deploymentRevision: "current" });
-    yield* provider.bind("uncertain", { companyId: "company-uncertain", bindingEpoch: 1 });
     const supervisor = [...aws.supervisors.values()].find((entry) => entry.taskId === "uncertain")!;
-    const before = aws.describes();
-    aws.loseInvokeReply();
-    assert.include(
-      yield* provider
-        .invoke("uncertain", invocation("company-uncertain", 1_010_000))
-        .pipe(Effect.flip),
-      { reason: "transport" }
-    );
-    assert.strictEqual(supervisor.invokes, 1);
-    assert.strictEqual(aws.describes(), before);
-    // The failure forgot the address, so the next call asks ECS again.
-    yield* provider.stats("uncertain", { bindingEpoch: 1 });
-    assert.strictEqual(aws.describes() - before, 1);
+    // A malformed reply after a fresh lookup keeps no address.
+    const first = aws.describes();
+    aws.malformNextReply();
+    assert.include(yield* bind.pipe(Effect.flip), { reason: "protocol" });
+    yield* bind;
+    assert.strictEqual(aws.describes() - first, 2);
+    for (const [reason, garble] of [
+      ["transport", aws.loseInvokeReply],
+      ["protocol", aws.malformNextReply]
+    ] as const) {
+      const sent = supervisor.invokes;
+      const before = aws.describes();
+      garble();
+      assert.include(
+        yield* provider
+          .invoke("uncertain", invocation("company-uncertain", 1_010_000))
+          .pipe(Effect.flip),
+        { reason },
+        reason
+      );
+      assert.strictEqual(supervisor.invokes - sent, 1, reason);
+      assert.strictEqual(aws.describes(), before, reason);
+      // The failure forgot the address, so the next call asks ECS again.
+      yield* provider.stats("uncertain", { bindingEpoch: 1 });
+      assert.strictEqual(aws.describes() - before, 1, reason);
+    }
   })
 );
 

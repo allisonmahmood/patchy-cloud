@@ -516,23 +516,35 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       yield* Effect.sleep(500);
     }
   });
-  const call = Effect.fn("EcsTaskProvider.call")(function* (
+  const call = Effect.fn("EcsTaskProvider.call")(function* <A>(
     taskId: string,
     operation: Operation,
     path: string,
-    body: object
+    body: object,
+    decode: (reply: unknown) => Effect.Effect<A, Schema.SchemaError>
   ) {
     const now = yield* Clock.currentTimeMillis;
+    // A malformed reply fails the request like any other failure: it is never kept or re-sent.
+    const answer = (task: ManagedTask) =>
+      post(task, operation, path, body).pipe(
+        Effect.flatMap(decode),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TaskProvider.TaskProviderError({ operation, taskId, reason: "protocol", cause })
+            )
+        })
+      );
     // Kept only once its supervisor answered: it verified the task id before acting.
     const fresh = Effect.gen(function* () {
       const task = yield* resolve(taskId, operation);
-      const value = yield* post(task, operation, path, body);
+      const value = yield* answer(task);
       if (checksIdentity(task) && task.value.lastStatus === "RUNNING") remember(task, now);
       return value;
     });
     const cached = endpoints.get(taskId);
     if (cached === undefined || cached.expiresAt <= now) return yield* fresh;
-    return yield* post(cached.task, operation, path, body).pipe(
+    return yield* answer(cached.task).pipe(
       Effect.onError(() =>
         Effect.sync(() => {
           if (endpoints.get(taskId) === cached) endpoints.delete(taskId);
@@ -660,7 +672,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       bounded(
         "quiesce",
         taskId,
-        call(taskId, "quiesce", "stop", { bindingEpoch }).pipe(Effect.asVoid)
+        call(taskId, "quiesce", "stop", { bindingEpoch }, () => Effect.void)
       ),
     stop: (taskId) =>
       bounded(
@@ -691,10 +703,13 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       bounded(
         "bind",
         taskId,
-        call(taskId, "bind", "bind", {
-          ...request,
-          callbackUrls: options.callbackUrls
-        } satisfies Management.BindRequest).pipe(Effect.flatMap(decodeBind))
+        call(
+          taskId,
+          "bind",
+          "bind",
+          { ...request, callbackUrls: options.callbackUrls } satisfies Management.BindRequest,
+          decodeBind
+        )
       ),
     invoke: (taskId, request) =>
       Effect.gen(function* () {
@@ -702,16 +717,12 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
         return yield* bounded(
           "invoke",
           taskId,
-          call(taskId, "invoke", "invoke", request).pipe(Effect.flatMap(decodeInvoke)),
+          call(taskId, "invoke", "invoke", request, decodeInvoke),
           Math.max(1, request.request.deadline - now) + managementTimeout
         );
       }),
     stats: (taskId, request) =>
-      bounded(
-        "stats",
-        taskId,
-        call(taskId, "stats", "stats", request).pipe(Effect.flatMap(decodeStats))
-      )
+      bounded("stats", taskId, call(taskId, "stats", "stats", request, decodeStats))
   });
 });
 
