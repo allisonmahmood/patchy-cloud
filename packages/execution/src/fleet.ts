@@ -655,8 +655,12 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   });
   const ensure = Effect.fn("Fleet.ensureBinding")(
     function* (companyId: string) {
-      const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       const startedAt = yield* Clock.currentTimeMillis;
+      // A warm company's active binding needs no claim. `protect` still decides admission
+      // against the same epoch, state and task; any miss takes the claim loop, which fences.
+      const warm = (yield* store.findAdmissible(companyId))[0];
+      if (warm) return warm;
+      const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
         while (true) {
@@ -709,19 +713,9 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   ) {
     yield* unlock;
     const now = yield* Clock.currentTimeMillis;
-    yield* store.touch(companyId, now);
-    if (binding) {
-      // A normal final settlement removes crash protection when all callers have
-      // released. A crashed owner leaves the absolute deadline protection intact.
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const rows =
-            yield* sql`SELECT pg_try_advisory_xact_lock(hashtextextended(${FleetStore.bindingLock(binding.bindingId)}, 0)) AS acquired`;
-          if (rows[0]?.acquired)
-            yield* sql`UPDATE execution_bindings SET protected_until = 0 WHERE binding_id = ${binding.bindingId}`;
-        })
-      );
-    }
+    // A normal final settlement removes crash protection when all callers have
+    // released. A crashed owner leaves the absolute deadline protection intact.
+    yield* binding ? store.release(binding, now) : store.touch(companyId, now);
   }, Effect.orDie);
   const lifecycle = ExecutionLifecycle.ExecutionLifecycle.of({
     connect: Effect.fn("Fleet.connect")(function* (companyId) {
@@ -912,8 +906,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       input: Parameters<typeof limits.setOverride>[0]
     ) {
       const result = yield* limits.setOverride(input);
-      const binding = (yield* store.findCompany(input.companyId))[0];
-      if (binding?.state === "active" && (yield* store.isAdmissibleTask(binding.taskId)))
+      const binding = (yield* store.findAdmissible(input.companyId))[0];
+      if (binding)
         yield* provider.bind(binding.taskId, {
           companyId: input.companyId,
           bindingEpoch: binding.bindingEpoch,
@@ -925,8 +919,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       input: Parameters<typeof limits.removeOverride>[0]
     ) {
       const result = yield* limits.removeOverride(input);
-      const binding = (yield* store.findCompany(input.companyId))[0];
-      if (binding?.state === "active" && (yield* store.isAdmissibleTask(binding.taskId)))
+      const binding = (yield* store.findAdmissible(input.companyId))[0];
+      if (binding)
         yield* provider.bind(binding.taskId, {
           companyId: input.companyId,
           bindingEpoch: binding.bindingEpoch,
