@@ -49,6 +49,8 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `tier2.mutation.attempts` | contract | 3 | attempts | viewer | Maximum full handler attempts after serialization failures | `write_conflict` | No | release |
 | `tier2.mutation.retryDelayMs` | operating | 100 | milliseconds | host | Base serialization retry delay; doubles per retry with jitter, inside the invocation deadline | None | No | deployment |
 | `tier2.capability.tombstone` | operating | 300000 | milliseconds | host | Expired capability replay tombstone lifetime | None | No | deployment |
+| `tier2.bundleCache.bytes` | operating | 67108864 | bytes | host | Verified server bundles kept in memory per host replica, least recently used evicted first; a bundle over a quarter of this is read from storage on every call | None | No | deployment |
+| `tier2.bundleCache.entries` | operating | 256 | bundles | host | Server bundles kept in memory per host replica, within `tier2.bundleCache.bytes` | None | No | deployment |
 | `company.connections` | operating | 4 | connections | company | Company connections per host replica | `busy` | Yes | deployment |
 | `company.connections.hostBackends` | operating | 200 | connections | host | Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |
 | `company.connections.pools` | operating | 100 | pools | host | Retained company pools per host replica | `busy` | No | legacy |
