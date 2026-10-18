@@ -5,7 +5,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { RequireSession, Session, pageResponse, returnPath } from "@patchy/auth";
-import type { Companies, Users } from "@patchy/companies";
+import type { Users } from "@patchy/companies";
 
 /** Admission is optional here: only the handler knows whether the patch is public. */
 export class Admission extends Context.Service<
@@ -67,7 +67,7 @@ const admission = Effect.gen(function* () {
 /** Installed only on patch addresses and content URLs; handlers own scope and cookies. */
 export const layer = HttpRouter.middleware<{ provides: Admission }>()(
   Effect.gen(function* () {
-    const services = yield* Effect.context<Session.Session | Companies.Companies | Users.Users>();
+    const services = yield* Effect.context<Session.Session | Users.Users>();
     return (app) =>
       Effect.gen(function* () {
         const decision = yield* admission.pipe(Effect.provide(services));

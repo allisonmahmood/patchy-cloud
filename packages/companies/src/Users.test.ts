@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -48,6 +50,54 @@ const auditClaimRefresh = ddl(
   `CREATE OR REPLACE TRIGGER claim_refresh_audit AFTER UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION audit_claim_refresh()`
 );
+// Waits until `count` sessions on this test's database wait on a lock.
+const lockWaits = (count: number) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    sql`SELECT pid FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
+      Effect.repeat({ until: (rows) => rows.length === count })
+    )
+  );
+// Bounds one wait in a concurrency case. It fails naming the wait when one of `fibers` ends
+// first, or after three real seconds, instead of hanging until the test's own timeout.
+const within = <A, E, R>(
+  name: string,
+  wait: Effect.Effect<A, E, R>,
+  ...fibers: ReadonlyArray<Fiber.Fiber<unknown, unknown>>
+) =>
+  Effect.raceAllFirst([
+    wait,
+    TestClock.withLive(Effect.sleep("3 seconds")).pipe(
+      Effect.map(() => assert.fail(`${name}: still waiting after three seconds`))
+    ),
+    ...fibers.map((fiber) =>
+      Fiber.await(fiber).pipe(Effect.map((exit) => assert.fail(`${name}: ended first: ${exit}`)))
+    )
+  ]);
+// Runs `change` in a transaction left open, holding its row locks, until `release` commits it.
+// The transaction rolls back if the case ends first.
+const hold = Effect.fn("hold")(function* <A, E>(name: string, change: Effect.Effect<A, E>) {
+  const sql = yield* SqlClient.SqlClient;
+  const ran = yield* Deferred.make<void>();
+  const commit = yield* Deferred.make<void>();
+  const fiber = yield* sql
+    .withTransaction(
+      Effect.gen(function* () {
+        const result = yield* change;
+        yield* Deferred.succeed(ran, undefined);
+        yield* Deferred.await(commit);
+        return result;
+      })
+    )
+    .pipe(Effect.forkScoped);
+  yield* within(name, Deferred.await(ran), fiber);
+  return {
+    fiber,
+    release: Deferred.succeed(commit, undefined).pipe(
+      Effect.andThen(within(`${name}: commit`, Fiber.join(fiber)))
+    )
+  };
+});
 const outcome = {
   onSuccess: () => "ok",
   onFailure: (error: { readonly _tag: string }) => error._tag
@@ -67,14 +117,18 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         Effect.gen(function* () {
           const users = yield* Users.Users;
           const sql = yield* SqlClient.SqlClient;
-          const { admin } = yield* companyWithMember("claim-refresh");
+          const { company, admin } = yield* companyWithMember("claim-refresh");
           yield* auditClaimRefresh;
           const claims = {
             clerkUserId: admin.clerkUserId,
             email: admin.email.toUpperCase(),
             name: admin.name
           };
-          assert.deepStrictEqual(yield* users.refreshClaims(claims), admin);
+          const theirCompany = { id: company.id, handle: company.handle, name: company.name };
+          assert.deepStrictEqual(yield* users.refreshClaims(claims), {
+            user: admin,
+            company: theirCompany
+          });
           assert.deepStrictEqual(
             yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${admin.id}`,
             []
@@ -84,8 +138,11 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             email: "Changed@Example.COM",
             name: "Changed Name"
           });
-          assert.strictEqual(changed?.email, "changed@example.com");
-          assert.strictEqual(changed?.name, "Changed Name");
+          assert.deepStrictEqual(changed, {
+            user: new Users.User({ ...admin, email: "changed@example.com", name: "Changed Name" }),
+            company: theirCompany
+          });
+          assert.deepStrictEqual(changed?.user, yield* users.findByClerkId(admin.clerkUserId));
           assert.isNull(yield* users.findByEmail(admin.email));
           assert.strictEqual((yield* users.findByEmail("CHANGED@example.com"))?.id, admin.id);
           assert.strictEqual((yield* users.findByClerkId(admin.clerkUserId))?.name, "Changed Name");
@@ -116,19 +173,175 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         yield* auditClaimRefresh;
         const updates = sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`;
         const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "" };
-        assert.strictEqual((yield* users.refreshClaims(claims))?.name, "nameless-refresh-member");
+        assert.strictEqual(
+          (yield* users.refreshClaims(claims))?.user.name,
+          "nameless-refresh-member"
+        );
         assert.strictEqual((yield* updates).length, 1);
         yield* users.refreshClaims({ ...claims, name: " \t" });
         yield* users.refreshClaims({ ...claims, email: member.email.toUpperCase() });
         assert.strictEqual((yield* updates).length, 1);
         assert.strictEqual(
-          (yield* users.refreshClaims({ ...claims, name: "Grace Hopper" }))?.name,
+          (yield* users.refreshClaims({ ...claims, name: "Grace Hopper" }))?.user.name,
           "Grace Hopper"
         );
-        assert.strictEqual((yield* users.refreshClaims(claims))?.name, "nameless-refresh-member");
+        assert.strictEqual(
+          (yield* users.refreshClaims(claims))?.user.name,
+          "nameless-refresh-member"
+        );
         const moved = yield* users.refreshClaims({ ...claims, email: "Grace@Example.com" });
-        assert.deepInclude(moved, { email: "grace@example.com", name: "grace" });
+        assert.deepInclude(moved?.user, { email: "grace@example.com", name: "grace" });
       })
+    );
+
+    it.effect("writes once and answers the stored row when two refreshes race", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("claim-race");
+        yield* auditClaimRefresh;
+        const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "Raced" };
+        const first = yield* hold("the first refresh", users.refreshClaims(claims));
+        // The second reads the old name, so it writes too, and waits on the first's row.
+        const second = yield* users.refreshClaims(claims).pipe(Effect.forkScoped);
+        yield* within("the second refresh waiting", lockWaits(1), first.fiber, second);
+        yield* first.release;
+        assert.deepStrictEqual(yield* within("the second refresh", Fiber.join(second)), {
+          user: (yield* users.findByClerkId(member.clerkUserId))!,
+          company: { id: company.id, handle: company.handle, name: company.name }
+        });
+        assert.lengthOf(
+          yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`,
+          1
+        );
+      }).pipe(Effect.scoped)
+    );
+
+    it.effect("a refresh that waits on an admin's change answers the row that change left", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const companies = yield* Companies.Companies;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("claim-wait", "admin");
+        const ref = { companyId: company.id, userId: member.id };
+        // Holds `change` until a refresh with new claims, `name`, waits on the row.
+        const refreshDuring = <A, E>(change: Effect.Effect<A, E>, name: string) =>
+          Effect.gen(function* () {
+            const held = yield* hold(`${name}: the change`, change);
+            const refreshed = yield* users
+              .refreshClaims({ clerkUserId: member.clerkUserId, email: member.email, name })
+              .pipe(Effect.forkScoped);
+            yield* within(`${name}: the refresh waiting`, lockWaits(1), held.fiber, refreshed);
+            const result = yield* held.release;
+            const answer = yield* within(`${name}: the refresh`, Fiber.join(refreshed));
+            assert.deepStrictEqual(answer?.user, yield* users.findByClerkId(member.clerkUserId));
+            return { result, answer };
+          }).pipe(Effect.scoped);
+
+        // The company keeps its id, so only a read after the wait sees its new name.
+        const demoted = yield* refreshDuring(
+          Effect.gen(function* () {
+            yield* sql`UPDATE companies SET name = 'Renamed Inc' WHERE id = ${company.id}`;
+            return yield* users.setRole({ ...ref, role: "member" });
+          }),
+          "Demoted"
+        );
+        assert.strictEqual(demoted.answer?.user.role, "member");
+        assert.deepStrictEqual(demoted.answer?.company, {
+          id: company.id,
+          handle: company.handle,
+          name: "Renamed Inc"
+        });
+        const deactivated = yield* refreshDuring(users.deactivate(ref), "Deactivated");
+        assert.isNotNull(deactivated.answer?.user.deactivatedAt);
+        // The company the user moves to is created by the same transaction that moves them.
+        const moved = yield* refreshDuring(
+          Effect.gen(function* () {
+            const created = yield* companies.create({
+              handle: "claim-wait-moved",
+              name: "Moved Inc",
+              clerkUserId: "clerk_claim_wait_moved",
+              email: "claim-wait-moved@example.com",
+              userName: "Admin"
+            });
+            yield* sql`UPDATE users SET company_id = ${created.company.id} WHERE id = ${member.id}`;
+            return created.company;
+          }),
+          "Moved"
+        );
+        assert.deepStrictEqual(moved.answer?.company, {
+          id: moved.result.id,
+          handle: "claim-wait-moved",
+          name: "Moved Inc"
+        });
+      })
+    );
+
+    it.effect("a refresh with unchanged claims answers without waiting on a held change", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("claim-unblocked");
+        yield* auditClaimRefresh;
+        const held = yield* hold(
+          "the deactivation",
+          users.deactivate({ companyId: company.id, userId: member.id })
+        );
+        // Answers while the deactivation still holds the row: the active row it can see.
+        const answer = yield* within(
+          "the unchanged refresh",
+          users.refreshClaims({
+            clerkUserId: member.clerkUserId,
+            email: member.email,
+            name: member.name
+          }),
+          held.fiber
+        );
+        assert.deepStrictEqual(answer, {
+          user: member,
+          company: { id: company.id, handle: company.handle, name: company.name }
+        });
+        yield* held.release;
+        // The deactivation's own update is the only one.
+        assert.lengthOf(
+          yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`,
+          1
+        );
+      }).pipe(Effect.scoped)
+    );
+
+    it.effect("refreshes queued on a deactivation answer it, whichever writes the claims", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("claim-queue");
+        yield* auditClaimRefresh;
+        const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "Queued" };
+        const held = yield* hold(
+          "the deactivation",
+          users.deactivate({ companyId: company.id, userId: member.id })
+        );
+        // Both read the active row and queue on the held one. Once it commits, either may take
+        // the row and write the claims; the other then has nothing to write, and its answer
+        // must come from a read after that wait.
+        const refreshes = yield* Effect.forEach([1, 2], () =>
+          users.refreshClaims(claims).pipe(Effect.forkScoped)
+        );
+        yield* within("both refreshes waiting", lockWaits(2), held.fiber, ...refreshes);
+        yield* held.release;
+        const answers = yield* within("the refreshes", Fiber.joinAll(refreshes));
+        const stored = yield* users.findByClerkId(member.clerkUserId);
+        assert.isNotNull(stored?.deactivatedAt);
+        assert.deepStrictEqual(
+          answers.map((answer) => answer?.user ?? null),
+          [stored, stored]
+        );
+        // The deactivation and one refresh updated the row; the other refresh wrote nothing.
+        assert.lengthOf(
+          yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`,
+          2
+        );
+      }).pipe(Effect.scoped)
     );
 
     it.effect(
