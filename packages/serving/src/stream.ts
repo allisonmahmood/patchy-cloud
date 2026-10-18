@@ -68,6 +68,10 @@ export function openDocumentStream(options: {
   let retryTimer: number | undefined;
   let hiddenTimer: number | undefined;
   let failures = 0;
+  // One reconnect may skip the backoff after a refused subscription POST; see `post`. A
+  // reconciled document earns it back, a new hello does not.
+  let reconnectAtOnce = true;
+  let lostToRefusal: AbortController | undefined;
   let refreshAttempts = 0;
   let bindingFailures = 0;
   let bindingRetryAt = 0;
@@ -100,6 +104,9 @@ export function openDocumentStream(options: {
     }
     reconciliation.update("reconciled");
     status.connected();
+    // This stream's host admitted its latest sequence and answered every subscription, so
+    // its POSTs reach it.
+    reconnectAtOnce = true;
   };
   const forget = (id: string) => {
     const entry = desired.get(id);
@@ -112,6 +119,7 @@ export function openDocumentStream(options: {
     const current = controller;
     if (!current || current.signal.aborted || suspended || closed) return;
     let bytes = 0;
+    let replaced = false;
     try {
       const body = JSON.stringify(request);
       options.reserve(body.length * 2);
@@ -129,7 +137,14 @@ export function openDocumentStream(options: {
         body,
         signal: current.signal
       });
-      if (!response.ok) throw new Error("Subscription reconciliation was refused.");
+      if (!response.ok) {
+        // A host that does not hold this stream's document answers StreamReplaced, and a
+        // closing document StaleSequence: both are 409 `invalid_request`.
+        replaced =
+          response.status === 409 &&
+          decodeFailure(await response.json()).code === "invalid_request";
+        throw new Error("Subscription reconciliation was refused.");
+      }
       // The SSE admitted frame is authoritative, not this HTTP acknowledgement.
       void response.body?.cancel().catch(() => {});
     } catch {
@@ -137,8 +152,18 @@ export function openDocumentStream(options: {
         controller === current &&
         generation === request.generation &&
         sequence === request.sequence
-      )
+      ) {
+        // Refused as replaced while it still names the current generation and latest
+        // sequence, this POST most likely reached a host that does not hold the stream, such
+        // as a misrouted one. Its stream reconnects at once, once: a further loss before a
+        // stream reconciles waits for the backoff, so a persistent misroute cannot loop. Any
+        // other refusal, including session and rate limits, keeps the backoff.
+        if (replaced && reconnectAtOnce) {
+          reconnectAtOnce = false;
+          lostToRefusal = current;
+        }
         current.abort();
+      }
     } finally {
       options.release(bytes);
     }
@@ -352,9 +377,11 @@ export function openDocumentStream(options: {
           status.connecting();
           // A successful refresh is not a failure: it reconnects at once unless a bind
           // deadline is pending. The refresh budget bounds a server that keeps refusing.
-          const backoff = refreshed
-            ? 0
-            : Math.min(30_000, 500 * 2 ** Math.min(failures++, 6)) * (0.5 + Math.random() * 0.5);
+          // So does a stream lost to a POST refused as replaced while it held the allowance.
+          const backoff =
+            refreshed || lostToRefusal === current
+              ? 0
+              : Math.min(30_000, 500 * 2 ** Math.min(failures++, 6)) * (0.5 + Math.random() * 0.5);
           const delay = Math.max(backoff, bindingRetryAt - Date.now());
           if (delay > 0)
             retryTimer = window.setTimeout(() => {

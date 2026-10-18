@@ -1,7 +1,7 @@
-import type { Frame } from "@playwright/test";
+import type { Frame, Route } from "@playwright/test";
 import type { FixtureWindow } from "./fixture-client.js";
 import { test, expect, open, notice, installSessionRefreshBoundary } from "./fixtures.js";
-import { RuntimeSubscriptionRequest } from "../../packages/api/src/index.js";
+import { RuntimeSubscriptionRequest, type RuntimeFailure } from "../../packages/api/src/index.js";
 import * as Schema from "effect/Schema";
 
 test.use({ tls: true, ignoreHTTPSErrors: true });
@@ -750,5 +750,121 @@ test("a lost subscribe POST or admitted frame is repaired within a second", asyn
   await expect(frame.locator("#rows-2")).toHaveText("0");
   await page.clock.resume();
   await expect(page.locator('[data-stream-status="reconnecting"]')).toBeHidden();
+  await page.unroute("**/api/runtime/subscriptions");
+});
+
+// A Patchy refusal of one subscription POST, in the server's wire shape.
+const refusal = (status: number, code: RuntimeFailure["code"]) => ({
+  status,
+  contentType: "application/json",
+  body: JSON.stringify({
+    ok: false,
+    source: "patchy",
+    error: "Refused by the test ingress.",
+    code
+  } satisfies RuntimeFailure)
+});
+
+test("a POST refused as a replaced stream reconnects at once, then waits until a stream reconciles", async ({
+  page,
+  instance
+}) => {
+  await page.clock.install();
+  const fences: Array<string | undefined> = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/runtime/stream")
+      fences.push(request.headers()["x-patchy-generation"]);
+  });
+  // Like a host that does not hold the stream: StreamReplaced, for the next POSTs of any type.
+  let refusals = 0;
+  await page.route("**/api/runtime/subscriptions", async (route) => {
+    if (refusals === 0) return route.continue();
+    refusals--;
+    await route.fulfill(refusal(409, "invalid_request"));
+  });
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  // Pause ahead of real time; no timer is armed for the reconciled empty set. From here a
+  // reconnect that lands without runFor skipped the backoff.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+
+  // The first loss reconnects at once. The new stream's replace is refused before it
+  // reconciled, so that loss waits for the backoff.
+  refusals = 2;
+  await subscribeLimit(frame, 1);
+  await expect.poll(() => generations(frame)).toHaveLength(2);
+  await expect.poll(() => refusals).toBe(0);
+  await expect.poll(() => instance.streamConnections.size).toBe(0);
+  await page.waitForTimeout(500);
+  expect(await generations(frame)).toHaveLength(2);
+  await page.clock.runFor(500);
+  await expect.poll(() => generations(frame)).toHaveLength(3);
+  await expect(frame.locator("#rows-1")).toHaveText("0");
+
+  // That stream reconciled, so the next loss reconnects at once again.
+  refusals = 1;
+  await subscribeLimit(frame, 2);
+  await expect.poll(() => generations(frame)).toHaveLength(4);
+  await expect(frame.locator("#rows-2")).toHaveText("0");
+  // Every reconnect names the generation it replaces, so it touches its version, never warms it.
+  expect(fences).toEqual([undefined, ...(await generations(frame)).slice(0, -1)]);
+  await page.unroute("**/api/runtime/subscriptions");
+});
+
+test("stale, session, principal and rate-limit refusals of a POST keep their handling", async ({
+  page,
+  instance
+}) => {
+  await page.clock.install();
+  let held: PromiseWithResolvers<Route> | undefined;
+  let refuse: Parameters<typeof refusal> | undefined;
+  await page.route("**/api/runtime/subscriptions", async (route) => {
+    const command = decodeSubscriptionRequest(route.request().postDataJSON());
+    if (command.type !== "subscribe") return route.continue();
+    if (held) return held.resolve(route);
+    if (!refuse) return route.continue();
+    const [status, code] = refuse;
+    refuse = undefined;
+    await route.fulfill(refusal(status, code));
+  });
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+
+  // A refusal that arrives after the shell moved past its sequence leaves the stream alone.
+  held = Promise.withResolvers<Route>();
+  await subscribeLimit(frame, 1);
+  const stale = await held.promise;
+  held = undefined;
+  await subscribeLimit(frame, 2);
+  // The fast repair installs the whole set at sequence 2.
+  await page.clock.runFor(1_000);
+  await expect(frame.locator("#rows-2")).toHaveText("0");
+  await stale.fulfill(refusal(409, "invalid_request"));
+  await page.waitForTimeout(500);
+  await page.clock.runFor(1_000);
+  await expect(frame.locator("#rows-1")).toHaveText("0");
+  expect(await generations(frame)).toHaveLength(1);
+  expect(instance.streamConnections.size).toBe(1);
+
+  // Every other refusal of a current POST still tears the stream down behind the backoff,
+  // with the at-once allowance unspent.
+  let limit = 2;
+  for (const [status, code] of [
+    [401, "session_refresh_required"],
+    [409, "principal_changed"],
+    [429, "rate_limited"]
+  ] as const) {
+    const opened = (await generations(frame)).length;
+    refuse = [status, code];
+    await subscribeLimit(frame, ++limit);
+    await expect.poll(() => refuse).toBeUndefined();
+    await expect.poll(() => instance.streamConnections.size).toBe(0);
+    await page.waitForTimeout(500);
+    expect(await generations(frame)).toHaveLength(opened);
+    await page.clock.runFor(500);
+    await expect.poll(() => generations(frame)).toHaveLength(opened + 1);
+    await expect(frame.locator(`#rows-${limit}`)).toHaveText("0");
+  }
   await page.unroute("**/api/runtime/subscriptions");
 });
