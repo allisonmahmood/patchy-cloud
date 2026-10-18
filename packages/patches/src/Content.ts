@@ -204,13 +204,25 @@ const makeBundleCache = Effect.gen(function* () {
   const kept = new Map<string, { readonly bundle: string; readonly bytes: number }>();
   let keptBytes = 0;
   const identity = (stored: StoredServer) => `${stored.objectKey}#${stored.sha256}`;
-  const keep = (stored: StoredServer, bundle: string) => {
-    if (stored.bytes > maxBytes / 4) return;
-    kept.set(identity(stored), { bundle, bytes: stored.bytes });
-    keptBytes += stored.bytes;
-    for (const [key, entry] of kept) {
-      if (keptBytes <= maxBytes && kept.size <= maxEntries) break;
+  /** The kept bundle, now the most recently used, recorded as the call's `cached` load. */
+  const recall = (key: string) =>
+    Effect.suspend(() => {
+      const hit = kept.get(key);
+      if (hit === undefined) return Effect.undefined;
       kept.delete(key);
+      kept.set(key, hit);
+      return Effect.as(WideEvents.enrich({ bundleLoad: "cached" }), hit.bundle);
+    });
+  const keep = (key: string, bundle: string, bytes: number) => {
+    if (bytes > maxBytes / 4) return;
+    // Replacing an entry releases its bytes and moves it to the end.
+    keptBytes -= kept.get(key)?.bytes ?? 0;
+    kept.delete(key);
+    kept.set(key, { bundle, bytes });
+    keptBytes += bytes;
+    for (const [oldest, entry] of kept) {
+      if (keptBytes <= maxBytes && kept.size <= maxEntries) break;
+      kept.delete(oldest);
       keptBytes -= entry.bytes;
     }
   };
@@ -219,6 +231,10 @@ const makeBundleCache = Effect.gen(function* () {
     capacity: Number.POSITIVE_INFINITY,
     timeToLive: Duration.zero,
     lookup: Effect.fnUntraced(function* (stored: StoredServer) {
+      const key = identity(stored);
+      // A miss can arrive here just after another call's read settled and kept the bundle.
+      const settled = yield* recall(key);
+      if (settled !== undefined) return settled;
       yield* WideEvents.enrich({ bundleLoad: "read" });
       const bundle = yield* store.get(stored.objectKey);
       if (sha256(bundle) !== stored.sha256)
@@ -226,20 +242,14 @@ const makeBundleCache = Effect.gen(function* () {
           patchId: stored.patchId,
           versionId: stored.versionId
         });
-      keep(stored, bundle);
+      keep(key, bundle, stored.bytes);
       return bundle;
     })
   });
   return Effect.fnUntraced(function* (stored: StoredServer) {
-    const key = identity(stored);
-    const hit = kept.get(key);
-    if (hit !== undefined) {
-      kept.delete(key);
-      kept.set(key, hit);
-      yield* WideEvents.enrich({ bundleLoad: "cached" });
-      return hit.bundle;
-    }
-    // The call whose miss starts the read is relabelled `read` by the lookup, which runs in its context.
+    const hit = yield* recall(identity(stored));
+    if (hit !== undefined) return hit;
+    // The lookup runs in the context of the call that starts it and relabels that call.
     yield* WideEvents.enrich({ bundleLoad: "joined" });
     return yield* Cache.get(reads, stored);
   });
