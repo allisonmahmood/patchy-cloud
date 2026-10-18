@@ -45,7 +45,7 @@ _Avoid_: outcome (whether the work succeeded)
 _Avoid_: cache hit (`joined` is neither a hit nor its own read)
 
 **Rebound**:
-`rebound: true`: a tier 2 call or re-run whose invoke the supervisor refused before dispatch, because the bound process was reaped or replaced after bind, so it went back to bind once more. It stays set whatever came of that: success, `busy` from the bind, the deadline or another failure. The refused invoke ran no handler and is not counted in `attempts`. Nested calls keep their parent's process and never rebind.
+`rebound: true`: a tier 2 call or re-run whose invoke the supervisor refused before dispatch, because the bound process was reaped or replaced after bind, so it went back to bind once more. It stays set whatever came of that: success, `busy` from the bind, the deadline or another failure. The refused invoke ran no handler and is not counted in `attempts`. Nested calls keep their parent's process and never rebind. Unrelated to the `rebind` trigger, a development handler swap.
 _Avoid_: retry (nothing ran the first time), replay
 
 **Limit peak**:
