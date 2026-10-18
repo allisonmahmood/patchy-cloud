@@ -3,7 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { Identity, RuntimeStreamFrame } from "@patchy/api";
-import { shellContentSecurityPolicy } from "@patchy/serving/shell";
+import { brokerScript, brokerSrc, shellContentSecurityPolicy } from "@patchy/serving/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
@@ -106,7 +106,13 @@ it.live(
       const shell = yield* http.get(base);
       assert.strictEqual(shell.status, 200);
       assert.strictEqual(shell.headers["content-security-policy"], shellContentSecurityPolicy(1));
-      assert.include(yield* shell.text, content);
+      const shellHtml = yield* shell.text;
+      assert.include(shellHtml, content);
+      // The local server answers the hosted shell's versioned broker URL, uncached.
+      assert.include(shellHtml, `src="${brokerSrc}"`);
+      const broker = yield* http.get(brokerSrc);
+      assert.strictEqual(broker.headers["cache-control"], "private, no-store");
+      assert.strictEqual(yield* broker.text, brokerScript);
       const initial = yield* http.get(content);
       assert.include(initial.headers["content-security-policy"]!, "connect-src 'none'");
       assert.include(yield* initial.text, "First local build");

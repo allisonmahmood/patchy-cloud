@@ -24,7 +24,14 @@ import { Content, Patches, PatchesConfig } from "@patchy/patches";
 import * as Door from "./Door.js";
 import { renderNotFound } from "./render.js";
 import { renderAddressNotice } from "./address-notice.js";
-import { renderPatchWrapper, renderShellNotice, isShellNotice, brokerScript } from "./shell.js";
+import { negotiate, precompress } from "./compression.js";
+import {
+  renderPatchWrapper,
+  renderShellNotice,
+  isShellNotice,
+  brokerScript,
+  brokerDigest
+} from "./shell.js";
 import {
   NO_REFERRER_POLICY,
   PATCH_CONTENT_SECURITY_POLICY,
@@ -276,12 +283,24 @@ const patches = HttpRouter.use((router) =>
 const otherPages = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
+    const broker = precompress(new TextEncoder().encode(brokerScript));
     yield* router.add(
       "GET",
       "/~shell/broker.js",
-      HttpServerResponse.text(brokerScript, {
-        contentType: "text/javascript",
-        headers: { "cache-control": "no-store" }
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const coding = negotiate(request.headers["accept-encoding"]);
+        // Mixed releases share this path during a rolling deploy. Only bytes whose digest is `v`
+        // are kept for good; a shell from another release, or none, revalidates every load.
+        const current = new URL(request.url, publicBaseUrl).searchParams.get("v") === brokerDigest;
+        return HttpServerResponse.uint8Array(broker[coding], {
+          contentType: "text/javascript",
+          headers: {
+            "cache-control": current ? "public, max-age=31536000, immutable" : "no-cache",
+            vary: "Accept-Encoding",
+            ...(coding === "identity" ? {} : { "content-encoding": coding })
+          }
+        });
       })
     );
     yield* router.add(
