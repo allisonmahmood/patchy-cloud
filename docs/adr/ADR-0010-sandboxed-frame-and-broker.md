@@ -66,7 +66,7 @@ must use application-cookie affinity, not independent round-robin requests.
 For ALB the target group attributes are `stickiness.enabled=true`,
 `stickiness.type=app_cookie`,
 `stickiness.app_cookie.cookie_name=patchy_stream_affinity` and
-`stickiness.app_cookie.duration_seconds=604800`, with cross-zone balancing enabled.
+`stickiness.app_cookie.duration_seconds=86400`, with cross-zone balancing enabled.
 The browser sends both the application and ALB-generated cookies. On target loss,
 a stale-generation refusal forces reconnect and re-admission on the replacement;
 no subscription state or presence row is replicated. See
@@ -116,6 +116,11 @@ it is not a failure and adds no backoff.
 Refresh/network failures keep the document and its backoff; no operation is replayed.
 
 EOF, a network cut and deployment drain use the same capped, jittered-backoff reconnect.
+A subscription POST refused as `invalid_request` (409) while it still names the
+current generation and latest sequence tears the stream down, most likely sent to a
+host that does not hold it. The first such loss reconnects at once; a further one waits
+for the backoff until a stream reconciles again, with its latest sequence admitted
+and every subscription answered. A new `hello` alone does not restore the allowance.
 `pagehide` closes early; a hidden document suspends after 30 seconds and reopens
 on return. Shutdown signals fence new runtime operations and streams before the
 HTTP listener closes. Already-admitted work is not replayed.
