@@ -7,7 +7,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { activateStarter, writeInitialGeneration } from "./initProject.js";
+import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
 
 const directories: string[] = [];
 async function temporaryDirectory() {
@@ -20,6 +20,26 @@ afterEach(async () => {
     directories.splice(0).map((root) => rm(root, { recursive: true, force: true }))
   );
 });
+
+// Tier 0's built page is checked by its publish test; the Preact tiers share this wiring.
+it.each([1, 2] as const)(
+  "starts the tier %i page in a main column styled after the look",
+  (tier) => {
+    const files = starterFiles({
+      instance: "http://127.0.0.1:1",
+      name: "notes",
+      tier,
+      purpose: "Synthetic notes",
+      tarball: "http://127.0.0.1:1/patchy.tgz"
+    });
+    expect(files["src/main.tsx"]!.split("\n").slice(0, 2)).toEqual([
+      'import "../patchy/_generated/look.css";',
+      'import "./styles.css";'
+    ]);
+    expect(files["src/App.tsx"]).toMatch(/return \(\n {4}<main>[\s\S]*\n {4}<\/main>\n {2}\);/);
+    expect(files["src/styles.css"]).toContain("max-width: 960px;");
+  }
+);
 
 it("keeps an already-running caller in the initialized directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "patchy-init-cwd-"));

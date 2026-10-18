@@ -7,7 +7,6 @@ import { CURRENT_RELEASE } from "@patchy/api";
 import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import {
-  companyLook,
   decodePublishRequest,
   embeddedFontLook,
   generateProjectResponse,
@@ -86,20 +85,23 @@ describe("patch-repo builds", () => {
     );
     expect(html).toContain(embeddedFontLook.font);
     expect(html).toContain("--look-bg:#08090a");
+    expect(html).toMatch(/main\{[^}]*max-width:960px/);
   });
 
-  it("publishes a repo behind the company's look with its own revision, and warns only a page that imports it", async () => {
+  it("publishes a repo behind the company's look with its own revision, stamped only when its page imports it", async () => {
     const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };
-    const current = {
-      ...lookRevision(8, "darker green"),
-      files: { "look.css": embeddedFontLook["look.css"], "LOOK.md": "# Darker\n" }
-    };
-    let lookRefused = false;
+    const behind =
+      "This repo has Patchy Dev's look rev 7, but the current look is rev 8 by Sam: darker green. This version keeps the repo's look; run patchy refresh to bring it up to date.";
     const instance = await stubInstance((request, respond, disconnect) => {
-      if (request.url === "/api/publish") return respond(201, response);
-      if (request.url === "/api/look" && lookRefused)
-        return respond(429, { ok: false, code: "rate_limited", error: "Too many requests." });
-      if (request.url === "/api/look") return respond(200, companyLook(current, [current]));
+      // The instance compares a stamp with the company's current look; this one is always behind.
+      if (request.url === "/api/publish")
+        return respond(201, {
+          ...response,
+          warnings: [
+            ...response.warnings,
+            ...(decodePublishRequest(request.body).metadata.look === undefined ? [] : [behind])
+          ]
+        });
       if (request.url === "/api/sdk/generate")
         return respond(
           200,
@@ -113,39 +115,28 @@ describe("patch-repo builds", () => {
     const dir = publishTree(instance.url);
     const options = { cwd: dir, env, stateDir: tempDir() };
     expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    const behind = await runCli(["publish", "--json"], options);
-    expect(behind, behind.stderr).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(behind.stdout).warnings).toContain(
-      "This repo has Patchy Dev's look rev 7, but the current look is rev 8 by Sam: darker green. This version keeps the repo's look; run patchy refresh to bring it up to date."
-    );
+    const stamped = await runCli(["publish", "--json"], options);
+    expect(stamped, stamped.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(stamped.stdout).warnings).toContain(behind);
     const sent = () =>
       decodePublishRequest(
         instance.requests.findLast((request) => request.url === "/api/publish")?.body
-      ).html;
-    expect(sent()).toContain("--look-bg:#fffdf4");
-    expect(sent()).not.toContain(embeddedFontLook.font);
+      );
+    const { revision, createdAt } = lookRevision(7, "first green");
+    expect(sent().metadata.look).toEqual({ revision, createdAt });
+    expect(sent().html).toContain("--look-bg:#fffdf4");
 
-    // The check is advisory: an unanswered look read is a warning, and the publish goes ahead.
-    lookRefused = true;
-    const unchecked = await runCli(["publish", "--json"], options);
-    expect(unchecked, unchecked.stderr).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(unchecked.stdout).warnings).toContainEqual(
-      expect.stringMatching(/^Could not check whether this repo's look is current: .*429/)
-    );
-
-    // A page with its own stylesheet instead publishes without asking for the look.
+    // A page with its own stylesheet sends no stamp, so nothing is checked.
     const main = path.join(dir, "src/main.tsx");
-    writeFileSync(
-      main,
-      readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, 'import "./styles.css";\n')
-    );
+    writeFileSync(main, readFileSync(main, "utf8").replace(/^import "[^"]+look\.css";\n/, ""));
     writeFileSync(path.join(dir, "src/styles.css"), "body { background: #fff0f5; }\n");
-    const looks = instance.requests.filter((request) => request.url === "/api/look").length;
     const own = await runCli(["publish", "--json"], options);
     expect(own, own.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(own.stdout).warnings).toEqual(response.warnings);
-    expect(instance.requests.filter((request) => request.url === "/api/look")).toHaveLength(looks);
-    expect(sent()).not.toContain("--look-bg:#fffdf4");
+    expect(sent().metadata).not.toHaveProperty("look");
+    expect(sent().html).not.toContain("--look-bg:#fffdf4");
+    // Publish never reads the company's look itself.
+    expect(instance.requests.some((request) => request.url === "/api/look")).toBe(false);
   });
 
   it("publishes a vanilla page with default Vite module preloading", async () => {

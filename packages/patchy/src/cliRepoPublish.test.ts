@@ -140,8 +140,9 @@ describe("repo publish checks", () => {
       instance.requests.find((request) => request.url === "/api/publish")?.body
     );
     expect(sent.manifest.tier).toBe(0);
-    expect(sent.html).toContain("<h1>My patch</h1>");
+    expect(sent.html).toContain("<main><h1>My patch</h1>");
     expect(sent.html).toContain(embeddedFontLook.font);
+    expect(sent.html).toMatch(/main\{[^}]*max-width:960px/);
     expect(validateHtml(sent.html).ok).toBe(true);
   }, 120_000); // An offline install of the real release archive can exceed 30 seconds.
 });

@@ -742,6 +742,7 @@ describe("patchy publish", async () => {
       metadata: { cliVersion: CURRENT_RELEASE, filename: "page.html" }
     });
     expect(instance.requests[2]?.body).not.toHaveProperty("scope");
+    expect(instance.requests[2]?.body).not.toHaveProperty("metadata.look");
 
     // The cache turns the second publish of the same file into an update, and
     // under --json the document is the wire shape alone.
