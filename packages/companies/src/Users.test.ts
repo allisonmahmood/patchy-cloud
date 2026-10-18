@@ -333,7 +333,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         const stored = yield* users.findByClerkId(member.clerkUserId);
         assert.isNotNull(stored?.deactivatedAt);
         assert.deepStrictEqual(
-          answers.map((answer) => answer?.user),
+          answers.map((answer) => answer?.user ?? null),
           [stored, stored]
         );
         // The deactivation and one refresh updated the row; the other refresh wrote nothing.
