@@ -67,7 +67,15 @@ interface Subscription {
   vector: RevisionVector | undefined;
   result: string | undefined;
   revision: bigint;
+  /** A rebind advances it, so a run it overtakes is thrown away. */
   epoch: number;
+  /**
+   * Same-signature replaces admitted. A replace may recover a write whose wake was lost, so a
+   * run it overlaps answers only once the revisions it read match a fence taken afterwards.
+   */
+  replaces: number;
+  /** When a replace the current run has not answered arrived; the run's end makes it dirty. */
+  replacedAt: number | undefined;
   dirty: boolean;
   /** The oldest pending dirty transition and why. A recoverable failure is one. */
   dirtyAt: number;
@@ -274,6 +282,14 @@ export const make = Effect.gen(function* () {
   const run = Effect.fnUntraced(function* (doc: Document, sub: Subscription, slot: Slot) {
     if (!present(doc, sub)) return;
     const epoch = sub.epoch;
+    // Replaces the run's fence covers; a later one must be checked against a newer fence.
+    let replaces = sub.replaces;
+    const answerable = () => present(doc, sub) && sub.epoch === epoch && sub.replaces === replaces;
+    // Each frame the run sends answers its subscription, including any replace it covers.
+    const answer = (frame: RuntimeStreamFrame) => {
+      sub.replacedAt = undefined;
+      doc.send(frame);
+    };
     let binding = doc.binding();
     const check = Effect.gen(function* () {
       yield* doc.check;
@@ -334,17 +350,17 @@ export const make = Effect.gen(function* () {
     ) {
       const dropped = (error: Runtime.RuntimeError | SubscriptionReads.HandlerRefusal) =>
         WideEvents.enrich({ outcome: "failure", code: codeOf(error), disposition: "discarded" });
-      if (!present(doc, sub) || sub.epoch !== epoch) return yield* dropped(attemptError);
+      if (!answerable()) return yield* dropped(attemptError);
       const error = yield* check.pipe(
         Effect.as(attemptError),
         Effect.catch((refusal) => Effect.succeed(refusal))
       );
-      if (!present(doc, sub) || sub.epoch !== epoch) return yield* dropped(error);
+      if (!answerable()) return yield* dropped(error);
       for (const key of attempted) sub.dependencies.add(key);
       const handlerRefusal = SubscriptionReads.isHandlerRefusal(error);
       const code = codeOf(error);
       const permanent = !handlerRefusal && !isCallbackRefusal(error) && recoverable[code] !== true;
-      doc.send({
+      answer({
         type: "error",
         id: sub.input.id,
         permanent,
@@ -391,14 +407,14 @@ export const make = Effect.gen(function* () {
       input = { ...input, binding };
       const keys = yield* reads.admit(input);
       const fence = yield* reads.revisions(binding.companyId, keys);
-      if (!present(doc, sub) || sub.epoch !== epoch) return;
+      if (!answerable()) return;
       if (sub.failures === 0 && equalVector(sub.vector, fence)) {
         yield* check;
-        if (!present(doc, sub) || sub.epoch !== epoch) return;
+        if (!answerable()) return;
         sub.dependencies.clear();
         for (const key of keys) sub.dependencies.add(key);
         sub.failures = 0;
-        doc.send({
+        answer({
           type: "up-to-date",
           id: sub.input.id,
           revision: String(sub.revision),
@@ -445,7 +461,16 @@ export const make = Effect.gen(function* () {
             }
           ]
         });
-        if (!present(doc, sub) || sub.epoch !== epoch) return yield* discarded;
+        // A replace admitted during the read may recover a write whose wake was lost. The result
+        // answers it only if the revisions it read still match a fence taken after the replace.
+        while (sub.replaces !== replaces) {
+          if (!present(doc, sub) || sub.epoch !== epoch) return yield* discarded;
+          const seen = sub.replaces;
+          const after = yield* reads.revisions(binding.companyId, Object.keys(snapshot.vector));
+          if (!equalVector(snapshot.vector, after)) return yield* discarded;
+          replaces = seen;
+        }
+        if (!answerable()) return yield* discarded;
         if (size > snapshotLimit) {
           refuse(doc, sub.input.id, "subscriptions.snapshot.bytes", snapshotLimit);
           doc.subscriptions.delete(sub.input.id);
@@ -457,7 +482,7 @@ export const make = Effect.gen(function* () {
           return;
         }
         yield* check;
-        if (!present(doc, sub) || sub.epoch !== epoch) return yield* discarded;
+        if (!answerable()) return yield* discarded;
         sub.dependencies.clear();
         for (const key of Object.keys(snapshot.vector)) sub.dependencies.add(key);
         // The pre-read watermark is a fence, not evidence that a stale snapshot is fresh.
@@ -470,7 +495,7 @@ export const make = Effect.gen(function* () {
         sub.failures = 0;
         sub.retryAt = 0;
         if (sub.result === json) {
-          doc.send({
+          answer({
             type: "up-to-date",
             id: sub.input.id,
             revision: String(sub.revision),
@@ -480,7 +505,7 @@ export const make = Effect.gen(function* () {
         } else {
           sub.result = json;
           sub.revision++;
-          doc.send({
+          answer({
             type: "snapshot",
             id: sub.input.id,
             revision: String(sub.revision),
@@ -528,6 +553,10 @@ export const make = Effect.gen(function* () {
               sub.duringRun.clear();
               if (present(doc, sub) && wokenAt !== undefined)
                 markDirty(sub, "invalidation", wokenAt);
+              // A replace the run could not answer runs it again, dated from its admission.
+              if (present(doc, sub) && sub.replacedAt !== undefined)
+                markDirty(sub, "replace", sub.replacedAt);
+              sub.replacedAt = undefined;
               if (present(doc, sub)) {
                 // Rotate after completion so subscriptions added during the run get a turn.
                 doc.subscriptions.delete(sub.input.id);
@@ -663,8 +692,10 @@ export const make = Effect.gen(function* () {
               previous.vector = input.vector;
               if (input.revision === undefined || BigInt(input.revision) !== previous.revision)
                 previous.result = undefined;
-              previous.epoch++;
-              markDirty(previous, "replace", now);
+              // A running read keeps its work; the run answers this replace or ends dirty.
+              previous.replaces++;
+              if (previous.running) previous.replacedAt ??= now;
+              else markDirty(previous, "replace", now);
               endBackoff(previous, now);
               return;
             }
@@ -707,7 +738,9 @@ export const make = Effect.gen(function* () {
               failures: 0,
               retryAt: 0,
               cause: undefined,
-              epoch: 0
+              epoch: 0,
+              replaces: 0,
+              replacedAt: undefined
             });
             doc.peak = Math.max(doc.peak, doc.subscriptions.size);
           };

@@ -48,6 +48,7 @@ const fixture = Effect.gen(function* () {
   const frames = yield* Queue.make<RuntimeStreamFrame>();
   const started = yield* Queue.make<number>();
   const admitting = yield* Queue.make<number>();
+  const fencing = yield* Queue.make<void>();
   const recorded = yield* Queue.make<WideEvents.WideEvent>();
   const state = {
     revision: 0,
@@ -58,6 +59,8 @@ const fixture = Effect.gen(function* () {
     failure: undefined as Runtime.RuntimeError | undefined,
     admissionGate: undefined as Deferred.Deferred<void> | undefined,
     gate: undefined as Deferred.Deferred<void> | undefined,
+    /** Holds a revision read after taking its fence, so a write can land just after it. */
+    revisionsGate: undefined as Deferred.Deferred<void> | undefined,
     limitsGate: undefined as Deferred.Deferred<void> | undefined,
     /** A dependency only a read's result reveals, so a wake for it waits on the run. */
     late: undefined as string | undefined,
@@ -93,7 +96,15 @@ const fixture = Effect.gen(function* () {
         if (state.failure !== undefined) return yield* Effect.fail(state.failure);
         return snapshot;
       }),
-    revisions: () => Effect.sync(vector)
+    revisions: () =>
+      Effect.gen(function* () {
+        const fence = vector();
+        if (state.revisionsGate !== undefined) {
+          yield* Queue.offer(fencing, undefined);
+          yield* Deferred.await(state.revisionsGate);
+        }
+        return fence;
+      })
   };
   const events = yield* WideEvents.make.pipe(
     Effect.provideService(WideEvents.Sink, {
@@ -151,6 +162,7 @@ const fixture = Effect.gen(function* () {
     frames,
     started,
     admitting,
+    fencing,
     recorded,
     document,
     update,
@@ -738,7 +750,7 @@ it.effect("measures slot waits from the first dirty transition, behind capped ru
   }).pipe(Effect.scoped)
 );
 
-it.effect("keeps a coalesced wait's first trigger and discards a run a replace overtook", () =>
+it.effect("keeps a coalesced wait's first trigger and the runs a replace overlapped", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
     const ops = (["tables.list", "tables.get", "shared.list", "shared.get"] as const).slice(
@@ -751,24 +763,24 @@ it.effect("keeps a coalesced wait's first trigger and discards a run a replace o
     yield* f.update({ type: "replace", sequence: 0, subscriptions });
     for (let index = 0; index < cap; index++) yield* Queue.take(f.started);
     yield* TestClock.adjust("50 millis");
-    // The same desired set: running runs change epoch, and the waiting one is already dirty.
+    // The same desired set: running reads answer it unchanged, and the waiting one is dirty.
     yield* f.update({ type: "replace", sequence: 1, subscriptions });
     yield* TestClock.adjust("50 millis");
     f.state.gate = undefined;
     yield* Deferred.succeed(gate, undefined);
-    const events = yield* reruns(f.recorded, 2 * cap + 1);
+    const events = yield* reruns(f.recorded, cap + 1);
     const runs = (handler: string) =>
       events
         .filter((event) => event.handler === handler)
         .map(({ trigger, disposition, slotWaitMs }) => ({ trigger, disposition, slotWaitMs }));
     for (const op of ops.slice(0, cap))
       assert.deepStrictEqual(runs(op), [
-        { trigger: "initial", disposition: "discarded", slotWaitMs: 0 },
-        { trigger: "replace", disposition: "delivered", slotWaitMs: 50 }
+        { trigger: "initial", disposition: "delivered", slotWaitMs: 0 }
       ]);
     assert.deepStrictEqual(runs(ops[cap]!), [
       { trigger: "initial", disposition: "delivered", slotWaitMs: 100 }
     ]);
+    assert.strictEqual(f.state.reads, cap + 1);
   }).pipe(Effect.scoped)
 );
 
@@ -1014,5 +1026,195 @@ it.effect("records a result or failure whose document closed during its read as 
           : { outcome: "failure", code: "source_unavailable", disposition: "discarded" }
       );
     }
+  }).pipe(Effect.scoped)
+);
+
+/** Subscribes `query` and holds its read once it starts; the returned effect lets it finish. */
+const holdRead = Effect.fnUntraced(function* (f: Effect.Success<typeof fixture>) {
+  const gate = yield* Deferred.make<void>();
+  f.state.gate = gate;
+  yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
+  assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 1 });
+  yield* Queue.take(f.started);
+  f.state.gate = undefined;
+  return Deferred.succeed(gate, undefined);
+});
+
+it.effect("answers a replace that overlaps a read with that read when nothing changed", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const release = yield* holdRead(f);
+    yield* f.update({ type: "replace", sequence: 1, subscriptions: [query] });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 1 });
+    yield* release;
+    assert.include((yield* reruns(f.recorded, 1))[0], {
+      trigger: "initial",
+      disposition: "delivered"
+    });
+    assert.deepStrictEqual(yield* f.next, {
+      type: "snapshot",
+      id: query.id,
+      revision: "1",
+      result: f.state.value,
+      vector: f.vector()
+    });
+    // An unchanged reconcile answers from revisions alone: the replace left no read behind.
+    yield* f.document.reconcile("periodic");
+    assert.strictEqual((yield* f.next).type, "up-to-date");
+    assert.strictEqual(f.state.reads, 1);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("runs again when a write whose wake was lost precedes a replace during the read", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const release = yield* holdRead(f);
+    f.state.revision++;
+    f.state.value = { rows: [{ id: "one", value: "written during the read" }], cursor: null };
+    yield* f.update({ type: "replace", sequence: 1, subscriptions: [query] });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 1 });
+    yield* release;
+    assert.include((yield* reruns(f.recorded, 1))[0], {
+      trigger: "initial",
+      disposition: "discarded"
+    });
+    assert.include((yield* reruns(f.recorded, 1))[0], {
+      trigger: "replace",
+      disposition: "delivered"
+    });
+    // The first answer after the replace's admission carries the write.
+    assert.deepStrictEqual(yield* f.next, {
+      type: "snapshot",
+      id: query.id,
+      revision: "1",
+      result: f.state.value,
+      vector: f.vector()
+    });
+  }).pipe(Effect.scoped)
+);
+
+it.effect("sends a full snapshot when an unchanged read overlaps a replace that missed one", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
+    yield* f.next;
+    const received = yield* f.next;
+    assert(received.type === "snapshot");
+    f.state.revision++;
+    f.state.value = { rows: [{ id: "one", value: "missed" }], cursor: null };
+    yield* f.document.reconcile("invalidation", [key]);
+    assert.strictEqual((yield* f.next).type, "snapshot");
+    // A write that leaves the result as it was starts a read, and the client's repair overlaps it.
+    const gate = yield* Deferred.make<void>();
+    f.state.gate = gate;
+    f.state.revision++;
+    yield* f.document.reconcile("invalidation", [key]);
+    while ((yield* Queue.take(f.started)) < 3) {
+      /* skip the reads before this one */
+    }
+    yield* f.update({
+      type: "replace",
+      sequence: 1,
+      subscriptions: [{ ...query, vector: received.vector, revision: received.revision }]
+    });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 1 });
+    f.state.gate = undefined;
+    yield* Deferred.succeed(gate, undefined);
+    assert.deepStrictEqual(yield* f.next, {
+      type: "snapshot",
+      id: query.id,
+      revision: "3",
+      result: f.state.value,
+      vector: f.vector()
+    });
+    assert.strictEqual(f.state.reads, 3);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("checks overlapping replaces against a fence taken after the last one", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const release = yield* holdRead(f);
+    for (const sequence of [1, 2]) {
+      yield* f.update({ type: "replace", sequence, subscriptions: [query] });
+      assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence });
+    }
+    const checking = yield* Deferred.make<void>();
+    f.state.revisionsGate = checking;
+    yield* release;
+    yield* Queue.take(f.fencing);
+    f.state.revisionsGate = undefined;
+    // That fence still matches the read. A write whose wake is lost lands after it, then a
+    // third replace, so the read can't answer the third.
+    f.state.revision++;
+    f.state.value = { rows: [{ id: "one", value: "written during the check" }], cursor: null };
+    yield* f.update({ type: "replace", sequence: 3, subscriptions: [query] });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 3 });
+    yield* Deferred.succeed(checking, undefined);
+    assert.include((yield* reruns(f.recorded, 1))[0], {
+      trigger: "initial",
+      disposition: "discarded"
+    });
+    assert.include((yield* reruns(f.recorded, 1))[0], {
+      trigger: "replace",
+      disposition: "delivered"
+    });
+    assert.deepStrictEqual(yield* f.next, {
+      type: "snapshot",
+      id: query.id,
+      revision: "1",
+      result: f.state.value,
+      vector: f.vector()
+    });
+  }).pipe(Effect.scoped)
+);
+
+it.effect("discards a replaced read that a rebind overtakes", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const release = yield* holdRead(f);
+    yield* f.update({ type: "replace", sequence: 1, subscriptions: [query] });
+    yield* f.next;
+    yield* f.registry.rebind(binding.patchId, {});
+    assert.deepStrictEqual(yield* f.next, { type: "handlers", kinds: {} });
+    yield* release;
+    const [overtaken, rebound] = yield* reruns(f.recorded, 2);
+    assert.include(overtaken, { trigger: "initial", disposition: "discarded" });
+    assert.include(rebound, { disposition: "delivered" });
+    assert.strictEqual((yield* f.next).type, "snapshot");
+    assert.strictEqual(f.state.reads, 2);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("discards a read whose subscription was removed and added again meanwhile", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const release = yield* holdRead(f);
+    yield* f.update({ type: "unsubscribe", sequence: 2, id: query.id });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 2 });
+    yield* f.update({ type: "subscribe", sequence: 3, subscription: query });
+    assert.deepStrictEqual(yield* f.next, { type: "admitted", sequence: 3 });
+    assert.include((yield* reruns(f.recorded, 1))[0], { disposition: "delivered" });
+    assert.strictEqual((yield* f.next).type, "snapshot");
+    yield* release;
+    assert.include((yield* reruns(f.recorded, 1))[0], { disposition: "discarded" });
+    // The removed read sent nothing, so the next frame answers this reconcile.
+    yield* f.document.reconcile("periodic");
+    assert.strictEqual((yield* f.next).type, "up-to-date");
+    assert.strictEqual(f.state.reads, 2);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("sends nothing for a replaced read whose document closed", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const release = yield* holdRead(f);
+    yield* f.update({ type: "replace", sequence: 1, subscriptions: [query] });
+    yield* f.next;
+    f.document.close();
+    yield* release;
+    assert.include((yield* reruns(f.recorded, 1))[0], { disposition: "discarded" });
+    assert.strictEqual(yield* Queue.size(f.frames), 0);
+    assert.strictEqual(f.state.reads, 1);
   }).pipe(Effect.scoped)
 );
