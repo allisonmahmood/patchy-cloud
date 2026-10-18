@@ -778,7 +778,22 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           }
         })
       );
-    })
+    }),
+    // Reads the binding a call would be admitted to without admitting, claiming or binding.
+    touch: Effect.fn("Fleet.touch")(
+      function* (version) {
+        const now = yield* Clock.currentTimeMillis;
+        if (!options.dev && (yield* store.pausedUntil(version.companyId, version.patchId)) > now)
+          return { outcome: "paused" as const };
+        const binding = (yield* store.findCompany(version.companyId))[0];
+        if (binding?.state !== "active") return { outcome: "unbound" as const };
+        return yield* provider.touch(binding.taskId, {
+          bindingEpoch: binding.bindingEpoch,
+          binding: version
+        });
+      },
+      Effect.catch(() => Effect.succeed({ outcome: "failed" as const }))
+    )
   });
   const route = Effect.fn("Fleet.route")(
     function* (

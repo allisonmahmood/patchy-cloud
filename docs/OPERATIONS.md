@@ -218,6 +218,25 @@ fields @timestamp, replica, refusal, documentConnected, streamId, currentStreamI
 | sort @timestamp desc
 ```
 
+#### Keeping open versions warm
+
+While a tier 2 version has a connected document on a host, that host touches its
+process before each idle window ends, and a document's first stream warms the
+version once it is ready (ADR-0012 › Fleet controller). Each host emits one
+`type: "keepalive"` event per company version when its last document leaves:
+`peakDocuments`, `touches` counted by what each found (`touched`, `loading`,
+`absent`, `unsupported`, `paused`, `unbound`, `failed`) and `warmups` counted by
+what each came to (`resident`, `loading`, `loaded`, `bound`, `paused`, `unbound`,
+`failed`). `touches.absent` is a version evicted, or reaped by a missed touch, while
+open. A process event with `callsServed = 0` after a `loaded` warmup is an unused
+warmup, and `cause = "evicted"` is residency churn:
+
+```
+fields @timestamp, versionId, peakDocuments, touches.absent, touches.failed, warmups.loaded, warmups.resident
+| filter type = "keepalive" and companyId = "…"
+| sort @timestamp desc
+```
+
 The patch repo's local runtime uses the same record with compact stdout output.
 `@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and
 `layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs

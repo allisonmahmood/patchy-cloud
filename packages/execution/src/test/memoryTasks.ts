@@ -1,4 +1,5 @@
 import type * as Management from "@patchy/api/management";
+import { registry } from "@patchy/limits/registry";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as TaskProvider from "../TaskProvider.js";
@@ -23,7 +24,8 @@ const refuse = (
  * that never run patch code. Each task's supervisor fences epochs like supervisor.ts: bind
  * refuses another company or an older epoch, quiesce and stats need the exact epoch, and a
  * stopped task answers stats from its final snapshot like the local task owner. Invoke and
- * bundle binds are refused; cases that execute code use the local provider.
+ * bundle binds are refused and touches find nothing; cases that execute code use the local
+ * provider.
  */
 export const make = (): TaskProvider.TaskProvider["Service"] => {
   const tasks = new Map<string, Entry>();
@@ -90,6 +92,13 @@ export const make = (): TaskProvider.TaskProvider["Service"] => {
       return { bindingEpoch: request.bindingEpoch };
     }),
     invoke: (taskId) => Effect.fail(refuse("invoke", taskId, "provider")),
+    // No task here loads a version, so a touch at the current epoch finds nothing.
+    touch: Effect.fnUntraced(function* (taskId, request) {
+      const entry = yield* running("touch", taskId);
+      if (request.bindingEpoch !== entry.bindingEpoch)
+        return yield* refuse("touch", taskId, "stale_epoch");
+      return { outcome: "absent" as const, idleMs: registry["execution.process.idle"].default };
+    }),
     stats: Effect.fnUntraced(function* (taskId, request) {
       const entry = tasks.get(taskId);
       const current =

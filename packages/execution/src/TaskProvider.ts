@@ -16,7 +16,16 @@ export interface Task {
 export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
   "TaskProviderError",
   {
-    operation: Schema.Literals(["start", "list", "quiesce", "stop", "bind", "invoke", "stats"]),
+    operation: Schema.Literals([
+      "start",
+      "list",
+      "quiesce",
+      "stop",
+      "bind",
+      "invoke",
+      "stats",
+      "touch"
+    ]),
     taskId: Schema.optionalKey(Schema.String),
     reason: Schema.Union([Management.Refusal.fields.code, Schema.Literal("provider")]),
     limit: Schema.optionalKey(
@@ -72,6 +81,12 @@ export const bindByHash = <E extends { readonly reason: string }, R>(
 };
 
 /**
+ * The supervisor's answer to a touch, or `unsupported` when the task runs a release without
+ * touches and none was sent.
+ */
+export type TouchResult = Management.TouchReply | { readonly outcome: "unsupported" };
+
+/**
  * All host clients address the same shared inventory. Identity survives ambiguous starts
  * and stops; closing a host does not stop its tasks. A stopped observation certifies actual exit.
  * Omitted tasks and management timeouts are uncertainty, never evidence that a task stopped.
@@ -102,5 +117,10 @@ export class TaskProvider extends Context.Service<
       taskId: string,
       request: Management.StatsRequest
     ) => Effect.Effect<Management.StatsReply, TaskProviderError>;
+    /** Never loads a version; a task whose supervisor predates touches is never sent one. */
+    readonly touch: (
+      taskId: string,
+      request: Management.TouchRequest
+    ) => Effect.Effect<TouchResult, TaskProviderError>;
   }
 >()("@patchy/execution/TaskProvider") {}

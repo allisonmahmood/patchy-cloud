@@ -81,7 +81,7 @@ it.live(
   () =>
     Effect.gen(function* () {
       const { url } = yield* start();
-      for (const path of ["bind", "invoke", "stop", "stats"]) {
+      for (const path of ["bind", "invoke", "stop", "stats", "touch"]) {
         const status = yield* Effect.callback<number, Error>((resume) => {
           const request = httpRequest(
             `${url}/${path}`,
@@ -194,6 +194,7 @@ it.live(
       });
       yield* misdirected("stop", { bindingEpoch: 1 });
       yield* misdirected("stats", { bindingEpoch: 1 });
+      yield* misdirected("touch", { bindingEpoch: 1, binding: loaded.binding });
       expect(yield* stats(1)).toMatchObject({ stopped: false, processes: [{ callsServed: 0 }] });
       // A supervisor without an identity is no task a host can name.
       const anonymous = yield* start();
