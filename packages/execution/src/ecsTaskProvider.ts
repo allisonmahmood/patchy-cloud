@@ -45,8 +45,8 @@ type ManagedTask = {
 };
 type Endpoint = { readonly task: ManagedTask; readonly expiresAt: number };
 // Refused before the receiver acts: authentication, decoding (an older supervisor refuses `taskId`
-// as an unknown key) and the identity check. Only these prove any request had no effect; a bind by
-// hash's `bundle_required` proves it too, and `bindByHash` recovers both where it sends them.
+// as an unknown key) and the identity check. Only these prove any request had no effect. A bind by
+// hash refused `bundle_required` or `invalid_request` is recovered by `bindByHash` where it is sent.
 const unaffected: ReadonlySet<TaskProvider.TaskProviderError["reason"]> = new Set([
   "unauthorized",
   "invalid_request",
