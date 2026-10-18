@@ -1086,7 +1086,7 @@ it.layer(services)("pages in memory", (it) => {
       readonly limits?: Partial<
         Record<"serving.contentCache.bytes" | "serving.contentCache.entries", number>
       >;
-      readonly compression?: Pages.DocumentCompression["Service"];
+      readonly compression?: typeof compress;
     } = {}
   ) {
     const memory = yield* ContentStore.ContentStore;
