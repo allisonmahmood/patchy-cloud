@@ -435,17 +435,17 @@ export const make = Effect.gen(function* () {
     ON CONFLICT(company_id, patch_id) DO UPDATE SET publish_revision = EXCLUDED.publish_revision,
       reset_at = EXCLUDED.reset_at, paused_until = 0
     WHERE execution_breakers.publish_revision < EXCLUDED.publish_revision`;
-  // One statement: the upsert returns the pause it wrote, and when it wrote nothing the row
-  // as of the statement's start answers. A row a racing first admission inserted is unpaused.
+  // The read is its own statement so it sees a trip or publish that committed while the
+  // upsert waited on the row; one statement would read the row as it stood before that wait.
   const pausedUntil = Effect.fn("FleetStore.pausedUntil")(function* (
     company: string,
     patch: string
   ) {
-    return yield* sql`WITH synced AS (${syncPublish(company, patch)} RETURNING paused_until)
-      SELECT COALESCE((SELECT paused_until FROM synced), (SELECT paused_until FROM execution_breakers
-        WHERE company_id = ${company} AND patch_id = ${patch}), 0) AS "pausedUntil"`.pipe(
+    yield* syncPublish(company, patch);
+    return yield* sql`SELECT paused_until AS "pausedUntil"
+      FROM execution_breakers WHERE company_id = ${company} AND patch_id = ${patch}`.pipe(
       Effect.flatMap(decodePauses),
-      Effect.map((rows) => rows[0]!.pausedUntil)
+      Effect.map((rows) => rows[0]?.pausedUntil ?? 0)
     );
   });
   const report = Effect.fn("FleetStore.report")(function* (

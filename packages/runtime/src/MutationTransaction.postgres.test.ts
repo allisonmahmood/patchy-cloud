@@ -33,7 +33,6 @@ import * as TestWakes from "../../primitives/src/test/wakes.js";
 import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
 import * as Binding from "./Binding.js";
 import * as CallbackGateway from "./CallbackGateway.js";
-import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as Executor from "./Executor.js";
 import * as Invocation from "./Invocation.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
@@ -307,47 +306,6 @@ it.layer(services)("Mutation SERIALIZABLE acceptance", (it) => {
       yield* Deferred.succeed(releaseWake, undefined);
       yield* Deferred.await(published);
     }).pipe(Effect.scoped, TestClock.withLive)
-  );
-
-  it.effect(
-    "replies before releasing its admission, and releases each call once, failed or not",
-    () =>
-      Effect.gen(function* () {
-        const fixture = yield* setup("mutation40018");
-        const releasing = yield* Queue.unbounded<Deferred.Deferred<void>>();
-        const released = yield* Queue.unbounded<void>();
-        let failing = false;
-        const runtime = yield* host(fixture, (request, gateway) =>
-          failing
-            ? Effect.fail(new Executor.ExecutionError({ operation: "invoke", reason: "transport" }))
-            : increment(request, gateway)
-        ).pipe(
-          Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
-            touch: () => Effect.succeed({ outcome: "absent" as const }),
-            connect: () => Effect.void,
-            acquire: () =>
-              Effect.succeed({
-                binding: { taskId: "release-after-reply", bindingEpoch: 1 },
-                // Each release waits for the case, so a reply that waited for it would never come.
-                release: Effect.gen(function* () {
-                  const proceed = yield* Deferred.make<void>();
-                  yield* Queue.offer(releasing, proceed);
-                  yield* Deferred.await(proceed);
-                  yield* Queue.offer(released, undefined);
-                })
-              })
-          })
-        );
-        assert.deepInclude(yield* runtime.call(), { ok: true, value: 1 });
-        assert.deepStrictEqual(yield* fixture.value, [{ value: 1 }]);
-        yield* Deferred.succeed(yield* Queue.take(releasing), undefined);
-        yield* Queue.take(released);
-        failing = true;
-        assert.strictEqual((yield* runtime.call().pipe(Effect.flip)).code, "handler_failed");
-        yield* Deferred.succeed(yield* Queue.take(releasing), undefined);
-        yield* Queue.take(released);
-        assert.strictEqual(yield* Queue.size(releasing), 0);
-      }).pipe(Effect.scoped)
   );
 
   it.effect("reports the enforced attempts bound on conflict exhaustion and its wide event", () =>

@@ -196,6 +196,42 @@ const recordStatements = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     const result = yield* work.pipe(Effect.provideService(Statement.CurrentTransformer, transform));
     return { result, statements };
   });
+// Waits until a statement in this case's database is blocked on a lock, the barrier for cases
+// that race a call against a transaction held open.
+const lockWait = Effect.fn("FleetTest.lockWait")(function* (name: string) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* phase(
+    name,
+    Effect.gen(function* () {
+      while (true) {
+        const rows = yield* sql<{ waiting: number }>`SELECT count(*)::integer AS waiting
+          FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+        if (rows[0]!.waiting > 0) return;
+        yield* TestClock.withLive(Effect.sleep(5));
+      }
+    })
+  );
+});
+// Records a patch and returns how to publish its versions, whose numbers a breaker reads.
+const publishedPatch = Effect.fn("FleetTest.publishedPatch")(function* (
+  companyId: string,
+  patchId: string,
+  name: string
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const seed = (yield* sql`SELECT u.id AS user_id, m.id AS token_id FROM users u
+    JOIN machine_tokens m ON m.user_id = u.id LIMIT 1`)[0]!;
+  yield* sql`INSERT INTO patches(id, company_id, owner_user_id, title, name)
+    VALUES (${patchId}, ${companyId}, ${seed.user_id}, 'Breaker', ${name})`;
+  return Effect.fn("FleetTest.publishVersion")(function* (number: number) {
+    yield* sql`INSERT INTO patch_versions(id, patch_id, version_number, object_key, content_hash, file_size,
+      created_by_machine_token_id, owner_user_id, tier, release, manifest_version, wire_version, schema_revision,
+      manifest, publish_key, payload_digest, publish_response, publish_status, created_at)
+      VALUES (${`${patchId}-published-${number}`}, ${patchId}, ${number}, ${`${patchId}/${number}`}, 'test', 1,
+        ${seed.token_id}, ${seed.user_id}, 2, 'test', 1, 1, 0, '{}'::jsonb,
+        ${`${patchId}-publish-${number}`}, 'test', '{}'::jsonb, 201, ${new Date()})`;
+  });
+});
 const request = (
   bundle: GuestProtocol.BundleBinding,
   generation: number,
@@ -901,7 +937,7 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
-    "admits and releases a warm call in four platform statements, none in a transaction",
+    "admits and releases a warm call in five platform statements, none in a transaction",
     () =>
       Effect.gen(function* () {
         const { sql, companyId, left, bundle } = yield* setupMemory("statements");
@@ -914,9 +950,10 @@ it.layer(services)("host fleet controller", (it) => {
             yield* admission.release;
           })
         );
-        // Pause, the warm read, `protect`, then the release.
+        // The pause upsert and read, the warm read, `protect`, then the release.
         const expected = [
-          /^WITH synced AS \(INSERT INTO execution_breakers /,
+          /^INSERT INTO execution_breakers /,
+          /^SELECT paused_until AS "pausedUntil" FROM execution_breakers /,
           /^SELECT .* FROM execution_bindings WHERE company_id = \$1 AND state = 'active' AND EXISTS /,
           /^UPDATE execution_bindings SET protected_until = GREATEST/,
           /^UPDATE execution_bindings SET last_activity_at = CASE /
@@ -931,7 +968,7 @@ it.layer(services)("host fleet controller", (it) => {
           WHERE company_id = ${companyId} AND state = 'active'`,
           [{ protected_until: 0, last_activity_at: now, idle_since: null }]
         );
-        // A keepalive touch reads the pause and the binding: one statement each.
+        // A keepalive touch reads the pause, two statements, and the binding.
         const touch = yield* recordStatements(
           left.lifecycle.touch({
             companyId,
@@ -941,7 +978,7 @@ it.layer(services)("host fleet controller", (it) => {
           })
         );
         assert.strictEqual(touch.result.outcome, "absent");
-        assert.lengthOf(touch.statements, 2);
+        assert.lengthOf(touch.statements, 3);
       }).pipe(Effect.scoped)
   );
 
@@ -1005,18 +1042,7 @@ it.layer(services)("host fleet controller", (it) => {
         .pipe(Effect.forkChild);
       yield* Deferred.await(adopting);
       const call = yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.forkChild);
-      yield* phase(
-        "the call's hold waits behind the adoption",
-        Effect.gen(function* () {
-          while (true) {
-            const waiting = yield* sql<{ waiting: number }>`SELECT count(*)::integer AS waiting
-              FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
-                AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
-            if (waiting[0]!.waiting > 0) return;
-            yield* TestClock.withLive(Effect.sleep(5));
-          }
-        })
-      );
+      yield* lockWait("the call's hold waits behind the adoption");
       yield* Deferred.succeed(commit, undefined);
       const adopted = yield* Fiber.join(adoption);
       assert.isAbove(adopted.bindingEpoch, warm.binding.bindingEpoch);
@@ -1063,18 +1089,69 @@ it.layer(services)("host fleet controller", (it) => {
       }).pipe(Effect.scoped)
   );
 
-  it.effect("keeps a call admitted when its breaker trips mid-call and refuses the next", () =>
+  it.effect(
+    "refuses an admission that waited on a breaker trip, and the call already admitted keeps running",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, left, bundle } = yield* setupMemory("trip");
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const now = yield* Clock.currentTimeMillis;
+        const tripped = yield* Deferred.make<void>();
+        const commit = yield* Deferred.make<void>();
+        // A report trips the breaker mid-call and holds the row until it commits.
+        const trip = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`UPDATE execution_breakers SET paused_until = ${now + 60_000}
+                WHERE company_id = ${companyId} AND patch_id = ${bundle.patchId}`;
+              yield* Deferred.succeed(tripped, undefined);
+              yield* Deferred.await(commit);
+            })
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(tripped);
+        const next = yield* left.lifecycle
+          .acquire(companyId, bundle.patchId)
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* lockWait("the next admission waits on the trip");
+        yield* Deferred.succeed(commit, undefined);
+        yield* Fiber.join(trip);
+        assert.include(yield* Fiber.join(next), { code: "patch_paused", retryAfterSeconds: 60 });
+        yield* admitted.release;
+        yield* TestClock.adjust(60_000);
+        yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("admits a call that waited on a newer publish clearing its pause", () =>
     Effect.gen(function* () {
-      const { sql, companyId, left, bundle } = yield* setupMemory("trip");
-      const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+      const { sql, companyId, left, bundle } = yield* setupMemory("publish-reset");
+      const store = yield* FleetStore.make;
+      const publish = yield* publishedPatch(companyId, bundle.patchId, "fleet-publish-reset");
+      yield* publish(1);
+      yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
       const now = yield* Clock.currentTimeMillis;
       yield* sql`UPDATE execution_breakers SET paused_until = ${now + 60_000}
         WHERE company_id = ${companyId} AND patch_id = ${bundle.patchId}`;
-      yield* admitted.release;
-      const refusal = yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.flip);
-      assert.include(refusal, { code: "patch_paused", retryAfterSeconds: 60 });
-      yield* TestClock.adjust(60_000);
-      yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
+      yield* publish(2);
+      const cleared = yield* Deferred.make<void>();
+      const commit = yield* Deferred.make<void>();
+      // Another host's admission sees the publish first; its upsert clears the pause and holds the row.
+      const other = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            assert.strictEqual(yield* store.pausedUntil(companyId, bundle.patchId), 0);
+            yield* Deferred.succeed(cleared, undefined);
+            yield* Deferred.await(commit);
+          })
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(cleared);
+      const call = yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.forkChild);
+      yield* lockWait("the call waits on the publish's reset");
+      yield* Deferred.succeed(commit, undefined);
+      yield* Fiber.join(other);
+      yield* (yield* Fiber.join(call)).release;
     }).pipe(Effect.scoped)
   );
 });
@@ -1610,18 +1687,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, right, bundle, sql } = yield* setupLocal("breaker");
-        const seed = (yield* sql`SELECT u.id AS user_id, m.id AS token_id FROM users u
-        JOIN machine_tokens m ON m.user_id = u.id LIMIT 1`)[0]!;
-        yield* sql`INSERT INTO patches(id, company_id, owner_user_id, title, name)
-        VALUES (${bundle.patchId}, ${companyId}, ${seed.user_id}, 'Breaker', 'fleet-breaker')`;
-        const publish = Effect.fn("publishVersion")(function* (number: number) {
-          yield* sql`INSERT INTO patch_versions(id, patch_id, version_number, object_key, content_hash, file_size,
-          created_by_machine_token_id, owner_user_id, tier, release, manifest_version, wire_version, schema_revision,
-          manifest, publish_key, payload_digest, publish_response, publish_status, created_at)
-          VALUES (${`breaker-published-${number}`}, ${bundle.patchId}, ${number}, ${`breaker/${number}`}, 'test', 1,
-            ${seed.token_id}, ${seed.user_id}, 2, 'test', 1, 1, 0, '{}'::jsonb,
-            ${`breaker-publish-${number}`}, 'test', '{}'::jsonb, 201, ${new Date()})`;
-        });
+        const publish = yield* publishedPatch(companyId, bundle.patchId, "fleet-breaker");
         yield* publish(1);
         // One real watchdog kill proves the report plumbing. The other kills are synthetic
         // deadline reports that the real controller collects, persists and acknowledges.
