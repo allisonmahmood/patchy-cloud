@@ -80,7 +80,22 @@ export class Users extends Context.Service<
     readonly findByClerkId: (clerkUserId: string) => Effect.Effect<User | null, SqlError>;
     readonly findByEmail: (email: string) => Effect.Effect<User | null, SqlError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<User>, SqlError>;
-    readonly refreshClaims: (claims: Claims) => Effect.Effect<User | null, SqlError>;
+    /**
+     * The signed-in user and their company, with the user's email and name brought up to
+     * `claims`. Unchanged claims cost one read and write nothing. `company` is null only when
+     * its row is missing.
+     */
+    readonly refreshClaims: (claims: Claims) => Effect.Effect<
+      {
+        readonly user: User;
+        readonly company: {
+          readonly id: string;
+          readonly handle: string;
+          readonly name: string;
+        } | null;
+      } | null,
+      SqlError
+    >;
     /** `changed` is false when the user already had the role. */
     readonly setRole: (
       input: UserRef & { readonly role: Role }
@@ -147,6 +162,25 @@ export const make = Effect.gen(function* () {
       SELECT count(*)::int AS count FROM users
       WHERE company_id = ${companyId} AND role = 'admin' AND deactivated_at IS NULL`
   });
+  // A fresh read that takes no row locks. The LEFT JOIN answers a missing company as nulls,
+  // not as no user.
+  const signedIn = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      ...User.fields,
+      companyHandle: Schema.NullOr(Schema.String),
+      companyName: Schema.NullOr(Schema.String)
+    }),
+    execute: (clerkUserId) => sql`
+      SELECT u.*, c.handle AS "companyHandle", c.name AS "companyName"
+      FROM (SELECT ${columns} FROM users WHERE clerk_user_id = ${clerkUserId}) u
+      LEFT JOIN companies c ON c.id = u."companyId"`
+  });
+  const companyById = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ id: Schema.String, handle: Schema.String, name: Schema.String }),
+    execute: (id) => sql`SELECT id, handle, name FROM companies WHERE id = ${id}`
+  });
   const refresh = SqlSchema.findOneOption({
     Request: Schema.Struct({
       clerkUserId: Schema.String,
@@ -174,15 +208,39 @@ export const make = Effect.gen(function* () {
     companyUsers(companyId).pipe(Effect.catchTags(dieOnSchemaError))
   );
   // The stored name is settled before the change check, so a nameless person's repeat
-  // requests compare equal and write nothing.
+  // requests compare equal and write nothing. Changed claims keep the write path a resolve
+  // always took, in its own statements: the UPDATE waits out a concurrent change to the row,
+  // such as a deactivation, and answers the row as that change left it, with the company read
+  // after it; if a concurrent refresh already wrote these claims, a fresh read answers instead.
+  // The first read's snapshot predates any such wait, so it answers only when nothing needs
+  // writing.
   const refreshClaims = Effect.fn("Users.refreshClaims")(function* (claims: Claims) {
     const email = claims.email.toLowerCase();
-    const updated = yield* refresh({
-      clerkUserId: claims.clerkUserId,
-      email,
-      name: displayName({ name: claims.name, email })
-    }).pipe(Effect.catchTags(dieOnSchemaError));
-    return Option.isSome(updated) ? updated.value : yield* findByClerkId(claims.clerkUserId);
+    const name = displayName({ name: claims.name, email });
+    const read = signedIn(claims.clerkUserId).pipe(
+      Effect.catchTags(dieOnSchemaError),
+      Effect.map(
+        Option.map(({ companyHandle: handle, companyName, ...user }) => ({
+          user: new User(user),
+          company:
+            handle === null || companyName === null
+              ? null
+              : { id: user.companyId, handle, name: companyName }
+        }))
+      ),
+      Effect.map(Option.getOrNull)
+    );
+    const found = yield* read;
+    if (found === null || (found.user.email === email && found.user.name === name)) return found;
+    const updated = yield* refresh({ clerkUserId: claims.clerkUserId, email, name }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    );
+    if (Option.isNone(updated)) return yield* read;
+    const company = yield* companyById(updated.value.companyId).pipe(
+      Effect.catchTags(dieOnSchemaError),
+      Effect.map(Option.getOrNull)
+    );
+    return { user: updated.value, company };
   });
 
   // Lock the company before reading any user's role. Locking only the target

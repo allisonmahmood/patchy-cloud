@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Supervisor from "./supervisor.js";
+import * as TaskProvider from "./TaskProvider.js";
 
 export interface Options extends Omit<Supervisor.Options, "residencyAccounting"> {
   readonly companyId: string;
@@ -34,9 +35,11 @@ export const make = Effect.fn("LocalExecutor.make")(
     yield* supervisor.bind({ companyId: options.companyId, bindingEpoch });
     return Executor.Executor.of({
       bind: Effect.fn("LocalExecutor.bind")(function* (bundle) {
-        const reply = yield* supervisor
-          .bind({ companyId: options.companyId, bindingEpoch, bundle })
-          .pipe(Effect.mapError(executionError));
+        // In process no bytes move, but binding by hash first runs the fleet's path locally.
+        const reply = yield* TaskProvider.bindByHash(
+          { companyId: options.companyId, bindingEpoch, bundle },
+          supervisor.bind
+        ).pipe(Effect.mapError(executionError));
         if (reply.binding === undefined || reply.processGeneration === undefined)
           return yield* new Executor.ExecutionError({ operation: "bind", reason: "protocol" });
         return { binding: reply.binding, processGeneration: reply.processGeneration };

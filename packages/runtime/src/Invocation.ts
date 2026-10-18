@@ -411,6 +411,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
         let guestMs = 0;
         let resultBytes = 0;
         let attempts = 0;
+        let rebound = false;
         let storedOutcome: MutationTransaction.StoredOutcome | undefined;
         const meter = yield* DatabaseMeter.make;
         let logs: Array<typeof Schema.Json.Type> | undefined;
@@ -741,6 +742,25 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   limitRefusal("tier2.mutation.attempts", bounds.mutationAttempts)
                 )
               );
+            } else if (
+              parent === undefined &&
+              !rebound &&
+              Option.isSome(failure) &&
+              isExecutionError(failure.value) &&
+              failure.value.operation === "invoke" &&
+              (failure.value.reason === "bundle_required" ||
+                failure.value.reason === "stale_generation")
+            ) {
+              // The supervisor refused before dispatch: the bound process was reaped or replaced
+              // after bind. Bind once more for the current generation, under a fresh attempt; the
+              // next pass checks the deadline first, as every pass does. The handler never ran, so
+              // this is not one of its attempts. A nested call keeps its parent's generation, so it
+              // never rebinds.
+              rebound = true;
+              attempts--;
+              capability = undefined;
+              yield* WideEvents.enrich({ rebound: true });
+              continue;
             } else if (Exit.isSuccess(raw)) outcome = Exit.succeed(raw.value);
             else if (Option.isSome(failure)) {
               const error = failure.value;

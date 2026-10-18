@@ -37,7 +37,7 @@ What first made a run's subscription dirty: `initial` (newly installed), `replac
 _Avoid_: cause (`causedByEventId` names the write behind a wake)
 
 **Disposition**:
-What became of a run's result: `delivered` as a snapshot, `unchanged` as up-to-date, or `discarded` because its epoch changed, its subscription or document went away, or its read fell behind its fence. A run that sent an error or a refusal has none; its outcome says so.
+What became of a run's result: `delivered` as a snapshot, `unchanged` as up-to-date, or `discarded` because a rebind overtook it, its subscription or document went away, its read fell behind its fence, or it overlapped a replace and couldn't show its result was still current. A run that sent an error or a refusal has none; its outcome says so.
 _Avoid_: outcome (whether the work succeeded)
 
 **Bundle load**:
@@ -47,6 +47,10 @@ _Avoid_: cache hit (`joined` is neither a hit nor its own read)
 **Content load**:
 `contentLoad`: where a content URL request got its version's document: `cached` from the host's memory, `read` from object storage by a read this request started, or `joined` by waiting on a read of the same document another request started, which finishes even if that request has stopped. A failed read keeps `read` or `joined`. A request the door or a notice answers never reaches the documents and records none. `contentEncoding` is the `Content-Encoding` the document went out in: `br`, `gzip` or `identity`, which a document too large to keep always is.
 _Avoid_: cache hit (`joined` is neither a hit nor its own read)
+
+**Rebound**:
+`rebound: true`: a tier 2 call or re-run whose invoke the supervisor refused before dispatch, because the bound process was reaped or replaced after bind, so it went back to bind once more. It stays set whatever came of that: success, `busy` from the bind, the deadline or another failure. The refused invoke ran no handler and is not counted in `attempts`. Nested calls keep their parent's process and never rebind. Unrelated to the `rebind` trigger, a development handler swap.
+_Avoid_: retry (nothing ran the first time), replay
 
 **Limit peak**:
 The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.

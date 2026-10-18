@@ -205,6 +205,62 @@ it.live(
 );
 
 it.live(
+  "binds a held version by hash and refuses one it doesn't hold before any effect",
+  () =>
+    Effect.gen(function* () {
+      const { url } = yield* start();
+      const binding: GuestProtocol.BundleBinding = {
+        companyId: bundle.companyId,
+        patchId: bundle.patchId,
+        versionId: bundle.versionId,
+        sha256: bundle.sha256
+      };
+      const stats = Effect.fn("ManagementTest.stats")(function* (bindingEpoch: number) {
+        return yield* decodeStats(yield* (yield* post(url, "stats", { bindingEpoch })).json);
+      });
+      const needed = yield* post(url, "bind", {
+        companyId: bundle.companyId,
+        bindingEpoch: 1,
+        binding
+      });
+      expect(needed.status).toBe(409);
+      expect(yield* needed.json).toEqual({ ok: false, code: "bundle_required" });
+      // Still a spare: the refusal reserved no company and adopted no epoch.
+      expect(yield* stats(0)).toMatchObject({ companyId: null, bindingEpoch: 0, processes: [] });
+      const loaded = yield* decodeBind(
+        yield* (yield* post(url, "bind", { companyId: bundle.companyId, bindingEpoch: 1, bundle }))
+          .json
+      );
+      const held = yield* post(url, "bind", {
+        companyId: bundle.companyId,
+        bindingEpoch: 1,
+        binding
+      });
+      expect(held.status).toBe(200);
+      expect(yield* decodeBind(yield* held.json)).toEqual(loaded);
+      const conflicting = yield* post(url, "bind", {
+        companyId: bundle.companyId,
+        bindingEpoch: 1,
+        binding: { ...binding, sha256: "f".repeat(64) }
+      });
+      expect(conflicting.status).toBe(409);
+      expect(yield* conflicting.json).toEqual({ ok: false, code: "binding_conflict" });
+      const both = yield* post(url, "bind", {
+        companyId: bundle.companyId,
+        bindingEpoch: 1,
+        bundle,
+        binding
+      });
+      expect(both.status).toBe(400);
+      expect(yield* both.json).toEqual({ ok: false, code: "invalid_request" });
+      expect((yield* stats(1)).processes).toMatchObject([
+        { processGeneration: loaded.processGeneration }
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  15_000
+);
+
+it.live(
   "fences every management verb and transports acknowledged process reports",
   () =>
     Effect.gen(function* () {

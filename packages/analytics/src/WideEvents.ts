@@ -69,7 +69,12 @@ const invocationMetrics = {
    * A mutation retry that passes the retained-version checks loads again; one refused before
    * the cache leaves the field as it was.
    */
-  bundleLoad: Schema.optionalKey(Schema.Literals(["cached", "read", "joined"]))
+  bundleLoad: Schema.optionalKey(Schema.Literals(["cached", "read", "joined"])),
+  /**
+   * The tier 2 call or re-run went back to bind once more after its invoke was refused before
+   * dispatch, its process reaped or replaced since bind. Set whatever came of that.
+   */
+  rebound: Schema.optionalKey(Schema.Boolean)
 };
 /**
  * How a content URL's document reached its reader: from the host's memory, a read it started,

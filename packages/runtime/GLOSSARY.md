@@ -84,6 +84,10 @@ _Avoid_: retired, revoked, disabled
 The execution service's process owner. It loads patch versions, watches their processes and terminates or reaps them without deciding invocation commit outcomes.
 _Avoid_: fleet controller, handler, security boundary
 
+**Bind by hash**:
+A version bind that names the version and its SHA-256 without the bundle. A supervisor holding a live process for it answers as a bundle bind would; one that doesn't asks for the bundle before doing anything.
+_Avoid_: warm bind, touch, cached bind
+
 **Process generation**:
 The identity of one loaded version's process lifetime. A replacement process gets a new generation; a call from the previous generation has no authority.
 _Avoid_: version id, binding epoch, stream generation
@@ -221,5 +225,5 @@ The revision vector a subscription must reach for its current desired-set sequen
 _Avoid_: stream generation (connection identity), publish version
 
 **Resync**:
-Replacement of a document's desired subscriptions, with its latest vectors, after reconnect or an unrecoverable sequence gap. It fences prior work; equal vectors answer up-to-date without rerunning the read.
+Replacement of a document's desired subscriptions, with its latest vectors, after reconnect, an unrecoverable sequence gap or stalled reconciliation. It fences prior work: a read it overlaps answers it only if the revisions that read saw still match a fence taken after the replace; otherwise the subscription runs again. Equal vectors answer up-to-date without rerunning the read.
 _Avoid_: reload, mutation retry
