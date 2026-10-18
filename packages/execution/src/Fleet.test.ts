@@ -10,6 +10,7 @@ import { OperatingLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -178,6 +179,23 @@ const phase = <A, E>(
           )
         ])
   ]);
+// Records each statement `work` sends through the platform client and whether a transaction
+// held it. The activity session's lock and unlock bypass the client and are not recorded.
+const recordStatements = <A, E, R>(work: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const statements: Array<{ readonly text: string; readonly inTransaction: boolean }> = [];
+    const transform: Statement.Transformer = (statement, _sql, fiber) =>
+      Effect.sync(() => {
+        statements.push({
+          text: statement.compile()[0].replace(/\s+/g, " ").trim(),
+          inTransaction: Context.getOption(fiber.context, sql.transactionService)._tag === "Some"
+        });
+        return statement;
+      });
+    const result = yield* work.pipe(Effect.provideService(Statement.CurrentTransformer, transform));
+    return { result, statements };
+  });
 const request = (
   bundle: GuestProtocol.BundleBinding,
   generation: number,
@@ -880,6 +898,184 @@ it.layer(services)("host fleet controller", (it) => {
         );
       }).pipe(Effect.scoped),
     60_000
+  );
+
+  it.effect(
+    "admits and releases a warm call in four platform statements, none in a transaction",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, left, bundle } = yield* setupMemory("statements");
+        yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
+        yield* TestClock.adjust(1_000);
+        const now = yield* Clock.currentTimeMillis;
+        const call = yield* recordStatements(
+          Effect.gen(function* () {
+            const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+            yield* admission.release;
+          })
+        );
+        // Pause, the warm read, `protect`, then the release.
+        const expected = [
+          /^WITH synced AS \(INSERT INTO execution_breakers /,
+          /^SELECT .* FROM execution_bindings WHERE company_id = \$1 AND state = 'active' AND EXISTS /,
+          /^UPDATE execution_bindings SET protected_until = GREATEST/,
+          /^UPDATE execution_bindings SET last_activity_at = CASE /
+        ];
+        assert.lengthOf(call.statements, expected.length);
+        call.statements.forEach(({ text, inTransaction }, index) => {
+          assert.match(text, expected[index]!);
+          assert.isFalse(inTransaction, text);
+        });
+        assert.deepStrictEqual(
+          yield* sql`SELECT protected_until, last_activity_at, idle_since FROM execution_bindings
+          WHERE company_id = ${companyId} AND state = 'active'`,
+          [{ protected_until: 0, last_activity_at: now, idle_since: null }]
+        );
+        // A keepalive touch reads the pause and the binding: one statement each.
+        const touch = yield* recordStatements(
+          left.lifecycle.touch({
+            companyId,
+            patchId: bundle.patchId,
+            versionId: bundle.versionId,
+            sha256: bundle.sha256
+          })
+        );
+        assert.strictEqual(touch.result.outcome, "absent");
+        assert.lengthOf(touch.statements, 2);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "keeps protection while another call holds the binding and clears it on a draining binding at the last release",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, left, right, bundle } = yield* setupMemory("release");
+        const first = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const second = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const row = (taskId: string) =>
+          sql<{
+            state: string;
+            protected_until: number;
+            last_activity_at: number;
+          }>`SELECT state, protected_until, last_activity_at FROM execution_bindings WHERE task_id = ${taskId}`.pipe(
+            Effect.map((rows) => rows[0]!)
+          );
+        yield* first.release;
+        assert.isAbove((yield* row(first.binding.taskId)).protected_until, 0);
+        // Drained while held: new work binds fresh, and the stop waits for the held call.
+        assert.isTrue(yield* right.releaseCompany(companyId));
+        const fresh = yield* right.ensureBinding(companyId);
+        assert.notStrictEqual(fresh.taskId, first.binding.taskId);
+        yield* TestClock.adjust(1_000);
+        yield* second.release;
+        assert.include(yield* row(first.binding.taskId), { state: "stopping", protected_until: 0 });
+        assert.strictEqual(
+          (yield* row(fresh.taskId)).last_activity_at,
+          yield* Clock.currentTimeMillis
+        );
+        yield* left.housekeeping();
+        assert.strictEqual((yield* row(first.binding.taskId)).state, "stopped");
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("never admits the epoch an adoption replaced between the warm read and the hold", () =>
+    Effect.gen(function* () {
+      const { sql, companyId, left, bundle } = yield* setupMemory("adopt-race");
+      const store = yield* FleetStore.make;
+      const warm = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+      yield* warm.release;
+      const current = (yield* store.findTask(warm.binding.taskId))[0]!;
+      const adopting = yield* Deferred.make<void>();
+      const commit = yield* Deferred.make<void>();
+      // The adoption keeps the binding's exclusive lock until it commits, so the call's warm
+      // read still sees the old epoch while its hold waits behind the lock.
+      const adoption = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const adopted = yield* store.adopt(
+              current,
+              "adopt-race-right",
+              yield* Clock.currentTimeMillis
+            );
+            yield* Deferred.succeed(adopting, undefined);
+            yield* Deferred.await(commit);
+            return adopted[0]!;
+          })
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(adopting);
+      const call = yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.forkChild);
+      yield* phase(
+        "the call's hold waits behind the adoption",
+        Effect.gen(function* () {
+          while (true) {
+            const waiting = yield* sql<{ waiting: number }>`SELECT count(*)::integer AS waiting
+              FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+                AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
+            if (waiting[0]!.waiting > 0) return;
+            yield* TestClock.withLive(Effect.sleep(5));
+          }
+        })
+      );
+      yield* Deferred.succeed(commit, undefined);
+      const adopted = yield* Fiber.join(adoption);
+      assert.isAbove(adopted.bindingEpoch, warm.binding.bindingEpoch);
+      // `protect` refuses the old epoch, and the claim loop finishes binding the adopted one.
+      const admission = yield* Fiber.join(call);
+      assert.deepStrictEqual(admission.binding, {
+        taskId: warm.binding.taskId,
+        bindingEpoch: adopted.bindingEpoch
+      });
+      yield* admission.release;
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "skips a warm binding whose deployment retired, and the claim loop fences it before admitting a fresh task",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, companyId, left, bundle } = yield* setupMemory("retired");
+        const old = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        yield* old.release;
+        const next = yield* Fleet.make({
+          replicaId: "retired-next",
+          deploymentRevision: "retired-next",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.isTrue(yield* next.stageDeployment("retired-next"));
+        yield* next.housekeeping();
+        assert.isTrue(yield* next.promoteDeployment("retired-next"));
+        // Retired without the drain that would fence the binding first.
+        yield* sql`UPDATE execution_deployments SET retired = true WHERE revision = 'retired'`;
+        const fresh = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        assert.notStrictEqual(fresh.binding.taskId, old.binding.taskId);
+        const tasks = yield* provider.list;
+        assert.strictEqual(
+          tasks.find((task) => task.taskId === fresh.binding.taskId)?.deploymentRevision,
+          "retired-next"
+        );
+        assert.strictEqual(
+          tasks.find((task) => task.taskId === old.binding.taskId)?.state,
+          "stopped"
+        );
+        assert.strictEqual((yield* left.history(companyId))[0]?.releaseCause, "deployment");
+        yield* fresh.release;
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("keeps a call admitted when its breaker trips mid-call and refuses the next", () =>
+    Effect.gen(function* () {
+      const { sql, companyId, left, bundle } = yield* setupMemory("trip");
+      const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`UPDATE execution_breakers SET paused_until = ${now + 60_000}
+        WHERE company_id = ${companyId} AND patch_id = ${bundle.patchId}`;
+      yield* admitted.release;
+      const refusal = yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.flip);
+      assert.include(refusal, { code: "patch_paused", retryAfterSeconds: 60 });
+      yield* TestClock.adjust(60_000);
+      yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
+    }).pipe(Effect.scoped)
   );
 });
 

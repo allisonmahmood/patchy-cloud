@@ -381,9 +381,13 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           }
         }
         if (admission !== undefined) admission.owners++;
+        // The last owner forks the release, so it never sits in front of a reply.
         const releaseAdmission = Effect.suspend(() =>
           admission !== undefined && --admission.owners === 0
-            ? admission.lease.release
+            ? admission.lease.release.pipe(
+                Effect.forkIn(scope, { uninterruptible: true }),
+                Effect.asVoid
+              )
             : Effect.void
         );
         if (actionLimits !== undefined) {

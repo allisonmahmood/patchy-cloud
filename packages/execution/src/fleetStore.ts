@@ -95,6 +95,18 @@ export const make = Effect.gen(function* () {
     execute: (company) => sql`SELECT ${bindingColumns} FROM execution_bindings
       WHERE company_id = ${company} AND state IN ('claiming', 'active')`
   });
+  // A bound task on a deployment that is not retired can take admissions. The warm read,
+  // `protect` and `adopt` share this check, so they agree on which tasks can.
+  const admissibleTask = sql.literal(`EXISTS (SELECT 1 FROM execution_tasks t
+    JOIN execution_deployments d ON d.revision = t.deployment_revision
+    WHERE t.task_id = execution_bindings.task_id AND t.state = 'bound' AND NOT d.retired)`);
+  // The warm path's one read: the company's active binding, while its task can take admissions.
+  const findAdmissible = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Binding,
+    execute: (company) => sql`SELECT ${bindingColumns} FROM execution_bindings
+      WHERE company_id = ${company} AND state = 'active' AND ${admissibleTask}`
+  });
   const findTask = SqlSchema.findAll({
     Request: Schema.String,
     Result: Binding,
@@ -195,8 +207,7 @@ export const make = Effect.gen(function* () {
       binding_epoch = nextval('execution_binding_epochs'), state = 'claiming'
       WHERE binding_id = ${binding.bindingId} AND binding_epoch = ${binding.bindingEpoch}
         AND owner_id = ${binding.ownerId} AND state = 'active' AND protected_until <= ${now}
-        AND EXISTS (SELECT 1 FROM execution_tasks t JOIN execution_deployments d ON d.revision = t.deployment_revision
-          WHERE t.task_id = execution_bindings.task_id AND t.state = 'bound' AND NOT d.retired)
+        AND ${admissibleTask}
       RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
   }, sql.withTransaction);
   const touch = (company: string, now: number) => sql`UPDATE execution_bindings
@@ -204,10 +215,20 @@ export const make = Effect.gen(function* () {
   const protect = (binding: Binding, until: number, now: number) =>
     sql`UPDATE execution_bindings
     SET protected_until = GREATEST(protected_until, ${until}), last_activity_at = ${now}, idle_since = NULL
-    WHERE binding_epoch = ${binding.bindingEpoch} AND state = 'active'
-      AND EXISTS (SELECT 1 FROM execution_tasks t JOIN execution_deployments d ON d.revision = t.deployment_revision
-        WHERE t.task_id = execution_bindings.task_id AND t.state = 'bound' AND NOT d.retired)
-      RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
+    WHERE binding_epoch = ${binding.bindingEpoch} AND state = 'active' AND ${admissibleTask}
+    RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
+  // Settles an admitted call in one statement. It touches the company's admission binding and,
+  // once no caller holds the call's binding, clears that binding's crash protection, draining
+  // or not. The exclusive try-lock lasts until the statement commits, so a new holder waits
+  // and then protects again.
+  const release = (binding: Binding, now: number) => sql`UPDATE execution_bindings SET
+    last_activity_at = CASE WHEN state IN ('claiming', 'active') THEN ${now} ELSE last_activity_at END,
+    idle_since = CASE WHEN state IN ('claiming', 'active') THEN NULL ELSE idle_since END,
+    protected_until = CASE WHEN binding_id <> ${binding.bindingId} THEN protected_until
+      WHEN pg_try_advisory_xact_lock(hashtextextended(${bindingLock(binding.bindingId)}, 0)) THEN 0
+      ELSE protected_until END
+    WHERE (company_id = ${binding.companyId} AND state IN ('claiming', 'active'))
+      OR binding_id = ${binding.bindingId}`;
   const exclusive = (key: string) =>
     sql`SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS acquired`.pipe(
       Effect.flatMap(decodeFlags),
@@ -414,15 +435,17 @@ export const make = Effect.gen(function* () {
     ON CONFLICT(company_id, patch_id) DO UPDATE SET publish_revision = EXCLUDED.publish_revision,
       reset_at = EXCLUDED.reset_at, paused_until = 0
     WHERE execution_breakers.publish_revision < EXCLUDED.publish_revision`;
+  // One statement: the upsert returns the pause it wrote, and when it wrote nothing the row
+  // as of the statement's start answers. A row a racing first admission inserted is unpaused.
   const pausedUntil = Effect.fn("FleetStore.pausedUntil")(function* (
     company: string,
     patch: string
   ) {
-    yield* syncPublish(company, patch);
-    return yield* sql`SELECT paused_until AS "pausedUntil"
-      FROM execution_breakers WHERE company_id = ${company} AND patch_id = ${patch}`.pipe(
+    return yield* sql`WITH synced AS (${syncPublish(company, patch)} RETURNING paused_until)
+      SELECT COALESCE((SELECT paused_until FROM synced), (SELECT paused_until FROM execution_breakers
+        WHERE company_id = ${company} AND patch_id = ${patch}), 0) AS "pausedUntil"`.pipe(
       Effect.flatMap(decodePauses),
-      Effect.map((rows) => rows[0]?.pausedUntil ?? 0)
+      Effect.map((rows) => rows[0]!.pausedUntil)
     );
   });
   const report = Effect.fn("FleetStore.report")(function* (
@@ -465,6 +488,7 @@ export const make = Effect.gen(function* () {
     bindings,
     tasks,
     findCompany,
+    findAdmissible,
     findTask,
     isAdmissibleTask,
     history,
@@ -475,6 +499,7 @@ export const make = Effect.gen(function* () {
     adopt,
     touch,
     protect,
+    release,
     idleFence,
     drained,
     stopped,

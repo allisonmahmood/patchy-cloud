@@ -150,6 +150,7 @@ it.layer(services)("Invocation", (it) => {
       let current = original;
       let acquisitions = 0;
       let releases = 0;
+      const released = yield* Deferred.make<void>();
       const invocations = yield* makeInvocation(
         (request, selected) =>
           Effect.gen(function* () {
@@ -178,7 +179,7 @@ it.layer(services)("Invocation", (it) => {
                 binding: current,
                 release: Effect.sync(() => {
                   releases++;
-                })
+                }).pipe(Effect.andThen(Deferred.succeed(released, undefined)), Effect.asVoid)
               };
             })
         })
@@ -203,6 +204,7 @@ it.layer(services)("Invocation", (it) => {
       assert.strictEqual(releases, 0);
       yield* Deferred.succeed(childDone, undefined);
       assert.deepStrictEqual(yield* Fiber.join(child), { ok: true, value: 42 });
+      yield* Deferred.await(released);
       assert.strictEqual(releases, 1);
     })
   );
