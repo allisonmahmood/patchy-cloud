@@ -968,15 +968,26 @@ for (const scenario of [
     refusing = true;
     await subscribeLimit(frame, 1);
     await reconnect(scenario.streak);
-    // Once a stream's POSTs reach it, it reconciles and the next streak starts over.
+    // A stream that admits its replace while its answers are held has not reconciled, so
+    // losing it keeps the grown delay.
     await expect.poll(() => newestLost(page, instance)).toBe(true);
     refusing = false;
+    instance.holdStreamFrames("answers");
     await reconnect([3]);
-    await expect(frame.locator("#rows-1")).toHaveText("0");
+    await expect.poll(() => admittedSinceHello(frame)).toBe(true);
     refusing = true;
     await subscribeLimit(frame, 2);
+    // Once a stream's answers arrive, it reconciles and the next streak starts over.
+    await expect.poll(() => newestLost(page, instance)).toBe(true);
+    refusing = false;
+    instance.holdStreamFrames(false);
+    await reconnect([4]);
+    await expect(frame.locator("#rows-1")).toHaveText("0");
+    await expect(frame.locator("#rows-2")).toHaveText("0");
+    refusing = true;
+    await subscribeLimit(frame, 3);
     await reconnect(scenario.next);
-    expect(await reconnectSteps(page)).toEqual([...scenario.streak, 3, ...scenario.next]);
+    expect(await reconnectSteps(page)).toEqual([...scenario.streak, 3, 4, ...scenario.next]);
     await page.unroute("**/api/runtime/subscriptions");
   });
 }
