@@ -921,6 +921,60 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
   );
 
   it.effect(
+    "touches the current binding's task without claiming one, and none for a paused patch",
+    () =>
+      Effect.gen(function* () {
+        const { sql, provider, companyId, bundle } = yield* setupMemory("touch");
+        const version = {
+          companyId,
+          patchId: bundle.patchId,
+          versionId: bundle.versionId,
+          sha256: bundle.sha256
+        };
+        const sent: Array<{ readonly taskId: string; readonly bindingEpoch: number }> = [];
+        const host = yield* Fleet.make({
+          replicaId: "touch-host",
+          deploymentRevision: "touch",
+          automaticHousekeeping: false
+        }).pipe(
+          Effect.provideService(
+            TaskProvider.TaskProvider,
+            TaskProvider.TaskProvider.of({
+              ...provider,
+              touch: (taskId, request) => {
+                sent.push({ taskId, bindingEpoch: request.bindingEpoch });
+                return provider.touch(taskId, request);
+              }
+            })
+          )
+        );
+        // A company without a binding stays without one.
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "unbound");
+        assert.deepStrictEqual(
+          yield* sql`SELECT task_id FROM execution_bindings WHERE company_id = ${companyId}`,
+          []
+        );
+        const bound = yield* host.ensureBinding(companyId);
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "absent");
+        // Adoption advances the epoch, and the next touch follows it.
+        assert.isTrue(yield* host.adopt(bound, "touch-host"));
+        const adopted = yield* host.ensureBinding(companyId);
+        assert.isAbove(adopted.bindingEpoch, bound.bindingEpoch);
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "absent");
+        assert.deepStrictEqual(sent, [
+          { taskId: bound.taskId, bindingEpoch: bound.bindingEpoch },
+          { taskId: bound.taskId, bindingEpoch: adopted.bindingEpoch }
+        ]);
+        // A paused patch's versions are left to idle out.
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`UPDATE execution_breakers SET paused_until = ${now + 60_000}
+          WHERE company_id = ${companyId} AND patch_id = ${version.patchId}`;
+        assert.strictEqual((yield* host.lifecycle.touch(version)).outcome, "paused");
+        assert.lengthOf(sent, 2);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
     "adopts only after global drain, advances the management epoch, and retains prior-epoch process metering",
     () =>
       Effect.gen(function* () {

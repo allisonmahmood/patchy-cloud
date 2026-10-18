@@ -100,6 +100,18 @@ const bind = (supervisor: Supervisor.Supervisor["Service"], versionId: string, c
     bindingEpoch: 1,
     bundle: bundle(versionId, code)
   });
+const touch = (supervisor: Supervisor.Supervisor["Service"], versionId: string, code = source) => {
+  const { companyId, patchId, sha256 } = bundle(versionId, code);
+  return supervisor.touch({ bindingEpoch: 1, binding: { companyId, patchId, versionId, sha256 } });
+};
+// Guest timers use workerd's clock, which the host test clock cannot advance.
+const unfinishedDescribe = `export default { async fetch() {
+  while (true) {
+    const tick = Promise.withResolvers();
+    setTimeout(tick.resolve, 10);
+    await tick.promise;
+  }
+}};`;
 const statsWhen = Effect.fnUntraced(function* (
   supervisor: Supervisor.Supervisor["Service"],
   ready: (stats: Management.StatsReply) => boolean
@@ -566,6 +578,149 @@ it.live(
 );
 
 it.live(
+  "keeps a touched process past its idle window and loads nothing for a version it doesn't hold",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: {
+          ...largeAggregate,
+          "execution.process.idle": 2_000,
+          "execution.probe.interval": 25
+        }
+      });
+      const kept = yield* bind(supervisor, "ver_kept");
+      expect(yield* touch(supervisor, "ver_missing")).toEqual({ outcome: "absent", idleMs: 2_000 });
+      // Touched well inside each window for more than one and a half windows.
+      for (let round = 0; round < 8; round++) {
+        yield* Effect.sleep(400);
+        expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "touched", idleMs: 2_000 });
+      }
+      const stats = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(stats.processes).toEqual([
+        expect.objectContaining({ processGeneration: kept.processGeneration, callsServed: 0 })
+      ]);
+      expect(stats.reports).toEqual([]);
+      // A touch names its exact hash and the current epoch.
+      expect(yield* touch(supervisor, "ver_kept", `${source}\n`).pipe(Effect.flip)).toMatchObject({
+        reason: "binding_conflict"
+      });
+      expect(
+        yield* supervisor.touch({ bindingEpoch: 2, binding: kept.binding! }).pipe(Effect.flip)
+      ).toMatchObject({ reason: "stale_epoch" });
+      // Untouched, it idles out, and a touch then finds nothing and starts nothing.
+      expect(yield* reportFor(supervisor, kept.processGeneration!)).toMatchObject({
+        cause: "idle"
+      });
+      expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "absent", idleMs: 2_000 });
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
+  "expires an unfinished load at its deadline from spawn while touches keep arriving",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: {
+          ...largeAggregate,
+          "execution.process.idle": 2_000,
+          "execution.probe.interval": 25
+        }
+      });
+      yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 1 });
+      const loading = yield* bind(supervisor, "ver_touched_load", unfinishedDescribe).pipe(
+        Effect.result,
+        Effect.forkChild
+      );
+      const pending = yield* statsWhen(supervisor, (stats) => stats.processes.length === 1);
+      const outcomes: string[] = [];
+      const touching = yield* Effect.gen(function* () {
+        while (true) {
+          outcomes.push((yield* touch(supervisor, "ver_touched_load", unfinishedDescribe)).outcome);
+          yield* Effect.sleep(100);
+        }
+      }).pipe(Effect.forkChild);
+      expect(yield* Fiber.join(loading)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "load_failed" }
+      });
+      yield* Fiber.interrupt(touching);
+      expect(yield* reportFor(supervisor, pending.processes[0]!.processGeneration)).toMatchObject({
+        cause: "load_failed",
+        callsServed: 0
+      });
+      expect(outcomes).toContain("loading");
+      expect(outcomes).not.toContain("touched");
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+// The production cap is 12. Touches never reserve, so the property is the same at any cap, and
+// twelve workerd processes would dominate the suite.
+it.live(
+  "keeps one more touched version than the process cap allows without evicting or reloading any",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: {
+          ...largeAggregate,
+          "execution.residency.processes": 2,
+          "execution.process.idle": 2_000,
+          "execution.probe.interval": 25
+        }
+      });
+      const open = ["ver_open_0", "ver_open_1", "ver_open_2"] as const;
+      const first = yield* bind(supervisor, open[0]);
+      const second = yield* bind(supervisor, open[1]);
+      const touchAll = Effect.fnUntraced(function* (rounds: number) {
+        const outcomes = new Map<string, Set<string>>(open.map((version) => [version, new Set()]));
+        for (let round = 0; round < rounds; round++) {
+          for (const version of open)
+            outcomes.get(version)!.add((yield* touch(supervisor, version)).outcome);
+          yield* Effect.sleep(400);
+        }
+        return outcomes;
+      });
+      // Every open version is touched for two idle windows; the third holds no process.
+      expect(yield* touchAll(10)).toEqual(
+        new Map([
+          [open[0], new Set(["touched"])],
+          [open[1], new Set(["touched"])],
+          [open[2], new Set(["absent"])]
+        ])
+      );
+      const generations = (stats: Management.StatsReply) =>
+        stats.processes.map((entry) => entry.processGeneration).sort((a, b) => a - b);
+      const touched = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(generations(touched)).toEqual([first.processGeneration, second.processGeneration]);
+      expect(touched.reports).toEqual([]);
+      // Demand still wins: loading the third evicts the least recently touched, once, and that
+      // version's touches then find nothing rather than load it back.
+      const third = yield* bind(supervisor, open[2]);
+      expect(yield* touchAll(6)).toEqual(
+        new Map([
+          [open[0], new Set(["absent"])],
+          [open[1], new Set(["touched"])],
+          [open[2], new Set(["touched"])]
+        ])
+      );
+      const after = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(generations(after)).toEqual([second.processGeneration, third.processGeneration]);
+      expect(after.reports).toEqual([
+        expect.objectContaining({ processGeneration: first.processGeneration, cause: "evicted" })
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  30_000
+);
+
+it.live(
   "continuously evicts the largest idle process under aggregate memory pressure without killing a busy version",
   () =>
     Effect.gen(function* () {
@@ -805,18 +960,10 @@ it.live(
       });
       yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 1 });
       const started = Date.now();
-      // Guest timers use workerd's clock, which the host test clock cannot advance.
-      const loading = yield* bind(
-        supervisor,
-        "ver_async_describe",
-        `export default { async fetch() {
-          while (true) {
-            const tick = Promise.withResolvers();
-            setTimeout(tick.resolve, 10);
-            await tick.promise;
-          }
-        }};`
-      ).pipe(Effect.result, Effect.forkChild);
+      const loading = yield* bind(supervisor, "ver_async_describe", unfinishedDescribe).pipe(
+        Effect.result,
+        Effect.forkChild
+      );
       const pending = yield* statsWhen(supervisor, (stats) => stats.processes.length === 1);
       expect(yield* bind(supervisor, "ver_full").pipe(Effect.result)).toMatchObject({
         _tag: "Failure",

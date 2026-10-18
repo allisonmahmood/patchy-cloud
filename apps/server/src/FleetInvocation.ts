@@ -12,6 +12,7 @@ import { MutationTransaction, QuerySnapshot } from "@patchy/primitives";
 import {
   CallbackGateway,
   CallbackGatewayApi,
+  ConnectedVersions,
   ExecutionLifecycle,
   Executor,
   Invocation,
@@ -22,6 +23,7 @@ import {
   type QuerySnapshot as RuntimeQuerySnapshot,
   type RuntimeLog,
   type ServerBundles,
+  StreamLimits,
   type Wakes
 } from "@patchy/runtime";
 import * as Config from "effect/Config";
@@ -68,7 +70,11 @@ export const enabled = Config.map(
 export const make: (
   handlers: Readonly<Record<string, Runtime.Handler>>
 ) => Effect.Effect<
-  Context.Context<Invocation.Invocation | ExecutionLifecycle.ExecutionLifecycle>,
+  Context.Context<
+    | Invocation.Invocation
+    | ExecutionLifecycle.ExecutionLifecycle
+    | ConnectedVersions.ConnectedVersions
+  >,
   StartupError,
   Dependencies
 > = Effect.fn("FleetInvocation.make")(function* (
@@ -126,15 +132,23 @@ export const make: (
     Effect.provideService(Executor.Executor, fleet.executor),
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle)
   );
+  const connectedVersions = yield* ConnectedVersions.make.pipe(
+    Effect.provideService(Executor.Executor, fleet.executor),
+    Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle),
+    Effect.provideServiceEffect(StreamLimits.StreamLimits, StreamLimits.make)
+  );
   return Context.make(Invocation.Invocation, invocation).pipe(
-    Context.add(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle)
+    Context.add(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle),
+    Context.add(ConnectedVersions.ConnectedVersions, connectedVersions)
   );
 });
 
 export const layer = (
   handlers: Readonly<Record<string, Runtime.Handler>>
 ): Layer.Layer<
-  Invocation.Invocation | ExecutionLifecycle.ExecutionLifecycle,
+  | Invocation.Invocation
+  | ExecutionLifecycle.ExecutionLifecycle
+  | ConnectedVersions.ConnectedVersions,
   StartupError,
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory

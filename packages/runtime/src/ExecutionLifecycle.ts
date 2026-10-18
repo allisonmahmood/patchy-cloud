@@ -1,4 +1,4 @@
-import { limitRefusalFields } from "@patchy/api";
+import { limitRefusalFields, type GuestProtocol } from "@patchy/api";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -24,6 +24,20 @@ export interface Admission {
   readonly release: Effect.Effect<void>;
 }
 
+/**
+ * What a touch of a loaded version found. The supervisor answers `touched` (its idle clock
+ * restarted), `loading` or `absent`; `unsupported` means its release has no touch, and `paused`
+ * or `unbound` that none was sent. `failed` covers every refusal and transport failure.
+ */
+export type TouchOutcome =
+  "touched" | "loading" | "absent" | "unsupported" | "paused" | "unbound" | "failed";
+
+export interface Touch {
+  readonly outcome: TouchOutcome;
+  /** The idle window the supervisor reaps by, in milliseconds, whenever it answered. */
+  readonly idleMs?: number;
+}
+
 /** Absent in no-pool dev. Presence follows the stream scope; admission follows settlement. */
 export class ExecutionLifecycle extends Context.Service<
   ExecutionLifecycle,
@@ -33,5 +47,10 @@ export class ExecutionLifecycle extends Context.Service<
       companyId: string,
       patchId: string
     ) => Effect.Effect<Admission, LifecycleError>;
+    /**
+     * Restarts the idle clock of the version's process on the company's current task, unless
+     * its patch is paused. It never admits, claims a task or loads a version.
+     */
+    readonly touch: (version: GuestProtocol.BundleBinding) => Effect.Effect<Touch>;
   }
 >()("@patchy/runtime/ExecutionLifecycle") {}

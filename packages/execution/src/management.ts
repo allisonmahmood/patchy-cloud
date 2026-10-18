@@ -73,6 +73,7 @@ const decodeBind = Schema.decodeUnknownEffect(Protocol.BindRequest, strict);
 const decodeInvoke = Schema.decodeUnknownEffect(Protocol.InvokeRequest, strict);
 const decodeStop = Schema.decodeUnknownEffect(Protocol.StopRequest, strict);
 const decodeStats = Schema.decodeUnknownEffect(Protocol.StatsRequest, strict);
+const decodeTouch = Schema.decodeUnknownEffect(Protocol.TouchRequest, strict);
 const portSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 }));
 const validPort = Schema.is(portSchema);
 const validBodyLimit = Schema.is(Schema.Int.check(Schema.isGreaterThan(0)));
@@ -214,6 +215,17 @@ export const serve = Effect.fn("ExecutionManagement.serve")(function* (options: 
           Effect.gen(function* () {
             return HttpServerResponse.jsonUnsafe(
               yield* supervisor.stats(yield* decodeStats(yield* readBody(bodyLimit)))
+            );
+          })
+        )
+      ),
+      HttpRouter.route(
+        "POST",
+        "/touch",
+        respond(
+          Effect.gen(function* () {
+            return HttpServerResponse.jsonUnsafe(
+              yield* supervisor.touch(yield* decodeTouch(yield* readBody(bodyLimit)))
             );
           })
         )

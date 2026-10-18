@@ -164,6 +164,39 @@ const bindingMetrics = {
   peakProcesses: Schema.optionalKey(Schema.Number),
   releaseCause: Schema.optionalKey(Schema.String)
 };
+const count = Schema.optionalKey(Schema.Number);
+/** How long one host kept a connected tier 2 version's process warm, and what that took. */
+const keepaliveMetrics = {
+  /** The most documents connected to the version on this host at once. */
+  peakDocuments: Schema.optionalKey(Schema.Number),
+  /** Touches by what each found: a ready process, one loading, none, or why none was sent. */
+  touches: Schema.optionalKey(
+    Schema.Struct({
+      touched: count,
+      loading: count,
+      absent: count,
+      unsupported: count,
+      paused: count,
+      unbound: count,
+      failed: count
+    })
+  ),
+  /**
+   * Warmups by what each came to: the process was `resident` or `loading` already, a bind
+   * `loaded` it, a supervisor without touches was `bound` normally, or none was tried.
+   */
+  warmups: Schema.optionalKey(
+    Schema.Struct({
+      resident: count,
+      loading: count,
+      loaded: count,
+      bound: count,
+      paused: count,
+      unbound: count,
+      failed: count
+    })
+  )
+};
 
 /** Enrichment is local to the current event. Each emitter retains only its own fields. */
 export const EventFields = Schema.Struct({
@@ -178,7 +211,8 @@ export const EventFields = Schema.Struct({
   ...subscriptionRequestFields,
   ...streamMetrics,
   ...processMetrics,
-  ...bindingMetrics
+  ...bindingMetrics,
+  ...keepaliveMetrics
 });
 export type EventFields = typeof EventFields.Type;
 
@@ -250,12 +284,23 @@ export const BindingEvent = Schema.Struct({
   ...bindingMetrics
 });
 export type BindingEvent = typeof BindingEvent.Type;
+export const KeepaliveEvent = Schema.Struct({
+  ...common,
+  type: Schema.Literal("keepalive"),
+  companyId: attribution.companyId,
+  patchId: attribution.patchId,
+  versionId: attribution.versionId,
+  tier: attribution.tier,
+  ...keepaliveMetrics
+});
+export type KeepaliveEvent = typeof KeepaliveEvent.Type;
 export const WideEvent = Schema.Union([
   RequestEvent,
   RerunEvent,
   StreamEvent,
   ProcessEvent,
-  BindingEvent
+  BindingEvent,
+  KeepaliveEvent
 ]);
 export type WideEvent = typeof WideEvent.Type;
 
@@ -384,7 +429,8 @@ const schemas = {
   "re-run": RerunEvent,
   stream: StreamEvent,
   process: ProcessEvent,
-  binding: BindingEvent
+  binding: BindingEvent,
+  keepalive: KeepaliveEvent
 };
 const bestEffort = (work: Effect.Effect<void>) =>
   work.pipe(
