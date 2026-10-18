@@ -1,22 +1,33 @@
 import { createHash } from "node:crypto";
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Scheduler from "effect/Scheduler";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { sharedTableId } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
+import { newInternalId, newPatchId, sha256 } from "@patchy/core";
 import { Tables } from "@patchy/primitives";
+import {
+  type LoadedVersions as RuntimeLoadedVersions,
+  Runtime,
+  ServerBundles
+} from "@patchy/runtime";
 import * as Content from "./Content.js";
 import * as DeletionSweep from "./DeletionSweep.js";
+import * as LoadedVersions from "./LoadedVersions.js";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
 
@@ -1157,5 +1168,392 @@ it.layer(
         "<p>company pool unavailable</p>"
       );
     })
+  );
+});
+
+/** A memory store counting reads; `beforeRead` runs inside each one. */
+const countingStore = () => {
+  const memory = Fixtures.memoryStore();
+  const control = { reads: 0, beforeRead: Effect.void as Effect.Effect<void> };
+  const service = ContentStore.ContentStore.of({
+    ...memory.service,
+    get: (key) =>
+      Effect.suspend(() => {
+        control.reads++;
+        return control.beforeRead.pipe(Effect.andThen(memory.service.get(key)));
+      })
+  });
+  return { service, control };
+};
+
+/** Server bundles over `store`, each provision with a cache of its own. */
+const serverBundles = (
+  store: ContentStore.ContentStore["Service"],
+  limits: Partial<Record<"tier2.bundleCache.bytes" | "tier2.bundleCache.entries", number>> = {}
+) =>
+  Content.serverBundlesLayer.pipe(
+    Layer.provide(Layer.succeed(ContentStore.ContentStore, store)),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({ PATCHY_LIMITS_JSON: JSON.stringify(limits) })
+      )
+    )
+  );
+
+/** Records a tier 2 version whose server artifact is `bundle`, and loads it as admission would. */
+const recordServer = Effect.fn("recordServer")(function* (
+  store: ContentStore.ContentStore["Service"],
+  bundle: string
+) {
+  const patchId = newPatchId();
+  const versionId = newInternalId("ver");
+  const objectKey = Content.serverObjectKey(patchId, versionId);
+  yield* Fixtures.record(
+    Fixtures.recordInput(uploader, {
+      patchId,
+      versionId,
+      server: { objectKey, sha256: sha256(bundle), bytes: Buffer.byteLength(bundle) },
+      manifest: { ...Fixtures.manifest, tier: 2 }
+    })
+  );
+  yield* store.put(objectKey, bundle);
+  const loaded = yield* LoadedVersions.make;
+  return { objectKey, loaded: Option.getOrThrow(yield* loaded.find(patchId, versionId)) };
+});
+
+const load = (version: RuntimeLoadedVersions.LoadedVersion) =>
+  Effect.flatMap(ServerBundles.ServerBundles, (bundles) => bundles.load(version));
+const refused = (version: RuntimeLoadedVersions.LoadedVersion) =>
+  Effect.map(Effect.flip(load(version)), (error) =>
+    assert.instanceOf(error, Runtime.SourceUnavailable)
+  );
+
+/** The real `Patches`, running `afterFind` after each retained lookup: a load's last wait before the cache. */
+const observedPatches = (afterFind: () => Effect.Effect<void>) =>
+  Layer.effect(
+    Patches.Patches,
+    Effect.map(Patches.make, (patches) =>
+      Patches.Patches.of({
+        ...patches,
+        findRetained: (...args) => patches.findRetained(...args).pipe(Effect.tap(afterFind))
+      })
+    )
+  );
+
+/** Runs work in re-run events; `bundleLoad` takes the next emitted event's field. */
+const recordingEvents = Effect.gen(function* () {
+  const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+  const events = yield* WideEvents.make.pipe(
+    Effect.provideService(WideEvents.Sink, {
+      write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+    })
+  );
+  return {
+    within: <A, E, R>(work: Effect.Effect<A, E, R>) => events.withEvent({ type: "re-run" }, work),
+    bundleLoad: Effect.map(Queue.take(records), (event) =>
+      event.type === "re-run" ? event.bundleLoad : undefined
+    )
+  };
+});
+
+it.layer(
+  Patches.layer.pipe(Layer.provideMerge(Analytics.layerNoop), Layer.provideMerge(Fixtures.database))
+)("server bundles", (it) => {
+  it.effect("shares one read between simultaneous loads of an artifact", () => {
+    const store = countingStore();
+    let finds = 0;
+    const bothFound = Deferred.makeUnsafe<void>();
+    const observed = observedPatches(() =>
+      ++finds === 2 ? Deferred.succeed(bothFound, undefined) : Effect.void
+    );
+    return Effect.gen(function* () {
+      const { loaded } = yield* recordServer(store.service, "export default {};");
+      const events = yield* recordingEvents;
+      const opened = yield* Deferred.make<void>();
+      store.control.beforeRead = Deferred.await(opened);
+      // Neither load yields on its op budget: past its lookup, the second runs straight on to
+      // wait on the first read before this fiber's next turn.
+      const loads = yield* Effect.all(
+        [loaded, loaded].map((version) => events.within(load(version))),
+        { concurrency: "unbounded" }
+      ).pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true), Effect.forkScoped);
+      yield* Deferred.await(bothFound);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(opened, undefined);
+      assert.deepStrictEqual(
+        (yield* Fiber.join(loads)).map((loaded) => loaded.bundle),
+        ["export default {};", "export default {};"]
+      );
+      assert.strictEqual(store.control.reads, 1);
+      assert.sameMembers([yield* events.bundleLoad, yield* events.bundleLoad], ["read", "joined"]);
+      yield* events.within(load(loaded));
+      assert.strictEqual(store.control.reads, 1);
+      assert.strictEqual(yield* events.bundleLoad, "cached");
+    }).pipe(Effect.provide(serverBundles(store.service).pipe(Layer.provide(observed))));
+  });
+
+  it.effect("finishes a read for its other waiters when the load that started it stops", () => {
+    const store = countingStore();
+    let found: Deferred.Deferred<void> | undefined;
+    const observed = observedPatches(() =>
+      found === undefined ? Effect.void : Deferred.succeed(found, undefined)
+    );
+    return Effect.gen(function* () {
+      const { loaded } = yield* recordServer(store.service, "export default 4;");
+      const reading = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      store.control.beforeRead = Deferred.succeed(reading, undefined).pipe(
+        Effect.andThen(Deferred.await(opened))
+      );
+      const leader = yield* load(loaded).pipe(Effect.forkScoped);
+      yield* Deferred.await(reading);
+      found = yield* Deferred.make<void>();
+      const joiner = yield* load(loaded).pipe(
+        Effect.provideService(Scheduler.PreventSchedulerYield, true),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(found);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(leader);
+      yield* Deferred.succeed(opened, undefined);
+      assert.strictEqual((yield* Fiber.join(joiner)).bundle, "export default 4;");
+      yield* load(loaded);
+      assert.strictEqual(store.control.reads, 1);
+
+      // With no one left waiting, the read stops and keeps nothing.
+      const { loaded: alone } = yield* recordServer(store.service, "export default 5;");
+      const started = yield* Deferred.make<void>();
+      store.control.beforeRead = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never)
+      );
+      const stopped = yield* load(alone).pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(stopped);
+      store.control.beforeRead = Effect.void;
+      assert.strictEqual((yield* load(alone)).bundle, "export default 5;");
+      yield* load(alone);
+      assert.strictEqual(store.control.reads, 3);
+    }).pipe(Effect.provide(serverBundles(store.service).pipe(Layer.provide(observed))));
+  });
+
+  it.effect("reuses a read that settles while another load is on its way to join it", () => {
+    const store = countingStore();
+    let found: Deferred.Deferred<void> | undefined;
+    const observed = observedPatches(() =>
+      found === undefined ? Effect.void : Deferred.succeed(found, undefined)
+    );
+    return Effect.gen(function* () {
+      const { loaded } = yield* recordServer(store.service, "export default {};");
+      const outcomes = new Set<string | undefined>();
+      // The late load yields every couple of steps (a budget below three never progresses),
+      // so each lag settles the first read at a different point between the late load's
+      // lookup and its join; some land after its miss.
+      for (let lag = 0; lag < 60; lag++)
+        yield* Effect.gen(function* () {
+          const events = yield* recordingEvents;
+          const reading = yield* Deferred.make<void>();
+          const settle = yield* Deferred.make<void>();
+          store.control.reads = 0;
+          store.control.beforeRead = Deferred.succeed(reading, undefined).pipe(
+            Effect.andThen(Deferred.await(settle))
+          );
+          const first = yield* load(loaded).pipe(Effect.forkScoped);
+          yield* Deferred.await(reading);
+          store.control.beforeRead = Effect.void;
+          found = yield* Deferred.make<void>();
+          const late = yield* events
+            .within(load(loaded))
+            .pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 3), Effect.forkScoped);
+          yield* Deferred.await(found);
+          found = undefined;
+          for (let turn = 0; turn < lag; turn++) yield* Effect.yieldNow;
+          yield* Deferred.succeed(settle, undefined);
+          yield* Fiber.join(first);
+          yield* Fiber.join(late);
+          assert.strictEqual(store.control.reads, 1, `lag ${lag}`);
+          outcomes.add(yield* events.bundleLoad);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(serverBundles(store.service).pipe(Layer.provide(observed)))
+        );
+      // The lags span the late load finding the kept bundle and joining the read in flight.
+      assert.sameMembers([...outcomes], ["cached", "joined"]);
+    });
+  });
+
+  it.effect("rechecks retention, company and digest on every load, even when cached", () => {
+    const store = countingStore();
+    return Effect.gen(function* () {
+      const { objectKey, loaded } = yield* recordServer(store.service, "export default 1;");
+      assert.strictEqual((yield* load(loaded)).bundle, "export default 1;");
+      yield* refused({ ...loaded, companyId: "co_elsewhere" });
+      assert.strictEqual(store.control.reads, 1);
+
+      // The same version and key, with a new digest: dev and local artifacts can change this way.
+      const sql = yield* SqlClient.SqlClient;
+      const changed = "export default 2;";
+      yield* store.service.put(objectKey, changed);
+      yield* sql`UPDATE patch_versions SET server_content_hash = ${sha256(changed)}
+        WHERE id = ${loaded.versionId}`;
+      assert.strictEqual((yield* load(loaded)).bundle, changed);
+      assert.strictEqual(store.control.reads, 2);
+
+      // A purged version is refused although its bytes are still cached and stored.
+      const patches = yield* Patches.Patches;
+      yield* patches.delete(loaded.patchId, { userId: uploader.user.id, admin: false }, true);
+      yield* TestClock.adjust("30 days");
+      assert.isTrue(Option.isSome(yield* patches.purgeDeleted(loaded.patchId)));
+      yield* refused(loaded);
+      assert.strictEqual(store.control.reads, 2);
+    }).pipe(Effect.provide(serverBundles(store.service)));
+  });
+
+  it.effect("never keeps a failed read or a hash mismatch", () => {
+    const store = countingStore();
+    return Effect.gen(function* () {
+      const { objectKey, loaded } = yield* recordServer(store.service, "export default 3;");
+      yield* store.service.delete(objectKey);
+      yield* refused(loaded);
+      yield* store.service.put(objectKey, "export default 'tampered';");
+      yield* refused(loaded);
+      yield* store.service.put(objectKey, "export default 3;");
+      assert.strictEqual((yield* load(loaded)).bundle, "export default 3;");
+      yield* load(loaded);
+      assert.strictEqual(store.control.reads, 3);
+    }).pipe(Effect.provide(serverBundles(store.service)));
+  });
+
+  it.effect("keeps no more bundles than the entry bound, however small", () => {
+    const store = countingStore();
+    return Effect.gen(function* () {
+      const kept = (label: string) =>
+        Effect.map(
+          recordServer(store.service, `export default '${label}';`),
+          ({ loaded }) => loaded
+        );
+      const [one, two, three] = yield* Effect.all([kept("one"), kept("two"), kept("three")]);
+      yield* load(one);
+      yield* load(two);
+      yield* load(one);
+      assert.strictEqual(store.control.reads, 2);
+      // A third bundle evicts `two`, now the least recently used.
+      yield* load(three);
+      yield* load(one);
+      yield* load(three);
+      assert.strictEqual(store.control.reads, 3);
+      yield* load(two);
+      assert.strictEqual(store.control.reads, 4);
+    }).pipe(Effect.provide(serverBundles(store.service, { "tier2.bundleCache.entries": 2 })));
+  });
+
+  it.effect("charges a replaced bundle once and makes it the most recently used", () => {
+    const store = countingStore();
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const kept = (label: string) =>
+        Effect.map(recordServer(store.service, label.padEnd(19, ".")), ({ loaded }) => loaded);
+      const [shared, one, two, three, four, five] = yield* Effect.all([
+        kept("shared"),
+        kept("one"),
+        kept("two"),
+        kept("three"),
+        kept("four"),
+        kept("five")
+      ]);
+      const started = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+      const opened = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+      let next = 0;
+      store.control.beforeRead = Effect.suspend(() => {
+        const read = next++;
+        return Deferred.succeed(started[read]!, undefined).pipe(
+          Effect.andThen(Deferred.await(opened[read]!))
+        );
+      });
+      // A changed recorded size makes a second lookup of the same artifact while the first
+      // is still reading, so both keep it and the second replaces the first.
+      const first = yield* load(shared).pipe(Effect.forkScoped);
+      yield* Deferred.await(started[0]!);
+      yield* sql`UPDATE patch_versions SET server_file_size = 24 WHERE id = ${shared.versionId}`;
+      const second = yield* load(shared).pipe(Effect.forkScoped);
+      yield* Deferred.await(started[1]!);
+      store.control.beforeRead = Effect.void;
+      yield* Deferred.succeed(opened[0]!, undefined);
+      yield* Fiber.join(first);
+      yield* load(one);
+      yield* Deferred.succeed(opened[1]!, undefined);
+      yield* Fiber.join(second);
+      // 24 bytes for the replacement and four of 19 fill the bound exactly; `one` is now the
+      // least recently used, so `five` evicts it alone.
+      for (const version of [two, three, four, five]) yield* load(version);
+      assert.strictEqual(store.control.reads, 7);
+      for (const version of [two, three, four, five, shared]) yield* load(version);
+      assert.strictEqual(store.control.reads, 7);
+      yield* load(one);
+      assert.strictEqual(store.control.reads, 8);
+    }).pipe(
+      Effect.provide(
+        serverBundles(store.service, {
+          "tier2.bundleCache.bytes": 100,
+          "tier2.bundleCache.entries": 100
+        })
+      )
+    );
+  });
+
+  it.effect("records the last load's source when one event loads twice", () => {
+    // A retried mutation loads again on each attempt in the same event.
+    const store = countingStore();
+    return Effect.gen(function* () {
+      const { loaded } = yield* recordServer(store.service, "export default 6;");
+      const events = yield* recordingEvents;
+      yield* events.within(Effect.andThen(load(loaded), load(loaded)));
+      assert.strictEqual(store.control.reads, 1);
+      assert.strictEqual(yield* events.bundleLoad, "cached");
+    }).pipe(Effect.provide(serverBundles(store.service)));
+  });
+
+  it.effect(
+    "evicts the least recently used past the byte bound and never keeps an oversized bundle",
+    () => {
+      const store = countingStore();
+      // A quarter of 100 bytes is the largest bundle kept.
+      return Effect.gen(function* () {
+        const kept = (label: string) =>
+          Effect.map(recordServer(store.service, label.padEnd(20, ".")), ({ loaded }) => loaded);
+        const [one, two, three, four, five, six] = yield* Effect.all([
+          kept("one"),
+          kept("two"),
+          kept("three"),
+          kept("four"),
+          kept("five"),
+          kept("six")
+        ]);
+        for (const version of [one, two, three, four, five]) yield* load(version);
+        yield* load(one);
+        assert.strictEqual(store.control.reads, 5);
+        // 120 bytes: `two` is now the least recently used.
+        yield* load(six);
+        yield* load(one);
+        yield* load(three);
+        assert.strictEqual(store.control.reads, 6);
+        yield* load(two);
+        assert.strictEqual(store.control.reads, 7);
+
+        const { loaded: large } = yield* recordServer(store.service, "large".padEnd(26, "."));
+        yield* load(large);
+        yield* load(large);
+        assert.strictEqual(store.control.reads, 9);
+        for (const version of [five, six, one, two]) yield* load(version);
+        assert.strictEqual(store.control.reads, 9);
+      }).pipe(
+        Effect.provide(
+          serverBundles(store.service, {
+            "tier2.bundleCache.bytes": 100,
+            "tier2.bundleCache.entries": 100
+          })
+        )
+      );
+    }
   );
 });
