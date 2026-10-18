@@ -84,7 +84,8 @@ stream wide event with delivered bytes, peak subscriptions and its close reason.
 Every resource write and publish, rollback, sharing or lifecycle change commits
 a revision in the same transaction. After commit, deduplicated resource keys wake
 local subscribers and travel through Postgres NOTIFY to one listener per host.
-Hints contain no rows or bytes and are not durable. Scoped workers coalesce wakes,
+Each NOTIFY names the host that sent it, and that host's listener skips it, so
+a write wakes every host once. Hints contain no rows or bytes and are not durable. Scoped workers coalesce wakes,
 reread durable revisions and authority, and reconcile every 30 seconds by default.
 They also reconcile after a listener reconnect or a document reconnect.
 Publishing does not wait for subscriber reads. Initial snapshots and lifecycle dispatch
