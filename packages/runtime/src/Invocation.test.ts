@@ -146,7 +146,11 @@ it.layer(services)("Invocation", (it) => {
       const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
       const actionDone = yield* Deferred.make<void>();
       const childDone = yield* Deferred.make<void>();
-      const original = { taskId: "task-before-rollout", bindingEpoch: 1 };
+      const original = {
+        taskId: "task-before-rollout",
+        bindingEpoch: 1,
+        companyId: bundle.companyId
+      };
       let current = original;
       let acquisitions = 0;
       let releases = 0;
@@ -192,7 +196,7 @@ it.layer(services)("Invocation", (it) => {
         .pipe(Effect.forkChild);
       const request = yield* Queue.take(seen);
       const capability = yield* capabilities.resolve(request.callback.capability, request);
-      current = { taskId: "task-after-rollout", bindingEpoch: 2 };
+      current = { taskId: "task-after-rollout", bindingEpoch: 2, companyId: bundle.companyId };
       const child = yield* capability.run!({ handler: "demo.query", args: { id: 1 } }).pipe(
         Effect.forkChild
       );
@@ -221,7 +225,7 @@ it.layer(services)("Invocation", (it) => {
           connect: () => Effect.void,
           acquire: () =>
             Effect.succeed({
-              binding: { taskId: "admitted-task", bindingEpoch: 3 },
+              binding: { taskId: "admitted-task", bindingEpoch: 3, companyId: bundle.companyId },
               release: Effect.void
             })
         })
@@ -674,7 +678,11 @@ it.layer(services)("Invocation", (it) => {
               Effect.sync(() => {
                 active = true;
                 return {
-                  binding: { taskId: "disconnect-task", bindingEpoch: 1 },
+                  binding: {
+                    taskId: "disconnect-task",
+                    bindingEpoch: 1,
+                    companyId: bundle.companyId
+                  },
                   release: Effect.sync(() => {
                     active = false;
                   }).pipe(Effect.andThen(Deferred.succeed(released, undefined)), Effect.asVoid)
@@ -786,7 +794,7 @@ it.layer(services)("Invocation", (it) => {
               Effect.sync(() => {
                 active = true;
                 return {
-                  binding: { taskId: "cleanup-task", bindingEpoch: 1 },
+                  binding: { taskId: "cleanup-task", bindingEpoch: 1, companyId: bundle.companyId },
                   release: Effect.sync(() => {
                     active = false;
                   })
@@ -825,7 +833,7 @@ it.layer(services)("Invocation", (it) => {
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
       const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
-      const route = { taskId: "original-task", bindingEpoch: 7 };
+      const route = { taskId: "original-task", bindingEpoch: 7, companyId: bundle.companyId };
       let acquisitions = 0;
       let released = false;
       const releasedSignal = yield* Deferred.make<void>();

@@ -83,12 +83,15 @@ const harness = Effect.gen(function* () {
   const connected = yield* ConnectedVersions.make.pipe(
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
       connect: () => Effect.void,
-      acquire: (_companyId, patchId) =>
+      acquire: (companyId, patchId) =>
         Effect.gen(function* () {
           yield* Queue.offer(steps, { kind: "admission", versionId: patchId });
           if (admissions.gate !== undefined) yield* Deferred.await(admissions.gate);
           admissions.admitted++;
-          return { binding: { taskId: "task_connected", bindingEpoch: 1 }, release: Effect.void };
+          return {
+            binding: { taskId: "task_connected", bindingEpoch: 1, companyId },
+            release: Effect.void
+          };
         }).pipe(
           Effect.onInterrupt(() =>
             Effect.sync(() => {

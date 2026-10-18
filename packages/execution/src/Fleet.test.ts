@@ -212,6 +212,14 @@ const lockWait = Effect.fn("FleetTest.lockWait")(function* (name: string) {
     })
   );
 });
+// Expires a binding's crash protection and idles it out in its row, so only its holders' shared
+// lock keeps it from adoption, an idle fence and a drain's stop. The row moves, not the clock: a
+// clock jump also fires the activity session's own statement timeouts, which drops its locks.
+const expireProtection = Effect.fn("FleetTest.expireProtection")(function* (taskId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE execution_bindings SET protected_until = 0, idle_since = 1, last_activity_at = 1
+    WHERE task_id = ${taskId}`;
+});
 // Records a patch and returns how to publish its versions, whose numbers a breaker reads.
 const publishedPatch = Effect.fn("FleetTest.publishedPatch")(function* (
   companyId: string,
@@ -1050,7 +1058,8 @@ it.layer(services)("host fleet controller", (it) => {
       const admission = yield* Fiber.join(call);
       assert.deepStrictEqual(admission.binding, {
         taskId: warm.binding.taskId,
-        bindingEpoch: adopted.bindingEpoch
+        bindingEpoch: adopted.bindingEpoch,
+        companyId
       });
       yield* admission.release;
     }).pipe(Effect.scoped)
@@ -1164,6 +1173,8 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         const { companyId, provider, left, right, bundle } = yield* setupLocal("fence");
         const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
         const loaded = yield* left.executor.bind(bundle, admission.binding);
+        // With its protection expired, only the call's shared lock keeps the drain from stopping the task.
+        yield* expireProtection(admission.binding.taskId);
         assert.isTrue(yield* left.releaseCompany(companyId));
         assert.isFalse(yield* right.adopt(admission.binding, "fence-left"));
         const fresh = yield* right.ensureBinding(companyId);
@@ -1248,12 +1259,14 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
   );
 
   it.effect(
-    "adopts only after global drain, advances the management epoch, and retains prior-epoch process metering",
+    "adopts only after global drain, advances the management epoch, refuses the old epoch's calls before they run, and retains prior-epoch process metering",
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, right, bundle, sql } = yield* setupLocal("adopt");
         const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
         const loaded = yield* left.executor.bind(bundle, admission.binding);
+        // With its protection expired, only the call's shared lock refuses the adoption.
+        yield* expireProtection(admission.binding.taskId);
         assert.isFalse(yield* right.adopt(admission.binding, "adopt-left"));
         yield* admission.release;
         assert.isTrue(yield* right.adopt(admission.binding, "adopt-left"));
@@ -1267,6 +1280,18 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
           })
           .pipe(Effect.flip);
         assert.strictEqual(stale.reason, "stale_epoch");
+        // A call still routed by the replaced epoch reaches the supervisor, which refuses it before
+        // the handler runs; the one process below serves only the adopted epoch's call.
+        for (const replaced of [
+          left.executor.bind(bundle, admission.binding).pipe(Effect.asVoid),
+          left.executor
+            .invoke(
+              request(loaded.binding, loaded.processGeneration!, "replaced-epoch"),
+              admission.binding
+            )
+            .pipe(Effect.asVoid)
+        ])
+          assert.strictEqual((yield* Effect.flip(replaced)).reason, "binding_conflict");
         const reply = yield* right.executor.invoke(
           request(loaded.binding, loaded.processGeneration!, "after-adoption"),
           adopted.binding
@@ -1282,6 +1307,130 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         assert.strictEqual(reports[0]!.binding_id, history[0]!.bindingId);
         assert.strictEqual(reports[0]!.binding_epoch, admission.binding.bindingEpoch);
         assert.strictEqual(reports[0]!.calls_served, 1);
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "binds and invokes a warm call by the binding it protected, without reading it again",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, left, bundle } = yield* setupLocal("route");
+        // The first call loads the version, so the counted one is warm.
+        const first = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        yield* left.executor.bind(bundle, first.binding);
+        yield* first.release;
+        const call = yield* recordStatements(
+          Effect.gen(function* () {
+            const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+            const loaded = yield* left.executor.bind(bundle, admission.binding);
+            const reply = yield* left.executor.invoke(
+              request(loaded.binding, loaded.processGeneration!, "route-warm"),
+              admission.binding
+            );
+            yield* admission.release;
+            return reply;
+          })
+        );
+        assert.strictEqual(call.result.outcome, "returned");
+        // The admission, the bind's supervisor limits, then the release.
+        const expected = [
+          /^INSERT INTO execution_breakers /,
+          /^SELECT paused_until AS "pausedUntil" FROM execution_breakers /,
+          /^SELECT .* FROM execution_bindings WHERE company_id = \$1 AND state = 'active' AND EXISTS /,
+          /^UPDATE execution_bindings SET protected_until = GREATEST/,
+          /^SELECT COALESCE\( jsonb_object_agg\(o\.limit_id, o\.value\)/,
+          /^UPDATE execution_bindings SET last_activity_at = CASE /
+        ];
+        assert.lengthOf(call.statements, expected.length);
+        call.statements.forEach(({ text }, index) => assert.match(text, expected[index]!));
+        // A bundle for another company is refused in memory, before the bind reads its limits.
+        const other = yield* recordStatements(
+          left.executor
+            .bind({ ...bundle, companyId: "cmp_fleet_other" }, first.binding)
+            .pipe(Effect.flip)
+        );
+        assert.strictEqual(other.result.reason, "binding_conflict");
+        assert.lengthOf(other.statements, 0);
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "routes a held call's rebind, and a later call after its protection expires and a housekeeping pass, by the same admission",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, left, right, bundle } = yield* setupLocal("rebind");
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const killed = yield* left.executor.bind(bundle, admission.binding);
+        const spin = yield* left.executor
+          .invoke(
+            request(killed.binding, killed.processGeneration!, "rebind-spin", "demo.spin"),
+            admission.binding
+          )
+          .pipe(Effect.flip);
+        assert.strictEqual(spin.reason, "process_killed");
+        // The supervisor refuses the reaped generation before dispatch, and the call binds again.
+        const reaped = yield* left.executor
+          .invoke(
+            request(killed.binding, killed.processGeneration!, "rebind-reaped"),
+            admission.binding
+          )
+          .pipe(Effect.flip);
+        assert.oneOf(reaped.reason, ["bundle_required", "stale_generation"]);
+        const rebound = yield* left.executor.bind(bundle, admission.binding);
+        assert.isAbove(rebound.processGeneration!, killed.processGeneration!);
+        const invoke = (id: string) =>
+          left.executor
+            .invoke(request(rebound.binding, rebound.processGeneration!, id), admission.binding)
+            .pipe(Effect.map((reply) => (reply.outcome === "returned" ? reply.reply : reply)));
+        assert.deepStrictEqual(yield* invoke("rebind-call"), { ok: true, value: 1 });
+        // An action's nested call can come long after its parent's bind. With the binding's
+        // protection expired and the company idle, another host's housekeeping still can't fence,
+        // stop or adopt it while the call holds it, so the later call routes as before.
+        yield* expireProtection(admission.binding.taskId);
+        assert.isTrue(yield* right.housekeeping());
+        assert.isFalse(yield* right.adopt(admission.binding, "rebind-left"));
+        assert.deepStrictEqual(
+          yield* sql`SELECT state, binding_epoch FROM execution_bindings
+            WHERE task_id = ${admission.binding.taskId}`,
+          [{ state: "active", binding_epoch: admission.binding.bindingEpoch }]
+        );
+        assert.deepStrictEqual(yield* invoke("rebind-later"), { ok: true, value: 2 });
+        yield* admission.release;
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "refuses a held call's bind and invoke once its task stops, before and after housekeeping records it",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, provider, left, bundle } = yield* setupLocal("task-lost");
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const loaded = yield* left.executor.bind(bundle, admission.binding);
+        const refused = Effect.gen(function* () {
+          for (const call of [
+            left.executor.bind(bundle, admission.binding).pipe(Effect.asVoid),
+            left.executor
+              .invoke(
+                request(loaded.binding, loaded.processGeneration!, "task-lost"),
+                admission.binding
+              )
+              .pipe(Effect.asVoid)
+          ])
+            assert.strictEqual((yield* Effect.flip(call)).reason, "binding_conflict");
+        });
+        // The task exits under the held call; its provider refuses the call before anything runs.
+        yield* provider.stop(admission.binding.taskId);
+        yield* refused;
+        assert.isTrue(yield* left.housekeeping());
+        assert.deepStrictEqual(
+          yield* sql`SELECT state FROM execution_bindings WHERE task_id = ${admission.binding.taskId}`,
+          [{ state: "stopped" }]
+        );
+        yield* refused;
+        yield* admission.release;
       }).pipe(Effect.scoped),
     30_000
   );

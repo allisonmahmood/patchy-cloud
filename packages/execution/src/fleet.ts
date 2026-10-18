@@ -75,10 +75,20 @@ export interface Options {
 }
 const isExecutionReason = Schema.is(Executor.ExecutionError.fields.reason);
 const isLifecycleError = Schema.is(ExecutionLifecycle.LifecycleError);
+// A supervisor refusing the admission's epoch, or a task that stopped under it: the binding the
+// call was admitted to no longer serves it, the same conflict as a call routed for another company.
+const supersededBinding: ReadonlySet<TaskProvider.TaskProviderError["reason"]> = new Set([
+  "stale_epoch",
+  "stopped"
+]);
 const executionError = (cause: TaskProvider.TaskProviderError) =>
   new Executor.ExecutionError({
     operation: cause.operation === "invoke" ? "invoke" : "bind",
-    reason: isExecutionReason(cause.reason) ? cause.reason : "transport",
+    reason: supersededBinding.has(cause.reason)
+      ? "binding_conflict"
+      : isExecutionReason(cause.reason)
+        ? cause.reason
+        : "transport",
     ...(cause.limit === undefined ? {} : { limit: cause.limit }),
     ...(cause.limits === undefined ? {} : { limits: cause.limits }),
     cause
@@ -753,7 +763,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
             const unlock = yield* activity
               .hold(FleetStore.bindingLock(binding.bindingId))
               .pipe(Effect.mapError(lifecycleFailure));
-            const protectedBinding = yield* store
+            const admitted = (yield* store
               .protect(
                 binding,
                 (yield* Clock.currentTimeMillis) + maximumCallMs,
@@ -762,11 +772,16 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               .pipe(
                 Effect.mapError(lifecycleFailure),
                 Effect.onError(() => unlock.pipe(Effect.orDie))
-              );
-            if (protectedBinding[0])
+              ))[0];
+            // The call routes by the row `protect` returned; see `route`.
+            if (admitted)
               return {
-                binding: { taskId: binding.taskId, bindingEpoch: binding.bindingEpoch },
-                release: releaseActivity(companyId, unlock, binding)
+                binding: {
+                  taskId: admitted.taskId,
+                  bindingEpoch: admitted.bindingEpoch,
+                  companyId: admitted.companyId
+                },
+                release: releaseActivity(companyId, unlock, admitted)
               };
             yield* unlock.pipe(Effect.mapError(lifecycleFailure));
           }
@@ -789,30 +804,20 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       Effect.catch(() => Effect.succeed({ outcome: "failed" as const }))
     )
   });
-  const route = Effect.fn("Fleet.route")(
-    function* (
-      companyId: string,
-      selected: Executor.ExecutionBinding | undefined,
-      operation: "bind" | "invoke"
-    ) {
-      if (!selected)
-        return yield* new Executor.ExecutionError({ operation, reason: "binding_conflict" });
-      const binding = (yield* store.findTask(selected.taskId))[0];
-      if (
-        !binding ||
-        binding.companyId !== companyId ||
-        binding.bindingEpoch !== selected.bindingEpoch ||
-        binding.state === "stopped"
-      )
-        return yield* new Executor.ExecutionError({ operation, reason: "binding_conflict" });
-      return selected;
-    },
-    Effect.catchTags({
-      SqlError: (cause) =>
-        Effect.fail(new Executor.ExecutionError({ operation: "bind", reason: "transport", cause })),
-      SchemaError: Effect.die
-    })
-  );
+  // Routes by the binding `protect` returned, without reading it again. Until the admission is
+  // released, its shared activity lock keeps that binding from being adopted to a new epoch or
+  // drained to `stopped`: both take the binding's exclusive lock. A fence, replacement or
+  // retirement only moves it to `stopping`, which still serves admitted calls. A task that exits
+  // on its own runs nothing more; its provider refuses or fails the call. The supervisor refuses
+  // any epoch but its current one, and any task but its own, before any effect.
+  const route = (
+    companyId: string,
+    selected: Executor.ExecutionBinding | undefined,
+    operation: "bind" | "invoke"
+  ) =>
+    selected?.companyId === companyId
+      ? Effect.succeed(selected)
+      : Effect.fail(new Executor.ExecutionError({ operation, reason: "binding_conflict" }));
   const executor = Executor.Executor.of({
     bind: Effect.fn("Fleet.bindBundle")(function* (bundle: GuestProtocol.Bundle, selected) {
       const binding = yield* route(bundle.companyId, selected, "bind");

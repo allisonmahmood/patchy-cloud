@@ -27,10 +27,14 @@ export class ExecutionError extends Schema.TaggedError<ExecutionError>()("Execut
   }
 }
 
-/** Host-only admission identity. It never crosses the guest protocol. */
+/**
+ * Host-only admission identity: the binding a call was admitted to, which its bind and invoke
+ * route by. It never crosses the guest protocol.
+ */
 export interface ExecutionBinding {
   readonly taskId: string;
   readonly bindingEpoch: number;
+  readonly companyId: string;
 }
 
 export interface BoundVersion {
