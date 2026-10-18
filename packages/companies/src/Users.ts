@@ -162,8 +162,8 @@ export const make = Effect.gen(function* () {
       SELECT count(*)::int AS count FROM users
       WHERE company_id = ${companyId} AND role = 'admin' AND deactivated_at IS NULL`
   });
-  // A fresh read that takes no locks. The LEFT JOIN answers a missing company as nulls, not
-  // as no user.
+  // A fresh read that takes no row locks. The LEFT JOIN answers a missing company as nulls,
+  // not as no user.
   const signedIn = SqlSchema.findOneOption({
     Request: Schema.String,
     Result: Schema.Struct({
@@ -210,9 +210,10 @@ export const make = Effect.gen(function* () {
   // The stored name is settled before the change check, so a nameless person's repeat
   // requests compare equal and write nothing. Changed claims keep the write path a resolve
   // always took, in its own statements: the UPDATE waits out a concurrent change to the row,
-  // such as a deactivation, and answers the row as that change left it; if a concurrent
-  // refresh already wrote these claims, a fresh read answers instead. The first read's
-  // snapshot predates any such wait, so it answers only when nothing needs writing.
+  // such as a deactivation, and answers the row as that change left it, with the company read
+  // after it; if a concurrent refresh already wrote these claims, a fresh read answers instead.
+  // The first read's snapshot predates any such wait, so it answers only when nothing needs
+  // writing.
   const refreshClaims = Effect.fn("Users.refreshClaims")(function* (claims: Claims) {
     const email = claims.email.toLowerCase();
     const name = displayName({ name: claims.name, email });
@@ -235,13 +236,11 @@ export const make = Effect.gen(function* () {
       Effect.catchTags(dieOnSchemaError)
     );
     if (Option.isNone(updated)) return yield* read;
-    const user = updated.value;
-    if (user.companyId === found.user.companyId) return { user, company: found.company };
-    const company = yield* companyById(user.companyId).pipe(
+    const company = yield* companyById(updated.value.companyId).pipe(
       Effect.catchTags(dieOnSchemaError),
       Effect.map(Option.getOrNull)
     );
-    return { user, company };
+    return { user: updated.value, company };
   });
 
   // Lock the company before reading any user's role. Locking only the target

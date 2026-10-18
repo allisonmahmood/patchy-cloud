@@ -224,8 +224,20 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             return { result, answer };
           }).pipe(Effect.scoped);
 
-        const demoted = yield* refreshDuring(users.setRole({ ...ref, role: "member" }), "Demoted");
+        // The company keeps its id, so only a read after the wait sees its new name.
+        const demoted = yield* refreshDuring(
+          Effect.gen(function* () {
+            yield* sql`UPDATE companies SET name = 'Renamed Inc' WHERE id = ${company.id}`;
+            return yield* users.setRole({ ...ref, role: "member" });
+          }),
+          "Demoted"
+        );
         assert.strictEqual(demoted.answer?.user.role, "member");
+        assert.deepStrictEqual(demoted.answer?.company, {
+          id: company.id,
+          handle: company.handle,
+          name: "Renamed Inc"
+        });
         const deactivated = yield* refreshDuring(users.deactivate(ref), "Deactivated");
         assert.isNotNull(deactivated.answer?.user.deactivatedAt);
         // The company the user moves to is created by the same transaction that moves them.
@@ -249,6 +261,46 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           name: "Moved Inc"
         });
       })
+    );
+
+    it.effect("a refresh with unchanged claims answers without waiting on a held change", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("claim-unblocked");
+        yield* auditClaimRefresh;
+        const deactivated = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const admin = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* users.deactivate({ companyId: company.id, userId: member.id });
+              yield* Deferred.succeed(deactivated, undefined);
+              yield* Deferred.await(release);
+            })
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(deactivated);
+        // Answers while the deactivation still holds the row: the active row it can see.
+        const answer = yield* users
+          .refreshClaims({
+            clerkUserId: member.clerkUserId,
+            email: member.email,
+            name: member.name
+          })
+          .pipe(Effect.timeout("5 seconds"), TestClock.withLive);
+        assert.deepStrictEqual(answer, {
+          user: member,
+          company: { id: company.id, handle: company.handle, name: company.name }
+        });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(admin);
+        // The deactivation's own update is the only one.
+        assert.lengthOf(
+          yield* sql`SELECT user_id FROM claim_refresh_audit WHERE user_id = ${member.id}`,
+          1
+        );
+      }).pipe(Effect.scoped)
     );
 
     it.effect("a refresh queued behind an identical one still sees what committed first", () =>

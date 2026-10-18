@@ -141,7 +141,8 @@ export const sameOrigin = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServe
 
 /**
  * Claim refresh and deactivation are shared by enrollment, doored pages and tier 2 calls. Each
- * resolve reads current state in one statement, so a caller re-checks by resolving again.
+ * resolve reads current state: one read when the claims are unchanged, more statements when they
+ * changed and need writing. A caller re-checks by resolving again.
  */
 export const resolveViewer = Effect.gen(function* () {
   const claims = yield* SignedIn;
