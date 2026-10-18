@@ -25,7 +25,7 @@ import * as Engine from "./engine.js";
 import { sampleProcess, startWorkerd, type WorkerdProcess } from "./process.js";
 
 export class SupervisorError extends Schema.TaggedError<SupervisorError>()("SupervisorError", {
-  operation: Schema.Literals(["bind", "invoke", "stop", "stats"]),
+  operation: Schema.Literals(["bind", "invoke", "stop", "stats", "touch"]),
   reason: Management.Refusal.fields.code,
   limit: Schema.optionalKey(Schema.Struct(limitRefusalFields)),
   limits: Management.Refusal.fields.limits,
@@ -41,6 +41,7 @@ const decodeBind = Schema.decodeUnknownEffect(Management.BindRequest, strict);
 const decodeInvoke = Schema.decodeUnknownEffect(Management.InvokeRequest, strict);
 const decodeStop = Schema.decodeUnknownEffect(Management.StopRequest, strict);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsRequest, strict);
+const decodeTouch = Schema.decodeUnknownEffect(Management.TouchRequest, strict);
 const killGrace = 1_000;
 
 class CallbackBodyTooLarge extends Schema.TaggedError<CallbackBodyTooLarge>()(
@@ -141,6 +142,10 @@ export class Supervisor extends Context.Service<
     readonly stats: (
       request: Management.StatsRequest
     ) => Effect.Effect<Management.StatsReply, SupervisorError>;
+    /** Restarts a ready process's idle clock. It never loads, reserves or evicts anything. */
+    readonly touch: (
+      request: Management.TouchRequest
+    ) => Effect.Effect<Management.TouchReply, SupervisorError>;
   }
 >()("@patchy/execution/supervisor") {}
 
@@ -866,6 +871,27 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         ),
         reports: [...reports.values()]
       };
+    }),
+    touch: Effect.fn("Supervisor.touch")(function* (input) {
+      const request = yield* decodeTouch(input).pipe(
+        Effect.mapError(
+          (cause) => new SupervisorError({ operation: "touch", reason: "protocol", cause })
+        )
+      );
+      yield* checkTask(request.taskId, "touch");
+      yield* checkEpoch(request.bindingEpoch, "touch");
+      if (stopped) return yield* new SupervisorError({ operation: "touch", reason: "stopped" });
+      if (request.binding.companyId !== companyId)
+        return yield* new SupervisorError({ operation: "touch", reason: "binding_conflict" });
+      const resident = residents.get(versionKey(request.binding));
+      if (resident === undefined || !resident.alive) return { outcome: "absent" as const };
+      if (resident.binding.sha256 !== request.binding.sha256)
+        return yield* new SupervisorError({ operation: "touch", reason: "binding_conflict" });
+      // Initialization keeps its deadline from spawn, so a touch cannot keep a hung load alive.
+      if (resident.loading) return { outcome: "loading" as const };
+      // Only the idle clock: eviction under residency or memory pressure still picks from it.
+      resident.idleSince = Date.now();
+      return { outcome: "touched" as const };
     })
   });
 });

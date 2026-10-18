@@ -128,7 +128,7 @@ check, not proof that arbitrary hostile code dispatches what it describes.
 `@patchy/execution/supervisor` owns one workerd process per loaded patch version.
 The `apps/server/src/exec.ts` entrypoint runs it without host services or
 persistence. The management listener exposes only private `POST /bind`,
-`/invoke`, `/stop` and `/stats`. It authenticates before reading the body, using
+`/invoke`, `/stop`, `/stats` and `/touch`. It authenticates before reading the body, using
 the current or previous deployment secret. It binds loopback by default;
 an explicit private-interface setting permits an RFC1918 or ULA address,
 never a wildcard or public address. The deployment must restrict that listener
@@ -159,10 +159,14 @@ losing the management HTTP caller does not remove the running deadline.
 Loading a bundle does not block the watchdog. An unfinished initializer is killed
 at `execution.process.idle`, 60 seconds by default, even if health probes succeed.
 Its bind fails with `load_failed`, and its process report has the same end cause.
-Ready processes are reaped after 60 seconds idle. Residency allows 12 processes
+Ready processes are reaped after 60 seconds idle. A touch names a version and its
+hash at the current epoch and restarts only a ready process's idle clock; it never
+loads, reserves, evicts or changes the epoch, and a loading process keeps its
+initialization deadline from spawn. Residency allows 12 processes
 and 1.5 GiB aggregate RSS, including the supervisor's retained bundles and reports.
 Under memory pressure the largest idle process goes first; otherwise eviction
-selects the oldest idle process. Both bind and invoke can evict idle residents;
+selects the process idle longest since its last call or touch. Both bind and
+invoke can evict idle residents;
 invocation admission does not evict its target. Without an idle process to evict,
 further work receives `busy` with the company scope, limiting residency id and
 configured value.
@@ -207,7 +211,25 @@ provider owns task launch, management transport, discovery and observed stop tim
 The ECS provider reuses a resolved task address only for supervisors of its own
 release, which check the named task, so a reused address is refused rather than
 served; it never re-sends a request after a transport failure. Only those
-supervisors get a bind by hash: older ones refuse the field.
+supervisors get a bind by hash or a touch: older ones refuse the field and have no
+touch route, so a touch for another release's task is skipped without a request,
+and that task's release is remembered rather than asked of ECS again.
+
+A host keeps the version of each connected, ready tier 2 document loaded. One
+keepalive per company version on each host touches it right away and then every
+35 to 45 percent of the company's `execution.process.idle`, so one lost touch still
+leaves another before the reap. Each touch reads the patch's pause and the company's
+current active binding, and goes to that task at that epoch; it never admits,
+claims a task or loads. A paused patch, or a company without an active binding, is
+not touched. The last document's disconnect, including a hidden document's
+suspension, ends the keepalive, and the process idles out as before. A document's
+first stream also warms its version once it is ready, while the client boots: if
+the touch finds no process, it binds the version under a normal admission. A
+stream that names its previous generation, as a reconnect, reauthentication or
+resume does, only touches, so a version evicted under pressure reloads on demand
+rather than on renewal. With more open versions than residency allows, touches
+never evict or reload anything; only calls and first-stream warmups load, as calls
+alone did before.
 The execution baseline, `0008_execution`, owns task identity and deployment revision, company
 bindings and their epochs, binding history, process reports, breaker state and the
 housekeeping lease. A partial unique index permits one admission-serving binding
@@ -483,7 +505,8 @@ both slots readable.
    state, then returns `busy`. Residency is separate: at most 12 loaded-version
    processes and 1.5 GiB aggregate, including supervisor, bundles and overlapping
    versions. Evict idle processes first; refuse `busy` if none is idle. Reap at
-   60 seconds idle and kill a process at 512 MiB RSS. Dormant patches spawn nothing.
+   60 seconds idle, where a connected document's touch counts as use, and kill a
+   process at 512 MiB RSS. Dormant patches spawn nothing.
 3. **Idle release counts all work.** Release follows 30 minutes with no connected
    tier 2 documents and no work in flight. Retries, nested calls after document
    departure and transaction cleanup count. Fence new admissions before stopping;

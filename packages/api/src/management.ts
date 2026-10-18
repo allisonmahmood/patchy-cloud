@@ -79,6 +79,25 @@ export const StopRequest = Schema.Struct({
   processGeneration: Schema.optionalKey(ProcessGeneration)
 });
 export type StopRequest = typeof StopRequest.Type;
+/**
+ * Restarts the idle clock of a ready process for exactly this version and hash, at the current
+ * epoch. It never loads, reserves or changes anything else. Older supervisors have no route for
+ * it, so fleet hosts send it only to supervisors of their own release.
+ */
+export const TouchRequest = Schema.Struct({
+  ...expectedTask,
+  bindingEpoch: BindingEpoch,
+  binding: GuestProtocol.BundleBinding
+});
+export type TouchRequest = typeof TouchRequest.Type;
+export const TouchReply = Schema.Struct({
+  /**
+   * `touched`: a ready process's idle clock restarted. `loading`: left to its initialization
+   * deadline. `absent`: no live process for the version, and none was started.
+   */
+  outcome: Schema.Literals(["touched", "loading", "absent"])
+});
+export type TouchReply = typeof TouchReply.Type;
 export const StatsRequest = Schema.Struct({
   ...expectedTask,
   bindingEpoch: BindingEpoch,

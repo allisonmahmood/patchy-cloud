@@ -21,6 +21,7 @@ import * as TaskProvider from "./TaskProvider.js";
 const decodeBind = Schema.decodeUnknownEffect(Management.BindReply);
 const decodeInvoke = Schema.decodeUnknownEffect(GuestProtocol.InvokeReply);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsReply);
+const decodeTouch = Schema.decodeUnknownEffect(Management.TouchReply);
 const decodeRefusal = Schema.decodeUnknownEffect(Management.Refusal);
 const isProviderError = Schema.is(TaskProvider.TaskProviderError);
 const taskDefinition = Schema.NonEmptyString.check(
@@ -178,6 +179,9 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   // so tasks of other definitions get neither, nor a cached address.
   const sameRelease = (task: ManagedTask) =>
     task.value.taskDefinitionArn === options.current.taskDefinition;
+  // Tasks seen running another release's definition, which they keep for life. A touch skips
+  // them without asking ECS again; nothing else reads this, and it is never an address.
+  const otherReleases = new Set<string>();
   const remember = (task: ManagedTask, now: number) => {
     for (const [taskId, entry] of endpoints) if (entry.expiresAt <= now) endpoints.delete(taskId);
     endpoints.delete(task.taskId);
@@ -271,7 +275,10 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     )
       return undefined;
     addresses.set(taskId, value.taskArn);
-    if (value.lastStatus === "STOPPED") endpoints.delete(taskId);
+    if (value.lastStatus === "STOPPED") {
+      endpoints.delete(taskId);
+      otherReleases.delete(taskId);
+    }
     return { value, taskId, deploymentRevision };
   };
   const describe = Effect.fn("EcsTaskProvider.describe")(function* (
@@ -748,6 +755,27 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
         "stats",
         taskId,
         call(taskId, "stats", (task) => exchange(task, "stats", "stats", request, decodeStats))
+      ),
+    // Older supervisors have no touch route, so only this release's are sent one.
+    touch: (taskId, request) =>
+      Effect.suspend(() =>
+        otherReleases.has(taskId)
+          ? Effect.succeed("unsupported" as const)
+          : bounded(
+              "touch",
+              taskId,
+              call(taskId, "touch", (task) => {
+                if (sameRelease(task))
+                  return exchange(task, "touch", "touch", request, decodeTouch).pipe(
+                    Effect.map((reply) => reply.outcome)
+                  );
+                // Live tasks stay within the fleet budget; evicting the oldest only guards a leak.
+                if (otherReleases.size >= endpointCapacity)
+                  otherReleases.delete(otherReleases.values().next().value!);
+                otherReleases.add(task.taskId);
+                return Effect.succeed("unsupported" as const);
+              })
+            )
       )
   });
 });

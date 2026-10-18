@@ -48,6 +48,10 @@ _Avoid_: cache hit (`joined` is neither a hit nor its own read)
 `rebound: true`: a tier 2 call or re-run whose invoke the supervisor refused before dispatch, because the bound process was reaped or replaced after bind, so it went back to bind once more. It stays set whatever came of that: success, `busy` from the bind, the deadline or another failure. The refused invoke ran no handler and is not counted in `attempts`. Nested calls keep their parent's process and never rebind. Unrelated to the `rebind` trigger, a development handler swap.
 _Avoid_: retry (nothing ran the first time), replay
 
+**Keepalive event**:
+The wide event for one host keeping a connected tier 2 version warm, from its first connected document's ready stream to its last document leaving. It counts `peakDocuments`, the [touches](../runtime/GLOSSARY.md) by what each found and the warmups by what each came to. A touch that found `absent` means the version was evicted or reaped while open; `unsupported` means its task runs a release without touches; `paused` and `unbound` sent none. A warmup is `resident` or `loading` when a touch found the process, `loaded` when a bind followed, `bound` when an older supervisor took a normal bind, and `failed` when that bind failed.
+_Avoid_: heartbeat log, presence record
+
 **Limit peak**:
 The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.
 _Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)

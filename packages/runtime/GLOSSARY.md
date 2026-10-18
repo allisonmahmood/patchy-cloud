@@ -88,6 +88,14 @@ _Avoid_: fleet controller, handler, security boundary
 A version bind that names the version and its SHA-256 without the bundle. A supervisor holding a live process for it answers as a bundle bind would; one that doesn't asks for the bundle before doing anything.
 _Avoid_: warm bind, touch, cached bind
 
+**Touch**:
+A management request that restarts the idle clock of a version's ready process on its company task, at the current binding epoch. It never loads, reserves or evicts: a touch that finds no process does nothing, so only a call or a warmup loads an evicted version. A host touches each version with a connected tier 2 document before its idle window ends, once per version however many documents hold it, until the last one disconnects or suspends while hidden. A paused patch's versions are not touched.
+_Avoid_: heartbeat (presence is the connection), keepalive bind, bind by hash
+
+**Warmup**:
+Loading a tier 2 document's version as its first stream becomes ready, while the client boots, unless a touch finds the process loaded. A document warms once: its reconnects, reauthentications and resumes only touch.
+_Avoid_: prefetch, preload (page assets)
+
 **Process generation**:
 The identity of one loaded version's process lifetime. A replacement process gets a new generation; a call from the previous generation has no authority.
 _Avoid_: version id, binding epoch, stream generation

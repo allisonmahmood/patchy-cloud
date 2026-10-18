@@ -25,6 +25,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
+import * as ConnectedVersions from "./ConnectedVersions.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as Runtime from "./Runtime.js";
@@ -126,6 +127,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
   Effect.gen(function* () {
     const admission = yield* StreamAdmission.StreamAdmission;
     const executionLifecycle = yield* Effect.serviceOption(ExecutionLifecycle.ExecutionLifecycle);
+    const connectedVersions = yield* Effect.serviceOption(ConnectedVersions.ConnectedVersions);
     const versions = yield* LoadedVersions.LoadedVersions;
     const events = yield* WideEvents.WideEvents;
     const limits = yield* Limits.Limits;
@@ -499,6 +501,13 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             if (closeReason !== undefined) return;
             executionReady = true;
             entry.send({ type: "ready" });
+            // The version loads while the client boots. A reconnect, reauthentication or resume
+            // names its previous generation and only keeps the version warm: a document warms
+            // once, so its renewals never reload a version evicted under pressure.
+            if (Option.isSome(connectedVersions))
+              yield* connectedVersions.value.connect(loaded, {
+                warm: request.headers["x-patchy-generation"] === undefined
+              });
             yield* documentSubscriptions.reconcile("ready");
             yield* Deferred.await(lifecycleClosed);
           }).pipe(

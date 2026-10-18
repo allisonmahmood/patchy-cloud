@@ -20,6 +20,7 @@ import { Session } from "@patchy/auth";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
+import * as ConnectedVersions from "./ConnectedVersions.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as Fixtures from "./test/fixtures.js";
@@ -320,6 +321,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          touch: () => Effect.succeed("absent" as const),
           connect: () =>
             Effect.gen(function* () {
               yield* Effect.acquireRelease(
@@ -385,6 +387,67 @@ it.layer(layer)("document streams", (it) => {
     }).pipe(Effect.scoped)
   );
 
+  it.effect(
+    "keeps a ready document's version warm until it disconnects, warming only its first stream",
+    () =>
+      Effect.gen(function* () {
+        const authority = yield* versionAuthority;
+        authority.state.retained.set(authority.initial.versionId, {
+          ...authority.initial,
+          manifest: { ...authority.initial.manifest, tier: 2 }
+        });
+        const connections: Array<{ readonly versionId: string; readonly warm: boolean }> = [];
+        let held = 0;
+        const streams = yield* makeStreams.pipe(
+          Effect.provide(authority.layer),
+          Effect.provide(WideEvents.layerNoop),
+          Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            connect: () => Effect.void,
+            acquire: () => Effect.die("A stream cannot admit an invocation."),
+            touch: () => Effect.die("Only the keepalive touches.")
+          }),
+          Effect.provideService(ConnectedVersions.ConnectedVersions, {
+            connect: (version, options) =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  connections.push({ versionId: version.versionId, warm: options.warm });
+                  held++;
+                }),
+                () =>
+                  Effect.sync(() => {
+                    held--;
+                  })
+              )
+          })
+        );
+        const ready = Effect.fnUntraced(function* (generation?: string) {
+          const document = yield* open("warm_document_one", generation).pipe(
+            Effect.provideService(RuntimeStream.RuntimeStream, streams)
+          );
+          const hello = frame(yield* document.pull);
+          assert.strictEqual(frame(yield* document.pull).type, "served");
+          assert.deepStrictEqual(frame(yield* document.pull), { type: "starting" });
+          assert.deepStrictEqual(frame(yield* document.pull), { type: "ready" });
+          return { ...document, generation: hello.type === "hello" ? hello.generation : "" };
+        });
+        const first = yield* ready();
+        assert.deepStrictEqual(connections, [
+          { versionId: authority.initial.versionId, warm: true }
+        ]);
+        // A reconnect names its previous generation: the version stays held, never warmed again.
+        const reconnected = yield* ready(first.generation);
+        assert.deepStrictEqual(frame(yield* first.pull), { type: "closed", reason: "replaced" });
+        assert.deepStrictEqual(connections[1], {
+          versionId: authority.initial.versionId,
+          warm: false
+        });
+        // A disconnect, including a hidden document's suspension, lets the version go.
+        yield* Scope.close(first.scope, Exit.void);
+        yield* Scope.close(reconnected.scope, Exit.void);
+        assert.strictEqual(held, 0);
+      }).pipe(Effect.scoped)
+  );
+
   it.effect("preserves the effective pool limit on a refused bind", () =>
     Effect.gen(function* () {
       const authority = yield* versionAuthority;
@@ -396,6 +459,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          touch: () => Effect.succeed("absent" as const),
           connect: () =>
             Effect.fail(
               new ExecutionLifecycle.LifecycleError({
@@ -444,6 +508,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          touch: () => Effect.succeed("absent" as const),
           connect: () =>
             Effect.acquireRelease(Effect.void, () =>
               Deferred.succeed(departed, undefined).pipe(Effect.asVoid)
@@ -498,6 +563,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          touch: () => Effect.succeed("absent" as const),
           connect: () =>
             Effect.gen(function* () {
               yield* Effect.acquireRelease(

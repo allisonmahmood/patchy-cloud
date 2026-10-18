@@ -23,6 +23,7 @@ import * as TaskProvider from "./TaskProvider.js";
 const decodeBind = Schema.decodeUnknownEffect(Management.BindReply);
 const decodeInvoke = Schema.decodeUnknownEffect(GuestProtocol.InvokeReply);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsReply);
+const decodeTouch = Schema.decodeUnknownEffect(Management.TouchReply);
 const decodeRefusal = Schema.decodeUnknownEffect(Management.Refusal);
 const isProviderError = Schema.is(TaskProvider.TaskProviderError);
 export interface Options {
@@ -162,7 +163,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
   });
   const post = Effect.fn("LocalTaskProvider.post")(function* (
     taskId: string,
-    operation: "bind" | "invoke" | "stats" | "quiesce",
+    operation: "bind" | "invoke" | "stats" | "quiesce" | "touch",
     body: object
   ) {
     const record = yield* current(taskId, operation);
@@ -222,7 +223,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
     return value;
   });
   const bounded = <A, E>(
-    operation: "bind" | "invoke" | "stats" | "quiesce",
+    operation: "bind" | "invoke" | "stats" | "quiesce" | "touch",
     taskId: string,
     effect: Effect.Effect<A, E>,
     timeout = managementTimeout
@@ -378,6 +379,16 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
             };
           });
         })
+      ),
+    // A task owner that outlived its host's checkout may not know the route; that touch fails.
+    touch: (taskId, request) =>
+      bounded(
+        "touch",
+        taskId,
+        post(taskId, "touch", request).pipe(
+          Effect.flatMap(decodeTouch),
+          Effect.map((reply) => reply.outcome)
+        )
       )
   });
 });

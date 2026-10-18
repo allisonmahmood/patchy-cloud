@@ -49,8 +49,8 @@ const revisions = [options.current, options.previous!];
 // Alternate external-service layer: ECS retains tasks and idempotency tokens across host clients.
 // Each supervisor accepts the secrets its host injected and answers at the task's address; a
 // fresh task can be given a stopped task's address. Supervisors hold the versions bound with their
-// bundle. "previous" models the release before identity checks and binds by hash: it refuses
-// `taskId` and `binding` as unknown keys.
+// bundle. "previous" models the release before identity checks, binds by hash and touches: it
+// refuses `taskId` and `binding` as unknown keys.
 const cloud = Effect.gen(function* () {
   const tasks = new Map<string, Task>();
   const tokens = new Map<string, string>();
@@ -84,6 +84,7 @@ const cloud = Effect.gen(function* () {
       /** Binds that carried a bundle's bytes, and binds by hash, refused ones included. */
       uploads: number;
       byHash: number;
+      touches: number;
     }
   >();
   let generations = 0;
@@ -168,7 +169,8 @@ const cloud = Effect.gen(function* () {
         invokes: 0,
         held: new Map(),
         uploads: 0,
-        byHash: 0
+        byHash: 0,
+        touches: 0
       });
       if (loseRunReply) {
         loseRunReply = false;
@@ -218,7 +220,8 @@ const cloud = Effect.gen(function* () {
               binding?: GuestProtocol.BundleBinding;
             })
           : { bindingEpoch: 0 };
-      if (body.binding !== undefined) supervisor.byHash++;
+      if (url.pathname === "/touch") supervisor.touches++;
+      else if (body.binding !== undefined) supervisor.byHash++;
       if (
         (body.taskId !== undefined || body.binding !== undefined) &&
         supervisor.revision === "previous"
@@ -267,6 +270,13 @@ const cloud = Effect.gen(function* () {
             },
             processGeneration: supervisor.held.get(key)
           })
+        );
+      }
+      if (url.pathname === "/touch") {
+        const key = `${body.binding?.patchId}/${body.binding?.versionId}`;
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ outcome: supervisor.held.has(key) ? "touched" : "absent" })
         );
       }
       if (url.pathname === "/stop") {
@@ -682,6 +692,49 @@ it.effect(
       assert.strictEqual(aws.describes() - before, 3);
       assert.include(aws.supervisor("older"), { uploads: 3, byHash: 0 });
     })
+);
+
+it.effect("touches only its own release's supervisors and asks ECS once about another's", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(1_000_000);
+    const aws = yield* cloud;
+    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const { companyId, patchId, versionId, sha256 } = versionBind("company-touched").bundle!;
+    const held = { companyId, patchId, versionId, sha256 };
+    yield* provider.start({ taskId: "touched", deploymentRevision: "current" });
+    yield* provider.bind("touched", versionBind("company-touched"));
+    const before = aws.describes();
+    assert.strictEqual(
+      yield* provider.touch("touched", { bindingEpoch: 1, binding: held }),
+      "touched"
+    );
+    assert.strictEqual(
+      yield* provider.touch("touched", {
+        bindingEpoch: 1,
+        binding: { ...held, versionId: "ver_evicted" }
+      }),
+      "absent"
+    );
+    // Its address was resolved by the bind, so neither touch asked ECS.
+    assert.strictEqual(aws.describes(), before);
+    assert.strictEqual(aws.supervisor("touched").touches, 2);
+
+    yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
+    yield* provider.bind("older", versionBind("company-older"));
+    const older = aws.describes();
+    for (let touch = 0; touch < 3; touch++)
+      assert.strictEqual(
+        yield* provider.touch("older", {
+          bindingEpoch: 1,
+          binding: { ...held, companyId: "company-older" }
+        }),
+        "unsupported"
+      );
+    // The older supervisor would refuse a touch; it is never sent one, and its release is known
+    // after the first lookup.
+    assert.strictEqual(aws.supervisor("older").touches, 0);
+    assert.strictEqual(aws.describes() - older, 1);
+  })
 );
 
 it.effect("refuses a stopped task's reused address before any effect and re-resolves", () =>
