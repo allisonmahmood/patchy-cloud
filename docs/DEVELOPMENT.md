@@ -484,7 +484,7 @@ can quote it.
   still starts and serves on the schema your commit leaves.
 - **The dev runner.** `pnpm exec vitest run scripts/dev`, then the real loop:
   `pnpm dev`, `up`, `shot`, `compare`, `film`, `transcript` and `down` in
-  this worktree, and one small `trial` when the change touches it.
+  this worktree. `trial` is part of the loop too, at a model run per side.
 
 ## How the runner works
 

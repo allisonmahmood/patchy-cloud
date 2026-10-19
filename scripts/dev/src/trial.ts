@@ -29,6 +29,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { layoutFor, StepUnavailable } from "./environment.js";
 import type { Side } from "./evidence.js";
+import { sectionKey } from "./publish.js";
 import type { Sanitizer } from "./sanitize.js";
 import { stepOutput } from "./steps.js";
 import {
@@ -208,6 +209,8 @@ const Event = Schema.Union([
     subtype: Schema.String,
     is_error: Schema.Boolean,
     result: Schema.optional(Schema.NullOr(Schema.String)),
+    /** Why a run that didn't succeed failed, as Claude Code says it. */
+    errors: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
     num_turns: Schema.optional(Schema.NullOr(Schema.Number)),
     total_cost_usd: Schema.optional(Schema.NullOr(Schema.Number)),
     permission_denials: Schema.optional(
@@ -399,7 +402,7 @@ export const makeTally = () => {
       return {
         ...common,
         ending: "failed",
-        detail: errorLine(end.result ?? "") ?? end.subtype,
+        detail: errorLine([...(end.errors ?? []), end.result ?? ""].join("\n")) ?? end.subtype,
         answer: null
       };
     }
@@ -577,6 +580,20 @@ export const cleanAttempt = Effect.fn("Trial.cleanAttempt")(function* (
 });
 
 // ---- The section ----------------------------------------------------------------
+
+/**
+ * The section's key in the PR body: `--key`, or the task's first words,
+ * redacted before it is slugged. The key is public in the section's markers,
+ * and a slug's lowercasing could hide a secret from redaction afterwards.
+ */
+export const trialKey = Effect.fn("Trial.trialKey")(function* (
+  task: string,
+  key: Option.Option<string>,
+  sanitizer: Sanitizer
+) {
+  const words = Option.getOrElse(key, () => task.trim().split(/\s+/).slice(0, 6).join(" "));
+  return sectionKey(yield* sanitizer.redact(words));
+});
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 

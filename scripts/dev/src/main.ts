@@ -96,6 +96,7 @@ import {
   runAgent,
   TaskRefused,
   taskRefusal,
+  trialKey,
   trialMarkdown
 } from "./trial.js";
 
@@ -1425,10 +1426,8 @@ const trial = Command.make(
     const refused = taskRefusal(task);
     if (refused !== null) return yield* new TaskRefused({ what: refused });
     yield* checkClaude(root);
-    const sectionName = sectionKey(
-      Option.getOrElse(key, () => task.trim().split(/\s+/).slice(0, 6).join(" "))
-    );
-    const run = yield* prepareRun({ root, command: "trial", key: sectionName, base, scenario, pr });
+    // The run folder has a fixed name: the section's key is only known once the task is redacted.
+    const run = yield* prepareRun({ root, command: "trial", key: "task", base, scenario, pr });
     const budget = { maxTurns, minutes };
     const tried = yield* Effect.scoped(
       Effect.gen(function* () {
@@ -1497,6 +1496,7 @@ const trial = Command.make(
       })
     );
     const { sanitizer } = tried;
+    const sectionName = yield* trialKey(task, key, sanitizer);
     const beforeAttempt =
       tried.beforeAttempt === null || tried.beforeShell === null
         ? null

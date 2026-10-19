@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { makeSanitizer } from "./sanitize.js";
@@ -16,6 +17,7 @@ import {
   makeTally,
   runAgent,
   taskRefusal,
+  trialKey,
   trialMarkdown
 } from "./trial.js";
 
@@ -168,6 +170,17 @@ describe("the filtered log", () => {
         })
       ]),
       { ending: "failed", detail: "Not logged in · Please run /login" }
+    );
+    assert.deepStrictEqual(
+      ending([
+        line({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: ["OAuth token has expired. Please run /login"]
+        })
+      ]),
+      { ending: "failed", detail: "OAuth token has expired. Please run /login" }
     );
     assert.deepStrictEqual(
       ending([], { exitCode: 1, stderr: "warming up\nError: no such model\n" }),
@@ -334,6 +347,20 @@ describe("trialMarkdown", () => {
     assert.include(markdown, "Claude Code reported no Patchy skill for after.");
     assert.notInclude(markdown, "Before");
   });
+
+  it.effect("redacts the section's key before slugging it", () =>
+    Effect.gen(function* () {
+      const sanitizer = yield* makeSanitizer({
+        stateDirs: [],
+        envs: [{ PATCHY_API_TOKEN: "Secret-Value-123" }]
+      });
+      const keys = [
+        yield* trialKey("Sign in with Secret-Value-123, then publish", Option.none(), sanitizer),
+        yield* trialKey("x", Option.some("logs Secret-Value-123"), sanitizer)
+      ];
+      assert.deepStrictEqual(keys, ["sign-in-with-redacted-then-publish", "logs-redacted"]);
+    }).pipe(Effect.provide(NodeServices.layer))
+  );
 
   it.effect("redacts and normalizes a long line before cutting it", () =>
     Effect.gen(function* () {
