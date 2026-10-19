@@ -135,6 +135,7 @@ server is not watched: after a code change, `pnpm dev stop && pnpm dev`.
 | `pnpm dev shot <person> [path]`       | A full-page PNG of a page as one person, with its HTTP status and browser errors.                  |
 | `pnpm dev compare <person> <path>...` | Pages before and after as one person, from throwaway instances at both commits, laid out for a PR. |
 | `pnpm dev film <person> <flow>`       | A Playwright flow recorded before and after, as captioned mp4s side by side, for a PR.             |
+| `pnpm dev transcript <script>`        | CLI lines run before and after as the scenario's signed-in CLI, compared line by line, for a PR.   |
 | `pnpm dev down`                       | Stop everything the instance or environment started and delete what it made.                       |
 
 `pnpm --silent dev … --json` keeps pnpm's echo out of the JSON. One
@@ -227,8 +228,9 @@ before deleting anything.
 
 ### Showing a change in a PR
 
-`pnpm dev compare` and `pnpm dev film` show a change before and after, for a PR
-body. Both run on **evidence instances**, never this worktree's own: two shared
+`pnpm dev compare`, `pnpm dev film` and `pnpm dev transcript` show a change
+before and after, for a PR body. All three run on **evidence instances**, never
+this worktree's own: two shared
 clones of the repository under `$XDG_DATA_HOME/patchy-dev/<label>.evidence/`,
 one at the base and one at `HEAD`, each brought up by its own runner on fresh
 scenario data. When the command ends, however it ends, both are taken down and
@@ -247,14 +249,35 @@ and so does `pnpm dev down`, which otherwise deletes the checkouts too.
   uploads the files it references; its head must be `HEAD`. Without `--pr`
   the command prints the `gh pr edit` line that would. `--json` prints the
   commits, files, statuses and section.
-- **Prerequisites:** Playwright's Chromium, from
+- **Prerequisites:** for `compare` and `film`, Playwright's Chromium, from
   `pnpm exec playwright install chromium`; for `film`, an `ffmpeg` built with
   libx264; for `--pr`, gh 2.102 or later, signed in with write access to the
   repository. Each is checked before anything starts.
 
+`pnpm dev transcript <script>` runs a script of shell lines on each side as
+the scenario publisher's signed-in CLI. Each non-blank line is a command, and a
+`#` line captions the commands after it. Each line runs in its own `bash -c`,
+stdin closed, from the side's agent workspace, with the runner's closed
+environment: the side's `bin` first on `PATH`, its `PATCHY_STATE_DIR` set, and
+nothing else from your shell, so an exported `PATCHY_API_TOKEN` or
+`PATCHY_API_URL` can't steer it. Only files carry between lines; chain with
+`&&` on one line. A non-zero exit is recorded and the script goes on. A line
+past `--timeout` (60 seconds) is killed and recorded; on `HEAD` that fails the
+command and publishes nothing. A line that runs `patchy setup` or installs
+globally is refused before anything starts, since lines run as you.
+
+Before comparing, each side's origin becomes `<origin>`, its environment
+folder `<env>`, its checkout `<checkout>` and your home folder `~`; every other
+difference stays. One sanitizer redacts what it collected before anything is
+written: the values in each side's CLI state, read before the run and after
+every line (so a login code a later `patchy logout` clears is still known),
+anything shaped like a machine token (`pp_…`), and secret-named variables the
+runner passes. The section says which matched. Redaction is a backstop, not a
+guarantee; read the section before publishing.
+
 A cold run takes under a minute on `team` and about two on `brightline`. The
-`patchy-dev-loop` skill says how to write a flow; the `pr-evidence` skill
-covers what each command shows.
+`patchy-dev-loop` skill says how to write a flow and a script; the
+`pr-evidence` skill covers what each command shows.
 
 ### Signing in with Clerk
 

@@ -1,6 +1,6 @@
 ---
 name: patchy-dev-loop
-description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, to capture pages or a flow before and after for a PR, or when a dev instance is reported unhealthy.
+description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, to capture pages, a flow or CLI lines before and after for a PR, or when a dev instance is reported unhealthy.
 metadata:
   internal: "true"
 ---
@@ -88,9 +88,9 @@ Before calling a change ready to ship, run `pnpm verify`.
 
 ## Before and after, for a PR
 
-`pnpm dev compare` and `pnpm dev film` capture both sides on throwaway
-evidence instances: clones at the base and at `HEAD`, on fresh scenario data,
-taken down when the command ends. They never use this worktree's instance, so
+`pnpm dev compare`, `pnpm dev film` and `pnpm dev transcript` capture both
+sides on throwaway evidence instances: clones at the base and at `HEAD`, on
+fresh scenario data, taken down when the command ends. They never use this worktree's instance, so
 it can be up or down. They show commits: commit first, and with `--pr` push
 too. DEVELOPMENT's **Showing a change in a PR** has the details and
 prerequisites; the `pr-evidence` skill says what each shows.
@@ -100,6 +100,9 @@ prerequisites; the `pr-evidence` skill says what each shows.
   content, and prints each side's status and browser errors.
 - `pnpm dev film <person> <flow-file> [--path /] [--after-only]` runs a flow on
   both sides and joins the two videos side by side.
+- `pnpm dev transcript <script> [--timeout 60]` runs a script of shell lines on
+  both sides as the scenario's signed-in CLI and compares each line's output,
+  exit code and time.
 - "Before" is where `HEAD` left `origin/main`; `--base <ref>` picks another
   commit, and `--pr <number>` the PR's base branch. Both sides run this
   worktree's scenario, or `team`; `--scenario brightline` has patches of every
@@ -107,7 +110,8 @@ prerequisites; the `pr-evidence` skill says what each shows.
 - `--pr <number>` puts the section in the PR body and uploads its files. A
   re-run replaces its own section: compare's is keyed by the person (`--key`
   overrides), film's by the flow's file name. Without `--pr`, the section is
-  written under `.local/shots/` with the `gh` line that publishes it.
+  written under `.local/shots/` with the `gh` line that publishes it. A
+  transcript's is keyed by the script's file name.
 
 A flow is a module whose default export drives a page that is already signed
 in as the person, at `--path`. Keep it outside the repo's tracked files, such
@@ -138,3 +142,30 @@ export default (async ({ page, step }) => {
   on `HEAD` keeps its video, publishes nothing and exits 1.
 - Each side starts from fresh scenario data, so a flow that writes runs the
   same every time.
+
+A transcript script is a text file, also kept outside tracked files, such as
+`.local/transcripts/`. Each non-blank line is a command, and a `#` line
+captions the commands after it:
+
+```sh
+# A patch's log
+cd new-business && patchy logs --limit 1
+# Signing in, then out
+patchy login
+patchy logout
+patchy whoami
+```
+
+- Each line runs in its own `bash -c` from the side's agent workspace, which
+  holds the scenario's patch repos, with stdin closed. Only files carry over:
+  chain with `&&` on one line.
+- `patchy` is the side's own release, logged in as the scenario's publisher.
+  Your shell's `PATCHY_API_TOKEN`, `PATCHY_API_URL` and every other variable
+  stay out.
+- A non-zero exit is recorded and the script goes on. A line past `--timeout`
+  is killed; on `HEAD` that fails the command and publishes nothing.
+- Lines run as you, with your HOME. A line running `patchy setup` or a global
+  install is refused before anything starts.
+- Origins and paths read `<origin>`, `<env>`, `<checkout>` and `~`; every
+  other difference shows. Collected secrets read `[redacted]`. Read the
+  section before publishing anyway.

@@ -53,6 +53,32 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   head exits 1 and publishes nothing. The joined video is 2560px wide, so each
   side shows about 440px inline; full screen shows the detail.
 
+## CLI lines before and after: `pnpm dev transcript`
+
+- **Shows** what a change does to the CLI's interface: each line's output,
+  exit code and time on the base and the head, run as the scenario's
+  signed-in CLI. A changed line shows after's output and the diff from before;
+  an unchanged line folds to "no change".
+- **Make** it by writing a script, one shell line per command with `#` lines
+  as captions (the `patchy-dev-loop` skill shows one), and running
+  `pnpm dev transcript <script>` with the change committed. Lines start in the
+  agent workspace, which holds the scenario's patch repos, so on `brightline`
+  `cd new-business && patchy logs` reads a published patch. `--pr` publishes
+  as compare does, with nothing to upload.
+- **Costs** about a minute and a half on `brightline` from cold, both sides in
+  parallel. A `patchy` line adds under a second on each side.
+- **Gotchas.** Each side's origin and paths are normalized, and nothing else:
+  ids, times and the clock time a login code expires all differ between two
+  fresh instances and show as changes. Before is the base's own CLI release,
+  so a command or flag the base lacks fails there, which is often the point.
+  Secrets the sanitizer collected read `[redacted]`, and the section says
+  which sources matched; it is a backstop, so read the section before
+  publishing. stdin is closed, so a command that would wait for a person
+  reports instead. Lines run as you, with your HOME: `patchy setup` and global
+  installs are refused, and nothing else a line writes outside the workspace
+  is undone. Past 30 lines, the middle of an output or diff is cut, keeping
+  the first 20 and last 10; `--json` has all of it.
+
 ## A test, red then green
 
 - **Shows** that the change does what it claims and keeps doing it. The
@@ -84,41 +110,24 @@ is done when each thing in Look at carries evidence that matches the PR's head.
 
 - **Shows** that a command behaves as claimed: its output, its `--json` shape,
   its exit code and its refusals. ADR-0004 is the CLI's contract.
-- **Make** it by running the command and pasting it with its output in a
-  fenced block, with `echo $?` after it where the exit code matters. The
-  worktree's own instance can hold the developer's data, so until
-  `pnpm dev transcript` (#792) lands, run it in a throwaway checkout and
-  instance seeded with scenario data at the intended commit
-  (`scenarios/README.md` lists the scenarios):
-
-  ```sh
-  git worktree add --detach /tmp/<name> <commit>
-  cd /tmp/<name>
-  pnpm install --frozen-lockfile && pnpm dev up <scenario>
-  env -u PATCHY_API_URL -u PATCHY_API_TOKEN pnpm patchy …
-  pnpm dev down && cd - && git worktree remove --force /tmp/<name>
-  ```
-
-  `pnpm patchy` runs the CLI from source against that checkout's instance (the
-  `patchy-dev-loop` skill), and `env -u` keeps the shell's Patchy settings out.
-
-- **Costs** seconds a command, after about two minutes for the throwaway
-  checkout: a minute or so to install, under half a minute for
-  `pnpm dev up team`.
+- **Make** it with `pnpm dev transcript` for the `patchy` CLI, above. For what
+  it doesn't run, such as `pnpm dev` itself, a repo script or a command that
+  needs a person at the terminal, run the command and paste it with its output
+  in a fenced block, with `echo $?` after it where the exit code matters.
+- **Costs** seconds a command.
 - **Gotchas.** Output carries what the shell can reach: tokens, home paths,
-  local ports, ids. Trim it to what makes the point. An exported
-  `PATCHY_API_TOKEN` wins over stored and seeded keys. An exported `PATCHY_API_URL`
-  steers an environment's installed CLI, `<env>/bin/patchy` beside the `agent`
-  launcher `pnpm dev up` prints, which otherwise reads `~/.patchy`. Any of these
-  can point at production. The launcher clears both and sets its state dir; by
-  hand, run
+  local ports, ids. Trim it to what makes the point. The worktree's own
+  instance can hold your data. An exported `PATCHY_API_TOKEN` wins over stored
+  and seeded keys. An exported `PATCHY_API_URL` steers an environment's
+  installed CLI, `<env>/bin/patchy` beside the `agent` launcher `pnpm dev up`
+  prints, which otherwise reads `~/.patchy`. Any of these can point at
+  production. The launcher clears both and sets its state dir; by hand, run
   `env -u PATCHY_API_URL -u PATCHY_API_TOKEN PATCHY_STATE_DIR=<env>/cli-state <env>/bin/patchy …`.
 
 ## Not built yet
 
-`pnpm dev transcript` (#792) shows a CLI script's output before and after, and
-`trial` (#793) a fresh agent trying a task. Each adds its entry here when it
-lands.
+`trial` (#793) shows a fresh agent trying a task. It adds its entry here when
+it lands.
 
 ## Publishing
 
@@ -129,7 +138,7 @@ lands.
 - An attached `![name](x.mp4)` alone in its own paragraph, with blank lines
   around it, plays inline; sharing a paragraph, it becomes a link.
 - At most 50 attachments per command and 10 MB per file.
-- `compare` and `film` with `--pr` keep each section between
+- `compare`, `film` and `transcript` with `--pr` keep each section between
   `<!-- patchy-dev:<command>:<key> -->` markers. A re-run replaces its own
   section wherever it was moved and leaves the rest of the body alone. When
   some uploads fail, gh still updates the body; the command names the files
