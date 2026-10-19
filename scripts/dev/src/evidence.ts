@@ -11,9 +11,9 @@
  * run ends, however it ends, a finalizer takes both instances down with their
  * own runners, which deletes their data. The checkouts and `node_modules`
  * stay, so the next run skips the clone and installs incrementally. One run at
- * a time per worktree: the lock folder `<label>.evidence.lock/` spans setup,
- * capture and cleanup, and `pnpm dev down` takes it too before deleting the
- * clones.
+ * a time per worktree: the lock folder `<label>.evidence/lock/`, made before
+ * anything else, spans setup, capture and cleanup, and `pnpm dev down` takes
+ * it too before deleting the folder, lock and all.
  */
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -126,6 +126,9 @@ export const provenanceLines = (input: Provenance) => {
     lines.push("", `Before couldn't be shown: ${input.before.reason} This shows after only.`);
   return lines;
 };
+
+/** The lock lives inside the evidence folder, so deleting the folder deletes it too. */
+const lockDirOf = (evidenceDir: string) => `${evidenceDir}/lock`;
 
 const evidenceDirOf = (worktree: string) =>
   Effect.map(environmentDir(worktree), (dir) => `${dir}.evidence`);
@@ -473,7 +476,7 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
   /** The run's folder, absolute; a side that fails to come up leaves its log here. */
   readonly runDir: string;
 }) {
-  yield* acquireLock(`${yield* evidenceDirOf(input.root)}.lock`, input.command);
+  yield* acquireLock(lockDirOf(yield* evidenceDirOf(input.root)), input.command);
   const [before, after] = yield* Effect.all(
     [
       Option.match(input.before, {
@@ -511,9 +514,9 @@ export const removeEvidence = Effect.fn("Evidence.removeEvidence")(function* (ro
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* evidenceDirOf(root);
-  // First, even with no checkouts yet: a run may be about to make them.
-  yield* acquireLock(`${dir}.lock`, "down");
+  // A run makes the folder with its lock before anything else, so no folder means no run.
   if (!(yield* fs.exists(dir))) return false;
+  yield* acquireLock(lockDirOf(dir), "down");
   const env = yield* cloneEnv(root);
   for (const side of ["before", "after"] as const) {
     const clone = path.join(dir, side);
