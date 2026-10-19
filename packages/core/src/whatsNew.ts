@@ -50,6 +50,30 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 15,
+    date: "2026-10-19",
+    through: "9e4b0dfc8f5868035c8c40821b28145a4abbd804",
+    changes: [
+      {
+        kind: "New",
+        title: "Your agent can read a tool's log",
+        detail:
+          "When a tool your agent published goes wrong, the agent can now read the tool's log itself, errors included, instead of you copying them out of the Log tab. Ask it to look at what happened, fix the tool and publish again. It sees the same log you do as the tool's owner or a company admin.",
+        prs: [786]
+      },
+      {
+        kind: "Fixed",
+        title: "Tools with server code keep one steady connection",
+        detail:
+          "Opening a tool with server code sometimes dropped its live connection a moment later and set it up again, which held up its data. It now stays connected from the start.",
+        prs: [798]
+      }
+    ],
+    behindTheScenes: [
+      "A tool left open but unused no longer keeps its server running all the time. After a while the server rests, and it starts again when you next use the tool."
+    ]
+  },
+  {
     id: 14,
     date: "2026-10-19",
     through: "7694babf056f355ba9cd0e239febfd1cae907d7a",
