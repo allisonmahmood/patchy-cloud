@@ -1,6 +1,6 @@
 ---
 name: patchy-dev-loop
-description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, or when a dev instance is reported unhealthy.
+description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, to capture pages or a flow before and after for a PR, or when a dev instance is reported unhealthy.
 metadata:
   internal: "true"
 ---
@@ -85,3 +85,56 @@ An instance that was already running when you arrived belongs to whoever
 started it; leave it up.
 
 Before calling a change ready to ship, run `pnpm verify`.
+
+## Before and after, for a PR
+
+`pnpm dev compare` and `pnpm dev film` capture both sides on throwaway
+evidence instances: clones at the base and at `HEAD`, on fresh scenario data,
+taken down when the command ends. They never use this worktree's instance, so
+it can be up or down. They show commits: commit first, and with `--pr` push
+too. DEVELOPMENT's **Showing a change in a PR** has the details and
+prerequisites; the `pr-evidence` skill says what each shows.
+
+- `pnpm dev compare <person> <path>... [--width 1280,390]` takes a full-page
+  PNG of every path at every width on both sides, patch frames grown to their
+  content, and prints each side's status and browser errors.
+- `pnpm dev film <person> <flow-file> [--path /] [--after-only]` runs a flow on
+  both sides and joins the two videos side by side.
+- "Before" is where `HEAD` left `origin/main`; `--base <ref>` picks another
+  commit, and `--pr <number>` the PR's base branch. Both sides run this
+  worktree's scenario, or `team`; `--scenario brightline` has patches of every
+  tier.
+- `--pr <number>` puts the section in the PR body and uploads its files. A
+  re-run replaces its own section: compare's is keyed by the person (`--key`
+  overrides), film's by the flow's file name. Without `--pr`, the section is
+  written under `.local/shots/` with the `gh` line that publishes it.
+
+A flow is a module whose default export drives a page that is already signed
+in as the person, at `--path`. Keep it outside the repo's tracked files, such
+as `.local/flows/`:
+
+```ts
+import type { Flow } from "../../scripts/dev/src/film.ts";
+
+export default (async ({ page, step }) => {
+  await step("Search Home for kudos"); // captions the video and holds it
+  await page.getByPlaceholder(/search/i).fill("kudos");
+  await page.keyboard.press("Enter");
+  await step("Open it");
+  await page.getByRole("link", { name: /kudos/i }).first().click();
+  await page
+    .frameLocator("iframe#patch")
+    .getByRole("heading", { name: "Kudos", exact: true })
+    .waitFor();
+}) satisfies Flow;
+```
+
+- `page` is Playwright's. Relative URLs resolve against each side's instance.
+  A patch's content is inside `frameLocator("iframe#patch")`.
+- Use role, label and placeholder locators. Actions wait 5 seconds and
+  navigations 15, so a missing element ends the take quickly.
+- A flow for something new fails on the base: that take stops at the missing
+  element, captioned in red, and the command still succeeds. A flow that fails
+  on `HEAD` keeps its video, publishes nothing and exits 1.
+- Each side starts from fresh scenario data, so a flow that writes runs the
+  same every time.

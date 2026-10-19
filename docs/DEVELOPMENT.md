@@ -121,19 +121,21 @@ once and keeps using the instance. Ports come from a hash of the worktree path,
 so worktrees run side by side; use the printed URL, not a remembered port. The
 server is not watched: after a code change, `pnpm dev stop && pnpm dev`.
 
-| Command                         | What it does                                                                                      |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                      | Start (or confirm) this worktree's instance and print the plan; `--json` for scripts.             |
-| `pnpm dev --clerk`              | The same, signing people in through Clerk; see [Signing in with Clerk](#signing-in-with-clerk).   |
-| `pnpm dev --dry-run --json`     | Print the plan this worktree would run with; touches nothing.                                     |
-| `pnpm dev status`               | Exit 0 only when the recorded processes are alive and `/healthz` answers.                         |
-| `pnpm dev stop`                 | Stop the instance; its data stays.                                                                |
-| `pnpm dev logs`                 | Print `dev.log`: every process's lines, wide events and startup failures.                         |
-| `pnpm dev reset`                | Stop, wipe `.local/dev/` and start fresh.                                                         |
-| `pnpm dev up [scenario]`        | An environment: a scenario's company, people and patches, a logged-in CLI and an agent workspace. |
-| `pnpm dev open <person>`        | A browser window with its own profile, signed in as one of the environment's people.              |
-| `pnpm dev shot <person> [path]` | A full-page PNG of a page as one person, with its HTTP status and browser errors.                 |
-| `pnpm dev down`                 | Stop everything the instance or environment started and delete what it made.                      |
+| Command                               | What it does                                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                            | Start (or confirm) this worktree's instance and print the plan; `--json` for scripts.              |
+| `pnpm dev --clerk`                    | The same, signing people in through Clerk; see [Signing in with Clerk](#signing-in-with-clerk).    |
+| `pnpm dev --dry-run --json`           | Print the plan this worktree would run with; touches nothing.                                      |
+| `pnpm dev status`                     | Exit 0 only when the recorded processes are alive and `/healthz` answers.                          |
+| `pnpm dev stop`                       | Stop the instance; its data stays.                                                                 |
+| `pnpm dev logs`                       | Print `dev.log`: every process's lines, wide events and startup failures.                          |
+| `pnpm dev reset`                      | Stop, wipe `.local/dev/` and start fresh.                                                          |
+| `pnpm dev up [scenario]`              | An environment: a scenario's company, people and patches, a logged-in CLI and an agent workspace.  |
+| `pnpm dev open <person>`              | A browser window with its own profile, signed in as one of the environment's people.               |
+| `pnpm dev shot <person> [path]`       | A full-page PNG of a page as one person, with its HTTP status and browser errors.                  |
+| `pnpm dev compare <person> <path>...` | Pages before and after as one person, from throwaway instances at both commits, laid out for a PR. |
+| `pnpm dev film <person> <flow>`       | A Playwright flow recorded before and after, as captioned mp4s side by side, for a PR.             |
+| `pnpm dev down`                       | Stop everything the instance or environment started and delete what it made.                       |
 
 `pnpm --silent dev … --json` keeps pnpm's echo out of the JSON. One
 `relation "schema_migrations" does not exist` line in a fresh `dev.log` is
@@ -222,6 +224,37 @@ environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
 `down` stops the workspace's patch dev sessions and the persons' browsers
 before deleting anything.
+
+### Showing a change in a PR
+
+`pnpm dev compare` and `pnpm dev film` show a change before and after, for a PR
+body. Both run on **evidence instances**, never this worktree's own: two shared
+clones of the repository under `$XDG_DATA_HOME/patchy-dev/<label>.evidence/`,
+one at the base and one at `HEAD`, each brought up by its own runner on fresh
+scenario data. When the command ends, however it ends, both are taken down and
+their data deleted; the checkouts and their `node_modules` stay, so the next
+run skips the clone. One run at a time per worktree: a second fails at once,
+and so does `pnpm dev down`, which otherwise deletes the checkouts too.
+
+- **Before** is where `HEAD` left `origin/main`, or the PR's base branch with
+  `--pr`, or `--base <ref>`. **After** is `HEAD`. Uncommitted changes and new
+  files aren't included, and `--pr` refuses to run with them.
+- **The scenario** is this worktree's environment's, or `team`; `--scenario`
+  picks another. A base that can't set it up, or lacks the person, shows after
+  only and says why.
+- **Output** lands in `.local/shots/<run>/`: the PNGs or videos, and the PR
+  section as markdown. `--pr <number>` puts the section in that PR's body and
+  uploads the files it references; its head must be `HEAD`. Without `--pr`
+  the command prints the `gh pr edit` line that would. `--json` prints the
+  commits, files, statuses and section.
+- **Prerequisites:** Playwright's Chromium, from
+  `pnpm exec playwright install chromium`; for `film`, an `ffmpeg` built with
+  libx264; for `--pr`, gh 2.102 or later, signed in with write access to the
+  repository. Each is checked before anything starts.
+
+A cold run takes under a minute on `team` and about two on `brightline`. The
+`patchy-dev-loop` skill says how to write a flow; the `pr-evidence` skill
+covers what each command shows.
 
 ### Signing in with Clerk
 
@@ -397,7 +430,7 @@ can quote it.
   Commit, then `pnpm test:rollback-rehearsal` checks that the live release
   still starts and serves on the schema your commit leaves.
 - **The dev runner.** `pnpm exec vitest run scripts/dev`, then the real loop:
-  `pnpm dev`, `up`, `shot` and `down` in this worktree.
+  `pnpm dev`, `up`, `shot`, `compare`, `film` and `down` in this worktree.
 
 ## How the runner works
 

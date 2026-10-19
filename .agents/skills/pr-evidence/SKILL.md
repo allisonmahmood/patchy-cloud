@@ -16,32 +16,42 @@ what it costs and where it goes wrong. Pick what shows your change; one that
 touches a page, a flow and a command may want one kind or several. The summary
 is done when each thing in Look at carries evidence that matches the PR's head.
 
-## Screenshots: `pnpm dev shot`
+## Pages before and after: `pnpm dev compare`
 
-- **Shows** a page as one person sees it, patch frames included, with the
-  final URL, the HTTP status and every browser error.
-- **Make** it with `pnpm dev shot <person> <path> --out <file>`, a full-page
-  PNG; `<person>` is an email, or a scenario person's key or first name. Read
-  the PNG before publishing it. Before and after takes two instances, one at
-  the base commit and one at the head.
-- **Costs** about two minutes a side for a fresh checkout: a minute or so to
-  install, under half a minute for `pnpm dev up team` (`brightline` takes about
-  a minute), then two seconds a shot.
-- **Gotchas.** `shot` captures the worktree's own instance, which can hold the
-  developer's data and uncommitted code. Until #725 lands, publish only from a
-  separate throwaway checkout and instance, seeded with scenario data at the
-  intended commit. Don't reset the developer's instance to produce evidence.
-  One way, with `scenarios/README.md` listing the scenarios:
+- **Shows** pages as one person sees them on the base and on the head:
+  full-page PNGs at each width, patch frames grown to their content, with each
+  side's HTTP status and browser errors.
+- **Make** it with `pnpm dev compare <person> <path>... [--width 1280,390]`,
+  with the change committed. Both sides run on throwaway evidence instances at
+  exact commits with fresh scenario data, so the PNGs hold only scenario data.
+  `--pr <number>` lays the section out in the PR body and uploads its PNGs;
+  without it, the section is written under `.local/shots/` with the `gh` line
+  that publishes it. Read the PNGs before publishing.
+- **Costs** about 45 seconds for one page on `team` from cold, both sides in
+  parallel, and about two minutes for five `brightline` pages at two widths.
+  Each run starts two instances and takes them down when it ends.
+- **Gotchas.** Byte-identical PNGs say "No visible change" and leave "before"
+  out. Portal pages that show times, such as "Opened 1 minute ago", can differ
+  anyway. A page that scrolls inside an element is cut at that element's fold,
+  and the section says so. A base that can't set up the scenario or lacks the
+  person shows after only and says why. Desktop widths put "after" full width
+  with "before" one click away; phone widths sit side by side. `pnpm dev shot`
+  captures the worktree's own instance, which can hold the developer's data
+  and uncommitted code: it is for looking locally, not for a PR.
 
-  ```sh
-  git worktree add --detach /tmp/<name> <commit>
-  cd /tmp/<name>
-  pnpm install --frozen-lockfile && pnpm dev up <scenario>
-  pnpm dev shot <person> <path> --out /tmp/<pr-folder>/after.png
-  pnpm dev down && cd - && git worktree remove --force /tmp/<name>
-  ```
+## A flow on video: `pnpm dev film`
 
-  The checkout's folder name becomes the instance's host, which pages can show.
+- **Shows** a flow working: the same steps on the base and the head, side by
+  side, captioned, with a cursor and a ring at each click.
+- **Make** it by writing a flow (the `patchy-dev-loop` skill shows one) and
+  running `pnpm dev film <person> <flow-file> [--path <start>]`.
+  `--after-only` films the head alone. `--pr` publishes as compare does.
+- **Costs** about a minute on `brightline` once the checkouts exist. A take of
+  ten seconds is about 0.1 MB, and side by side about 0.25 MB.
+- **Gotchas.** A flow for something new fails on the base: that take ends on
+  the error in red, and the command still succeeds. A flow that fails on the
+  head exits 1 and publishes nothing. The joined video is 2560px wide, so each
+  side shows about 440px inline; full screen shows the detail.
 
 ## A test, red then green
 
@@ -75,12 +85,26 @@ is done when each thing in Look at carries evidence that matches the PR's head.
 - **Shows** that a command behaves as claimed: its output, its `--json` shape,
   its exit code and its refusals. ADR-0004 is the CLI's contract.
 - **Make** it by running the command and pasting it with its output in a
-  fenced block, with `echo $?` after it where the exit code matters. In the
-  throwaway checkout above,
-  `env -u PATCHY_API_URL -u PATCHY_API_TOKEN pnpm patchy …` runs the CLI from
-  source against that checkout's instance (the `patchy-dev-loop` skill),
-  without the shell's Patchy settings.
-- **Costs** seconds.
+  fenced block, with `echo $?` after it where the exit code matters. The
+  worktree's own instance can hold the developer's data, so until
+  `pnpm dev transcript` (#792) lands, run it in a throwaway checkout and
+  instance seeded with scenario data at the intended commit
+  (`scenarios/README.md` lists the scenarios):
+
+  ```sh
+  git worktree add --detach /tmp/<name> <commit>
+  cd /tmp/<name>
+  pnpm install --frozen-lockfile && pnpm dev up <scenario>
+  env -u PATCHY_API_URL -u PATCHY_API_TOKEN pnpm patchy …
+  pnpm dev down && cd - && git worktree remove --force /tmp/<name>
+  ```
+
+  `pnpm patchy` runs the CLI from source against that checkout's instance (the
+  `patchy-dev-loop` skill), and `env -u` keeps the shell's Patchy settings out.
+
+- **Costs** seconds a command, after about two minutes for the throwaway
+  checkout: a minute or so to install, under half a minute for
+  `pnpm dev up team`.
 - **Gotchas.** Output carries what the shell can reach: tokens, home paths,
   local ports, ids. Trim it to what makes the point. An exported
   `PATCHY_API_TOKEN` wins over stored and seeded keys. An exported `PATCHY_API_URL`
@@ -92,8 +116,7 @@ is done when each thing in Look at carries evidence that matches the PR's head.
 
 ## Not built yet
 
-`pnpm dev compare` and `film` (#725) show pages and flows before and after from
-throwaway evidence instances, `transcript` (#792) a CLI script's output, and
+`pnpm dev transcript` (#792) shows a CLI script's output before and after, and
 `trial` (#793) a fresh agent trying a task. Each adds its entry here when it
 lands.
 
@@ -106,6 +129,11 @@ lands.
 - An attached `![name](x.mp4)` alone in its own paragraph, with blank lines
   around it, plays inline; sharing a paragraph, it becomes a link.
 - At most 50 attachments per command and 10 MB per file.
+- `compare` and `film` with `--pr` keep each section between
+  `<!-- patchy-dev:<command>:<key> -->` markers. A re-run replaces its own
+  section wherever it was moved and leaves the rest of the body alone. When
+  some uploads fail, gh still updates the body; the command names the files
+  left as local paths and exits 1, and running it again replaces the section.
 - Uploads are public by URL, and so is the repo: only scenario data, never
   tokens.
 - Re-run after a push that changes what the evidence shows. Editing the body
