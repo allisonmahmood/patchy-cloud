@@ -60,6 +60,11 @@ describe("redactText", () => {
         "git config user.email '[redacted]'",
         quoted
       );
+    // Apostrophes may be the whole local part.
+    assert.strictEqual(
+      redactText(new Map(), "'@company.com ''%40company.com").text,
+      "'[redacted] ''[redacted]"
+    );
     // A run with no `@` is scanned once: quadratic scanning takes seconds here.
     const started = performance.now();
     for (const run of ["a'", "'"]) redactText(new Map(), run.repeat(64 * 1024));

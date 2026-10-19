@@ -54,11 +54,15 @@ const LOGIN_CODE = /\b[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}\b/g;
  * punycode), so `patchy@0.14.0` isn't one. A match only starts where a run
  * of local-part characters does, so a long run with no `@` is scanned once,
  * not once per character. Leading apostrophes, as in `'jane@company.com'` or
- * `'"jane doe"@company.com'`, are matched but left out of the span; a plain
- * local part never starts with one, so they are read once.
+ * `'"jane doe"@company.com'`, are matched but left out of the span, and may
+ * be all there is before the `@`. A local part never starts with one, so they
+ * are read once.
  */
-const EMAIL =
-  /(?<![\p{L}\p{N}._%+'-])'*(?:"[^"\n]+"|[\p{L}\p{N}._%+-][\p{L}\p{N}._%+'-]*)(?:@|%40)(?:[\p{L}\p{N}-]+\.)+(?:\p{L}{2,}|xn--[\p{L}\p{N}-]+)(?![\p{L}\p{N}-])/giu;
+const LOCAL_PART = String.raw`(?:"[^"\n]+"|[\p{L}\p{N}._%+-][\p{L}\p{N}._%+'-]*)`;
+const EMAIL = new RegExp(
+  String.raw`(?<![\p{L}\p{N}._%+'-])(?:'+${LOCAL_PART}?|${LOCAL_PART})(?:@|%40)(?:[\p{L}\p{N}-]+\.)+(?:\p{L}{2,}|xn--[\p{L}\p{N}-]+)(?![\p{L}\p{N}-])`,
+  "giu"
+);
 /**
  * Domains reserved for examples and tests (RFC 2606, 6761), which every
  * scenario person uses, and the seed's `patchy.local`. Other `.local` names
