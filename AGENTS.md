@@ -57,7 +57,7 @@ Review notes belong in PR comments, not in the working tree.
 
 ### Issue tracker
 
-Issues live in the `allisonmahmood/patchy-cloud` GitHub repo, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in the `allisonmahmood/patchy-cloud` GitHub repo, managed with the `gh` CLI. Read `docs/agents/issue-tracker.md` before filing or changing one.
 
 ### Triage labels
 
