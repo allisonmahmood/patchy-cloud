@@ -83,7 +83,7 @@ is done when each thing in Look at carries evidence that matches the PR's head.
 - **Costs** seconds.
 - **Gotchas.** Output carries what the shell can reach: tokens, home paths,
   local ports, ids. Trim it to what makes the point. An exported
-  `PATCHY_API_TOKEN` goes with every CLI request. An exported `PATCHY_API_URL`
+  `PATCHY_API_TOKEN` wins over stored and seeded keys. An exported `PATCHY_API_URL`
   steers an environment's installed CLI, `<env>/bin/patchy` beside the `agent`
   launcher `pnpm dev up` prints, which otherwise reads `~/.patchy`. Any of these
   can point at production. The launcher clears both and sets its state dir; by
