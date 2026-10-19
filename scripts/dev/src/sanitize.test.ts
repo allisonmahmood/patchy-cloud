@@ -32,6 +32,20 @@ describe("marksSecret", () => {
 });
 
 describe("redactText", () => {
+  it("finds every match before replacing, so a short value can't break up a token, and twice is once", () => {
+    const secrets = new Map([
+      ["p", "cli-state" as const],
+      ["B", "cli-state" as const]
+    ]);
+    const once = redactText(secrets, "pp_AbC123-_xyzDEF456 and BCDF-GHJK, then pq");
+    assert.strictEqual(once.text, "[redacted] and [redacted], then [redacted]q");
+    assert.deepStrictEqual([...once.matched].sort(), ["cli-state", "login-code", "machine-token"]);
+
+    const twice = redactText(secrets, once.text);
+    assert.strictEqual(twice.text, once.text);
+    assert.deepStrictEqual([...twice.matched], []);
+  });
+
   it("replaces a value whole, in a URL and in JSON, and anything shaped like a machine token or login code", () => {
     const secrets = new Map([
       ["BCDF-GHJK", "cli-state" as const],
@@ -62,6 +76,18 @@ describe("redactText", () => {
 });
 
 it.layer(NodeServices.layer)("a sanitizer", (it) => {
+  it.effect("keeps a JSON report valid however short a secret is", () =>
+    Effect.gen(function* () {
+      const sanitizer = yield* makeSanitizer({ stateDirs: [], envs: [{ GH_TOKEN: "0" }] });
+      const report = yield* sanitizer.redactJson({ exitCode: 0, stdout: "0 rows", lines: ["10"] });
+      assert.deepStrictEqual(report, {
+        exitCode: 0,
+        stdout: "[redacted] rows",
+        lines: ["1[redacted]"]
+      });
+    })
+  );
+
   it.effect("still redacts a login code after a logout cleared it from the CLI state", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -107,7 +133,7 @@ it.layer(NodeServices.layer)("a sanitizer", (it) => {
           "agent key [redacted] in /home/someone"
         ].join("\n")
       );
-      assert.deepStrictEqual(yield* sanitizer.matched, ["cli-state", "variable"]);
+      assert.deepStrictEqual(yield* sanitizer.matched, ["cli-state", "login-code", "variable"]);
     })
   );
 });

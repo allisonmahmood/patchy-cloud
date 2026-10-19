@@ -1152,27 +1152,26 @@ class LineTimedOut extends Schema.TaggedError<LineTimedOut>()("LineTimedOut", {
   }
 }
 
+/** Encoded, not yet a string: the sanitizer redacts its strings first, so the JSON stays valid. */
 const encodeTranscriptReport = Schema.encodeSync(
-  Schema.fromJsonString(
-    Schema.Struct({
-      command: Schema.Literal("transcript"),
-      ...Report.fields,
-      /** Each line of the script, redacted and normalized as the section shows it. */
-      lines: Schema.Array(
-        Schema.Struct({
-          line: Schema.Int,
-          caption: Schema.NullOr(Schema.String),
-          command: Schema.String,
-          before: Schema.NullOr(Run),
-          after: Run
-        })
-      ),
-      /** The sources a secret was redacted from. */
-      redacted: Schema.Array(Schema.Literals(SECRET_SOURCES))
-    }),
-    { space: 2 }
-  )
+  Schema.Struct({
+    command: Schema.Literal("transcript"),
+    ...Report.fields,
+    /** Each line of the script, redacted and normalized as the section shows it. */
+    lines: Schema.Array(
+      Schema.Struct({
+        line: Schema.Int,
+        caption: Schema.NullOr(Schema.String),
+        command: Schema.String,
+        before: Schema.NullOr(Run),
+        after: Run
+      })
+    ),
+    /** The sources a secret was redacted from. */
+    redacted: Schema.Array(Schema.Literals(SECRET_SOURCES))
+  })
 );
+const printJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
 const transcript = Command.make(
   "transcript",
@@ -1309,17 +1308,19 @@ const transcript = Command.make(
     });
     if (json)
       yield* Console.log(
-        yield* sanitizer.redact(
-          encodeTranscriptReport({
-            command: "transcript",
-            key: sectionName,
-            scenario: run.scenario,
-            before: sideReport(ran.before),
-            after: { ...run.commits.after, apiUrl: ran.after.served.apiUrl },
-            lines: compared,
-            redacted: yield* sanitizer.matched,
-            ...delivered
-          })
+        printJson(
+          yield* sanitizer.redactJson(
+            encodeTranscriptReport({
+              command: "transcript",
+              key: sectionName,
+              scenario: run.scenario,
+              before: sideReport(ran.before),
+              after: { ...run.commits.after, apiUrl: ran.after.served.apiUrl },
+              lines: compared,
+              redacted: yield* sanitizer.matched,
+              ...delivered
+            })
+          )
         )
       );
     else if (timedOut === undefined) yield* printDelivery(root, delivered);

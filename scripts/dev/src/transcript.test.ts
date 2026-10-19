@@ -36,6 +36,7 @@ describe("refusal", () => {
     const refused = [
       "patchy setup",
       "patchy --json setup",
+      "patchy --api-url http://x.localhost:1 --log-level debug setup",
       "cd x && patchy setup --remove",
       "npm install -g patchy",
       "npm i --global patchy",
@@ -47,15 +48,16 @@ describe("refusal", () => {
       "patchy whoami; echo setup",
       "pnpm install",
       "npm test -- --grep x",
-      "patchy logs --json | grep setup"
+      "patchy logs --json | grep setup",
+      "patchy init setup-demo --tier 0",
+      "patchy publish setup.html",
+      "npm install global-agent"
     ];
     assert.deepStrictEqual(refused.map(refusal), [
-      "`patchy setup`",
-      "`patchy setup`",
-      "`patchy setup`",
+      ...Array(4).fill("`patchy setup`"),
       ...Array(5).fill("a global install")
     ]);
-    assert.deepStrictEqual(allowed.map(refusal), [null, null, null, null]);
+    assert.deepStrictEqual(allowed.map(refusal), Array(allowed.length).fill(null));
   });
 });
 

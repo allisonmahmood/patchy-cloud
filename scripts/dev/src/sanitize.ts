@@ -84,32 +84,77 @@ const forms = (value: string) => [
   ...new Set([value, encodeURIComponent(value), JSON.stringify(value).slice(1, -1)])
 ];
 
+const SHAPES = [
+  [MACHINE_TOKEN, "machine-token"],
+  [LOGIN_CODE, "login-code"]
+] as const;
+
+interface Span {
+  readonly start: number;
+  readonly end: number;
+  /** Null for a `[redacted]` already in the text. */
+  readonly source: SecretSource | null;
+}
+
 /**
  * `text` with every collected value, and anything shaped like a machine token
- * or a login code, replaced by `[redacted]`. Longer values go first, so one
- * that contains another is replaced whole. Returns the sources that matched.
+ * or a login code, replaced by `[redacted]`. Every match is found in the
+ * original text before anything is replaced, and overlapping matches become
+ * one, so a short value can't break up a longer one or a shape. A `[redacted]`
+ * already in the text counts as a match, so redacting twice changes nothing.
+ * Returns the sources that matched something not already redacted.
  */
 export const redactText = (secrets: ReadonlyMap<string, SecretSource>, text: string) => {
+  const spans: Array<Span> = [];
+  const find = (value: string, source: SecretSource | null) => {
+    for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + 1))
+      spans.push({ start: at, end: at + value.length, source });
+  };
+  find(REDACTED, null);
+  for (const [value, source] of secrets) for (const form of forms(value)) find(form, source);
+  for (const [shape, source] of SHAPES)
+    for (const match of text.matchAll(shape))
+      spans.push({ start: match.index, end: match.index + match[0].length, source });
+  spans.sort((a, b) => a.start - b.start || b.end - a.end);
+  const done = spans.filter((span) => span.source === null);
   const matched = new Set<SecretSource>();
-  let result = text;
-  const ordered = [...secrets].flatMap(([value, source]) =>
-    forms(value).map((form) => [form, source] as const)
-  );
-  ordered.sort(([a], [b]) => b.length - a.length);
-  for (const [value, source] of ordered) {
-    if (!result.includes(value)) continue;
-    result = result.split(value).join(REDACTED);
-    matched.add(source);
+  let result = "";
+  let at = 0;
+  for (let index = 0; index < spans.length;) {
+    const start = spans[index]!.start;
+    let end = start;
+    for (; index < spans.length && spans[index]!.start < Math.max(end, start + 1); index++) {
+      const span = spans[index]!;
+      end = Math.max(end, span.end);
+      if (
+        span.source !== null &&
+        !done.some((already) => already.start <= span.start && span.end <= already.end)
+      )
+        matched.add(span.source);
+    }
+    result += `${text.slice(at, start)}${REDACTED}`;
+    at = end;
   }
-  for (const [shape, source] of [
-    [MACHINE_TOKEN, "machine-token"],
-    [LOGIN_CODE, "login-code"]
-  ] as const)
-    result = result.replace(shape, () => {
-      matched.add(source);
-      return REDACTED;
-    });
-  return { text: result, matched };
+  return { text: result + text.slice(at), matched };
+};
+
+/** Every string in a JSON value redacted, its structure untouched. */
+const redactJson = (
+  secrets: ReadonlyMap<string, SecretSource>,
+  value: unknown,
+  matched: Set<SecretSource>
+): unknown => {
+  if (typeof value === "string") {
+    const result = redactText(secrets, value);
+    for (const source of result.matched) matched.add(source);
+    return result.text;
+  }
+  if (Array.isArray(value)) return value.map((item) => redactJson(secrets, item, matched));
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactJson(secrets, item, matched)])
+    );
+  return value;
 };
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -181,6 +226,14 @@ export const makeSanitizer = Effect.fn("Sanitize.makeSanitizer")(function* (inpu
         const result = redactText(yield* Ref.get(secrets), text);
         yield* Ref.update(matched, (sources) => new Set([...sources, ...result.matched]));
         return result.text;
+      }),
+    /** Every string in an encoded JSON value redacted, so the document stays valid however short a secret is. */
+    redactJson: (value: unknown) =>
+      Effect.gen(function* () {
+        const found = new Set<SecretSource>();
+        const result = redactJson(yield* Ref.get(secrets), value, found);
+        yield* Ref.update(matched, (sources) => new Set([...sources, ...found]));
+        return result;
       }),
     matched: Effect.map(Ref.get(matched), (sources) =>
       SECRET_SOURCES.filter((source) => sources.has(source))

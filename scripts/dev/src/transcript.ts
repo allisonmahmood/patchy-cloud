@@ -73,15 +73,18 @@ export interface ScriptLine {
 }
 
 /**
- * The agent workspace's rules: what a line must never run. Each pattern looks
- * from the program to the next `|`, `;` or `&`, so flags before a subcommand,
- * as in `patchy --json setup`, don't hide it. A guard against the plain forms,
- * not a sandbox.
+ * The agent workspace's rules: what a line must never run. `setup` counts as
+ * patchy's subcommand after any of its global flags, as in `patchy --json
+ * setup`, not as an argument. A global install is a flag anywhere up to the
+ * next `|`, `;` or `&`. A guard against the plain forms, not a sandbox.
  */
 const REFUSED: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\bpatchy\b[^|;&]*\ssetup\b/, "`patchy setup`"],
   [
-    /\b(?:npm|pnpm|yarn|bun)\b[^|;&]*\s(?:-(?!-)[A-Za-z]*g[A-Za-z]*(?=\s|$)|--global\b|--location[=\s]global\b|global\s)/,
+    /\bpatchy(?:\s+(?:--(?:api-url|log-level|completions)(?:=|\s+)\S+|-{1,2}[\w-]+(?:=\S+)?))*\s+setup(?=$|[\s|;&])/,
+    "`patchy setup`"
+  ],
+  [
+    /\b(?:npm|pnpm|yarn|bun)\b[^|;&]*\s(?:-(?!-)[A-Za-z]*g[A-Za-z]*(?=\s|$)|--global\b|--location[=\s]global\b)|\byarn\s+global\s/,
     "a global install"
   ]
 ];
