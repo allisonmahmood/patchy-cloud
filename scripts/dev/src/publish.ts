@@ -286,12 +286,22 @@ const prBody = (root: string, pr: number) =>
     Effect.map((view) => view.body)
   );
 
-/** The section between `open` and `close` in `body`, or all of `body` when it isn't there. */
-const sectionIn = (body: string, command: string, key: string) => {
+/**
+ * The files whose references in the published body's keyed section are still
+ * local paths: gh updates the body when only some uploads fail, and leaves
+ * those references as they were.
+ */
+export const notUploaded = (
+  body: string,
+  command: string,
+  key: string,
+  files: ReadonlyArray<string>
+) => {
   const { open, close } = markersOf(command, key);
   const start = body.indexOf(open);
   const end = body.indexOf(close, start);
-  return start === -1 || end === -1 ? body : body.slice(start, end);
+  const section = start === -1 || end === -1 ? body : body.slice(start, end);
+  return files.filter((file) => section.includes(`](${file})`));
 };
 
 /**
@@ -339,8 +349,7 @@ export const publishSection = Effect.fn("Publish.publishSection")(function* (inp
   const normalize = (text: string) => text.replace(/\r\n/g, "\n").trim();
   if (exitCode !== 0 && normalize(after) === normalize(before))
     return yield* new GhEditFailed({ pr: input.pr.number, exitCode });
-  const published = sectionIn(after, input.command, input.key);
-  const failed = files.filter((file) => published.includes(`](${file})`));
+  const failed = notUploaded(after, input.command, input.key, files);
   return { url: input.pr.url, attached: files.length - failed.length, failed, bodyFile };
 });
 

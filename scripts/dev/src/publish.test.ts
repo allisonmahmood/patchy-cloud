@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { checkAttachments, placeSection } from "./publish.js";
+import { checkAttachments, notUploaded, placeSection } from "./publish.js";
 
 const open = "<!-- patchy-dev:compare:ada -->";
 const close = "<!-- /patchy-dev:compare:ada -->";
@@ -99,6 +99,26 @@ describe("placeSection", () => {
       assert.strictEqual(error._tag, "UnclosedSection");
     })
   );
+});
+
+describe("notUploaded", () => {
+  it("names the files gh left as local paths in the section", () => {
+    const body = [
+      "![Elsewhere](.local/shots/run/after-1-home-390.png)",
+      open,
+      "![After](https://github.com/user-attachments/assets/1234)",
+      "![Before](.local/shots/run/before-1-home-1280.png)",
+      close
+    ].join("\n");
+
+    assert.deepStrictEqual(
+      notUploaded(body, "compare", "ada", [
+        ".local/shots/run/after-1-home-1280.png",
+        ".local/shots/run/before-1-home-1280.png"
+      ]),
+      [".local/shots/run/before-1-home-1280.png"]
+    );
+  });
 });
 
 it.layer(NodeServices.layer)("checkAttachments", (it) => {
