@@ -1,7 +1,7 @@
 /**
  * Evidence in a PR body: keyed sections, and their files uploaded with
  * `gh pr edit --attach`. Every `pnpm dev` command that shows a change in a PR
- * publishes through here (`compare` and `film` today).
+ * publishes through here: `compare`, `film`, `transcript` and `trial`.
  *
  * A section sits between markers on lines of their own,
  *

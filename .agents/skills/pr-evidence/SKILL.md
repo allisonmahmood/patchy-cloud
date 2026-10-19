@@ -79,6 +79,42 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   is undone. Past 30 lines, the middle of an output or diff is cut, keeping
   the first 20 and last 10; `--json` has all of it.
 
+## A fresh agent trying a task: `pnpm dev trial`
+
+- **Shows** how an agent copes with the CLI and the Patchy skill on the base
+  and on the head: whether it finished, its answer in a sentence or two, and
+  a table of its commands, failures, help lookups and minutes, with each
+  side's log folded below. The log lists each tool call, a command with its
+  exit code, and one line per failure. It is for a change that should make
+  something easier or possible for people's agents, where guessed flags,
+  retries and help lookups are the symptom.
+- **Make** it with `pnpm dev trial "<task>"`, the change committed, the task
+  phrased as a person would ask their agent: on `brightline`, "show me the
+  last few log lines of the new-business patch". Each side gives it to its
+  environment's `agent` launcher, Claude Code as the scenario's publisher with
+  the release's Patchy skill and no personal instructions or settings, run
+  without a person within `--max-turns` (30) and `--minutes` (10). `--model`
+  passes through; the default `sonnet` is close to what people's agents run.
+  `--pr` publishes as compare does, keyed by the task's first words or
+  `--key`.
+- **Costs** a model run per side, both at once, on top of about a minute and
+  a half to bring `brightline` up. A short `brightline` task on Sonnet came to
+  about ten cents a side; the price Claude Code reports, at API rates, prints
+  on stderr and lands in `--json`.
+- **Gotchas.** One run is a smell test, not a measurement: agents vary, so a
+  difference of a command or two says little. The launcher pre-approves only
+  some commands, such as `patchy`, `pnpm` and reading files, and no one is
+  there to approve the rest, so a chained command that leaves the workspace,
+  or `npx`, shows as `denied`: that is the launcher's limit, not the change's.
+  Its commands run as you, with your HOME: a task that mentions
+  `patchy setup` or the portal's setup line is refused, and `patchy setup` is
+  denied to the agent. Only the log is kept, never the agent's reasoning, what
+  its commands printed or the session; collected secrets read `[redacted]`.
+  Read the section before publishing anyway: the answer is the agent's own
+  words. A base whose launcher predates #701 shows after only, and an agent
+  that errors or gives no result on the head publishes nothing. The Patchy
+  MCP (#730) isn't part of the agent yet.
+
 ## A test, red then green
 
 - **Shows** that the change does what it claims and keeps doing it. The
@@ -124,11 +160,6 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   production. The launcher clears both and sets its state dir; by hand, run
   `env -u PATCHY_API_URL -u PATCHY_API_TOKEN PATCHY_STATE_DIR=<env>/cli-state <env>/bin/patchy …`.
 
-## Not built yet
-
-`trial` (#793) shows a fresh agent trying a task. It adds its entry here when
-it lands.
-
 ## Publishing
 
 - `gh pr create`, `gh pr edit` and `gh pr comment` take `--attach <file>`, once
@@ -138,7 +169,7 @@ it lands.
 - An attached `![name](x.mp4)` alone in its own paragraph, with blank lines
   around it, plays inline; sharing a paragraph, it becomes a link.
 - At most 50 attachments per command and 10 MB per file.
-- `compare`, `film` and `transcript` with `--pr` keep each section between
+- `compare`, `film`, `transcript` and `trial` with `--pr` keep each section between
   `<!-- patchy-dev:<command>:<key> -->` markers. A re-run replaces its own
   section wherever it was moved and leaves the rest of the body alone. When
   some uploads fail, gh still updates the body; the command names the files

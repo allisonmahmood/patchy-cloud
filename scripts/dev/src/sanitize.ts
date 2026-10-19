@@ -1,7 +1,7 @@
 /**
  * The sanitizer: every evidence command that writes what a CLI or an agent
- * printed puts it through here first. `pnpm dev transcript` does, and `trial`
- * (#793) calls `collect` after each agent command.
+ * printed puts it through here first. `pnpm dev transcript` does, and so does
+ * `pnpm dev trial`, which calls `collect` after each tool call its agent makes.
  *
  * It collects secrets for the whole run and keeps every value it has seen
  * until the last write, so a login code that a later `patchy logout` cleared

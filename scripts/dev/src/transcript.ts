@@ -385,10 +385,19 @@ const MAX_LINE_CHARS = 400;
 /** Outputs longer than this are compared on their first lines only. */
 const MAX_COMPARED_LINES = 1_000;
 
+/** `lines` in a fenced block that no backtick run inside can close. */
+export const fenced = (language: string, lines: ReadonlyArray<string>) => {
+  const longest = Math.max(
+    0,
+    ...lines.flatMap((line) => line.match(/`+/g) ?? []).map((run) => run.length)
+  );
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return [`${fence}${language}`, ...lines, fence];
+};
+
 /**
- * `lines` in a fenced block that no backtick run inside can close, cut to
- * size: the middle of a long block becomes one line saying how many were
- * cut, an `@@` line in a diff, and a note below says so.
+ * `lines` fenced and cut to size: the middle of a long block becomes one line
+ * saying how many were cut, an `@@` line in a diff, and a note below says so.
  */
 const block = (language: "console" | "diff", lines: ReadonlyArray<string>) => {
   const cut = lines.length - HEAD_LINES - TAIL_LINES;
@@ -404,24 +413,17 @@ const block = (language: "console" | "diff", lines: ReadonlyArray<string>) => {
   const shown = kept.map((line) =>
     line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}…` : line
   );
-  const longest = Math.max(
-    0,
-    ...shown.flatMap((line) => line.match(/`+/g) ?? []).map((run) => run.length)
-  );
-  const fence = "`".repeat(Math.max(3, longest + 1));
   const notes = [
     ...(cut > 0 ? [`${cut} of ${lines.length} lines are cut from the middle.`] : []),
     ...(long ? [`Lines are cut at ${MAX_LINE_CHARS} characters.`] : [])
   ];
   return [
-    `${fence}${language}`,
-    ...shown,
-    fence,
+    ...fenced(language, shown),
     ...(notes.length === 0 ? [] : ["", `_${notes.join(" ")} \`--json\` has it all._`])
   ];
 };
 
-const escapeHtml = (text: string) =>
+export const escapeHtml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 /** One line of the script, both sides of it already redacted and normalized. `before` is null when only after ran. */
