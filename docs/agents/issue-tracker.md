@@ -14,6 +14,17 @@ Issues and PRDs for this repo live as GitHub issues in [`allisonmahmood/patchy-c
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
 
+## Done means
+
+Every issue an agent files ends with a `## Done means` section. It says what someone can do or see when the work is finished, in a line or a few bullets. The agent building the issue and whoever checks its PR read it to tell finished from not, so it names the outcome, not a test plan. It takes the place of a skill template's acceptance criteria.
+
+```markdown
+## Done means
+
+- An owner or admin reads a published patch's log with `patchy logs`.
+- A member who doesn't own the patch is refused.
+```
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
