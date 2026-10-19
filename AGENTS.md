@@ -123,6 +123,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: fill in `.github/PULL_REQUEST_TEMPLATE.md`, a merge summary that shows the change working; the `pr-evidence` skill lists the ways to show it. End with the model and harness that did the work.
 - One concern per PR. If the description says "also", split it.
+- A PR is ready to merge when its required checks pass, its review findings are resolved and an acceptance verdict on its latest commit passes; the `acceptance` skill says how to get one.
 
 ## Deploying
 
