@@ -66,10 +66,13 @@ route its requests independently. For ALB the target group attributes are
 `stickiness.enabled=true`, `stickiness.type=lb_cookie` and
 `stickiness.lb_cookie.duration_seconds=86400`, with cross-zone balancing enabled.
 The ALB sets its `AWSALB` cookie, scoped to `/`, on the page's own response,
-before the shell opens its stream, so every later request from that browser
-reaches one replica. On drain or target loss the ALB picks a healthy replica and
-updates the cookie; a stale-generation refusal forces reconnect and re-admission
-there, and no subscription state or presence row is replicated. See
+before the shell opens its stream. Once a browser holds that cookie and its
+target is healthy, every request from it reaches that replica. Until then, as
+when two tabs open at once without one, or during a drain, a stream can briefly
+sit on another replica than the cookie names. On drain or target loss the ALB
+picks a healthy replica and updates the cookie. Either way the next POST's
+stale-generation refusal forces reconnect and re-admission where the cookie
+points, and no subscription state or presence row is replicated. See
 [ALB duration-based stickiness](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html#duration-based-stickiness).
 
 Application-cookie stickiness on a server-issued cookie scoped to `/api/runtime`

@@ -1046,9 +1046,10 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "`X-Patchy-Generation`; a stale replacement is `invalid_request` (409). " +
           "The server sets no routing cookie. Multi-replica ingress must keep a browser on one " +
           "replica with its own stickiness cookie on every path, such as ALB duration-based " +
-          "stickiness (`AWSALB`), so the stream and its subscription POSTs reach the same replica. " +
-          "Round-robin routing without stickiness is unsupported. " +
-          "If failover loses the generation, a 409 triggers reconnect and fresh admission. " +
+          "stickiness (`AWSALB`), so once the cookie is set and its replica healthy, the stream and " +
+          "its subscription POSTs reach the same replica. Round-robin routing without stickiness " +
+          "is unsupported. If concurrent first opens, a drain or failover split them or lose the " +
+          "generation, a 409 triggers reconnect and fresh admission. " +
           "Publish and rollback send `served`; lost authority sends " +
           "`access_denied`, `principal_changed` or `session_expired`. `revoked` is reserved pending " +
           "the version-revocation decision in #425; no version-revocation state or action exists yet. " +
