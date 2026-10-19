@@ -11,6 +11,7 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
+import { ShopifySnapshot } from "./shopifySnapshot.js";
 import {
   HandlerDescriptors,
   HandlerModuleName,
@@ -500,8 +501,17 @@ export const PostHogDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("posthog")
 });
+/** PROTOTYPE (#815). */
+export const ShopifyDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("shopify")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
-export const ConnectionDeclaration = Schema.Union([PostgresDeclaration, PostHogDeclaration]);
+export const ConnectionDeclaration = Schema.Union([
+  PostgresDeclaration,
+  PostHogDeclaration,
+  ShopifyDeclaration
+]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
 export const sharedTableId = (patchId: string, table: string): string => `${patchId}/${table}`;
@@ -588,6 +598,7 @@ export const Manifest = Schema.Struct({
     Schema.Union([
       PostgresDeclaration,
       PostHogDeclaration,
+      ShopifyDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -614,6 +625,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...ShopifyDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -628,7 +644,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog"] as const;
+export const integrations = ["postgres", "posthog", "shopify"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -665,8 +681,13 @@ const detail = <const I extends Integration, F extends Schema.Struct.Fields>(
 /** What the legacy `/connections/:handle` route answers, as CLIs from before PostHog decode it. */
 export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
+export const ShopifyConnectionDetail = detail("shopify", ShopifySnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
-export const ConnectionDetail = Schema.Union([PostgresConnectionDetail, PostHogConnectionDetail]);
+export const ConnectionDetail = Schema.Union([
+  PostgresConnectionDetail,
+  PostHogConnectionDetail,
+  ShopifyConnectionDetail
+]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
 export const ConnectionUnavailable = failure(503, {
@@ -704,6 +725,13 @@ export const DeclarationMetadata = Schema.Struct({
   posthog: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: PostHogDeclaration, snapshot: PostHogSnapshot })
+  ),
+  // PROTOTYPE (#815): optional so releases and fixtures that predate Shopify still decode.
+  shopify: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ declaration: ShopifyDeclaration, snapshot: ShopifySnapshot })
+    )
   ),
   shared: Schema.Record(
     Schema.String,

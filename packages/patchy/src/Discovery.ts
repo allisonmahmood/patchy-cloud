@@ -109,6 +109,18 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       ...properties("Person properties", snapshot.personProperties)
     ];
   }
+  if (connection.integration === "shopify") {
+    const snapshot = connection.snapshot;
+    return [
+      ...lines,
+      `Store: ${snapshot.shop.name} (${snapshot.shop.domain}), ${snapshot.shop.plan} plan`,
+      `Currency: ${snapshot.shop.currency}, timezone ${snapshot.shop.timezone}`,
+      `Analytics: ${snapshot.analytics}`,
+      `Revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`,
+      "Reads orders, line items, products, stock, locations and sales analytics. Never customer details."
+    ];
+  }
   const snapshot = connection.snapshot;
   lines.push(
     `Schema revision: ${snapshot.revision}`,

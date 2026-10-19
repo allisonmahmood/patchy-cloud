@@ -27,7 +27,8 @@ export type Operation =
   | `shared.files.${"get" | "list" | "stat"}`
   | `files.${"get" | "put" | "list" | "stat" | "delete"}`
   | `postgres.${"get" | "getMany" | "list" | "query"}`
-  | "posthog.query";
+  | "posthog.query"
+  | "shopify.read";
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
   get(): Promise<string>;

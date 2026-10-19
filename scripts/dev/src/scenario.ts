@@ -40,11 +40,24 @@ export const FilePatch = Schema.Struct({
   description: Schema.NonEmptyString
 });
 
+/**
+ * PROTOTYPE (#815): a company connection the publisher makes through the connect form, as an
+ * admin would, before any patch publishes. `fields` are the form's credential fields.
+ */
+export const ScenarioConnection = Schema.Struct({
+  integration: Schema.Literal("shopify"),
+  handle: Slug,
+  description: Schema.NonEmptyString,
+  fields: Schema.Record(Schema.String, Schema.String)
+});
+export type ScenarioConnection = typeof ScenarioConnection.Type;
+
 export const Scenario = Schema.Struct({
   company: Schema.Struct({ name: Schema.NonEmptyString, handle: Slug }),
   people: Schema.NonEmptyArray(Person),
   /** The admin the environment's CLI publishes as. */
   publisher: Slug,
+  connections: Schema.optionalKey(Schema.Array(ScenarioConnection)),
   patches: Schema.Array(Schema.Union([RepoPatch, FilePatch]))
 });
 export type Scenario = typeof Scenario.Type;

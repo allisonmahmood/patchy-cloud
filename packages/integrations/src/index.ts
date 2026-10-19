@@ -13,4 +13,7 @@ export * as PostgresOperations from "./postgres/Operations.js";
 export * as PostHog from "./posthog/index.js";
 export * as PostHogSource from "./posthog/Source.js";
 export * as PostHogOperations from "./posthog/Operations.js";
+export * as Shopify from "./shopify/index.js";
+export * as ShopifySource from "./shopify/Source.js";
+export * as ShopifyOperations from "./shopify/Operations.js";
 export { migrations } from "./migrations.js";

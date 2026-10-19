@@ -111,7 +111,7 @@ const connectionCall = (item: InvocationLog.TreeItem, names: LogNames) => {
       ? "connection"
       : (names.connections.get(item.connectionId) ?? item.connectionId);
   const method = item.name.slice(item.name.indexOf(".") + 1);
-  if (item.name.startsWith("posthog."))
+  if (item.name.startsWith("posthog.") || item.name.startsWith("shopify."))
     return `${name}.${method}${item.resource === null ? "" : ` ${item.resource}`}`;
   const relation =
     item.resource === null ? "" : `.${resource(item.resource).replace(/^public\./u, "")}`;

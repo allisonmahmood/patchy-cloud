@@ -270,7 +270,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_COMPANY_DB_ADMIN_URL: plan.databaseUrl,
           PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
-          PATCHY_PUBLIC_BASE_URL: plan.apiUrl
+          PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
+          // PROTOTYPE (#815): the demo Shopify store answers in memory; real stores stay real.
+          PATCHY_SHOPIFY_FAKE: "true"
         },
         extendEnv: false,
         stdin: "ignore",

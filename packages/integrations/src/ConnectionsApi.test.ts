@@ -19,6 +19,7 @@ import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
+import * as ShopifySource from "./shopify/Source.js";
 
 const snapshot = {
   version: 1,
@@ -88,6 +89,7 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
         RuntimeLog.layer,
         Source.layer,
         PostHogSource.layer,
+        ShopifySource.layer,
         CredentialKeys.layerFromKeys(
           Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)
         )
