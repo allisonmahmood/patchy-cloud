@@ -21,7 +21,8 @@ one for your own PR, see [Asking for a verdict](#asking-for-a-verdict).
 - `gh pr view <n> --json title,body,headRefOid,baseRefName,labels,files,closingIssuesReferences`.
   `headRefOid` is the **head**, the commit your verdict names.
 - The issue it closes, `gh issue view <issue>`: its **Done means** is what the
-  PR must show.
+  PR must show. Without an issue or a Done means, the PR's What changed is the
+  claim to check.
 - `gh pr diff <n>`, the review comments and reviews
   (`gh pr view <n> --comments`, `gh api repos/{owner}/{repo}/pulls/<n>/reviews`
   and `/pulls/<n>/comments`), and `gh pr checks <n>`.
