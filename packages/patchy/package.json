@@ -109,7 +109,7 @@
     "@electric-sql/pglite": "0.5.8",
     "@preact/signals": "2.11.3",
     "@preact/signals-core": "1.14.4",
-    "preact": "10.29.8"
+    "preact": "11.0.0"
   },
   "bundledDependencies": [
     "@electric-sql/pglite",
