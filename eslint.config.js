@@ -101,6 +101,7 @@ export default tseslint.config(
       "test/postgres.ts",
       "test/clerk.ts",
       "scripts/flake-report.ts",
+      "scripts/rollback-rehearsal.ts",
       "scripts/test-clerk.ts",
       "scripts/verify.ts"
     ],
@@ -119,6 +120,7 @@ export default tseslint.config(
       "test/clerk.ts",
       "scripts/test-clerk.ts",
       "scripts/flake-report.ts",
+      "scripts/rollback-rehearsal.ts",
       "playwright.clerk.config.ts",
       "playwright.tier1.config.ts",
       "test/browser/fixtures.ts",

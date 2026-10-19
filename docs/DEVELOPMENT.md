@@ -34,6 +34,14 @@ going after a failure and prints a summary. CI also runs `pnpm test` on Node
 22.22.0, 24.20.0 and 26.11.1, `cli-smoke` again on Node 26.11.1, and `clerk-live`
 on pushes to `main` and same-repository PRs.
 
+On pull requests CI also runs `rollback-rehearsal`. When the PR changes a
+capability's `src/migrations.ts`, it deploys the PR onto data the live release
+seeded, rolls back to the live release, and fails naming the step that broke;
+otherwise it passes at once. [Rolling back](OPERATIONS.md#rolling-back) says what
+it covers. `pnpm verify` leaves it out, because it rehearses commits against the
+commit production runs. `pnpm test:rollback-rehearsal` runs it on HEAD, reading
+the Deploy runs with `gh`; `--live <sha>` rehearses against another commit.
+
 CI pins every job to `ubuntu-24.04`, and every job that runs the repository's
 code to an exact Node patch. Bump the patches by hand in every workflow under
 `.github/workflows/` that pins one, like the server image: Node 24 moves with the
@@ -386,6 +394,8 @@ can quote it.
   upgrade tests exist: write one with the first migration that changes state a
   database must keep, after launch or earlier if something real must be kept.
   The same holds for company inventory, which `Inventory.initialize` creates.
+  Commit, then `pnpm test:rollback-rehearsal` checks that the live release
+  still starts and serves on the schema your commit leaves.
 - **The dev runner.** `pnpm exec vitest run scripts/dev`, then the real loop:
   `pnpm dev`, `up`, `shot` and `down` in this worktree.
 
