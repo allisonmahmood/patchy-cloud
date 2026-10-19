@@ -201,7 +201,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         cookies
       );
     }
-    if (served.value.patch.companyId !== admission.company.id) {
+    // A patch's address admits the people its owner publishes for.
+    if (served.value.patch.ownerUserId !== admission.user.id) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
     if (served.value.patch.state !== "live" && !isAlias) {
