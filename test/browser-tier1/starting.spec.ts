@@ -450,6 +450,28 @@ test.describe("idle documents", () => {
     await page.clock.fastForward(30_000);
     await expect.poll(() => instance.streamConnections.size).toBe(0);
     await add(frame, instance.wire, "after-idle");
+    // Only an active document's hold takes the company's activity lock, never a call's own
+    // admission, so seeing it shows the resumed call reached the document's stream. It is
+    // watched from before the call, so a slow reply can't hide it.
+    const companyHeld = async () =>
+      (
+        await instance.platform.query<{ held: boolean }>(
+          `SELECT EXISTS (
+            SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
+            WHERE d.datname = current_database() AND l.locktype = 'advisory' AND l.objsubid = 1
+              AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended(
+                'execution/company/' || (SELECT company_id FROM users WHERE id = 'usr_dev'), 0)
+          ) AS held`
+        )
+      ).rows[0]!.held;
+    let watching = true;
+    const reheld = (async () => {
+      while (watching) {
+        if (await companyHeld()) return true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return false;
+    })();
     await page.evaluate(() => {
       Object.defineProperty(document, "hidden", { configurable: true, value: false });
       document.dispatchEvent(new Event("visibilitychange"));
@@ -469,10 +491,9 @@ test.describe("idle documents", () => {
       )
     ).toBe(1);
     await expect(page.getByRole("dialog", { name: "Starting your tools" })).toBeHidden();
-    // The call made the document active again, so the company outlives its own idle window
-    // until the document's window passes too.
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    expect(await released()).toBe(1);
+    // The call made the document active again; once its window passes, the company goes again.
     await expect.poll(released, { timeout: 30_000 }).toBe(2);
+    watching = false;
+    expect(await reheld).toBe(true);
   });
 });
