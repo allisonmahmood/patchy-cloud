@@ -139,7 +139,7 @@ const streamMetrics = {
 };
 /**
  * A subscription POST's desired-set change and what this host knew of its document.
- * Cookies are recorded as booleans, never values.
+ * The load balancer's cookie is recorded as a boolean, never its value.
  */
 const subscriptionRequestFields = {
   subscriptionRequest: Schema.optionalKey(Schema.Literals(["subscribe", "unsubscribe", "replace"])),
@@ -149,8 +149,6 @@ const subscriptionRequestFields = {
   currentStreamId: Schema.optionalKey(Schema.String),
   documentConnected: Schema.optionalKey(Schema.Boolean),
   refusal: Schema.optionalKey(Schema.Literals(["stream_replaced", "stale_sequence"])),
-  affinityCookie: Schema.optionalKey(Schema.Boolean),
-  affinityMatched: Schema.optionalKey(Schema.Boolean),
   balancerCookie: Schema.optionalKey(Schema.Boolean)
 };
 const processMetrics = {

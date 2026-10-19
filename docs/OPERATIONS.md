@@ -210,12 +210,13 @@ fields @timestamp, handler, trigger, slotWaitMs, readyWaitMs, backoffMs, slotOcc
 | sort @timestamp asc
 ```
 
-A refused control names its `refusal`. `documentConnected = false` with
-`affinityMatched = false` is a request the balancer sent to a host without its
-stream:
+A refused control names its `refusal`. `documentConnected = false` is a request
+that reached a host without its document's stream, and `replica` names that host.
+`balancerCookie = false` means the browser sent no `AWSALB` cookie for the load
+balancer to route by:
 
 ```
-fields @timestamp, replica, refusal, documentConnected, streamId, currentStreamId, sequence, currentSequence, affinityCookie, affinityMatched, balancerCookie
+fields @timestamp, replica, refusal, documentConnected, streamId, currentStreamId, sequence, currentSequence, balancerCookie
 | filter type = "request" and ispresent(subscriptionRequest) and outcome = "refused"
 | sort @timestamp desc
 ```
@@ -912,9 +913,9 @@ they require the corresponding `*_PRIVATE_INTERFACE=true` opt-in.
 
 The deploy snapshots ALB and security-group settings in mode-0600
 `.local/tier2-spike/state.json`. It enables HTTP/2, the 90-second deregistration
-delay, and application-cookie stickiness on `patchy_stream_affinity`. Keep the
-server-issued cookie: subscription control POSTs must reach the replica holding
-the document stream. The spike certificate is self-signed; only acceptance
+delay, and the load balancer's one-day cookie stickiness (`AWSALB`), as production
+does: subscription control POSTs must reach the replica holding the document
+stream. The spike certificate is self-signed; only acceptance
 clients against this ALB may ignore its certificate error.
 
 Hosts and the disposable promotion task use only the existing

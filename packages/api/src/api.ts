@@ -1044,12 +1044,11 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "mutations receive client-minted mutation keys without a page reload. " +
           "Replacing an open document requires its latest generation in " +
           "`X-Patchy-Generation`; a stale replacement is `invalid_request` (409). " +
-          "A successful stream sets the opaque `patchy_stream_affinity` cookie, scoped to " +
-          "`/api/runtime` with `HttpOnly` and `SameSite=Strict`; it is `Secure` when the trusted " +
-          "public base URL uses HTTPS. Multi-replica ingress must enable application-cookie " +
-          "stickiness with cookie name `patchy_stream_affinity`, routing the stream and its " +
-          "subscription POSTs to the same replica. Round-robin routing without affinity is " +
-          "unsupported. If failover loses the generation, a 409 triggers reconnect and fresh admission. " +
+          "The server sets no routing cookie. Multi-replica ingress must keep a browser on one " +
+          "replica with its own stickiness cookie on every path, such as ALB duration-based " +
+          "stickiness (`AWSALB`), so the stream and its subscription POSTs reach the same replica. " +
+          "Round-robin routing without stickiness is unsupported. " +
+          "If failover loses the generation, a 409 triggers reconnect and fresh admission. " +
           "Publish and rollback send `served`; lost authority sends " +
           "`access_denied`, `principal_changed` or `session_expired`. `revoked` is reserved pending " +
           "the version-revocation decision in #425; no version-revocation state or action exists yet. " +

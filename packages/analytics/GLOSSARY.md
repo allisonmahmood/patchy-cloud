@@ -21,7 +21,7 @@ The wide event for one server request. Runtime requests record their own, as [Ru
 _Avoid_: access log (it records URLs), request log
 
 **Subscription request event**:
-The request event for one subscription POST. It names the desired-set change (`subscriptionRequest`) and its `sequence`, the `documentId` and the generation it named (`streamId`), whether this host holds that document (`documentConnected`) and, when it does, the document's generation and sequence here (`currentStreamId`, `currentSequence`). A 409 names its `refusal`: `stream_replaced` or `stale_sequence`. Three booleans say whether the request carried the stream affinity cookie (`affinityCookie`), whether that cookie names this host (`affinityMatched`) and whether a load balancer stickiness cookie came with it (`balancerCookie`); cookie values are never recorded. The `replica` every event carries names the receiving host.
+The request event for one subscription POST. It names the desired-set change (`subscriptionRequest`) and its `sequence`, the `documentId` and the generation it named (`streamId`), whether this host holds that document (`documentConnected`) and, when it does, the document's generation and sequence here (`currentStreamId`, `currentSequence`). A 409 names its `refusal`: `stream_replaced` or `stale_sequence`. `balancerCookie` says whether the request carried the load balancer's stickiness cookie, `AWSALB`; its value is never recorded. The `replica` every event carries names the receiving host; with `documentConnected = false` it names where a request landed without its document's stream.
 _Avoid_: control log
 
 **Re-run event**:

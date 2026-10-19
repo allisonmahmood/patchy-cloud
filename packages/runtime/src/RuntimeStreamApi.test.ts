@@ -2,14 +2,12 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as Cookies from "effect/http/Cookies";
 import { RuntimeStreamFrame, RuntimeStreamGroup } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
@@ -93,7 +91,6 @@ it.layer(layer)("stream HTTP admission", (it) => {
         });
         assert.strictEqual(response.status, status);
         assert.include(yield* response.json, { ok: false, source: "patchy", code });
-        assert.isTrue(Option.isNone(Cookies.get(response.cookies, "patchy_stream_affinity")));
       }
     })
   );
@@ -232,43 +229,27 @@ it.layer(layer)("stream HTTP admission", (it) => {
     }).pipe(Effect.scoped)
   );
 
-  it.effect(
-    "streams hello without waiting for the document to close, on one replica per affinity cookie",
-    () =>
-      Effect.gen(function* () {
-        const client = yield* api;
-        let affinity: string | undefined;
-        for (const documentId of ["first_affinity_document", "second_affinity_document"]) {
-          const response = yield* client.stream({
-            query: { ...query, documentId },
-            headers,
-            responseMode: "response-only"
-          });
-          assert.strictEqual(response.status, 200);
-          assert.include(response.headers["content-type"], "text/event-stream");
-          assert.include(response.headers["cache-control"], "no-store");
-          const cookie = Option.getOrThrow(Cookies.get(response.cookies, "patchy_stream_affinity"));
-          assert.match(cookie.value, /^replica_[a-z0-9]+$/);
-          assert.strictEqual(cookie.options?.path, "/api/runtime");
-          assert.isTrue(cookie.options?.httpOnly);
-          assert.strictEqual(cookie.options?.sameSite, "strict");
-          assert.strictEqual(
-            cookie.options?.secure === true,
-            new URL(PUBLIC_BASE_URL).protocol === "https:"
-          );
-          if (affinity === undefined) affinity = cookie.value;
-          else assert.strictEqual(cookie.value, affinity);
-          const pull = yield* Stream.toPull(response.stream);
-          // The frame schema requires hello's generation and server time.
-          const hello = decodeFrame(
-            new TextDecoder()
-              .decode((yield* pull)[0])
-              .slice(6)
-              .trim()
-          );
-          assert.strictEqual(hello.type, "hello");
-        }
-      }).pipe(Effect.scoped)
+  it.effect("streams hello without waiting for the document to close", () =>
+    Effect.gen(function* () {
+      const client = yield* api;
+      const response = yield* client.stream({
+        query: { ...query, documentId: "hello_stream_document" },
+        headers,
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, 200);
+      assert.include(response.headers["content-type"], "text/event-stream");
+      assert.include(response.headers["cache-control"], "no-store");
+      const pull = yield* Stream.toPull(response.stream);
+      // The frame schema requires hello's generation and server time.
+      const hello = decodeFrame(
+        new TextDecoder()
+          .decode((yield* pull)[0])
+          .slice(6)
+          .trim()
+      );
+      assert.strictEqual(hello.type, "hello");
+    }).pipe(Effect.scoped)
   );
 });
 
@@ -293,14 +274,10 @@ const recording = WideEvents.layerWithSink.pipe(
 );
 
 it.layer(layerWith(recording))("subscription request events", (it) => {
-  it.effect("record each POST's outcome, its document on this host and cookie booleans", () =>
+  it.effect("record each POST's outcome, its document on this host and the balancer cookie", () =>
     Effect.gen(function* () {
       const client = yield* api;
       const requests = yield* Requests;
-      const opened = yield* client.stream({ query, headers, responseMode: "response-only" });
-      const affinity = Option.getOrThrow(
-        Cookies.get(opened.cookies, "patchy_stream_affinity")
-      ).value;
       const documentId = "recorded_document";
       const next = yield* openDocument(documentId);
       const hello = yield* next;
@@ -326,8 +303,8 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
         });
       const stale = `stream_${"a".repeat(24)}`;
       const statuses = [
-        yield* post({}, 1, `; patchy_stream_affinity=${affinity}; AWSALBAPP-0=balancer-value`),
-        yield* post({}, 0, "; patchy_stream_affinity=replica_elsewhere"),
+        yield* post({}, 1, "; AWSALB=balancer-value"),
+        yield* post({}, 0),
         yield* post({ generation: stale }, 2),
         yield* post({ documentId: "unknown_document_id" }, 2),
         yield* client.subscriptions({
@@ -367,8 +344,6 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
         streamId: hello.generation,
         sequence: 1,
         currentSequence: 0,
-        affinityCookie: true,
-        affinityMatched: true,
         balancerCookie: true
       });
       assert.notProperty(accepted, "refusal");
@@ -379,8 +354,6 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
         refusal: "stale_sequence",
         sequence: 0,
         currentSequence: 1,
-        affinityCookie: true,
-        affinityMatched: false,
         balancerCookie: false
       });
       assert.include(replaced, {
@@ -389,8 +362,7 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
         code: "invalid_request",
         refusal: "stream_replaced",
         streamId: stale,
-        affinityCookie: false,
-        affinityMatched: false
+        balancerCookie: false
       });
       assert.notProperty(replaced, "currentSequence");
       assert.include(elsewhere, {
@@ -404,14 +376,12 @@ it.layer(layerWith(recording))("subscription request events", (it) => {
       assert.include(signedOut, {
         outcome: "refused",
         code: "session_expired",
-        affinityCookie: false,
         balancerCookie: false
       });
       for (const key of ["documentId", "streamId", "subscriptionRequest", "viewerId", "refusal"])
         assert.notProperty(signedOut, key);
       const recorded = JSON.stringify([accepted, superseded, replaced, elsewhere, signedOut]);
-      for (const value of [affinity, "balancer-value", "replica_elsewhere", headers.cookie])
-        assert.notInclude(recorded, value);
+      for (const value of ["balancer-value", headers.cookie]) assert.notInclude(recorded, value);
     }).pipe(Effect.scoped)
   );
 });

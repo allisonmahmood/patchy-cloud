@@ -11,8 +11,8 @@ const region = "us-east-1";
 const targetAttributes = [
   { Key: "deregistration_delay.timeout_seconds", Value: "90" },
   { Key: "stickiness.enabled", Value: "true" },
-  { Key: "stickiness.type", Value: "app_cookie" },
-  { Key: "stickiness.app_cookie.cookie_name", Value: "patchy_stream_affinity" }
+  { Key: "stickiness.type", Value: "lb_cookie" },
+  { Key: "stickiness.lb_cookie.duration_seconds", Value: "86400" }
 ];
 const albAttributes = [
   { Key: "routing.http2.enabled", Value: "true" },
