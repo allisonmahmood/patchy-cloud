@@ -39,14 +39,15 @@ could touch.
 
 ## 2. Get the head
 
-Work in a checkout of your own at the head. The evidence commands compare its
-`HEAD` with where it left `origin/main`, and `pnpm dev down` there deletes only
-what you made. A fresh checkout someone started you in (a T3 worktree task, a
-folder they named) counts; otherwise make one:
+Work in a checkout made for this run: a T3 worktree task's own, a folder the
+person made for it, or one you make. Any other checkout holds someone's work and
+instance. The evidence commands compare its `HEAD` with where it left
+`origin/main`, and `pnpm dev down` there deletes only what this run made.
 
 ```sh
-git fetch origin main "pull/<n>/head"
-git worktree add --detach <dir> <head sha> && cd <dir> && pnpm install
+git fetch origin <baseRefName> "pull/<n>/head"
+git checkout --detach <head sha> && pnpm install          # in a checkout made for this run
+git worktree add --detach <dir> <head sha> && cd <dir> && pnpm install   # or make one
 ```
 
 Done when `git rev-parse HEAD` prints the head and `git status --short` prints
@@ -64,14 +65,17 @@ journey the change could touch. How is your call. These are the tools:
   down. Run them without `--pr`, which would write into the author's PR body:
   each writes its section and files under `.local/shots/<run>/`, ready for your
   verdict. For a PR stacked on another branch, `--base origin/<baseRefName>`
-  makes that branch the before.
+  makes that branch, as step 2 fetched it, the before.
 - **Tests:** CI's checks on the head, a suite you run in your checkout, or a
   test the PR added, red on the base and green on the head (`pr-evidence` has
   the recipe).
 - **Direct checks** on an instance of your checkout: `pnpm dev up <scenario>`
   brings one up at the head on fresh scenario data. Drive it as the
-  `patchy-dev-loop` skill says: `curl` as a person, `pnpm dev shot`, the
-  environment's CLI with its state dir.
+  `patchy-dev-loop` skill says: `curl` as a person, or `pnpm dev shot`. Run
+  the environment's CLI only as
+  `env -u PATCHY_API_URL -u PATCHY_API_TOKEN PATCHY_STATE_DIR=<env>/cli-state <env>/bin/patchy …`,
+  since an exported URL or token steers it to another instance, production
+  included.
 
 Evidence instances are heavy: run one command at a time, and take each instance
 you start down when you're done with it.
@@ -138,15 +142,17 @@ the verdict still reads at a glance. Then post it and replace your earlier
 verdict:
 
 ```sh
+me=$(gh api user --jq .login)
 old=$(gh api "repos/{owner}/{repo}/issues/<n>/comments" --paginate \
-  --jq '.[] | select(.body | startswith("<!-- patchy-acceptance -->")) | .id')
-gh pr comment <n> --body-file verdict.md --attach .local/shots/<run>/<file>   # one --attach per file
-for id in $old; do gh api -X DELETE "repos/{owner}/{repo}/issues/comments/$id"; done
+  --jq '.[] | select(.body | startswith("<!-- patchy-acceptance -->")) | "\(.id) \(.user.login)"' |
+  awk -v me="$me" '$2 == me { print $1 }')
+gh pr comment <n> --body-file verdict.md --attach .local/shots/<run>/<file> &&   # one --attach per file
+  for id in $old; do gh api -X DELETE "repos/{owner}/{repo}/issues/comments/$id"; done
 ```
 
-The new comment goes up before the old one goes, because `gh` uploads
-attachments only into a comment it creates, and a new comment notifies the
-people watching the PR. Before posting, check `headRefOid` again. If the head
+Only verdicts posted by your GitHub account are yours to replace, and they go
+only once the new one is up: `gh` uploads attachments only into a comment it
+creates, and a new comment notifies the people watching the PR. Before posting, check `headRefOid` again. If the head
 moved while you worked, post anyway and say so in the first line: the verdict
 names the commit you checked, and the new head needs a new run.
 
