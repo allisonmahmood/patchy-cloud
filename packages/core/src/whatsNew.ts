@@ -50,6 +50,72 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 14,
+    date: "2026-10-19",
+    through: "7694babf056f355ba9cd0e239febfd1cae907d7a",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Tools with server code answer faster",
+        detail:
+          "A tool your agent built with server code now keeps its server ready while you have it open, so switching screens or saving after a pause no longer waits for it to start again. Each call also does less work before it reaches your data, and a screen runs two of its lookups at once instead of one after another.",
+        prs: [756, 764, 768, 769, 771, 772, 773, 775, 778]
+      },
+      {
+        kind: "Improved",
+        title: "Your company's tools and pages open sooner",
+        detail:
+          "Opening a tool or page no longer waits for Patchy to check who you are before it starts loading its data. Its files come from memory and arrive compressed, and the parts every tool shares stay in your browser between visits.",
+        prs: [759, 761, 766, 770]
+      },
+      {
+        kind: "Fixed",
+        title: "Tools stop flashing Reconnecting while they load",
+        detail:
+          "A tool with several slow lookups used to show Reconnecting and ask for its data again while it was still loading. It now waits for the answers, picks a lost connection back up at once, and backs off calmly when it can't.",
+        prs: [755, 776, 780]
+      },
+      {
+        kind: "Improved",
+        title: "Publishing is quicker",
+        detail:
+          "When your agent publishes a tool that uses your company's look, Patchy checks the look is current without downloading all of it first.",
+        prs: [729]
+      },
+      {
+        kind: "Improved",
+        title: "New tools start with a tidy layout",
+        detail:
+          "A tool your agent starts now opens as a centred column with room around it, instead of text pressed into the top-left corner.",
+        prs: [763]
+      },
+      {
+        kind: "Improved",
+        title: "Your usual is easier to scan",
+        detail:
+          "The patches in Your usual on Home now show just their name and why they're there. On a mid-sized window, Home's rows fit their column instead of breaking names across lines.",
+        prs: [721]
+      },
+      {
+        kind: "Fixed",
+        title: "A page that isn't there says what to do",
+        detail:
+          "An address that doesn't lead anywhere now shows a full-page notice like the rest of Patchy, with a link back to Home.",
+        prs: [762]
+      },
+      {
+        kind: "Fixed",
+        title: "A logo Patchy can't read is refused, not a crash",
+        detail:
+          "If a company logo has text Patchy can't check, publishing the look now says which part to fix instead of failing with an unexpected error.",
+        prs: [728]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy's own logs record more about how tools keep their live data up to date, to find what's still slow."
+    ]
+  },
+  {
     id: 13,
     date: "2026-10-16",
     through: "c9b8fc48622ddff2a02251f4415dcbbcbe841ec6",
