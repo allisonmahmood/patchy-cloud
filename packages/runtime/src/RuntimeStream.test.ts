@@ -25,7 +25,6 @@ import { Session } from "@patchy/auth";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
-import type { ContractLimitId } from "@patchy/limits/registry";
 import * as ConnectedVersions from "./ConnectedVersions.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
@@ -1089,12 +1088,14 @@ type Change<R = RuntimeSubscriptionRequest> = R extends unknown
  * from `connect`, and keepalives with whether each warmed and why it ended. Query re-runs admit
  * themselves like calls, counted in `admissions`, and read `revision`. With `gated`, each
  * `connect` waits in `attempts` for its release; while `releasing` is set, a company lock that
- * lets go waits for it first. `idle` overrides the company's window.
+ * lets go waits for it first, and while `landing` is set, a desired-set change waits for it
+ * before its activity lands. `idle` overrides the company's window and `records` the bounds on
+ * disconnected documents' records.
  */
 const fleetStreams = Effect.fnUntraced(function* (
   options: {
-    readonly overrides?: Readonly<Partial<Record<ContractLimitId, number>>>;
     readonly idle?: number;
+    readonly records?: typeof RuntimeStream.ActivityRecords.Service;
   } = {}
 ) {
   const operating = yield* StreamLimits.make;
@@ -1137,7 +1138,8 @@ const fleetStreams = Effect.fnUntraced(function* (
     admissions: 0,
     revision: 0,
     gated: false,
-    releasing: undefined as Deferred.Deferred<void> | undefined
+    releasing: undefined as Deferred.Deferred<void> | undefined,
+    landing: undefined as Deferred.Deferred<void> | undefined
   };
   const events = yield* WideEvents.make.pipe(
     Effect.provideService(WideEvents.Sink, {
@@ -1145,12 +1147,40 @@ const fleetStreams = Effect.fnUntraced(function* (
     })
   );
   const streams = yield* RuntimeStream.make.pipe(
-    Effect.provideServiceEffect(Subscriptions.Subscriptions, Subscriptions.make),
+    Effect.provideServiceEffect(
+      Subscriptions.Subscriptions,
+      Effect.map(Subscriptions.make, (registry) =>
+        Subscriptions.Subscriptions.of({
+          ...registry,
+          attach: (attached) => {
+            const document = registry.attach(attached);
+            return {
+              ...document,
+              update: (request) =>
+                document
+                  .update(request)
+                  .pipe(
+                    Effect.tap((changed) =>
+                      changed && fleet.landing !== undefined
+                        ? Deferred.await(fleet.landing)
+                        : Effect.void
+                    )
+                  )
+            };
+          }
+        })
+      )
+    ),
     Effect.provide(StreamAdmission.layer),
     Effect.provideService(StreamLimits.StreamLimits, limits),
     Effect.provide(authority.layer),
     Effect.provideService(WideEvents.WideEvents, events),
-    Effect.provideService(ContractLimits.overrides, options.overrides ?? {}),
+    // The suite's call budget of three a minute is for its own tests.
+    Effect.provideService(ContractLimits.overrides, {}),
+    Effect.provideService(
+      RuntimeStream.ActivityRecords,
+      options.records ?? RuntimeStream.ActivityRecords.defaultValue()
+    ),
     Effect.provideService(SubscriptionReads.SubscriptionReads, {
       admit: () => Effect.die("Hosted queries admit through Invocation."),
       read: () => Effect.die("Hosted queries read through Invocation."),
@@ -1445,6 +1475,60 @@ it.layer(layer)("document activity", (it) => {
   );
 
   it.effect(
+    "lands a call's activity on the generation that replaced its document meanwhile, not a departed one",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* fleetStreams();
+        const moving = yield* host.connect("moving_call_document");
+        const leaving = yield* host.connect("leaving_call_document");
+        for (const document of [moving, leaving])
+          assert.deepStrictEqual(yield* document.next, { type: "ready" });
+        yield* TestClock.adjust(window);
+        // The call's documents are found, then reauthentication replaces one and the other leaves.
+        const activity = host.streams.called({
+          companyId: DEV_SEED.companyId,
+          patchId: Fixtures.patchId,
+          versionId: Fixtures.versionId,
+          viewerId: DEV_SEED.userId
+        });
+        const moved = yield* host.connect("moving_call_document", moving.generation);
+        assert.strictEqual(moved.opened, "ready");
+        yield* Scope.close(leaving.scope, Exit.void);
+        yield* activity;
+        yield* host.connection(3);
+        yield* Effect.yieldNow;
+        assert.deepInclude(host.fleet, { company: 1, versions: 1, connects: 3 });
+        const resumed = yield* host.connect("leaving_call_document", leaving.generation);
+        assert.strictEqual(resumed.opened, "ready");
+        assert.strictEqual(host.fleet.connects, 3);
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("lands a set change's activity on the generation that replaced it meanwhile", () =>
+    Effect.gen(function* () {
+      const host = yield* fleetStreams();
+      const first = yield* host.connect("handed_over_document");
+      assert.deepStrictEqual(yield* first.next, { type: "ready" });
+      yield* TestClock.adjust(window);
+      const landing = yield* Deferred.make<void>();
+      host.fleet.landing = landing;
+      const updating = yield* host
+        .update(first, { sequence: 1, type: "subscribe", subscription: items })
+        .pipe(Effect.forkChild);
+      assert.deepStrictEqual(yield* first.next, { type: "admitted", sequence: 1 });
+      host.fleet.landing = undefined;
+      // Admitted, but its activity hasn't landed when reauthentication replaces the generation.
+      const second = yield* host.connect("handed_over_document", first.generation);
+      assert.strictEqual(second.opened, "ready");
+      yield* Deferred.succeed(landing, undefined);
+      yield* Fiber.join(updating);
+      yield* host.connection(2);
+      yield* Effect.yieldNow;
+      assert.deepInclude(host.fleet, { company: 1, versions: 1, connects: 2 });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect(
     "never lets an old owner's expiry, acquisition or finalizer touch its replacement's holds",
     () =>
       Effect.gen(function* () {
@@ -1494,7 +1578,7 @@ it.layer(layer)("document activity", (it) => {
 
   it.effect("forgets the longest-disconnected records past the bound, never a connected one", () =>
     Effect.gen(function* () {
-      const host = yield* fleetStreams({ overrides: { "stream.activity.records": 1 } });
+      const host = yield* fleetStreams({ records: { capacity: 1, retention: 60 * 60_000 } });
       const kept = yield* host.connect("kept_connected_document");
       const evicted = yield* host.connect("evicted_document");
       const remembered = yield* host.connect("remembered_document");
@@ -1517,7 +1601,7 @@ it.layer(layer)("document activity", (it) => {
 
   it.effect("forgets a disconnected record after retention, never one that reattached", () =>
     Effect.gen(function* () {
-      const host = yield* fleetStreams({ overrides: { "stream.activity.retention": 60_000 } });
+      const host = yield* fleetStreams({ records: { capacity: 4096, retention: 60_000 } });
       let document = yield* host.connect("returning_document");
       assert.deepStrictEqual(yield* document.next, { type: "ready" });
       yield* TestClock.adjust(window);

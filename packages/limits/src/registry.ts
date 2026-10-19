@@ -916,26 +916,6 @@ export const registry = {
     refusal: null,
     overridable: false
   },
-  "stream.activity.records": {
-    kind: "contract",
-    default: 4096,
-    unit: "documents",
-    scope: "host",
-    measure:
-      "Disconnected tier 2 documents whose activity a host remembers for their reconnect; the longest gone are forgotten first",
-    refusal: null,
-    overridable: false
-  },
-  "stream.activity.retention": {
-    kind: "contract",
-    default: 3600000,
-    unit: "milliseconds",
-    scope: "host",
-    measure:
-      "How long a host remembers a disconnected tier 2 document's activity; a document it has forgotten reconnects active",
-    refusal: null,
-    overridable: false
-  },
   "look.bytes": {
     kind: "contract",
     default: 524288,

@@ -116,8 +116,6 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `subscriptions.reconcile.interval` | operating | 30000 | milliseconds | host | Reconcile durable revisions and document authority | None | No | deployment |
 | `stream.hidden.suspend` | contract | 30000 | milliseconds | viewer | Hidden document delay before suspension | None | No | release |
 | `stream.remount.grace` | contract | 1000 | milliseconds | viewer | Document remount grace | None | No | release |
-| `stream.activity.records` | contract | 4096 | documents | host | Disconnected tier 2 documents whose activity a host remembers for their reconnect; the longest gone are forgotten first | None | No | release |
-| `stream.activity.retention` | contract | 3600000 | milliseconds | host | How long a host remembers a disconnected tier 2 document's activity; a document it has forgotten reconnects active | None | No | release |
 | `look.bytes` | contract | 524288 | bytes | company | Published bytes of a look revision's files, embedded fonts included; look publish refuses invalid_look | None | No | release |
 | `look.brief.bytes` | contract | 32768 | bytes | company | A look revision's LOOK.md; look publish refuses invalid_look | None | No | release |
 | `invites.batch` | contract | 50 | addresses | company | Addresses in one invite from the Company page; more are refused before any email goes out | None | No | release |

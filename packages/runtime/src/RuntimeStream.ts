@@ -111,9 +111,20 @@ type Entry = {
   readonly subscriptions: Subscriptions.DocumentSubscriptions;
   readonly send: (frame: RuntimeStreamFrame) => void;
   readonly close: (reason: string, frame?: RuntimeStreamFrame) => void;
-  /** Marks the document active, taking its warm holds back in the background if it was idle. */
-  readonly activate: Effect.Effect<void>;
+  /**
+   * Marks the document active at `now` in one step, for its record's current generation, and
+   * returns the background re-hold to start if it was idle.
+   */
+  readonly activate: (now: number) => Effect.Effect<void>;
 };
+
+/** A host forgets the longest-disconnected documents past 4096, and any after an hour. */
+export const ActivityRecords = Context.Reference<{
+  readonly capacity: number;
+  readonly retention: number;
+}>("@patchy/runtime/RuntimeStream/ActivityRecords", {
+  defaultValue: () => ({ capacity: 4096, retention: 60 * 60_000 })
+});
 
 /** Request admission and stream lifetime use the HTTP request's scope.
  * @effect-expect-leaking HttpServerRequest
@@ -170,8 +181,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const limits = yield* Limits.Limits;
     const callsPerMinute = yield* ContractLimits.get("runtime.calls.perMinute");
     const documentLimit = yield* ContractLimits.get("stream.documents");
-    const recordLimit = yield* ContractLimits.get("stream.activity.records");
-    const retention = yield* ContractLimits.get("stream.activity.retention");
+    const records = yield* ActivityRecords;
     const clock = yield* Clock.Clock;
     const operatingLimits = yield* StreamLimits.StreamLimits;
     const subscriptions = yield* Subscriptions.Subscriptions;
@@ -212,7 +222,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const detached = new Map<string, Activity>();
     const forget = (now: number) => {
       for (const [key, activity] of detached) {
-        if (detached.size <= recordLimit && activity.detachedAt + retention > now) return;
+        if (detached.size <= records.capacity && activity.detachedAt + records.retention > now)
+          return;
         detached.delete(key);
         if (activities.get(key) === activity) activities.delete(key);
       }
@@ -245,6 +256,15 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       activity.entry = entry;
       return activity;
     };
+    /**
+     * Marks a document active for its viewer's call or set change. It lands on whichever
+     * generation is connected when it runs, so a replacement meanwhile doesn't lose it; a
+     * document that disconnected meanwhile keeps none.
+     */
+    const activate = (activity: Activity) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        Effect.suspend(() => activity.entry?.activate(now) ?? Effect.void)
+      );
     const detach = (key: string, activity: Activity) => {
       activity.entry = undefined;
       activity.owner = undefined;
@@ -596,19 +616,17 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           if (frame.type === "handlers") entry.lastHandlerKinds = frame.kinds;
           if (!put(frame)) close("slow_consumer", { type: "closed", reason: "slow_consumer" });
         },
-        activate: Effect.flatMap(Clock.currentTimeMillis, (now) =>
-          Effect.suspend(() => {
-            const activity = entry.activity;
-            if (execution === undefined || activity?.entry !== entry) return Effect.void;
-            quietest = Math.max(quietest, now - activity.lastActive);
-            activity.lastActive = Math.max(activity.lastActive, now);
-            if (!started || activity.owner !== undefined) return Effect.void;
-            const owner: Owner = { idle: false };
-            activity.owner = owner;
-            reactivated++;
-            return hold(execution, activity, owner, false);
-          })
-        )
+        activate: (now) => {
+          const activity = entry.activity;
+          if (execution === undefined || activity?.entry !== entry) return Effect.void;
+          quietest = Math.max(quietest, now - activity.lastActive);
+          activity.lastActive = Math.max(activity.lastActive, now);
+          if (!started || activity.owner !== undefined) return Effect.void;
+          const owner: Owner = { idle: false };
+          activity.owner = owner;
+          reactivated++;
+          return hold(execution, activity, owner, false);
+        }
       };
       const disconnect = Effect.sync(() => {
         close("disconnected");
@@ -885,7 +903,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           value: attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : callsPerMinute
         });
       // A change to the logical desired set is the viewer's activity; a repeat is not.
-      if (yield* entry.subscriptions.update(input)) yield* entry.activate;
+      if ((yield* entry.subscriptions.update(input)) && entry.activity !== undefined)
+        yield* activate(entry.activity);
     });
     return RuntimeStream.of({
       open,
@@ -903,14 +922,16 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ),
       called: (call) =>
         Effect.forEach(
-          [...entries.values()].filter(
-            (entry) =>
-              entry.companyId === call.companyId &&
-              entry.patchId === call.patchId &&
-              entry.versionId === call.versionId &&
-              entry.viewerId === call.viewerId
+          [...entries.values()].flatMap((entry) =>
+            entry.activity !== undefined &&
+            entry.companyId === call.companyId &&
+            entry.patchId === call.patchId &&
+            entry.versionId === call.versionId &&
+            entry.viewerId === call.viewerId
+              ? [entry.activity]
+              : []
           ),
-          (entry) => entry.activate,
+          activate,
           { discard: true }
         ),
       connected: (companyId, patchId) =>

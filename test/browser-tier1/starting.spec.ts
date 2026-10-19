@@ -414,7 +414,7 @@ test.describe("idle documents", () => {
     serverEnvironment: {
       EXECUTION_PROVIDER: "local-fleet",
       PATCHY_LIMITS_JSON: JSON.stringify({
-        "execution.document.idle": 1_000,
+        "execution.document.idle": 8_000,
         "execution.company.idle": 1_000,
         "execution.housekeeping.interval": 250,
         "execution.housekeeping.lease": 1_000
@@ -422,7 +422,7 @@ test.describe("idle documents", () => {
     }
   });
 
-  test("an open tab nobody uses lets its company go, and resumes to run a held call once", async ({
+  test("an open tab nobody uses lets its company go, and a held call after resume runs once and holds it again", async ({
     page,
     instance
   }) => {
@@ -469,5 +469,10 @@ test.describe("idle documents", () => {
       )
     ).toBe(1);
     await expect(page.getByRole("dialog", { name: "Starting your tools" })).toBeHidden();
+    // The call made the document active again, so the company outlives its own idle window
+    // until the document's window passes too.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(await released()).toBe(1);
+    await expect.poll(released, { timeout: 30_000 }).toBe(2);
   });
 });

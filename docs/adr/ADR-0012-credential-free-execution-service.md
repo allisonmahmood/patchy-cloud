@@ -222,9 +222,10 @@ set or an admitted `server.call` from its viewer for that version on that host.
 Reconnects, reauthentication, reconciliation and re-runs caused by other people's
 writes don't count. Each host keeps one activity record per document across its
 stream generations, with the last admitted desired set as a digest, and one owner
-of its company hold and keepalive at a time. Disconnected records wait in a
-bounded cache (`stream.activity.records`, `stream.activity.retention`), and a
-reconnect the host has no record of starts active. An idle document lets go of
+of its company hold and keepalive at a time. Activity lands on whichever generation
+is connected when it runs. Disconnected records wait in a cache of 4096, longest
+gone first, for at most an hour, and a reconnect the host has no record of starts
+active. An idle document lets go of
 both holds and stays connected and ready; its activity takes them back in the
 background, without warming. One
 keepalive per company version on each host touches it right away; each later touch

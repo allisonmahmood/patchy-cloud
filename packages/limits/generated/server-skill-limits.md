@@ -106,5 +106,3 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `subscriptions.reconcile.interval` | operating | 30000 | milliseconds | host | Reconcile durable revisions and document authority | None | No | deployment |
 | `stream.hidden.suspend` | contract | 30000 | milliseconds | viewer | Hidden document delay before suspension | None | No | release |
 | `stream.remount.grace` | contract | 1000 | milliseconds | viewer | Document remount grace | None | No | release |
-| `stream.activity.records` | contract | 4096 | documents | host | Disconnected tier 2 documents whose activity a host remembers for their reconnect; the longest gone are forgotten first | None | No | release |
-| `stream.activity.retention` | contract | 3600000 | milliseconds | host | How long a host remembers a disconnected tier 2 document's activity; a document it has forgotten reconnects active | None | No | release |
