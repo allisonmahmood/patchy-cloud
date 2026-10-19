@@ -11,9 +11,10 @@
  * run ends, however it ends, a finalizer takes both instances down with their
  * own runners, which deletes their data. The checkouts and `node_modules`
  * stay, so the next run skips the clone and installs incrementally. One run at
- * a time per worktree: the lock folder `<label>.evidence/lock/`, made before
- * anything else, spans setup, capture and cleanup, and `pnpm dev down` takes
- * it too before deleting the folder, lock and all.
+ * a time per worktree: the lock folder `<label>.evidence.lock/`, made before
+ * anything else, spans setup, capture and cleanup. `pnpm dev down` takes it
+ * too before deleting the checkouts, and never deletes the lock folder: a run
+ * starting at that moment would lose its entry.
  */
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -127,11 +128,12 @@ export const provenanceLines = (input: Provenance) => {
   return lines;
 };
 
-/** The lock lives inside the evidence folder, so deleting the folder deletes it too. */
-const lockDirOf = (evidenceDir: string) => `${evidenceDir}/lock`;
-
-const evidenceDirOf = (worktree: string) =>
-  Effect.map(environmentDir(worktree), (dir) => `${dir}.evidence`);
+/** Where a worktree's evidence checkouts live, and the lock folder beside them. */
+export const evidencePaths = (worktree: string) =>
+  Effect.map(environmentDir(worktree), (dir) => ({
+    dir: `${dir}.evidence`,
+    lock: `${dir}.evidence.lock`
+  }));
 
 // ---- Commits ----------------------------------------------------------------
 
@@ -426,7 +428,7 @@ const serveSide = Effect.fn("Evidence.serveSide")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dir = path.join(yield* evidenceDirOf(root), name);
+  const dir = path.join((yield* evidencePaths(root)).dir, name);
   const env = yield* cloneEnv(root);
   yield* prepare(root, dir, name, commit, env);
   yield* Effect.addFinalizer(() =>
@@ -476,7 +478,7 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
   /** The run's folder, absolute; a side that fails to come up leaves its log here. */
   readonly runDir: string;
 }) {
-  yield* acquireLock(lockDirOf(yield* evidenceDirOf(input.root)), input.command);
+  yield* acquireLock((yield* evidencePaths(input.root)).lock, input.command);
   const [before, after] = yield* Effect.all(
     [
       Option.match(input.before, {
@@ -507,16 +509,17 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
 
 /**
  * For `pnpm dev down`: takes any leftover evidence instance down and deletes
- * the checkouts, holding the lock so no run is setting up meanwhile. Returns
- * whether there was anything to delete.
+ * the checkouts, holding the lock so no run is setting up meanwhile. The lock
+ * folder stays, empty. Returns whether there was anything to delete.
  */
 export const removeEvidence = Effect.fn("Evidence.removeEvidence")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dir = yield* evidenceDirOf(root);
-  // A run makes the folder with its lock before anything else, so no folder means no run.
+  const { dir, lock } = yield* evidencePaths(root);
+  // A run makes the lock folder before anything else: with neither, there is no run and nothing to delete.
+  if (!(yield* fs.exists(dir)) && !(yield* fs.exists(lock))) return false;
+  yield* acquireLock(lock, "down");
   if (!(yield* fs.exists(dir))) return false;
-  yield* acquireLock(lockDirOf(dir), "down");
   const env = yield* cloneEnv(root);
   for (const side of ["before", "after"] as const) {
     const clone = path.join(dir, side);

@@ -1,10 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
-import { acquireLock, clonePlan } from "./evidence.js";
+import { acquireLock, clonePlan, evidencePaths, removeEvidence } from "./evidence.js";
 
 describe("clonePlan", () => {
   it("clones and checks out a side that has no checkout yet", () => {
@@ -94,5 +95,41 @@ it.layer(NodeServices.layer)("the evidence lock", (it) => {
         })
       );
     }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "down deletes the checkouts only when no run holds the lock, and keeps the lock folder",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const data = path.join(home, "data");
+        const inHome = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          effect.pipe(
+            Effect.provide(
+              ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home, XDG_DATA_HOME: data }))
+            )
+          );
+        const root = path.join(home, "worktree");
+        const { dir, lock } = yield* inHome(evidencePaths(root));
+
+        assert.isFalse(yield* inHome(removeEvidence(root)));
+        assert.isFalse(yield* fs.exists(lock));
+
+        yield* fs.makeDirectory(path.join(dir, "after"), { recursive: true });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* acquireLock(lock, "compare");
+            const busy = yield* Effect.flip(inHome(removeEvidence(root)));
+            assert.strictEqual(busy._tag, "EvidenceBusy");
+            assert.isTrue(yield* fs.exists(dir));
+          })
+        );
+
+        assert.isTrue(yield* inHome(removeEvidence(root)));
+        assert.isFalse(yield* fs.exists(dir));
+        assert.deepStrictEqual(yield* fs.readDirectory(lock), []);
+      }).pipe(Effect.scoped)
   );
 });
