@@ -1225,8 +1225,9 @@ A browser's failure reports its correlation id; grep for it to find the entry.
   2 MiB, always holding at least one entry.
 - `--before` takes the cursor the previous page printed, to read older entries.
 
-There is no search or follow mode: page with `--before` and filter with `grep`
-or `jq`. `--json` prints `{ ok, patchId, entries, next, windowEnded }`, documented
+Text prints each step under the handler that made it and stops after about
+2 MiB, saying so; `--json` always holds the whole page. There is no search or
+follow mode: page with `--before` and filter with `grep` or `jq`. `--json` prints `{ ok, patchId, entries, next, windowEnded }`, documented
 in [`docs/API.md`](../../docs/API.md); `next` is the cursor for `--before`, or
 null at the start of the log. Another member's key is refused with `not_owner`,
 exit 2, naming the owner.

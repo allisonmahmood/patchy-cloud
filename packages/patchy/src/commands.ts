@@ -1105,9 +1105,11 @@ const logs = Command.make(
               )
             )
           );
+        // Text is built only when it is what gets printed.
+        const json = yield* Output.JsonFlag;
         yield* Output.report(
           encodePatchLog(log),
-          Logs.render(log, { failed: options.failed, patch: options.patch })
+          json ? [] : Logs.render(log, { failed: options.failed, patch: options.patch })
         );
       })
     )
