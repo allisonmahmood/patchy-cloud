@@ -75,15 +75,18 @@ is done when each thing in Look at carries evidence that matches the PR's head.
 - **Shows** that a command behaves as claimed: its output, its `--json` shape,
   its exit code and its refusals. ADR-0004 is the CLI's contract.
 - **Make** it by running the command and pasting it with its output in a
-  fenced block, with `echo $?` after it where the exit code matters. Against a
-  local instance, `pnpm patchy …` runs the CLI from source (the
-  `patchy-dev-loop` skill); the throwaway instance above keeps its output to
+  fenced block, with `echo $?` after it where the exit code matters. In the
+  throwaway checkout above, `pnpm patchy …` runs the CLI from source against
+  that checkout's instance (the `patchy-dev-loop` skill), so its output is
   scenario data.
 - **Costs** seconds.
 - **Gotchas.** Output carries what the shell can reach: tokens, home paths,
-  local ports, ids. Trim it to what makes the point. An environment's own CLI,
-  `<env>/bin/patchy`, reads `~/.patchy`, which can be signed in to production,
-  unless `PATCHY_STATE_DIR=<env>/cli-state` is set.
+  local ports, ids. Trim it to what makes the point. An environment's installed
+  CLI, `<env>/bin/patchy` beside the `agent` launcher `pnpm dev up` prints,
+  follows an exported `PATCHY_API_URL` or `PATCHY_API_TOKEN` and then
+  `~/.patchy`, any of which can point at production. The launcher clears both
+  and sets its state dir; by hand, run
+  `env -u PATCHY_API_URL -u PATCHY_API_TOKEN PATCHY_STATE_DIR=<env>/cli-state <env>/bin/patchy …`.
 
 ## Not built yet
 
@@ -98,7 +101,8 @@ lands.
   per file. Each `![alt](./after.png)` in the body that names an attached file
   becomes its upload, inside tables and `<details>` too. It needs gh 2.102 or
   later (`gh --version`).
-- `![name](x.mp4)` plays inline.
+- An attached `![name](x.mp4)` on a line of its own plays inline; beside other
+  text it becomes a link.
 - At most 50 attachments per command and 10 MB per file.
 - Uploads are public by URL, and so is the repo: only scenario data, never
   tokens.
