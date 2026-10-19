@@ -51,11 +51,13 @@ const LOGIN_CODE = /\b[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}\b/g;
 /**
  * An email address, its `@` written or URL-encoded as `%40`: a quoted or plain
  * local part, Unicode included, and a domain whose top level is letters (or
- * punycode), so `patchy@0.14.0` isn't one. A match only starts where a local
- * part can, so a long run with no `@` is scanned once, not once per character.
+ * punycode), so `patchy@0.14.0` isn't one. A match only starts where a run
+ * of local-part characters does, so a long run with no `@` is scanned once,
+ * not once per character. Leading apostrophes, as in `'jane@company.com'`,
+ * are matched but left out of the span.
  */
 const EMAIL =
-  /(?<![\p{L}\p{N}._%+-])(?:"[^"\n]+"|[\p{L}\p{N}._%+-][\p{L}\p{N}._%+'-]*)(?:@|%40)(?:[\p{L}\p{N}-]+\.)+(?:\p{L}{2,}|xn--[\p{L}\p{N}-]+)(?![\p{L}\p{N}-])/giu;
+  /(?<![\p{L}\p{N}._%+'-])(?:"[^"\n]+"|[\p{L}\p{N}._%+'-]+)(?:@|%40)(?:[\p{L}\p{N}-]+\.)+(?:\p{L}{2,}|xn--[\p{L}\p{N}-]+)(?![\p{L}\p{N}-])/giu;
 /**
  * Domains reserved for examples and tests (RFC 2606, 6761), which every
  * scenario person uses, and the seed's `patchy.local`. Other `.local` names
@@ -145,9 +147,11 @@ export const redactText = (secrets: ReadonlyMap<string, SecretSource>, text: str
   find(REDACTED, null);
   for (const [value, source] of secrets) for (const form of forms(value)) find(form, source);
   for (const [shape, source, redacts] of SHAPES)
-    for (const match of text.matchAll(shape))
-      if (redacts(match[0]))
-        spans.push({ start: match.index, end: match.index + match[0].length, source });
+    for (const match of text.matchAll(shape)) {
+      const lead = /^'*/.exec(match[0])![0].length;
+      if (redacts(match[0].slice(lead)))
+        spans.push({ start: match.index + lead, end: match.index + match[0].length, source });
+    }
   spans.sort((a, b) => a.start - b.start || b.end - a.end);
   const done = spans.filter((span) => span.source === null);
   const matched = new Set<SecretSource>();

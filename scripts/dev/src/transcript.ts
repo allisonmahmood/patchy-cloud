@@ -242,6 +242,8 @@ export const sideShell = Effect.fn("Transcript.sideShell")(function* (root: stri
       Effect.orElseSucceed(() => [dir])
     );
   const homes = yield* both(yield* Config.String("HOME"));
+  // `~<user>` names the same folder as `~`.
+  const tildes = ["~", `~${path.basename(homes[0]!)}`];
   const folders: Array<readonly [string, string]> = [];
   for (const [dir, placeholder] of [
     [layout.dir, "<env>"],
@@ -254,11 +256,12 @@ export const sideShell = Effect.fn("Transcript.sideShell")(function* (root: stri
     ...folders.flatMap(([dir, placeholder]) =>
       homes
         .filter((home) => dir.startsWith(`${home}${path.sep}`))
-        .map((home) => [`~${dir.slice(home.length)}`, placeholder] as const)
+        .flatMap((home) =>
+          tildes.map((tilde) => [`${tilde}${dir.slice(home.length)}`, placeholder] as const)
+        )
     ),
     ...homes.map((home) => [home, "~"] as const),
-    // `~<user>` names the same folder.
-    [`~${path.basename(homes[0]!)}`, "~"]
+    [tildes[1]!, "~"]
   ];
   return {
     name: side.name,

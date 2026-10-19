@@ -114,18 +114,31 @@ const decodeAccount = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeAcc
  * environment, best effort; the email shape is the backstop.
  */
 export const identities = Effect.fn("Trial.identities")(function* (shell: AgentShell) {
-  const read = (step: string, command: string, args: ReadonlyArray<string>) =>
-    stepOutput(step, command, args, { cwd: shell.cwd, env: shell.env, prefix: shell.name }).pipe(
-      Effect.orElseSucceed(() => "")
-    );
-  const account = yield* decodeAccount(
-    yield* read("Reading Claude Code's account", "claude", ["auth", "status", "--json"])
-  ).pipe(Effect.option);
-  const author = yield* read("Reading git's author email", "git", [
-    "config",
-    "--get",
-    "user.email"
-  ]);
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // Only stdout is read: a diagnostic on stderr can name the account before the sanitizer exists.
+  const read = (command: string, args: ReadonlyArray<string>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(command, [...args], {
+            cwd: shell.cwd,
+            env: shell.env,
+            extendEnv: false,
+            stdin: "ignore",
+            stderr: "ignore"
+          })
+        );
+        const [stdout, exitCode] = yield* Effect.all(
+          [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+          { concurrency: "unbounded" }
+        );
+        return Number(exitCode) === 0 ? stdout.trim() : "";
+      })
+    ).pipe(Effect.orElseSucceed(() => ""));
+  const account = yield* decodeAccount(yield* read("claude", ["auth", "status", "--json"])).pipe(
+    Effect.option
+  );
+  const author = yield* read("git", ["config", "--get", "user.email"]);
   return [
     Option.match(account, { onNone: () => null, onSome: (a) => a.email ?? null }),
     author

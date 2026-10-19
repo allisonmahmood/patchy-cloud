@@ -457,6 +457,18 @@ describe("runAgent", () => {
         env: { PATH: `${dir}:/usr/bin:/bin`, HOME: dir }
       });
       assert.deepStrictEqual(found, ["jane@company.com", "jane@home.example.org"]);
+
+      // A failing read gives nothing, and its stderr isn't passed on.
+      yield* fs.writeFileString(
+        path.join(dir, "claude"),
+        `#!/usr/bin/env bash\necho 'Authentication failed for jane@company.com' >&2\nexit 1\n`,
+        { mode: 0o755 }
+      );
+      const fallback = yield* identities({
+        ...shell(dir, path.join(dir, "agent")),
+        env: { PATH: `${dir}:/usr/bin:/bin`, HOME: dir }
+      });
+      assert.deepStrictEqual(fallback, ["jane@home.example.org"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   );
 
