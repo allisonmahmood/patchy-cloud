@@ -265,6 +265,21 @@ const location = (node: Node) => {
 // --- analytics: Patchy writes the ShopifyQL --------------------------------------------------
 
 type AnalyticsInput = Extract<ShopifyDevRead, { readonly operation: "analytics" }>["input"];
+/**
+ * Ids look the same everywhere a patch sees them: ShopifyQL's numeric product and variant ids
+ * become the GraphQL ids orders, products and stock use, and go back to numbers in filters, so a
+ * patch can join a report to its stock (#815: the builder agent's join silently matched nothing).
+ */
+const idTypes: Readonly<Record<string, string>> = {
+  product_id: "Product",
+  product_variant_id: "ProductVariant"
+};
+const toGid = (dimension: string, value: string) =>
+  idTypes[dimension] !== undefined && /^\d+$/.test(value)
+    ? `gid://shopify/${idTypes[dimension]}/${value}`
+    : value;
+const fromGid = (dimension: string, value: string) =>
+  idTypes[dimension] === undefined ? value : (/\/(\d+)$/.exec(value)?.[1] ?? value);
 /** ShopifyQL single-quoted: backslashes and quotes escaped, so a value can't end the literal. */
 const quoted = (value: string) => `'${value.replace(/[\\']/g, (char) => `\\${char}`)}'`;
 export const shopifyql = (input: AnalyticsInput) => {
@@ -284,7 +299,9 @@ export const shopifyql = (input: AnalyticsInput) => {
     `SHOW ${input.show.join(", ")}`,
     ...(where.length === 0
       ? []
-      : [`WHERE ${where.map(([key, value]) => `${key} = ${quoted(value)}`).join(" AND ")}`]),
+      : [
+          `WHERE ${where.map(([key, value]) => `${key} = ${quoted(fromGid(key, value))}`).join(" AND ")}`
+        ]),
     ...(groupBy.length === 0 ? [] : [`GROUP BY ${groupBy.join(", ")}`]),
     ...(input.timeseries === undefined ? [] : [`TIMESERIES ${input.timeseries}`]),
     `SINCE ${input.since}`,
@@ -331,7 +348,7 @@ const analyticsRows = (input: AnalyticsInput, data: unknown) =>
                     : String(cell)
               ];
             if (name in shopifyDimensions || cell !== undefined)
-              return [name, cell === null || cell === undefined ? null : String(cell)];
+              return [name, cell === null || cell === undefined ? null : toGid(name, String(cell))];
             return [name, null];
           })
         ) as Readonly<Record<string, Json>>;

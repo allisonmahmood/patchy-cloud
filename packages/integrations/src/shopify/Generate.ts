@@ -142,7 +142,10 @@ export interface Metrics {
 ${metricTypes}
 }
 export type Metric = keyof Metrics;
-/** What rows may be grouped by. Nothing is per customer, and no place is finer than a region. */
+/**
+ * What rows may be grouped by. Nothing is per customer, and no place is finer than a region.
+ * product_id and product_variant_id are the same ids orders, products and stock use.
+ */
 export type Dimension = ${dimensionNames};
 export type FilterDimension = ${filterNames};
 export type Bucket = "day" | "week" | "month" | "quarter" | "year";
