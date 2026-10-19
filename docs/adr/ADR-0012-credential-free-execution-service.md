@@ -472,9 +472,9 @@ The **app stack** is one release, pinned to an image digest:
   reaches nothing. Every group but the hosts' declares its egress inline, so
   AWS's default allow-all egress is removed. An offline snapshot test pins them.
 - **Load balancer.** HTTPS with the existing certificate, 80 redirecting, HTTP/2
-  and a 3,600-second idle timeout. Hosts are one target group with
-  application-cookie stickiness on `patchy_stream_affinity`, a 90-second
-  deregistration delay and the shallow `/healthz` check.
+  and a 3,600-second idle timeout. Hosts are one target group with the load
+  balancer's one-day cookie stickiness (ADR-0010), a 90-second deregistration
+  delay and the shallow `/healthz` check.
 - **Hosts.** One ECS service of two tasks at 0.5 vCPU and 2 GiB, rolling at
   100/200 percent with circuit-breaker rollback, as user 1000 with a 120-second
   stop timeout. Settings come from the host secret by key. The host task role is

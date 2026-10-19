@@ -239,8 +239,6 @@ it.effect("keeps subscription telemetry on the event types that own it", () =>
         currentStreamId: "current",
         documentConnected: true,
         refusal: "stale_sequence",
-        affinityCookie: true,
-        affinityMatched: false,
         balancerCookie: true
       } as const;
       // Each type's schema keeps its own fields, in the order listed above, and drops the rest.
@@ -270,8 +268,6 @@ it.effect("keeps subscription telemetry on the event types that own it", () =>
             "currentStreamId",
             "documentConnected",
             "refusal",
-            "affinityCookie",
-            "affinityMatched",
             "balancerCookie"
           ]
         ],

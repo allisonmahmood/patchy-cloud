@@ -266,9 +266,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
     yield* Layer.build(
       HttpRouter.serve(
         Layer.mergeAll(
-          HttpApiBuilder.layer(api).pipe(
-            Layer.provide([RuntimeApi.layer, RuntimeStreamApi.layerLocal])
-          ),
+          HttpApiBuilder.layer(api).pipe(Layer.provide([RuntimeApi.layer, RuntimeStreamApi.layer])),
           pages,
           guard
         ),

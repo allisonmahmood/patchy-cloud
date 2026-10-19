@@ -32,9 +32,6 @@ const s3PrefixList = "pl-63a5400a";
 
 const port = { host: 8080, management: 8788, callback: 8789 } as const;
 
-/** The load balancer keeps a reader's stream and its subscription POSTs on one host (ADR-0010). */
-const streamAffinityCookie = "patchy_stream_affinity";
-
 /** The exec supervisor runs as root to give each workerd child its own uid, and needs none of these. */
 const execDroppedCapabilities = [
   "NET_RAW",
@@ -383,8 +380,8 @@ export class AppStack extends Stack {
       targetType: elbv2.TargetType.IP,
       // Matches the server's stream drain: readers reconnect to another host at EOF.
       deregistrationDelay: Duration.seconds(90),
-      // The server issues the cookie; the load balancer only keys on it.
-      stickinessCookieName: streamAffinityCookie,
+      // The load balancer's own cookie keeps a browser, and so a document's stream and its
+      // subscription POSTs, on one host (ADR-0010).
       stickinessCookieDuration: Duration.days(1),
       // Shallow on purpose: a database blip must not make ECS replace every host.
       healthCheck: {

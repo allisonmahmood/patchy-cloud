@@ -47,11 +47,12 @@ it("pins every security group and rule, and closes egress everywhere but the hos
 it("keeps a reader's stream and its subscription requests on one host", () => {
   template.hasResourceProperties("AWS::ElasticLoadBalancingV2::TargetGroup", {
     HealthCheckPath: "/healthz",
+    // The load balancer's own cookie: it rides every request from the browser, not one path.
     TargetGroupAttributes: Match.arrayWith([
       { Key: "deregistration_delay.timeout_seconds", Value: "90" },
       { Key: "stickiness.enabled", Value: "true" },
-      { Key: "stickiness.type", Value: "app_cookie" },
-      { Key: "stickiness.app_cookie.cookie_name", Value: "patchy_stream_affinity" }
+      { Key: "stickiness.type", Value: "lb_cookie" },
+      { Key: "stickiness.lb_cookie.duration_seconds", Value: "86400" }
     ])
   });
   template.hasResourceProperties("AWS::ElasticLoadBalancingV2::LoadBalancer", {

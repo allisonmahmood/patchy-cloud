@@ -59,18 +59,29 @@ the abandoned connection closes; the generation fence is never bypassed. Frames
 cross the existing bound port as `{ v, kind: "event", event: "stream", data }`.
 The core transport maintains the clock estimate without handing patch code a credential.
 
-The stream and its subscription POSTs must reach the same replica. A successful
-stream sets the opaque, HTTP-only `patchy_stream_affinity` application cookie
-under `/api/runtime`; it is routing state, never authority. Multi-replica ingress
-must use application-cookie affinity, not independent round-robin requests.
-For ALB the target group attributes are `stickiness.enabled=true`,
-`stickiness.type=app_cookie`,
-`stickiness.app_cookie.cookie_name=patchy_stream_affinity` and
-`stickiness.app_cookie.duration_seconds=86400`, with cross-zone balancing enabled.
-The browser sends both the application and ALB-generated cookies. On target loss,
-a stale-generation refusal forces reconnect and re-admission on the replacement;
-no subscription state or presence row is replicated. See
-[ALB application-based stickiness](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html#application-based-stickiness).
+The stream and its subscription POSTs must reach the same replica. The load
+balancer owns that with its own cookie; the server sets no routing cookie.
+Multi-replica ingress must keep a browser on one replica across every path, not
+route its requests independently. For ALB the target group attributes are
+`stickiness.enabled=true`, `stickiness.type=lb_cookie` and
+`stickiness.lb_cookie.duration_seconds=86400`, with cross-zone balancing enabled.
+The ALB sets its `AWSALB` cookie, scoped to `/`, on the page's own response,
+before the shell opens its stream. Once a browser holds that cookie and its
+target is healthy, every request from it reaches that replica. Until then, as
+when two tabs open at once without one, or during a drain, a stream can briefly
+sit on another replica than the cookie names. On drain or target loss the ALB
+picks a healthy replica and updates the cookie. Either way the next POST's
+stale-generation refusal forces reconnect and re-admission where the cookie
+points, and no subscription state or presence row is replicated. See
+[ALB duration-based stickiness](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html#duration-based-stickiness).
+
+Application-cookie stickiness on a server-issued cookie scoped to `/api/runtime`
+came first and failed in production ([#749](https://github.com/allisonmahmood/patchy-cloud/issues/749)).
+The ALB only sticks a request that carries both that cookie and its own
+`AWSALBAPP-*` cookie, which does not copy the server cookie's path. Requests
+outside `/api/runtime`, such as the frame's content, carried only the ALB cookie;
+the ALB balanced them freely and its responses cleared that cookie, so the
+subscription POSTs that followed alternated replicas.
 
 A document is connected only while its stream is open. The host derives company,
 patch and viewer counts in memory, without a presence row or heartbeat.
