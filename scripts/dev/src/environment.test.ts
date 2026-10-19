@@ -40,4 +40,38 @@ it.layer(NodeServices.layer)("the agent launcher", (it) => {
       assert.notInclude(env, "PATCHY_API_TOKEN");
     }).pipe(Effect.scoped)
   );
+
+  it.effect("lets claude use $TMPDIR as its temp folder, or /tmp without one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const layout = layoutOf(path.join(dir, "environment"), path);
+      yield* fs.makeDirectory(layout.workspace, { recursive: true });
+      yield* writeLauncher(layout);
+      const stubs = path.join(dir, "stubs");
+      yield* fs.makeDirectory(stubs);
+      yield* fs.writeFileString(path.join(stubs, "claude"), `#!/bin/sh\nprintf '%s\\n' "$@"\n`, {
+        mode: 0o755
+      });
+      const addDir = Effect.fn(function* (env: Record<string, string>) {
+        const child = yield* spawner.spawn(
+          ChildProcess.make(layout.agent, [], {
+            env: { PATH: `${stubs}:${yield* Config.String("PATH")}`, ...env },
+            extendEnv: false,
+            stdin: "ignore"
+          })
+        );
+        const args = (yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString)).split("\n");
+        return args[args.indexOf("--add-dir") + 1];
+      });
+
+      assert.strictEqual(
+        yield* addDir({ TMPDIR: path.join(dir, "scratch") }),
+        path.join(dir, "scratch")
+      );
+      assert.strictEqual(yield* addDir({}), "/tmp");
+    }).pipe(Effect.scoped)
+  );
 });

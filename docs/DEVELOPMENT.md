@@ -136,6 +136,7 @@ server is not watched: after a code change, `pnpm dev stop && pnpm dev`.
 | `pnpm dev compare <person> <path>...` | Pages before and after as one person, from throwaway instances at both commits, laid out for a PR. |
 | `pnpm dev film <person> <flow>`       | A Playwright flow recorded before and after, as captioned mp4s side by side, for a PR.             |
 | `pnpm dev transcript <script>`        | CLI lines run before and after as the scenario's signed-in CLI, compared line by line, for a PR.   |
+| `pnpm dev trial "<task>"`             | A fresh agent tries a task before and after, as the scenario's publisher, logged for a PR.         |
 | `pnpm dev down`                       | Stop everything the instance or environment started and delete what it made.                       |
 
 `pnpm --silent dev … --json` keeps pnpm's echo out of the JSON. One
@@ -228,9 +229,9 @@ before deleting anything.
 
 ### Showing a change in a PR
 
-`pnpm dev compare`, `pnpm dev film` and `pnpm dev transcript` show a change
-before and after, for a PR body. All three run on **evidence instances**, never
-this worktree's own: two shared
+`pnpm dev compare`, `pnpm dev film`, `pnpm dev transcript` and `pnpm dev trial`
+show a change before and after, for a PR body. All four run on **evidence
+instances**, never this worktree's own: two shared
 clones of the repository under `$XDG_DATA_HOME/patchy-dev/<label>.evidence/`,
 one at the base and one at `HEAD`, each brought up by its own runner on fresh
 scenario data. When the command ends, however it ends, both are taken down and
@@ -271,17 +272,50 @@ globally is refused before anything starts, since lines run as you; the check
 catches the plain forms, not every way to write them.
 
 Before comparing, each side's origin becomes `<origin>`, its environment
-folder `<env>`, its checkout `<checkout>` and your home folder `~`; every other
-difference stays. One sanitizer redacts what it collected before anything is
+folder `<env>`, its checkout `<checkout>` and your home folder `~`, each also
+in its resolved, `~/…` and `~<user>` forms; every other difference stays. One sanitizer redacts what it collected before anything is
 written: the values in each side's CLI state, read before the run, while each
 line runs and after it (so a login code a later `patchy logout` clears is still
-known), anything shaped like a machine token (`pp_…`) or a login code, and
-secret-named variables the runner passes. The section says which matched.
-Redaction is a backstop, not a guarantee; read the section before publishing.
+known), anything shaped like a machine token (`pp_…`) or a login code, any
+email address outside the reserved domains the scenarios use (`.example`,
+`patchy.local`), written with `@` or `%40`, and secret-named variables the
+runner passes. The section says which matched. Redaction is a backstop, not a guarantee; read the section before publishing.
 
-A cold run takes under a minute on `team` and about two on `brightline`. The
-`patchy-dev-loop` skill says how to write a flow and a script; the
-`pr-evidence` skill covers what each command shows.
+`pnpm dev trial "<task>"` gives a task, in a person's words, to a fresh agent
+on each side: the side's `agent` launcher, run without a person. The task goes
+in on stdin to Claude Code's `-p`, with its stream-json events, `--max-turns`
+(30), `--no-session-persistence` and auto memory off, and the run is stopped
+after `--minutes` (10). Both sides run at once. `--model` passes through to
+Claude Code; the default is `sonnet`. Its environment is the runner's closed
+one, plus only what Claude Code needs to stay signed in: your HOME, which
+holds its login, is already there, and `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`
+and `CLAUDE_CODE_OAUTH_TOKEN` pass when set. The launcher's limits hold: its
+commands run as you, so a task that mentions `patchy setup` or the portal's
+setup line is refused, and `patchy setup` and global `pnpm add`s are denied to
+the agent. The launcher pre-approves only some commands, and with no one there
+to approve the rest, those are denied and the log says so. The launcher adds
+your temp folder (`$TMPDIR`, or `/tmp`); a trial sets `TMPDIR` to a scratch
+folder of each side's own, deleted when the run ends, so the agent can't read
+other sessions' files in the machine's `/tmp`. A base whose launcher adds
+`/tmp` itself runs as a copy with only that swapped, so both sides have the
+same limits. The launcher isn't a sandbox: `node`, which it pre-approves, can
+read whatever you can. A base whose launcher predates the one that excludes
+the instruction files above the workspace (#701) shows after only.
+
+Of the agent's event stream only a filtered log is kept: whether it finished
+and its final answer cut to a sentence or two, each tool call with commands'
+exit codes, one line per failure, and the counts of commands, failures and
+help lookups. Its reasoning, what its commands printed and the session itself
+are never written. The sanitizer reads each side's CLI state every 100ms while
+the agents run and after each tool call, and redacts and normalizes every
+string before it is written. It also redacts who the agents act as: the email
+of the Claude account they sign in with, from `claude auth status`, which
+Claude Code puts in its agent's context, and git's `user.email`. An agent on `HEAD` that errors or exits without
+a result publishes nothing and fails the command.
+
+A cold run takes under a minute on `team` and about two on `brightline`, plus
+a trial's model runs. The `patchy-dev-loop` skill says how to write a flow and
+a script; the `pr-evidence` skill covers what each command shows.
 
 ### Signing in with Clerk
 
@@ -457,7 +491,8 @@ can quote it.
   Commit, then `pnpm test:rollback-rehearsal` checks that the live release
   still starts and serves on the schema your commit leaves.
 - **The dev runner.** `pnpm exec vitest run scripts/dev`, then the real loop:
-  `pnpm dev`, `up`, `shot`, `compare`, `film` and `down` in this worktree.
+  `pnpm dev`, `up`, `shot`, `compare`, `film`, `transcript` and `down` in
+  this worktree. `trial` is part of the loop too, at a model run per side.
 
 ## How the runner works
 

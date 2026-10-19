@@ -1,6 +1,6 @@
 ---
 name: patchy-dev-loop
-description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, to capture pages, a flow or CLI lines before and after for a PR, or when a dev instance is reported unhealthy.
+description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, to capture pages, a flow, CLI lines or a fresh agent's attempt at a task before and after for a PR, or when a dev instance is reported unhealthy.
 metadata:
   internal: "true"
 ---
@@ -88,8 +88,8 @@ Before calling a change ready to ship, run `pnpm verify`.
 
 ## Before and after, for a PR
 
-`pnpm dev compare`, `pnpm dev film` and `pnpm dev transcript` capture both
-sides on throwaway evidence instances: clones at the base and at `HEAD`, on
+`pnpm dev compare`, `pnpm dev film`, `pnpm dev transcript` and `pnpm dev trial`
+capture both sides on throwaway evidence instances: clones at the base and at `HEAD`, on
 fresh scenario data, taken down when the command ends. They never use this worktree's instance, so
 it can be up or down. They show commits: commit first, and with `--pr` push
 too. DEVELOPMENT's **Showing a change in a PR** has the details and
@@ -103,6 +103,13 @@ prerequisites; the `pr-evidence` skill says what each shows.
 - `pnpm dev transcript <script> [--timeout 60]` runs a script of shell lines on
   both sides as the scenario's signed-in CLI and compares each line's output,
   exit code and time.
+- `pnpm dev trial "<task>" [--model sonnet] [--max-turns 30] [--minutes 10]`
+  gives the task to a fresh agent on both sides, each side's `agent` launcher
+  run without a person, and logs how each attempt went: finished or not, its
+  answer in brief, its commands with exit codes and a line per failure. Each
+  side is a model run. Phrase the task as a person would ask their agent,
+  never for `patchy setup` or the portal's setup line: its commands run as
+  you.
 - "Before" is where `HEAD` left `origin/main`; `--base <ref>` picks another
   commit, and `--pr <number>` the PR's base branch. Both sides run this
   worktree's scenario, or `team`; `--scenario brightline` has patches of every
@@ -111,7 +118,8 @@ prerequisites; the `pr-evidence` skill says what each shows.
   re-run replaces its own section: compare's is keyed by the person (`--key`
   overrides), film's by the flow's file name. Without `--pr`, the section is
   written under `.local/shots/` with the `gh` line that publishes it. A
-  transcript's is keyed by the script's file name.
+  transcript's is keyed by the script's file name, a trial's by the task's
+  first words (`--key` overrides).
 
 A flow is a module whose default export drives a page that is already signed
 in as the person, at `--path`. Keep it outside the repo's tracked files, such

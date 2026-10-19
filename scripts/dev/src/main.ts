@@ -11,6 +11,7 @@
  *   pnpm dev compare <person> <path>...  pages before and after, from evidence instances
  *   pnpm dev film <person> <flow>        a flow recorded before and after, as mp4
  *   pnpm dev transcript <script>         CLI lines run before and after, compared
+ *   pnpm dev trial "<task>"              a fresh agent tries a task before and after
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -29,6 +30,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { Argument, CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient } from "effect/http";
@@ -85,6 +87,19 @@ import {
   sideShell,
   transcriptMarkdown
 } from "./transcript.js";
+import {
+  type AgentShell,
+  agentShell,
+  Attempt,
+  checkClaude,
+  cleanAttempt,
+  identities,
+  runAgent,
+  TaskRefused,
+  taskRefusal,
+  trialKey,
+  trialMarkdown
+} from "./trial.js";
 
 class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerBuildFailed", {
   exitCode: Schema.Number
@@ -1334,6 +1349,233 @@ const transcript = Command.make(
   )
 );
 
+class InvalidBudget extends Schema.TaggedError<InvalidBudget>()("InvalidBudget", {
+  flag: Schema.String,
+  given: Schema.Number,
+  max: Schema.Int
+}) {
+  override get message() {
+    return `--${this.flag} takes a whole number from 1 to ${this.max}; got ${this.given}.`;
+  }
+}
+
+class AgentGaveNoResult extends Schema.TaggedError<AgentGaveNoResult>()("AgentGaveNoResult", {
+  detail: Schema.String
+}) {
+  override get message() {
+    return `The agent on this branch never really tried the task (${this.detail}), so nothing was published; the section is above.`;
+  }
+}
+
+/** Encoded, not yet a string: the sanitizer redacts its strings first, so the JSON stays valid. */
+const encodeTrialReport = Schema.encodeSync(
+  Schema.Struct({
+    command: Schema.Literal("trial"),
+    ...Report.fields,
+    task: Schema.String,
+    /** What was asked for with `--model`; each attempt names the model Claude Code ran. */
+    model: Schema.String,
+    budget: Schema.Struct({ maxTurns: Schema.Int, minutes: Schema.Int }),
+    /** Each side's filtered log, redacted and normalized as the section shows it. */
+    attempts: Schema.Struct({ before: Schema.NullOr(Attempt), after: Attempt }),
+    /** The sources a secret was redacted from. */
+    redacted: Schema.Array(Schema.Literals(SECRET_SOURCES))
+  })
+);
+
+const trial = Command.make(
+  "trial",
+  {
+    task: Argument.String("task").pipe(
+      Argument.withDescription(
+        'What the agent is asked to do, as a person would ask, such as "show me the last few log lines of new-business"'
+      )
+    ),
+    model: Flag.String("model").pipe(
+      Flag.withDescription("The model both sides' agents run, passed to Claude Code"),
+      Flag.withDefault("sonnet")
+    ),
+    maxTurns: Flag.Int("max-turns").pipe(
+      Flag.withDescription("Turns each side's agent may take"),
+      Flag.withDefault(30)
+    ),
+    minutes: Flag.Int("minutes").pipe(
+      Flag.withDescription("Minutes each side's agent may run before it is stopped"),
+      Flag.withDefault(10)
+    ),
+    key: Flag.String("key").pipe(
+      Flag.withDescription(
+        "Names this section in the PR body; the task's first words when omitted"
+      ),
+      Flag.optional
+    ),
+    base: baseFlag,
+    scenario: scenarioFlag,
+    pr: prFlag,
+    json: Flag.Boolean("json").pipe(
+      Flag.withDescription("Print the commits, each side's filtered log and the section as JSON"),
+      Flag.withDefault(false)
+    )
+  },
+  Effect.fn(function* ({ task, model, maxTurns, minutes, key, base, scenario, pr, json }) {
+    const path = yield* Path.Path;
+    const root = yield* worktree;
+    if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 200)
+      return yield* new InvalidBudget({ flag: "max-turns", given: maxTurns, max: 200 });
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60)
+      return yield* new InvalidBudget({ flag: "minutes", given: minutes, max: 60 });
+    const refused = taskRefusal(task);
+    if (refused !== null) return yield* new TaskRefused({ what: refused });
+    yield* checkClaude(root);
+    // The run folder has a fixed name: the section's key is only known once the task is redacted.
+    const run = yield* prepareRun({ root, command: "trial", key: "task", base, scenario, pr });
+    const budget = { maxTurns, minutes };
+    const tried = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sides = yield* evidence({
+          root,
+          command: "trial",
+          scenario: run.scenario,
+          before: Option.some(run.commits.before),
+          after: run.commits.after,
+          runDir: path.join(root, run.runDir)
+        });
+        const afterShell = yield* agentShell(root, sides.after);
+        let before = sides.before;
+        let beforeShell: AgentShell | null = null;
+        if (before.status === "served") {
+          // A string is why before's agent can't run.
+          const found = yield* agentShell(root, before.side).pipe(
+            Effect.catchTags({
+              NoWorkspace: () =>
+                Effect.succeed("Its environment isn't where this checkout looks for it."),
+              OldLauncher: () =>
+                Effect.succeed(
+                  "Its `agent` launcher predates the one that keeps your own instruction files out."
+                )
+            })
+          );
+          if (typeof found === "string")
+            before = { status: "unavailable", commit: before.side.commit, reason: found };
+          else beforeShell = found;
+        }
+        const shells = beforeShell === null ? [afterShell] : [beforeShell, afterShell];
+        // Both sides' state is read before either agent starts, every 100ms while
+        // they run, and after each tool call either one makes.
+        const sanitizer = yield* makeSanitizer({
+          stateDirs: shells.map((shell) => shell.state),
+          envs: shells.map((shell) => shell.env),
+          // Both sides' agents sign in the same way, so after's environment speaks for both.
+          identities: yield* identities(afterShell)
+        });
+        yield* Console.error(
+          `Giving the task to ${shells.length === 2 ? "each side's agent" : "after's agent"} on ${model}, within ${maxTurns} turns and ${minutes} min`
+        );
+        const attempt = (shell: AgentShell) =>
+          runAgent({ shell, task, model, maxTurns, timeout: Duration.minutes(minutes), sanitizer });
+        const [beforeAttempt, afterAttempt] = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.forkScoped(
+              Effect.ignore(sanitizer.collect).pipe(Effect.repeat(Schedule.spaced("100 millis")))
+            );
+            return yield* Effect.all(
+              [
+                beforeShell === null ? Effect.succeed(null) : attempt(beforeShell),
+                attempt(afterShell)
+              ],
+              { concurrency: "unbounded" }
+            );
+          })
+        );
+        return {
+          before,
+          after: sides.after,
+          beforeShell,
+          afterShell,
+          beforeAttempt,
+          afterAttempt,
+          sanitizer
+        };
+      })
+    );
+    const { sanitizer } = tried;
+    const sectionName = yield* trialKey(task, key, sanitizer);
+    const beforeAttempt =
+      tried.beforeAttempt === null || tried.beforeShell === null
+        ? null
+        : yield* cleanAttempt(tried.beforeAttempt, sanitizer, tried.beforeShell.placeholders);
+    const afterAttempt = yield* cleanAttempt(
+      tried.afterAttempt,
+      sanitizer,
+      tried.afterShell.placeholders
+    );
+    const markdown = yield* sanitizer.redact(
+      trialMarkdown({
+        name: sectionName,
+        task: yield* sanitizer.redact(task),
+        provenance: provenanceLines({
+          command: "trial",
+          scenario: run.scenario,
+          before: tried.before,
+          after: run.commits.after
+        }),
+        redaction: redactionLine(yield* sanitizer.matched),
+        model: afterAttempt.model ?? model,
+        budget,
+        before: beforeAttempt,
+        after: afterAttempt
+      })
+    );
+    // An agent on this branch that errored or gave no result never tried the task: nothing is published.
+    const broken = afterAttempt.ending === "failed" || afterAttempt.ending === "no-answer";
+    const delivered = yield* deliver({
+      root,
+      target: broken ? Option.none() : run.target,
+      command: "trial",
+      key: sectionName,
+      markdown,
+      files: [],
+      runDir: run.runDir
+    });
+    if (json)
+      yield* Console.log(
+        printJson(
+          yield* sanitizer.redactJson(
+            encodeTrialReport({
+              command: "trial",
+              key: sectionName,
+              scenario: run.scenario,
+              before: sideReport(tried.before),
+              after: { ...run.commits.after, apiUrl: tried.after.served.apiUrl },
+              task,
+              model,
+              budget,
+              attempts: { before: beforeAttempt, after: afterAttempt },
+              redacted: yield* sanitizer.matched,
+              ...delivered
+            })
+          )
+        )
+      );
+    else if (!broken) yield* printDelivery(root, delivered);
+    else yield* Console.log(["", delivered.section, ""].join("\n"));
+    const costs = [beforeAttempt, afterAttempt].flatMap((attempt, index) =>
+      attempt?.costUsd == null
+        ? []
+        : [`$${attempt.costUsd.toFixed(2)} ${index === 0 ? "before" : "after"}`]
+    );
+    if (costs.length > 0)
+      yield* Console.error(`Claude Code put the runs at ${costs.join(" and ")}, at API prices.`);
+    if (broken)
+      return yield* new AgentGaveNoResult({ detail: afterAttempt.detail ?? afterAttempt.ending });
+    yield* failPartial(delivered);
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Give a task to a fresh agent before and after, as the scenario's publisher, on throwaway instances at both commits, and show how each attempt went for the PR"
+  )
+);
+
 const down = Command.make(
   "down",
   {},
@@ -1396,6 +1638,7 @@ dev.pipe(
     compare,
     film,
     transcript,
+    trial,
     down,
     superviseCommand
   ]),

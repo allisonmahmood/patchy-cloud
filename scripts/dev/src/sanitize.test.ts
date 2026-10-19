@@ -32,6 +32,48 @@ describe("marksSecret", () => {
 });
 
 describe("redactText", () => {
+  it("redacts an email address outside the example domains in any form, and leaves the scenarios' and versions alone", () => {
+    const redacted = [
+      "someone@company.co.uk",
+      "jane@bücher.de",
+      '"jane doe"@company.com',
+      "o'hara@company.com",
+      "privateuser@private-laptop.local",
+      "JANE@Company.COM"
+    ];
+    for (const address of redacted)
+      assert.strictEqual(redactText(new Map(), `as ${address}.`).text, "as [redacted].", address);
+    assert.strictEqual(
+      redactText(
+        new Map(),
+        '[account](https://x.co/?email=jane%40company.com) {"email":"jane@company.com"}'
+      ).text,
+      '[account](https://x.co/?email=[redacted]) {"email":"[redacted]"}'
+    );
+    for (const quoted of [
+      "'jane@company.com'",
+      `'"jane doe"@company.com'`,
+      `'"jane doe"%40company.com'`
+    ])
+      assert.strictEqual(
+        redactText(new Map(), `git config user.email ${quoted}`).text,
+        "git config user.email '[redacted]'",
+        quoted
+      );
+    // Apostrophes may be the whole local part.
+    assert.strictEqual(
+      redactText(new Map(), "'@company.com ''%40company.com").text,
+      "'[redacted] ''[redacted]"
+    );
+    // A run with no `@` is scanned once: quadratic scanning takes seconds here.
+    const started = performance.now();
+    for (const run of ["a'", "'"]) redactText(new Map(), run.repeat(64 * 1024));
+    assert.isBelow(performance.now() - started, 1_000);
+    const kept =
+      "ada@acme.example, ada%40acme.example, dev@patchy.local, patchy@0.14.0, @effect/vitest@4.0.1, user@host";
+    assert.deepStrictEqual(redactText(new Map(), kept), { text: kept, matched: new Set() });
+  });
+
   it("finds every match before replacing, so a short value can't break up a token, and twice is once", () => {
     const secrets = new Map([
       ["p", "cli-state" as const],
@@ -76,6 +118,21 @@ describe("redactText", () => {
 });
 
 it.layer(NodeServices.layer)("a sanitizer", (it) => {
+  it.effect("redacts the identities it is given in every form", () =>
+    Effect.gen(function* () {
+      const sanitizer = yield* makeSanitizer({
+        stateDirs: [],
+        envs: [],
+        identities: ["Jane.Doe+work@company.com"]
+      });
+      assert.strictEqual(
+        yield* sanitizer.redact("Jane.Doe+work@company.com or ?u=Jane.Doe%2Bwork%40company.com"),
+        "[redacted] or ?u=[redacted]"
+      );
+      assert.include(yield* sanitizer.matched, "identity");
+    })
+  );
+
   it.effect("keeps a JSON report valid however short a secret is", () =>
     Effect.gen(function* () {
       const sanitizer = yield* makeSanitizer({ stateDirs: [], envs: [{ GH_TOKEN: "0" }] });

@@ -218,9 +218,11 @@ export const ending = (run: Run) => {
  * Where a side's lines run: its agent workspace, with the runner's closed
  * environment. PATH drops this worktree's own folders, which `pnpm dev` put
  * first. Also what normalizing replaces on that side: its origin, its
- * environment folder, its checkout and the home folder. The folder is found
- * by this checkout's rules; a side whose runner kept it elsewhere fails here,
- * before a line runs where the sanitizer can't read its CLI state.
+ * environment folder, its checkout and the home folder, each also as resolved
+ * past symlinks, under HOME in its `~/…` form, and HOME as `~<user>`, as an
+ * agent may write them. The folder is
+ * found by this checkout's rules; a side whose runner kept it elsewhere fails
+ * here, before a line runs where the sanitizer can't read its CLI state.
  */
 export const sideShell = Effect.fn("Transcript.sideShell")(function* (root: string, side: Side) {
   const fs = yield* FileSystem.FileSystem;
@@ -233,11 +235,33 @@ export const sideShell = Effect.fn("Transcript.sideShell")(function* (root: stri
   const PATH = env.PATH.split(delimiter)
     .filter((dir) => dir !== "" && !path.resolve(dir).startsWith(`${root}${path.sep}`))
     .join(delimiter);
+  // Each folder as given and as resolved past symlinks, which is how an agent's tools see it.
+  const both = (dir: string) =>
+    fs.realPath(dir).pipe(
+      Effect.map((real) => [...new Set([dir, real])]),
+      Effect.orElseSucceed(() => [dir])
+    );
+  const homes = yield* both(yield* Config.String("HOME"));
+  // `~<user>` names the same folder as `~`.
+  const tildes = ["~", `~${path.basename(homes[0]!)}`];
+  const folders: Array<readonly [string, string]> = [];
+  for (const [dir, placeholder] of [
+    [layout.dir, "<env>"],
+    [side.clone, "<checkout>"]
+  ] as const)
+    for (const form of yield* both(dir)) folders.push([form, placeholder]);
   const placeholders: Placeholders = [
     [new URL(side.served.apiUrl).origin, "<origin>"],
-    [layout.dir, "<env>"],
-    [side.clone, "<checkout>"],
-    [yield* Config.String("HOME"), "~"]
+    ...folders,
+    ...folders.flatMap(([dir, placeholder]) =>
+      homes
+        .filter((home) => dir.startsWith(`${home}${path.sep}`))
+        .flatMap((home) =>
+          tildes.map((tilde) => [`${tilde}${dir.slice(home.length)}`, placeholder] as const)
+        )
+    ),
+    ...homes.map((home) => [home, "~"] as const),
+    [tildes[1]!, "~"]
   ];
   return {
     name: side.name,
@@ -385,10 +409,19 @@ const MAX_LINE_CHARS = 400;
 /** Outputs longer than this are compared on their first lines only. */
 const MAX_COMPARED_LINES = 1_000;
 
+/** `lines` in a fenced block that no backtick run inside can close. */
+export const fenced = (language: string, lines: ReadonlyArray<string>) => {
+  const longest = Math.max(
+    0,
+    ...lines.flatMap((line) => line.match(/`+/g) ?? []).map((run) => run.length)
+  );
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return [`${fence}${language}`, ...lines, fence];
+};
+
 /**
- * `lines` in a fenced block that no backtick run inside can close, cut to
- * size: the middle of a long block becomes one line saying how many were
- * cut, an `@@` line in a diff, and a note below says so.
+ * `lines` fenced and cut to size: the middle of a long block becomes one line
+ * saying how many were cut, an `@@` line in a diff, and a note below says so.
  */
 const block = (language: "console" | "diff", lines: ReadonlyArray<string>) => {
   const cut = lines.length - HEAD_LINES - TAIL_LINES;
@@ -404,24 +437,17 @@ const block = (language: "console" | "diff", lines: ReadonlyArray<string>) => {
   const shown = kept.map((line) =>
     line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}…` : line
   );
-  const longest = Math.max(
-    0,
-    ...shown.flatMap((line) => line.match(/`+/g) ?? []).map((run) => run.length)
-  );
-  const fence = "`".repeat(Math.max(3, longest + 1));
   const notes = [
     ...(cut > 0 ? [`${cut} of ${lines.length} lines are cut from the middle.`] : []),
     ...(long ? [`Lines are cut at ${MAX_LINE_CHARS} characters.`] : [])
   ];
   return [
-    `${fence}${language}`,
-    ...shown,
-    fence,
+    ...fenced(language, shown),
     ...(notes.length === 0 ? [] : ["", `_${notes.join(" ")} \`--json\` has it all._`])
   ];
 };
 
-const escapeHtml = (text: string) =>
+export const escapeHtml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 /** One line of the script, both sides of it already redacted and normalized. `before` is null when only after ran. */

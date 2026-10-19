@@ -1,7 +1,7 @@
 /**
  * The sanitizer: every evidence command that writes what a CLI or an agent
- * printed puts it through here first. `pnpm dev transcript` does, and `trial`
- * (#793) calls `collect` after each agent command.
+ * printed puts it through here first. `pnpm dev transcript` does, and so does
+ * `pnpm dev trial`, which calls `collect` after each tool call its agent makes.
  *
  * It collects secrets for the whole run and keeps every value it has seen
  * until the last write, so a login code that a later `patchy logout` cleared
@@ -13,9 +13,14 @@
  * - **Shapes**: anything shaped like a machine token (`pp_…`) or a login code
  *   (`BCDF-GHJK`), wherever it appears. A line that logs in and out in one
  *   `bash -c` can clear its code before any `collect` sees it; the shape
- *   still does.
+ *   still does. So is any email address outside the reserved domains the
+ *   scenarios and the seed use, `@` or `%40`, as a backstop for an address
+ *   no source names.
  * - **Variables**: the values of variables the runner passes whose names mark
  *   them secret, such as `PATCHY_API_TOKEN` or `ANTHROPIC_API_KEY`.
+ * - **Identities**: values the caller passes for who a run acts as beyond
+ *   the scenario, such as the Claude account `trial`'s agent is signed in as,
+ *   which Claude Code tells the agent, and git's author email.
  *
  * Redaction is a backstop, not a guarantee. The closed environment, which keeps
  * the developer's own secrets out of reach, is the first line.
@@ -27,7 +32,14 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-export const SECRET_SOURCES = ["cli-state", "machine-token", "login-code", "variable"] as const;
+export const SECRET_SOURCES = [
+  "cli-state",
+  "machine-token",
+  "login-code",
+  "email",
+  "variable",
+  "identity"
+] as const;
 export type SecretSource = (typeof SECRET_SOURCES)[number];
 
 /** What replaces each secret. */
@@ -36,6 +48,30 @@ export const REDACTED = "[redacted]";
 const MACHINE_TOKEN = /\bpp_[A-Za-z0-9_-]{8,}/g;
 /** The user code `patchy login` prints, from the alphabet in `packages/auth/src/DeviceLogins.ts`. */
 const LOGIN_CODE = /\b[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}\b/g;
+/**
+ * An email address, its `@` written or URL-encoded as `%40`: a quoted or plain
+ * local part, Unicode included, and a domain whose top level is letters (or
+ * punycode), so `patchy@0.14.0` isn't one. A match only starts where a run
+ * of local-part characters does, so a long run with no `@` is scanned once,
+ * not once per character. Leading apostrophes, as in `'jane@company.com'` or
+ * `'"jane doe"@company.com'`, are matched but left out of the span, and may
+ * be all there is before the `@`. A local part never starts with one, so they
+ * are read once.
+ */
+const LOCAL_PART = String.raw`(?:"[^"\n]+"|[\p{L}\p{N}._%+-][\p{L}\p{N}._%+'-]*)`;
+const EMAIL = new RegExp(
+  String.raw`(?<![\p{L}\p{N}._%+'-])(?:'+${LOCAL_PART}?|${LOCAL_PART})(?:@|%40)(?:[\p{L}\p{N}-]+\.)+(?:\p{L}{2,}|xn--[\p{L}\p{N}-]+)(?![\p{L}\p{N}-])`,
+  "giu"
+);
+/**
+ * Domains reserved for examples and tests (RFC 2606, 6761), which every
+ * scenario person uses, and the seed's `patchy.local`. Other `.local` names
+ * are real machines on a network.
+ */
+const EXAMPLE_DOMAIN =
+  /(?:^|\.)(?:example|test|invalid|localhost)$|^(?:example\.(?:com|net|org)|patchy\.local)$/i;
+/** The domain of an address `EMAIL` matched. */
+const domainOf = (address: string) => address.replace(/^.*(?:@|%40)/i, "");
 
 /** Anywhere in a name, these mark it secret: `PGPASSWORD` as much as `token`. */
 const SECRET_PARTS = [
@@ -84,10 +120,12 @@ const forms = (value: string) => [
   ...new Set([value, encodeURIComponent(value), JSON.stringify(value).slice(1, -1)])
 ];
 
-const SHAPES = [
-  [MACHINE_TOKEN, "machine-token"],
-  [LOGIN_CODE, "login-code"]
-] as const;
+/** Each shape, its source, and which of its matches are redacted. */
+const SHAPES: ReadonlyArray<readonly [RegExp, SecretSource, (match: string) => boolean]> = [
+  [MACHINE_TOKEN, "machine-token", () => true],
+  [LOGIN_CODE, "login-code", () => true],
+  [EMAIL, "email", (address) => !EXAMPLE_DOMAIN.test(domainOf(address))]
+];
 
 interface Span {
   readonly start: number;
@@ -97,8 +135,9 @@ interface Span {
 }
 
 /**
- * `text` with every collected value, and anything shaped like a machine token
- * or a login code, replaced by `[redacted]`. Every match is found in the
+ * `text` with every collected value, anything shaped like a machine token or
+ * a login code, and any email address outside the example domains, replaced
+ * by `[redacted]`. Every match is found in the
  * original text before anything is replaced, and overlapping matches become
  * one, so a short value can't break up a longer one or a shape. A `[redacted]`
  * already in the text counts as a match, so redacting twice changes nothing.
@@ -112,9 +151,12 @@ export const redactText = (secrets: ReadonlyMap<string, SecretSource>, text: str
   };
   find(REDACTED, null);
   for (const [value, source] of secrets) for (const form of forms(value)) find(form, source);
-  for (const [shape, source] of SHAPES)
-    for (const match of text.matchAll(shape))
-      spans.push({ start: match.index, end: match.index + match[0].length, source });
+  for (const [shape, source, redacts] of SHAPES)
+    for (const match of text.matchAll(shape)) {
+      const lead = /^'*/.exec(match[0])![0].length;
+      if (redacts(match[0].slice(lead)))
+        spans.push({ start: match.index + lead, end: match.index + match[0].length, source });
+    }
   spans.sort((a, b) => a.start - b.start || b.end - a.end);
   const done = spans.filter((span) => span.source === null);
   const matched = new Set<SecretSource>();
@@ -181,24 +223,28 @@ const SOURCE_NAMES: Record<SecretSource, string> = {
   "cli-state": "tokens and login codes from each side's CLI state",
   "machine-token": "strings shaped like machine tokens (`pp_…`)",
   "login-code": "strings shaped like login codes",
-  variable: "secret-named variables the runner passed"
+  email: "email addresses outside the scenarios' example domains",
+  variable: "secret-named variables the runner passed",
+  identity: "the accounts the run acts as"
 };
 
 /** The sentence a section carries about what was redacted. */
 export const redactionLine = (matched: ReadonlyArray<SecretSource>) =>
   matched.length === 0
-    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token and login-code shapes, and secret-named variables)."
+    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token and login-code shapes, email addresses outside the scenarios' example domains, secret-named variables, and any accounts the run acts as)."
     : `Redacted before writing: ${matched.map((source) => SOURCE_NAMES[source]).join("; ")}.`;
 
 /**
  * A sanitizer for one run: it reads `stateDirs` and the secret-named values in
- * `envs` (each environment the runner passes) at once, `collect` reads the
- * state dirs again, and `redact` uses every value seen so far. `matched` lists
+ * `envs` (each environment the runner passes) at once and takes `identities`
+ * whole, `collect` reads the state dirs again, and `redact` uses every value
+ * seen so far. `matched` lists
  * the sources `redact` has replaced something from, in a stable order.
  */
 export const makeSanitizer = Effect.fn("Sanitize.makeSanitizer")(function* (input: {
   readonly stateDirs: ReadonlyArray<string>;
   readonly envs: ReadonlyArray<Readonly<Record<string, string>>>;
+  readonly identities?: ReadonlyArray<string>;
 }) {
   const secrets = yield* Ref.make(new Map<string, SecretSource>());
   const matched = yield* Ref.make(new Set<SecretSource>());
@@ -215,6 +261,7 @@ export const makeSanitizer = Effect.fn("Sanitize.makeSanitizer")(function* (inpu
     ),
     "variable"
   );
+  yield* add(input.identities ?? [], "identity");
   const collect = Effect.forEach(input.stateDirs, (dir) =>
     secretsInStateDir(dir).pipe(Effect.flatMap((values) => add(values, "cli-state")))
   ).pipe(Effect.asVoid);
