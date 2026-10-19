@@ -324,8 +324,9 @@ const encodeAgentSettings = Schema.encodeSync(
  * load. Its commands still run as the developer, with their HOME and npm
  * prefix, so it must never be given the portal's setup line or run `patchy
  * setup`: both write to the developer's own machine, and `down` undoes neither.
- * Permissions come as flags, so the workspace needs no trust prompt. Arguments
- * pass through.
+ * Besides the workspace it may use the temp folder, `$TMPDIR` or `/tmp`; a
+ * trial points `TMPDIR` at a scratch folder of its own. Permissions come as
+ * flags, so the workspace needs no trust prompt. Arguments pass through.
  */
 export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layout) {
   const fs = yield* FileSystem.FileSystem;
@@ -357,7 +358,7 @@ export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layou
       `export PATH=${quote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
       `export PATCHY_STATE_DIR=${quote(layout.state)}`,
       `cd ${quote(layout.workspace)} || exit 1`,
-      `exec claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir /tmp --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
+      `exec claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir "\${TMPDIR:-/tmp}" --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
       ""
     ].join("\n"),
     { mode: 0o755 }

@@ -11,6 +11,7 @@ import {
   type AgentShell,
   type Attempt,
   cleanAttempt,
+  confineTemp,
   type Ended,
   gist,
   identities,
@@ -223,6 +224,15 @@ describe("the filtered log", () => {
     ];
     assert.deepStrictEqual(help.map(isHelpLookup), Array(help.length).fill(true));
     assert.deepStrictEqual(not.map(isHelpLookup), Array(not.length).fill(false));
+  });
+});
+
+describe("confineTemp", () => {
+  it("swaps an older launcher's /tmp for the temp folder in TMPDIR, and leaves a current one alone", () => {
+    const flags = (dir: string) =>
+      `exec claude "$@" --permission-mode acceptEdits --add-dir ${dir} --allowedTools 'Bash(patchy:*)'`;
+    assert.strictEqual(confineTemp(flags("/tmp")), flags(`"\${TMPDIR:-/tmp}"`));
+    assert.strictEqual(confineTemp(flags(`"\${TMPDIR:-/tmp}"`)), flags(`"\${TMPDIR:-/tmp}"`));
   });
 });
 

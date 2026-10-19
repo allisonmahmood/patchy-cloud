@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -82,25 +83,52 @@ export const checkClaude = Effect.fn("Trial.checkClaude")(function* (root: strin
 /** What Claude Code needs to stay signed in, passed when set. HOME, which holds its login, already is. */
 const SIGN_IN = ["CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
 
+/** What a launcher from before it took `TMPDIR` adds: the machine's own `/tmp`, other sessions' files and all. */
+const MACHINE_TMP = " --add-dir /tmp ";
+
+/** `script` with the machine's `/tmp` swapped for the temp folder in `TMPDIR`, as the launcher adds it now. */
+export const confineTemp = (script: string) =>
+  script.replace(MACHINE_TMP, ` --add-dir "\${TMPDIR:-/tmp}" `);
+
 /**
  * Where a side's agent runs: the side's shell (its workspace and the runner's
  * closed environment, as transcript lines get) and its launcher. On top go
- * only Claude Code's sign-in and auto memory turned off, so a trial neither
- * reads nor leaves memories for the next. A launcher from before #701 would
+ * only Claude Code's sign-in, auto memory turned off, so a trial neither reads
+ * nor leaves memories for the next, and `TMPDIR` set to a scratch folder of
+ * the side's own, so its agent can't read other sessions' files in the
+ * machine's `/tmp`. A base's launcher that adds `/tmp` runs as a copy with
+ * only that swapped, so both sides have the same limits; the scratch folder
+ * and the copy are deleted with the scope. A launcher from before #701 would
  * load the developer's own instruction files, so it fails here.
  */
 export const agentShell = Effect.fn("Trial.agentShell")(function* (root: string, side: Side) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const shell = yield* sideShell(root, side);
-  const launcher = (yield* layoutFor(side.clone)).agent;
-  const script = yield* fs.readFileString(launcher).pipe(Effect.orElseSucceed(() => ""));
+  const layout = yield* layoutFor(side.clone);
+  const script = yield* fs.readFileString(layout.agent).pipe(Effect.orElseSucceed(() => ""));
   if (!script.includes("claudeMdExcludes")) return yield* new OldLauncher({ side: side.name });
-  const env: Record<string, string> = { ...shell.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
+  const scratch = path.join(layout.dir, "trial-tmp");
+  const copy = path.join(layout.dir, "trial-agent");
+  yield* Effect.addFinalizer(() =>
+    Effect.all([
+      fs.remove(scratch, { recursive: true, force: true }),
+      fs.remove(copy, { force: true })
+    ]).pipe(Effect.ignore)
+  );
+  yield* fs.makeDirectory(scratch, { recursive: true });
+  const confined = confineTemp(script);
+  if (confined !== script) yield* fs.writeFileString(copy, confined, { mode: 0o755 });
+  const env: Record<string, string> = {
+    ...shell.env,
+    TMPDIR: scratch,
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
+  };
   for (const name of SIGN_IN) {
     const value = yield* Config.option(Config.String(name));
     if (Option.isSome(value) && value.value !== "") env[name] = value.value;
   }
-  return { ...shell, env, launcher };
+  return { ...shell, env, launcher: confined === script ? layout.agent : copy };
 });
 export type AgentShell = Effect.Success<ReturnType<typeof agentShell>>;
 
