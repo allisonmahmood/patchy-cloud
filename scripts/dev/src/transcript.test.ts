@@ -4,14 +4,17 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { makeSanitizer } from "./sanitize.js";
 import {
   diffLines,
   hunks,
   loadScript,
   normalize,
   parseScript,
+  refusal,
   type Run,
   runLine,
+  runScript,
   transcriptMarkdown
 } from "./transcript.js";
 
@@ -28,32 +31,52 @@ describe("parseScript", () => {
   });
 });
 
-it.layer(NodeServices.layer)("a script", (it) => {
-  it.effect(
-    "is refused before anything starts when a line sets Patchy up or installs globally",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const dir = yield* fs.makeTempDirectoryScoped();
-        const refused = Effect.fn(function* (text: string) {
-          const file = path.join(dir, "script.txt");
-          yield* fs.writeFileString(file, text);
-          return yield* Effect.flip(loadScript(file));
-        });
+describe("refusal", () => {
+  it("refuses setting Patchy up and global installs, flags first or not, and nothing else", () => {
+    const refused = [
+      "patchy setup",
+      "patchy --json setup",
+      "cd x && patchy setup --remove",
+      "npm install -g patchy",
+      "npm i --global patchy",
+      "npm install --location=global patchy",
+      "pnpm add -gD patchy",
+      "yarn global add patchy"
+    ];
+    const allowed = [
+      "patchy whoami; echo setup",
+      "pnpm install",
+      "npm test -- --grep x",
+      "patchy logs --json | grep setup"
+    ];
+    assert.deepStrictEqual(refused.map(refusal), [
+      "`patchy setup`",
+      "`patchy setup`",
+      "`patchy setup`",
+      ...Array(5).fill("a global install")
+    ]);
+    assert.deepStrictEqual(allowed.map(refusal), [null, null, null, null]);
+  });
+});
 
-        assert.include(
-          (yield* refused("patchy whoami\npatchy setup --json")).message,
-          "Line 2 runs `patchy setup`"
-        );
-        assert.include((yield* refused("npm install -g patchy")).message, "a global install");
-        assert.strictEqual(
-          (yield* refused("# only a caption\n")).message.endsWith(
-            "has no commands. Each non-blank line that doesn't start with # is one."
-          ),
-          true
-        );
-      })
+it.layer(NodeServices.layer)("a script", (it) => {
+  it.effect("is refused before anything starts with a refused line, or with no commands", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const failure = Effect.fn(function* (text: string) {
+        const file = path.join(dir, "script.txt");
+        yield* fs.writeFileString(file, text);
+        return yield* Effect.flip(loadScript(file));
+      });
+
+      assert.include(
+        (yield* failure("patchy whoami\npatchy setup --json")).message,
+        "Line 2 runs `patchy setup`"
+      );
+      assert.include((yield* failure("# only a caption\n")).message, "has no commands.");
+    })
   );
 });
 
@@ -78,6 +101,34 @@ describe("runLine", () => {
         assert.strictEqual(run.stderr, "err\n");
         assert.isFalse(run.timedOut);
       }).pipe(Effect.provide(NodeServices.layer))
+  );
+
+  it.live("redacts a secret a line wrote to the CLI state and cleared before it ended", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const state = yield* fs.makeTempDirectoryScoped();
+      const sanitizer = yield* makeSanitizer({ stateDirs: [state], envs: [] });
+      const file = '"$PATCHY_STATE_DIR/credentials.json"';
+      const [run] = yield* runScript({
+        shell: {
+          name: "after",
+          cwd: state,
+          env: { PATH: "/usr/bin:/bin", PATCHY_STATE_DIR: state },
+          state,
+          placeholders: []
+        },
+        lines: [
+          {
+            line: 1,
+            caption: null,
+            command: `echo '{"token":"short-lived"}' > ${file} && sleep 0.5 && cat ${file} && rm ${file}`
+          }
+        ],
+        timeout: Duration.seconds(10),
+        sanitizer
+      });
+      assert.strictEqual(yield* sanitizer.redact(run!.stdout), '{"token":"[redacted]"}\n');
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   );
 
   it.live("kills a line past its timeout, and doesn't wait on what a line left running", () =>
@@ -189,5 +240,27 @@ describe("transcriptMarkdown", () => {
     );
     assert.include(markdown, "\n19\n… 11 lines cut …\n31\n");
     assert.include(markdown, "_11 of 41 lines are cut from the middle. `--json` has it all._");
+  });
+
+  it("says when outputs were compared on their first lines only", () => {
+    const lines = (last: string) =>
+      `${Array.from({ length: 1_000 }, (_, n) => `line ${n}`).join("\n")}\n${last}\n`;
+    const markdown = transcriptMarkdown({
+      name: "long",
+      provenance: [],
+      redaction: "",
+      lines: [
+        {
+          caption: null,
+          command: "long",
+          before: run(0, lines("old")),
+          after: run(0, lines("new"))
+        }
+      ]
+    });
+    assert.include(
+      markdown,
+      "_Only the first 1000 lines of each side were compared; `--json` has them all._"
+    );
   });
 });

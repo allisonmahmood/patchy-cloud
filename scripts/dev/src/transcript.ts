@@ -26,6 +26,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -71,10 +72,18 @@ export interface ScriptLine {
   readonly command: string;
 }
 
-/** The agent workspace's rules: what a line must never run. */
+/**
+ * The agent workspace's rules: what a line must never run. Each pattern looks
+ * from the program to the next `|`, `;` or `&`, so flags before a subcommand,
+ * as in `patchy --json setup`, don't hide it. A guard against the plain forms,
+ * not a sandbox.
+ */
 const REFUSED: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\bpatchy\s+setup\b/, "`patchy setup`"],
-  [/\b(?:npm|pnpm|yarn|bun)\b.*\s(?:-g|--global)\b/, "a global install"]
+  [/\bpatchy\b[^|;&]*\ssetup\b/, "`patchy setup`"],
+  [
+    /\b(?:npm|pnpm|yarn|bun)\b[^|;&]*\s(?:-(?!-)[A-Za-z]*g[A-Za-z]*(?=\s|$)|--global\b|--location[=\s]global\b|global\s)/,
+    "a global install"
+  ]
 ];
 
 /** A script's commands, each under the last caption above it; a `#!` line is skipped. */
@@ -93,6 +102,10 @@ export const parseScript = (text: string): ReadonlyArray<ScriptLine> => {
   return lines;
 };
 
+/** What a line runs that the workspace's rules refuse, if anything. */
+export const refusal = (command: string) =>
+  REFUSED.find(([pattern]) => pattern.test(command))?.[1] ?? null;
+
 /** The script at `file`, refused before anything starts when it is empty or breaks the workspace's rules. */
 export const loadScript = Effect.fn("Transcript.loadScript")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -101,9 +114,10 @@ export const loadScript = Effect.fn("Transcript.loadScript")(function* (file: st
     .pipe(Effect.catchTags({ PlatformError: () => Effect.fail(new NoScript({ file })) }));
   const lines = parseScript(text);
   if (lines.length === 0) return yield* new NoCommands({ file });
-  for (const { line, command } of lines)
-    for (const [pattern, what] of REFUSED)
-      if (pattern.test(command)) return yield* new ScriptRefused({ line, what });
+  for (const { line, command } of lines) {
+    const what = refusal(command);
+    if (what !== null) return yield* new ScriptRefused({ line, what });
+  }
   return lines;
 });
 
@@ -117,6 +131,8 @@ export const Run = Schema.Struct({
   stderr: Schema.String
 });
 export type Run = typeof Run.Type;
+
+const FORCE_KILL_AFTER = "2 seconds";
 
 /**
  * Runs `command` in `bash -c` and records it. The line leads its own process
@@ -141,7 +157,9 @@ export const runLine = Effect.fn("Transcript.runLine")(function* (
           cwd: options.cwd,
           env: options.env,
           extendEnv: false,
-          stdin: "ignore"
+          stdin: "ignore",
+          // Ending the group, here or when the scope closes, kills what ignores SIGTERM.
+          forceKillAfter: FORCE_KILL_AFTER
         })
       );
       const stdout: Array<string> = [];
@@ -167,7 +185,8 @@ export const runLine = Effect.fn("Transcript.runLine")(function* (
         Effect.timeoutOption(options.timeout)
       );
       const seconds = ((yield* Clock.currentTimeMillis) - started) / 1000;
-      if (Option.isNone(exit)) yield* Effect.ignore(handle.kill({ forceKillAfter: "2 seconds" }));
+      if (Option.isNone(exit))
+        yield* Effect.ignore(handle.kill({ forceKillAfter: FORCE_KILL_AFTER }));
       yield* Effect.ignore(Fiber.join(drained).pipe(Effect.timeoutOption("1 second")));
       return {
         exitCode: Option.getOrNull(exit),
@@ -229,8 +248,8 @@ export type SideShell = Effect.Success<ReturnType<typeof sideShell>>;
 
 /**
  * Runs every line on one side, in order. The sanitizer reads the CLI state
- * again after each line, before a later one can clear what it holds. Progress
- * goes to stderr, each command redacted, never its output.
+ * while each line runs and again after it, before a later line can clear what
+ * it holds. Progress goes to stderr, each command redacted, never its output.
  */
 export const runScript = Effect.fn("Transcript.runScript")(function* (input: {
   readonly shell: SideShell;
@@ -240,7 +259,16 @@ export const runScript = Effect.fn("Transcript.runScript")(function* (input: {
 }) {
   const runs: Array<Run> = [];
   for (const line of input.lines) {
-    const run = yield* runLine(line.command, { ...input.shell, timeout: input.timeout });
+    // A line can make a secret and clear it, as `patchy login && patchy logout` does;
+    // reading every 100ms while it runs narrows that window.
+    const run = yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.forkScoped(
+          Effect.ignore(input.sanitizer.collect).pipe(Effect.repeat(Schedule.spaced("100 millis")))
+        );
+        return yield* runLine(line.command, { ...input.shell, timeout: input.timeout });
+      })
+    );
     yield* input.sanitizer.collect;
     yield* Console.error(
       `  ${input.shell.name.padEnd(6)}  ${yield* input.sanitizer.redact(`$ ${line.command}`)}  (${ending(run)})`
@@ -425,18 +453,19 @@ const lineMarkdown = (line: Compared): ReadonlyArray<string> => {
   const before = view(line.before);
   const diff = diffLines(before.slice(0, MAX_COMPARED_LINES), after.slice(0, MAX_COMPARED_LINES));
   const changes = diff.some((part) => part.mark !== " ");
+  const longer = before.length > MAX_COMPARED_LINES || after.length > MAX_COMPARED_LINES;
   return [
     `**Changed.** Before, ${ending(line.before)}; after, ${ending(line.after)}.`,
     "",
     ...transcript,
     "",
-    ...(changes
-      ? block("diff", hunks(diff))
-      : [
-          before.join("\n") === after.join("\n")
-            ? "The output is the same."
-            : `The output differs past its first ${MAX_COMPARED_LINES} lines; \`--json\` has it all.`
-        ])
+    ...(changes ? block("diff", hunks(diff)) : longer ? [] : ["The output is the same."]),
+    ...(longer
+      ? [
+          ...(changes ? [""] : []),
+          `_Only the first ${MAX_COMPARED_LINES} lines of each side were compared; \`--json\` has them all._`
+        ]
+      : [])
   ];
 };
 

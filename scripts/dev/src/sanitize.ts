@@ -5,12 +5,15 @@
  *
  * It collects secrets for the whole run and keeps every value it has seen
  * until the last write, so a login code that a later `patchy logout` cleared
- * is still redacted. It collects from three sources:
+ * is still redacted. It collects from these sources:
  *
  * - **CLI state**: each state dir's JSON files, read on `collect`. Every string
  *   under a key whose name marks it secret, such as `token`, `deviceCode` or
  *   `userCode`.
- * - **Machine tokens**: anything shaped like one (`pp_…`), wherever it appears.
+ * - **Shapes**: anything shaped like a machine token (`pp_…`) or a login code
+ *   (`BCDF-GHJK`), wherever it appears. A line that logs in and out in one
+ *   `bash -c` can clear its code before any `collect` sees it; the shape
+ *   still does.
  * - **Variables**: the values of variables the runner passes whose names mark
  *   them secret, such as `PATCHY_API_TOKEN` or `ANTHROPIC_API_KEY`.
  *
@@ -24,15 +27,15 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-export type SecretSource = "cli-state" | "machine-token" | "variable";
+export const SECRET_SOURCES = ["cli-state", "machine-token", "login-code", "variable"] as const;
+export type SecretSource = (typeof SECRET_SOURCES)[number];
 
 /** What replaces each secret. */
 export const REDACTED = "[redacted]";
 
-/** Shorter values are left alone: redacting them would cut ordinary words out of the output. */
-const MIN_SECRET_LENGTH = 8;
-
 const MACHINE_TOKEN = /\bpp_[A-Za-z0-9_-]{8,}/g;
+/** The user code `patchy login` prints, from the alphabet in `packages/auth/src/DeviceLogins.ts`. */
+const LOGIN_CODE = /\b[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}\b/g;
 
 /** Anywhere in a name, these mark it secret: `PGPASSWORD` as much as `token`. */
 const SECRET_PARTS = [
@@ -82,9 +85,9 @@ const forms = (value: string) => [
 ];
 
 /**
- * `text` with every collected value, and anything shaped like a machine token,
- * replaced by `[redacted]`. Longer values go first, so one that contains
- * another is replaced whole. Returns the sources that matched.
+ * `text` with every collected value, and anything shaped like a machine token
+ * or a login code, replaced by `[redacted]`. Longer values go first, so one
+ * that contains another is replaced whole. Returns the sources that matched.
  */
 export const redactText = (secrets: ReadonlyMap<string, SecretSource>, text: string) => {
   const matched = new Set<SecretSource>();
@@ -98,10 +101,14 @@ export const redactText = (secrets: ReadonlyMap<string, SecretSource>, text: str
     result = result.split(value).join(REDACTED);
     matched.add(source);
   }
-  result = result.replace(MACHINE_TOKEN, () => {
-    matched.add("machine-token");
-    return REDACTED;
-  });
+  for (const [shape, source] of [
+    [MACHINE_TOKEN, "machine-token"],
+    [LOGIN_CODE, "login-code"]
+  ] as const)
+    result = result.replace(shape, () => {
+      matched.add(source);
+      return REDACTED;
+    });
   return { text: result, matched };
 };
 
@@ -128,13 +135,14 @@ const secretsInStateDir = Effect.fn("Sanitize.secretsInStateDir")(function* (dir
 const SOURCE_NAMES: Record<SecretSource, string> = {
   "cli-state": "tokens and login codes from each side's CLI state",
   "machine-token": "strings shaped like machine tokens (`pp_…`)",
+  "login-code": "strings shaped like login codes",
   variable: "secret-named variables the runner passed"
 };
 
 /** The sentence a section carries about what was redacted. */
 export const redactionLine = (matched: ReadonlyArray<SecretSource>) =>
   matched.length === 0
-    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token shapes and secret-named variables)."
+    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token and login-code shapes, and secret-named variables)."
     : `Redacted before writing: ${matched.map((source) => SOURCE_NAMES[source]).join("; ")}.`;
 
 /**
@@ -152,8 +160,8 @@ export const makeSanitizer = Effect.fn("Sanitize.makeSanitizer")(function* (inpu
   const add = (values: ReadonlyArray<string>, source: SecretSource) =>
     Ref.update(secrets, (known) => {
       const next = new Map(known);
-      for (const value of values)
-        if (value.length >= MIN_SECRET_LENGTH && !next.has(value)) next.set(value, source);
+      // Any length: a short value is still a secret, even if redacting it cuts into other words.
+      for (const value of values) if (value !== "" && !next.has(value)) next.set(value, source);
       return next;
     });
   yield* add(
@@ -175,7 +183,7 @@ export const makeSanitizer = Effect.fn("Sanitize.makeSanitizer")(function* (inpu
         return result.text;
       }),
     matched: Effect.map(Ref.get(matched), (sources) =>
-      (["cli-state", "machine-token", "variable"] as const).filter((source) => sources.has(source))
+      SECRET_SOURCES.filter((source) => sources.has(source))
     )
   };
 });

@@ -73,7 +73,7 @@ import {
   sectionKey,
   TooManyAttachments
 } from "./publish.js";
-import { makeSanitizer, redactionLine } from "./sanitize.js";
+import { makeSanitizer, redactionLine, SECRET_SOURCES } from "./sanitize.js";
 import { failureOf, layout, readPlan, writePlan } from "./state.js";
 import {
   type Compared,
@@ -1168,7 +1168,7 @@ const encodeTranscriptReport = Schema.encodeSync(
         })
       ),
       /** The sources a secret was redacted from. */
-      redacted: Schema.Array(Schema.Literals(["cli-state", "machine-token", "variable"]))
+      redacted: Schema.Array(Schema.Literals(SECRET_SOURCES))
     }),
     { space: 2 }
   )

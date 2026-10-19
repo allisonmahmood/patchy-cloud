@@ -249,10 +249,13 @@ and so does `pnpm dev down`, which otherwise deletes the checkouts too.
   uploads the files it references; its head must be `HEAD`. Without `--pr`
   the command prints the `gh pr edit` line that would. `--json` prints the
   commits, files, statuses and section.
-- **Prerequisites:** for `compare` and `film`, Playwright's Chromium, from
-  `pnpm exec playwright install chromium`; for `film`, an `ffmpeg` built with
-  libx264; for `--pr`, gh 2.102 or later, signed in with write access to the
-  repository. Each is checked before anything starts.
+- **Prerequisites:** Playwright's Chromium, from
+  `pnpm exec playwright install chromium`, for `compare`, `film` and a
+  scenario whose patches load sample data, such as `brightline`; for `film`, an
+  `ffmpeg` built with libx264; for `--pr`, gh 2.102 or later, signed in with
+  write access to the repository. Each command checks its own before anything
+  starts; a missing Chromium fails a scenario's sample data as its side comes
+  up.
 
 `pnpm dev transcript <script>` runs a script of shell lines on each side as
 the scenario publisher's signed-in CLI. Each non-blank line is a command, and a
@@ -264,16 +267,17 @@ nothing else from your shell, so an exported `PATCHY_API_TOKEN` or
 `&&` on one line. A non-zero exit is recorded and the script goes on. A line
 past `--timeout` (60 seconds) is killed and recorded; on `HEAD` that fails the
 command and publishes nothing. A line that runs `patchy setup` or installs
-globally is refused before anything starts, since lines run as you.
+globally is refused before anything starts, since lines run as you; the check
+catches the plain forms, not every way to write them.
 
 Before comparing, each side's origin becomes `<origin>`, its environment
 folder `<env>`, its checkout `<checkout>` and your home folder `~`; every other
 difference stays. One sanitizer redacts what it collected before anything is
-written: the values in each side's CLI state, read before the run and after
-every line (so a login code a later `patchy logout` clears is still known),
-anything shaped like a machine token (`pp_…`), and secret-named variables the
-runner passes. The section says which matched. Redaction is a backstop, not a
-guarantee; read the section before publishing.
+written: the values in each side's CLI state, read before the run, while each
+line runs and after it (so a login code a later `patchy logout` clears is still
+known), anything shaped like a machine token (`pp_…`) or a login code, and
+secret-named variables the runner passes. The section says which matched.
+Redaction is a backstop, not a guarantee; read the section before publishing.
 
 A cold run takes under a minute on `team` and about two on `brightline`. The
 `patchy-dev-loop` skill says how to write a flow and a script; the

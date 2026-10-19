@@ -32,7 +32,7 @@ describe("marksSecret", () => {
 });
 
 describe("redactText", () => {
-  it("replaces a value whole, in a URL and in JSON, and anything shaped like a machine token", () => {
+  it("replaces a value whole, in a URL and in JSON, and anything shaped like a machine token or login code", () => {
     const secrets = new Map([
       ["BCDF-GHJK", "cli-state" as const],
       ["BCDF-GHJK-LONGER", "cli-state" as const]
@@ -43,7 +43,8 @@ describe("redactText", () => {
         "Sign in: http://x.localhost/login/device?code=BCDF-GHJK",
         "Code: BCDF-GHJK-LONGER",
         'key pp_AbC123-_xyzDEF456 in {"token":"pp_AbC123-_xyzDEF456"}',
-        "an app_3ImZu8038U0oFds84 id stays"
+        "an app_3ImZu8038U0oFds84 id stays",
+        "a code it never saw: QRST-VWXZ"
       ].join("\n")
     );
     assert.strictEqual(
@@ -52,10 +53,11 @@ describe("redactText", () => {
         "Sign in: http://x.localhost/login/device?code=[redacted]",
         "Code: [redacted]",
         'key [redacted] in {"token":"[redacted]"}',
-        "an app_3ImZu8038U0oFds84 id stays"
+        "an app_3ImZu8038U0oFds84 id stays",
+        "a code it never saw: [redacted]"
       ].join("\n")
     );
-    assert.deepStrictEqual([...matched].sort(), ["cli-state", "machine-token"]);
+    assert.deepStrictEqual([...matched].sort(), ["cli-state", "login-code", "machine-token"]);
   });
 });
 
@@ -68,7 +70,7 @@ it.layer(NodeServices.layer)("a sanitizer", (it) => {
       const url = "http://after.localhost:4000";
       yield* fs.writeFileString(
         path.join(state, "credentials.json"),
-        `{"hosts":{"${url}":{"token":"patchy-env-acme-ada","source":"auth-set"}}}`
+        `{"hosts":{"${url}":{"token":"hunter2","source":"auth-set"}}}`
       );
       const sanitizer = yield* makeSanitizer({
         stateDirs: [state, path.join(state, "missing")],
@@ -90,7 +92,7 @@ it.layer(NodeServices.layer)("a sanitizer", (it) => {
           `Sign in: ${url}/login/device?code=BCDF-GHJK`,
           "Code: BCDF-GHJK",
           "Then run: patchy login --complete BCDF-GHJK",
-          "device dc_9f8e7d6c5b4a39281706, key patchy-env-acme-ada",
+          "device dc_9f8e7d6c5b4a39281706, key hunter2",
           "agent key sk-ant-0123456789 in /home/someone"
         ].join("\n")
       );
