@@ -54,3 +54,10 @@ The workflow applies exactly one size label from additions plus deletions, exclu
 | `size:xl` | Over 1,000    |
 
 Above 1,000 lines, review needs a different approach from reading the entire PR in one pass. Size labels describe review scope; they do not block merging or require splitting a PR.
+
+## The `one-way` label
+
+`one-way` marks a pull request that production can't roll back past: once it is released, going back to the release before it would break that release. The template's Release impact section asks every PR what a revert leaves behind and whether the release before it still works with that. When the second answer is no, the PR gets this label.
+
+- The agent opening the PR sets it. Anyone can remove it with a comment saying why.
+- A deploy reads the answers of every `one-way` PR it releases, and names the rollback commit or the PR that blocks going back (`AGENTS.md` › Deploying).

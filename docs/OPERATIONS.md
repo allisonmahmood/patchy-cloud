@@ -648,8 +648,11 @@ Once, by an administrator, as part of [#416](https://github.com/allisonmahmood/p
 Every release goes through the Deploy workflow, `.github/workflows/deploy.yml`,
 and nothing else deploys: run it on `main` from the Actions tab and approve it in
 the `production` environment. Nobody deploys from a laptop. Before the run, the
-release gets its What's new entry and `patchy` version, landed on `main`
-(`AGENTS.md` › Deploying). One run goes at a time; a second waits. A run:
+release gets its What's new entry and `patchy` version, landed on `main`, and
+one line saying where a rollback would go: the live commit, or the `one-way` PR
+that blocks going back (`AGENTS.md` › Deploying). The run's `revision` is the
+commit that line was reviewed against, so nothing merged later ships with it.
+One run goes at a time; a second waits. A run:
 
 1. assumes the deploy role through GitHub's OIDC provider;
 2. stops any promote task a cancelled run left behind;
