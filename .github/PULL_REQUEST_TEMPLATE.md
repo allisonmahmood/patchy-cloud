@@ -1,15 +1,23 @@
-# What changed
+## What changed
 
-<!-- One or two sentences. What does this do, and why now? -->
+<!-- A sentence or two for someone using Patchy: the problem, and what is different now. -->
 
 Closes #
 
+## Look at
+
+<!--
+The one or two things worth a reviewer's eyes, each with its evidence inline:
+a screenshot, a test red then green, numbers, command output. The `pr-evidence`
+skill lists the ways to show a change.
+-->
+
 ## How it was verified
 
-<!-- Tests added or run, manual checks, anything a reviewer should reproduce. -->
-
-- [ ] `pnpm test` passes locally
-- [ ] Added or updated tests covering this change
+<!--
+What ran, and what wasn't checked. When the issue says what done means, show
+it here, or say which part can only be shown after merge.
+-->
 
 ## Release impact
 
