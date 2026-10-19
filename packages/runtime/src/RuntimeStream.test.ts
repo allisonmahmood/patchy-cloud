@@ -1127,7 +1127,7 @@ const fleetStreams = Effect.fnUntraced(function* (
     }
   });
   const attempts = yield* Queue.unbounded<Deferred.Deferred<void>>();
-  const connected = yield* Queue.unbounded<number>();
+  const changes = yield* Queue.unbounded<void>();
   const recorded = yield* Queue.unbounded<WideEvents.WideEvent>();
   const fleet = {
     company: 0,
@@ -1202,7 +1202,7 @@ const fleetStreams = Effect.fnUntraced(function* (
             Effect.sync(() => {
               fleet.company++;
               fleet.connects++;
-              Queue.offerUnsafe(connected, fleet.connects);
+              Queue.offerUnsafe(changes, undefined);
             }),
             () =>
               Effect.suspend(() =>
@@ -1211,6 +1211,7 @@ const fleetStreams = Effect.fnUntraced(function* (
                 Effect.andThen(
                   Effect.sync(() => {
                     fleet.company--;
+                    Queue.offerUnsafe(changes, undefined);
                   })
                 )
               )
@@ -1229,11 +1230,13 @@ const fleetStreams = Effect.fnUntraced(function* (
           Effect.sync(() => {
             fleet.versions++;
             fleet.warmed.push(options.warm);
+            Queue.offerUnsafe(changes, undefined);
           }),
           () =>
             Effect.sync(() => {
               fleet.versions--;
               fleet.ended.push(options.idle?.() === true ? "idle" : "left");
+              Queue.offerUnsafe(changes, undefined);
             })
         )
     })
@@ -1290,10 +1293,18 @@ const fleetStreams = Effect.fnUntraced(function* (
       return assert.fail("Expected an answer");
     return { last, read };
   });
-  /** Waits for the fleet's `count`th company lock, which a background re-hold takes. */
-  const connection = (count: number) =>
-    Queue.take(connected).pipe(Effect.repeat({ until: (taken) => taken >= count }));
-  return { streams, fleet, attempts, recorded, connect, update, until, answer, connection };
+  type Counts = Partial<Pick<typeof fleet, "company" | "connects" | "versions">>;
+  /**
+   * Waits until the fleet shows these counts. Holds are taken and let go by background fibers,
+   * some after real I/O, so they land in their own time.
+   */
+  const settle = (counts: Counts): Effect.Effect<void> =>
+    Effect.suspend(() =>
+      (Object.keys(counts) as Array<keyof Counts>).every((name) => fleet[name] === counts[name])
+        ? Effect.void
+        : Effect.andThen(Queue.take(changes), settle(counts))
+    );
+  return { streams, fleet, attempts, recorded, connect, update, until, answer, settle };
 });
 
 it.layer(layer)("document activity", (it) => {
@@ -1305,12 +1316,12 @@ it.layer(layer)("document activity", (it) => {
         const document = yield* host.connect("idle_after_window_document");
         assert.strictEqual(document.opened, "starting");
         assert.deepStrictEqual(yield* document.next, { type: "ready" });
-        assert.deepInclude(host.fleet, { company: 1, versions: 1 });
+        yield* host.settle({ company: 1, versions: 1 });
         assert.deepStrictEqual(host.fleet.warmed, [true]);
         yield* TestClock.adjust(10 * 60_000 - 1);
         assert.deepInclude(host.fleet, { company: 1, versions: 1 });
         yield* TestClock.adjust(1);
-        assert.deepInclude(host.fleet, { company: 0, versions: 0 });
+        yield* host.settle({ company: 0, versions: 0 });
         assert.deepStrictEqual(host.fleet.ended, ["idle"]);
         // The screen and stream stay: the document still counts and its controls are admitted.
         assert.strictEqual(yield* host.streams.connected(DEV_SEED.companyId), 1);
@@ -1338,7 +1349,7 @@ it.layer(layer)("document activity", (it) => {
         yield* host.update(document, { sequence: 1, type: "subscribe", subscription: items });
         let { last } = yield* host.answer(document, "items");
         yield* TestClock.adjust(window);
-        assert.deepInclude(host.fleet, { company: 0, versions: 0 });
+        yield* host.settle({ company: 0, versions: 0 });
         // Reauthentication reconnects about every 50 seconds, across two more windows.
         for (let reconnect = 0; reconnect < 30; reconnect++) {
           host.fleet.revision++;
@@ -1366,6 +1377,7 @@ it.layer(layer)("document activity", (it) => {
       yield* host.update(document, { sequence: 1, type: "subscribe", subscription: items });
       const { last } = yield* host.answer(document, "items");
       yield* TestClock.adjust(window);
+      yield* host.settle({ company: 0, versions: 0 });
       // The shell's reconciliation repeats the set it holds, with what it has received since.
       yield* host.update(document, {
         sequence: 2,
@@ -1380,14 +1392,12 @@ it.layer(layer)("document activity", (it) => {
         subscription: { ...items, id: "more" }
       });
       const { read } = yield* host.answer(document, "more");
-      yield* host.connection(2);
-      yield* Effect.yieldNow;
+      yield* host.settle({ company: 1, versions: 1, connects: 2 });
       // A background re-hold sends no startup frames and warms nothing.
       assert.isFalse(read.some((next) => next.type === "starting" || next.type === "ready"));
-      assert.deepInclude(host.fleet, { company: 1, versions: 1, connects: 2 });
       assert.deepStrictEqual(host.fleet.warmed, [true, false]);
       yield* TestClock.adjust(window);
-      assert.deepInclude(host.fleet, { company: 0, versions: 0 });
+      yield* host.settle({ company: 0, versions: 0 });
       assert.deepStrictEqual(host.fleet.ended, ["idle", "idle"]);
     }).pipe(Effect.scoped)
   );
@@ -1403,7 +1413,7 @@ it.layer(layer)("document activity", (it) => {
         for (const document of [calling, hidden, colleague])
           assert.deepStrictEqual(yield* document.next, { type: "ready" });
         yield* TestClock.adjust(window);
-        assert.deepInclude(host.fleet, { company: 0, connects: 3 });
+        yield* host.settle({ company: 0, versions: 0, connects: 3 });
         // Hidden suspension disconnects the document.
         yield* Scope.close(hidden.scope, Exit.void);
         yield* host.streams.called({
@@ -1412,9 +1422,7 @@ it.layer(layer)("document activity", (it) => {
           versionId: Fixtures.versionId,
           viewerId: DEV_SEED.userId
         });
-        yield* host.connection(4);
-        yield* Effect.yieldNow;
-        assert.deepInclude(host.fleet, { company: 1, versions: 1, connects: 4 });
+        yield* host.settle({ company: 1, versions: 1, connects: 4 });
         assert.deepStrictEqual(host.fleet.warmed, [true, true, true, false]);
         // The hidden document comes back still idle.
         const resumed = yield* host.connect("hidden_tab_document", hidden.generation);
@@ -1432,6 +1440,7 @@ it.layer(layer)("document activity", (it) => {
       yield* host.update(document, { sequence: 1, type: "subscribe", subscription: items });
       yield* host.answer(document, "items");
       yield* TestClock.adjust(window);
+      yield* host.settle({ company: 0, versions: 0 });
       const admissions = host.fleet.admissions;
       host.fleet.revision++;
       yield* wakes.publish([itemsKey]);
@@ -1450,7 +1459,7 @@ it.layer(layer)("document activity", (it) => {
       const document = yield* host.connect("moved_host_document", "stream_fromanotherhost00000000");
       assert.strictEqual(document.opened, "starting");
       assert.deepStrictEqual(yield* document.next, { type: "ready" });
-      assert.deepInclude(host.fleet, { company: 1, versions: 1 });
+      yield* host.settle({ company: 1, versions: 1 });
       assert.deepStrictEqual(host.fleet.warmed, [false]);
     }).pipe(Effect.scoped)
   );
@@ -1484,6 +1493,7 @@ it.layer(layer)("document activity", (it) => {
         for (const document of [moving, leaving])
           assert.deepStrictEqual(yield* document.next, { type: "ready" });
         yield* TestClock.adjust(window);
+        yield* host.settle({ company: 0, versions: 0 });
         // The call's documents are found, then reauthentication replaces one and the other leaves.
         const activity = host.streams.called({
           companyId: DEV_SEED.companyId,
@@ -1495,9 +1505,7 @@ it.layer(layer)("document activity", (it) => {
         assert.strictEqual(moved.opened, "ready");
         yield* Scope.close(leaving.scope, Exit.void);
         yield* activity;
-        yield* host.connection(3);
-        yield* Effect.yieldNow;
-        assert.deepInclude(host.fleet, { company: 1, versions: 1, connects: 3 });
+        yield* host.settle({ company: 1, versions: 1, connects: 3 });
         const resumed = yield* host.connect("leaving_call_document", leaving.generation);
         assert.strictEqual(resumed.opened, "ready");
         assert.strictEqual(host.fleet.connects, 3);
@@ -1510,6 +1518,7 @@ it.layer(layer)("document activity", (it) => {
       const first = yield* host.connect("handed_over_document");
       assert.deepStrictEqual(yield* first.next, { type: "ready" });
       yield* TestClock.adjust(window);
+      yield* host.settle({ company: 0, versions: 0 });
       const landing = yield* Deferred.make<void>();
       host.fleet.landing = landing;
       const updating = yield* host
@@ -1522,9 +1531,7 @@ it.layer(layer)("document activity", (it) => {
       assert.strictEqual(second.opened, "ready");
       yield* Deferred.succeed(landing, undefined);
       yield* Fiber.join(updating);
-      yield* host.connection(2);
-      yield* Effect.yieldNow;
-      assert.deepInclude(host.fleet, { company: 1, versions: 1, connects: 2 });
+      yield* host.settle({ company: 1, versions: 1, connects: 2 });
     }).pipe(Effect.scoped)
   );
 
@@ -1538,13 +1545,13 @@ it.layer(layer)("document activity", (it) => {
         yield* Deferred.succeed(yield* Queue.take(host.attempts), undefined);
         assert.deepStrictEqual(yield* first.next, { type: "ready" });
         yield* TestClock.adjust(window);
-        assert.deepInclude(host.fleet, { company: 0, versions: 0 });
+        yield* host.settle({ company: 0, versions: 0 });
         // Expiry cancels a re-hold still acquiring.
         yield* host.update(first, { sequence: 1, type: "subscribe", subscription: items });
         yield* Queue.take(host.attempts);
         assert.deepInclude(host.fleet, { company: 1, versions: 0 });
         yield* TestClock.adjust(window);
-        assert.deepInclude(host.fleet, { company: 0, versions: 0 });
+        yield* host.settle({ company: 0, versions: 0 });
         // The generation is replaced while a re-hold acquires, and its lock lets go slowly.
         yield* host.update(first, {
           sequence: 2,
@@ -1560,19 +1567,20 @@ it.layer(layer)("document activity", (it) => {
         yield* Deferred.succeed(stale, undefined);
         yield* Deferred.succeed(current, undefined);
         assert.deepStrictEqual(yield* second.next, { type: "ready" });
-        assert.deepInclude(host.fleet, { company: 2, versions: 1 });
+        yield* host.settle({ company: 2, versions: 1 });
         // The old owner's finalizer lands after the new owner took over, letting go of its own.
         host.fleet.releasing = undefined;
         yield* Deferred.succeed(releasing, undefined);
-        yield* Effect.yieldNow;
-        assert.deepInclude(host.fleet, { company: 1, versions: 1 });
-        // The new owner still holds: more activity takes nothing more.
+        yield* host.settle({ company: 1, versions: 1 });
+        // The new owner still holds: a change to its set takes nothing more.
         const connects = host.fleet.connects;
         yield* host.update(second, { sequence: 0, type: "replace", subscriptions: [] });
-        yield* Effect.yieldNow;
-        assert.strictEqual(host.fleet.connects, connects);
         yield* Scope.close(second.scope, Exit.void);
-        assert.deepInclude(host.fleet, { company: 0, versions: 0 });
+        yield* host.settle({ company: 0, versions: 0 });
+        let summary = yield* Queue.take(host.recorded);
+        while (summary.eventId !== second.generation) summary = yield* Queue.take(host.recorded);
+        assert.deepInclude(summary, { reactivated: 0 });
+        assert.strictEqual(host.fleet.connects, connects);
       }).pipe(Effect.scoped)
   );
 
