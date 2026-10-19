@@ -146,8 +146,9 @@ export const readManifest = Effect.fn("readManifest")(function* (layout: Layout)
  * Child commands get a closed env, as the server does: what a process needs to
  * run, the CLI's own state dir, and the environment's bin (its patchy and the
  * runner's Node) first on PATH. Nothing from the caller's PATCHY_* leaks in.
+ * `pnpm dev transcript` runs its lines in it too.
  */
-const childEnv = Effect.fn("childEnv")(function* (layout: Layout) {
+export const childEnv = Effect.fn("childEnv")(function* (layout: Layout) {
   const path = yield* Path.Path;
   const optional = (name: string) => Config.option(Config.String(name));
   const settings = yield* Config.all({

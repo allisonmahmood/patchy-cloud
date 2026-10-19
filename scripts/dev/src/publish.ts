@@ -387,6 +387,9 @@ export const draftSection = Effect.fn("Publish.draftSection")(function* (input: 
   );
   return {
     file,
-    gh: `gh pr edit <number> --body-file <body.md> ${input.files.map((f) => `--attach ${f}`).join(" ")}`
+    gh: [
+      "gh pr edit <number> --body-file <body.md>",
+      ...input.files.map((f) => `--attach ${f}`)
+    ].join(" ")
   };
 });

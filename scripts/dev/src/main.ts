@@ -10,6 +10,7 @@
  *   pnpm dev shot <person> [path]  a full-page PNG as that person, with the page's errors
  *   pnpm dev compare <person> <path>...  pages before and after, from evidence instances
  *   pnpm dev film <person> <flow>        a flow recorded before and after, as mp4
+ *   pnpm dev transcript <script>         CLI lines run before and after, compared
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -22,6 +23,7 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -71,7 +73,18 @@ import {
   sectionKey,
   TooManyAttachments
 } from "./publish.js";
+import { makeSanitizer, redactionLine, SECRET_SOURCES } from "./sanitize.js";
 import { failureOf, layout, readPlan, writePlan } from "./state.js";
+import {
+  type Compared,
+  loadScript,
+  normalize,
+  Run,
+  runScript,
+  type SideShell,
+  sideShell,
+  transcriptMarkdown
+} from "./transcript.js";
 
 class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerBuildFailed", {
   exitCode: Schema.Number
@@ -733,11 +746,10 @@ const sideReport = (before: Before): typeof SideReport.Type =>
         }
       : { status: "skipped", sha: null, label: null, apiUrl: null, reason: null };
 
-/** What `--json` prints for every evidence command: the commits, the person, the section and where it went. */
+/** What `--json` prints for every evidence command: the commits, the section and where it went. */
 const Report = Schema.Struct({
   key: Schema.String,
   scenario: Schema.String,
-  person: Person,
   before: SideReport,
   after: Schema.Struct({ sha: Schema.String, label: Schema.String, apiUrl: Schema.String }),
   /** The section with its markers, as it goes in the PR body. */
@@ -758,6 +770,7 @@ const encodeCompareReport = Schema.encodeSync(
     Schema.Struct({
       command: Schema.Literal("compare"),
       ...Report.fields,
+      person: Person,
       captures: Schema.Array(Capture)
     }),
     { space: 2 }
@@ -768,6 +781,7 @@ const encodeFilmReport = Schema.encodeSync(
     Schema.Struct({
       command: Schema.Literal("film"),
       ...Report.fields,
+      person: Person,
       takes: Schema.Array(Take)
     }),
     { space: 2 }
@@ -1121,6 +1135,205 @@ const film = Command.make(
   )
 );
 
+class InvalidTimeout extends Schema.TaggedError<InvalidTimeout>()("InvalidTimeout", {
+  given: Schema.Number
+}) {
+  override get message() {
+    return `--timeout takes whole seconds from 1 to 3600; got ${this.given}.`;
+  }
+}
+
+class LineTimedOut extends Schema.TaggedError<LineTimedOut>()("LineTimedOut", {
+  line: Schema.Int,
+  timeout: Schema.Int
+}) {
+  override get message() {
+    return `Line ${this.line} of the script timed out after ${this.timeout} s on this branch, so nothing was published; the section is above. Fix the line or raise --timeout.`;
+  }
+}
+
+/** Encoded, not yet a string: the sanitizer redacts its strings first, so the JSON stays valid. */
+const encodeTranscriptReport = Schema.encodeSync(
+  Schema.Struct({
+    command: Schema.Literal("transcript"),
+    ...Report.fields,
+    /** Each line of the script, redacted and normalized as the section shows it. */
+    lines: Schema.Array(
+      Schema.Struct({
+        line: Schema.Int,
+        caption: Schema.NullOr(Schema.String),
+        command: Schema.String,
+        before: Schema.NullOr(Run),
+        after: Run
+      })
+    ),
+    /** The sources a secret was redacted from. */
+    redacted: Schema.Array(Schema.Literals(SECRET_SOURCES))
+  })
+);
+const printJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+
+const transcript = Command.make(
+  "transcript",
+  {
+    script: Argument.String("script").pipe(
+      Argument.withDescription(
+        "A text file: each non-blank line is a command; a # line captions the commands after it"
+      )
+    ),
+    timeout: Flag.Int("timeout").pipe(
+      Flag.withDescription("Seconds a line may run before it is killed"),
+      Flag.withDefault(60)
+    ),
+    base: baseFlag,
+    scenario: scenarioFlag,
+    pr: prFlag,
+    json: Flag.Boolean("json").pipe(
+      Flag.withDescription(
+        "Print the commits, each line's exit code, output and time, and the section as JSON"
+      ),
+      Flag.withDefault(false)
+    )
+  },
+  Effect.fn(function* ({ script, timeout, base, scenario, pr, json }) {
+    const path = yield* Path.Path;
+    const root = yield* worktree;
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > 3600)
+      return yield* new InvalidTimeout({ given: timeout });
+    const file = path.resolve(script);
+    const lines = yield* loadScript(file);
+    const name = path.basename(file).replace(/\.[^.]+$/, "");
+    const sectionName = sectionKey(name);
+    const run = yield* prepareRun({
+      root,
+      command: "transcript",
+      key: sectionName,
+      base,
+      scenario,
+      pr
+    });
+    const ran = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sides = yield* evidence({
+          root,
+          command: "transcript",
+          scenario: run.scenario,
+          before: Option.some(run.commits.before),
+          after: run.commits.after,
+          runDir: path.join(root, run.runDir)
+        });
+        const afterShell = yield* sideShell(root, sides.after);
+        let before = sides.before;
+        let beforeShell: SideShell | null = null;
+        if (before.status === "served") {
+          const found = yield* Effect.option(sideShell(root, before.side));
+          if (Option.isSome(found)) beforeShell = found.value;
+          else
+            before = {
+              status: "unavailable",
+              commit: before.side.commit,
+              reason: "Its environment isn't where this checkout looks for it."
+            };
+        }
+        const shells = beforeShell === null ? [afterShell] : [beforeShell, afterShell];
+        // Both sides' state is read before either runs, and again after every line.
+        const sanitizer = yield* makeSanitizer({
+          stateDirs: shells.map((shell) => shell.state),
+          envs: shells.map((shell) => shell.env)
+        });
+        const limit = Duration.seconds(timeout);
+        yield* Console.error(`Running ${lines.length} line(s) on each side`);
+        const beforeRuns =
+          beforeShell === null
+            ? null
+            : {
+                shell: beforeShell,
+                runs: yield* runScript({ shell: beforeShell, lines, timeout: limit, sanitizer })
+              };
+        const afterRuns = yield* runScript({ shell: afterShell, lines, timeout: limit, sanitizer });
+        return {
+          before,
+          after: sides.after,
+          beforeRuns,
+          afterShell,
+          afterRuns,
+          sanitizer
+        };
+      })
+    );
+    const { sanitizer } = ran;
+    // Secrets go first, while each is still whole; then each side's origin and paths.
+    const clean = Effect.fn(function* (result: Run, shell: SideShell) {
+      return {
+        ...result,
+        stdout: normalize(yield* sanitizer.redact(result.stdout), shell.placeholders),
+        stderr: normalize(yield* sanitizer.redact(result.stderr), shell.placeholders)
+      } satisfies Run;
+    });
+    const compared: Array<Compared & { readonly line: number }> = [];
+    for (const [index, line] of lines.entries())
+      compared.push({
+        line: line.line,
+        caption: line.caption === null ? null : yield* sanitizer.redact(line.caption),
+        command: yield* sanitizer.redact(line.command),
+        before:
+          ran.beforeRuns === null
+            ? null
+            : yield* clean(ran.beforeRuns.runs[index]!, ran.beforeRuns.shell),
+        after: yield* clean(ran.afterRuns[index]!, ran.afterShell)
+      });
+    const markdown = yield* sanitizer.redact(
+      transcriptMarkdown({
+        name,
+        provenance: provenanceLines({
+          command: "transcript",
+          scenario: run.scenario,
+          before: ran.before,
+          after: run.commits.after
+        }),
+        redaction: redactionLine(yield* sanitizer.matched),
+        lines: compared
+      })
+    );
+    // A line that timed out on this branch keeps the section local and publishes nothing.
+    const timedOut = compared.find((line) => line.after.timedOut);
+    const delivered = yield* deliver({
+      root,
+      target: timedOut === undefined ? run.target : Option.none(),
+      command: "transcript",
+      key: sectionName,
+      markdown,
+      files: [],
+      runDir: run.runDir
+    });
+    if (json)
+      yield* Console.log(
+        printJson(
+          yield* sanitizer.redactJson(
+            encodeTranscriptReport({
+              command: "transcript",
+              key: sectionName,
+              scenario: run.scenario,
+              before: sideReport(ran.before),
+              after: { ...run.commits.after, apiUrl: ran.after.served.apiUrl },
+              lines: compared,
+              redacted: yield* sanitizer.matched,
+              ...delivered
+            })
+          )
+        )
+      );
+    else if (timedOut === undefined) yield* printDelivery(root, delivered);
+    else yield* Console.log(["", delivered.section, ""].join("\n"));
+    if (timedOut !== undefined) return yield* new LineTimedOut({ line: timedOut.line, timeout });
+    yield* failPartial(delivered);
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Run a script of CLI lines before and after, as the scenario's signed-in CLI, on throwaway instances at both commits, and compare them for the PR"
+  )
+);
+
 const down = Command.make(
   "down",
   {},
@@ -1182,6 +1395,7 @@ dev.pipe(
     shot,
     compare,
     film,
+    transcript,
     down,
     superviseCommand
   ]),
