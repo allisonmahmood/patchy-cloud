@@ -29,6 +29,8 @@ import {
   NameTaken,
   NotAdditive,
   PatchInventory,
+  PatchLog,
+  LOG_PAGE_MAX,
   PatchSummary,
   PatchDetail,
   PatchStateFilter,
@@ -364,6 +366,36 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "An existing ready company database is probed for inventory even when the current version " +
           "declares none: a failed platform commit may have left cumulative definitions. An unavailable " +
           "database answers `source_unavailable` (or `busy`), never a fabricated empty inventory."
+      )
+    ),
+    HttpApiEndpoint.get("log", "/patches/:patchId/log", {
+      params: patchParams,
+      query: {
+        before: Schema.optionalKey(Schema.String),
+        limit: Schema.optionalKey(
+          Schema.NumberFromString.check(
+            Schema.isInt(),
+            Schema.isBetween({ minimum: 1, maximum: LOG_PAGE_MAX })
+          )
+        ),
+        failed: Schema.optionalKey(queryFlag)
+      },
+      success: PatchLog,
+      error: [...patchRouteErrors, NotOwner]
+    }).annotateMerge(
+      describe(
+        "Read one page of a patch's log, newest first: the portal's Log tab for the agent that builds the " +
+          "patch. Its current owner and company admins read it in any lifecycle state; another member " +
+          "answers 403 `not_owner` naming the owner, and unknown, unopenable, foreign and gone patches 404. " +
+          "Each entry is a top-level handler call with its version number, handler and kind, initiating " +
+          "viewer, outcome and code, timings, correlation id, `ctx.log` lines (including a thrown error's " +
+          "message and stack) and up to 50 retained steps: nested handlers and the operations each made, " +
+          "successful or not, with `stepsTruncated` when it made more. Quiet successful queries roll up " +
+          "without entries, so tiers 0 and 1 have none. `limit` is 1 to 25, default 10, and a page stops " +
+          "early rather than pass about 2 MiB, always holding at least one entry. `before` takes a previous " +
+          "page's `next`; an id from elsewhere yields an empty page. A bare `?failed` or `failed=true` keeps " +
+          "handler errors, failures and timeouts, searching 1,000 entries at a time: `windowEnded` says the " +
+          "search stopped at that edge, and `next` carries on. Machine tokens only; responses are private, no-store."
       )
     ),
     HttpApiEndpoint.post("share", "/patches/:patchId/share", {

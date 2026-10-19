@@ -1,6 +1,7 @@
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
- * `Patches` and `Limits`: discovery, publish and owner lifecycle actions. The
+ * `Patches` and `Limits`: discovery, publish, owner lifecycle actions and the
+ * patch's log, read through Runtime's `InvocationLog`. The
  * identity comes from the bearer middleware the group declares; this
  * package never authenticates anyone.
  * The hosting server mounts the group with the rest of the API.
@@ -45,6 +46,9 @@ import {
   PatchQuotaExceeded,
   PatchyApi,
   PatchInventory,
+  LogEntry,
+  LOG_PAGE_DEFAULT,
+  PatchLog,
   PatchSummary,
   PatchDetail,
   PrimitiveDetail,
@@ -63,9 +67,11 @@ import {
   MANIFEST_VERSION,
   WIRE_VERSION
 } from "@patchy/api";
-import { Looks } from "@patchy/companies";
+import { Looks, Users } from "@patchy/companies";
 import { contentHash, documentTitle, validateHtml } from "@patchy/core";
+import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
+import { InvocationLog } from "@patchy/runtime";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
@@ -81,6 +87,7 @@ const encodeInventory = Schema.encodeSync(PatchInventory);
 const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
 const encodePrimitive = Schema.encodeSync(PrimitiveDetail);
+const encodeLog = Schema.encodeSync(PatchLog);
 const readHeaders = { "cache-control": "private, no-store" };
 const summary = (row: Patches.ReadPatch, userId: string, publicBaseUrl: string) =>
   new PatchSummary({
@@ -185,6 +192,81 @@ const readFailures = {
 };
 const isPatchId = Schema.is(PatchId);
 
+/** A log page stops before passing this many bytes, so one noisy patch can't flood an agent. */
+const LOG_PAGE_BYTES = 2 * 1024 * 1024;
+
+/** Stored ids in the reader's words: version numbers, people's names and connection handles. */
+interface LogNames {
+  readonly versions: ReadonlyMap<string, number>;
+  readonly people: ReadonlyMap<string, string>;
+  readonly connections: ReadonlyMap<string, string>;
+}
+
+const logEntry = ({ invocation, tree, truncated }: InvocationLog.Entry, names: LogNames) =>
+  ({
+    id: invocation.id,
+    correlationId: invocation.correlationId,
+    startedAt: invocation.startedAt.toISOString(),
+    settledAt: invocation.settledAt?.toISOString() ?? null,
+    version: names.versions.get(invocation.versionId) ?? null,
+    handler: invocation.handler,
+    kind: invocation.kind,
+    viewer: {
+      id: invocation.initiatingViewerId,
+      name: names.people.get(invocation.initiatingViewerId) ?? null
+    },
+    outcome: invocation.outcome,
+    code: invocation.outcomeCode,
+    durationMs: invocation.durationMs,
+    guestMs: invocation.guestMs,
+    dbMs: invocation.dbMs,
+    callbacks: invocation.callbacks,
+    attempts: invocation.attempts,
+    replyDelivered: invocation.replyDelivered,
+    logLines: invocation.logLines,
+    steps: tree.map((step) => ({
+      type: step.type,
+      id: step.id,
+      parentId: step.parentId,
+      at: step.at.toISOString(),
+      name: step.name,
+      kind: step.kind,
+      resource: step.resource,
+      connection:
+        step.connectionId === null
+          ? null
+          : (names.connections.get(step.connectionId) ?? step.connectionId),
+      effectivePrincipal: step.effectivePrincipal,
+      outcome: step.outcome,
+      code: step.outcomeCode,
+      durationMs: step.durationMs,
+      attempts: step.attempts,
+      rowCount: step.rowCount,
+      logLines: step.logLines
+    })),
+    stepsTruncated: truncated
+  }) satisfies LogEntry;
+
+/**
+ * Keeps entries, newest first, until the next would pass `LOG_PAGE_BYTES`; the first always stays.
+ * A cut page continues from its last kept entry, inside the same filter window.
+ */
+const boundLogPage = (
+  entries: ReadonlyArray<LogEntry>,
+  page: { readonly next: string | null; readonly windowEnded: boolean }
+) => {
+  const kept: LogEntry[] = [];
+  let bytes = 0;
+  for (const entry of entries) {
+    bytes += Buffer.byteLength(JSON.stringify(entry));
+    if (kept.length > 0 && bytes > LOG_PAGE_BYTES) break;
+    kept.push(entry);
+  }
+  return kept.length < entries.length
+    ? { entries: kept, next: kept.at(-1)!.id, windowEnded: false }
+    : { entries: kept, next: page.next, windowEnded: page.windowEnded };
+};
+
 const decodePublish = decodeBody(PublishRequest);
 const decodeKey = decodeBody(
   Schema.Struct({
@@ -265,6 +347,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const openability = yield* Patches.Openability;
     const limits = yield* Limits.Limits;
     const looks = yield* Looks.Looks;
+    const invocationLog = yield* InvocationLog.InvocationLog;
+    const users = yield* Users.Users;
+    const connectionStore = yield* ConnectionStore.ConnectionStore;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const maxHtmlBytes = yield* PatchesConfig.maxHtmlBytes;
     const maxBundleBytes = yield* PatchesConfig.maxBundleBytes;
@@ -745,6 +830,71 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           return HttpServerResponse.jsonUnsafe(encodeInventory(result), {
             headers: { "cache-control": "private, no-store" }
           });
+        })
+      )
+      .handleRaw(
+        "log",
+        Effect.fn("PatchesApi.log")(function* ({ params, query }) {
+          const identity = yield* CurrentIdentity;
+          if (!isPatchId(params.patchId)) return notFound();
+          const card = yield* patches
+            .portalCard(params.patchId, {
+              companyId: identity.company.id,
+              userId: identity.user.id,
+              canOpen: (patch) => openability(patch, identity.user.id)
+            })
+            .pipe(
+              Effect.catchTags({
+                PatchUnavailable: () => Effect.succeed(notFound()),
+                SqlError: Effect.die
+              })
+            );
+          if (HttpServerResponse.isHttpServerResponse(card)) return card;
+          yield* WideEvents.enrich(Patches.eventFields(card.patch));
+          // Ownership is read now, so reassignment moves who may read the log, as in the portal.
+          if (identity.role !== "admin" && card.owner.id !== identity.user.id)
+            return refuse(NotOwner, {
+              ok: false,
+              code: "not_owner",
+              error: `Only ${card.owner.name} or an admin can read this patch's log.`,
+              owner: { id: card.owner.id, name: card.owner.name }
+            });
+          const page = yield* invocationLog
+            .page({
+              companyId: identity.company.id,
+              patchId: card.patch.id,
+              ...(query.before === undefined ? {} : { before: query.before }),
+              filter: query.failed === true ? { outcome: "failed" } : {},
+              limit: query.limit ?? LOG_PAGE_DEFAULT
+            })
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          const members = yield* users
+            .list(identity.company.id)
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          // A connection deleted since, or a store that cannot answer, leaves the id.
+          const connections = page.entries.some((entry) =>
+            entry.tree.some((step) => step.connectionId !== null)
+          )
+            ? yield* connectionStore.list(identity.company.id).pipe(Effect.orElseSucceed(() => []))
+            : [];
+          const names: LogNames = {
+            versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
+            people: new Map(members.map((member) => [member.id, member.name])),
+            connections: new Map(
+              connections.map((connection) => [
+                connection.id,
+                `${connection.integration}/${connection.handle}`
+              ])
+            )
+          };
+          const bounded = boundLogPage(
+            page.entries.map((entry) => logEntry(entry, names)),
+            page
+          );
+          return HttpServerResponse.jsonUnsafe(
+            encodeLog(new PatchLog({ ok: true, patchId: card.patch.id, ...bounded })),
+            { headers: readHeaders }
+          );
         })
       )
       .handleRaw("share", ({ params }) =>

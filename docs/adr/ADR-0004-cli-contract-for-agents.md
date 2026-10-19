@@ -59,7 +59,7 @@ lists of validation failures; their line count is not the branching contract.
   Check the exit code before parsing stdout as success. Built-ins such as help
   and the bare `--version` retain their own output, not success envelopes.
 
-`whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `look publish` and `look restore` expose their API success shapes;
+`whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look publish` and `look restore` expose their API success shapes;
 [API reference](../API.md) owns those fields. `publicUrl` on publish/share is an
 address, not a promise of anonymous access: `scope` decides who can open it.
 
@@ -564,6 +564,7 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 | `patchy rollback <n> [file] [--patch <id>]`                                                                               | Serve retained version n of a live patch, preserving data, sharing, description and name.                                                                                                               | `{ ok, patchId, currentVersion, address }`                                                    |
 | `patchy describe "<text>" [--patch <id>]` or `patchy describe <file> "<text>"`                                            | Set a live or retired patch's description; normalized text and stamp rewrite `patchy.json` in repo mode.                                                                                                | `{ ok, patchId, description, descriptionUpdatedAt }`                                          |
 | `patchy describe [file] --clear [--patch <id>]`                                                                           | Explicitly clear the description; empty and whitespace-only positionals are refused.                                                                                                                    | Same description response.                                                                    |
+| `patchy logs [--patch <id>] [--failed] [--limit <n>] [--before <cursor>]`                                                 | Read one page of a patch's log, newest first, as its owner or an admin. `--limit` outside 1 to 25 is local exit 1.                                                                                      | `{ ok, patchId, entries, next, windowEnded }`                                                 |
 
 Inside a published repo, untargeted share, retire, delete, restore, rollback and
 describe use `patchy.json`. An unpublished repo is a local refusal. A file and
@@ -586,7 +587,7 @@ including an unshare at publish; `--yes` only confirms deletion.
 `wrong_state` names the current state. A missing rollback version is
 `version_unavailable`; invalid cloud description text is `invalid_description`.
 These are `rejected`, exit 2. `not_owner` names the owner and asks them or an
-admin to reassign it. Publish to an off patch says restore it or ask an admin;
+admin to reassign it; on `logs` it says only the owner or an admin can read the log. Publish to an off patch says restore it or ask an admin;
 `patch_deleted` carries its reclaim date. Restore past that date is refused
 even if the deletion sweep has not run. None of these refusals suggests a new patch.
 

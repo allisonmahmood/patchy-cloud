@@ -195,8 +195,8 @@ disposable local state, not published resources. Start again to fetch the publis
 inventory. Config and fixture changes need stop/start. New starts check the release,
 authenticate as the machine user and regenerate declarations; existing sessions
 survive release changes. `--foreground` stays attached with logs.
-`dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` and local-only
-failure message/stack. Starting with `--json` records full wide events and invocation
+`dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` and each
+thrown error's message and stack. Starting with `--json` records full wide events and invocation
 JSON; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows
 are written. PostHog has no fixture: dev reads the real project through the
 instance as the key's person, and the instance logs each read as a Dev call.
@@ -222,6 +222,7 @@ These commands never create a patch and require its owner's publishing key.
 - `restore [file] [--patch <id>]` brings a retired patch back at any time, or a deleted patch before its `purgeAt`, at the same address. A deleted file's cache entry is forgotten, so restore it by id.
 - `rollback <n> [file] [--patch <id>]` serves retained version n of a live patch. Data, sharing, description and name stay unchanged.
 - `describe "<text>"`, `describe <file> "<text>"` or `describe "<text>" --patch <id>` edits a live or retired patch's description. Use `describe [file] --clear [--patch <id>]` to empty it. Without a file or `--patch`, describe uses the repo id and rewrites `patchy.json`; explicit targets do not change the local repo.
+- `logs [--patch <id>] [--failed]` prints a page of a tier 2 patch's log, newest first: each call's version, handler, outcome, `ctx.log` lines, thrown error and steps. Read it when someone says a published patch is broken; an admin's key reads it too. Page with `--before <next>` and filter with grep or jq.
 
 Every verb accepts `--json`. Branch on `kind`/exit first, then `code`; refusal documents preserve
 `owner`, `state`, `dependants`, `sources` or `purgeAt` when applicable.

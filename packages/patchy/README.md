@@ -1204,6 +1204,33 @@ It keeps the repo id and reserves every name until reclamation. Restore a delete
 file patch by id because its cache entry is gone. A still-fresh public cache may
 serve for up to 60 seconds; downloaded copies cannot be recalled.
 
+### `patchy logs [--patch <id>] [--failed] [--limit <n>] [--before <cursor>]`
+
+Print one page of a published patch's log, newest first: what the portal's Log
+tab shows its owner and admins. Use it when someone says a published patch is
+broken, then fix the bug and publish. Inside a published repo it reads
+`patchy.json`'s patch; elsewhere pass `--patch`. Only tier 2 handler calls write
+entries: mutations and actions always, queries only when they log or fail.
+
+Each entry names its time, version, handler and kind, outcome and code, duration
+and the person who opened the patch, then its correlation id, its `ctx.log` lines
+and the steps it made: nested handlers and table, file and connection calls,
+successful or not. A thrown error's message and stack are a log line. Stacks
+point into the minified server bundle, so trust the message over line numbers.
+A browser's failure reports its correlation id; grep for it to find the entry.
+
+- `--failed` keeps handler errors, failures and timeouts. It searches 1,000
+  entries at a time and says when to continue past them.
+- `--limit` is 1 to 25, default 10. A page stops early rather than pass about
+  2 MiB, always holding at least one entry.
+- `--before` takes the cursor the previous page printed, to read older entries.
+
+There is no search or follow mode: page with `--before` and filter with `grep`
+or `jq`. `--json` prints `{ ok, patchId, entries, next, windowEnded }`, documented
+in [`docs/API.md`](../../docs/API.md); `next` is the cursor for `--before`, or
+null at the start of the log. Another member's key is refused with `not_owner`,
+exit 2, naming the owner.
+
 ### The company look
 
 A company has numbered look revisions and a pointer to the current one. Having
@@ -1383,7 +1410,7 @@ warning after the local logout succeeds, never exit 3.
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
-- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `look`, `look publish` and `look restore` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
+- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look`, `look publish` and `look restore` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
 
 A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, admins?, warnings? }`
 on stderr, ordinarily with empty stdout and the exit code for `kind`. Lifecycle
@@ -1411,7 +1438,8 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--share company|public` — on `publish`, explicitly set who may read the patch. Without it, creates default to company and updates preserve scope.
 - `--new` — on `publish`, always create a new patch with a server-generated ID instead of updating the one previously published from this path. It cannot be combined with `--patch`.
 - `--patch <patch-id>` — on `publish`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
-- `--patch <patch-id>`: on `share`, `retire`, `delete`, `restore`, `rollback` and `describe`, name the patch instead of using the repo id or file cache. It cannot be combined with a file argument.
+- `--patch <patch-id>`: on `share`, `retire`, `delete`, `restore`, `rollback` and `describe`, name the patch instead of using the repo id or file cache. It cannot be combined with a file argument. On `logs`, read that patch's log instead of the repo's.
+- `--failed`, `--limit <n>` and `--before <cursor>`: on `logs`, keep only failed calls, set the page size (1 to 25, default 10) and continue from a previous page.
 - `--force`: on `retire`, `delete`, `restore` and `publish`, accept the reported dependant/source breakage. Ask the person you are working for first.
 - `--yes`: on `delete`, confirm deletion without an interactive prompt. Required for agent, JSON and non-terminal calls; it does not imply `--force`.
 - `--clear`: on `describe`, remove the description instead of supplying text.
