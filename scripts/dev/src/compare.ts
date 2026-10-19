@@ -131,6 +131,26 @@ const growPatchFrame = async (page: Page): Promise<string | null> => {
 };
 
 /**
+ * Playwright's Chromium for the rest of the scope, which closes it. Playwright's
+ * own signal handlers stay off: on Ctrl-C they exit the process before the
+ * evidence instances' finalizers can take them down.
+ */
+export const launchBrowser = (options: { readonly slowMo?: number } = {}) =>
+  Effect.acquireRelease(
+    Effect.tryPromise({
+      try: async () =>
+        (await import("@playwright/test")).chromium.launch({
+          handleSIGINT: false,
+          handleSIGTERM: false,
+          handleSIGHUP: false,
+          ...options
+        }),
+      catch: (cause) => new CaptureFailed({ what: "Launching Chromium", cause })
+    }),
+    (browser) => Effect.promise(() => browser.close().catch(() => undefined))
+  );
+
+/**
  * Full-page PNGs of every target at every width on each side, signed in as
  * `email`, at device scale 2 so text stays sharp when zoomed. One browser, a
  * fresh context per shot. A page holding a live stream never goes network-idle,
@@ -145,53 +165,48 @@ export const shootAll = Effect.fn("Compare.shootAll")(function* (input: {
   readonly runDir: string;
 }) {
   const path = yield* Path.Path;
+  const browser = yield* launchBrowser();
   return yield* Effect.tryPromise({
     try: async () => {
-      const { chromium } = await import("@playwright/test");
-      const browser = await chromium.launch();
       const shots: Array<Capture> = [];
-      try {
-        for (const target of input.targets)
-          for (const width of input.widths)
-            for (const { side, apiUrl } of input.sides) {
-              const context = await browser.newContext({
-                viewport: { width, height: 800 },
-                deviceScaleFactor: 2
-              });
-              const page = await context.newPage();
-              const errors: Array<string> = [];
-              page.on("console", (message) => {
-                if (message.type() === "error") errors.push(message.text());
-              });
-              page.on("pageerror", (error) => errors.push(error.message));
-              const response = await page.goto(
-                `${apiUrl}/dev/sign-in?as=${encodeURIComponent(input.email)}&return=${encodeURIComponent(target)}`
-              );
-              await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
-              await page.evaluate(() => document.fonts.ready.then(() => undefined));
-              const clipped = await growPatchFrame(page);
-              const file = shotFile(input.runDir, side, target, width);
-              await page.screenshot({ path: path.join(input.root, file), fullPage: true });
-              shots.push({
-                side,
-                target,
-                width,
-                url: page.url(),
-                status: response?.status() ?? null,
-                file,
-                errors,
-                clipped
-              });
-              await context.close();
-            }
-      } finally {
-        await browser.close();
-      }
+      for (const target of input.targets)
+        for (const width of input.widths)
+          for (const { side, apiUrl } of input.sides) {
+            const context = await browser.newContext({
+              viewport: { width, height: 800 },
+              deviceScaleFactor: 2
+            });
+            const page = await context.newPage();
+            const errors: Array<string> = [];
+            page.on("console", (message) => {
+              if (message.type() === "error") errors.push(message.text());
+            });
+            page.on("pageerror", (error) => errors.push(error.message));
+            const response = await page.goto(
+              `${apiUrl}/dev/sign-in?as=${encodeURIComponent(input.email)}&return=${encodeURIComponent(target)}`
+            );
+            await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+            await page.evaluate(() => document.fonts.ready.then(() => undefined));
+            const clipped = await growPatchFrame(page);
+            const file = shotFile(input.runDir, side, target, width);
+            await page.screenshot({ path: path.join(input.root, file), fullPage: true });
+            shots.push({
+              side,
+              target,
+              width,
+              url: page.url(),
+              status: response?.status() ?? null,
+              file,
+              errors,
+              clipped
+            });
+            await context.close();
+          }
       return shots;
     },
     catch: (cause) => new CaptureFailed({ what: "Taking the screenshots", cause })
   });
-});
+}, Effect.scoped);
 
 /** One page at one width: each side's capture, and whether their PNGs are the same bytes. */
 export interface Pair {

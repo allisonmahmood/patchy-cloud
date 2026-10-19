@@ -305,6 +305,16 @@ const cloneEnv = Effect.fn("Evidence.cloneEnv")(function* (root: string) {
   return env;
 });
 
+/** Whether a checkout's runner left an instance or environment behind: its state dir or its environment folder. */
+const hasInstance = Effect.fn("Evidence.hasInstance")(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return (
+    (yield* fs.exists(path.join(dir, ".local", "dev"))) ||
+    (yield* fs.exists(yield* environmentDir(dir)))
+  );
+});
+
 const readCloneState = Effect.fn("Evidence.readCloneState")(function* (
   dir: string,
   env: Record<string, string>
@@ -320,10 +330,12 @@ const readCloneState = Effect.fn("Evidence.readCloneState")(function* (
     ["status", "--porcelain", "--untracked-files=no"],
     options
   );
-  const leftover =
-    (yield* fs.exists(path.join(dir, ".local", "dev"))) ||
-    (yield* fs.exists(yield* environmentDir(dir)));
-  return { exists: true, sha, dirty: status !== "", leftover } satisfies CloneState;
+  return {
+    exists: true,
+    sha,
+    dirty: status !== "",
+    leftover: yield* hasInstance(dir)
+  } satisfies CloneState;
 });
 
 /** Takes a side's instance down with its own runner, which deletes its data. */
@@ -420,7 +432,14 @@ const serveSide = Effect.fn("Evidence.serveSide")(function* (
   const env = yield* cloneEnv(root);
   yield* prepare(root, dir, name, commit, env);
   yield* Effect.addFinalizer(() =>
-    takeDown(dir, name, env).pipe(
+    hasInstance(dir).pipe(
+      Effect.flatMap((up) =>
+        up
+          ? Console.error(`  ${name.padEnd(6)}  taking the instance down`).pipe(
+              Effect.andThen(takeDown(dir, name, env))
+            )
+          : Effect.void
+      ),
       Effect.catch((error) =>
         Console.error(
           `The ${name} instance did not come down (${error.message}). Run \`pnpm dev down\` in ${dir}.`
@@ -450,13 +469,22 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
     [
       Option.match(input.before, {
         onNone: () => Effect.succeed<Before>({ status: "skipped" }),
-        onSome: (commit) =>
-          serveSide(input.root, "before", commit, input.scenario).pipe(
+        onSome: (commit) => {
+          const unavailable = (reason: string) =>
+            Effect.succeed<Before>({ status: "unavailable", commit, reason });
+          return serveSide(input.root, "before", commit, input.scenario).pipe(
             Effect.map((side): Before => ({ status: "served", side })),
-            Effect.catch((error) =>
-              Effect.succeed<Before>({ status: "unavailable", commit, reason: error.message })
-            )
-          )
+            // The reason goes in a public PR, so it names the step, never its output.
+            Effect.catchTags({
+              StepExited: (error) => unavailable(`${error.step} failed (exit ${error.exitCode}).`),
+              StepUnavailable: (error) => unavailable(`${error.step} could not start.`),
+              SchemaError: () => unavailable("Its `pnpm dev up --json` printed something else."),
+              SideUnhealthy: (error) => unavailable(error.message),
+              WrongCheckout: (error) => unavailable(error.message)
+            }),
+            Effect.catch(() => unavailable("It could not be set up."))
+          );
+        }
       }),
       serveSide(input.root, "after", input.after, input.scenario)
     ],

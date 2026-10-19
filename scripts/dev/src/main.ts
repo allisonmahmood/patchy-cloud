@@ -73,7 +73,6 @@ import {
   TooManyAttachments
 } from "./publish.js";
 import { failureOf, layout, readPlan, writePlan } from "./state.js";
-import { supervise } from "./supervisor.js";
 
 class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerBuildFailed", {
   exitCode: Schema.Number
@@ -1157,9 +1156,17 @@ const down = Command.make(
   )
 );
 
-/** The detached process `start` spawns. Reads the plan `start` wrote. */
+/**
+ * The detached process `start` spawns. Reads the plan `start` wrote. The
+ * supervisor loads only here: embedded-postgres hooks Ctrl-C to exit the
+ * process at once, which would skip every other command's finalizers.
+ */
 const superviseCommand = Command.make("supervise", {}, () =>
-  Effect.flatMap(recordedPlan, supervise).pipe(Effect.scoped, userFacing)
+  Effect.promise(() => import("./supervisor.js")).pipe(
+    Effect.flatMap(({ supervise }) => Effect.flatMap(recordedPlan, supervise)),
+    Effect.scoped,
+    userFacing
+  )
 ).pipe(Command.unlisted);
 
 /** Agent-facing surface: `--help`/`--version` only; failures are one line, no stack. */

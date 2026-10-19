@@ -24,7 +24,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { pathToFileURL } from "node:url";
 import type { Page } from "@playwright/test";
-import { CaptureFailed } from "./compare.js";
+import { CaptureFailed, launchBrowser } from "./compare.js";
 import type { SideName } from "./evidence.js";
 import { overlay } from "./filmOverlay.js";
 import { stepOutput } from "./steps.js";
@@ -96,7 +96,7 @@ const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
  * Playwright recorded. Failures inside the flow are part of the take, not
  * errors: the video shows them.
  */
-const recordTake = (input: {
+const recordTake = Effect.fn("Film.recordTake")(function* (input: {
   readonly apiUrl: string;
   readonly email: string;
   readonly start: string;
@@ -104,65 +104,61 @@ const recordTake = (input: {
   readonly width: number;
   readonly label: string;
   readonly videoDir: string;
-}) =>
-  Effect.tryPromise({
+}) {
+  const browser = yield* launchBrowser({ slowMo: 120 });
+  return yield* Effect.tryPromise({
     try: async () => {
-      const { chromium } = await import("@playwright/test");
-      const browser = await chromium.launch({ slowMo: 120 });
+      const size = { width: input.width, height: HEIGHT };
+      const context = await browser.newContext({
+        viewport: size,
+        baseURL: input.apiUrl,
+        recordVideo: { dir: input.videoDir, size }
+      });
+      // tsx wraps named inner functions in `__name(...)`, which the page
+      // lacks, so the overlay goes in as source with a local stand-in.
+      await context.addInitScript({
+        content: `(() => { const __name = (f) => f; (${overlay.toString()})({ label: ${encodeString(input.label)} }); })();`
+      });
+      const page = await context.newPage();
+      // A local instance answers fast: a missing element should end the take, not hold it 30s.
+      page.setDefaultTimeout(5_000);
+      page.setDefaultNavigationTimeout(15_000);
+      let current = "";
+      let failure: Take["failure"] = null;
+      const caption = (text: string, failed = false) =>
+        page
+          .evaluate(([t, f]) => window.__film?.caption(t, f), [text, failed] as const)
+          .catch(() => undefined);
+      const step = async (text: string) => {
+        current = text;
+        await caption(text);
+        await page.waitForTimeout(1_200);
+      };
+      const started = performance.now();
       try {
-        const size = { width: input.width, height: HEIGHT };
-        const context = await browser.newContext({
-          viewport: size,
-          baseURL: input.apiUrl,
-          recordVideo: { dir: input.videoDir, size }
-        });
-        // tsx wraps named inner functions in `__name(...)`, which the page
-        // lacks, so the overlay goes in as source with a local stand-in.
-        await context.addInitScript({
-          content: `(() => { const __name = (f) => f; (${overlay.toString()})({ label: ${encodeString(input.label)} }); })();`
-        });
-        const page = await context.newPage();
-        // A local instance answers fast: a missing element should end the take, not hold it 30s.
-        page.setDefaultTimeout(5_000);
-        page.setDefaultNavigationTimeout(15_000);
-        let current = "";
-        let failure: Take["failure"] = null;
-        const caption = (text: string, failed = false) =>
-          page
-            .evaluate(([t, f]) => window.__film?.caption(t, f), [text, failed] as const)
-            .catch(() => undefined);
-        const step = async (text: string) => {
-          current = text;
-          await caption(text);
-          await page.waitForTimeout(1_200);
-        };
-        const started = performance.now();
-        try {
-          await page.goto(
-            `${input.apiUrl}/dev/sign-in?as=${encodeURIComponent(input.email)}&return=${encodeURIComponent(input.start)}`
-          );
-          await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
-          await page.waitForTimeout(800);
-          await input.flow({ page, step });
-          await page.waitForTimeout(1_500);
-        } catch (error) {
-          const message =
-            (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
-          failure = { step: current, message };
-          await caption(`Stopped${current === "" ? "" : ` at "${current}"`}: ${message}`, true);
-          await page.waitForTimeout(2_500);
-        }
-        const seconds = (performance.now() - started) / 1000;
-        const video = page.video();
-        await context.close();
-        if (video === null) throw new Error("Playwright recorded no video");
-        return { webm: await video.path(), seconds, failure };
-      } finally {
-        await browser.close();
+        await page.goto(
+          `${input.apiUrl}/dev/sign-in?as=${encodeURIComponent(input.email)}&return=${encodeURIComponent(input.start)}`
+        );
+        await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+        await page.waitForTimeout(800);
+        await input.flow({ page, step });
+        await page.waitForTimeout(1_500);
+      } catch (error) {
+        const message =
+          (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
+        failure = { step: current, message };
+        await caption(`Stopped${current === "" ? "" : ` at "${current}"`}: ${message}`, true);
+        await page.waitForTimeout(2_500);
       }
+      const seconds = (performance.now() - started) / 1000;
+      const video = page.video();
+      await context.close();
+      if (video === null) throw new Error("Playwright recorded no video");
+      return { webm: await video.path(), seconds, failure };
     },
     catch: (cause) => new CaptureFailed({ what: "Recording the flow", cause })
   });
+}, Effect.scoped);
 
 const ffmpeg = (root: string, step: string, args: ReadonlyArray<string>) =>
   stepOutput(step, "ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args], {
