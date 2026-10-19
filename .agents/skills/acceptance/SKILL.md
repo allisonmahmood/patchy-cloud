@@ -109,7 +109,8 @@ data from instances at the PR's commits. Read every file before attaching it,
 and trim command output to what makes the point, without home paths, tokens,
 ids or infrastructure details.
 
-Write the comment, starting with the marker line:
+Write the comment to `.local/shots/verdict.md`, which git ignores, starting
+with the marker line:
 
 ```markdown
 <!-- patchy-acceptance -->
@@ -147,22 +148,24 @@ me=$(gh api user --jq .login)
 old=$(gh api "repos/{owner}/{repo}/issues/<n>/comments" --paginate \
   --jq '.[] | select(.body | startswith("<!-- patchy-acceptance -->")) | "\(.id) \(.user.login)"' |
   awk -v me="$me" '$2 == me { print $1 }')
-gh pr comment <n> --body-file verdict.md --attach .local/shots/<run>/<file> &&   # one --attach per file
+gh pr comment <n> --body-file .local/shots/verdict.md --attach .local/shots/<run>/<file> &&   # one --attach per file
   for id in $old; do gh api -X DELETE "repos/{owner}/{repo}/issues/comments/$id"; done
 ```
 
 Only verdicts posted by your GitHub account are yours to replace, and they go
 only once the new one is up: `gh` uploads attachments only into a comment it
-creates, and a new comment notifies the people watching the PR. Before posting, check `headRefOid` again. If the head
-moved while you worked, post anyway and say so in the first line: the verdict
-names the commit you checked, and the new head needs a new run.
+creates, and a new comment notifies the people watching the PR.
+
+Before posting, check `headRefOid` again. If the head moved while you worked,
+post anyway and say so in the first line: the verdict names the commit you
+checked, and the new head needs a new run.
 
 Told not to post, or checking a commit without a PR, print the verdict instead.
 
 Then clean up: `pnpm dev down` in your checkout, and `git worktree remove <dir>`
 for a checkout you made.
 
-Done when the PR has exactly one comment starting with the marker, it names the
+Done when the PR has exactly one marked comment from your account, it names the
 head you checked, and you have reported the verdict to whoever asked.
 
 ## Golden journeys
