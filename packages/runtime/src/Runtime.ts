@@ -460,6 +460,16 @@ export interface Options {
   readonly bootstrapIdentity: Options["identity"];
   /** Production operating admission, once per incoming operation, never inside a handler. */
   readonly admitCompany?: (companyId: string) => Effect.Effect<void, RuntimeError>;
+  /**
+   * Hears each admitted browser `server.call`, so the viewer's open documents of the version
+   * count it as activity. Subscription re-runs and nested calls never reach it.
+   */
+  readonly called?: (call: {
+    readonly companyId: string;
+    readonly patchId: string;
+    readonly versionId: string;
+    readonly viewerId: string;
+  }) => Effect.Effect<void>;
   readonly record?: <A>(
     execution: Execution,
     run: Effect.Effect<A, RuntimeError, HttpServerRequest.HttpServerRequest>
@@ -728,6 +738,13 @@ export const make = (
         if (!integration) yield* admit;
         if (input.op === "server.call") {
           if (Option.isNone(invocations)) return yield* new InvocationUnavailable();
+          if (identity !== null && options.called !== undefined)
+            yield* options.called({
+              companyId: version.companyId,
+              patchId: version.patchId,
+              versionId: version.versionId,
+              viewerId: identity.user.id
+            });
           return yield* run({
             kind: "read",
             run: (args) => invocations.value.call(args, binding, reauthorize)

@@ -685,7 +685,17 @@ export const registry = {
     default: 1800000,
     unit: "milliseconds",
     scope: "company",
-    measure: "Release after no connected tier 2 documents and no in-flight work",
+    measure: "Release after no active tier 2 documents and no in-flight work",
+    refusal: null,
+    overridable: true
+  },
+  "execution.document.idle": {
+    kind: "operating",
+    default: 600000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Time a connected tier 2 document goes without activity before it lets go of its company task and version process",
     refusal: null,
     overridable: true
   },

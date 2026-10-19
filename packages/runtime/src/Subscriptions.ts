@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A digest keeps a document's desired set small across generations.
+import { createHash } from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -61,6 +63,8 @@ export class InvalidSnapshot extends Schema.TaggedError<InvalidSnapshot>()("Inva
 interface Subscription {
   readonly input: RuntimeSubscription;
   readonly signature: string;
+  /** The signature's digest, which stands for it in the document's logical desired set. */
+  readonly digest: string;
   readonly dependencies: Set<string>;
   /** Keys woken during a run, with each one's first arrival; the run's result decides which matter. */
   readonly duringRun: Map<string, number>;
@@ -87,6 +91,15 @@ interface Subscription {
   retryAt: number;
   cause: string | undefined;
 }
+/**
+ * A document's logical desired set as it last admitted one: a digest of its subscription ids,
+ * operations and canonical args, ignoring order, revisions and vectors. The stream keeps one per
+ * document across its generations, so a reconnect's `replace` tells a change from a repeat.
+ * Unset until the document admits a set.
+ */
+export interface Desired {
+  value: string | undefined;
+}
 interface Document {
   readonly generation: string;
   readonly documentId: string;
@@ -96,6 +109,9 @@ interface Document {
   readonly checkOperation?: (op: string) => Effect.Effect<void, Runtime.RuntimeError>;
   readonly scope: Scope.Scope;
   readonly ready?: () => boolean;
+  readonly desired: Desired;
+  /** This generation has admitted a set, so its own subscriptions are the logical set. */
+  applied: boolean;
   readonly subscriptions: Map<string, Subscription>;
   readonly buffered: Map<number, RuntimeSubscriptionRequest>;
   readonly gate: Semaphore.Semaphore;
@@ -122,9 +138,13 @@ interface Slot {
   readonly backoffMs?: number;
 }
 export interface DocumentSubscriptions {
+  /**
+   * Admits a desired-set request, succeeding with whether it changed the document's logical
+   * desired set. Stale, buffered and repeated requests change nothing until their deltas apply.
+   */
   readonly update: (
     request: RuntimeSubscriptionRequest
-  ) => Effect.Effect<void, Runtime.RuntimeError>;
+  ) => Effect.Effect<boolean, Runtime.RuntimeError>;
   readonly close: () => void;
   readonly metrics: () => {
     readonly peakSubscriptions: number;
@@ -157,7 +177,7 @@ export class Subscriptions extends Context.Service<
         | "send"
         | "scope"
         | "ready"
-      >
+      > & { readonly desired?: Desired }
     ) => DocumentSubscriptions;
     /** Invalidates snapshots, including reads already in flight, after a dev binding swap. */
     readonly rebind: (
@@ -171,6 +191,14 @@ const equalVector = (left: RevisionVector | undefined, right: RevisionVector) =>
   left !== undefined &&
   Object.keys(left).length === Object.keys(right).length &&
   Object.entries(right).every(([key, value]) => left[key] === value);
+/** The digest of a logical desired set: its ids with their signatures' digests, in id order. */
+const digestOf = (subscriptions: ReadonlyMap<string, Subscription>) => {
+  const hash = createHash("sha256");
+  for (const id of [...subscriptions.keys()].sort())
+    hash.update(`${id.length}:${id}${subscriptions.get(id)!.digest}`);
+  return hash.digest("base64");
+};
+const nothingDesired = digestOf(new Map());
 const reachesFence = (vector: RevisionVector, fence: RevisionVector) =>
   Object.entries(fence).every(
     ([key, value]) => vector[key] === undefined || BigInt(vector[key]!) >= BigInt(value)
@@ -600,10 +628,12 @@ export const make = Effect.gen(function* () {
       | "send"
       | "scope"
       | "ready"
-    >
+    > & { readonly desired?: Desired }
   ): DocumentSubscriptions => {
     const doc: Document = {
       ...options,
+      desired: options.desired ?? { value: undefined },
+      applied: false,
       subscriptions: new Map(),
       buffered: new Map(),
       gate: Semaphore.makeUnsafe(1),
@@ -642,17 +672,17 @@ export const make = Effect.gen(function* () {
             return yield* stale;
           if (request.type !== "replace" && request.sequence <= doc.sequence) {
             doc.send({ type: "admitted", sequence: doc.sequence });
-            return;
+            return false;
           }
           if (request.type !== "replace" && (doc.resync || request.sequence !== doc.sequence + 1)) {
             if (doc.resync) {
               doc.send({ type: "resync_required", sequence: doc.sequence });
-              return;
+              return false;
             }
             doc.buffered.set(request.sequence, request);
             if (doc.buffered.size > bufferLimit) {
               resync();
-              return;
+              return false;
             }
             if (doc.buffered.size === 1) {
               const gap = ++doc.gap;
@@ -665,7 +695,7 @@ export const make = Effect.gen(function* () {
                 Effect.forkIn(doc.scope)
               );
             }
-            return;
+            return false;
           }
           const binding = doc.binding();
           const bounds = yield* limits.getMany({
@@ -677,13 +707,20 @@ export const make = Effect.gen(function* () {
               patchRuns: "subscriptions.reruns.patch"
             }
           });
+          const now = yield* Clock.currentTimeMillis;
+          // From here the request applies in one step, so a generation replacing this one never
+          // finds its desired set half written.
           if (!doc.active) return yield* stale;
           for (const other of documents) {
             if (other.binding().companyId !== binding.companyId) continue;
             other.companyRuns = bounds.companyRuns.value;
             other.patchRuns = bounds.patchRuns.value;
           }
-          const now = yield* Clock.currentTimeMillis;
+          // Until this generation admits a set, the logical set is the one an earlier generation
+          // kept. Afterwards it is this generation's own, less any the server has since refused.
+          const before = doc.applied
+            ? digestOf(doc.subscriptions)
+            : (doc.desired.value ?? nothingDesired);
           const install = (input: RuntimeSubscription) => {
             const signature = `${input.op}:${canonicalArgs(input.args)}`;
             const previous = doc.subscriptions.get(input.id);
@@ -725,6 +762,7 @@ export const make = Effect.gen(function* () {
             doc.subscriptions.set(input.id, {
               input,
               signature,
+              digest: createHash("sha256").update(signature).digest("base64"),
               dependencies: new Set(),
               duringRun: new Map(),
               vector: input.vector,
@@ -766,12 +804,18 @@ export const make = Effect.gen(function* () {
           }
           if (doc.buffered.size === 0) doc.gap++;
           doc.send({ type: "admitted", sequence: doc.sequence });
+          const after = digestOf(doc.subscriptions);
+          doc.applied = true;
+          doc.desired.value = after;
           yield* schedule;
+          return after !== before;
         })
       );
     return {
       update,
       close: () => {
+        // The next generation compares its first admitted set with the last one this one kept.
+        if (doc.active && doc.applied) doc.desired.value = digestOf(doc.subscriptions);
         doc.active = false;
         doc.gap++;
         doc.subscriptions.clear();

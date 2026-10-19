@@ -53,7 +53,7 @@ _Avoid_: cache hit (`joined` is neither a hit nor its own read)
 _Avoid_: retry (nothing ran the first time), replay
 
 **Keepalive event**:
-The wide event for one host keeping a connected tier 2 version warm, from its first connected document's ready stream to its last document leaving. It counts `peakDocuments`, the [touches](../runtime/GLOSSARY.md) by what each found and the warmups by what each came to. A touch that found `absent` means the version was evicted or reaped while open; `unsupported` means its task runs a release without touches; `paused` and `unbound` sent none. A warmup is `resident` or `loading` when a touch found the process, `loaded` when a bind followed, `bound` when an older supervisor took a normal bind, and `failed` when that bind failed.
+The wide event for one host keeping an open tier 2 version warm, from its first active document's ready stream to its last active document going idle or leaving, which `endReason` says. It counts `peakDocuments`, the [touches](../runtime/GLOSSARY.md) by what each found and the warmups by what each came to. A touch that found `absent` means the version was evicted or reaped while open; `unsupported` means its task runs a release without touches; `paused` and `unbound` sent none. A warmup is `resident` or `loading` when a touch found the process, `loaded` when a bind followed, `bound` when an older supervisor took a normal bind, and `failed` when that bind failed.
 _Avoid_: heartbeat log, presence record
 
 **Limit peak**:

@@ -408,3 +408,92 @@ test.describe("fleet bind retry", () => {
       });
   });
 });
+
+test.describe("idle documents", () => {
+  test.use({
+    serverEnvironment: {
+      EXECUTION_PROVIDER: "local-fleet",
+      PATCHY_LIMITS_JSON: JSON.stringify({
+        "execution.document.idle": 8_000,
+        "execution.company.idle": 1_000,
+        "execution.housekeeping.interval": 250,
+        "execution.housekeeping.lease": 1_000
+      })
+    }
+  });
+
+  test("an open tab nobody uses lets its company go, and a held call after resume runs once and holds it again", async ({
+    page,
+    instance
+  }) => {
+    await page.clock.install();
+    const patch = await publish(instance);
+    const frame = await open(page, patch);
+    await add(frame, instance.wire, "before-idle");
+    await expect
+      .poll(() => reply(frame, "before-idle"))
+      .toMatchObject({ kind: "result", value: { label: "before-idle" } });
+    // Visible and connected, the tab stops holding the company once nobody uses it.
+    const released = async () =>
+      (
+        await instance.platform.query<{ released: number }>(
+          "SELECT count(*)::integer AS released FROM execution_bindings WHERE release_cause = 'idle'"
+        )
+      ).rows[0]!.released;
+    await expect.poll(released, { timeout: 30_000 }).toBe(1);
+    expect(instance.streamConnections.size).toBe(1);
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 100)));
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.fastForward(30_000);
+    await expect.poll(() => instance.streamConnections.size).toBe(0);
+    await add(frame, instance.wire, "after-idle");
+    // Only an active document's hold takes the company's activity lock, never a call's own
+    // admission, so seeing it shows the resumed call reached the document's stream. It is
+    // watched from before the call, so a slow reply can't hide it.
+    const companyHeld = async () =>
+      (
+        await instance.platform.query<{ held: boolean }>(
+          `SELECT EXISTS (
+            SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
+            WHERE d.datname = current_database() AND l.locktype = 'advisory' AND l.objsubid = 1
+              AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended(
+                'execution/company/' || (SELECT company_id FROM users WHERE id = 'usr_dev'), 0)
+          ) AS held`
+        )
+      ).rows[0]!.held;
+    let watching = true;
+    const reheld = (async () => {
+      while (watching) {
+        if (await companyHeld()) return true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return false;
+    })();
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.resume();
+    // The idle resume is ready at once; the held call binds the company on demand.
+    await expect
+      .poll(() => reply(frame, "after-idle"), { timeout: 30_000 })
+      .toMatchObject({ kind: "result", value: { label: "after-idle" } });
+    expect(calls(instance)).toHaveLength(2);
+    expect(
+      await frame.evaluate(
+        () =>
+          (window as unknown as FixtureWindow).harness.replies.filter(
+            (reply) => reply.id === "after-idle"
+          ).length
+      )
+    ).toBe(1);
+    await expect(page.getByRole("dialog", { name: "Starting your tools" })).toBeHidden();
+    // The call made the document active again; once its window passes, the company goes again.
+    await expect.poll(released, { timeout: 30_000 }).toBe(2);
+    watching = false;
+    expect(await reheld).toBe(true);
+  });
+});

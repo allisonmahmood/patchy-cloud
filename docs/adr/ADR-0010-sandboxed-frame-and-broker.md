@@ -191,6 +191,13 @@ unbounded listeners or queues.
 
 Tier 2 streams now emit `starting` while the fleet binds the company, `ready` on
 success and `start_failed` with busy and retryAfter after the bounded wait.
+That holds for an active document. A document whose viewer has done nothing for
+`execution.document.idle` lets go of its company task and stays ready: its
+reconnect or resume sends `ready` at once without binding, and its next call or
+live update binds the company on demand, under that call's own admission. Its
+first stream, a change to its desired set and a call from its viewer make it
+active again, binding in the background without another `starting`. A startup
+that the window outlasts still ends in `ready`.
 The broker holds calls within its normal bounds, including across stream loss,
 and refuses held calls on failure without replay. The selected T-1 cover appears
 after two seconds on first open and resume, holds focus with an accessible name,

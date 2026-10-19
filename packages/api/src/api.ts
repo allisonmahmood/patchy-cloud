@@ -1054,6 +1054,8 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "`access_denied`, `principal_changed` or `session_expired`. `revoked` is reserved pending " +
           "the version-revocation decision in #425; no version-revocation state or action exists yet. " +
           "Tier 2 opens and resumes send `starting` while ensuring a company task binding, then `ready`. " +
+          "A document whose viewer has made no call and changed no subscription for `execution.document.idle` " +
+          "lets the binding go but stays ready: its reconnects and resumes send `ready` at once, and its calls bind on demand. " +
           "The broker holds `server.call` requests within its frame bounds until ready; invocation deadlines begin only at admission. " +
           "A stream drop keeps held calls held. After 40 seconds without a binding, " +
           "`start_failed` (`code:'busy'`, `retryAfter` seconds, and the effective `scope`, `limitId`, `value`) refuses held calls once, without replay. " +

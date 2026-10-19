@@ -90,7 +90,8 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
 | `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
 | `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed; held calls are never replayed | `busy` | Yes | deployment |
-| `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no connected tier 2 documents and no in-flight work | None | Yes | deployment |
+| `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no active tier 2 documents and no in-flight work | None | Yes | deployment |
+| `execution.document.idle` | operating | 600000 | milliseconds | company | Time a connected tier 2 document goes without activity before it lets go of its company task and version process | None | Yes | deployment |
 | `execution.deploy.drain` | operating | 90000 | milliseconds | host | Deployment deregistration delay | None | No | deployment |
 | `execution.endpoint.lifetime` | operating | 60000 | milliseconds | host | Reuse of an ECS task's resolved address by a host of the task's release; a failed call forgets it sooner | None | No | deployment |
 | `files.handle.length` | contract | 57 | characters | viewer | Fixed authorised handle size; included in page and result bounds | None | No | release |
@@ -151,7 +152,7 @@ Process reports retain CPU seconds and peak RSS sampled before the operating sys
 
 The controller targets max(2, company wakes per millisecond over 900000 ms times measured cold-start milliseconds), rounded up. Spares, bound tasks and draining tasks share the 100-task fleet budget. One replica holds the 15000 ms housekeeping lease; passes run every 5000 ms.
 
-A first open waits at most 40000 ms for a binding. The shell holds calls within its normal byte and outstanding-call bounds, shows the starting cover after two seconds and refuses held calls busy on start_failed, without replay. It retries binding with backoff while open. Release follows 1800000 ms with no connected tier 2 documents and no admitted work, including nested calls, retries and cleanup. The controller fences admissions before stopping a task; released tasks never become spares.
+A first open waits at most 40000 ms for a binding. The shell holds calls within its normal byte and outstanding-call bounds, shows the starting cover after two seconds and refuses held calls busy on start_failed, without replay. It retries binding with backoff while open. Release follows 1800000 ms with no active tier 2 documents and no admitted work, including nested calls, retries and cleanup. A connected document is active until it goes 600000 ms without its first stream, a change to its subscriptions or a call from its viewer; reconnects, reconciliation and other people's writes do not count. An inactive document stays ready: its next call and live updates bind the company on demand. The controller fences admissions before stopping a task; released tasks never become spares.
 
 Across host replicas and versions, 3 watchdog kills within 600000 ms pause the patch for 600000 ms. Admission returns patch_paused with retryAfter. A new publish clears the pause; rollback and sharing changes do not. The breaker is off in the no-pool development executor.
 

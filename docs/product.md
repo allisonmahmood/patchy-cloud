@@ -545,9 +545,12 @@ patch open. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.**
 
 Patchy admits new work while a viewer has the patch open. Already-admitted work
-finishes after departure. The company task is released after thirty minutes with
-no connected tier 2 documents and no admitted work, including retries, nested calls
-and cleanup. Bringing a whole app would be a second runtime with different limits;
+finishes after departure. An open patch keeps its company's task only while its
+viewer is using it: after ten minutes with no calls and no change to what it
+subscribes to, the tab lets go, though its screen stays usable and live updates
+still arrive. The company task is released after thirty minutes with no active
+tier 2 documents and no admitted work, including retries, nested calls and
+cleanup, so the next action after that may wait for the company to start again. Bringing a whole app would be a second runtime with different limits;
 it is not supported.
 
 Server-side calls use two identities. The **initiating viewer** is the person

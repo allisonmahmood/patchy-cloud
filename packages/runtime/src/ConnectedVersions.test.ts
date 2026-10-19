@@ -154,10 +154,16 @@ const harness = Effect.gen(function* () {
     }),
     Effect.provideService(WideEvents.WideEvents, events)
   );
-  /** A document's ready stream on this host, until `Scope.close`. */
-  const open = Effect.fnUntraced(function* (versionId: string, warm: boolean) {
+  /** An active document's hold on this host, until `Scope.close`; `idle` says why it let go. */
+  const open = Effect.fnUntraced(function* (
+    versionId: string,
+    warm: boolean,
+    idle?: () => boolean
+  ) {
     const scope = yield* Scope.make();
-    yield* connected.connect(version(versionId), { warm }).pipe(Scope.provide(scope));
+    yield* connected
+      .connect(version(versionId), { warm, ...(idle === undefined ? {} : { idle }) })
+      .pipe(Scope.provide(scope));
     return scope;
   });
   return {
@@ -222,6 +228,31 @@ it.effect("warms a version once per document and only touches it for renewals", 
       peakDocuments: 1,
       warmups: {}
     });
+  }).pipe(Effect.scoped)
+);
+
+it.effect("says whether its last document went idle or left", () =>
+  Effect.gen(function* () {
+    const host = yield* harness;
+    host.resident.add("ver_a");
+    let wentIdle = false;
+    const leaving = yield* host.open("ver_a", false);
+    const idling = yield* host.open("ver_a", false, () => wentIdle);
+    assert.deepStrictEqual(yield* host.next, {
+      kind: "touch",
+      versionId: "ver_a",
+      outcome: "touched"
+    });
+    yield* Scope.close(leaving, Exit.void);
+    wentIdle = true;
+    yield* Scope.close(idling, Exit.void);
+    assert.deepInclude(yield* host.event, {
+      type: "keepalive",
+      peakDocuments: 2,
+      endReason: "idle"
+    });
+    yield* Scope.close(yield* host.open("ver_a", false, () => false), Exit.void);
+    assert.deepInclude(yield* host.event, { type: "keepalive", endReason: "left" });
   }).pipe(Effect.scoped)
 );
 

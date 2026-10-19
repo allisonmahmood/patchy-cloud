@@ -444,21 +444,25 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
-    "counts documents on another host and full invocation settlement before the thirty-minute idle window",
+    "counts an active document or an admitted invocation on another host before the thirty-minute idle window",
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, right, bundle } = yield* setupMemory("idle");
         const document = yield* Scope.make();
         yield* right.lifecycle.connect(companyId).pipe(Scope.provide(document));
-        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const bound = yield* right.ensureBinding(companyId);
+        const state = Effect.map(
+          provider.list,
+          (tasks) => tasks.find((task) => task.taskId === bound.taskId)?.state
+        );
         yield* TestClock.adjust(30 * 60_000);
         yield* left.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        const admission = yield* right.lifecycle.acquire(companyId, bundle.patchId);
+        assert.strictEqual(admission.binding.taskId, bound.taskId);
         yield* Scope.close(document, Exit.void);
         yield* left.housekeeping();
-        assert.strictEqual(
-          (yield* provider.list).find((task) => task.taskId === admission.binding.taskId)?.state,
-          "running"
-        );
+        assert.strictEqual(yield* state, "running");
         yield* admission.release;
         yield* left.housekeeping();
         yield* TestClock.adjust(30 * 60_000 - 1);

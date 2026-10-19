@@ -89,11 +89,11 @@ A version bind that names the version and its SHA-256 without the bundle. A supe
 _Avoid_: warm bind, touch, cached bind
 
 **Touch**:
-A management request that restarts the idle clock of a version's ready process on its company task, at the current binding epoch. It never loads, reserves or evicts: a touch that finds no process does nothing, so only a call or a warmup loads an evicted version. A host touches each version with a connected tier 2 document before its idle window ends, once per version however many documents hold it, until the last one disconnects or suspends while hidden. A paused patch's versions are not touched.
+A management request that restarts the idle clock of a version's ready process on its company task, at the current binding epoch. It never loads, reserves or evicts: a touch that finds no process does nothing, so only a call or a warmup loads an evicted version. A host touches each version with an active tier 2 document before its idle window ends, once per version however many documents hold it, until the last one goes idle, disconnects or suspends while hidden. A paused patch's versions are not touched.
 _Avoid_: heartbeat (presence is the connection), keepalive bind, bind by hash
 
 **Warmup**:
-Loading a tier 2 document's version as its first stream becomes ready, while the client boots, unless a touch finds the process loaded. A document warms once: its reconnects, reauthentications and resumes only touch.
+Loading a tier 2 document's version as its first stream becomes ready, while the client boots, unless a touch finds the process loaded. A document warms once: its reconnects, reauthentications, resumes and returns from idle only touch.
 _Avoid_: prefetch, preload (page assets)
 
 **Process generation**:
@@ -183,6 +183,10 @@ _Avoid_: tab, session, viewer (one person may hold several documents)
 **Connected**:
 A document whose stream is open. Presence is derived from that connection, not a lease or stored row.
 _Avoid_: online, alive, heartbeat
+
+**Active**:
+A connected tier 2 document whose viewer has used it within `execution.document.idle`: its first stream, a change to its logical desired set (subscription ids, operations and canonical args) or an admitted `server.call` from its viewer for that version on that host. Reconnects, reconciliation and re-runs for other people's writes are not activity. Only an active document holds its company task and keeps its version warm; an **idle** one stays connected and ready, and its calls and live updates bind the company on demand. The host keeps each document's activity record across stream generations, and forgets a disconnected one after a bound or an hour.
+_Avoid_: visible (a hidden document suspends instead), online, in use (admitted work)
 
 **Lifecycle frame**:
 A stream message about a document's version or authority, not its data.

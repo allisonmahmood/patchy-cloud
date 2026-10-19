@@ -223,11 +223,15 @@ fields @timestamp, replica, refusal, documentConnected, streamId, currentStreamI
 
 #### Keeping open versions warm
 
-While a tier 2 version has a connected document on a host, that host touches its
-process before each idle window ends, and a document's first stream warms the
-version once it is ready (ADR-0012 › Fleet controller). Each host emits one
-`type: "keepalive"` event per company version when its last document leaves:
-`peakDocuments`, `touches` counted by what each found (`touched`, `loading`,
+While a tier 2 version has a connected, active document on a host, that host
+touches its process before each idle window ends, and a document's first stream
+warms the version once it is ready (ADR-0012 › Fleet controller). A document stays
+active until `execution.document.idle` (ten minutes, overridable per company)
+passes without a change to its desired set or a call from its viewer; then it lets
+go of the version and its company task, and its next activity takes both back.
+Each host emits one `type: "keepalive"` event per company version when its last
+active document lets go: `endReason` says whether that document went `idle` or
+`left`, then `peakDocuments`, `touches` counted by what each found (`touched`, `loading`,
 `absent`, `unsupported`, `paused`, `unbound`, `failed`) and `warmups` counted by
 what each came to (`resident`, `loading`, `loaded`, `bound`, `paused`, `unbound`,
 `failed`). `touches.absent` is a version evicted, or reaped by a missed touch, while
@@ -235,8 +239,20 @@ open. A process event with `callsServed = 0` after a `loaded` warmup is an unuse
 warmup, and `cause = "evicted"` is residency churn:
 
 ```
-fields @timestamp, versionId, peakDocuments, touches.absent, touches.failed, warmups.loaded, warmups.resident
+fields @timestamp, versionId, endReason, peakDocuments, touches.absent, touches.failed, warmups.loaded, warmups.resident
 | filter type = "keepalive" and companyId = "…"
+| sort @timestamp desc
+```
+
+To tune the window, each tier 2 stream event beside the fleet counts the times its
+document went `idled` and was `reactivated` during that generation, and its
+`limits` carry `execution.document.idle` with the window in force, its
+`configRevision` and, as `peak`, the longest the document went without activity.
+Documents reactivated soon after going idle argue for a longer window:
+
+```
+fields @timestamp, companyId, documentId, idled, reactivated, closeReason
+| filter type = "stream" and tier = 2 and reactivated > 0
 | sort @timestamp desc
 ```
 
