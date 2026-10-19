@@ -349,7 +349,6 @@ export const draftSection = Effect.fn("Publish.draftSection")(function* (input: 
   const files = localReferences(input.markdown);
   return {
     file,
-    files,
     gh: `gh pr edit <number> --body-file <body.md> ${files.map((f) => `--attach ${f}`).join(" ")}`
   };
 });

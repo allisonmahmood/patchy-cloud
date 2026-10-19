@@ -734,8 +734,8 @@ const sideReport = (before: Before): typeof SideReport.Type =>
         }
       : { status: "skipped", sha: null, label: null, apiUrl: null, reason: null };
 
-/** What `--json` adds about where the section went, for every evidence command. */
-const Delivery = Schema.Struct({
+/** What `--json` prints for every evidence command: the commits, the person, the section and where it went. */
+const Report = Schema.Struct({
   key: Schema.String,
   scenario: Schema.String,
   person: Person,
@@ -758,7 +758,7 @@ const encodeCompareReport = Schema.encodeSync(
   Schema.fromJsonString(
     Schema.Struct({
       command: Schema.Literal("compare"),
-      ...Delivery.fields,
+      ...Report.fields,
       captures: Schema.Array(Capture)
     }),
     { space: 2 }
@@ -768,7 +768,7 @@ const encodeFilmReport = Schema.encodeSync(
   Schema.fromJsonString(
     Schema.Struct({
       command: Schema.Literal("film"),
-      ...Delivery.fields,
+      ...Report.fields,
       takes: Schema.Array(Take)
     }),
     { space: 2 }
@@ -790,6 +790,7 @@ const deliver = Effect.fn("deliver")(function* (input: {
 }) {
   const path = yield* Path.Path;
   const section = keyedSection(input.command, input.key, input.markdown);
+  const files = localReferences(input.markdown);
   if (Option.isSome(input.target)) {
     const published = yield* publishSection({
       root: input.root,
@@ -801,7 +802,7 @@ const deliver = Effect.fn("deliver")(function* (input: {
     });
     return {
       section,
-      files: localReferences(input.markdown),
+      files,
       sectionFile: null,
       gh: null,
       published: { url: published.url, attached: published.attached, failed: published.failed }
@@ -816,14 +817,14 @@ const deliver = Effect.fn("deliver")(function* (input: {
   });
   return {
     section,
-    files: draft.files,
+    files,
     sectionFile: path.relative(input.root, draft.file),
     gh: draft.gh,
     published: null
   };
 });
 
-/** The human ending: the section, then where it went. A partial publication then exits 1. */
+/** The human ending: the section, then where it went or the gh line that sends it. */
 const printDelivery = Effect.fn("printDelivery")(function* (
   root: string,
   delivered: Effect.Success<ReturnType<typeof deliver>>
@@ -842,6 +843,7 @@ const printDelivery = Effect.fn("printDelivery")(function* (
   );
 });
 
+/** A partial publication is printed first, then exits 1. */
 const failPartial = (delivered: Effect.Success<ReturnType<typeof deliver>>) =>
   delivered.published !== null && delivered.published.failed.length > 0
     ? Effect.fail(
