@@ -293,9 +293,14 @@ and `CLAUDE_CODE_OAUTH_TOKEN` pass when set. The launcher's limits hold: its
 commands run as you, so a task that mentions `patchy setup` or the portal's
 setup line is refused, and `patchy setup` and global `pnpm add`s are denied to
 the agent. The launcher pre-approves only some commands, and with no one there
-to approve the rest, those are denied and the log says so. A base whose
-launcher predates the one that excludes the instruction files above the
-workspace (#701) shows after only.
+to approve the rest, those are denied and the log says so. The launcher adds
+your temp folder (`$TMPDIR`, or `/tmp`); a trial sets `TMPDIR` to a scratch
+folder of each side's own, deleted when the run ends, so the agent can't read
+other sessions' files in the machine's `/tmp`. A base whose launcher adds
+`/tmp` itself runs as a copy with only that swapped, so both sides have the
+same limits. The launcher isn't a sandbox: `node`, which it pre-approves, can
+read whatever you can. A base whose launcher predates the one that excludes
+the instruction files above the workspace (#701) shows after only.
 
 Of the agent's event stream only a filtered log is kept: whether it finished
 and its final answer cut to a sentence or two, each tool call with commands'

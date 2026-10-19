@@ -113,9 +113,12 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   Claude Code tells its agent which account it is signed in as, so an answer
   can name your email: the trial redacts that account's email and git's, and
   any address outside the scenarios' example domains. Read the section before
-  publishing anyway: the answer is the agent's own words. A base whose
-  launcher predates #701 shows after only, and an agent that errors or gives
-  no result on the head publishes nothing. The Patchy MCP (#730) isn't part
+  publishing anyway: the answer is the agent's own words. Each side's agent
+  gets a scratch temp folder instead of the machine's `/tmp`, an older base's
+  launcher included, so it can't read other sessions' files there; `node`
+  still reads whatever you can. A base whose launcher predates #701 shows
+  after only, and an agent that errors or gives no result on the head
+  publishes nothing. The Patchy MCP (#730) isn't part
   of the agent yet.
 
 ## A test, red then green
