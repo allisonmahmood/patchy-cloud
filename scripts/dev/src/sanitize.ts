@@ -13,7 +13,9 @@
  * - **Shapes**: anything shaped like a machine token (`pp_…`) or a login code
  *   (`BCDF-GHJK`), wherever it appears. A line that logs in and out in one
  *   `bash -c` can clear its code before any `collect` sees it; the shape
- *   still does.
+ *   still does. So is any email address outside the reserved domains the
+ *   scenarios and the seed use, such as the account Claude Code tells its
+ *   agent it is signed in as, or a commit author's.
  * - **Variables**: the values of variables the runner passes whose names mark
  *   them secret, such as `PATCHY_API_TOKEN` or `ANTHROPIC_API_KEY`.
  *
@@ -27,7 +29,13 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-export const SECRET_SOURCES = ["cli-state", "machine-token", "login-code", "variable"] as const;
+export const SECRET_SOURCES = [
+  "cli-state",
+  "machine-token",
+  "login-code",
+  "email",
+  "variable"
+] as const;
 export type SecretSource = (typeof SECRET_SOURCES)[number];
 
 /** What replaces each secret. */
@@ -36,6 +44,11 @@ export const REDACTED = "[redacted]";
 const MACHINE_TOKEN = /\bpp_[A-Za-z0-9_-]{8,}/g;
 /** The user code `patchy login` prints, from the alphabet in `packages/auth/src/DeviceLogins.ts`. */
 const LOGIN_CODE = /\b[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}\b/g;
+/** An email address; its top-level domain is letters, so `patchy@0.14.0` isn't one. */
+const EMAIL = /[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b/g;
+/** Domains reserved for examples and tests (RFC 2606, 6761), which every scenario person and the seed use. */
+const EXAMPLE_DOMAIN =
+  /(?:^|\.)(?:example|test|invalid|localhost|local)$|^example\.(?:com|net|org)$/i;
 
 /** Anywhere in a name, these mark it secret: `PGPASSWORD` as much as `token`. */
 const SECRET_PARTS = [
@@ -84,10 +97,12 @@ const forms = (value: string) => [
   ...new Set([value, encodeURIComponent(value), JSON.stringify(value).slice(1, -1)])
 ];
 
-const SHAPES = [
-  [MACHINE_TOKEN, "machine-token"],
-  [LOGIN_CODE, "login-code"]
-] as const;
+/** Each shape, its source, and which of its matches are redacted. */
+const SHAPES: ReadonlyArray<readonly [RegExp, SecretSource, (match: string) => boolean]> = [
+  [MACHINE_TOKEN, "machine-token", () => true],
+  [LOGIN_CODE, "login-code", () => true],
+  [EMAIL, "email", (address) => !EXAMPLE_DOMAIN.test(address.slice(address.lastIndexOf("@") + 1))]
+];
 
 interface Span {
   readonly start: number;
@@ -97,8 +112,9 @@ interface Span {
 }
 
 /**
- * `text` with every collected value, and anything shaped like a machine token
- * or a login code, replaced by `[redacted]`. Every match is found in the
+ * `text` with every collected value, anything shaped like a machine token or
+ * a login code, and any email address outside the example domains, replaced
+ * by `[redacted]`. Every match is found in the
  * original text before anything is replaced, and overlapping matches become
  * one, so a short value can't break up a longer one or a shape. A `[redacted]`
  * already in the text counts as a match, so redacting twice changes nothing.
@@ -112,9 +128,10 @@ export const redactText = (secrets: ReadonlyMap<string, SecretSource>, text: str
   };
   find(REDACTED, null);
   for (const [value, source] of secrets) for (const form of forms(value)) find(form, source);
-  for (const [shape, source] of SHAPES)
+  for (const [shape, source, redacts] of SHAPES)
     for (const match of text.matchAll(shape))
-      spans.push({ start: match.index, end: match.index + match[0].length, source });
+      if (redacts(match[0]))
+        spans.push({ start: match.index, end: match.index + match[0].length, source });
   spans.sort((a, b) => a.start - b.start || b.end - a.end);
   const done = spans.filter((span) => span.source === null);
   const matched = new Set<SecretSource>();
@@ -181,13 +198,14 @@ const SOURCE_NAMES: Record<SecretSource, string> = {
   "cli-state": "tokens and login codes from each side's CLI state",
   "machine-token": "strings shaped like machine tokens (`pp_…`)",
   "login-code": "strings shaped like login codes",
+  email: "email addresses outside the scenarios' example domains",
   variable: "secret-named variables the runner passed"
 };
 
 /** The sentence a section carries about what was redacted. */
 export const redactionLine = (matched: ReadonlyArray<SecretSource>) =>
   matched.length === 0
-    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token and login-code shapes, and secret-named variables)."
+    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token and login-code shapes, email addresses outside the scenarios' example domains, and secret-named variables)."
     : `Redacted before writing: ${matched.map((source) => SOURCE_NAMES[source]).join("; ")}.`;
 
 /**

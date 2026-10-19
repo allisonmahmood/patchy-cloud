@@ -276,8 +276,10 @@ folder `<env>`, its checkout `<checkout>` and your home folder `~`; every other
 difference stays. One sanitizer redacts what it collected before anything is
 written: the values in each side's CLI state, read before the run, while each
 line runs and after it (so a login code a later `patchy logout` clears is still
-known), anything shaped like a machine token (`pp_…`) or a login code, and
-secret-named variables the runner passes. The section says which matched.
+known), anything shaped like a machine token (`pp_…`) or a login code, any
+email address outside the reserved domains the scenarios use (`.example`,
+`patchy.local`), and secret-named variables the runner passes. The section
+says which matched.
 Redaction is a backstop, not a guarantee; read the section before publishing.
 
 `pnpm dev trial "<task>"` gives a task, in a person's words, to a fresh agent

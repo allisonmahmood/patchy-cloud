@@ -32,6 +32,18 @@ describe("marksSecret", () => {
 });
 
 describe("redactText", () => {
+  it("redacts an email address outside the example domains, and leaves the scenarios' and versions alone", () => {
+    const { text, matched } = redactText(
+      new Map(),
+      "signed in as ada@acme.example (dev@patchy.local), not someone@company.co.uk; patchy@0.14.0 and git@github.com"
+    );
+    assert.strictEqual(
+      text,
+      "signed in as ada@acme.example (dev@patchy.local), not [redacted]; patchy@0.14.0 and [redacted]"
+    );
+    assert.deepStrictEqual([...matched], ["email"]);
+  });
+
   it("finds every match before replacing, so a short value can't break up a token, and twice is once", () => {
     const secrets = new Map([
       ["p", "cli-state" as const],

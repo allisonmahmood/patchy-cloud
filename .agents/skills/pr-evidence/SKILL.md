@@ -110,8 +110,10 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   `patchy setup` or the portal's setup line is refused, and `patchy setup` is
   denied to the agent. Only the log is kept, never the agent's reasoning, what
   its commands printed or the session; collected secrets read `[redacted]`.
-  Read the section before publishing anyway: the answer is the agent's own
-  words. A base whose launcher predates #701 shows after only, and an agent
+  Claude Code tells its agent which account it is signed in as, so an answer
+  can name your email; addresses outside the scenarios' example domains are
+  redacted. Read the section before publishing anyway: the answer is the
+  agent's own words. A base whose launcher predates #701 shows after only, and an agent
   that errors or gives no result on the head publishes nothing. The Patchy
   MCP (#730) isn't part of the agent yet.
 
