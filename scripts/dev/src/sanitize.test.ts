@@ -68,7 +68,7 @@ it.layer(NodeServices.layer)("a sanitizer", (it) => {
       const url = "http://after.localhost:4000";
       yield* fs.writeFileString(
         path.join(state, "credentials.json"),
-        JSON.stringify({ hosts: { [url]: { token: "patchy-env-acme-ada", source: "auth-set" } } })
+        `{"hosts":{"${url}":{"token":"patchy-env-acme-ada","source":"auth-set"}}}`
       );
       const sanitizer = yield* makeSanitizer({
         stateDirs: [state, path.join(state, "missing")],
@@ -78,15 +78,7 @@ it.layer(NodeServices.layer)("a sanitizer", (it) => {
       // `patchy login` saves a pending login; the next line's logout clears it and the token.
       yield* fs.writeFileString(
         path.join(state, "device-login.json"),
-        JSON.stringify({
-          hosts: {
-            [url]: {
-              deviceCode: "dc_9f8e7d6c5b4a39281706",
-              userCode: "BCDF-GHJK",
-              verificationUrl: `${url}/login/device?code=BCDF-GHJK`
-            }
-          }
-        })
+        `{"hosts":{"${url}":{"deviceCode":"dc_9f8e7d6c5b4a39281706","userCode":"BCDF-GHJK","verificationUrl":"${url}/login/device?code=BCDF-GHJK"}}}`
       );
       yield* sanitizer.collect;
       yield* fs.remove(path.join(state, "device-login.json"));
