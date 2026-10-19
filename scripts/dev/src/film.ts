@@ -24,7 +24,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { pathToFileURL } from "node:url";
 import type { Page } from "@playwright/test";
-import { CaptureFailed, launchBrowser } from "./compare.js";
+import { CaptureFailed, launchBrowser, quote } from "./compare.js";
 import type { SideName } from "./evidence.js";
 import { overlay } from "./filmOverlay.js";
 import { stepOutput } from "./steps.js";
@@ -234,7 +234,7 @@ export const sideBySide = Effect.fn("Film.sideBySide")(function* (
   return file;
 });
 
-/** The film section: the commits, how each take ended, and the video. */
+/** The film section (the commits, how each take ended, and the video) and the one file it attaches. */
 export const filmMarkdown = (input: {
   readonly name: string;
   readonly person: { readonly name: string; readonly role: string };
@@ -245,8 +245,8 @@ export const filmMarkdown = (input: {
   const ending = (take: Take) =>
     take.failure === null
       ? `finished in ${take.seconds.toFixed(1)}s`
-      : `stopped${take.failure.step === "" ? "" : ` at "${take.failure.step}"`} after ${take.seconds.toFixed(1)}s: \`${take.failure.message.slice(0, 200)}\``;
-  return [
+      : `stopped${take.failure.step === "" ? "" : ` at "${take.failure.step}"`} after ${take.seconds.toFixed(1)}s: ${quote(take.failure.message)}`;
+  const markdown = [
     `#### Flow \`${input.name}\`, as ${input.person.name} (${input.person.role})`,
     "",
     ...input.provenance,
@@ -259,4 +259,5 @@ export const filmMarkdown = (input: {
     // gh rewrites an image reference to a video into a bare URL, which GitHub plays inline.
     `![${input.name}](${input.video})`
   ].join("\n");
+  return { markdown, files: [input.video] };
 };

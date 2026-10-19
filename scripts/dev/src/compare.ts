@@ -61,9 +61,18 @@ const MAX_FRAME_HEIGHT = 8_000;
 const slug = (target: string) =>
   target.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "home";
 
-/** Where one side's PNG of a page at a width lands, relative to the worktree root. */
-export const shotFile = (runDir: string, side: SideName, target: string, width: number) =>
-  `${runDir}/${side}-${slug(target)}-${width}.png`;
+/**
+ * Where one side's PNG of a page at a width lands, relative to the worktree
+ * root. The page's place in the command line keeps two paths that slug alike
+ * apart, such as `/?q=a+b` and `/?q=a-b`.
+ */
+export const shotFile = (
+  runDir: string,
+  side: SideName,
+  index: number,
+  target: string,
+  width: number
+) => `${runDir}/${side}-${index + 1}-${slug(target)}-${width}.png`;
 
 /**
  * A patch scrolls inside its sandboxed frame while the shell pins the document
@@ -169,7 +178,7 @@ export const shootAll = Effect.fn("Compare.shootAll")(function* (input: {
   return yield* Effect.tryPromise({
     try: async () => {
       const shots: Array<Capture> = [];
-      for (const target of input.targets)
+      for (const [index, target] of input.targets.entries())
         for (const width of input.widths)
           for (const { side, apiUrl } of input.sides) {
             const context = await browser.newContext({
@@ -188,7 +197,7 @@ export const shootAll = Effect.fn("Compare.shootAll")(function* (input: {
             await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
             await page.evaluate(() => document.fonts.ready.then(() => undefined));
             const clipped = await growPatchFrame(page);
-            const file = shotFile(input.runDir, side, target, width);
+            const file = shotFile(input.runDir, side, index, target, width);
             await page.screenshot({ path: path.join(input.root, file), fullPage: true });
             shots.push({
               side,
@@ -217,6 +226,10 @@ export interface Pair {
   readonly identical: boolean;
 }
 
+/** A page's error as inline code: its first line, bounded, with no backtick to break out of it. */
+export const quote = (text: string) =>
+  `\`${(text.split("\n")[0] ?? "").slice(0, 200).replaceAll("`", "'")}\``;
+
 const capturesOf = (pair: Pair) =>
   pair.before === undefined ? [pair.after] : [pair.before, pair.after];
 
@@ -231,7 +244,7 @@ const problems = (capture: Capture) => {
     found.push(
       `${capture.errors.length} browser error(s): ${capture.errors
         .slice(0, 5)
-        .map((error) => `\`${(error.split("\n")[0] ?? "").slice(0, 200)}\``)
+        .map((error) => quote(error))
         .join("; ")}`
     );
   if (capture.clipped !== null) found.push(capture.clipped);
@@ -244,7 +257,8 @@ const problems = (capture: Capture) => {
  * `<details>`: table cells would shrink a 1280px page to about 340px. Phone
  * widths sit side by side in a Width | Before | After table at about true
  * size. A width whose two PNGs are identical says "No visible change" and
- * leaves "before" out, so it isn't uploaded.
+ * leaves "before" out, so it isn't uploaded. Returns the section and the
+ * files it references.
  */
 export const compareMarkdown = (input: {
   readonly provenance: Provenance;
@@ -290,5 +304,13 @@ export const compareMarkdown = (input: {
     }
     if (lines.at(-1) !== "") lines.push("");
   }
-  return lines.join("\n").trim();
+  // What the section shows, so exactly these are attached: an identical before is left out.
+  const files = input.pairs.flatMap((pair) =>
+    pair.before === undefined || pair.identical
+      ? [pair.after.file]
+      : pair.width > PHONE
+        ? [pair.after.file, pair.before.file]
+        : [pair.before.file, pair.after.file]
+  );
+  return { markdown: lines.join("\n").trim(), files };
 };

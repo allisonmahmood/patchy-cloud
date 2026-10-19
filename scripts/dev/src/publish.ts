@@ -13,7 +13,8 @@
  * rest of the body alone. A section names its local files as
  * `![alt](<path from the worktree root>)`; `gh` rewrites each attached one to
  * its upload, inside tables and `<details>` too, and turns a video's reference
- * into a bare URL GitHub plays inline.
+ * into a bare URL GitHub plays inline. The command that made the files names
+ * them; nothing is attached from parsing the text, which quotes page errors.
  */
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -52,6 +53,15 @@ export class TooManyAttachments extends Schema.TaggedError<TooManyAttachments>()
 ) {
   override get message() {
     return `This would attach ${this.count} files, and \`gh\` takes at most ${MAX_ATTACHMENTS} per command. Capture fewer pages or widths.`;
+  }
+}
+
+export class NotTheRunsFile extends Schema.TaggedError<NotTheRunsFile>()("NotTheRunsFile", {
+  file: Schema.String,
+  runDir: Schema.String
+}) {
+  override get message() {
+    return `${this.file} is outside this run's folder, ${this.runDir}; only files the command made are attached. Nothing was published.`;
   }
 }
 
@@ -190,22 +200,23 @@ export const placeSection = (
   );
 };
 
-/** The local files a section references as `![alt](path)`, in order, each once. */
-export const localReferences = (markdown: string) => [
-  ...new Set(
-    [...markdown.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)]
-      .map((match) => match[1]!)
-      .filter((target) => !/^[a-z][a-z0-9+.-]*:/i.test(target))
-  )
-];
-
-/** Fails before anything uploads when `gh` or GitHub would refuse the files. */
+/**
+ * Fails before anything uploads when a file isn't the run's own, or when `gh`
+ * or GitHub would refuse the files. `files` and `runDir` are relative to the
+ * worktree root.
+ */
 export const checkAttachments = Effect.fn("Publish.checkAttachments")(function* (
   root: string,
+  runDir: string,
   files: ReadonlyArray<string>
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  for (const file of files) {
+    const inside = path.relative(path.resolve(root, runDir), path.resolve(root, file));
+    if (inside === "" || inside.startsWith("..") || path.isAbsolute(inside))
+      return yield* new NotTheRunsFile({ file, runDir });
+  }
   if (files.length > MAX_ATTACHMENTS) return yield* new TooManyAttachments({ count: files.length });
   for (const file of files) {
     const bytes = Number((yield* fs.stat(path.resolve(root, file))).size);
@@ -298,15 +309,17 @@ export const publishSection = Effect.fn("Publish.publishSection")(function* (inp
   readonly command: string;
   readonly key: string;
   readonly markdown: string;
+  /** The files the section references, all under `runDir`; both relative to the worktree root. */
+  readonly files: ReadonlyArray<string>;
   readonly runDir: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const files = localReferences(input.markdown);
-  yield* checkAttachments(input.root, files);
+  const files = input.files;
+  yield* checkAttachments(input.root, input.runDir, files);
   const before = yield* prBody(input.root, input.pr.number);
   const body = yield* placeSection(before, input.command, input.key, input.markdown);
-  const bodyFile = path.join(input.runDir, "body.md");
+  const bodyFile = path.join(input.root, input.runDir, "body.md");
   yield* fs.writeFileString(bodyFile, body);
   yield* Console.error(`Publishing to ${input.pr.url}, attaching ${files.length} file(s)`);
   const { exitCode } = yield* spawnStep(
@@ -340,15 +353,19 @@ export const draftSection = Effect.fn("Publish.draftSection")(function* (input: 
   readonly command: string;
   readonly key: string;
   readonly markdown: string;
+  readonly files: ReadonlyArray<string>;
   readonly runDir: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  yield* checkAttachments(input.root, input.runDir, input.files);
   const file = path.join(input.runDir, `${input.command}-${input.key}.md`);
-  yield* fs.writeFileString(file, `${keyedSection(input.command, input.key, input.markdown)}\n`);
-  const files = localReferences(input.markdown);
+  yield* fs.writeFileString(
+    path.join(input.root, file),
+    `${keyedSection(input.command, input.key, input.markdown)}\n`
+  );
   return {
     file,
-    gh: `gh pr edit <number> --body-file <body.md> ${files.map((f) => `--attach ${f}`).join(" ")}`
+    gh: `gh pr edit <number> --body-file <body.md> ${input.files.map((f) => `--attach ${f}`).join(" ")}`
   };
 });

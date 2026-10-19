@@ -1,6 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { localReferences, placeSection } from "./publish.js";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { checkAttachments, placeSection } from "./publish.js";
 
 const open = "<!-- patchy-dev:compare:ada -->";
 const close = "<!-- /patchy-dev:compare:ada -->";
@@ -98,19 +101,25 @@ describe("placeSection", () => {
   );
 });
 
-describe("localReferences", () => {
-  it("lists each local file once, leaving uploads out", () => {
-    const markdown = [
-      "![After: /](.local/shots/run/after-home-1280.png)",
-      "| 390px | ![Before](.local/shots/run/before-home-390.png) | ![After](.local/shots/run/after-home-390.png) |",
-      "![After: /](.local/shots/run/after-home-1280.png)",
-      "![Old](https://github.com/user-attachments/assets/1234)"
-    ].join("\n");
+it.layer(NodeServices.layer)("checkAttachments", (it) => {
+  it.effect("attaches only files inside the run's folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(root, ".local/shots/run"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, ".local/shots/run/after-1-home-1280.png"), "png");
+      yield* fs.writeFileString(path.join(root, ".local/shots/private.png"), "png");
 
-    assert.deepStrictEqual(localReferences(markdown), [
-      ".local/shots/run/after-home-1280.png",
-      ".local/shots/run/before-home-390.png",
-      ".local/shots/run/after-home-390.png"
-    ]);
-  });
+      yield* checkAttachments(root, ".local/shots/run", [".local/shots/run/after-1-home-1280.png"]);
+      for (const file of [
+        ".local/shots/private.png",
+        ".local/shots/run/../private.png",
+        "/etc/passwd"
+      ]) {
+        const refused = yield* Effect.flip(checkAttachments(root, ".local/shots/run", [file]));
+        assert.strictEqual(refused._tag, "NotTheRunsFile");
+      }
+    }).pipe(Effect.scoped)
+  );
 });

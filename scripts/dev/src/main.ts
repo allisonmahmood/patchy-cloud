@@ -64,7 +64,6 @@ import {
   checkPr,
   draftSection,
   keyedSection,
-  localReferences,
   MAX_ATTACHMENTS,
   PartialPublication,
   type PrTarget,
@@ -786,20 +785,13 @@ const deliver = Effect.fn("deliver")(function* (input: {
   readonly command: string;
   readonly key: string;
   readonly markdown: string;
+  readonly files: ReadonlyArray<string>;
   readonly runDir: string;
 }) {
-  const path = yield* Path.Path;
   const section = keyedSection(input.command, input.key, input.markdown);
-  const files = localReferences(input.markdown);
+  const files = input.files;
   if (Option.isSome(input.target)) {
-    const published = yield* publishSection({
-      root: input.root,
-      pr: input.target.value,
-      command: input.command,
-      key: input.key,
-      markdown: input.markdown,
-      runDir: path.join(input.root, input.runDir)
-    });
+    const published = yield* publishSection({ ...input, pr: input.target.value });
     return {
       section,
       files,
@@ -808,17 +800,11 @@ const deliver = Effect.fn("deliver")(function* (input: {
       published: { url: published.url, attached: published.attached, failed: published.failed }
     };
   }
-  const draft = yield* draftSection({
-    root: input.root,
-    command: input.command,
-    key: input.key,
-    markdown: input.markdown,
-    runDir: path.join(input.root, input.runDir)
-  });
+  const draft = yield* draftSection(input);
   return {
     section,
     files,
-    sectionFile: path.relative(input.root, draft.file),
+    sectionFile: draft.file,
     gh: draft.gh,
     published: null
   };
@@ -941,7 +927,7 @@ const compare = Command.make(
           );
         pairs.push({ target, width: w, before, after, identical });
       }
-    const markdown = compareMarkdown({
+    const { markdown, files } = compareMarkdown({
       provenance: {
         command: "compare",
         scenario: run.scenario,
@@ -957,6 +943,7 @@ const compare = Command.make(
       command: "compare",
       key: sectionName,
       markdown,
+      files,
       runDir: run.runDir
     });
     if (json)
@@ -1086,7 +1073,7 @@ const film = Command.make(
       filmed.takes.length === 2
         ? yield* sideBySide(root, filmed.takes[0]!, after, `${run.runDir}/side-by-side.mp4`)
         : after.file;
-    const markdown = filmMarkdown({
+    const { markdown, files } = filmMarkdown({
       name,
       person: filmed.person,
       provenance: provenanceLines({
@@ -1106,6 +1093,7 @@ const film = Command.make(
       command: "film",
       key: sectionName,
       markdown,
+      files,
       runDir: run.runDir
     });
     if (json)

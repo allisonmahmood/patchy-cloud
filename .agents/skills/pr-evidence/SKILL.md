@@ -85,11 +85,26 @@ is done when each thing in Look at carries evidence that matches the PR's head.
 - **Shows** that a command behaves as claimed: its output, its `--json` shape,
   its exit code and its refusals. ADR-0004 is the CLI's contract.
 - **Make** it by running the command and pasting it with its output in a
-  fenced block, with `echo $?` after it where the exit code matters.
-  `env -u PATCHY_API_URL -u PATCHY_API_TOKEN pnpm patchy …` runs the CLI from
-  source against the worktree's instance (the `patchy-dev-loop` skill),
-  without the shell's Patchy settings.
-- **Costs** seconds.
+  fenced block, with `echo $?` after it where the exit code matters. The
+  worktree's own instance can hold the developer's data, so until
+  `pnpm dev transcript` (#792) lands, run it in a throwaway checkout and
+  instance seeded with scenario data at the intended commit
+  (`scenarios/README.md` lists the scenarios):
+
+  ```sh
+  git worktree add --detach /tmp/<name> <commit>
+  cd /tmp/<name>
+  pnpm install --frozen-lockfile && pnpm dev up <scenario>
+  env -u PATCHY_API_URL -u PATCHY_API_TOKEN pnpm patchy …
+  pnpm dev down && cd - && git worktree remove --force /tmp/<name>
+  ```
+
+  `pnpm patchy` runs the CLI from source against that checkout's instance (the
+  `patchy-dev-loop` skill), and `env -u` keeps the shell's Patchy settings out.
+
+- **Costs** seconds a command, after about two minutes for the throwaway
+  checkout: a minute or so to install, under half a minute for
+  `pnpm dev up team`.
 - **Gotchas.** Output carries what the shell can reach: tokens, home paths,
   local ports, ids. Trim it to what makes the point. An exported
   `PATCHY_API_TOKEN` wins over stored and seeded keys. An exported `PATCHY_API_URL`

@@ -11,8 +11,9 @@
  * run ends, however it ends, a finalizer takes both instances down with their
  * own runners, which deletes their data. The checkouts and `node_modules`
  * stay, so the next run skips the clone and installs incrementally. One run at
- * a time per worktree: `<label>.evidence.lock` spans setup, capture and
- * cleanup, and `pnpm dev down` takes it too before deleting the clones.
+ * a time per worktree: the lock folder `<label>.evidence.lock/` spans setup,
+ * capture and cleanup, and `pnpm dev down` takes it too before deleting the
+ * clones.
  */
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -21,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { environmentDir, layoutFor, readManifest } from "./environment.js";
@@ -194,53 +196,46 @@ const LockRecord = Schema.Struct({
   command: Schema.String,
   started: Schema.String
 });
+type Lock = typeof LockRecord.Type;
 const LockJson = Schema.fromJsonString(LockRecord);
 const decodeLock = Schema.decodeUnknownEffect(LockJson);
 const encodeLock = Schema.encodeSync(LockJson);
 
 /**
- * Holds `file` for the rest of the scope, or fails at once with who holds it.
- * A lock whose process is gone is stale and taken over; the release removes
- * the file only while it is still this process's.
+ * Holds the lock folder `dir` for the rest of the scope, or fails at once
+ * with who holds it. Each run writes its own entry there (whole, then renamed
+ * into place, so no one reads half of it), then looks at the others: any live
+ * one means another run holds the lock, and this one withdraws its entry. Two
+ * runs can't both hold it, since each writes before it looks; two that start
+ * at the same instant may both withdraw. An entry whose process is gone is
+ * stale and is deleted, so a run that was killed never blocks the next one.
  */
 export const acquireLock = Effect.fn("Evidence.acquireLock")(function* (
-  file: string,
+  dir: string,
   command: string
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-  const mine = {
+  yield* fs.makeDirectory(dir, { recursive: true });
+  const mine: Lock = {
     pid: process.pid,
     command,
     started: DateTime.formatIso(yield* DateTime.now)
   };
-  const holder = fs.readFileString(file).pipe(Effect.flatMap(decodeLock), Effect.option);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const created = yield* fs.writeFileString(file, encodeLock(mine), { flag: "wx" }).pipe(
-      Effect.as(true),
-      Effect.catchReason("PlatformError", "AlreadyExists", () => Effect.succeed(false))
-    );
-    if (created) {
-      yield* Effect.addFinalizer(() =>
-        holder.pipe(
-          Effect.flatMap((held) =>
-            Option.isSome(held) && held.value.pid === mine.pid
-              ? fs.remove(file, { force: true })
-              : Effect.void
-          ),
-          Effect.ignore
-        )
-      );
-      return;
-    }
-    const held = yield* holder;
-    if (Option.isSome(held) && (yield* alive(held.value.pid)))
+  const entry = path.join(dir, `${mine.pid}-${(yield* Random.nextInt).toString(36)}.json`);
+  yield* fs.writeFileString(`${entry}.tmp`, encodeLock(mine));
+  yield* fs.rename(`${entry}.tmp`, entry);
+  yield* Effect.addFinalizer(() => fs.remove(entry, { force: true }).pipe(Effect.ignore));
+  for (const name of yield* fs.readDirectory(dir)) {
+    const other = path.join(dir, name);
+    if (other === entry || !name.endsWith(".json")) continue;
+    const held = yield* fs.readFileString(other).pipe(Effect.flatMap(decodeLock), Effect.option);
+    if (Option.isSome(held) && (yield* alive(held.value.pid))) {
+      yield* fs.remove(entry, { force: true });
       return yield* new EvidenceBusy(held.value);
-    // Gone, or a file half written by a process that died: stale.
-    yield* fs.remove(file, { force: true });
+    }
+    yield* fs.remove(other, { force: true }).pipe(Effect.ignore);
   }
-  return yield* new EvidenceBusy({ pid: 0, command: "unknown", started: "now" });
 });
 
 // ---- Clones -----------------------------------------------------------------
@@ -518,8 +513,9 @@ export const removeEvidence = Effect.fn("Evidence.removeEvidence")(function* (ro
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* evidenceDirOf(root);
-  if (!(yield* fs.exists(dir))) return false;
+  // First, even with no checkouts yet: a run may be about to make them.
   yield* acquireLock(`${dir}.lock`, "down");
+  if (!(yield* fs.exists(dir))) return false;
   const env = yield* cloneEnv(root);
   for (const side of ["before", "after"] as const) {
     const clone = path.join(dir, side);

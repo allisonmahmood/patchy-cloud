@@ -1,6 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { type Capture, compareMarkdown, type Pair } from "./compare.js";
-import { localReferences } from "./publish.js";
+import { type Capture, compareMarkdown, type Pair, shotFile } from "./compare.js";
 
 const shot = (side: Capture["side"], width: number, extra: Partial<Capture> = {}): Capture => ({
   side,
@@ -22,7 +21,7 @@ const pair = (width: number, identical = false): Pair => ({
   identical
 });
 
-const markdown = (pairs: ReadonlyArray<Pair>) =>
+const section = (pairs: ReadonlyArray<Pair>) =>
   compareMarkdown({
     provenance: {
       command: "compare",
@@ -41,6 +40,7 @@ const markdown = (pairs: ReadonlyArray<Pair>) =>
     person: { key: "ada", name: "Ada", email: "ada@acme.example", role: "admin" },
     pairs
   });
+const markdown = (pairs: ReadonlyArray<Pair>) => section(pairs).markdown;
 
 describe("compareMarkdown", () => {
   it("puts a desktop width's after full width and its before in a details", () => {
@@ -68,22 +68,49 @@ describe("compareMarkdown", () => {
 
     assert.include(text, "No visible change at 1280px.");
     assert.include(text, "| 390px | No visible change | ![After: / at 390px]");
-    assert.deepStrictEqual(localReferences(text), [
+    assert.deepStrictEqual(section([pair(1280, true), pair(390, true)]).files, [
       ".local/shots/run/after-home-1280.png",
       ".local/shots/run/after-home-390.png"
     ]);
   });
 
-  it("names both commits and the scenario, and a page's problems", () => {
+  it("names both commits and the scenario, and a page's problems, quoting only text", () => {
     const text = markdown([
-      { ...pair(1280), after: shot("after", 1280, { status: 500, errors: ["boom\nstack"] }) }
+      {
+        ...pair(1280),
+        after: shot("after", 1280, {
+          status: 500,
+          errors: ["boom\nstack", "`![x](.local/shots/private.png)`"]
+        })
+      }
     ]);
 
     assert.include(
       text,
       "Before is `1111111` (where this branch left main) and after is `2222222` (dev/feature), both on the `team` scenario"
     );
-    assert.include(text, "- After at 1280px answered 500; 1 browser error(s): `boom`.");
+    assert.include(
+      text,
+      "- After at 1280px answered 500; 2 browser error(s): `boom`; `'![x](.local/shots/private.png)'`."
+    );
     assert.notInclude(text, "Every page answered 200");
+  });
+
+  it("attaches what it shows: both sides when they differ", () => {
+    assert.deepStrictEqual(section([pair(1280), pair(390)]).files, [
+      ".local/shots/run/after-home-1280.png",
+      ".local/shots/run/before-home-1280.png",
+      ".local/shots/run/before-home-390.png",
+      ".local/shots/run/after-home-390.png"
+    ]);
+  });
+});
+
+describe("shotFile", () => {
+  it("keeps two paths that slug alike apart", () => {
+    assert.notStrictEqual(
+      shotFile("run", "after", 0, "/?q=new+business", 1280),
+      shotFile("run", "after", 1, "/?q=new-business", 1280)
+    );
   });
 });
