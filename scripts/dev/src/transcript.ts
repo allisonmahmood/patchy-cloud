@@ -218,9 +218,10 @@ export const ending = (run: Run) => {
  * Where a side's lines run: its agent workspace, with the runner's closed
  * environment. PATH drops this worktree's own folders, which `pnpm dev` put
  * first. Also what normalizing replaces on that side: its origin, its
- * environment folder, its checkout and the home folder. The folder is found
- * by this checkout's rules; a side whose runner kept it elsewhere fails here,
- * before a line runs where the sanitizer can't read its CLI state.
+ * environment folder, its checkout and the home folder, the folders under
+ * HOME in their `~/…` form too, as an agent may write them. The folder is
+ * found by this checkout's rules; a side whose runner kept it elsewhere fails
+ * here, before a line runs where the sanitizer can't read its CLI state.
  */
 export const sideShell = Effect.fn("Transcript.sideShell")(function* (root: string, side: Side) {
   const fs = yield* FileSystem.FileSystem;
@@ -233,11 +234,20 @@ export const sideShell = Effect.fn("Transcript.sideShell")(function* (root: stri
   const PATH = env.PATH.split(delimiter)
     .filter((dir) => dir !== "" && !path.resolve(dir).startsWith(`${root}${path.sep}`))
     .join(delimiter);
+  const home = yield* Config.String("HOME");
+  const folders = [
+    [layout.dir, "<env>"],
+    [side.clone, "<checkout>"]
+  ] as const;
   const placeholders: Placeholders = [
     [new URL(side.served.apiUrl).origin, "<origin>"],
-    [layout.dir, "<env>"],
-    [side.clone, "<checkout>"],
-    [yield* Config.String("HOME"), "~"]
+    ...folders,
+    ...folders.flatMap(([dir, placeholder]) =>
+      dir.startsWith(`${home}${path.sep}`)
+        ? [[`~${dir.slice(home.length)}`, placeholder] as const]
+        : []
+    ),
+    [home, "~"]
   ];
   return {
     name: side.name,
