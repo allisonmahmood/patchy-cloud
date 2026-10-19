@@ -8,6 +8,8 @@
  *   pnpm dev up [scenario]    an environment: personas, a CLI, an agent workspace
  *   pnpm dev open <person>    a browser window signed in as one of its people
  *   pnpm dev shot <person> [path]  a full-page PNG as that person, with the page's errors
+ *   pnpm dev compare <person> <path>...  pages before and after, from evidence instances
+ *   pnpm dev film <person> <flow>        a flow recorded before and after, as mp4
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -19,6 +21,7 @@
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,6 +31,18 @@ import * as Schema from "effect/Schema";
 import { Argument, CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { Capture, checkChromium, compareMarkdown, type Pair, shootAll } from "./compare.js";
+import {
+  type Before,
+  type Commit,
+  evidence,
+  provenanceLines,
+  removeEvidence,
+  resolveCommits,
+  scenarioFor,
+  type Served,
+  UncommittedChanges
+} from "./evidence.js";
 import {
   encodeManifest,
   findPerson,
@@ -40,10 +55,23 @@ import {
   Shot,
   tearDown
 } from "./environment.js";
+import { checkFfmpeg, filmMarkdown, filmSide, loadFlow, sideBySide, Take } from "./film.js";
 import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
 import { alive, signal } from "./process.js";
-import { loadScenario } from "./scenario.js";
+import { loadScenario, Person } from "./scenario.js";
+import {
+  checkPr,
+  draftSection,
+  keyedSection,
+  localReferences,
+  MAX_ATTACHMENTS,
+  PartialPublication,
+  type PrTarget,
+  publishSection,
+  sectionKey,
+  TooManyAttachments
+} from "./publish.js";
 import { failureOf, layout, readPlan, writePlan } from "./state.js";
 import { supervise } from "./supervisor.js";
 
@@ -578,6 +606,529 @@ const shot = Command.make(
   )
 );
 
+// ---- Evidence for a PR ------------------------------------------------------
+
+class InvalidWidths extends Schema.TaggedError<InvalidWidths>()("InvalidWidths", {
+  given: Schema.String
+}) {
+  override get message() {
+    return `--width takes widths in pixels, comma-separated, such as 1280,390; got "${this.given}".`;
+  }
+}
+
+class FlowBrokeAfter extends Schema.TaggedError<FlowBrokeAfter>()("FlowBrokeAfter", {
+  step: Schema.String,
+  reason: Schema.String,
+  video: Schema.String
+}) {
+  override get message() {
+    return `The flow failed on this branch${this.step === "" ? "" : ` at "${this.step}"`}: ${this.reason}. Its video is ${this.video}; nothing was published.`;
+  }
+}
+
+const baseFlag = Flag.String("base").pipe(
+  Flag.withDescription(
+    "What before is: any git ref; where HEAD left origin/main, or the PR's base branch, when omitted"
+  ),
+  Flag.optional
+);
+
+const scenarioFlag = Flag.String("scenario").pipe(
+  Flag.withDescription("The scenario both sides run; this environment's, or team, when omitted"),
+  Flag.optional
+);
+
+const prFlag = Flag.Int("pr").pipe(
+  Flag.withDescription(
+    "Put the section in this PR's body and upload its files; the PR's head must be HEAD"
+  ),
+  Flag.optional
+);
+
+const evidencePerson = Argument.String("person").pipe(
+  Argument.withDescription("A scenario person's key, email or first name, on both sides")
+);
+
+/**
+ * What an evidence command settles before any instance starts: with `--pr`,
+ * that gh can attach files and the PR's head is HEAD; the two commits, and
+ * whether the working tree holds changes they don't (refused with `--pr`);
+ * the scenario; and a fresh run folder under `.local/shots/`.
+ */
+const prepareRun = Effect.fn("prepareRun")(function* (input: {
+  readonly root: string;
+  readonly command: string;
+  readonly key: string;
+  readonly base: Option.Option<string>;
+  readonly scenario: Option.Option<string>;
+  readonly pr: Option.Option<number>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const target = Option.isSome(input.pr)
+    ? Option.some(yield* checkPr(input.root, input.pr.value))
+    : Option.none();
+  const commits = yield* resolveCommits(input.root, {
+    base: input.base,
+    baseBranch: Option.map(target, (pr) => pr.baseRefName)
+  });
+  if (commits.dirty) {
+    if (Option.isSome(target)) return yield* new UncommittedChanges();
+    yield* Console.error(
+      `Uncommitted changes aren't included: the evidence is of ${commits.after.sha.slice(0, 7)}.`
+    );
+  }
+  const scenario = yield* scenarioFor(input.root, input.scenario);
+  const stamp = DateTime.formatIso(yield* DateTime.now)
+    .replace(/[-:]/g, "")
+    .replace(/\..*$/, "");
+  const runDir = `.local/shots/${input.command}-${input.key}-${stamp}`;
+  yield* fs.makeDirectory(path.join(input.root, runDir), { recursive: true });
+  return { target, commits, scenario, runDir };
+});
+
+/**
+ * The person on both sides. "After" must have them; a "before" whose
+ * scenario lacks them becomes unavailable, and the evidence shows after only.
+ */
+const personOnBothSides = Effect.fn("personOnBothSides")(function* (
+  before: Before,
+  after: Served,
+  query: string
+) {
+  const person = yield* findPerson(after, query);
+  if (before.status !== "served") return { person, before, beforeEmail: person.email };
+  const there = yield* findPerson(before.side.served, query).pipe(Effect.option);
+  if (Option.isSome(there)) return { person, before, beforeEmail: there.value.email };
+  const unavailable: Before = {
+    status: "unavailable",
+    commit: before.side.commit,
+    reason: `Its scenario has no one matching "${query}".`
+  };
+  return { person, before: unavailable, beforeEmail: person.email };
+});
+
+const SideReport = Schema.Struct({
+  status: Schema.Literals(["served", "unavailable", "skipped"]),
+  sha: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+  apiUrl: Schema.NullOr(Schema.String),
+  reason: Schema.NullOr(Schema.String)
+});
+
+const sideReport = (before: Before): typeof SideReport.Type =>
+  before.status === "served"
+    ? {
+        status: "served",
+        sha: before.side.commit.sha,
+        label: before.side.commit.label,
+        apiUrl: before.side.served.apiUrl,
+        reason: null
+      }
+    : before.status === "unavailable"
+      ? {
+          status: "unavailable",
+          sha: before.commit.sha,
+          label: before.commit.label,
+          apiUrl: null,
+          reason: before.reason
+        }
+      : { status: "skipped", sha: null, label: null, apiUrl: null, reason: null };
+
+/** What `--json` adds about where the section went, for every evidence command. */
+const Delivery = Schema.Struct({
+  key: Schema.String,
+  scenario: Schema.String,
+  person: Person,
+  before: SideReport,
+  after: Schema.Struct({ sha: Schema.String, label: Schema.String, apiUrl: Schema.String }),
+  /** The section with its markers, as it goes in the PR body. */
+  section: Schema.String,
+  /** The local files the section references, relative to the worktree root. */
+  files: Schema.Array(Schema.String),
+  /** Without `--pr`: where the section was written, and the gh line that publishes it. */
+  sectionFile: Schema.NullOr(Schema.String),
+  gh: Schema.NullOr(Schema.String),
+  /** With `--pr`: the PR, and files that did not upload. */
+  published: Schema.NullOr(
+    Schema.Struct({ url: Schema.String, attached: Schema.Int, failed: Schema.Array(Schema.String) })
+  )
+});
+
+const encodeCompareReport = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      command: Schema.Literal("compare"),
+      ...Delivery.fields,
+      captures: Schema.Array(Capture)
+    }),
+    { space: 2 }
+  )
+);
+const encodeFilmReport = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      command: Schema.Literal("film"),
+      ...Delivery.fields,
+      takes: Schema.Array(Take)
+    }),
+    { space: 2 }
+  )
+);
+
+/**
+ * With `--pr`, puts the section in the PR body and uploads its files;
+ * otherwise writes it beside them with the gh line that would. Either way the
+ * local files stay.
+ */
+const deliver = Effect.fn("deliver")(function* (input: {
+  readonly root: string;
+  readonly target: Option.Option<PrTarget>;
+  readonly command: string;
+  readonly key: string;
+  readonly markdown: string;
+  readonly runDir: string;
+}) {
+  const path = yield* Path.Path;
+  const section = keyedSection(input.command, input.key, input.markdown);
+  if (Option.isSome(input.target)) {
+    const published = yield* publishSection({
+      root: input.root,
+      pr: input.target.value,
+      command: input.command,
+      key: input.key,
+      markdown: input.markdown,
+      runDir: path.join(input.root, input.runDir)
+    });
+    return {
+      section,
+      files: localReferences(input.markdown),
+      sectionFile: null,
+      gh: null,
+      published: { url: published.url, attached: published.attached, failed: published.failed }
+    };
+  }
+  const draft = yield* draftSection({
+    root: input.root,
+    command: input.command,
+    key: input.key,
+    markdown: input.markdown,
+    runDir: path.join(input.root, input.runDir)
+  });
+  return {
+    section,
+    files: draft.files,
+    sectionFile: path.relative(input.root, draft.file),
+    gh: draft.gh,
+    published: null
+  };
+});
+
+/** The human ending: the section, then where it went. A partial publication then exits 1. */
+const printDelivery = Effect.fn("printDelivery")(function* (
+  root: string,
+  delivered: Effect.Success<ReturnType<typeof deliver>>
+) {
+  yield* Console.log(["", delivered.section, ""].join("\n"));
+  if (delivered.published === null)
+    return yield* Console.log(
+      [
+        `Wrote ${delivered.sectionFile}. Put it in the PR body, then from ${root}:`,
+        `  ${delivered.gh}`,
+        "Or run again with --pr <number> to do both."
+      ].join("\n")
+    );
+  yield* Console.log(
+    `Published to ${delivered.published.url}, ${delivered.published.attached} file(s) attached.`
+  );
+});
+
+const failPartial = (delivered: Effect.Success<ReturnType<typeof deliver>>) =>
+  delivered.published !== null && delivered.published.failed.length > 0
+    ? Effect.fail(
+        new PartialPublication({ url: delivered.published.url, failed: delivered.published.failed })
+      )
+    : Effect.void;
+
+const compare = Command.make(
+  "compare",
+  {
+    person: evidencePerson,
+    targets: Argument.String("path").pipe(
+      Argument.withDescription("Pages to capture, such as / or /acme/new-business"),
+      Argument.atLeast(1)
+    ),
+    width: Flag.String("width").pipe(
+      Flag.withDescription("Viewport widths in pixels, comma-separated"),
+      Flag.withDefault("1280,390")
+    ),
+    base: baseFlag,
+    scenario: scenarioFlag,
+    pr: prFlag,
+    key: Flag.String("key").pipe(
+      Flag.withDescription("Names this section in the PR body; the person when omitted"),
+      Flag.optional
+    ),
+    json: Flag.Boolean("json").pipe(
+      Flag.withDescription("Print the commits, files, statuses and section as JSON"),
+      Flag.withDefault(false)
+    )
+  },
+  Effect.fn(function* ({ person: query, targets, width, base, scenario, pr, key, json }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* worktree;
+    const widths = width.split(",").map((w) => Number(w.trim()));
+    if (widths.some((w) => !Number.isInteger(w) || w < 200 || w > 3840))
+      return yield* new InvalidWidths({ given: width });
+    // Both sides of every page at every width, before anything starts.
+    const most = targets.length * widths.length * 2;
+    if (most > MAX_ATTACHMENTS && Option.isSome(pr))
+      return yield* new TooManyAttachments({ count: most });
+    yield* checkChromium();
+    const sectionName = sectionKey(Option.getOrElse(key, () => query));
+    const run = yield* prepareRun({
+      root,
+      command: "compare",
+      key: sectionName,
+      base,
+      scenario,
+      pr
+    });
+    const captured = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sides = yield* evidence({
+          root,
+          command: "compare",
+          scenario: run.scenario,
+          before: Option.some(run.commits.before),
+          after: run.commits.after
+        });
+        const { person, before, beforeEmail } = yield* personOnBothSides(
+          sides.before,
+          sides.after.served,
+          query
+        );
+        yield* Console.error(
+          `Capturing ${targets.length} page(s) at ${widths.join(", ")}px as ${person.name}`
+        );
+        const shoot = (side: "before" | "after", apiUrl: string, email: string) =>
+          shootAll({ root, sides: [{ side, apiUrl }], email, targets, widths, runDir: run.runDir });
+        const captures = [
+          ...(before.status === "served"
+            ? yield* shoot("before", before.side.served.apiUrl, beforeEmail)
+            : []),
+          ...(yield* shoot("after", sides.after.served.apiUrl, person.email))
+        ];
+        return { person, before, after: sides.after, captures };
+      })
+    );
+    const at = (side: "before" | "after", target: string, w: number) =>
+      captured.captures.find(
+        (capture) => capture.side === side && capture.target === target && capture.width === w
+      );
+    const pairs: Array<Pair> = [];
+    for (const target of targets)
+      for (const w of widths) {
+        const after = at("after", target, w)!;
+        const before = at("before", target, w);
+        const identical =
+          before !== undefined &&
+          Buffer.from(yield* fs.readFile(path.join(root, before.file))).equals(
+            yield* fs.readFile(path.join(root, after.file))
+          );
+        pairs.push({ target, width: w, before, after, identical });
+      }
+    const markdown = compareMarkdown({
+      provenance: {
+        command: "compare",
+        scenario: run.scenario,
+        before: captured.before,
+        after: run.commits.after
+      },
+      person: captured.person,
+      pairs
+    });
+    const delivered = yield* deliver({
+      root,
+      target: run.target,
+      command: "compare",
+      key: sectionName,
+      markdown,
+      runDir: run.runDir
+    });
+    if (json)
+      yield* Console.log(
+        encodeCompareReport({
+          command: "compare",
+          key: sectionName,
+          scenario: run.scenario,
+          person: captured.person,
+          before: sideReport(captured.before),
+          after: { ...run.commits.after, apiUrl: captured.after.served.apiUrl },
+          captures: captured.captures,
+          ...delivered
+        })
+      );
+    else {
+      yield* Console.log(
+        captured.captures
+          .map(
+            (capture) =>
+              `${capture.side.padEnd(6)}  ${String(capture.width).padStart(4)}px  ${capture.status ?? "---"}  ${capture.target}  ${capture.errors.length === 0 ? "no errors" : `${capture.errors.length} error(s)`}${capture.clipped === null ? "" : `  (${capture.clipped})`}`
+          )
+          .join("\n")
+      );
+      yield* printDelivery(root, delivered);
+    }
+    yield* failPartial(delivered);
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Screenshot pages before and after, as one person, on throwaway instances at both commits, and lay them out for the PR"
+  )
+);
+
+const film = Command.make(
+  "film",
+  {
+    person: evidencePerson,
+    flow: Argument.String("flow").pipe(
+      Argument.withDescription(
+        "A module whose default export drives the page: async ({ page, step }) => {}"
+      )
+    ),
+    start: Flag.String("path").pipe(
+      Flag.withDescription("Where the flow starts, signed in"),
+      Flag.withDefault("/")
+    ),
+    width: Flag.Int("width").pipe(
+      Flag.withDescription("Viewport width in pixels"),
+      Flag.withDefault(1280)
+    ),
+    afterOnly: Flag.Boolean("after-only").pipe(
+      Flag.withDescription("Film this branch only"),
+      Flag.withDefault(false)
+    ),
+    base: baseFlag,
+    scenario: scenarioFlag,
+    pr: prFlag,
+    json: Flag.Boolean("json").pipe(
+      Flag.withDescription("Print the commits, takes, files and section as JSON"),
+      Flag.withDefault(false)
+    )
+  },
+  Effect.fn(function* ({
+    person: query,
+    flow: flowArg,
+    start,
+    width,
+    afterOnly,
+    base,
+    scenario,
+    pr,
+    json
+  }) {
+    const path = yield* Path.Path;
+    const root = yield* worktree;
+    if (!Number.isInteger(width) || width < 200 || width > 3840)
+      return yield* new InvalidWidths({ given: String(width) });
+    yield* checkChromium();
+    yield* checkFfmpeg(root);
+    const flowFile = path.resolve(flowArg);
+    const flow = yield* loadFlow(flowFile);
+    const name = path.basename(flowFile).replace(/\.[^.]+$/, "");
+    const sectionName = sectionKey(name);
+    const run = yield* prepareRun({ root, command: "film", key: sectionName, base, scenario, pr });
+    const filmed = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sides = yield* evidence({
+          root,
+          command: "film",
+          scenario: run.scenario,
+          before: afterOnly ? Option.none<Commit>() : Option.some(run.commits.before),
+          after: run.commits.after
+        });
+        const { person, before, beforeEmail } = yield* personOnBothSides(
+          sides.before,
+          sides.after.served,
+          query
+        );
+        const take = (side: "before" | "after", apiUrl: string, email: string, label: string) =>
+          filmSide({ root, side, apiUrl, email, start, flow, width, label, runDir: run.runDir });
+        yield* Console.error(`Filming ${name} as ${person.name}`);
+        const takes: Array<Take> = [];
+        if (before.status === "served")
+          takes.push(
+            yield* take(
+              "before",
+              before.side.served.apiUrl,
+              beforeEmail,
+              `Before: ${before.side.commit.sha.slice(0, 7)}`
+            )
+          );
+        takes.push(
+          yield* take(
+            "after",
+            sides.after.served.apiUrl,
+            person.email,
+            `After: ${run.commits.after.sha.slice(0, 7)}`
+          )
+        );
+        return { person, before, after: sides.after, takes };
+      })
+    );
+    const after = filmed.takes.at(-1)!;
+    const video =
+      filmed.takes.length === 2
+        ? yield* sideBySide(root, filmed.takes[0]!, after, `${run.runDir}/side-by-side.mp4`)
+        : after.file;
+    const markdown = filmMarkdown({
+      name,
+      person: filmed.person,
+      provenance: provenanceLines({
+        command: "film",
+        scenario: run.scenario,
+        before: filmed.before,
+        after: run.commits.after
+      }),
+      takes: filmed.takes,
+      video
+    });
+    // A flow broken on this branch keeps its footage locally and publishes nothing.
+    const broken = after.failure;
+    const delivered = yield* deliver({
+      root,
+      target: broken === null ? run.target : Option.none(),
+      command: "film",
+      key: sectionName,
+      markdown,
+      runDir: run.runDir
+    });
+    if (json)
+      yield* Console.log(
+        encodeFilmReport({
+          command: "film",
+          key: sectionName,
+          scenario: run.scenario,
+          person: filmed.person,
+          before: sideReport(filmed.before),
+          after: { ...run.commits.after, apiUrl: filmed.after.served.apiUrl },
+          takes: filmed.takes,
+          ...delivered
+        })
+      );
+    else yield* printDelivery(root, delivered);
+    if (broken !== null)
+      return yield* new FlowBrokeAfter({ step: broken.step, reason: broken.message, video });
+    yield* failPartial(delivered);
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Record a Playwright flow before and after, as one person, on throwaway instances at both commits, as captioned mp4s for the PR"
+  )
+);
+
 const down = Command.make(
   "down",
   {},
@@ -585,6 +1136,7 @@ const down = Command.make(
     const fs = yield* FileSystem.FileSystem;
     const root = yield* worktree;
     const stateDir = yield* stateDirOf(root);
+    const evidenceRemoved = yield* removeEvidence(root);
     const environmentRemoved = yield* tearDown(root);
     const recorded = yield* readPlan(stateDir).pipe(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
@@ -593,8 +1145,8 @@ const down = Command.make(
     const instanceRemoved = yield* fs.exists(stateDir);
     yield* fs.remove(stateDir, { recursive: true, force: true });
     yield* Console.log(
-      environmentRemoved || instanceRemoved
-        ? `Removed ${[instanceRemoved ? stateDir : "", environmentRemoved ? (yield* layoutFor(root)).dir : ""].filter(Boolean).join(" and ")}. Close any agent sessions you started in the workspace.`
+      environmentRemoved || instanceRemoved || evidenceRemoved
+        ? `Removed ${[instanceRemoved ? stateDir : "", environmentRemoved ? (yield* layoutFor(root)).dir : "", evidenceRemoved ? "the evidence checkouts" : ""].filter(Boolean).join(" and ")}. Close any agent sessions you started in the workspace.`
         : "Nothing to take down."
     );
   }, userFacing)
@@ -620,7 +1172,19 @@ const CliSurface = Layer.mergeAll(
 );
 
 dev.pipe(
-  Command.withSubcommands([status, stop, logs, reset, up, open, shot, down, superviseCommand]),
+  Command.withSubcommands([
+    status,
+    stop,
+    logs,
+    reset,
+    up,
+    open,
+    shot,
+    compare,
+    film,
+    down,
+    superviseCommand
+  ]),
   Command.run({ version: "0.0.0" }),
   Effect.scoped,
   Effect.provide([NodeServices.layer, FetchHttpClient.layer, CliSurface]),
