@@ -121,7 +121,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 - Never make a PR unless the developer explicitly asks you to do so.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
-- Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
+- Body: fill in `.github/PULL_REQUEST_TEMPLATE.md`, a merge summary that shows the change working; the `pr-evidence` skill lists the ways to show it. End with the model and harness that did the work.
 - One concern per PR. If the description says "also", split it.
 
 ## Deploying

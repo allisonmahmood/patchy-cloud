@@ -8,7 +8,7 @@ The package build (`scripts/build-patchy-package.mjs`) copies `skills/` wholesal
 
 The checked-in root `skills-lock.json` uses the `skills` CLI's lockfile format for the repo's own wiring. Its `patchy` entry names `skills/patchy/SKILL.md`; `computedHash` is the SHA-256 of that file's bytes alone (`sha256sum skills/patchy/SKILL.md`), not a hash of the references or the generated copy. Refresh it by hand after the final `SKILL.md` edit; `packages/patchy/src/skillLock.test.ts` fails while it is stale.
 
-Internal skills stay under `.agents/skills/`, outside the copied `skills/` tree, and carry `metadata.internal`: the local-instance loop `patchy-dev-loop`, and the `/code-review` review specs `effect-service-conventions` and `ui-consistency`.
+Internal skills stay under `.agents/skills/`, outside the copied `skills/` tree, and carry `metadata.internal`: the local-instance loop `patchy-dev-loop`, the ways to show a change in a PR `pr-evidence`, and the `/code-review` review specs `effect-service-conventions` and `ui-consistency`.
 
 The package is private and not published to a registry. `pnpm --filter patchy build`
 packs `packages/patchy/artifacts/patchy-<release>-<digest>.tgz`, where `digest` is
