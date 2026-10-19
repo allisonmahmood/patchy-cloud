@@ -272,15 +272,14 @@ globally is refused before anything starts, since lines run as you; the check
 catches the plain forms, not every way to write them.
 
 Before comparing, each side's origin becomes `<origin>`, its environment
-folder `<env>`, its checkout `<checkout>` and your home folder `~`; every other
-difference stays. One sanitizer redacts what it collected before anything is
+folder `<env>`, its checkout `<checkout>` and your home folder `~`, each also
+in its resolved, `~/…` and `~<user>` forms; every other difference stays. One sanitizer redacts what it collected before anything is
 written: the values in each side's CLI state, read before the run, while each
 line runs and after it (so a login code a later `patchy logout` clears is still
 known), anything shaped like a machine token (`pp_…`) or a login code, any
 email address outside the reserved domains the scenarios use (`.example`,
-`patchy.local`), and secret-named variables the runner passes. The section
-says which matched.
-Redaction is a backstop, not a guarantee; read the section before publishing.
+`patchy.local`), written with `@` or `%40`, and secret-named variables the
+runner passes. The section says which matched. Redaction is a backstop, not a guarantee; read the section before publishing.
 
 `pnpm dev trial "<task>"` gives a task, in a person's words, to a fresh agent
 on each side: the side's `agent` launcher, run without a person. The task goes
@@ -304,7 +303,9 @@ exit codes, one line per failure, and the counts of commands, failures and
 help lookups. Its reasoning, what its commands printed and the session itself
 are never written. The sanitizer reads each side's CLI state every 100ms while
 the agents run and after each tool call, and redacts and normalizes every
-string before it is written. An agent on `HEAD` that errors or exits without
+string before it is written. It also redacts who the agents act as: the email
+of the Claude account they sign in with, from `claude auth status`, which
+Claude Code puts in its agent's context, and git's `user.email`. An agent on `HEAD` that errors or exits without
 a result publishes nothing and fails the command.
 
 A cold run takes under a minute on `team` and about two on `brightline`, plus

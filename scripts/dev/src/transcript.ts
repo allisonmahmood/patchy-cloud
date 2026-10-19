@@ -218,8 +218,9 @@ export const ending = (run: Run) => {
  * Where a side's lines run: its agent workspace, with the runner's closed
  * environment. PATH drops this worktree's own folders, which `pnpm dev` put
  * first. Also what normalizing replaces on that side: its origin, its
- * environment folder, its checkout and the home folder, the folders under
- * HOME in their `~/…` form too, as an agent may write them. The folder is
+ * environment folder, its checkout and the home folder, each also as resolved
+ * past symlinks, under HOME in its `~/…` form, and HOME as `~<user>`, as an
+ * agent may write them. The folder is
  * found by this checkout's rules; a side whose runner kept it elsewhere fails
  * here, before a line runs where the sanitizer can't read its CLI state.
  */
@@ -234,20 +235,30 @@ export const sideShell = Effect.fn("Transcript.sideShell")(function* (root: stri
   const PATH = env.PATH.split(delimiter)
     .filter((dir) => dir !== "" && !path.resolve(dir).startsWith(`${root}${path.sep}`))
     .join(delimiter);
-  const home = yield* Config.String("HOME");
-  const folders = [
+  // Each folder as given and as resolved past symlinks, which is how an agent's tools see it.
+  const both = (dir: string) =>
+    fs.realPath(dir).pipe(
+      Effect.map((real) => [...new Set([dir, real])]),
+      Effect.orElseSucceed(() => [dir])
+    );
+  const homes = yield* both(yield* Config.String("HOME"));
+  const folders: Array<readonly [string, string]> = [];
+  for (const [dir, placeholder] of [
     [layout.dir, "<env>"],
     [side.clone, "<checkout>"]
-  ] as const;
+  ] as const)
+    for (const form of yield* both(dir)) folders.push([form, placeholder]);
   const placeholders: Placeholders = [
     [new URL(side.served.apiUrl).origin, "<origin>"],
     ...folders,
     ...folders.flatMap(([dir, placeholder]) =>
-      dir.startsWith(`${home}${path.sep}`)
-        ? [[`~${dir.slice(home.length)}`, placeholder] as const]
-        : []
+      homes
+        .filter((home) => dir.startsWith(`${home}${path.sep}`))
+        .map((home) => [`~${dir.slice(home.length)}`, placeholder] as const)
     ),
-    [home, "~"]
+    ...homes.map((home) => [home, "~"] as const),
+    // `~<user>` names the same folder.
+    [`~${path.basename(homes[0]!)}`, "~"]
   ];
   return {
     name: side.name,

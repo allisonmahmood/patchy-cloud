@@ -104,6 +104,34 @@ export const agentShell = Effect.fn("Trial.agentShell")(function* (root: string,
 });
 export type AgentShell = Effect.Success<ReturnType<typeof agentShell>>;
 
+const ClaudeAccount = Schema.Struct({ email: Schema.optional(Schema.NullOr(Schema.String)) });
+const decodeAccount = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeAccount));
+
+/**
+ * Who the agents act as beyond the scenario, for the sanitizer to redact: the
+ * Claude account they are signed in with, whose email Claude Code puts in its
+ * agent's context, and git's author email. Each is read in the agent's own
+ * environment, best effort; the email shape is the backstop.
+ */
+export const identities = Effect.fn("Trial.identities")(function* (shell: AgentShell) {
+  const read = (step: string, command: string, args: ReadonlyArray<string>) =>
+    stepOutput(step, command, args, { cwd: shell.cwd, env: shell.env, prefix: shell.name }).pipe(
+      Effect.orElseSucceed(() => "")
+    );
+  const account = yield* decodeAccount(
+    yield* read("Reading Claude Code's account", "claude", ["auth", "status", "--json"])
+  ).pipe(Effect.option);
+  const author = yield* read("Reading git's author email", "git", [
+    "config",
+    "--get",
+    "user.email"
+  ]);
+  return [
+    Option.match(account, { onNone: () => null, onSome: (a) => a.email ?? null }),
+    author
+  ].filter((value): value is string => value !== null && value !== "");
+});
+
 /** Denied to the agent on top of the launcher's own rules: setup and global installs, in their plain forms. */
 const DENIED = ["Bash(patchy setup:*)", "Bash(pnpm add -g:*)", "Bash(pnpm add --global:*)"];
 

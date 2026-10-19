@@ -93,6 +93,7 @@ import {
   Attempt,
   checkClaude,
   cleanAttempt,
+  identities,
   runAgent,
   TaskRefused,
   taskRefusal,
@@ -1463,7 +1464,9 @@ const trial = Command.make(
         // they run, and after each tool call either one makes.
         const sanitizer = yield* makeSanitizer({
           stateDirs: shells.map((shell) => shell.state),
-          envs: shells.map((shell) => shell.env)
+          envs: shells.map((shell) => shell.env),
+          // Both sides' agents sign in the same way, so after's environment speaks for both.
+          identities: yield* identities(afterShell)
         });
         yield* Console.error(
           `Giving the task to ${shells.length === 2 ? "each side's agent" : "after's agent"} on ${model}, within ${maxTurns} turns and ${minutes} min`

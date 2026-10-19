@@ -13,6 +13,7 @@ import {
   cleanAttempt,
   type Ended,
   gist,
+  identities,
   isHelpLookup,
   makeTally,
   runAgent,
@@ -434,6 +435,28 @@ describe("runAgent", () => {
       });
       assert.strictEqual(attempt.ending, "finished");
       assert.strictEqual(yield* sanitizer.redact("Code: short-lived"), "Code: [redacted]");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  );
+
+  it.live("collects the Claude account and git author the agent acts as", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(
+        path.join(dir, "claude"),
+        `#!/usr/bin/env bash\necho '{"loggedIn":true,"email":"jane@company.com","orgName":"Patchy"}'\n`,
+        { mode: 0o755 }
+      );
+      yield* fs.writeFileString(
+        path.join(dir, ".gitconfig"),
+        "[user]\n\temail = jane@home.example.org\n"
+      );
+      const found = yield* identities({
+        ...shell(dir, path.join(dir, "agent")),
+        env: { PATH: `${dir}:/usr/bin:/bin`, HOME: dir }
+      });
+      assert.deepStrictEqual(found, ["jane@company.com", "jane@home.example.org"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   );
 
