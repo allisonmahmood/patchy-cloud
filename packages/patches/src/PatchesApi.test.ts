@@ -45,9 +45,10 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
-import { Looks } from "@patchy/companies";
+import { Looks, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
+import { InvocationLog, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import { ConnectionStore, SqlConnectionStore, PostgresSource } from "@patchy/integrations";
 import * as PostHogDouble from "../../integrations/src/test/posthog.js";
@@ -82,6 +83,50 @@ const publishRequest = (payload: PublishPayload) =>
 const publish = (payload: PublishPayload) =>
   Effect.flatMap(client, (api) => api.publish({ payload: publishRequest(payload) }));
 
+/** Records a settled handler call in a published patch's log, initiated by the reader. */
+const logCall = (
+  published: { readonly patchId: string; readonly versionId: string },
+  call: {
+    readonly at: number;
+    readonly outcome: InvocationLog.Finish["outcome"];
+    readonly code?: string;
+    readonly logLines?: InvocationLog.Finish["logLines"];
+  }
+) =>
+  Effect.gen(function* () {
+    const id = `inv_${crypto.randomUUID()}`;
+    const log = yield* InvocationLog.InvocationLog;
+    yield* log.begin({
+      id,
+      companyId: uploader.company.id,
+      patchId: published.patchId,
+      versionId: published.versionId,
+      handler: "leads.import",
+      kind: "action",
+      initiatingViewerId: reader.user.id,
+      parentId: null,
+      correlationId: `cor_${id}`,
+      startedAt: call.at,
+      deadline: call.at + 60_000,
+      argsBytes: 2
+    });
+    yield* log.finish({
+      id,
+      outcome: call.outcome,
+      outcomeCode: call.code ?? null,
+      settledAt: call.at + 5,
+      durationMs: 5,
+      guestMs: 3,
+      dbMs: 1,
+      callbacks: 1,
+      resultBytes: 0,
+      attempts: 1,
+      logLines: call.logLines ?? [],
+      replyDelivered: true
+    });
+    return id;
+  });
+
 const events: Analytics.AnalyticsEvent[] = [];
 const recordingAnalytics = Layer.succeed(
   Analytics.Analytics,
@@ -104,6 +149,7 @@ const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
+  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer)),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
     ConfigProvider.layer(
@@ -372,6 +418,7 @@ const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
+  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer)),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
 );
@@ -3127,6 +3174,165 @@ it.layer(Layer.fresh(publishLayer))("publish look check", (it) => {
         "Could not check whether this repo's look is current: The look could not be read."
       ]);
       assert.strictEqual(published.versionNumber, 1);
+    })
+  );
+});
+
+it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
+  it.effect("lets the owner and admins read a patch's log and names the owner to anyone else", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const published = yield* owner.publish({ payload: publishRequest({ html: html("Logged") }) });
+      const at = Date.parse("2026-10-19T10:00:00Z");
+      const succeeded = yield* logCall(published, { at, outcome: "success" });
+      const thrown = {
+        message: "Cannot read properties of undefined (reading 'email')",
+        details: { stack: "TypeError: Cannot read properties of undefined\n    at server.js:1:20" }
+      };
+      const failed = yield* logCall(published, {
+        at: at + 1_000,
+        outcome: "failure",
+        code: "handler_failed",
+        logLines: [thrown]
+      });
+      // The write that landed before the throw is part of the story.
+      const runtimeLog = yield* RuntimeLog.RuntimeLog;
+      yield* runtimeLog.begin({
+        companyId: uploader.company.id,
+        userId: reader.user.id,
+        effectivePrincipal: "patch",
+        invocationId: failed,
+        op: "tables.insert",
+        resource: "leads",
+        connectionId: null,
+        correlationId: `cor_${failed}_insert`,
+        credentialKind: "session",
+        patchId: published.patchId,
+        versionId: published.versionId
+      });
+      yield* runtimeLog.finish({
+        correlationId: `cor_${failed}_insert`,
+        outcome: "success",
+        durationMs: 2,
+        rowCount: 1
+      });
+
+      const log = yield* owner.log({ params: { patchId: published.patchId }, query: {} });
+      expect(log).toMatchObject({ ok: true, patchId: published.patchId, next: null });
+      assert.deepStrictEqual(
+        log.entries.map((entry) => [entry.id, entry.version, entry.viewer, entry.outcome]),
+        [
+          [failed, 1, { id: reader.user.id, name: reader.user.name }, "failure"],
+          [succeeded, 1, { id: reader.user.id, name: reader.user.name }, "success"]
+        ]
+      );
+      expect(log.entries[0]).toMatchObject({
+        correlationId: `cor_${failed}`,
+        handler: "leads.import",
+        kind: "action",
+        code: "handler_failed",
+        logLines: [thrown],
+        stepsTruncated: false
+      });
+      assert.deepStrictEqual(
+        log.entries[0]!.steps.map((step) => [
+          step.name,
+          step.resource,
+          step.outcome,
+          step.rowCount
+        ]),
+        [["tables.insert", "leads", "success", 1]]
+      );
+
+      const asAdmin = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      assert.deepStrictEqual(
+        (yield* asAdmin.log({ params: { patchId: published.patchId }, query: {} })).entries.map(
+          (entry) => entry.id
+        ),
+        [failed, succeeded]
+      );
+      const asReader = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const refused = yield* asReader.log({
+        params: { patchId: published.patchId },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(refused.status, 403);
+      assert.deepStrictEqual(yield* refused.json, {
+        ok: false,
+        code: "not_owner",
+        error: "Only Uploader or an admin can read this patch's log.",
+        owner: { id: uploader.user.id, name: uploader.user.name }
+      });
+      const missing = yield* owner.log({
+        params: { patchId: "pat_missing" },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(missing.status, 404);
+    })
+  );
+
+  it.effect("pages a patch's log by cursor and keeps only failures when asked", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const published = yield* owner.publish({ payload: publishRequest({ html: html("Paged") }) });
+      const at = Date.parse("2026-10-19T11:00:00Z");
+      const oldest = yield* logCall(published, { at, outcome: "handler_timeout" });
+      const middle = yield* logCall(published, { at: at + 1_000, outcome: "success" });
+      const newest = yield* logCall(published, { at: at + 2_000, outcome: "handler_error" });
+      const params = { patchId: published.patchId };
+
+      const first = yield* owner.log({ params, query: { limit: 2 } });
+      assert.deepStrictEqual(
+        first.entries.map((entry) => entry.id),
+        [newest, middle]
+      );
+      assert.strictEqual(first.next, middle);
+      const second = yield* owner.log({ params, query: { limit: 2, before: first.next! } });
+      assert.deepStrictEqual(
+        second.entries.map((entry) => entry.id),
+        [oldest]
+      );
+      assert.strictEqual(second.next, null);
+
+      const failures = yield* owner.log({ params, query: { failed: true } });
+      assert.deepStrictEqual(
+        failures.entries.map((entry) => [entry.id, entry.outcome]),
+        [
+          [newest, "handler_error"],
+          [oldest, "handler_timeout"]
+        ]
+      );
+    })
+  );
+
+  it.effect("ends a log page before 2 MiB and carries on from its last entry", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const published = yield* owner.publish({ payload: publishRequest({ html: html("Noisy") }) });
+      const at = Date.parse("2026-10-19T12:00:00Z");
+      // Each entry stands in for one with a deep tree of nested handlers that each logged their fill.
+      const noise = [{ message: "x".repeat(800 * 1024) }];
+      const ids: string[] = [];
+      for (const offset of [0, 1_000, 2_000])
+        ids.unshift(
+          yield* logCall(published, { at: at + offset, outcome: "success", logLines: noise })
+        );
+      const params = { patchId: published.patchId };
+
+      const first = yield* owner.log({ params, query: {} });
+      assert.deepStrictEqual(
+        first.entries.map((entry) => entry.id),
+        ids.slice(0, 2)
+      );
+      assert.strictEqual(first.next, ids[1]);
+      const rest = yield* owner.log({ params, query: { before: first.next! } });
+      assert.deepStrictEqual(
+        rest.entries.map((entry) => entry.id),
+        ids.slice(2)
+      );
+      assert.strictEqual(rest.next, null);
     })
   );
 });

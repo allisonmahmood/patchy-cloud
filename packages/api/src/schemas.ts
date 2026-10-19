@@ -993,6 +993,85 @@ export class Described extends Schema.Class<Described>("Described")({
   descriptionUpdatedAt: Schema.NullOr(Schema.String)
 }) {}
 
+/** How a logged handler or call settled; `unknown_outcome` once its deadline passed unrecorded. */
+export const LogOutcome = Schema.Literals([
+  "pending",
+  "success",
+  "handler_error",
+  "failure",
+  "handler_timeout",
+  "unknown_outcome"
+]);
+
+/** A step inside a log entry: a nested handler, or an operation a handler made. */
+export const LogStep = Schema.Struct({
+  type: Schema.Literals(["invocation", "call"]),
+  id: Schema.String,
+  /** The entry or nested handler that made this step. */
+  parentId: Schema.String,
+  at: IsoTimestamp,
+  /** The handler's name for a nested handler; an operation such as `tables.insert` for a call. */
+  name: Schema.String,
+  kind: Schema.NullOr(HandlerKind),
+  resource: Schema.NullOr(Schema.String),
+  /** The company connection a call went to as `integration/handle`, or its id once deleted. */
+  connection: Schema.NullOr(Schema.String),
+  /** `patch`, or the user id a call acted as. */
+  effectivePrincipal: Schema.String,
+  outcome: LogOutcome,
+  code: Schema.NullOr(Schema.String),
+  durationMs: Schema.NullOr(Schema.Int),
+  attempts: Schema.Int,
+  rowCount: Schema.NullOr(Schema.Int),
+  logLines: Schema.Array(Schema.Json)
+});
+
+/** One top-level handler call in a patch's log, with the steps it made. */
+export const LogEntry = Schema.Struct({
+  id: Schema.String,
+  /** The id a browser's failure reports, to find the entry a person saw fail. */
+  correlationId: Schema.String,
+  startedAt: IsoTimestamp,
+  settledAt: Schema.NullOr(IsoTimestamp),
+  /** The version number the call ran; null only for a version no longer retained. */
+  version: Schema.NullOr(Schema.Int),
+  handler: Schema.String,
+  kind: HandlerKind,
+  /** Who opened the patch; `name` is null for someone no longer in the company. */
+  viewer: Schema.Struct({ id: Schema.String, name: Schema.NullOr(Schema.String) }),
+  outcome: LogOutcome,
+  code: Schema.NullOr(Schema.String),
+  durationMs: Schema.NullOr(Schema.Int),
+  guestMs: Schema.Int,
+  dbMs: Schema.Int,
+  callbacks: Schema.Int,
+  attempts: Schema.Int,
+  /** False when the page never received the reply; the outcome is still the real one. */
+  replyDelivered: Schema.Boolean,
+  /** `ctx.log` lines, and a thrown error's message and stack. */
+  logLines: Schema.Array(Schema.Json),
+  /** The retained steps, outermost first, each after its parent. */
+  steps: Schema.Array(LogStep),
+  /** The entry made more steps than `steps` holds. */
+  stepsTruncated: Schema.Boolean
+});
+export type LogEntry = typeof LogEntry.Type;
+
+/** At most this many entries per page; the default is `LOG_PAGE_DEFAULT`. */
+export const LOG_PAGE_MAX = 25;
+export const LOG_PAGE_DEFAULT = 10;
+
+/** `GET /api/patches/:patchId/log`: one page of a patch's log, newest first. */
+export class PatchLog extends Schema.Class<PatchLog>("PatchLog")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  entries: Schema.Array(LogEntry),
+  /** Pass as `before` to read older entries; null at the start of the log. */
+  next: Schema.NullOr(Schema.String),
+  /** A `failed` read stopped at the edge of the entries it searches; `next` carries on past it. */
+  windowEnded: Schema.Boolean
+}) {}
+
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}
 
 // --- look -----------------------------------------------------------------

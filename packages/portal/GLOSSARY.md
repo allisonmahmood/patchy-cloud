@@ -29,7 +29,7 @@ One patch's page at `/patches/<name>`, in tabs: **Overview** (its description, o
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Log**:
-The card's tab at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first, each expanding into the calls it made and its `ctx.log` lines, filtered and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal only reads it.
+The card's tab at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first, each expanding into the calls it made and its `ctx.log` lines, filtered and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal and `patchy logs` only read it.
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
 
 **Guide**:

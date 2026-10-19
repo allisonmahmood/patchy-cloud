@@ -28,6 +28,9 @@ import {
   Restored,
   RolledBack,
   Described,
+  LOG_PAGE_DEFAULT,
+  LOG_PAGE_MAX,
+  PatchLog,
   ForceRequest,
   RollbackRequest,
   DescriptionRequest,
@@ -63,6 +66,7 @@ import * as Setup from "./Setup.js";
 import { prepareRepoPublish } from "./repoBuild.js";
 import { publishLookStamp, sentence } from "./lookNotices.js";
 import * as Dev from "./devLifecycle.js";
+import * as Logs from "./logs.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
 export class Cwd extends Context.Service<Cwd, string>()("patchy/commands/Cwd") {}
@@ -92,6 +96,7 @@ const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
 
 const encodeIdentity = Schema.encodeSync(Identity);
 const encodeDeleted = Schema.encodeSync(Deleted);
+const encodePatchLog = Schema.encodeSync(PatchLog);
 const encodeShared = Schema.encodeSync(Shared);
 const encodeRetired = Schema.encodeSync(Retired);
 const encodeRestored = Schema.encodeSync(Restored);
@@ -1038,6 +1043,82 @@ const describe = Command.make(
   Command.withDescription("Change a published patch's description, or remove it with --clear.")
 );
 
+// --- logs -------------------------------------------------------------------
+
+const logs = Command.make(
+  "logs",
+  {
+    patch: Flag.String("patch").pipe(
+      Flag.withDescription("Read this patch's log by ID instead of the current repo's"),
+      Flag.optional
+    ),
+    failed: Flag.Boolean("failed").pipe(
+      Flag.withDescription("Only calls that failed or timed out"),
+      Flag.withDefault(false)
+    ),
+    limit: Flag.Int("limit").pipe(
+      Flag.withDescription(
+        `Entries per page, 1 to ${LOG_PAGE_MAX}; ${LOG_PAGE_DEFAULT} by default`
+      ),
+      Flag.optional
+    ),
+    before: Flag.String("before").pipe(
+      Flag.withDescription("Continue from a previous page's next cursor"),
+      Flag.optional
+    )
+  },
+  (options) =>
+    (Option.isNone(options.patch) ? runProject : run)(
+      Effect.gen(function* () {
+        const limit = Option.getOrUndefined(options.limit);
+        if (limit !== undefined && (limit < 1 || limit > LOG_PAGE_MAX))
+          return yield* new LocalError({
+            message: `--limit must be between 1 and ${LOG_PAGE_MAX}.`
+          });
+        const patchId = yield* patchTarget(Option.none(), options.patch);
+        const client = yield* Api.client(yield* requiredToken());
+        const log = yield* client
+          .log({
+            params: { patchId },
+            query: {
+              ...(limit === undefined ? {} : { limit }),
+              ...Option.match(options.before, {
+                onNone: () => ({}),
+                onSome: (before) => ({ before })
+              }),
+              ...(options.failed ? { failed: true } : {})
+            }
+          })
+          .pipe(
+            Effect.catch((error) =>
+              refused(error, "Reading the log failed.").pipe(
+                // The instance's own sentence: an admin can read the log, so reassignment isn't the fix.
+                Effect.mapError((failure) =>
+                  failure._tag === "RejectedError" && failure.refusal.code === "not_owner"
+                    ? new RejectedError({
+                        refusal: failure.refusal,
+                        hint: failure.refusal.error,
+                        cause: failure
+                      })
+                    : failure
+                )
+              )
+            )
+          );
+        // Text is built only when it is what gets printed.
+        const json = yield* Output.JsonFlag;
+        yield* Output.report(
+          encodePatchLog(log),
+          json ? [] : Logs.render(log, { failed: options.failed, patch: options.patch })
+        );
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Print a page of a published patch's log, newest first: failures, ctx.log lines and the steps each call made."
+  )
+);
+
 // --- the company look --------------------------------------------------------
 
 const NO_LOOK = "New patches start from the Patchy look.";
@@ -1547,6 +1628,7 @@ export const root = Command.make("patchy").pipe(
     withCommandHeader(restore),
     withCommandHeader(rollback),
     withCommandHeader(describe),
+    withCommandHeader(logs),
     withCommandHeader(init),
     withCommandHeader(dev),
     withCommandHeader(refresh),

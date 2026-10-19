@@ -25,6 +25,7 @@ export const CliCommand = Schema.Literals([
   "restore",
   "rollback",
   "describe",
+  "logs",
   "init",
   "dev",
   "refresh",

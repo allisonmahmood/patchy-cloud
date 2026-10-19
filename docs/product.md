@@ -177,8 +177,8 @@ the next start fetches the published inventory again.
 Before the first publish every schema change recreates local data. Afterwards,
 the published inventory determines additive changes and refusals, not the last
 local config; compatible additions preserve rows. `dev.log` records each call's
-viewer, handler, outcome and milliseconds, `ctx.log` output and local-only failure
-message/stack. Starting with `--json` records full wide events and invocation JSON.
+viewer, handler, outcome and milliseconds, `ctx.log` output and each thrown error's
+message and stack. Starting with `--json` records full wide events and invocation JSON.
 There are no local runtime database log rows, PostHog delivery or connection keyring;
 dev reads of a live integration are logged on the instance instead.
 
@@ -506,7 +506,9 @@ search 1,000 entries at a time, and the page says when older entries lie beyond
 that window. Calls to a company connection name it by handle. An entry shows at
 most 50 steps, outermost first, and says when it made more. It is an attribution record, not an access
 audit, and `ctx.log` text is the patch's own. The card shows the owner and admins
-the last three entries under Recent activity.
+the last three entries under Recent activity. Their agents read the same log with
+`patchy logs`, a page of up to 25 entries at a time, failures only with `--failed`,
+so a builder agent can fix a published patch without the log being pasted to it.
 
 Metering records calls and database-held milliseconds from the first admitted
 invocation, independently of best-effort request events. Invocation rows record

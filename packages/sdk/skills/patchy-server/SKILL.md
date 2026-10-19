@@ -32,9 +32,21 @@ fixture, and its actions read the real project through the instance, as the
 publishing key's person for either viewer. Put invented shared files
 in `fixtures/shared-<alias>/`; restart after fixture or config edits.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
-output and local-only failure message/stack. Starting with `--json` records full
-wide events and invocation JSON; `dev logs --json` returns `{ ok, log, text }`.
-No local runtime log rows are written; the instance logs PostHog dev reads.
+output and each thrown error's message and stack, which browsers never receive.
+Starting with `--json` records full wide events and invocation JSON;
+`dev logs --json` returns `{ ok, log, text }`. No local runtime log rows are
+written; the instance logs PostHog dev reads.
+
+When someone says a published patch is broken, read its log before guessing:
+`pnpm patchy logs --failed --json`, or without `--failed` to see what led up to
+it. Each entry gives the version, handler, outcome and code, who opened the
+patch, the correlation id a browser's failure shows, its `ctx.log` lines with a
+thrown error's message and stack, and the steps it made, including writes that
+succeeded before it failed. Stacks point into the minified bundle, so the
+message is the clue. Pages hold up to 25 entries; continue with
+`--before <next>` and filter with jq. Only the owner and admins can read it.
+Reproduce the failure in `patchy dev` with fixtures, fix it, publish, and check
+the log for new entries.
 
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors

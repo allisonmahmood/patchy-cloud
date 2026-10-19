@@ -134,6 +134,20 @@ Responses:
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
 
+### `GET /api/patches/:patchId/log`
+
+Read one page of a patch's log, newest first: the portal's Log tab for the agent that builds the patch. Its current owner and company admins read it in any lifecycle state; another member answers 403 `not_owner` naming the owner, and unknown, unopenable, foreign and gone patches 404. Each entry is a top-level handler call with its version number, handler and kind, initiating viewer, outcome and code, timings, correlation id, `ctx.log` lines (including a thrown error's message and stack) and up to 50 retained steps: nested handlers and the operations each made, successful or not, with `stepsTruncated` when it made more. Quiet successful queries roll up without entries, so tiers 0 and 1 have none. `limit` is 1 to 25, default 10, and a page stops early rather than pass about 2 MiB, always holding at least one entry. `before` takes a previous page's `next`; an id from elsewhere yields an empty page. A bare `?failed` or `failed=true` keeps handler errors, failures and timeouts, searching 1,000 entries at a time: `windowEnded` says the search stopped at that edge, and `next` carries on. Machine tokens only; responses are private, no-store.
+
+Responses:
+
+- `200` [PatchLog](#patchlog)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ### `POST /api/patches/:patchId/share`
 
 Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
@@ -997,6 +1011,18 @@ RuntimeSuccess | HandlerFailure
 ```
 {
   scope: "company" | "public"
+}
+```
+
+### PatchLog
+
+```
+{
+  ok: true,
+  patchId: string,
+  entries: { id: string, correlationId: string, startedAt: string, settledAt: string | null, version: integer | null, handler: string, kind: "query" | "mutation" | "action", viewer: { id: string, name: string | null }, outcome: "pending" | "success" | "handler_error" | "failure" | "handler_timeout" | "unknown_outcome", code: string | null, durationMs: integer | null, guestMs: integer, dbMs: integer, callbacks: integer, attempts: integer, replyDelivered: boolean, logLines: unknown[], steps: { type: "invocation" | "call", id: string, parentId: string, at: string, name: string, kind: "query" | "mutation" | "action" | null, resource: string | null, connection: string | null, effectivePrincipal: string, outcome: "pending" | "success" | "handler_error" | "failure" | "handler_timeout" | "unknown_outcome", code: string | null, durationMs: integer | null, attempts: integer, rowCount: integer | null, logLines: unknown[] }[], stepsTruncated: boolean }[],
+  next: string | null,
+  windowEnded: boolean
 }
 ```
 
