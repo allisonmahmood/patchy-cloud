@@ -131,23 +131,15 @@ export const keyedSection = (command: string, key: string, markdown: string) => 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 /**
- * `body` with the keyed section in place: replacing the one already there, or
- * inserted before a final paragraph starting "Made by" (the attribution line),
- * or appended. Markers inside code fences are text, not markers. More than one
- * section for the key, or one missing a marker, fails rather than guessing.
+ * `body`'s lines, which are inside (or the edge of) a fenced code block, and
+ * where the keyed section's markers sit outside them. Markers inside code
+ * fences are text, not markers.
  */
-export const placeSection = (
-  body: string,
-  command: string,
-  key: string,
-  markdown: string
-): Effect.Effect<string, DuplicateSection | UnclosedSection> => {
+const scan = (body: string, command: string, key: string) => {
   const { open, close } = markersOf(command, key);
-  const section = keyedSection(command, key, markdown).split("\n");
   const lines = body.split(/\r?\n/);
   const opens: Array<number> = [];
   const closes: Array<number> = [];
-  /** Whether each line is inside (or is the edge of) a fenced code block. */
   const fenced: Array<boolean> = [];
   let fence: { readonly char: string; readonly length: number } | undefined;
   for (const [index, line] of lines.entries()) {
@@ -173,6 +165,23 @@ export const placeSection = (
     if (line.trim() === open) opens.push(index);
     else if (line.trim() === close) closes.push(index);
   }
+  return { open, close, lines, opens, closes, fenced };
+};
+
+/**
+ * `body` with the keyed section in place: replacing the one already there, or
+ * inserted before a final paragraph starting "Made by" (the attribution line),
+ * or appended. More than one section for the key, or one missing a marker,
+ * fails rather than guessing.
+ */
+export const placeSection = (
+  body: string,
+  command: string,
+  key: string,
+  markdown: string
+): Effect.Effect<string, DuplicateSection | UnclosedSection> => {
+  const section = keyedSection(command, key, markdown).split("\n");
+  const { open, close, lines, opens, closes, fenced } = scan(body, command, key);
   if (opens.length > 1)
     return Effect.fail(new DuplicateSection({ marker: open, count: opens.length }));
   if (closes.length > 1)
@@ -297,10 +306,13 @@ export const notUploaded = (
   key: string,
   files: ReadonlyArray<string>
 ) => {
-  const { open, close } = markersOf(command, key);
-  const start = body.indexOf(open);
-  const end = body.indexOf(close, start);
-  const section = start === -1 || end === -1 ? body : body.slice(start, end);
+  const { lines, opens, closes } = scan(body, command, key);
+  const [start] = opens;
+  const [end] = closes;
+  const section =
+    opens.length === 1 && closes.length === 1 && start! < end!
+      ? lines.slice(start, end! + 1).join("\n")
+      : body;
   return files.filter((file) => section.includes(`](${file})`));
 };
 

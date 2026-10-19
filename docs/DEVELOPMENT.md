@@ -237,8 +237,8 @@ run skips the clone. One run at a time per worktree: a second fails at once,
 and so does `pnpm dev down`, which otherwise deletes the checkouts too.
 
 - **Before** is where `HEAD` left `origin/main`, or the PR's base branch with
-  `--pr`, or `--base <ref>`. **After** is `HEAD`. Uncommitted changes aren't
-  included, and `--pr` refuses to run with them.
+  `--pr`, or `--base <ref>`. **After** is `HEAD`. Uncommitted changes and new
+  files aren't included, and `--pr` refuses to run with them.
 - **The scenario** is this worktree's environment's, or `team`; `--scenario`
   picks another. A base that can't set it up, or lacks the person, shows after
   only and says why.

@@ -45,7 +45,7 @@ export class UncommittedChanges extends Schema.TaggedError<UncommittedChanges>()
   {}
 ) {
   override get message() {
-    return "Evidence shows commits, and this worktree has uncommitted changes. Commit and push them first, so the PR shows what the evidence shows.";
+    return "Evidence shows commits, and this worktree has uncommitted changes or new files. Commit and push them first, so the PR shows what the evidence shows.";
   }
 }
 
@@ -139,7 +139,8 @@ const git = (root: string, step: string, args: ReadonlyArray<string>) =>
  * "After" is `HEAD`. "Before" is `base` when given, otherwise where `HEAD`
  * left `origin/<baseBranch>` (`main`, or the PR's base branch, fetched first
  * so it is current). The evidence is of commits, so `dirty` says whether the
- * working tree holds tracked changes that are not in them.
+ * working tree holds changes or new files that are not in them; ignored
+ * files, such as flows under `.local/`, don't count.
  */
 export const resolveCommits = Effect.fn("Evidence.resolveCommits")(function* (
   root: string,
@@ -147,12 +148,9 @@ export const resolveCommits = Effect.fn("Evidence.resolveCommits")(function* (
 ) {
   const head = yield* git(root, "Reading HEAD", ["rev-parse", "HEAD"]);
   const branch = yield* git(root, "Reading the branch", ["rev-parse", "--abbrev-ref", "HEAD"]);
+  // New files count too: an untracked source file is as missing from the evidence as an edit.
   const dirty =
-    (yield* git(root, "Checking for uncommitted changes", [
-      "status",
-      "--porcelain",
-      "--untracked-files=no"
-    ])) !== "";
+    (yield* git(root, "Checking for uncommitted changes", ["status", "--porcelain"])) !== "";
   const after: Commit = { sha: head, label: branch === "HEAD" ? "HEAD" : branch };
   if (Option.isSome(options.base)) {
     const sha = yield* git(root, "Resolving --base", [

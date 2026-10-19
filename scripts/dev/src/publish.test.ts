@@ -102,6 +102,25 @@ describe("placeSection", () => {
 });
 
 describe("notUploaded", () => {
+  it("reads the real section, not a fenced example of one before it", () => {
+    const body = [
+      "```md",
+      open,
+      "![Example](https://github.com/user-attachments/assets/1234)",
+      close,
+      "```",
+      "",
+      open,
+      "![Before](.local/shots/run/before-1-home-1280.png)",
+      close
+    ].join("\n");
+
+    assert.deepStrictEqual(
+      notUploaded(body, "compare", "ada", [".local/shots/run/before-1-home-1280.png"]),
+      [".local/shots/run/before-1-home-1280.png"]
+    );
+  });
+
   it("names the files gh left as local paths in the section", () => {
     const body = [
       "![Elsewhere](.local/shots/run/after-1-home-390.png)",
