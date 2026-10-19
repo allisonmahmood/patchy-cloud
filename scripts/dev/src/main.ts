@@ -903,7 +903,8 @@ const compare = Command.make(
           command: "compare",
           scenario: run.scenario,
           before: Option.some(run.commits.before),
-          after: run.commits.after
+          after: run.commits.after,
+          runDir: path.join(root, run.runDir)
         });
         const { person, before, beforeEmail } = yield* personOnBothSides(
           sides.before,
@@ -1048,7 +1049,8 @@ const film = Command.make(
           command: "film",
           scenario: run.scenario,
           before: afterOnly ? Option.none<Commit>() : Option.some(run.commits.before),
-          after: run.commits.after
+          after: run.commits.after,
+          runDir: path.join(root, run.runDir)
         });
         const { person, before, beforeEmail } = yield* personOnBothSides(
           sides.before,

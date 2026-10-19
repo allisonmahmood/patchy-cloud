@@ -425,8 +425,10 @@ const serveSide = Effect.fn("Evidence.serveSide")(function* (
   root: string,
   name: SideName,
   commit: Commit,
-  scenario: string
+  scenario: string,
+  runDir: string
 ) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = path.join(yield* evidenceDirOf(root), name);
   const env = yield* cloneEnv(root);
@@ -448,7 +450,19 @@ const serveSide = Effect.fn("Evidence.serveSide")(function* (
     )
   );
   yield* Console.error(`  ${name.padEnd(6)}  bringing up ${scenario}`);
-  const served = yield* bringUp(dir, name, scenario, env);
+  // The take-down deletes the instance's log, so a side that fails to come up keeps a copy.
+  const log = path.join(dir, ".local", "dev", "dev.log");
+  const kept = path.join(runDir, `${name}-dev.log`);
+  const served = yield* bringUp(dir, name, scenario, env).pipe(
+    Effect.tapError(() =>
+      fs
+        .copyFile(log, kept)
+        .pipe(
+          Effect.andThen(Console.error(`  ${name.padEnd(6)}  its dev.log is kept at ${kept}`)),
+          Effect.ignore
+        )
+    )
+  );
   return { name, commit, clone: dir, served } satisfies Side;
 });
 
@@ -463,6 +477,8 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
   readonly scenario: string;
   readonly before: Option.Option<Commit>;
   readonly after: Commit;
+  /** The run's folder, absolute; a side that fails to come up leaves its log here. */
+  readonly runDir: string;
 }) {
   yield* acquireLock(`${yield* evidenceDirOf(input.root)}.lock`, input.command);
   const [before, after] = yield* Effect.all(
@@ -472,7 +488,7 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
         onSome: (commit) => {
           const unavailable = (reason: string) =>
             Effect.succeed<Before>({ status: "unavailable", commit, reason });
-          return serveSide(input.root, "before", commit, input.scenario).pipe(
+          return serveSide(input.root, "before", commit, input.scenario, input.runDir).pipe(
             Effect.map((side): Before => ({ status: "served", side })),
             // The reason goes in a public PR, so it names the step, never its output.
             Effect.catchTags({
@@ -486,7 +502,7 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
           );
         }
       }),
-      serveSide(input.root, "after", input.after, input.scenario)
+      serveSide(input.root, "after", input.after, input.scenario, input.runDir)
     ],
     { concurrency: "unbounded" }
   );
