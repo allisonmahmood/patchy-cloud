@@ -11,6 +11,7 @@ import { Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
+import * as RuntimeStream from "./RuntimeStream.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 
 type Dependencies =
@@ -30,6 +31,9 @@ export const make = (
     const operatingLimits = yield* OperatingLimits.OperatingLimits;
     const companyTokens = yield* TokenBucket.make;
     const principalAdmission = yield* StreamAdmission.StreamAdmission;
+    // The server provides the host's streams, so a call keeps its viewer's open documents
+    // active; suites without streams have no documents to keep.
+    const streams = yield* Effect.serviceOption(RuntimeStream.RuntimeStream);
     // Capture Auth's viewer resolver requirements, without importing its Companies dependencies.
     const viewerContext =
       yield* Effect.context<
@@ -85,6 +89,7 @@ export const make = (
         viewer: identity,
         reauthorize: Effect.map(recheck, (current) => current.identity)
       })),
+      ...(Option.isSome(streams) ? { called: streams.value.called } : {}),
       admitCompany: Effect.fn("Runtime.admitCompany")(function* (companyId: string) {
         const { rate, burst } = yield* operatingLimits
           .getMany({

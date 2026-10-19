@@ -74,6 +74,29 @@ export class DirectSubscriptionRequired extends Schema.TaggedError<DirectSubscri
   }
 }
 
+/** One warm-hold owner, compared by identity. */
+interface Owner {
+  /** The window passed with no activity, so this owner let go because its document went idle. */
+  idle: boolean;
+}
+
+/**
+ * What a host keeps of a tier 2 document beside the fleet, across its stream generations: when
+ * its viewer was last active, the logical desired set it last admitted, and the one owner of its
+ * warm holds, the company task and the version's process, while it is active. Bound to the
+ * viewer and version it was admitted for.
+ */
+interface Activity {
+  readonly viewerId: string;
+  readonly versionId: string;
+  desired: string | undefined;
+  lastActive: number;
+  /** The connected generation; unset while the record waits among the disconnected. */
+  entry: Entry | undefined;
+  owner: Owner | undefined;
+  detachedAt: number;
+}
+
 type Entry = {
   readonly companyId: string;
   readonly patchId: string;
@@ -82,10 +105,14 @@ type Entry = {
   readonly generation: string;
   lastServed: { readonly versionId: string; readonly tier: number } | undefined;
   lastHandlerKinds: Readonly<Record<string, HandlerKind>> | undefined;
+  /** Set once admitted, for a tier 2 document beside the fleet. */
+  activity: Activity | undefined;
   readonly recheck: Effect.Effect<void, Runtime.RuntimeError>;
   readonly subscriptions: Subscriptions.DocumentSubscriptions;
   readonly send: (frame: RuntimeStreamFrame) => void;
   readonly close: (reason: string, frame?: RuntimeStreamFrame) => void;
+  /** Marks the document active, taking its warm holds back in the background if it was idle. */
+  readonly activate: Effect.Effect<void>;
 };
 
 /** Request admission and stream lifetime use the HTTP request's scope.
@@ -109,6 +136,16 @@ export class RuntimeStream extends Context.Service<
       HttpServerRequest.HttpServerRequest
     >;
     readonly notify: (patchId: string) => Effect.Effect<void>;
+    /**
+     * Marks the viewer's connected documents of the version on this host active, for a
+     * `server.call` Runtime admitted from that viewer.
+     */
+    readonly called: (call: {
+      readonly companyId: string;
+      readonly patchId: string;
+      readonly versionId: string;
+      readonly viewerId: string;
+    }) => Effect.Effect<void>;
     readonly connected: (companyId: string, patchId?: string) => Effect.Effect<number>;
     readonly drain: Effect.Effect<void>;
   }
@@ -133,6 +170,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const limits = yield* Limits.Limits;
     const callsPerMinute = yield* ContractLimits.get("runtime.calls.perMinute");
     const documentLimit = yield* ContractLimits.get("stream.documents");
+    const recordLimit = yield* ContractLimits.get("stream.activity.records");
+    const retention = yield* ContractLimits.get("stream.activity.retention");
+    const clock = yield* Clock.Clock;
     const operatingLimits = yield* StreamLimits.StreamLimits;
     const subscriptions = yield* Subscriptions.Subscriptions;
     const rootScope = yield* Scope.Scope;
@@ -165,6 +205,53 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const count = (map.get(key) ?? 0) + delta;
       if (count === 0) map.delete(key);
       else map.set(key, count);
+    };
+    // Activity records by document key. A connected document keeps its record; the disconnected
+    // wait in `detached`, longest gone first, until the bound or retention forgets them.
+    const activities = new Map<string, Activity>();
+    const detached = new Map<string, Activity>();
+    const forget = (now: number) => {
+      for (const [key, activity] of detached) {
+        if (detached.size <= recordLimit && activity.detachedAt + retention > now) return;
+        detached.delete(key);
+        if (activities.get(key) === activity) activities.delete(key);
+      }
+    };
+    /**
+     * The admitted document's record, which its first stream marks active. A document this host
+     * does not remember, or remembers for another viewer or version, starts active.
+     */
+    const attach = (key: string, entry: Entry, first: boolean): Activity => {
+      const now = clock.currentTimeMillisUnsafe();
+      forget(now);
+      detached.delete(key);
+      let activity = activities.get(key);
+      if (
+        activity === undefined ||
+        activity.viewerId !== entry.viewerId ||
+        activity.versionId !== entry.versionId
+      ) {
+        activity = {
+          viewerId: entry.viewerId,
+          versionId: entry.versionId,
+          desired: undefined,
+          lastActive: now,
+          entry,
+          owner: undefined,
+          detachedAt: now
+        };
+        activities.set(key, activity);
+      } else if (first) activity.lastActive = now;
+      activity.entry = entry;
+      return activity;
+    };
+    const detach = (key: string, activity: Activity) => {
+      activity.entry = undefined;
+      activity.owner = undefined;
+      activity.detachedAt = clock.currentTimeMillisUnsafe();
+      detached.delete(key);
+      detached.set(key, activity);
+      forget(activity.detachedAt);
     };
     const drain = Effect.sync(() => {
       draining = true;
@@ -274,11 +361,14 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       if (Option.isNone(found) || found.value.companyId !== identity.companyId)
         return yield* new Runtime.AccessDenied({});
       const loaded = found.value;
-      const { buffer } = yield* operatingLimits.getMany({
+      const { buffer, idle } = yield* operatingLimits.getMany({
         companyId: identity.companyId,
-        limits: { buffer: "stream.buffer.bytes" }
+        limits: { buffer: "stream.buffer.bytes", idle: "execution.document.idle" }
       });
       const bufferLimit = buffer.value;
+      // Only a tier 2 document beside the fleet holds a company task, so only it keeps activity.
+      const execution =
+        loaded.manifest.tier === 2 ? Option.getOrUndefined(executionLifecycle) : undefined;
       if (wire !== WIRE_VERSION || wire !== loaded.wireVersion)
         return yield* new Runtime.ShellOutdated({});
       const queue = yield* Queue.make<Uint8Array, Cause.Done>();
@@ -312,6 +402,13 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       let bytes = 0;
       let closeReason: string | undefined;
       let executionReady = loaded.manifest.tier !== 2;
+      // Whether the generation has decided how it starts; activity before then only counts.
+      let started = false;
+      let idled = 0;
+      let reactivated = 0;
+      // The longest stretch without activity this generation saw, the window's peak.
+      let quietest = 0;
+      const desired: Subscriptions.Desired = { value: undefined };
       const put = (frame: RuntimeStreamFrame) => {
         const chunk = encoder.encode(`data: ${encodeFrame(frame)}\n\n`);
         if (buffered + chunk.byteLength > bufferLimit) return false;
@@ -338,6 +435,12 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           adjust(patches, patchKey, -1);
           adjust(viewers, viewerKey, -1);
         }
+        // Leaving, by disconnect, replacement or hidden suspension, lets the warm holds go at
+        // once; the record keeps only what the next generation compares against.
+        if (entry.activity?.entry === entry) {
+          entry.activity.desired = desired.value;
+          detach(key, entry.activity);
+        }
       };
       const documentSubscriptions = subscriptions.attach({
         generation,
@@ -345,6 +448,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         binding: () => binding,
         scope,
         ready: () => executionReady,
+        desired,
         send: (frame: RuntimeStreamFrame) => entry.send(frame),
         check: Effect.gen(function* () {
           yield* recheck;
@@ -377,6 +481,104 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
               });
           })
       });
+      // Ends once the window passes with no activity, letting go of the owner in the same step,
+      // so an activity after it re-holds instead of finding an owner on its way out.
+      const untilIdle = (activity: Activity, owner: Owner) =>
+        Effect.gen(function* () {
+          while (true) {
+            const now = yield* Clock.currentTimeMillis;
+            const remaining = activity.lastActive + idle.value - now;
+            if (remaining <= 0) break;
+            yield* Effect.sleep(remaining);
+          }
+          // An owner already let go ends with its generation, as a document that left.
+          if (activity.owner !== owner) return yield* Effect.never;
+          owner.idle = true;
+          activity.owner = undefined;
+          idled++;
+        });
+      /**
+       * Holds the company task and keeps the version warm for one owner, until the window passes
+       * with no activity or the generation ends. The generation's startup hold settles held
+       * calls with `ready` or `start_failed`; a background re-hold sends nothing, warms nothing,
+       * and on failure leaves the next activity to retry.
+       */
+      const hold = (
+        fleet: ExecutionLifecycle.ExecutionLifecycle["Service"],
+        activity: Activity,
+        owner: Owner,
+        startup: boolean
+      ) =>
+        Effect.gen(function* () {
+          const { wait } = yield* operatingLimits.getMany({
+            companyId: identity.companyId,
+            limits: { wait: "execution.pool.wait" }
+          });
+          yield* fleet.connect(identity.companyId).pipe(
+            Effect.timeoutOption(wait.value),
+            Effect.flatMap((connected) =>
+              Option.isSome(connected)
+                ? Effect.void
+                : Effect.fail(
+                    new ExecutionLifecycle.LifecycleError({
+                      code: "busy",
+                      status: 503,
+                      retryAfterSeconds: 1,
+                      limitId: "execution.pool.wait",
+                      scope: "company",
+                      value: wait.value
+                    })
+                  )
+            )
+          );
+          if (closeReason !== undefined) return;
+          if (startup) {
+            executionReady = true;
+            entry.send({ type: "ready" });
+          }
+          // The version loads while the client boots. A reconnect, reauthentication or resume
+          // names its previous generation and only keeps the version warm, as does a document
+          // that comes back from idle: a document warms once, so its renewals never reload a
+          // version evicted under pressure.
+          if (Option.isSome(connectedVersions))
+            yield* connectedVersions.value.connect(loaded, {
+              warm: startup && request.headers["x-patchy-generation"] === undefined,
+              idle: () => owner.idle
+            });
+          if (startup) yield* documentSubscriptions.reconcile("ready");
+          return yield* Effect.never;
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              if (startup && closeReason === undefined)
+                entry.send({
+                  type: "start_failed",
+                  code: "busy",
+                  retryAfter: "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 1) : 1,
+                  ...("scope" in error && error.scope !== undefined ? { scope: error.scope } : {}),
+                  ...("limitId" in error && error.limitId !== undefined
+                    ? { limitId: error.limitId }
+                    : {}),
+                  ...("value" in error && error.value !== undefined ? { value: error.value } : {})
+                });
+            })
+          ),
+          Effect.raceFirst(untilIdle(activity, owner)),
+          Effect.raceFirst(Deferred.await(lifecycleClosed)),
+          Effect.scoped,
+          Effect.ensuring(
+            Effect.suspend(() => {
+              if (activity.owner === owner) activity.owner = undefined;
+              // A startup the window outlasted still settles held calls: an idle document is ready.
+              if (!owner.idle || executionReady || closeReason !== undefined) return Effect.void;
+              executionReady = true;
+              entry.send({ type: "ready" });
+              return documentSubscriptions.reconcile("ready");
+            })
+          ),
+          Effect.forkIn(scope),
+          Effect.asVoid
+        );
       const entry: Entry = {
         companyId: identity.companyId,
         patchId: input.patchId,
@@ -385,6 +587,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         generation,
         lastServed: undefined,
         lastHandlerKinds: undefined,
+        activity: undefined,
         recheck,
         subscriptions: documentSubscriptions,
         close,
@@ -392,7 +595,20 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           if (closeReason !== undefined) return;
           if (frame.type === "handlers") entry.lastHandlerKinds = frame.kinds;
           if (!put(frame)) close("slow_consumer", { type: "closed", reason: "slow_consumer" });
-        }
+        },
+        activate: Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          Effect.suspend(() => {
+            const activity = entry.activity;
+            if (execution === undefined || activity?.entry !== entry) return Effect.void;
+            quietest = Math.max(quietest, now - activity.lastActive);
+            activity.lastActive = Math.max(activity.lastActive, now);
+            if (!started || activity.owner !== undefined) return Effect.void;
+            const owner: Owner = { idle: false };
+            activity.owner = owner;
+            reactivated++;
+            return hold(execution, activity, owner, false);
+          })
+        )
       };
       const disconnect = Effect.sync(() => {
         close("disconnected");
@@ -417,6 +633,14 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             adjust(companies, identity.companyId, 1);
             adjust(patches, patchKey, 1);
             adjust(viewers, viewerKey, 1);
+            if (execution !== undefined) {
+              entry.activity = attach(
+                key,
+                entry,
+                request.headers["x-patchy-generation"] === undefined
+              );
+              desired.value = entry.activity.desired;
+            }
             return Effect.void;
           }
         ),
@@ -437,13 +661,15 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           },
           Deferred.await(done).pipe(
             Effect.ensuring(
-              Effect.suspend(() => {
+              Effect.flatMap(Clock.currentTimeMillis, (now) => {
                 // Closed before its totals are read, so a check settling later reports itself.
                 close("disconnected");
+                const activity = entry.activity;
                 return WideEvents.enrich({
                   ...documentSubscriptions.metrics(),
                   bytes,
                   closeReason: closeReason ?? "disconnected",
+                  ...(activity === undefined ? {} : { idled, reactivated }),
                   limits: [
                     {
                       limitId: "stream.documents",
@@ -456,7 +682,17 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
                       value: bufferLimit,
                       peak: peakBuffered,
                       configRevision: buffer.configRevision
-                    }
+                    },
+                    ...(activity === undefined
+                      ? []
+                      : [
+                          {
+                            limitId: "execution.document.idle",
+                            value: idle.value,
+                            peak: Math.max(quietest, now - activity.lastActive),
+                            configRevision: idle.configRevision
+                          }
+                        ])
                   ]
                 });
               })
@@ -471,68 +707,30 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         )
       );
       if (loaded.manifest.tier === 2 && closeReason === undefined) {
-        if (Option.isNone(executionLifecycle)) {
-          executionReady = true;
-          entry.send({ type: "ready" });
-        } else {
-          entry.send({ type: "starting" });
-          yield* Effect.gen(function* () {
-            const { wait } = yield* operatingLimits.getMany({
-              companyId: identity.companyId,
-              limits: { wait: "execution.pool.wait" }
-            });
-            yield* executionLifecycle.value.connect(identity.companyId).pipe(
-              Effect.timeoutOption(wait.value),
-              Effect.flatMap((connected) =>
-                Option.isSome(connected)
-                  ? Effect.void
-                  : Effect.fail(
-                      new ExecutionLifecycle.LifecycleError({
-                        code: "busy",
-                        status: 503,
-                        retryAfterSeconds: 1,
-                        limitId: "execution.pool.wait",
-                        scope: "company",
-                        value: wait.value
-                      })
-                    )
-              )
-            );
-            if (closeReason !== undefined) return;
+        const decidedAt = yield* Clock.currentTimeMillis;
+        yield* Effect.suspend(() => {
+          started = true;
+          const activity = entry.activity;
+          if (closeReason !== undefined) return Effect.void;
+          if (execution !== undefined && activity !== undefined) {
+            // An active document binds its company and keeps its version warm before `ready`.
+            if (activity.lastActive + idle.value > decidedAt) {
+              const owner: Owner = { idle: false };
+              activity.owner = owner;
+              entry.send({ type: "starting" });
+              return hold(execution, activity, owner, true);
+            }
+            // An idle document's reconnect opens dispatch without binding its company or warming.
             executionReady = true;
             entry.send({ type: "ready" });
-            // The version loads while the client boots. A reconnect, reauthentication or resume
-            // names its previous generation and only keeps the version warm: a document warms
-            // once, so its renewals never reload a version evicted under pressure.
-            if (Option.isSome(connectedVersions))
-              yield* connectedVersions.value.connect(loaded, {
-                warm: request.headers["x-patchy-generation"] === undefined
-              });
-            yield* documentSubscriptions.reconcile("ready");
-            yield* Deferred.await(lifecycleClosed);
-          }).pipe(
-            Effect.catch((error) =>
-              Effect.sync(() => {
-                if (closeReason === undefined)
-                  entry.send({
-                    type: "start_failed",
-                    code: "busy",
-                    retryAfter: "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 1) : 1,
-                    ...("scope" in error && error.scope !== undefined
-                      ? { scope: error.scope }
-                      : {}),
-                    ...("limitId" in error && error.limitId !== undefined
-                      ? { limitId: error.limitId }
-                      : {}),
-                    ...("value" in error && error.value !== undefined ? { value: error.value } : {})
-                  });
-              })
-            ),
-            Effect.raceFirst(Deferred.await(lifecycleClosed)),
-            Effect.scoped,
-            Effect.forkIn(scope)
-          );
-        }
+            return documentSubscriptions
+              .reconcile("ready")
+              .pipe(Effect.forkIn(scope), Effect.asVoid);
+          }
+          executionReady = true;
+          entry.send({ type: "ready" });
+          return Effect.void;
+        });
       }
       yield* Effect.gen(function* () {
         while (closeReason === undefined) {
@@ -686,7 +884,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           limitId: attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
           value: attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : callsPerMinute
         });
-      yield* entry.subscriptions.update(input);
+      // A change to the logical desired set is the viewer's activity; a repeat is not.
+      if (yield* entry.subscriptions.update(input)) yield* entry.activate;
     });
     return RuntimeStream.of({
       open,
@@ -701,6 +900,18 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             }
             yield* refresh(patchId, targets);
           })
+        ),
+      called: (call) =>
+        Effect.forEach(
+          [...entries.values()].filter(
+            (entry) =>
+              entry.companyId === call.companyId &&
+              entry.patchId === call.patchId &&
+              entry.versionId === call.versionId &&
+              entry.viewerId === call.viewerId
+          ),
+          (entry) => entry.activate,
+          { discard: true }
         ),
       connected: (companyId, patchId) =>
         Effect.sync(() =>

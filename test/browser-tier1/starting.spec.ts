@@ -408,3 +408,66 @@ test.describe("fleet bind retry", () => {
       });
   });
 });
+
+test.describe("idle documents", () => {
+  test.use({
+    serverEnvironment: {
+      EXECUTION_PROVIDER: "local-fleet",
+      PATCHY_LIMITS_JSON: JSON.stringify({
+        "execution.document.idle": 1_000,
+        "execution.company.idle": 1_000,
+        "execution.housekeeping.interval": 250,
+        "execution.housekeeping.lease": 1_000
+      })
+    }
+  });
+
+  test("an open tab nobody uses lets its company go, and resumes to run a held call once", async ({
+    page,
+    instance
+  }) => {
+    await page.clock.install();
+    const patch = await publish(instance);
+    const frame = await open(page, patch);
+    await add(frame, instance.wire, "before-idle");
+    await expect
+      .poll(() => reply(frame, "before-idle"))
+      .toMatchObject({ kind: "result", value: { label: "before-idle" } });
+    // Visible and connected, the tab stops holding the company once nobody uses it.
+    const released = async () =>
+      (
+        await instance.platform.query<{ released: number }>(
+          "SELECT count(*)::integer AS released FROM execution_bindings WHERE release_cause = 'idle'"
+        )
+      ).rows[0]!.released;
+    await expect.poll(released, { timeout: 30_000 }).toBe(1);
+    expect(instance.streamConnections.size).toBe(1);
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 100)));
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.fastForward(30_000);
+    await expect.poll(() => instance.streamConnections.size).toBe(0);
+    await add(frame, instance.wire, "after-idle");
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.resume();
+    // The idle resume is ready at once; the held call binds the company on demand.
+    await expect
+      .poll(() => reply(frame, "after-idle"), { timeout: 30_000 })
+      .toMatchObject({ kind: "result", value: { label: "after-idle" } });
+    expect(calls(instance)).toHaveLength(2);
+    expect(
+      await frame.evaluate(
+        () =>
+          (window as unknown as FixtureWindow).harness.replies.filter(
+            (reply) => reply.id === "after-idle"
+          ).length
+      )
+    ).toBe(1);
+    await expect(page.getByRole("dialog", { name: "Starting your tools" })).toBeHidden();
+  });
+});

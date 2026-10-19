@@ -111,61 +111,76 @@ it.effect(
 );
 
 // A pinned shell sends a first server call without asking `me`, so admission alone stops another viewer.
-it.effect("refuses a server call pinned to another viewer before invoking it", () => {
-  let invoked = 0;
-  return Effect.gen(function* () {
-    const runtime = yield* Runtime.make(
-      { me },
-      {
-        origin: "http://localhost",
-        bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
-      }
-    );
-    const call = (userId: string) =>
-      runtime
-        .call({
+it.effect(
+  "refuses a server call pinned to another viewer before invoking it or counting it",
+  () => {
+    let invoked = 0;
+    const called: unknown[] = [];
+    return Effect.gen(function* () {
+      const runtime = yield* Runtime.make(
+        { me },
+        {
+          origin: "http://localhost",
+          bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
+          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) }),
+          called: (call) => Effect.sync(() => called.push(call))
+        }
+      );
+      const call = (userId: string) =>
+        runtime
+          .call({
+            patchId: version.patchId,
+            versionId: version.versionId,
+            wire: WIRE_VERSION,
+            principal: { userId },
+            op: "server.call",
+            args: { handler: "notes.create", args: {} }
+          })
+          .pipe(
+            Effect.provideService(
+              HttpServerRequest.HttpServerRequest,
+              HttpServerRequest.fromWeb(
+                new Request("http://localhost/api/runtime/call", {
+                  method: "POST",
+                  headers: {
+                    origin: "http://localhost",
+                    "x-patchy-wire": String(WIRE_VERSION),
+                    "x-patchy-principal": JSON.stringify({ userId })
+                  }
+                })
+              )
+            )
+          );
+      const error = yield* call("usr_other").pipe(Effect.flip);
+      assert.strictEqual(error.code, "principal_changed");
+      assert.strictEqual(invoked, 0);
+      assert.deepStrictEqual(called, []);
+      yield* call(viewer.user.id);
+      assert.strictEqual(invoked, 1);
+      // Only the admitted call is the viewer's activity on their open documents.
+      assert.deepStrictEqual(called, [
+        {
+          companyId: viewer.company.id,
           patchId: version.patchId,
           versionId: version.versionId,
-          wire: WIRE_VERSION,
-          principal: { userId },
-          op: "server.call",
-          args: { handler: "notes.create", args: {} }
-        })
-        .pipe(
-          Effect.provideService(
-            HttpServerRequest.HttpServerRequest,
-            HttpServerRequest.fromWeb(
-              new Request("http://localhost/api/runtime/call", {
-                method: "POST",
-                headers: {
-                  origin: "http://localhost",
-                  "x-patchy-wire": String(WIRE_VERSION),
-                  "x-patchy-principal": JSON.stringify({ userId })
-                }
-              })
-            )
-          )
-        );
-    const error = yield* call("usr_other").pipe(Effect.flip);
-    assert.strictEqual(error.code, "principal_changed");
-    assert.strictEqual(invoked, 0);
-    yield* call(viewer.user.id);
-    assert.strictEqual(invoked, 1);
-  }).pipe(
-    Effect.provideService(Invocation.Invocation, {
-      call: () =>
-        Effect.sync(() => {
-          invoked++;
-          return { ok: true as const, value: null };
-        })
-    }),
-    Effect.provideService(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some({ ...version, patchTier: 2 }))
-    }),
-    Effect.provide(Limits.layer)
-  );
-});
+          viewerId: viewer.user.id
+        }
+      ]);
+    }).pipe(
+      Effect.provideService(Invocation.Invocation, {
+        call: () =>
+          Effect.sync(() => {
+            invoked++;
+            return { ok: true as const, value: null };
+          })
+      }),
+      Effect.provideService(LoadedVersions.LoadedVersions, {
+        find: () => Effect.succeed(Option.some({ ...version, patchTier: 2 }))
+      }),
+      Effect.provide(Limits.layer)
+    );
+  }
+);
 
 it.effect(
   "a retained tier 1 document gets only me while tier 2 is served, and writes reopen on rollback",

@@ -165,13 +165,16 @@ const services = Layer.mergeAll(
       const postgres = yield* PostgresOperations.makeHandlers;
       const posthog = yield* PostHogOperations.makeHandlers;
       const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog };
-      const runtime = Layer.merge(
-        RuntimeProduction.layer(handlers),
-        RuntimeStream.layer.pipe(
-          Layer.provide(Subscriptions.layer),
-          Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
-        )
-      ).pipe(Layer.provide(StreamAdmission.layer));
+      // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
+      const runtime = RuntimeProduction.layer(handlers).pipe(
+        Layer.provideMerge(
+          RuntimeStream.layer.pipe(
+            Layer.provide(Subscriptions.layer),
+            Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
+          )
+        ),
+        Layer.provide(StreamAdmission.layer)
+      );
       if (yield* FleetInvocation.enabled)
         return runtime.pipe(
           Layer.provide(

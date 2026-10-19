@@ -80,7 +80,8 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
 | `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
 | `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed; held calls are never replayed | `busy` | Yes | deployment |
-| `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no connected tier 2 documents and no in-flight work | None | Yes | deployment |
+| `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no active tier 2 documents and no in-flight work | None | Yes | deployment |
+| `execution.document.idle` | operating | 600000 | milliseconds | company | Time a connected tier 2 document goes without activity before it lets go of its company task and version process | None | Yes | deployment |
 | `execution.deploy.drain` | operating | 90000 | milliseconds | host | Deployment deregistration delay | None | No | deployment |
 | `execution.endpoint.lifetime` | operating | 60000 | milliseconds | host | Reuse of an ECS task's resolved address by a host of the task's release; a failed call forgets it sooner | None | No | deployment |
 | `files.handle.length` | contract | 57 | characters | viewer | Fixed authorised handle size; included in page and result bounds | None | No | release |
@@ -105,3 +106,5 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `subscriptions.reconcile.interval` | operating | 30000 | milliseconds | host | Reconcile durable revisions and document authority | None | No | deployment |
 | `stream.hidden.suspend` | contract | 30000 | milliseconds | viewer | Hidden document delay before suspension | None | No | release |
 | `stream.remount.grace` | contract | 1000 | milliseconds | viewer | Document remount grace | None | No | release |
+| `stream.activity.records` | contract | 4096 | documents | host | Disconnected tier 2 documents whose activity a host remembers for their reconnect; the longest gone are forgotten first | None | No | release |
+| `stream.activity.retention` | contract | 3600000 | milliseconds | host | How long a host remembers a disconnected tier 2 document's activity; a document it has forgotten reconnects active | None | No | release |

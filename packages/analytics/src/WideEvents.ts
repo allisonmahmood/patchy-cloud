@@ -135,7 +135,13 @@ const streamMetrics = {
   checks: Schema.optionalKey(Schema.Number),
   checkMs: Schema.optionalKey(Schema.Number),
   bytes: Schema.optionalKey(Schema.Number),
-  closeReason: Schema.optionalKey(Schema.String)
+  closeReason: Schema.optionalKey(Schema.String),
+  /**
+   * Times during this generation a tier 2 document beside the fleet went idle, letting go of its
+   * company task and version process, and times its activity took them back.
+   */
+  idled: Schema.optionalKey(Schema.Number),
+  reactivated: Schema.optionalKey(Schema.Number)
 };
 /**
  * A subscription POST's desired-set change and what this host knew of its document.
@@ -163,10 +169,12 @@ const bindingMetrics = {
   releaseCause: Schema.optionalKey(Schema.String)
 };
 const count = Schema.optionalKey(Schema.Number);
-/** How long one host kept a connected tier 2 version's process warm, and what that took. */
+/** How long one host kept an open tier 2 version's process warm, and what that took. */
 const keepaliveMetrics = {
-  /** The most documents connected to the version on this host at once. */
+  /** The most active documents connected to the version on this host at once. */
   peakDocuments: Schema.optionalKey(Schema.Number),
+  /** Whether the last of them went idle or left. Unset when the host shut down first. */
+  endReason: Schema.optionalKey(Schema.Literals(["idle", "left"])),
   /** Touches by what each found: a ready process, one loading, none, or why none was sent. */
   touches: Schema.optionalKey(
     Schema.Struct({

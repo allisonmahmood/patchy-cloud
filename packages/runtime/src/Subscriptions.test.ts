@@ -207,6 +207,77 @@ it.effect(
     }).pipe(Effect.scoped)
 );
 
+it.effect("reports a change to the logical desired set only as its deltas apply", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const other: RuntimeSubscription = { id: "other", op: "shared.list", args: { alias: "other" } };
+    assert.isTrue(yield* f.update({ type: "replace", sequence: 0, subscriptions: [query, other] }));
+    // Order, revisions and vectors are not the logical set; ids, operations and args are.
+    assert.isFalse(
+      yield* f.update({
+        type: "replace",
+        sequence: 1,
+        subscriptions: [{ ...other, revision: "3", vector: { [key]: "3" } }, query]
+      })
+    );
+    assert.isTrue(
+      yield* f.update({
+        type: "replace",
+        sequence: 2,
+        subscriptions: [query, { ...other, args: { alias: "renamed" } }]
+      })
+    );
+    // Repeated, stale and buffered deltas change nothing until they apply.
+    assert.isFalse(yield* f.update({ type: "unsubscribe", sequence: 2, id: other.id }));
+    assert.instanceOf(
+      yield* f.update({ type: "unsubscribe", sequence: 1, id: other.id }).pipe(Effect.flip),
+      Subscriptions.StaleSequence
+    );
+    assert.isFalse(yield* f.update({ type: "unsubscribe", sequence: 4, id: query.id }));
+    assert.isTrue(yield* f.update({ type: "unsubscribe", sequence: 3, id: other.id }));
+  }).pipe(Effect.scoped)
+);
+
+it.effect("compares a generation's first set with the one its document last admitted", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const desired: Subscriptions.Desired = { value: undefined };
+    const generation = (name: string) => {
+      const document = f.registry.attach({
+        generation: name,
+        documentId: "document_generations",
+        binding: () => binding,
+        check: Effect.void,
+        scope: f.scope,
+        send: () => {},
+        desired
+      });
+      const replace = (subscriptions: readonly RuntimeSubscription[]) =>
+        document.update({
+          patchId: binding.patchId,
+          versionId: binding.versionId,
+          documentId: "document_generations",
+          generation: name,
+          type: "replace",
+          sequence: 0,
+          subscriptions
+        });
+      return { document, replace };
+    };
+    const first = generation("first");
+    assert.isTrue(yield* first.replace([query]));
+    first.document.close();
+    // A reconnect's replace repeats the set with what it received meanwhile.
+    const second = generation("second");
+    assert.isFalse(yield* second.replace([{ ...query, revision: "1", vector: f.vector() }]));
+    second.document.close();
+    // One that carries changes made while disconnected is a change.
+    const third = generation("third");
+    assert.isTrue(yield* third.replace([]));
+    third.document.close();
+  }).pipe(Effect.scoped)
+);
+
 it.effect("requires a full desired set after five seconds or a 65th buffered delta", () =>
   Effect.gen(function* () {
     const f = yield* fixture;

@@ -685,7 +685,17 @@ export const registry = {
     default: 1800000,
     unit: "milliseconds",
     scope: "company",
-    measure: "Release after no connected tier 2 documents and no in-flight work",
+    measure: "Release after no active tier 2 documents and no in-flight work",
+    refusal: null,
+    overridable: true
+  },
+  "execution.document.idle": {
+    kind: "operating",
+    default: 600000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Time a connected tier 2 document goes without activity before it lets go of its company task and version process",
     refusal: null,
     overridable: true
   },
@@ -903,6 +913,26 @@ export const registry = {
     unit: "milliseconds",
     scope: "viewer",
     measure: "Document remount grace",
+    refusal: null,
+    overridable: false
+  },
+  "stream.activity.records": {
+    kind: "contract",
+    default: 4096,
+    unit: "documents",
+    scope: "host",
+    measure:
+      "Disconnected tier 2 documents whose activity a host remembers for their reconnect; the longest gone are forgotten first",
+    refusal: null,
+    overridable: false
+  },
+  "stream.activity.retention": {
+    kind: "contract",
+    default: 3600000,
+    unit: "milliseconds",
+    scope: "host",
+    measure:
+      "How long a host remembers a disconnected tier 2 document's activity; a document it has forgotten reconnects active",
     refusal: null,
     overridable: false
   },

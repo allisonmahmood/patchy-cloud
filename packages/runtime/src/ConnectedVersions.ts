@@ -49,13 +49,15 @@ const settled = (touched: ExecutionLifecycle.TouchOutcome): WarmupOutcome | unde
 };
 
 /**
- * One version's keepalive on this host: its connected documents, and a loop that touches the
- * version's process until the last of them leaves.
+ * One version's keepalive on this host: its active connected documents, and a loop that touches
+ * the version's process until the last of them goes idle or leaves.
  */
 interface Keepalive {
   readonly version: LoadedVersion;
   documents: number;
   peakDocuments: number;
+  /** Why the last document let go: it went idle, or it left. */
+  endReason: "idle" | "left" | undefined;
   /** A document's first stream asked for a warmup the loop has not tried yet. */
   warm: boolean;
   /** Rings the loop to touch, and warm if asked, before its next turn. */
@@ -66,22 +68,24 @@ interface Keepalive {
 }
 
 /**
- * The tier 2 versions with a connected document on this host, kept loaded on their company task
- * while connected. Present only beside the execution fleet.
+ * The tier 2 versions with an active connected document on this host, kept loaded on their
+ * company task while one is. Present only beside the execution fleet.
  */
 export class ConnectedVersions extends Context.Service<
   ConnectedVersions,
   {
     /**
-     * Holds the version warm for the caller's scope, which a document's ready stream owns. Its
-     * first holder on this host starts touching the version's process before each idle window
-     * ends; the last one to leave, by disconnect or hidden suspension, stops it. A touch never
-     * loads, so an evicted version waits for demand. With `warm`, a document's first stream
-     * also loads the version now, unless a touch finds it loaded. Never fails or waits.
+     * Holds the version warm for the caller's scope, which an active document's warm-hold owner
+     * owns. Its first holder on this host starts touching the version's process before each idle
+     * window ends; the last one to let go, by going idle, disconnecting or suspending while
+     * hidden, stops it. A touch never loads, so an evicted version waits for demand. With
+     * `warm`, a document's first stream also loads the version now, unless a touch finds it
+     * loaded. `idle`, asked as the hold ends, says whether its document went idle rather than
+     * left. Never fails or waits.
      */
     readonly connect: (
       version: LoadedVersion,
-      options: { readonly warm: boolean }
+      options: { readonly warm: boolean; readonly idle?: () => boolean }
     ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@patchy/runtime/ConnectedVersions") {}
@@ -209,7 +213,8 @@ export const make = Effect.gen(function* () {
               WideEvents.enrich({
                 peakDocuments: keepalive.peakDocuments,
                 touches: keepalive.touches,
-                warmups: keepalive.warmups
+                warmups: keepalive.warmups,
+                ...(keepalive.endReason === undefined ? {} : { endReason: keepalive.endReason })
               })
             )
           )
@@ -228,6 +233,7 @@ export const make = Effect.gen(function* () {
             version,
             documents: 0,
             peakDocuments: 0,
+            endReason: undefined,
             warm: options.warm,
             wake: Deferred.makeUnsafe<void>(),
             closed: Deferred.makeUnsafe<void>(),
@@ -247,6 +253,7 @@ export const make = Effect.gen(function* () {
         ({ key, keepalive }) =>
           Effect.suspend(() => {
             if (--keepalive.documents > 0) return Effect.void;
+            keepalive.endReason = options.idle?.() === true ? "idle" : "left";
             if (keepalives.get(key) === keepalive) keepalives.delete(key);
             return Deferred.succeed(keepalive.closed, undefined);
           })

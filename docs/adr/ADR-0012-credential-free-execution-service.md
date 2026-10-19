@@ -215,7 +215,18 @@ supervisors get a bind by hash or a touch: older ones refuse the field and have 
 touch route, so a touch for another release's task is skipped without a request,
 and that task's release is remembered rather than asked of ECS again.
 
-A host keeps the version of each connected, ready tier 2 document loaded. One
+A host keeps the version of each connected, active tier 2 document loaded. A
+document is active from its first stream until `execution.document.idle` (ten
+minutes by default, per company) passes without a change to its logical desired
+set or an admitted `server.call` from its viewer for that version on that host.
+Reconnects, reauthentication, reconciliation and re-runs caused by other people's
+writes don't count. Each host keeps one activity record per document across its
+stream generations, with the last admitted desired set as a digest, and one owner
+of its company hold and keepalive at a time. Disconnected records wait in a
+bounded cache (`stream.activity.records`, `stream.activity.retention`), and a
+reconnect the host has no record of starts active. An idle document lets go of
+both holds and stays connected and ready; its activity takes them back in the
+background, without warming. One
 keepalive per company version on each host touches it right away; each later touch
 starts 30 to 40 percent of the idle window after the previous one started, and gives
 up after 10 percent. A lost touch therefore still leaves the next to land within 90
@@ -228,8 +239,9 @@ still reap a process already idle longer than the new window, as it would withou
 touches; demand reloads it. Each touch reads the patch's pause and the company's
 current active binding, and goes to that task at that epoch; it never admits,
 claims a task or loads. A paused patch, or a company without an active binding, is
-not touched. The last document's disconnect, including a hidden document's
-suspension, ends the keepalive, and the process idles out as before. A document's
+not touched. The last active document going idle or disconnecting, including a
+hidden document's suspension, ends the keepalive, and the process idles out as
+before. A document's
 first stream also warms its version once it is ready, while the client boots: if
 the touch finds no process, it binds the version under a normal admission, beside
 the touches rather than in their way, one warmup at a time per keepalive. As a
@@ -272,11 +284,12 @@ replacement spares; their old admissions are fenced atomically with replacement
 claim, and previously admitted work drains on the predecessor. Staging and promoting
 an earlier revision performs rollback. A restarting old host cannot reverse promotion.
 
-Connected document and admitted invocation lifetimes hold shared database advisory
+Active document and admitted invocation lifetimes hold shared database advisory
 locks. They are not presence rows, heartbeats or a document lease. The controller
 checks idle eligibility against those locks and atomically enters stopping under
-the binding owner check before stopping the provider task. A disconnected document
-releases its lock; an admitted call retains its separate lock through cleanup.
+the binding owner check before stopping the provider task. A document that
+disconnects or goes idle releases its lock; an admitted call, including an idle
+document's re-run, retains its separate lock through cleanup.
 Each replica uses one reserved database session for these locks, not one connection
 per document. A failed session is replaced and all still-held keys are reacquired,
 with reference counts preserved. A bounded session probe detects loss even when
@@ -515,12 +528,13 @@ both slots readable.
    state, then returns `busy`. Residency is separate: at most 12 loaded-version
    processes and 1.5 GiB aggregate, including supervisor, bundles and overlapping
    versions. Evict idle processes first; refuse `busy` if none is idle. Reap at
-   60 seconds idle, where a connected document's touch counts as use, and kill a
+   60 seconds idle, where an active document's touch counts as use, and kill a
    process at 512 MiB RSS. Dormant patches spawn nothing.
-3. **Idle release counts all work.** Release follows 30 minutes with no connected
+3. **Idle release counts all work.** Release follows 30 minutes with no active
    tier 2 documents and no work in flight. Retries, nested calls after document
    departure and transaction cleanup count. Fence new admissions before stopping;
-   an open racing release binds fresh. Hidden documents do not retain a task.
+   an open racing release binds fresh. Hidden documents do not retain a task, and
+   neither does an open one nobody has used for ten minutes.
 4. **The controller is host code over the platform database.** Atomic claims and
    a database uniqueness constraint give a company one admission-serving binding.
    Ambiguous bind acknowledgements retry by task identity and binding epoch,
