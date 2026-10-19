@@ -50,13 +50,19 @@ describe("redactText", () => {
       ).text,
       '[account](https://x.co/?email=[redacted]) {"email":"[redacted]"}'
     );
-    assert.strictEqual(
-      redactText(new Map(), "git config user.email 'jane@company.com'").text,
-      "git config user.email '[redacted]'"
-    );
+    for (const quoted of [
+      "'jane@company.com'",
+      `'"jane doe"@company.com'`,
+      `'"jane doe"%40company.com'`
+    ])
+      assert.strictEqual(
+        redactText(new Map(), `git config user.email ${quoted}`).text,
+        "git config user.email '[redacted]'",
+        quoted
+      );
     // A run with no `@` is scanned once: quadratic scanning takes seconds here.
     const started = performance.now();
-    redactText(new Map(), "a'".repeat(64 * 1024));
+    for (const run of ["a'", "'"]) redactText(new Map(), run.repeat(64 * 1024));
     assert.isBelow(performance.now() - started, 1_000);
     const kept =
       "ada@acme.example, ada%40acme.example, dev@patchy.local, patchy@0.14.0, @effect/vitest@4.0.1, user@host";
