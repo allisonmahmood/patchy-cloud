@@ -168,6 +168,51 @@ jobs:
       - name: Exercise the packed tier 2 journey against an isolated real server
         run: pnpm test:packed-tier2-e2e
 
+  # A deploy of the PR and a rollback to the live release, rehearsed on one set of
+  # data when the PR changes a migration (or the rehearsal); otherwise it passes at
+  # once, so the check can be required. `pnpm test:rollback-rehearsal`.
+  rollback-rehearsal:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # The Deploy runs, which say whether production's commit is settled.
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The merge commit and its first parent, the base branch: the PR's own changes.
+          fetch-depth: 2
+      - name: Look for a changed migration
+        id: changed
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- ':(glob)**/src/migrations.ts' scripts/rollback-rehearsal.ts; then
+            echo "No migration changed, so there is no rollback to rehearse."
+          else
+            echo "rehearse=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: pnpm/action-setup@v6
+        if: steps.changed.outputs.rehearse
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        if: steps.changed.outputs.rehearse
+        with:
+          # Production's Node, the node:24-slim digest in apps/server/Dockerfile.
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: steps.changed.outputs.rehearse
+      - name: Install Chromium and system dependencies
+        if: steps.changed.outputs.rehearse
+        uses: ./.github/actions/playwright
+      - name: Rehearse a deploy and a rollback on one set of data
+        if: steps.changed.outputs.rehearse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: pnpm test:rollback-rehearsal
+
   # Tier 1 and 2 pages in Chromium against an isolated server; `pnpm test:browser`.
   browser:
     runs-on: ubuntu-24.04

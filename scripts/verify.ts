@@ -8,7 +8,8 @@
  *
  * Suites run one at a time and keep going after a failure, so one run reports
  * everything; the exit code is nonzero if any failed. Keep the acceptance list
- * in step with the jobs in .github/workflows/ci.yml.
+ * in step with the jobs in .github/workflows/ci.yml, except `rollback-rehearsal`,
+ * which rehearses commits against the one production runs.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 

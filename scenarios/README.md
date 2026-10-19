@@ -13,6 +13,8 @@ A repo patch's source is `patches/<repo>/`, holding only builder-owned files: `s
 
 `sampleData: true` means the patch's empty state has a **Load sample data** button. `up` presses it once, as the publisher, after publishing. Sample data comes from the patch's own code, so it uses the scenario's people and goes through the patch's own rules.
 
+The rollback rehearsal (`pnpm test:rollback-rehearsal`) seeds `brightline` with the live release, then opens every patch after each upgrade and rollback; a `sampleData` patch fails it if its empty state comes back.
+
 File patches are static pages in `files/`, published with their `name` and `description`.
 
 | Scenario     | What it is                                                                                                                                                                                  |

@@ -722,6 +722,29 @@ hidden after a rollback. A patch whose current version declares a later
 integration still needs that release to serve or roll back, so recovering it
 means rolling forward.
 
+CI's `rollback-rehearsal` tries the first of these before a migration merges. On
+a pull request that changes a capability's `src/migrations.ts`, the live release,
+the commit `/healthz/deep` names, starts a fresh dev-runner instance, migrates
+and seeds the brightline scenario; the PR's server starts on that data and
+migrates it; then the live release's server starts on it again. Those two swap
+only the server build and seed nothing, so rows stay as the migration left them.
+After each start it exercises the deep health check, that build's CLI (whoami,
+list and a publish) and, in Chromium, the portal and every scenario patch, whose
+live queries must deliver again as they did for the live release and whose
+sample data must still show; meanwhile the server must log no failed request,
+call or live query. A failure names its step. A failure caused by another
+unreleased migration on `main` is real too, since the next release carries it.
+While a Deploy run is unfinished, or the one updated last did not succeed, the
+live commit is uncertain, by the same rule a deploy pins it with (AGENTS.md ›
+Deploying), and the check fails until it settles.
+
+A pass means the exercised paths survived, not that every rollback works. The
+rehearsal runs the dev runner's local storage and execution, not Object Storage
+or the fleet, and reaches only what the brightline scenario and its patches use.
+A change that writes a new shape without a migration is not rehearsed at all;
+the PR's Release impact answers
+([#788](https://github.com/allisonmahmood/patchy-cloud/issues/788)) cover it.
+
 ### Restoring data
 
 Neon holds the platform database and one database per company on the production
