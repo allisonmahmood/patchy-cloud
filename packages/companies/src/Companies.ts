@@ -158,7 +158,7 @@ export const make = Effect.gen(function* () {
   const companyColumns = sql`id, handle, name, created_at AS "createdAt"`;
   const userColumns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
     email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
-    whats_new_seen AS "whatsNewSeen"`;
+    0 AS "whatsNewSeen"`;
   const inviteColumns = sql`id, company_id AS "companyId", email, role, invited_by AS "invitedBy",
     clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt", expires_at AS "expiresAt",
     revoked_at AS "revokedAt", consumed_at AS "consumedAt"`;
@@ -199,9 +199,9 @@ export const make = Effect.gen(function* () {
     // Creation and invitation acceptance both land here, so the name rule applies once.
     // A new member starts caught up on What's new; the history is still one click away.
     execute: ({ id, companyId, clerkUserId, email, name, role, now }) => sql`
-      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at, whats_new_seen)
+      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at)
       VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${role},
-        to_timestamp(${now / 1_000}), ${WhatsNew.latestRelease})
+        to_timestamp(${now / 1_000}))
       ON CONFLICT DO NOTHING RETURNING ${userColumns}`
   });
   const existingUser = SqlSchema.findOneOption({

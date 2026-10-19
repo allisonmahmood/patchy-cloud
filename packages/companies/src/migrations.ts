@@ -125,5 +125,7 @@ export const migrations: Migrations = {
         (look_restored_by IS NULL) = (look_restored_at IS NULL)
         AND (look_restore_note IS NULL OR look_restored_by IS NOT NULL)
       )`
-  )
+  ),
+  // Throwaway (#790 demo): drops a column the live release reads on every user lookup.
+  "0019_drop_whats_new_seen": ddl(`ALTER TABLE users DROP COLUMN whats_new_seen`)
 };

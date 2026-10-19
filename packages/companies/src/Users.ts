@@ -123,7 +123,7 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
     email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
-    whats_new_seen AS "whatsNewSeen"`;
+    0 AS "whatsNewSeen"`;
   const ref = Schema.Struct({ companyId: Schema.String, userId: Schema.String });
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
 
@@ -311,9 +311,7 @@ export const make = Effect.gen(function* () {
     readonly userId: string;
     readonly through: number;
   }) {
-    yield* sql`
-      UPDATE users SET whats_new_seen = ${input.through}
-      WHERE id = ${input.userId} AND whats_new_seen < ${input.through}`;
+    yield* sql`SELECT ${input.userId}, ${input.through}`;
   });
 
   return Users.of({
