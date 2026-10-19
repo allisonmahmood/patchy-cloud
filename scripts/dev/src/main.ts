@@ -1118,7 +1118,8 @@ const film = Command.make(
           ...delivered
         })
       );
-    else yield* printDelivery(root, delivered);
+    else if (broken === null) yield* printDelivery(root, delivered);
+    else yield* Console.log(["", delivered.section, ""].join("\n"));
     if (broken !== null)
       return yield* new FlowBrokeAfter({ step: broken.step, reason: broken.message, video });
     yield* failPartial(delivered);

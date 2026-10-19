@@ -158,7 +158,9 @@ export const resolveCommits = Effect.fn("Evidence.resolveCommits")(function* (
       "--verify",
       `${options.base.value}^{commit}`
     ]);
-    return { before: { sha, label: options.base.value } satisfies Commit, after, dirty };
+    // A sha names itself; a branch or tag is worth naming.
+    const label = sha.startsWith(options.base.value) ? "--base" : `--base ${options.base.value}`;
+    return { before: { sha, label } satisfies Commit, after, dirty };
   }
   const baseBranch = Option.getOrElse(options.baseBranch, () => "main");
   if (Option.isSome(options.baseBranch))
