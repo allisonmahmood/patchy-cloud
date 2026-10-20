@@ -413,7 +413,7 @@ const relation = (value: string) =>
 const callName = (call: RuntimeLog.Call) => {
   const method = call.op.slice(call.op.indexOf(".") + 1);
   if (call.resource === null) return method;
-  return call.op.startsWith("posthog.")
+  return call.op.startsWith("posthog.") || call.op.startsWith("pidgeon.")
     ? `${method} ${call.resource}`
     : `${relation(call.resource)}.${method}`;
 };

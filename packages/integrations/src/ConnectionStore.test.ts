@@ -16,6 +16,7 @@ import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
 import * as PostHogDouble from "./test/posthog.js";
+import * as PidgeonSource from "./pidgeon/Source.js";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
 const evolved: typeof Snapshot.Type = {
@@ -79,7 +80,8 @@ const fixture = SqlConnectionStore.layer.pipe(
       CredentialKeys.layerFromKeys(Redacted.make(`old:${oldKey}`)),
       RuntimeLog.layer,
       Layer.succeed(Source.Source, source),
-      posthog.layer
+      posthog.layer,
+      PidgeonSource.layer
     )
   ),
   Layer.provideMerge(Testing.layer())

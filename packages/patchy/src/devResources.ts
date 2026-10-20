@@ -15,7 +15,8 @@ import {
   PostgresDev,
   PostgresExecution,
   PostgresOperations,
-  PostHogDev
+  PostHogDev,
+  PidgeonDev
 } from "@patchy/integrations/dev";
 import { Files, Members, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
 import { Binding, LoadedVersions, Wakes, me } from "@patchy/runtime/core";
@@ -155,6 +156,8 @@ const baselineSnapshot = (
   });
 
 interface LocalState {
+  /** PROTOTYPE (Pidgeon): each declared address's fake mailbox, from its fixture. */
+  readonly pidgeon: ReadonlyArray<PidgeonDev.Mailbox>;
   readonly stampPath: string;
   readonly stamp: string;
   readonly initialize: boolean;
@@ -295,7 +298,9 @@ const make = Effect.fn("DevResources.make")(function* (
     ...fileHandlers,
     ...postgres,
     // PostHog has no fixture: its reads go to the real connection, through the instance.
-    ...(yield* PostHogDev.handlers(instance))
+    ...(yield* PostHogDev.handlers(instance)),
+    // Pidgeon sends mail, so dev never reaches the address: a fake mailbox per fixture.
+    ...PidgeonDev.handlers(state.pidgeon)
   };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };
@@ -391,6 +396,14 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     if (!(yield* fs.exists(fixturePath))) return yield* new FixtureMissing({ path: relative });
     yield* checkedPath(local, `postgres-${declaration.id}`);
     yield* checkedPath(local, `postgres-${declaration.id}.json`);
+  }
+  const pidgeon: PidgeonDev.Mailbox[] = [];
+  for (const { declaration, snapshot } of Object.values(prepared.metadata.pidgeon ?? {})) {
+    const relative = `fixtures/pidgeon-${declaration.handle}.json`;
+    const fixturePath = yield* checkedPath(root, relative);
+    if (!(yield* fs.exists(fixturePath))) return yield* new FixtureMissing({ path: relative });
+    const fixture = yield* PidgeonDev.parseFixture(relative, yield* fs.readFileString(fixturePath));
+    pidgeon.push({ declarationId: declaration.id, snapshot, fixture });
   }
   const shared: Record<string, string> = Object.create(null);
   for (const { declaration } of Object.values(prepared.metadata.shared)) {
@@ -550,6 +563,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   const preparedResources = yield* make(
     prepared,
     {
+      pidgeon,
       stampPath,
       stamp,
       initialize,

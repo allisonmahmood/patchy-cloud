@@ -65,6 +65,7 @@ const changeSchema = Schema.Union([
       Schema.Struct({ kind: Schema.Literal("members") }),
       Schema.Struct({ kind: Schema.Literal("postgres"), handle: Schema.String }),
       Schema.Struct({ kind: Schema.Literal("posthog"), handle: Schema.String }),
+      Schema.Struct({ kind: Schema.Literal("pidgeon"), handle: Schema.String }),
       Schema.Struct({
         kind: Schema.Literal("sharedTable"),
         patchId: Schema.String,
@@ -533,11 +534,13 @@ export const generate = Effect.fn("Project.generate")(function* (
         ? "patchy-postgres"
         : removedKind === "posthog"
           ? "patchy-posthog"
-          : removedKind === "members"
-            ? "patchy-members"
-            : removedKind === "sharedStore"
-              ? "patchy-shared-stores"
-              : "patchy-shared-tables";
+          : removedKind === "pidgeon"
+            ? "patchy-pidgeon"
+            : removedKind === "members"
+              ? "patchy-members"
+              : removedKind === "sharedStore"
+                ? "patchy-shared-stores"
+                : "patchy-shared-tables";
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
@@ -818,11 +821,17 @@ export const add = Effect.fn("Project.add")(function* (
   } else if (
     integration === "postgres" ||
     integration === "posthog" ||
+    integration === "pidgeon" ||
     integration.startsWith("postgres/") ||
-    integration.startsWith("posthog/")
+    integration.startsWith("posthog/") ||
+    integration.startsWith("pidgeon/")
   ) {
-    const kind = integration.startsWith("posthog") ? "posthog" : "postgres";
-    const label = kind === "posthog" ? "PostHog" : "Postgres";
+    const kind = integration.startsWith("posthog")
+      ? "posthog"
+      : integration.startsWith("pidgeon")
+        ? "pidgeon"
+        : "postgres";
+    const label = kind === "posthog" ? "PostHog" : kind === "pidgeon" ? "Pidgeon" : "Postgres";
     if (Option.isSome(target))
       return yield* new LocalError({ message: `Use patchy add ${kind}/<handle> [--as <alias>].` });
     const handle = integration === kind ? undefined : integration.slice(`${kind}/`.length);
@@ -903,7 +912,7 @@ export const add = Effect.fn("Project.add")(function* (
   } else
     return yield* new LocalError({
       message:
-        "Use patchy add members, patchy add postgres/<handle>, patchy add posthog/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
+        "Use patchy add members, patchy add postgres/<handle>, patchy add posthog/<handle>, patchy add pidgeon/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
     });
   const alias = Option.getOrElse(as, () => defaultAlias);
   yield* refresh(cwd, token, { kind: "add", alias, declaration });

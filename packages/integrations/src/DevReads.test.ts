@@ -37,6 +37,7 @@ import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as PostHogDouble from "./test/posthog.js";
+import * as PidgeonSource from "./pidgeon/Source.js";
 import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
 
 /**
@@ -150,7 +151,8 @@ const serve = (
             Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
           )
         ]),
-        Layer.provideMerge(double.layer)
+        Layer.provideMerge(double.layer),
+        Layer.provideMerge(PidgeonSource.layer)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),

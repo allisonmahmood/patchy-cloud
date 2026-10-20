@@ -13,6 +13,7 @@ import {
 } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
 import { posthogOperations } from "./posthog.js";
+import { pidgeonOperations } from "./pidgeon.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
@@ -53,7 +54,7 @@ export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
       ? "runtime.batch.bytes"
       : op.startsWith("postgres.")
         ? "runtime.postgres.bytes"
-        : op.startsWith("posthog.")
+        : op.startsWith("posthog.") || op.startsWith("pidgeon.")
           ? "runtime.posthog.bytes"
           : op === "server.call"
             ? "tier2.args.bytes"
@@ -344,6 +345,7 @@ export type ServerCall = typeof ServerCall.Type;
 export const runtimeOperations = {
   ...postgresOperations,
   ...posthogOperations,
+  ...pidgeonOperations,
   "server.call": {
     request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
     response: Schema.suspend(() => ServerCallReply),

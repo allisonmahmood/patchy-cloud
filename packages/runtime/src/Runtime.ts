@@ -684,6 +684,7 @@ export const make = (
               input.op.startsWith("shared.") ||
               input.op.startsWith("postgres.") ||
               input.op.startsWith("posthog.") ||
+              input.op.startsWith("pidgeon.") ||
               input.op.startsWith("members."))
           )
             return yield* new ServerRequired();

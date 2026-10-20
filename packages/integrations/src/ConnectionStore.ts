@@ -2,6 +2,7 @@ import {
   type ConnectionDeclaration,
   type ConnectionDetail,
   type Integration,
+  PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
@@ -13,6 +14,7 @@ import * as Schema from "effect/Schema";
 import type * as CredentialKeys from "./CredentialKeys.js";
 import * as PostgresSource from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
+import * as PidgeonSource from "./pidgeon/Source.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
@@ -41,8 +43,13 @@ export const PostHogConnection = Schema.Struct({
   integration: Schema.Literal("posthog"),
   display: PostHogSource.Display
 });
+export const PidgeonConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("pidgeon"),
+  display: PidgeonSource.Display
+});
 /** A company connection; its integration decides what its display says. */
-export const Connection = Schema.Union([PostgresConnection, PostHogConnection]);
+export const Connection = Schema.Union([PostgresConnection, PostHogConnection, PidgeonConnection]);
 export type Connection = typeof Connection.Type;
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
 export type Target = {
@@ -52,7 +59,8 @@ export type Target = {
 /** A stored snapshot, decoded by the integration its own row names. */
 export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("postgres"), snapshot: Snapshot }),
-  Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot })
+  Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot })
 ]);
 export type Metadata = typeof Metadata.Type;
 
@@ -202,7 +210,8 @@ export type ConnectionError =
   | ConnectionMutationUnavailable
   | CredentialKeys.CredentialError
   | PostgresSource.SourceError
-  | PostHogSource.SourceError;
+  | PostHogSource.SourceError
+  | PidgeonSource.SourceError;
 
 /** Who declares a connection, by the rule that decides whether it may be deleted. */
 export interface Usage {

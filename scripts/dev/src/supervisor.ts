@@ -270,7 +270,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_COMPANY_DB_ADMIN_URL: plan.databaseUrl,
           PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
-          PATCHY_PUBLIC_BASE_URL: plan.apiUrl
+          PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
+          // PROTOTYPE (Pidgeon): fake Pidgeon keys answer from an in-memory mailbox; real keys stay real.
+          PATCHY_PIDGEON_FAKE: "true"
         },
         extendEnv: false,
         stdin: "ignore",

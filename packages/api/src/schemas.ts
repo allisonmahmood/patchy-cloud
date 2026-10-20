@@ -11,6 +11,7 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
+import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import {
   HandlerDescriptors,
   HandlerModuleName,
@@ -500,8 +501,17 @@ export const PostHogDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("posthog")
 });
+/** PROTOTYPE (Pidgeon): one company email address. */
+export const PidgeonDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("pidgeon")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
-export const ConnectionDeclaration = Schema.Union([PostgresDeclaration, PostHogDeclaration]);
+export const ConnectionDeclaration = Schema.Union([
+  PostgresDeclaration,
+  PostHogDeclaration,
+  PidgeonDeclaration
+]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
 export const sharedTableId = (patchId: string, table: string): string => `${patchId}/${table}`;
@@ -588,6 +598,7 @@ export const Manifest = Schema.Struct({
     Schema.Union([
       PostgresDeclaration,
       PostHogDeclaration,
+      PidgeonDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -614,6 +625,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...PidgeonDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -628,7 +644,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog"] as const;
+export const integrations = ["postgres", "posthog", "pidgeon"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -665,8 +681,13 @@ const detail = <const I extends Integration, F extends Schema.Struct.Fields>(
 /** What the legacy `/connections/:handle` route answers, as CLIs from before PostHog decode it. */
 export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
+export const PidgeonConnectionDetail = detail("pidgeon", PidgeonSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
-export const ConnectionDetail = Schema.Union([PostgresConnectionDetail, PostHogConnectionDetail]);
+export const ConnectionDetail = Schema.Union([
+  PostgresConnectionDetail,
+  PostHogConnectionDetail,
+  PidgeonConnectionDetail
+]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
 export const ConnectionUnavailable = failure(503, {
@@ -693,6 +714,7 @@ export const isManagedOutputPath = (path: string): boolean => {
     path.startsWith("patchy/_generated/") ||
     /^\.agents\/skills\/patchy-[a-z0-9-]+\/SKILL\.md$/.test(path) ||
     /^fixtures\/(?:postgres-[a-z0-9-]+|shared-[a-z][a-zA-Z0-9]*)\.sql$/.test(path) ||
+    /^fixtures\/pidgeon-[a-z0-9-]+\.json$/.test(path) ||
     /^fixtures\/shared-[a-z][a-zA-Z0-9]*\/README\.md$/.test(path)
   );
 };
@@ -704,6 +726,13 @@ export const DeclarationMetadata = Schema.Struct({
   posthog: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: PostHogDeclaration, snapshot: PostHogSnapshot })
+  ),
+  // PROTOTYPE (Pidgeon): optional so releases and fixtures that predate it still decode.
+  pidgeon: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ declaration: PidgeonDeclaration, snapshot: PidgeonSnapshot })
+    )
   ),
   shared: Schema.Record(
     Schema.String,

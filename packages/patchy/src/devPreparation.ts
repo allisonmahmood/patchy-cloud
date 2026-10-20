@@ -82,9 +82,11 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           const relative =
             declaration.kind === "postgres"
               ? `fixtures/postgres-${declaration.handle}.sql`
-              : declaration.kind === "sharedStore"
-                ? `fixtures/shared-${alias}`
-                : `fixtures/shared-${alias}.sql`;
+              : declaration.kind === "pidgeon"
+                ? `fixtures/pidgeon-${declaration.handle}.json`
+                : declaration.kind === "sharedStore"
+                  ? `fixtures/shared-${alias}`
+                  : `fixtures/shared-${alias}.sql`;
           const fixture = yield* io("Read fixture path", () => safePath(root, relative));
           if (!(yield* fs.exists(fixture))) return yield* new FixtureMissing({ path: relative });
           const info = yield* fs.stat(fixture);
@@ -117,6 +119,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         if (
           Object.keys(metadata.postgres).length +
             Object.keys(metadata.posthog).length +
+            Object.keys(metadata.pidgeon ?? {}).length +
             Object.keys(metadata.shared).length !==
           Object.values(manifest.uses).filter((declaration) => declaration.kind !== "members")
             .length
@@ -131,14 +134,20 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               ? metadata.postgres[alias]?.declaration
               : declaration.kind === "posthog"
                 ? metadata.posthog[alias]?.declaration
-                : metadata.shared[alias]?.declaration;
+                : declaration.kind === "pidgeon"
+                  ? metadata.pidgeon?.[alias]?.declaration
+                  : metadata.shared[alias]?.declaration;
           if (
             actual === undefined ||
             actual.kind !== declaration.kind ||
             actual.id !== declaration.id ||
             actual.revision !== declaration.revision ||
-            ((actual.kind === "postgres" || actual.kind === "posthog") &&
-              (declaration.kind === "postgres" || declaration.kind === "posthog") &&
+            ((actual.kind === "postgres" ||
+              actual.kind === "posthog" ||
+              actual.kind === "pidgeon") &&
+              (declaration.kind === "postgres" ||
+                declaration.kind === "posthog" ||
+                declaration.kind === "pidgeon") &&
               actual.handle !== declaration.handle) ||
             (actual.kind === "sharedTable" &&
               declaration.kind === "sharedTable" &&
