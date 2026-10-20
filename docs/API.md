@@ -105,6 +105,20 @@ Responses:
 - `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
+### `GET /api/patches/:patchRef/queries`
+
+Describe the current published queries of a live company tier 2 Tool by canonical id or exact name. Machine tokens only, with discovery's company and openability checks. Only queries are listed, sorted by handler name; mutations and actions are excluded. The stable identity is (patchId, handler); versionId identifies the described version. Each query has its published description (falling back to the patch description) and self-contained draft 2020-12 inputSchema and outputSchema derived from execution's validators, including expanded row shapes. outputSchema describes result.value on success, not the reply envelope. No code executes or business rows are read. Other tiers answer 400; unknown or inaccessible patches answer 404; off patches answer 409 wrong_state. Discovery grants no execution permission: POST query reauthorizes and validates the current published version on every call. Responses are private, no-store.
+
+Responses:
+
+- `200` [PatchQueries](#patchqueries)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ### `POST /api/patches/:patchRef/query`
 
 Execute a query from the current published tier 2 Tool as the machine token's user, without an open browser. Uses discovery's company and openability checks. Only declared query handlers are allowed; mutations, actions, mutation keys and caller-selected versions are refused. Cloud validates arguments and results and retains runtime rate limits, deadlines, read-only capabilities and execution isolation. Returns the executed version id and the handler reply. Responses are private, no-store.
@@ -415,7 +429,7 @@ Responses:
 
 Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap.
 
-Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string, shared?: boolean } }, uses: { [key: string]: { kind: "members" } | { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "posthog", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } | { kind: "sharedStore", patchId: string, store: string, id?: string, revision?: integer } }, handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } }, sdkImports?: string[] }, serverModules: string[], patchId?: string, skills: string[] }
+Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string, shared?: boolean } }, uses: { [key: string]: { kind: "members" } | { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "posthog", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } | { kind: "sharedStore", patchId: string, store: string, id?: string, revision?: integer } }, handlers?: { [key: string]: { kind: "query" | "mutation" | "action", description?: string, args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } }, sdkImports?: string[] }, serverModules: string[], patchId?: string, skills: string[] }
 
 Responses:
 
@@ -1245,6 +1259,16 @@ RuntimeSuccess | HandlerFailure
 }
 ```
 
+### PatchQueries
+
+```
+{
+  patchId: string,
+  versionId: string,
+  queries: { handler: string, description: string, inputSchema: { [key: string]: unknown }, outputSchema: { [key: string]: unknown } }[]
+}
+```
+
 ### PatchDetail
 
 ```
@@ -1400,7 +1424,7 @@ RuntimeSuccess | HandlerFailure
     tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
     files: { [key: string]: { description: string, shared?: boolean } },
     uses: { [key: string]: { kind: "postgres", handle: string, id: string, revision: integer } | { kind: "posthog", handle: string, id: string, revision: integer } | { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } | { kind: "sharedStore", patchId: string, store: string, id: string, revision: integer } | { kind: "members" } },
-    handlers?: { [key: string]: { kind: "query" | "mutation" | "action", args: { [key: string]: HandlerSchema }, result: HandlerSchema, errors?: string[] } },
+    handlers?: { [key: string]: { kind: "query" | "mutation" | "action", description?: string, args: { [key: string]: HandlerSchema }, result: HandlerSchema, errors?: string[] } },
     sdkImports?: string[]
   },
   html: string,

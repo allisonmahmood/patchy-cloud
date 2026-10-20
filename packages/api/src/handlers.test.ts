@@ -12,6 +12,7 @@ import {
   RuntimeRequest,
   handlerArgsSchema,
   handlerValueSchema,
+  publishedQueries,
   HandlerSchema
 } from "./index.js";
 import { canonicalArgs } from "./canonicalArgs.js";
@@ -65,6 +66,84 @@ const decodeRow = Schema.decodeUnknownExit(
 );
 
 describe("handler descriptors", () => {
+  it("preserves optional purpose text and refuses blank or oversized descriptions", () => {
+    for (const description of ["", "  ", "x".repeat(501)])
+      expect(decodeDescriptor({ ...query, description })._tag).toBe("Failure");
+    expect(decodeDescriptor({ ...query, description: "Count open leads." })._tag).toBe("Success");
+    expect(decodeDescriptor(query)._tag).toBe("Success");
+  });
+
+  it("describes only queries with self-contained validation schemas and expanded rows", () => {
+    const queries = publishedQueries(
+      decodeManifest({
+        ...manifest,
+        handlers: {
+          "leads.write": { ...query, kind: "mutation" },
+          "leads.action": { ...query, kind: "action" },
+          "leads.empty": query,
+          "leads.find": {
+            kind: "query",
+            description: "Find leads by stage.",
+            args: {
+              stage: { kind: "enum", values: ["open", "closed"] },
+              options: { kind: "object", fields: { limit: { kind: "integer", optional: true } } },
+              note: { kind: "nullable", value: { kind: "text" }, optional: true }
+            },
+            result: { kind: "array", element: { kind: "row", table: "leads" } }
+          }
+        }
+      }),
+      "Fallback Tool description."
+    );
+    expect(queries.map((entry) => entry.handler)).toEqual(["leads.empty", "leads.find"]);
+    expect(queries[0]).toMatchObject({
+      description: "Fallback Tool description.",
+      inputSchema: { type: "object", additionalProperties: false },
+      outputSchema: { type: "boolean" }
+    });
+    expect(queries[1]).toMatchObject({
+      description: "Find leads by stage.",
+      inputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        required: ["stage", "options"],
+        additionalProperties: false,
+        properties: {
+          stage: { enum: ["open", "closed"] },
+          options: {
+            type: "object",
+            additionalProperties: false,
+            properties: { limit: { type: "integer" } }
+          },
+          note: { anyOf: [{ type: "string" }, { type: "null" }] }
+        }
+      },
+      outputSchema: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            parent: { anyOf: [{ type: "string" }, { type: "null" }] }
+          }
+        }
+      }
+    });
+    // Table rows carry arbitrary JSON; every generated reference must resolve inside this schema.
+    for (const entry of queries) {
+      for (const schema of [entry.inputSchema, entry.outputSchema]) {
+        const refs = JSON.stringify(schema).matchAll(/"\$ref":"([^"]+)"/g);
+        for (const [, ref] of refs) {
+          expect(ref!.startsWith("#/$defs/")).toBe(true);
+          expect(schema.$defs).toHaveProperty(ref!.slice("#/$defs/".length));
+        }
+      }
+    }
+    expect(publishedQueries(decodeManifest(manifest), "No handlers")).toEqual([]);
+  });
+
   it("round-trips all handler kinds and recursive descriptors through the manifest", () => {
     const wire = {
       ...manifest,

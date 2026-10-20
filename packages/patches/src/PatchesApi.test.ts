@@ -2890,6 +2890,92 @@ const tier2Bundle = Effect.promise(async () => {
 });
 
 it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
+  it.effect("discovers current queries as an admitted member without executing them", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const anonymous = yield* client.pipe(
+        Effect.provide(
+          HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
+        )
+      );
+      const server = yield* tier2Bundle;
+      const payload = publishRequest({
+        html: html("Discoverable Tool"),
+        server,
+        manifest: {
+          ...Fixtures.manifest,
+          name: "discoverable-tool",
+          tier: 2,
+          handlers: tier2Handlers
+        },
+        metadata: { description: "Read the demo value." }
+      });
+      const created = yield* owner.publish({ payload });
+      for (const patchRef of [created.patchId, created.name]) {
+        const [found, response] = yield* colleague.queries({
+          params: { patchRef },
+          responseMode: "decoded-and-response"
+        });
+        assert.strictEqual(found.patchId, created.patchId);
+        assert.strictEqual(found.versionId, created.versionId);
+        assert.deepStrictEqual(
+          found.queries.map((entry) => entry.handler),
+          ["demo.read"]
+        );
+        assert.strictEqual(found.queries[0]!.description, "Read the demo value.");
+        assert.deepStrictEqual(found.queries[0]!.outputSchema, {
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "string"
+        });
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
+      }
+      const updated = yield* owner.publish({
+        payload: publishRequest({
+          ...payload,
+          patchId: created.patchId,
+          publishKey: crypto.randomUUID()
+        })
+      });
+      const params = { patchRef: created.patchId };
+      assert.strictEqual((yield* colleague.queries({ params })).versionId, updated.versionId);
+      assert.strictEqual(
+        (yield* anonymous.queries({ params, responseMode: "response-only" })).status,
+        401
+      );
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${created.patchId}`;
+      assert.strictEqual(
+        (yield* colleague.queries({ params, responseMode: "response-only" })).status,
+        404
+      );
+      yield* sql`UPDATE patches SET disabled_at = NULL WHERE id = ${created.patchId}`;
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_queries_foreign', 'queries-foreign', 'Foreign')`;
+      yield* sql`UPDATE patches SET company_id = 'cmp_queries_foreign' WHERE id = ${created.patchId}`;
+      const foreign = yield* colleague.queries({ params, responseMode: "response-only" });
+      const missing = yield* colleague.queries({
+        params: { patchRef: "missing" },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(foreign.status, 404);
+      assert.deepStrictEqual(yield* foreign.json, yield* missing.json);
+      yield* sql`UPDATE patches SET company_id = ${uploader.company.id} WHERE id = ${created.patchId}`;
+      yield* owner.retire({ params: { patchId: created.patchId }, payload: new ForceRequest({}) });
+      assert.strictEqual(
+        (yield* colleague.queries({ params, responseMode: "response-only" })).status,
+        409
+      );
+      const page = yield* owner.publish({ payload: publishRequest({ html: html("A Page") }) });
+      assert.strictEqual(
+        (yield* colleague.queries({
+          params: { patchRef: page.patchId },
+          responseMode: "response-only"
+        })).status,
+        400
+      );
+    })
+  );
+
   it.effect(
     "retains both artifacts and prevents public sharing, publishing and rollback",
     () =>

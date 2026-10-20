@@ -190,6 +190,19 @@ never imports server implementations to decide whether retry is safe. Missing or
 invalid kind metadata disables retry. Actions and delivered refusals are never
 automatically retried.
 
+Builders accept an optional `description` (1–500 characters, nonblank):
+`query({ description: "Find products by category.", args, result, handler })`.
+Publish retains it in the inspected handler contract. Machine callers discover
+current read-only queries through `GET /api/patches/:patchRef/queries`, then call
+`POST /api/patches/:patchRef/query` with `{ handler, args }`. Discovery returns
+`{ patchId, versionId, queries: [{ handler, description, inputSchema, outputSchema }] }`.
+The schemas are self-contained JSON Schema draft 2020-12 derived from the same
+validators as execution, with row shapes expanded. `outputSchema` describes the
+successful `result.value`. A missing handler description falls back to the Tool's
+description. Discovery excludes mutations and actions; execution rechecks current
+access and the current version's schemas. The `(patchId, handler)` pair is stable
+across publishes; a renamed handler is a different query.
+
 `t` adds objects, arrays, enums, nullable values, full rows, result-only file
 handles and action-argument uploads. Optional argument keys may be absent;
 optional columns remain nullable. Defaults and refs are table-only. Queries

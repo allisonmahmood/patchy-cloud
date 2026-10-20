@@ -349,7 +349,14 @@ isolated executor and read-only query capabilities. The machine token is recheck
 before invocation and for viewer-authorized callbacks. No browser cookie, document
 stream, historical version selection or write handler is accepted through this API.
 This is an on-demand read as a user, not a scheduler or a general agent runtime.
-New patches do not yet advertise operations to MCP automatically.
+Agents discover published queries with `GET /api/patches/:patchRef/queries`.
+It describes only queries from the current live company tier 2 version: the
+stable `(patchId, handler)` identity, version id, an author-written description
+(falling back to the Tool description), and self-contained JSON Schema for
+arguments and the successful value. The schemas use execution's own validators
+and expand table rows without reading their contents. Discovery executes no
+patch code and grants no authority; calls still reauthorize and validate the
+current version, so agents refresh discovery when a publish changes a contract.
 
 A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev/test instances and production hosts configured with the ECS fleet.
 

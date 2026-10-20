@@ -33,7 +33,7 @@ The decision about one operation requested by an invocation. Owned resources inh
 _Avoid_: invocation admission, guest permission
 
 **Query**:
-A read-only handler whose result can be subscribed to as its viewer.
+A read-only handler whose result can be subscribed to as its viewer, or called through the authenticated published-query API. Its stable discovery identity is the patch id and handler name; its published description and argument/result schemas describe a version, never grant permission to call it.
 _Avoid_: SQL query, polling function
 
 **Mutation**:

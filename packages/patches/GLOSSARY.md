@@ -29,7 +29,7 @@ Who may open a patch: `company` means signed-in colleagues in its company; `publ
 _Avoid_: visibility, token scope (machine credentials act as their user, within their company)
 
 **Openable patch**:
-A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch. Machine Page reads additionally require a live tier 0 current version.
+A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch. Machine Page reads additionally require a live tier 0 current version. Query discovery requires a live company tier 2 current version and describes its queries without executing them.
 _Avoid_: serving (requires live), publishable (requires the live patch's owner), manageable (owner or admin)
 
 **Patch repo**:
