@@ -146,7 +146,15 @@ Empty environment settings act as unset. Instance keys trim whitespace and
 trailing slashes; schemes, hosts and ports otherwise remain distinct. Saved keys
 carry `source: "login"` or `"auth-set"`; login also records the machine id/name.
 Credentials and pending device logins are owner-only. Neither publishing keys nor
-private device codes appear in command output. The previous single-instance
+private device codes appear in normal command output. The explicit local-program
+interface `auth token --json` is the sole secret-bearing output: it requires
+redirected stdout and returns `{ version: 1, instanceUrl, token }`. It uses the
+same credential precedence and instance normalization, makes no request and changes
+no state. It is not an identity check. A missing key is local exit 1 with
+`code: not_logged_in`; non-JSON or terminal output is local exit 1 with
+`code: credential_output_refused`. Local add-ons capture this output privately;
+agents must never log, relay or put it in configuration. Consumers reject unknown
+versions or a mismatched instance. Login, logout and revocation remain unchanged. The previous single-instance
 state formats are refused, not silently discarded or migrated; the diagnostic
 names the file requiring repair. A legacy `drafts.json` cache must be explicitly
 renamed to `patches.json` or removed.

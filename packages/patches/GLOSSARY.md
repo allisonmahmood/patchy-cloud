@@ -26,10 +26,10 @@ _Avoid_: transfer (a patch never moves companies), republish, claim
 
 **Sharing scope**:
 Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
-_Avoid_: visibility, token scope (a publishing key does not grant reading access)
+_Avoid_: visibility, token scope (machine credentials act as their user, within their company)
 
 **Openable patch**:
-A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch.
+A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch. Machine Page reads additionally require a live tier 0 current version.
 _Avoid_: serving (requires live), publishable (requires the live patch's owner), manageable (owner or admin)
 
 **Patch repo**:
@@ -127,3 +127,5 @@ _Avoid_: patch limit (the per-minute one), storage quota (this counts patches, n
 **Patch event**:
 A committed publish, update or owner deletion, attributed to the user who acted; reclamation belongs to the instance. Events contain ids, sizes, counts and states, never content, a filename, a URL or an address.
 _Avoid_: audit log, activity feed
+
+The machine query door (`POST /api/patches/:patchRef/query`) uses the same openability gate as discovery, then delegates to Runtime for current-version admission and query-only execution. It cannot select a retained version or invoke a mutation or action.

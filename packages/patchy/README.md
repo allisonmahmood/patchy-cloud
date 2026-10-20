@@ -927,6 +927,23 @@ printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PA
 
 <!-- patchy-packed-cli-e2e:end -->
 
+### `patchy auth token --json [--api-url <url>]`
+
+A stable credential interface for local programs such as the separate Patchy MCP
+add-on. Requires redirected stdout; refuses text mode and a terminal. It returns
+`{ version: 1, instanceUrl, token }`, using the normal instance selection and key
+precedence. It sends no request and changes no saved state. No key is local exit 1,
+`code: not_logged_in`; refusing unsafe output is local exit 1,
+`code: credential_output_refused`. Consumers must reject unknown versions or an
+instance mismatch and re-read for each call so a completed re-login takes effect.
+
+**This output is secret.** Capture it privately through a pipe. Never run this
+command to display or copy a token, record its output, or paste it into agent
+configuration. Use `login`, `whoami` and `status` for ordinary setup; those keep
+credentials out of their output. A Cloud 401 means sign in again with `patchy login
+--api-url <url> --json`, relay the URL and code to the person, complete the returned
+`next` command, then retry. An environment token still overrides the saved login.
+
 ### `patchy whoami [--api-url <url>]`
 
 Verify the configured credentials against the instance. Prints the user, company, role and machine.

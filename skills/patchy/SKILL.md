@@ -20,6 +20,12 @@ That reference owns the whole flow —
 the company look, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
 
+Local add-ons can reuse this CLI's saved login through its versioned
+`auth token --json` pipe interface. That output is secret: never invoke it to show
+credentials, log it, or put it in an agent's config. Normal setup uses `login` and
+`whoami`. For an expired or revoked key, finish a new device login and retry; a
+`PATCHY_API_TOKEN` environment override must be updated or unset separately.
+
 ## Finding tools and data sources
 
 For an existing tool or reusable data source, settle the instance and identity

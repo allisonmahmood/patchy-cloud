@@ -797,6 +797,16 @@ export class PatchDetail extends Schema.Class<PatchDetail>("PatchDetail")({
   reads: Schema.Array(PatchRead)
 }) {}
 
+/** The current static document, read as the machine token's user. */
+export class PatchPage extends Schema.Class<PatchPage>("PatchPage")({
+  id: PatchId,
+  name: Schema.String,
+  title: Schema.String,
+  address: Schema.String,
+  versionNumber: Schema.Int,
+  html: Schema.String
+}) {}
+
 /** A missing default differs from an explicit JSON null. Stores have no columns or indexes. */
 export class PrimitiveDetail extends Schema.Class<PrimitiveDetail>("PrimitiveDetail")({
   kind: Schema.Literals(["table", "store"]),

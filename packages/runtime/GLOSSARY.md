@@ -25,7 +25,7 @@ The refusal of a direct operation when a tier 2 document must use handlers, or w
 _Avoid_: revoked, permission lost
 
 **Invocation admission**:
-The decision that a live viewer may start a handler on an eligible loaded version of a live company patch, within its admission limits. Dispatched work retains that admission until settlement.
+The decision that an authenticated user may start a handler on an eligible loaded version of a live company patch, within its admission limits. Dispatched work retains that admission until settlement.
 _Avoid_: callback authorisation, presence lease
 
 **Callback authorisation**:
@@ -141,8 +141,8 @@ The patch whose loaded version defines its owned resources and declares the outs
 _Avoid_: effective principal, patch owner
 
 **Initiating viewer**:
-The user whose live session admits an invocation or a direct browser operation. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
-_Avoid_: principal, machine token, owning patch
+The user whose live session admits an invocation or a direct browser operation, or whose machine token admits a published query without an open document. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
+_Avoid_: principal, owning patch
 
 **Patch identity**:
 The patch's own id, used for its owned resources. It does not inherit the owner's access and does not change on reassignment or owner deactivation.
@@ -239,3 +239,6 @@ _Avoid_: stream generation (connection identity), publish version
 **Resync**:
 Replacement of a document's desired subscriptions, with its latest vectors, after reconnect, an unrecoverable sequence gap or stalled reconciliation. It fences prior work: a read it overlaps answers it only if the revisions that read saw still match a fence taken after the replace; otherwise the subscription runs again. Equal vectors answer up-to-date without rerunning the read.
 _Avoid_: reload, mutation retry
+
+**Machine query**:
+An on-demand invocation of a current published query by a machine token’s user. Cloud admits the user and loaded version; the query keeps the same read-only capabilities, limits and executor as a browser invocation. It creates no document stream and accepts neither mutation keys nor action handlers.

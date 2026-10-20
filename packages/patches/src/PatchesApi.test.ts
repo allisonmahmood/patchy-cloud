@@ -893,6 +893,113 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
 });
 
 it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) => {
+  it.effect("reads only the current live static Page within the credential's reach", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const anonymous = yield* client.pipe(
+        Effect.provide(
+          HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
+        )
+      );
+      const created = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Private notes"),
+          manifest: { ...Fixtures.manifest, name: "machine-page" }
+        })
+      });
+      assert.strictEqual(created.scope, "company");
+      yield* owner.publish({
+        payload: publishRequest({ patchId: created.patchId, html: html("Latest private notes") })
+      });
+      for (const patchRef of [created.patchId, created.name]) {
+        const [page, response] = yield* colleague.page({
+          params: { patchRef },
+          responseMode: "decoded-and-response"
+        });
+        assert.deepStrictEqual(
+          { ...page },
+          {
+            id: created.patchId,
+            name: created.name,
+            title: "Latest private notes",
+            address: created.address,
+            versionNumber: 2,
+            html: html("Latest private notes")
+          }
+        );
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
+      }
+      const params = { patchRef: created.patchId };
+      assert.strictEqual(
+        (yield* anonymous.page({ params, responseMode: "response-only" })).status,
+        401
+      );
+      const restricted = yield* client.pipe(
+        Effect.provide(Fixtures.as(reader)),
+        Effect.provide(
+          Layer.fresh(PatchesApi.layer).pipe(
+            Layer.provide(Layer.succeed(Patches.Openability, () => false)),
+            Layer.provide(publishConfig())
+          )
+        )
+      );
+      assert.strictEqual(
+        (yield* restricted.page({ params, responseMode: "response-only" })).status,
+        404
+      );
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${created.patchId}`;
+      assert.strictEqual(
+        (yield* colleague.page({ params, responseMode: "response-only" })).status,
+        404
+      );
+      yield* sql`UPDATE patches SET disabled_at = NULL WHERE id = ${created.patchId}`;
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_page_foreign', 'page-foreign', 'Foreign')`;
+      yield* sql`UPDATE patches SET company_id = 'cmp_page_foreign' WHERE id = ${created.patchId}`;
+      const foreign = yield* colleague.page({ params, responseMode: "response-only" });
+      const missing = yield* colleague.page({
+        params: { patchRef: "missing" },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(foreign.status, 404);
+      assert.deepStrictEqual(yield* foreign.json, yield* missing.json);
+      yield* sql`UPDATE patches SET company_id = ${uploader.company.id} WHERE id = ${created.patchId}`;
+      yield* owner.retire({ params: { patchId: created.patchId }, payload: new ForceRequest({}) });
+      assert.strictEqual(
+        (yield* colleague.page({ params, responseMode: "response-only" })).status,
+        409
+      );
+      yield* owner.delete({ params: { patchId: created.patchId }, query: {} });
+      assert.strictEqual(
+        (yield* colleague.page({ params, responseMode: "response-only" })).status,
+        409
+      );
+      assert.strictEqual(
+        (yield* colleague.page({
+          params: { patchRef: created.name },
+          responseMode: "response-only"
+        })).status,
+        404
+      );
+      const scripted = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Browser tool"),
+          manifest: { ...Fixtures.manifest, name: "machine-tool", tier: 1 }
+        })
+      });
+      const refused = yield* colleague.page({
+        params: { patchRef: scripted.patchId },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(refused.status, 400);
+      assert.deepStrictEqual(yield* refused.json, {
+        ok: false,
+        error: "Only tier 0 Pages can be read."
+      });
+    })
+  );
+
   it.effect("reports unavailable inventory without inventing an empty database", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));

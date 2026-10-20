@@ -333,6 +333,13 @@ export const MembersSearch = Schema.Struct({
   cursor: Schema.optionalKey(NonEmptyText)
 });
 
+/** Machine callers can request a query, never a mutation key or an action. */
+export const PatchQuery = Schema.Struct({
+  handler: HandlerName,
+  args: Schema.Record(Schema.String, Schema.Json)
+});
+export type PatchQuery = typeof PatchQuery.Type;
+
 export const ServerCall = Schema.Struct({
   handler: HandlerName,
   args: Schema.Record(Schema.String, Schema.Json),

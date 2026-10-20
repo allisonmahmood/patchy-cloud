@@ -51,6 +51,8 @@ import {
   PatchLog,
   PatchSummary,
   PatchDetail,
+  PatchPage,
+  PatchQuery,
   PrimitiveDetail,
   type PatchTableSummary,
   PayloadTooLarge,
@@ -71,7 +73,7 @@ import { Looks, Users } from "@patchy/companies";
 import { contentHash, documentTitle, validateHtml } from "@patchy/core";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
-import { InvocationLog } from "@patchy/runtime";
+import { InvocationLog, Runtime, RuntimeApi } from "@patchy/runtime";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
@@ -86,6 +88,7 @@ const databaseUnavailable = () =>
 const encodeInventory = Schema.encodeSync(PatchInventory);
 const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
+const encodePage = Schema.encodeSync(PatchPage);
 const encodePrimitive = Schema.encodeSync(PrimitiveDetail);
 const encodeLog = Schema.encodeSync(PatchLog);
 const readHeaders = { "cache-control": "private, no-store" };
@@ -283,6 +286,7 @@ const decodeManifest = Schema.decodeUnknownEffect(Manifest, { onExcessProperty: 
 const decodeReplayIds = Schema.decodeUnknownOption(
   Schema.Struct({ patchId: Schema.String, versionId: Schema.String })
 );
+const decodeQuery = decodeBody(PatchQuery, { onExcessProperty: "error" });
 const decodeShare = decodeBody(ShareRequest);
 const decodeForce = decodeBody(ForceRequest);
 const decodeRollback = decodeBody(RollbackRequest);
@@ -343,6 +347,7 @@ const requestOrigin = Effect.map(HttpServerRequest.HttpServerRequest, (request) 
 export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
   Effect.gen(function* () {
     const content = yield* Content.Content;
+    const runtime = yield* Effect.serviceOption(Runtime.Runtime);
     const patches = yield* Patches.Patches;
     const openability = yield* Patches.Openability;
     const limits = yield* Limits.Limits;
@@ -696,6 +701,60 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 rows.map((row) => summary(row, identity.user.id, publicBaseUrl))
               )
             },
+            { headers: readHeaders }
+          );
+        })
+      )
+      .handleRaw("query", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const row = yield* readOne(params.patchRef, "live", identity);
+          if (HttpServerResponse.isHttpServerResponse(row)) return row;
+          if (Option.isNone(runtime))
+            return RuntimeApi.failure(new Runtime.InvocationUnavailable());
+          const payload = yield* readBody(runtime.value.bodyLimit("server.call")).pipe(
+            Effect.flatMap(decodeQuery),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          return yield* runtime.value.query(row.patch.id, payload).pipe(
+            Effect.map((reply) => HttpServerResponse.jsonUnsafe(reply, { headers: readHeaders })),
+            Effect.catch(RuntimeApi.recordFailure)
+          );
+        })
+      )
+      .handleRaw(
+        "page",
+        Effect.fn("PatchesApi.page")(function* ({ params }) {
+          const identity = yield* CurrentIdentity;
+          const row = yield* readOne(params.patchRef, "live", identity);
+          if (HttpServerResponse.isHttpServerResponse(row)) return row;
+          const found = yield* patches
+            .find(row.patch.id)
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          if (
+            Option.isNone(found) ||
+            found.value.patch.companyId !== identity.company.id ||
+            !openability(found.value.patch, identity.user.id)
+          )
+            return notFound();
+          const { patch, version } = found.value;
+          if (version.tier !== 0)
+            return refuse(BadRequest, { ok: false, error: "Only tier 0 Pages can be read." });
+          const html = yield* content
+            .read(version)
+            .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }));
+          return HttpServerResponse.jsonUnsafe(
+            encodePage(
+              new PatchPage({
+                id: patch.id,
+                name: patch.name,
+                title: patch.title,
+                address: Patches.address(publicBaseUrl, patch.companyHandle, patch.name),
+                versionNumber: version.versionNumber,
+                html
+              })
+            ),
             { headers: readHeaders }
           );
         })
