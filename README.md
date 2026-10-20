@@ -8,6 +8,8 @@ A patch runs at one of three built tiers: tier 0 is a static page with no patch 
 
 ## Where it is today
 
+Patchy Cloud is live at [cloud.patchyhq.com](https://cloud.patchyhq.com). Companies join from the [waitlist](https://accounts.patchyhq.com/waitlist), and we let them in as fast as we can help them.
+
 Tier 0 static pages, tier 1 sandboxed browser tools and tier 2 hosted handlers are built. `patchy publish <file>` publishes one safe HTML file; `patchy init` starts a tier 1 repo with config builders, a typed client, Preact and project skills. Use `init --tier 2` for enforced rules, atomic multi-row writes or server-side work, not merely for live sync. `patchy dev` runs the hosted engine locally over PGlite and invented fixtures, with a second viewer URL on both scripted tiers. New starts and publishes require the current package release; deployed bundles keep their stable wire contract.
 
 Tier 2 repos publish a second artifact, a closed server module. The instance
@@ -16,23 +18,18 @@ Tier 2 is company-only. Its page calls generated server handlers rather than
 name-based resources; a served tier 2 version closes older tier 1 tabs' direct
 operations until reload or rollback.
 
-The ECS fleet provider is built and passed role-only Fargate acceptance on
-[#406](https://github.com/allisonmahmood/patchy-cloud/issues/406); production admission requires it.
-The reference CRM journey and tier-picking check on
-[#413](https://github.com/allisonmahmood/patchy-cloud/issues/413) run by hand after
-the stack merges. Production infrastructure and its deploy workflow are written
-([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)); the first
-deploy, [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), has not happened.
-Version revocation is unresolved on
+Production runs every release through the Deploy workflow, with tier 2 on the
+ECS fleet; each release gets a What's new entry in the portal
+([Operations](docs/OPERATIONS.md#deploying)). Version revocation is unresolved on
 [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425): the `revoked`
 frame exists, but no revocation operation does. Chromium desktop is the supported
 browser. Tier 3, execution without a viewer, is next.
 
 Patches have names at `/<company>/<patch>`, belong to users, and are shared with the company by default. Tiers 0 and 1 may be public; tier 2 cannot. Tier 1 code acts as the viewer through the shell broker, never holding their login. It can read and write its own tables and files and read declared shared tables and stores. The declared member directory admits signed-in company members on public tier 1 pages; other company-data operations remain unavailable there. Tier 2 callbacks act as the patch for its own resources and recheck the viewer for company data. Publish provisions resources additively in a Postgres database per company, preserving omitted definitions and data.
 
-`patchy login` hands the person a browser URL and code; confirmation lets the CLI mint and save a user-owned machine token. Clerk holds the browser session. Your machines lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Admins manage Postgres and PostHog connections, encrypted credentials, immutable metadata snapshots and recent calls at `/company/connections`. Patches get generated clients for constrained read-only queries; every integration call and table/file mutation is logged.
+`patchy login` hands the person a browser URL and code; confirmation lets the CLI mint and save a user-owned machine token. Clerk holds the browser session. Your machines lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Admins manage Postgres and PostHog connections, encrypted credentials, immutable metadata snapshots and recent calls at `/company/connections`. Patches get generated clients for constrained read-only queries; every integration call and table/file mutation is logged. Each company has a look, which an admin's agent captures from the company's site at onboarding and new patches start in.
 
-The signed-in `/` is the company's patch portal. Cards at `/patches/<name>` show descriptions, owners, sharing, versions and dependants, with management controls for owners and admins. Patches remain live or retired indefinitely; delete keeps them recoverable for 30 days. Owners can retire, delete, restore, roll back and describe through the CLI too. Admins can reassign patches and choose which to retire or restore when changing a user's active state; publish remains owner-only. Off addresses explain what happened and link colleagues to the card.
+The signed-in `/` is Home, which puts the patches each person uses first; All patches at `/patches` lists every patch they can open. Cards at `/patches/<name>` show descriptions, owners, sharing, versions and dependants, with management controls and the invocation log for owners and admins, whose agents read the same log with `patchy logs`. New members get a guide to their first patch, and a bell shows what shipped since their last visit. Patches remain live or retired indefinitely; delete keeps them recoverable for 30 days. Owners can retire, delete, restore, roll back and describe through the CLI too. Admins can reassign patches and choose which to retire or restore when changing a user's active state; publish remains owner-only. Off addresses explain what happened and link colleagues to the card.
 
 This repository is a full-history copy of [PatchPage](https://github.com/allisonmahmood/PatchPage), taken in a different direction. PatchPage remains a separate, free product with its own instance; nothing here runs it or publishes to it, and commits from before the split describe PatchPage, not Patchy Cloud.
 

@@ -8,7 +8,7 @@ The `@effect/sql-pg` client layer, Effect's Migrator over the capability package
 
 ## Baselines squashed before launch
 
-Before launch the platform record was squashed into one baseline per capability, ids 1 to 8 (`0001_companies` … `0008_execution`), producing exactly the schema the fifteen earlier steps did. The new names differ from every earlier step's, so a database migrated before the squash fails the ledger check at id 1; a dev instance recovers with `pnpm dev reset`, which wipes its data. The upgrade code and its tests went with the old steps. Write an upgrade test again with the first migration that changes state a database must keep: after launch, or earlier if something real must be kept. Change the schema by adding a step, not by editing a landed one: the check compares names, so an edited step goes unnoticed on a database that already applied it.
+Before launch the platform record was squashed into one baseline per capability, ids 1 to 8 (`0001_companies` … `0008_execution`), producing exactly the schema the fifteen earlier steps did. The new names differ from every earlier step's, so a database migrated before the squash fails the ledger check at id 1; a dev instance recovers with `pnpm dev reset`, which wipes its data. The upgrade code and its tests went with the old steps. Production now holds data it must keep, so a step that changes kept state comes with an upgrade test, as `0009_whats_new_seen` does in `packages/companies`. Change the schema by adding a step, not by editing a landed one: the check compares names, so an edited step goes unnoticed on a database that already applied it.
 
 ## Decoding rows
 
