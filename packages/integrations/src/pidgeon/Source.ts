@@ -115,6 +115,16 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonRateL
         : `Pidgeon is limiting this account's calls for now.${wait}`;
   }
 }
+/** Pidgeon refused the request itself: an attachment that isn't text, a malformed recipient. */
+export class Invalid extends Schema.TaggedError<Invalid>()("PidgeonInvalid", {
+  details: Schema.Struct({ code: Schema.String, message: Schema.String })
+}) {
+  readonly code = "invalid_request" as const;
+  readonly status = 400;
+  override get message() {
+    return `Pidgeon refused the request: ${this.details.message}`;
+  }
+}
 export class Unavailable extends Schema.TaggedError<Unavailable>()("PidgeonUnavailable", {
   stage: Schema.Literals(["request", "redirect", "status", "response"]),
   upstreamStatus: Schema.optionalKey(Schema.Int),
@@ -148,7 +158,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("PidgeonTooLarge", 
 
 /** What a call can fail with once the connection exists. */
 export type CallError =
-  KeyRejected | NotFound | Refused | RateLimited | Unavailable | Timeout | TooLarge;
+  KeyRejected | NotFound | Refused | Invalid | RateLimited | Unavailable | Timeout | TooLarge;
 export type SourceError = CallError | InvalidCredentials | KeyTooBroad | NoInbox;
 
 export const Credentials = Schema.Struct({
@@ -238,6 +248,15 @@ export const interpret = (answer: Answer): Effect.Effect<unknown, CallError> => 
       })
     );
   }
+  if (
+    (answer.status === 400 || answer.status === 409 || answer.status === 422) &&
+    error !== undefined
+  )
+    return Effect.fail(
+      new Invalid({
+        details: { code: error.code.slice(0, 64), message: error.message.slice(0, 500) }
+      })
+    );
   if (answer.status < 200 || answer.status >= 300)
     return Effect.fail(new Unavailable({ stage: "status", upstreamStatus: answer.status }));
   return answer.body === undefined

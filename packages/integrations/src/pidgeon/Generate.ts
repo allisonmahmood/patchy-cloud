@@ -102,8 +102,12 @@ export interface Sent {
   readonly threadId: string;
   readonly rejected: readonly { readonly address: string; readonly reason: string }[];
 }
-/** Names one intended send: retrying with the same key never sends twice. Made for you if absent. */
-export interface Once { readonly idempotencyKey?: string }
+/**
+ * Names one intended email. Make it when the person starts writing (\`crypto.randomUUID()\`) and
+ * keep it until the send succeeds: sending again with it after an error or timeout never sends
+ * twice. A new key is a new email.
+ */
+export interface Once { readonly idempotencyKey: string }
 `
     : ""
 }
@@ -142,11 +146,17 @@ export interface Client {
   };
 }
 
+/** The broker carries JSON: an option set to undefined is left out, as JSON.stringify would. */
+const defined = (input: unknown): unknown =>
+  input !== null && typeof input === "object" && !Array.isArray(input)
+    ? Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))
+    : input;
+
 export function createClient(connection: string, call: Call): Client {
   const invoke = async <A>(op: "pidgeon.read" | "pidgeon.write", operation: string, input: unknown): Promise<A> => {
     let value: unknown;
     try {
-      value = await call(op, { connection, operation, input });
+      value = await call(op, { connection, operation, input: defined(input) });
     } catch (error) {
       throw decodeError(error, op) ?? error;
     }
@@ -157,8 +167,7 @@ export function createClient(connection: string, call: Call): Client {
   const read = <A>(operation: string, input: unknown) => invoke<A>("pidgeon.read", operation, input);${
     send
       ? `
-  const write = <A>(operation: string, input: unknown) => invoke<A>("pidgeon.write", operation, input);
-  const once = (input: Once) => input.idempotencyKey ?? crypto.randomUUID();`
+  const write = <A>(operation: string, input: unknown) => invoke<A>("pidgeon.write", operation, input);`
       : ""
   }
   return {
@@ -179,10 +188,8 @@ export function createClient(connection: string, call: Call): Client {
       search: (input) => read("messages.search", input)${
         send
           ? `,
-      send: ({ idempotencyKey, to, ...input }) =>
-        write("messages.send", { ...input, to: typeof to === "string" ? [to] : to, idempotencyKey: once({ idempotencyKey }) }),
-      reply: (id, { idempotencyKey, ...input }) =>
-        write("messages.reply", { id, ...input, idempotencyKey: once({ idempotencyKey }) })`
+      send: ({ to, ...input }) => write("messages.send", { ...input, to: typeof to === "string" ? [to] : to }),
+      reply: (id, input) => write("messages.reply", { id, ...input })`
           : ""
       }
     },
@@ -264,7 +271,7 @@ Use the declared alias: \`connections.<alias>.threads.list()\`. Every call is fo
         ? `
 - \`messages.reply(id, { text })\` answers a message's sender in its thread; \`messages.send({ to, subject, text })\` starts a conversation. Plain text only. Read \`rejected\` on the result: those recipients' providers refused the mail.
 - \`threads.update(id, { status })\`, \`threads.label(id, labelId)\` and \`threads.unlabel(id, labelId)\` triage.
-- Sends and replies are idempotent: the client names each one with a fresh \`idempotencyKey\`. Retry a failed send with the same key and Pidgeon never sends twice.
+- Every send and reply takes an \`idempotencyKey\` naming that one email: make it when the person starts the draft and keep it until the send succeeds. Sending again with the same key after an error or timeout never sends twice; a fresh key per click can.
 - Every send runs as the person using the patch. The connection's recent calls show its recipients and subject to admins. Send only when the person asks: never on page load or in a loop.`
         : ""
     }

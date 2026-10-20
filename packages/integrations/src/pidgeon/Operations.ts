@@ -48,6 +48,7 @@ export const Errors = Schema.Union([
   ConnectionRefused,
   Source.NotFound,
   Source.Refused,
+  Source.Invalid,
   Source.RateLimited,
   Source.Unavailable,
   Source.Timeout,
@@ -312,6 +313,7 @@ export const run = Effect.fn("PidgeonOperations.run")(function* (
     case "threads.label":
     case "threads.unlabel": {
       const id = encodeURIComponent(call.input.id);
+      // Applying answers with the thread's labels; removing answers only `{ removed }`.
       const answer =
         call.operation === "threads.label"
           ? yield* api({
@@ -323,7 +325,7 @@ export const run = Effect.fn("PidgeonOperations.run")(function* (
               method: "DELETE",
               path: `/threads/${id}/labels`,
               query: { label_id: call.input.labelId }
-            });
+            }).pipe(Effect.andThen(api({ method: "GET", path: `/threads/${id}/labels` })));
       return { labels: page(answer, label).items };
     }
   }
@@ -456,11 +458,17 @@ export const recorded = {
     if (!Predicate.isObject(args) || typeof args.operation !== "string") return null;
     const input = record(args.input);
     const operation = args.operation.slice(0, 40);
+    const cc = Array.isArray(input.cc) && input.cc.length > 0 ? ` cc ${input.cc.join(", ")}` : "";
     if (operation === "messages.send") {
       const to = Array.isArray(input.to) ? input.to.join(", ") : "";
-      return `${operation} to ${to}: ${text(input.subject) ?? ""}`.slice(0, 300);
+      return `${operation} “${(text(input.subject) ?? "").slice(0, 120)}” to ${to}${cc}`.slice(
+        0,
+        500
+      );
     }
-    if (operation === "messages.reply") return `${operation} on ${text(input.id) ?? ""}`;
+    // The reply's recipient is the message's sender, resolved by Pidgeon after this is logged.
+    if (operation === "messages.reply")
+      return `${operation} on ${text(input.id) ?? ""}${cc}`.slice(0, 500);
     if (operation === "threads.update")
       return `${operation} ${text(input.id) ?? ""} to ${text(input.status) ?? ""}`;
     return operation;

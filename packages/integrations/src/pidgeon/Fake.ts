@@ -399,7 +399,13 @@ const workspace = (
     const cc = strings(body.cc).map(party);
     const text = typeof body.text === "string" ? body.text : "";
     if (to.length === 0) return fail(422, "invalid_request", "Name at least one recipient.");
-    if (reply === null && identity.sendPolicy === "reply_only") {
+    if (identity.sendPolicy === "list")
+      return fail(
+        403,
+        "not_permitted",
+        "The fake doesn't model allow-lists, so it refuses every send from a `list` address."
+      );
+    if (identity.sendPolicy === "reply_only") {
       const known = new Set(
         messages.filter((item) => item.direction === "inbound").map((item) => item.from.email)
       );
@@ -526,7 +532,12 @@ const workspace = (
           const label = labels.find((item) => item.id === body.label_id);
           if (label === undefined) return missing();
           thread.labelIds.add(label.id);
-        } else if (method === "DELETE") thread.labelIds.delete(query.get("label_id") ?? "");
+        } else if (method === "DELETE") {
+          const removed = thread.labelIds.delete(query.get("label_id") ?? "");
+          return ok({
+            data: { thread_id: thread.id, label_id: query.get("label_id") ?? "", removed }
+          });
+        }
         return page(
           labels.filter((label) => thread.labelIds.has(label.id)).map(labelJson),
           new URLSearchParams()

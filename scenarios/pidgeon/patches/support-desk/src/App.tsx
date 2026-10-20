@@ -185,6 +185,8 @@ function Conversation({ id, onChange }: { id: string; onChange: () => void }) {
   const [allLabels, setAllLabels] = useState<readonly Label[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
   const [reply, setReply] = useState("");
+  // Names this reply until it sends, so pressing Send again after a failure can't mail twice.
+  const [draft, setDraft] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
 
@@ -288,8 +290,12 @@ function Conversation({ id, onChange }: { id: string; onChange: () => void }) {
               onClick={() =>
                 act(
                   async () => {
-                    const sent = await support.messages.reply(last.id, { text: reply.trim() });
+                    const sent = await support.messages.reply(last.id, {
+                      text: reply.trim(),
+                      idempotencyKey: draft
+                    });
                     setReply("");
+                    setDraft(crypto.randomUUID());
                     if (sent.rejected.length > 0)
                       throw new Error(
                         `Sent, but refused for ${sent.rejected.map((item) => item.address).join(", ")}.`
@@ -377,6 +383,7 @@ function Compose({ onDone }: { onDone: (threadId: string) => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  const [draft] = useState(() => crypto.randomUUID());
   const recipients = to
     .split(",")
     .map((item) => item.trim())
@@ -385,7 +392,16 @@ function Compose({ onDone }: { onDone: (threadId: string) => void }) {
     setBusy(true);
     setNotice(undefined);
     try {
-      const sent = await support.messages.send({ to: recipients, subject, text });
+      const sent = await support.messages.send({
+        to: recipients,
+        subject,
+        text,
+        idempotencyKey: draft
+      });
+      if (sent.rejected.length > 0)
+        return setNotice(
+          `Sent, but these addresses were refused: ${sent.rejected.map((item) => `${item.address} (${item.reason})`).join(", ")}.`
+        );
       onDone(sent.threadId);
     } catch (failure) {
       setNotice(explain(failure));
