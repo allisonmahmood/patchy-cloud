@@ -337,7 +337,7 @@ Not a **connection** (a connected source belongs to the company, or in the futur
 
 ## Runtime tiers
 
-A tier determines where a patch's code runs. Tier 0 is static, with no patch code execution. Tier 1 runs in the viewer's browser, as the viewer. Tier 2 adds server handlers that Patchy runs for a signed-in viewer. A narrow machine-token API also runs published queries as the token’s user without an open browser; mutations and actions still require the browser runtime. Tier 3, unattended execution such as inbound routes, webhooks and schedules, is the next line of work. Tier 4, an agent's own computer, remains beyond it.
+A tier determines where a patch's code runs. Tier 0 is static, with no patch code execution. Tier 1 runs in the viewer's browser, as the viewer. Tier 2 adds server handlers that Patchy runs for a signed-in viewer. A narrow machine-token API also runs published queries and declared mutations as the token’s user without an open browser; actions still require the browser runtime. Tier 3, unattended execution such as inbound routes, webhooks and schedules, is the next line of work. Tier 4, an agent's own computer, remains beyond it.
 
 ### What a tier changes, and what it never changes
 
@@ -347,8 +347,8 @@ resolves the current published version, checks company membership and openabilit
 requires a declared query, validates inputs and results, and uses the existing
 isolated executor and read-only query capabilities. The machine token is rechecked
 before invocation and for viewer-authorized callbacks. No browser cookie, document
-stream, historical version selection or write handler is accepted through this API.
-This is an on-demand read as a user, not a scheduler or a general agent runtime.
+stream, historical version selection or write handler is accepted through the query API.
+This is an on-demand call as a user, not a scheduler or a general agent runtime.
 Agents discover published queries with `GET /api/patches/:patchRef/queries`.
 It describes only queries from the current live company tier 2 version: the
 stable `(patchId, handler)` identity, version id, an author-written description
@@ -357,6 +357,34 @@ arguments and the successful value. The schemas use execution's own validators
 and expand table rows without reading their contents. Discovery executes no
 patch code and grants no authority; calls still reauthorize and validate the
 current version, so agents refresh discovery when a publish changes a contract.
+
+Machine callers discover declared queries and mutations together through
+`GET /api/patches/:patchRef/operations`; actions are excluded. The catalog adds
+`kind` to each operation and keeps the query catalog's descriptions and schemas.
+`POST /api/patches/:patchRef/mutation` requires `handler`, `args`, the discovered
+`versionId` and a `mutationKey`. It admits only a current live openable company
+Tool's declared mutation. A changed version returns `409 version_changed`
+without running code; the client must never automatically reapply an uncertain
+change on a new version. The query door remains read-only.
+
+Machine mutations use the same serializable transaction, handler rules,
+argument/result validation, initiating-user attribution and revision/wake path
+as the Tool's browser calls. Only validated success commits; a business error,
+throw or invalid result rolls back. The reply carries the committed value and
+resource revisions, including on an identical-key replay. The normal page's
+live queries observe the changes without a new refresh mechanism.
+
+One intended change retains one key across retries: epoch milliseconds, a dash
+and 16 random bytes in unpadded base64url. The existing 24-hour key window and
+five-minute future skew apply. A committed key is bound to the person, patch,
+version, handler and canonical arguments; changed reuse is refused. Clients
+must preserve pending envelopes to retain protection across their own restart
+and never mint a replacement key for an unknown outcome. This endpoint cannot
+recover an older version's committed result after republish. Existing invocation
+logs name the initiating person, not the MCP machine; callback logs retain their
+browser credential label. Machine-specific attribution remains a gap, rather
+than a new audit system in this prototype. No arbitrary resource access, actions,
+file writes or external side effects are added.
 
 A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev/test instances and production hosts configured with the ECS fleet.
 

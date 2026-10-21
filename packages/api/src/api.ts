@@ -35,6 +35,7 @@ import {
   PatchDetail,
   PatchPage,
   PatchQueries,
+  PatchOperations,
   PatchStateFilter,
   PrimitiveDetail,
   PublishUnavailable,
@@ -94,6 +95,7 @@ import {
   RuntimeEventStream,
   ServerCallReply,
   PatchQuery,
+  PatchMutation,
   RuntimeSubscriptionRequest,
   RuntimeSubscriptionAccepted
 } from "./runtime.js";
@@ -350,6 +352,45 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "outputSchema describes result.value on success, not the reply envelope. No code executes or business rows are read. " +
           "Other tiers answer 400; unknown or inaccessible patches answer 404; off patches answer 409 wrong_state. " +
           "Discovery grants no execution permission: POST query reauthorizes and validates the current published version on every call. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.get("operations", "/patches/:patchRef/operations", {
+      params: readParams,
+      success: PatchOperations,
+      error: [...patchRouteErrors, WrongState]
+    }).annotateMerge(
+      describe(
+        "Describe current declared queries and mutations of a live company tier 2 Tool. " +
+          "Uses the same machine-token, company and openability checks as query discovery. " +
+          "Returns patchId, versionId and operations sorted by handler, each with kind, description and self-contained inputSchema/outputSchema. " +
+          "Actions are excluded. No code executes or business rows are read. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.post("mutation", "/patches/:patchRef/mutation", {
+      params: readParams,
+      payload: PatchMutation,
+      success: Schema.Struct({
+        patchId: Schema.String,
+        versionId: Schema.String,
+        result: ServerCallReply
+      }),
+      error: [
+        ...patchRouteErrors,
+        WrongState,
+        PayloadTooLarge,
+        ...[400, 403, 409, 413, 429, 500, 503, 504].map((status) =>
+          RuntimeFailure.pipe(HttpApiSchema.status(status))
+        )
+      ]
+    }).annotateMerge(
+      describe(
+        "Execute a declared mutation as the machine token's user, using the Tool's normal serializable transaction, input/result validation, attribution and live-update notifications. " +
+          "Requires the discovered versionId; a changed current version answers 409 version_changed without execution. " +
+          "Requires mutationKey: epoch milliseconds, a dash and 16 random bytes in unpadded base64url. Keys are valid 24 hours, with five minutes future skew. " +
+          "Retain the same key, version, handler, arguments and person on retry: committed duplicates replay the stored authoritative value and revisions; mismatched reuse is refused. " +
+          "Never replace a key after an unknown outcome or automatically retry on a new version. " +
+          "Only current live openable company tier 2 mutations are admitted. Queries, actions, arbitrary resources and caller identities are refused. " +
+          "Declared handler errors roll back and return result.ok=false; host errors are non-2xx. Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.post("query", "/patches/:patchRef/query", {

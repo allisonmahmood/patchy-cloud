@@ -129,3 +129,5 @@ A committed publish, update or owner deletion, attributed to the user who acted;
 _Avoid_: audit log, activity feed
 
 The machine query door (`POST /api/patches/:patchRef/query`) uses the same openability gate as discovery, then delegates to Runtime for current-version admission and query-only execution. It cannot select a retained version or invoke a mutation or action.
+
+The machine operation catalog (`GET /api/patches/:patchRef/operations`) applies the same openability gate and describes current queries and mutations, excluding actions. The mutation door (`POST /api/patches/:patchRef/mutation`) delegates to Runtime with the discovered version and a retained mutation key. It grants no arbitrary table access or publishing authority.

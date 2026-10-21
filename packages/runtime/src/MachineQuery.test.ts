@@ -20,6 +20,7 @@ it.effect(
       let active = true;
       let allowed = true;
       let calls = 0;
+      let expectedHandler = "queue.blocked";
       let version: LoadedVersions.LoadedVersion & { patchTier: number } = {
         patchId: "launchqueue1",
         versionId: "ver_current",
@@ -64,9 +65,14 @@ it.effect(
           }
         }),
         Effect.provideService(Invocation.Invocation, {
-          call: (_input, binding, recheck) =>
+          call: (input, binding, recheck) =>
             Effect.gen(function* () {
               calls++;
+              assert.deepStrictEqual(input, {
+                handler: expectedHandler,
+                args: {},
+                ...(expectedHandler === "queue.write" ? { mutationKey: "retained-key" } : {})
+              });
               assert.strictEqual(binding.identity?.user.id, viewer.user.id);
               assert.strictEqual(binding.versionId, version.versionId);
               yield* recheck;
@@ -92,10 +98,47 @@ it.effect(
           .pipe(Effect.flip),
         Runtime.InvalidRequest
       );
+      const mutation = {
+        handler: "queue.write",
+        args: {},
+        versionId: version.versionId,
+        mutationKey: "retained-key"
+      };
+      expectedHandler = "queue.write";
+      assert.deepStrictEqual(yield* runtime.mutation(version.patchId, mutation), {
+        patchId: version.patchId,
+        versionId: version.versionId,
+        result: { ok: true, value: 2 }
+      });
+      assert.instanceOf(
+        yield* runtime
+          .mutation(version.patchId, { ...mutation, versionId: "ver_old" })
+          .pipe(Effect.flip),
+        Runtime.VersionChanged
+      );
+      for (const handler of ["queue.blocked", "queue.action", "queue.missing", "toString"])
+        assert.instanceOf(
+          yield* runtime.mutation(version.patchId, { ...mutation, handler }).pipe(Effect.flip),
+          Runtime.InvalidRequest
+        );
+      active = false;
+      assert.instanceOf(
+        yield* runtime.mutation(version.patchId, mutation).pipe(Effect.flip),
+        Runtime.AccessDenied
+      );
+      active = true;
       version = { ...version, companyId: "cmp_other" };
       assert.instanceOf(yield* query.pipe(Effect.flip), Runtime.AccessDenied);
+      assert.instanceOf(
+        yield* runtime.mutation(version.patchId, mutation).pipe(Effect.flip),
+        Runtime.AccessDenied
+      );
       version = { ...version, companyId: "cmp_test", scope: "public" };
       assert.instanceOf(yield* query.pipe(Effect.flip), Runtime.AccessDenied);
+      assert.instanceOf(
+        yield* runtime.mutation(version.patchId, mutation).pipe(Effect.flip),
+        Runtime.AccessDenied
+      );
       version = { ...version, scope: "company", manifest: { ...version.manifest, tier: 1 } };
       assert.instanceOf(yield* query.pipe(Effect.flip), Runtime.InvalidRequest);
       version = { ...version, manifest: { ...version.manifest, tier: 2 } };
@@ -107,7 +150,7 @@ it.effect(
       allowed = true;
       yield* runtime.drain;
       assert.instanceOf(yield* query.pipe(Effect.flip), Runtime.Draining);
-      assert.strictEqual(calls, 1);
+      assert.strictEqual(calls, 2);
     }).pipe(
       Effect.provide(Limits.layer),
       Effect.provideService(

@@ -54,7 +54,10 @@ import {
   PatchPage,
   PatchQueries,
   publishedQueries,
+  PatchOperations,
+  publishedOperations,
   PatchQuery,
+  PatchMutation,
   PrimitiveDetail,
   type PatchTableSummary,
   PayloadTooLarge,
@@ -92,6 +95,7 @@ const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
 const encodePage = Schema.encodeSync(PatchPage);
 const encodeQueries = Schema.encodeSync(PatchQueries);
+const encodeOperations = Schema.encodeSync(PatchOperations);
 const encodePrimitive = Schema.encodeSync(PrimitiveDetail);
 const encodeLog = Schema.encodeSync(PatchLog);
 const readHeaders = { "cache-control": "private, no-store" };
@@ -290,6 +294,7 @@ const decodeReplayIds = Schema.decodeUnknownOption(
   Schema.Struct({ patchId: Schema.String, versionId: Schema.String })
 );
 const decodeQuery = decodeBody(PatchQuery, { onExcessProperty: "error" });
+const decodeMutation = decodeBody(PatchMutation, { onExcessProperty: "error" });
 const decodeShare = decodeBody(ShareRequest);
 const decodeForce = decodeBody(ForceRequest);
 const decodeRollback = decodeBody(RollbackRequest);
@@ -737,6 +742,56 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               })
             ),
             { headers: readHeaders }
+          );
+        })
+      )
+      .handleRaw("operations", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const row = yield* readOne(params.patchRef, "live", identity);
+          if (HttpServerResponse.isHttpServerResponse(row)) return row;
+          const found = yield* patches
+            .find(row.patch.id)
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          if (
+            Option.isNone(found) ||
+            found.value.patch.companyId !== identity.company.id ||
+            !openability(found.value.patch, identity.user.id)
+          )
+            return notFound();
+          const { patch, version } = found.value;
+          if (version.tier !== 2 || patch.scope !== "company")
+            return refuse(BadRequest, {
+              ok: false,
+              error: "Only company tier 2 Tools have published operations."
+            });
+          return HttpServerResponse.jsonUnsafe(
+            encodeOperations(
+              new PatchOperations({
+                patchId: patch.id,
+                versionId: version.id,
+                operations: publishedOperations(version.manifest, patch.description)
+              })
+            ),
+            { headers: readHeaders }
+          );
+        })
+      )
+      .handleRaw("mutation", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const row = yield* readOne(params.patchRef, "live", identity);
+          if (HttpServerResponse.isHttpServerResponse(row)) return row;
+          if (Option.isNone(runtime))
+            return RuntimeApi.failure(new Runtime.InvocationUnavailable());
+          const payload = yield* readBody(runtime.value.bodyLimit("server.call")).pipe(
+            Effect.flatMap(decodeMutation),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          return yield* runtime.value.mutation(row.patch.id, payload).pipe(
+            Effect.map((reply) => HttpServerResponse.jsonUnsafe(reply, { headers: readHeaders })),
+            Effect.catch(RuntimeApi.recordFailure)
           );
         })
       )

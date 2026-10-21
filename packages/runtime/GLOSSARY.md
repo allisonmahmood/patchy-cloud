@@ -141,7 +141,7 @@ The patch whose loaded version defines its owned resources and declares the outs
 _Avoid_: effective principal, patch owner
 
 **Initiating viewer**:
-The user whose live session admits an invocation or a direct browser operation, or whose machine token admits a published query without an open document. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
+The user whose live session admits an invocation or a direct browser operation, or whose machine token admits a published query or declared mutation without an open document. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
 _Avoid_: principal, owning patch
 
 **Patch identity**:
@@ -242,3 +242,6 @@ _Avoid_: reload, mutation retry
 
 **Machine query**:
 An on-demand invocation of a current published query by a machine token’s user. Cloud admits the user and loaded version; the query keeps the same read-only capabilities, limits and executor as a browser invocation. It creates no document stream and accepts neither mutation keys nor action handlers.
+
+**Machine mutation**:
+An on-demand invocation of a current Tool's declared mutation as a machine token's user, pinned to the discovered version. It uses the same transaction, mutation key, initiating-viewer attribution and live-query notifications as a browser call, and returns the committed value and resource revisions. A changed version refuses execution; a retry preserves its key and complete envelope. Actions are unavailable.

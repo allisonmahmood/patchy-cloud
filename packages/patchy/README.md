@@ -1588,3 +1588,12 @@ Report vulnerabilities privately by following the [security policy](https://gith
 ## License
 
 All rights reserved for now. See [LICENSE](https://github.com/allisonmahmood/patchy-cloud/blob/main/LICENSE).
+
+The separate MCP also discovers declared queries and mutations through
+`GET /api/patches/:patchRef/operations` and executes mutations through
+`POST /api/patches/:patchRef/mutation`. These machine API endpoints add no CLI
+command. They reuse the saved login, Tool permissions, validated handler contracts
+and serializable transaction path. Mutation calls pin the discovered `versionId`
+and retain one `mutationKey` across retries; they return the committed value and
+resource revisions. Actions and arbitrary table access remain unavailable. See
+[the API contract](../../docs/API.md) for the exact request and retry rules.

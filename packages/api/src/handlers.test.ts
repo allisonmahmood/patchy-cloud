@@ -13,6 +13,7 @@ import {
   handlerArgsSchema,
   handlerValueSchema,
   publishedQueries,
+  publishedOperations,
   HandlerSchema
 } from "./index.js";
 import { canonicalArgs } from "./canonicalArgs.js";
@@ -66,6 +67,28 @@ const decodeRow = Schema.decodeUnknownExit(
 );
 
 describe("handler descriptors", () => {
+  it("discovers declared mutations and queries while excluding actions", () => {
+    const operations = publishedOperations(
+      decodeManifest({
+        ...manifest,
+        handlers: {
+          "items.remove": { ...query, kind: "mutation", description: "Remove one item." },
+          "items.send": { ...query, kind: "action" },
+          "items.read": query
+        }
+      }),
+      "Tool purpose"
+    );
+    expect(operations.map(({ handler, kind }) => ({ handler, kind }))).toEqual([
+      { handler: "items.read", kind: "query" },
+      { handler: "items.remove", kind: "mutation" }
+    ]);
+    expect(operations[1]).toMatchObject({
+      description: "Remove one item.",
+      inputSchema: { type: "object", additionalProperties: false },
+      outputSchema: { type: "boolean" }
+    });
+  });
   it("preserves optional purpose text and refuses blank or oversized descriptions", () => {
     for (const description of ["", "  ", "x".repeat(501)])
       expect(decodeDescriptor({ ...query, description })._tag).toBe("Failure");

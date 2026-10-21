@@ -119,11 +119,25 @@ Responses:
 - `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
-### `POST /api/patches/:patchRef/query`
+### `GET /api/patches/:patchRef/operations`
 
-Execute a query from the current published tier 2 Tool as the machine token's user, without an open browser. Uses discovery's company and openability checks. Only declared query handlers are allowed; mutations, actions, mutation keys and caller-selected versions are refused. Cloud validates arguments and results and retains runtime rate limits, deadlines, read-only capabilities and execution isolation. Returns the executed version id and the handler reply. Responses are private, no-store.
+Describe current declared queries and mutations of a live company tier 2 Tool. Uses the same machine-token, company and openability checks as query discovery. Returns patchId, versionId and operations sorted by handler, each with kind, description and self-contained inputSchema/outputSchema. Actions are excluded. No code executes or business rows are read. Responses are private, no-store.
 
-Request body: { handler: string, args: { [key: string]: unknown } }
+Responses:
+
+- `200` [PatchOperations](#patchoperations)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/patches/:patchRef/mutation`
+
+Execute a declared mutation as the machine token's user, using the Tool's normal serializable transaction, input/result validation, attribution and live-update notifications. Requires the discovered versionId; a changed current version answers 409 version_changed without execution. Requires mutationKey: epoch milliseconds, a dash and 16 random bytes in unpadded base64url. Keys are valid 24 hours, with five minutes future skew. Retain the same key, version, handler, arguments and person on retry: committed duplicates replay the stored authoritative value and revisions; mismatched reuse is refused. Never replace a key after an unknown outcome or automatically retry on a new version. Only current live openable company tier 2 mutations are admitted. Queries, actions, arbitrary resources and caller identities are refused. Declared handler errors roll back and return result.ok=false; host errors are non-2xx. Responses are private, no-store.
+
+Request body: { handler: string, args: { [key: string]: unknown }, versionId: string, mutationKey: string }
 
 Responses:
 
@@ -139,6 +153,27 @@ Responses:
 - `500` [RuntimeFailure_5](#runtimefailure_5)
 - `503` [RuntimeFailure_6](#runtimefailure_6)
 - `504` [RuntimeFailure_7](#runtimefailure_7)
+
+### `POST /api/patches/:patchRef/query`
+
+Execute a query from the current published tier 2 Tool as the machine token's user, without an open browser. Uses discovery's company and openability checks. Only declared query handlers are allowed; mutations, actions, mutation keys and caller-selected versions are refused. Cloud validates arguments and results and retains runtime rate limits, deadlines, read-only capabilities and execution isolation. Returns the executed version id and the handler reply. Responses are private, no-store.
+
+Request body: { handler: string, args: { [key: string]: unknown } }
+
+Responses:
+
+- `200` { patchId: string, versionId: string, result: [ServerCallReply](#servercallreply) }
+- `400` { ok: false, error: string } | [RuntimeFailure_8](#runtimefailure_8)
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure_12](#runtimefailure_12)
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | [RuntimeFailure_10](#runtimefailure_10)
+- `413` { ok: false, error: string } | [RuntimeFailure_11](#runtimefailure_11)
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer } | [RuntimeFailure_9](#runtimefailure_9)
+- `500` [RuntimeFailure_13](#runtimefailure_13)
+- `503` [RuntimeFailure_14](#runtimefailure_14)
+- `504` [RuntimeFailure_15](#runtimefailure_15)
 
 ### `GET /api/patches/:patchRef/page`
 
@@ -357,15 +392,15 @@ Request body: [DevRead](#devread)
 Responses:
 
 - `200` [RuntimeSuccess](#runtimesuccess)
-- `400` [RuntimeFailure_8](#runtimefailure_8) | { ok: false, error: string }
-- `401` [RuntimeFailure_9](#runtimefailure_9) | { ok: false, error: "Missing or invalid API token." }
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11) | { ok: false, error: string }
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14) | { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16) | { ok: false, error: string }
+- `401` [RuntimeFailure_17](#runtimefailure_17) | { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19) | { ok: false, error: string }
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22) | { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ## look
 
@@ -453,15 +488,15 @@ Request body: [RuntimeCall](#runtimecall)
 Responses:
 
 - `200` [ServerCallReply](#servercallreply)
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ### `PUT /api/runtime/staged-files/:patchId/:versionId`
 
@@ -472,15 +507,15 @@ Request body: raw bytes (`application/octet-stream`)
 Responses:
 
 - `200` [RuntimeSuccess](#runtimesuccess)
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ### `GET /api/runtime/files/:patchId/:versionId/:store/*`
 
@@ -489,15 +524,15 @@ Browser-only: no bearer middleware, and machine tokens are refused. Every reques
 Responses:
 
 - `200` raw bytes (`application/octet-stream`)
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ### `PUT /api/runtime/files/:patchId/:versionId/:store/*`
 
@@ -508,15 +543,15 @@ Request body: raw bytes (`application/octet-stream`)
 Responses:
 
 - `200` [RuntimeSuccess](#runtimesuccess)
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ### `GET /api/runtime/shared-files/:patchId/:versionId/:alias/*`
 
@@ -525,15 +560,15 @@ Browser-only: no bearer middleware, and machine tokens are refused. Every reques
 Responses:
 
 - `200` raw bytes (`application/octet-stream`)
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ### `GET /api/runtime/file-handles/:patchId/:versionId/:handle`
 
@@ -542,15 +577,15 @@ Browser-only: no bearer middleware, and machine tokens are refused. Every reques
 Responses:
 
 - `200` raw bytes (`application/octet-stream`)
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ## runtimeStream
 
@@ -561,15 +596,15 @@ Browser-cookie authentication only; bearer tokens are refused. `X-Patchy-Wire` i
 Responses:
 
 - `200` SSE (`text/event-stream`), JSON data: [RuntimeStreamFrame](#runtimestreamframe)
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ### `POST /api/runtime/subscriptions`
 
@@ -580,15 +615,15 @@ Request body: { patchId: string, versionId: string, documentId: string, generati
 Responses:
 
 - `200` { ok: true }
-- `400` [RuntimeFailure_8](#runtimefailure_8)
-- `401` [RuntimeFailure_9](#runtimefailure_9)
-- `403` [RuntimeFailure_10](#runtimefailure_10)
-- `404` [RuntimeFailure_11](#runtimefailure_11)
-- `409` [RuntimeFailure_12](#runtimefailure_12)
-- `413` [RuntimeFailure_13](#runtimefailure_13)
-- `429` [RuntimeFailure_14](#runtimefailure_14)
-- `503` [RuntimeFailure_15](#runtimefailure_15)
-- `504` [RuntimeFailure_16](#runtimefailure_16)
+- `400` [RuntimeFailure_16](#runtimefailure_16)
+- `401` [RuntimeFailure_17](#runtimefailure_17)
+- `403` [RuntimeFailure_18](#runtimefailure_18)
+- `404` [RuntimeFailure_19](#runtimefailure_19)
+- `409` [RuntimeFailure_20](#runtimefailure_20)
+- `413` [RuntimeFailure_21](#runtimefailure_21)
+- `429` [RuntimeFailure_22](#runtimefailure_22)
+- `503` [RuntimeFailure_23](#runtimefailure_23)
+- `504` [RuntimeFailure_24](#runtimefailure_24)
 
 ## Version eligibility
 
@@ -647,7 +682,7 @@ substituting the host's limit configuration.
 
 ## Shapes
 
-### RuntimeFailure_16
+### RuntimeFailure_24
 
 ```
 {
@@ -668,28 +703,10 @@ substituting the host's limit configuration.
 ### RuntimeCode
 
 ```
-"connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "table_not_declared" | "row_not_found" | "not_found" | "invalid_row" | "unique_violation" | "invalid_cursor" | "not_additive" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "session_refresh_required" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "handler_failed" | "handler_timeout" | "write_conflict" | "patch_paused" | "server_required" | "tier2_not_public" | "limit_exceeded" | "offset_exhausted" | "source_rate_limited"
+"connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "table_not_declared" | "row_not_found" | "not_found" | "invalid_row" | "unique_violation" | "invalid_cursor" | "not_additive" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "session_refresh_required" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "handler_failed" | "handler_timeout" | "write_conflict" | "version_changed" | "patch_paused" | "server_required" | "tier2_not_public" | "limit_exceeded" | "offset_exhausted" | "source_rate_limited"
 ```
 
-### RuntimeFailure_15
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure_14
+### RuntimeFailure_23
 
 ```
 {
@@ -707,7 +724,7 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure_13
+### RuntimeFailure_22
 
 ```
 {
@@ -725,7 +742,7 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure_12
+### RuntimeFailure_21
 
 ```
 {
@@ -743,7 +760,7 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure_11
+### RuntimeFailure_20
 
 ```
 {
@@ -761,7 +778,7 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure_10
+### RuntimeFailure_19
 
 ```
 {
@@ -779,7 +796,7 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure_9
+### RuntimeFailure_18
 
 ```
 {
@@ -797,7 +814,25 @@ substituting the host's limit configuration.
 }
 ```
 
-### RuntimeFailure_8
+### RuntimeFailure_17
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_16
 
 ```
 {
@@ -1115,6 +1150,150 @@ RuntimeSuccess | HandlerFailure
 }
 ```
 
+### RuntimeFailure_15
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_14
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_13
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_12
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_11
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_10
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_9
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
+### RuntimeFailure_8
+
+```
+{
+  ok: false,
+  source: "patchy",
+  error: string,
+  code: RuntimeCode,
+  scope?: "viewer" | "patch" | "company" | "host",
+  limitId?: string,
+  value?: number,
+  retryAfter?: number,
+  details?: { [key: string]: unknown },
+  correlationId?: string,
+  operation?: string
+}
+```
+
 ### RuntimeFailure_7
 
 ```
@@ -1256,6 +1435,16 @@ RuntimeSuccess | HandlerFailure
   details?: { [key: string]: unknown },
   correlationId?: string,
   operation?: string
+}
+```
+
+### PatchOperations
+
+```
+{
+  patchId: string,
+  versionId: string,
+  operations: { handler: string, description: string, inputSchema: { [key: string]: unknown }, outputSchema: { [key: string]: unknown }, kind: "query" | "mutation" }[]
 }
 ```
 

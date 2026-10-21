@@ -808,16 +808,23 @@ export class PatchPage extends Schema.Class<PatchPage>("PatchPage")({
 }) {}
 
 const QueryJsonSchema = Schema.Record(Schema.String, Schema.Json);
+const operationFields = {
+  handler: HandlerName,
+  description: Schema.String,
+  inputSchema: QueryJsonSchema,
+  outputSchema: QueryJsonSchema
+};
 export class PatchQueries extends Schema.Class<PatchQueries>("PatchQueries")({
   patchId: PatchId,
   versionId: Schema.String,
-  queries: Schema.Array(
-    Schema.Struct({
-      handler: HandlerName,
-      description: Schema.String,
-      inputSchema: QueryJsonSchema,
-      outputSchema: QueryJsonSchema
-    })
+  queries: Schema.Array(Schema.Struct(operationFields))
+}) {}
+
+export class PatchOperations extends Schema.Class<PatchOperations>("PatchOperations")({
+  patchId: PatchId,
+  versionId: Schema.String,
+  operations: Schema.Array(
+    Schema.Struct({ ...operationFields, kind: Schema.Literals(["query", "mutation"]) })
   )
 }) {}
 
@@ -837,11 +844,25 @@ export const publishedQueries = (
   manifest: typeof Manifest.Type,
   description: string
 ): PatchQueries["queries"] =>
+  publishedOperations(manifest, description)
+    .filter((operation) => operation.kind === "query")
+    .map(({ handler, description, inputSchema, outputSchema }) => ({
+      handler,
+      description,
+      inputSchema,
+      outputSchema
+    }));
+
+export const publishedOperations = (
+  manifest: typeof Manifest.Type,
+  description: string
+): PatchOperations["operations"] =>
   Object.entries(manifest.handlers ?? {})
-    .filter(([, descriptor]) => descriptor.kind === "query")
+    .filter(([, descriptor]) => descriptor.kind !== "action")
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([handler, descriptor]) => ({
       handler,
+      kind: descriptor.kind as "query" | "mutation",
       description: descriptor.description ?? description,
       inputSchema: {
         ...queryJsonSchema(handlerArgsSchema(descriptor.args, manifest.tables)),
