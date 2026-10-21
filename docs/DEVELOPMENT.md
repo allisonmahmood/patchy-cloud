@@ -484,10 +484,12 @@ can quote it.
   composes them for the server, the dev runner and the test template, and its
   test fails on a duplicate or skipped id. Existing dev instances need
   `pnpm dev reset` when a baseline was rewritten; startup refuses a ledger with
-  another history and says so. The baselines were squashed before launch, so no
-  upgrade tests exist: write one with the first migration that changes state a
-  database must keep, after launch or earlier if something real must be kept.
-  The same holds for company inventory, which `Inventory.initialize` creates.
+  another history and says so. Production holds data it must keep, so a
+  migration that changes kept state comes with an upgrade test, as
+  `0009_whats_new_seen` does in `packages/companies/src/migrations.test.ts`.
+  Company inventory, which `Inventory.initialize` creates, has no upgrade path
+  yet: the first change to an existing inventory structure adds one, with its
+  tests.
   Commit, then `pnpm test:rollback-rehearsal` checks that the live release
   still starts and serves on the schema your commit leaves.
 - **The dev runner.** `pnpm exec vitest run scripts/dev`, then the real loop:

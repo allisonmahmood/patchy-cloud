@@ -40,8 +40,8 @@ Local processes do not prove Fargate containment.
 The ECS provider is built and passed role-only Fargate acceptance on
 [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406); **Fargate deployment and
 measurements** below records the run. **Production topology** records the
-infrastructure written for [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415);
-its first deploy is [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
+infrastructure written for [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415),
+which production has run on since its first deploy on 2026-10-05 ([#416](https://github.com/allisonmahmood/patchy-cloud/issues/416)).
 
 ## Engine, guest wire and inspection
 
@@ -459,8 +459,9 @@ snapshots. [Full measurements and teardown evidence are recorded on #406](https:
 [#415](https://github.com/allisonmahmood/patchy-cloud/issues/415) writes production
 as AWS CDK in `apps/infra`: two CloudFormation stacks per environment in
 `us-east-1`, chosen over Alchemy because CloudFormation holds the state, refuses
-overlapping updates and rolls back a failed one. Nothing is deployed until
-[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416).
+overlapping updates and rolls back a failed one. The first deploy,
+[#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), created both
+stacks on 2026-10-05.
 
 The **base stack** holds what outlives a release: the ECR repository, with
 immutable tags named by commit; the GitHub OIDC provider and a deploy role

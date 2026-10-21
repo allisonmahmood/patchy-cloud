@@ -295,8 +295,8 @@ export const layer = Layer.effect(Inventory, make);
  * One statement per call. Idempotent, because a provisioning interrupted after
  * this ran runs it again; the file handle key is created once and never replaced.
  * The schema was squashed before launch and there is no upgrade path for retained
- * inventory yet: a change to an existing structure adds one, with its tests,
- * once a company database worth keeping exists.
+ * inventory yet. Production company databases hold data to keep, so the next
+ * change to an existing structure adds one, with its tests.
  */
 export const initialize = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -2,9 +2,9 @@
 
 Running the server outside `pnpm dev`: its configuration, Clerk, the stores, the
 execution service and fleet, production and its runbooks, and the tier 2 spike
-deploy. The local loop is in [Development](DEVELOPMENT.md). Production is written
-([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)) but not yet
-deployed ([#416](https://github.com/allisonmahmood/patchy-cloud/issues/416)).
+deploy. The local loop is in [Development](DEVELOPMENT.md). Production has run at
+`https://cloud.patchyhq.com` since its first release on 2026-10-05
+([#416](https://github.com/allisonmahmood/patchy-cloud/issues/416)).
 
 ## Running the server by hand
 
@@ -632,7 +632,9 @@ connections. Raise it together with the compute's connection ceiling.
 
 ### Setting up production
 
-Once, by an administrator, as part of [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416):
+An administrator did this once, for [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416),
+before the first release. It stays as the record of what production needs
+outside the deploy workflow:
 
 1. Bootstrap CDK in the account for `us-east-1`.
 2. Deploy the base stack from the administrator's shell. It creates the deploy

@@ -92,9 +92,9 @@ may wait for provisioning; they do not return a partly old, partly new inventory
 provisioning interrupted after it ran runs it again. `ensureReady` leaves
 already-ready placements alone. The inventory was squashed with the platform
 baselines before launch, and the upgrade steps for retained inventory went with
-them. Once a company database worth keeping exists, a change to an existing
-structure needs an upgrade path again: steps `ensureReady` runs on ready
-placements, tested on PostgreSQL and PGlite for keeping rows and definitions.
+them. Production company databases now hold data to keep, so the next change to
+an existing structure brings the upgrade path back: steps `ensureReady` runs on
+ready placements, tested on PostgreSQL and PGlite for keeping rows and definitions.
 The portable inventory contract runs initialization again on an initialized
 database and checks that the inventory, rows and file handle key survive. A
 versioned per-company migration ledger remains deferred.

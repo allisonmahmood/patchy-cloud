@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Patchy Cloud is pre-launch and publishes no releases. Fixes land on `main`; there is no supported older version to back-port to.
+Patchy Cloud runs as one hosted instance, at https://cloud.patchyhq.com. Only the release it is running is supported: fixes land on `main` and ship in the next release, and there is no older version to back-port to. The `patchy` CLI is supported at the release that instance serves; rerunning its installer upgrades it.
 
 ## Reporting a vulnerability
 
