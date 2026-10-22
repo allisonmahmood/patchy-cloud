@@ -1,3 +1,4 @@
+export * as AgentConnections from "./AgentConnections.js";
 export * as AuthApi from "./AuthApi.js";
 export * as Authorization from "./Authorization.js";
 export * as Bearer from "./Bearer.js";

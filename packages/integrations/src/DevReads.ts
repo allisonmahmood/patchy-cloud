@@ -128,7 +128,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
         })
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       // The same token, person, company and machine, once a slot is held and before PostHog hears.
-      const recheck = Authorization.identify.pipe(
+      const recheck = Authorization.identify("build").pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(MachineTokens.MachineTokens, tokens),
         Effect.flatMap((current) =>

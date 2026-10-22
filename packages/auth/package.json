@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Clerk browser sessions, user-owned machine tokens, bearer authentication, auth pages, migrations, and the development seed.",
+  "description": "Clerk browser sessions, user-owned machine tokens and agent connections, bearer authentication, auth pages, migrations, and the development seed.",
   "exports": {
     ".": {
       "development": "./src/index.ts",

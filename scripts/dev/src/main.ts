@@ -8,6 +8,7 @@
  *   pnpm dev up [scenario]    an environment: personas, a CLI, an agent workspace
  *   pnpm dev open <person>    a browser window signed in as one of its people
  *   pnpm dev shot <person> [path]  a full-page PNG as that person, with the page's errors
+ *   pnpm dev mcp-token <person> --client <name>  an agent connection's token, without consent
  *   pnpm dev compare <person> <path>...  pages before and after, from evidence instances
  *   pnpm dev film <person> <flow>        a flow recorded before and after, as mp4
  *   pnpm dev transcript <script>         CLI lines run before and after, compared
@@ -30,11 +31,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { Argument, CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { AgentConnections } from "@patchy/auth";
+import { mintDevAgentConnection } from "@patchy/auth/seed";
+import { layerFromUrl } from "@patchy/sql";
 import { Capture, checkChromium, compareMarkdown, type Pair, shootAll } from "./compare.js";
 import {
   type Before,
@@ -629,6 +634,65 @@ const shot = Command.make(
 ).pipe(
   Command.withDescription(
     "Capture a page as one person: a full-page PNG, its HTTP status and the browser's errors"
+  )
+);
+
+const McpToken = Schema.Struct({
+  token: Schema.String,
+  connection: Schema.Struct({
+    id: Schema.String,
+    clientName: Schema.String,
+    clientSite: Schema.String
+  }),
+  person: Schema.Struct({ email: Schema.String, name: Schema.String, company: Schema.String })
+});
+const encodeMcpToken = Schema.encodeSync(Schema.fromJsonString(McpToken, { space: 2 }));
+
+const mcpToken = Command.make(
+  "mcp-token",
+  {
+    person: Argument.String("person").pipe(
+      Argument.withDescription("Any email, or an environment person's key, email or first name")
+    ),
+    client: Flag.String("client").pipe(
+      Flag.withDescription("The client's name, as a consent page would show it, such as Codex")
+    ),
+    json
+  },
+  Effect.fn(function* ({ person, client, json }) {
+    const plan = yield* recordedPlan;
+    if (!(yield* healthy(plan))) return yield* new NotHealthy({ apiUrl: plan.apiUrl });
+    let email = person;
+    if (!person.includes("@")) {
+      const manifest = yield* readManifest(yield* layoutFor(plan.worktree));
+      if (Option.isNone(manifest)) return yield* new NoEnvironment({ worktree: plan.worktree });
+      email = (yield* findPerson(manifest.value, person)).email;
+    }
+    // No document names a minted client, so its id is this instance's own address for it.
+    const minted = yield* mintDevAgentConnection({
+      email,
+      clientName: client,
+      clientId: `${plan.apiUrl}/dev/mcp-token`
+    }).pipe(
+      Effect.provide(
+        AgentConnections.layer.pipe(
+          Layer.provideMerge(layerFromUrl(Redacted.make(plan.databaseUrl)))
+        )
+      )
+    );
+    const result = { ...minted, person: { email, ...minted.person } };
+    if (json) return yield* Console.log(encodeMcpToken(result));
+    yield* Console.log(
+      [
+        `${result.connection.clientName} can act as ${result.person.name} at ${result.person.company}.`,
+        `  Token       ${result.token}`,
+        `  Connection  ${result.connection.id}`
+      ].join("\n")
+    );
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Mint an agent connection straight into this instance's database, with a year-long access token for launchers that take a pasted token"
   )
 );
 
@@ -1631,6 +1695,7 @@ dev.pipe(
     up,
     open,
     shot,
+    mcpToken,
     compare,
     film,
     transcript,

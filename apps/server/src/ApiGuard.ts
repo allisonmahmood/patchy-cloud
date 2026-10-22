@@ -131,7 +131,7 @@ const authenticated = <E, R>(
   E,
   R | HttpServerRequest.HttpServerRequest | MachineTokens.MachineTokens
 > =>
-  Effect.flatMap(Authorization.identify, (identity) =>
+  Effect.flatMap(Authorization.identify("build"), (identity) =>
     Option.isNone(identity) ? Effect.succeed(Authorization.unauthorized) : answer
   );
 
