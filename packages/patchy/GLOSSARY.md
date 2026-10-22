@@ -37,8 +37,12 @@ Whoever is running the CLI — an agent first, a developer touching the cloud di
 _Avoid_: operator, user (ambiguous with the account the driver acts as)
 
 **Agent**:
-Software acting for a user, with that user's machine token: the CLI's primary driver. Never a who, always a how — it is indistinguishable from its user except by the machine name on the token, and it holds no identity of its own. The CLI names which coding agent runs it, such as `claude-code`, on every request for usage records: the kind of harness, read from a variable it sets, never an identity.
+Software acting for a user: a builder agent through the CLI, or a worker agent through Patchy MCP. Never a who, always a how — it holds no identity of its own.
 _Avoid_: bot, service account, agent identity
+
+**Builder agent**:
+An agent making and publishing patches through the CLI with its user's machine token: the builder pipeline's agent and the CLI's primary driver. It is indistinguishable from its user except by the machine name on the token. The CLI names which coding agent runs it, such as `claude-code`, on every request for usage records: the kind of harness, read from a variable it sets, never an identity.
+_Avoid_: worker agent (Patchy MCP's), developer, builder on its own (every user can build)
 
 **Onboarding**:
 The optional, user-requested first-time setup conversation — establish where to publish and log the machine in, offer to add the instance to Claude Code's auto mode settings as the company's own, set up the company's [look](../companies/GLOSSARY.md) when its first admin wants one, then publish the welcome patch in the look that applies. Only an admin of a company with no look is asked about it; everyone else is told which look their tools use.
@@ -83,6 +87,18 @@ _Avoid_: publishing key, token
 **Release**:
 The exact version shared by Patchy's CLI, config builders, browser client and dev runtime, named `0.<id>.0` after the newest What's new release. An instance accepts only its current release for new publishing, new repos and dev starts; unresolved publishes remain recoverable and deployed versions keep their own wire contract.
 _Avoid_: wire version, patch version
+
+**Agent area**:
+A tier 2 patch's `agent/` folder, whose exports are its agent tools. A patch has one only when its code includes it, and nothing else in a patch is reachable by agents.
+_Avoid_: MCP server (Patchy MCP is the one server), `server/agent.ts` (the prototype's form)
+
+**Agent tool**:
+One export of an agent area: a described query, mutation or action that a worker agent calls through Patchy MCP, named after its export. It is a read when it is a query or a read-only action, otherwise a change. Agents only; the page calls server handlers.
+_Avoid_: MCP tool (Patchy MCP's four fixed tools), endpoint
+
+**Read-only action**:
+An action declared `readOnly: true`, held to reads by its context type and Patchy's callback gate, so connection reads count as reads.
+_Avoid_: read action, query (a different kind), safe action
 
 **Server bundle**:
 The single closed module built from a tier 2 version's handler code and stored beside its browser HTML. Its hash and handler descriptors identify the server artifact in the manifest; it is distinct from the generated server module list.
