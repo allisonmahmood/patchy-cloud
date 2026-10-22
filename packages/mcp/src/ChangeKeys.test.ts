@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import type * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import type { HandlerDescriptors, ServerCallReply } from "@patchy/api";
+import { canonicalArgs, type HandlerDescriptors, type ServerCallReply } from "@patchy/api";
 import { AgentConnections } from "@patchy/auth";
 import { sha256 } from "@patchy/core";
 import { Invocation, Runtime } from "@patchy/runtime";
@@ -396,7 +396,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
         });
         const sql = yield* SqlClient.SqlClient;
         const keyed = (key: string) =>
-          sql`patch_id = ${published.patchId} AND key_hash = ${sha256(JSON.stringify(key))}`;
+          sql`patch_id = ${published.patchId} AND key_hash = ${sha256(canonicalArgs(key))}`;
         /** Makes a key's first try, and the mutation key it was given, `interval` older. */
         const age = (key: string, interval: string) =>
           sql`UPDATE change_keys SET created_at = created_at - ${interval}::interval,
@@ -446,7 +446,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
         yield* ChangeKeys.ChangeKeys.use((keys) => keys.sweep);
         assert.deepStrictEqual(
           yield* sql`SELECT key_hash AS "keyHash" FROM change_keys WHERE patch_id = ${published.patchId}`,
-          [{ keyHash: sha256(JSON.stringify("import-monday")) }]
+          [{ keyHash: sha256(canonicalArgs("import-monday")) }]
         );
       })
   );

@@ -148,7 +148,7 @@ export const make = Effect.gen(function* () {
       connectionId: change.connectionId,
       patchId: change.patchId,
       // As JSON, so strings UTF-8 can't tell apart, such as two lone surrogates, stay apart.
-      keyHash: sha256(JSON.stringify(change.key))
+      keyHash: sha256(canonicalArgs(change.key))
     };
     const argsHash = sha256(canonicalArgs(change.args));
     const lease = leases[change.kind];
