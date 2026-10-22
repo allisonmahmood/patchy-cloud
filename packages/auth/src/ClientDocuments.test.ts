@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { Limits } from "@patchy/limits";
 import * as ClientDocumentNetwork from "./ClientDocumentNetwork.js";
@@ -650,6 +651,19 @@ describe("limits", () => {
               )
             );
       }
+    })
+  );
+
+  it.effect("ends every waiting load when the service closes before its fetch starts", () =>
+    Effect.gen(function* () {
+      const host = yield* clientDocumentHost(serveDocuments([agentDocument()]));
+      const scope = yield* Scope.make();
+      const documents = yield* loader(host.network).pipe(Scope.provide(scope));
+      // The load claims the URL and forks its fetch, which hasn't run when the service closes.
+      const waiting = yield* Effect.forkChild(documents.load(AGENT), { startImmediately: true });
+      yield* Scope.close(scope, Exit.void);
+      assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(waiting)));
+      assert.deepStrictEqual(host.seen.lookups, []);
     })
   );
 

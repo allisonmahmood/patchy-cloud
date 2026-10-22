@@ -361,37 +361,44 @@ export const make = Effect.gen(function* () {
     return document;
   });
 
+  /** The document `clientId` names if one is kept, else the fetch to wait on, claimed if new. */
+  const claim = (clientId: string, now: number) => {
+    const hit = kept.get(clientId);
+    kept.delete(clientId);
+    if (hit !== undefined && now < hit.expiresAt) {
+      kept.set(clientId, hit);
+      return { kind: "kept", document: hit.document } as const;
+    }
+    const fetching = running.get(clientId);
+    if (fetching !== undefined) return { kind: "running", fetching } as const;
+    const claimed = Deferred.makeUnsafe<ClientDocument, LoadFailure>();
+    running.set(clientId, claimed);
+    return { kind: "starts", fetching: claimed } as const;
+  };
+
   const load = Effect.fn("ClientDocuments.load")(function* (clientId: string) {
     const url = fetchable(clientId);
     if (url === undefined) return yield* new ClientDocumentRefused({ reason: "client_id_url" });
     const now = yield* Clock.currentTimeMillis;
-    // One synchronous step, so no other load acts on this URL between the look and the claim.
-    const found = yield* Effect.sync(() => {
-      const hit = kept.get(clientId);
-      kept.delete(clientId);
-      if (hit !== undefined && now < hit.expiresAt) {
-        kept.set(clientId, hit);
-        return { kind: "kept", document: hit.document } as const;
-      }
-      const fetching = running.get(clientId);
-      if (fetching !== undefined) return { kind: "running", fetching } as const;
-      const started = Deferred.makeUnsafe<ClientDocument, LoadFailure>();
-      running.set(clientId, started);
-      return { kind: "starts", fetching: started } as const;
-    });
-    if (found.kind === "kept") return found.document;
-    // The fetch belongs to the service, not this load, so it finishes for everyone waiting.
-    if (found.kind === "starts")
-      yield* fetchAndKeep(url).pipe(
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
+    // A claim without its fetch would strand every later load of the URL, so claiming and
+    // starting can't be interrupted apart; only the wait can.
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const found = claim(clientId, now);
+        if (found.kind === "kept") return found.document;
+        if (found.kind === "starts") {
+          // The fetch belongs to the service, so it finishes for everyone waiting even if this
+          // load ends. Its observer settles them however it ends, interrupted before it ran
+          // included.
+          const fiber = yield* Effect.forkIn(fetchAndKeep(url), scope);
+          fiber.addObserver((exit) => {
             running.delete(clientId);
             Deferred.doneUnsafe(found.fetching, exit);
-          })
-        ),
-        Effect.forkIn(scope)
-      );
-    return yield* Deferred.await(found.fetching);
+          });
+        }
+        return yield* restore(Deferred.await(found.fetching));
+      })
+    );
   });
 
   return ClientDocuments.of({ load });
