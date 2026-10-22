@@ -33,13 +33,19 @@ const probe = HttpRouter.use((router) =>
 );
 const routes = Layer.mergeAll(AuthPages.layer, DevPersonas.routes, probe);
 const settings = ConfigProvider.layer(ConfigProvider.fromUnknown(env));
-const send = Effect.fn(function* (path: string, cookie?: string) {
+const send = Effect.fn(function* (
+  path: string,
+  cookie?: string,
+  headers: Readonly<Record<string, string>> = {}
+) {
   const app = yield* HttpRouter.toHttpEffect(routes).pipe(Effect.provide(settings));
   const response = yield* app.pipe(
     Effect.provideService(
       HttpServerRequest.HttpServerRequest,
       HttpServerRequest.fromWeb(
-        new Request(new URL(path, base), cookie === undefined ? {} : { headers: { cookie } })
+        new Request(new URL(path, base), {
+          headers: { ...headers, ...(cookie === undefined ? {} : { cookie }) }
+        })
       )
     )
   );
@@ -110,6 +116,29 @@ it.layer(services)("dev personas", (it) => {
       const join = yield* send("/join", cookie);
       assert.strictEqual(join.status, 200);
       assert.include(yield* Effect.promise(() => join.text()), "someone.new@brightline.example");
+    })
+  );
+
+  it.effect("never switches who you are when another site sends you to switch", () =>
+    Effect.gen(function* () {
+      const path = `/dev/sign-in?as=${encodeURIComponent(DEV_SEED.email)}&return=%2Foauth%2Fauthorize`;
+      for (const site of ["cross-site", "same-site"]) {
+        const refused = yield* send(path, undefined, { "sec-fetch-site": site });
+        assert.strictEqual(refused.status, 403, site);
+        assert.deepStrictEqual(refused.headers.getSetCookie(), []);
+        assert.include(
+          yield* Effect.promise(() => refused.text()),
+          'href="/dev/sign-in?return=%2Foauth%2Fauthorize"'
+        );
+      }
+      // The dev tools open the URL directly, so their browsers say none or nothing at all.
+      const direct: ReadonlyArray<Record<string, string>> = [
+        { "sec-fetch-site": "none" },
+        { "sec-fetch-site": "same-origin" },
+        {}
+      ];
+      for (const headers of direct)
+        assert.strictEqual((yield* send(path, undefined, headers)).status, 303);
     })
   );
 

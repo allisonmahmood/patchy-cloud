@@ -975,6 +975,16 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "oauth.consent.perMinute": {
+    kind: "operating",
+    default: 10,
+    unit: "attempts/minute",
+    scope: "host",
+    measure:
+      "Consent page loads and answers per source address per host replica, counted once the person is signed in; past it the page answers 429",
+    refusal: "rate_limited",
+    overridable: false
+  },
   "oauth.token.failures.perMinute": {
     kind: "operating",
     default: 60,

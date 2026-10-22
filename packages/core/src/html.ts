@@ -693,6 +693,23 @@ export function htmlPage(options: {
     .avatar-amber { background: var(--paper-amber); }
     .avatar-waiting { border-style: dashed; border-color: var(--line-strong); background: transparent; color: var(--muted); }
     .avatar-off { border-color: var(--line-strong); background: transparent; color: var(--muted); }
+    /* agent-mark: an agent beside its name, as an avatar sits beside a person's: the guide's agent icon in an avatar's frame. */
+    .agent-mark { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper-blue); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); }
+    .agent-mark svg { width: 20px; height: 20px; }
+    /* consent-strip: who meets whom when an agent asks to act as a person: the agent's mark, name and site, the
+       consent-strip-ask, then the person's avatar, name and email, each in a consent-strip-party. */
+    .consent-strip { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0 0 18px; padding: 12px 14px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--paper); }
+    .consent-strip-party { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .consent-strip-party > div { min-width: 0; line-height: 1.35; }
+    .consent-strip-ask { margin-left: 46px; color: var(--muted); font-size: .8rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    /* can-list: what something will and won't be able to do, such as an agent at consent. A can-head names each
+       list list-compact; can-list-yes ticks its rows and can-list-no crosses them, the marks hidden from readers. */
+    .can-head { margin: 14px 0 0; font-weight: 750; }
+    .can-head + .can-list { margin-top: 6px; }
+    .can-list .list-row { display: flex; gap: 10px; align-items: baseline; }
+    .can-list .list-row::before { flex: none; font-weight: 850; }
+    .can-list-yes .list-row::before { content: "✓"; content: "✓" / ""; color: var(--green-ink); }
+    .can-list-no .list-row::before { content: "✕"; content: "✕" / ""; color: var(--danger); }
     /* mono: a tool's two-letter mark, tinted from its name and turned like the glyph; mono-blue, mono-green and
        mono-amber vary the tint. page-mark: a tier 0 page's ruled sheet in the same footprint. */
     .mono { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); font-size: .72rem; font-weight: 900; letter-spacing: .02em; line-height: 1; transform: rotate(-3deg); }

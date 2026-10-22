@@ -15,6 +15,8 @@ export type { AppShell } from "./html.js";
 export { ago, dateLabel, daysLeft, renderOffPatch } from "./patch-presentation.js";
 export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
 export {
+  agentIcon,
+  agentMark,
   avatar,
   menuCopy,
   menuLink,

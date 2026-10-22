@@ -1,15 +1,18 @@
 /**
- * The authorization server over HTTP: who `GET /oauth/authorize` sends where, and the token
- * endpoint's wire, limits and CORS. The rules behind both are `Consents.test.ts`'s.
+ * The authorization server over HTTP: who `GET /oauth/authorize` sends where, the consent page
+ * and its answer, and the token endpoint's wire, limits and CORS. The rules behind them are
+ * `Consents.test.ts`'s.
  */
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Companies, Users } from "@patchy/companies";
 import { randomToken, sha256 } from "@patchy/core";
 import { Limits } from "@patchy/limits";
@@ -25,13 +28,20 @@ import { clerkEnv, layerClientDocumentNetwork, signedInCookies, signSession } fr
 const BASE = "https://patchy.example";
 const AGENT = "https://agent.example/client.json";
 const CALLBACK = "https://agent.example/callback";
+/** A client whose answer returns to a program on the person's computer. */
+const LOCAL = "https://local.example/client.json";
+/** A client whose document says things a page must never render as written. */
+const HOSTILE = "https://hostile.example/client.json";
+const HOSTILE_NAME = `<img src=x onerror=alert(1)>\u202e${"a".repeat(80)}`;
+const limits = {
+  "oauth.token.failures.perMinute": 3,
+  "oauth.token.rotations.perMinute": 2,
+  "oauth.consent.perMinute": 1_000
+};
 const env = {
   ...clerkEnv(),
   PATCHY_PUBLIC_BASE_URL: BASE,
-  PATCHY_LIMITS_JSON: JSON.stringify({
-    "oauth.token.failures.perMinute": 3,
-    "oauth.token.rotations.perMinute": 2
-  })
+  PATCHY_LIMITS_JSON: JSON.stringify(limits)
 };
 const signedIn = signedInCookies(
   signSession({ sub: DEV_SEED.clerkUserId, email: DEV_SEED.email, azp: BASE })
@@ -57,6 +67,24 @@ const loads = Layer.effect(
           client_id: AGENT,
           client_name: "Agent",
           redirect_uris: [CALLBACK],
+          token_endpoint_auth_method: "none"
+        })
+      },
+      {
+        url: LOCAL,
+        body: JSON.stringify({
+          client_id: LOCAL,
+          client_name: "Local Agent",
+          redirect_uris: ["http://127.0.0.1/callback", "http://[::1]/callback"],
+          token_endpoint_auth_method: "none"
+        })
+      },
+      {
+        url: HOSTILE,
+        body: JSON.stringify({
+          client_id: HOSTILE,
+          client_name: HOSTILE_NAME,
+          redirect_uris: ["https://hostile.example/callback"],
           token_endpoint_auth_method: "none"
         })
       }
@@ -85,12 +113,22 @@ const routes = Layer.mergeAll(
 const send = Effect.fn(function* (
   path: string,
   init: RequestInit = {},
-  options: { readonly address?: string; readonly base?: string } = {}
+  options: {
+    readonly address?: string;
+    readonly base?: string;
+    readonly limits?: Readonly<Record<string, number>>;
+  } = {}
 ) {
   const base = options.base ?? BASE;
   const app = yield* HttpRouter.toHttpEffect(routes).pipe(
     Effect.provide(
-      ConfigProvider.layer(ConfigProvider.fromUnknown({ ...env, PATCHY_PUBLIC_BASE_URL: base }))
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          ...env,
+          PATCHY_PUBLIC_BASE_URL: base,
+          PATCHY_LIMITS_JSON: JSON.stringify({ ...limits, ...options.limits })
+        })
+      )
     )
   );
   const request = HttpServerRequest.fromWeb(new Request(new URL(path, base), init)).modify({
@@ -155,6 +193,80 @@ const exchangeFields = (code: { readonly code: string; readonly verifier: string
   client_id: AGENT
 });
 
+/** A fresh browser session for a person, signed now so a slow run never outlives it. */
+const sessionOf = (sub: string = DEV_SEED.clerkUserId, email: string = DEV_SEED.email) =>
+  signedInCookies(signSession({ sub, email, azp: BASE }));
+
+const setAccess = (on: boolean) =>
+  Effect.flatMap(Companies.Companies, (companies) =>
+    companies.setAgentAccess({ companyId: DEV_SEED.companyId, on, by: DEV_SEED.userId })
+  );
+
+const text = (response: Response) => Effect.promise(() => response.text());
+
+/** The consent page for `query`, as `cookie`'s person sees it. */
+const consentPage = (query: URLSearchParams, cookie = sessionOf(), address?: string) =>
+  send(
+    `/oauth/authorize?${query}`,
+    { headers: { cookie } },
+    address === undefined ? {} : { address }
+  );
+
+const unescaped = (value: string) =>
+  value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+
+/** A page's answer form: where it posts, and the account and time it was shown. */
+const formOf = (html: string) => ({
+  action: unescaped(/<form(?: class="actions")? method="post" action="([^"]*)"/.exec(html)![1]!),
+  userId: unescaped(/name="userId" value="([^"]*)"/.exec(html)![1]!),
+  shown: /name="shown" value="([^"]*)"/.exec(html)![1]!
+});
+
+/** The person's answer to a shown page, from this instance's own origin unless `headers` replaces it. */
+const answer = (
+  form: ReturnType<typeof formOf>,
+  action: "allow" | "deny",
+  options: {
+    readonly cookie?: string | undefined;
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly fields?: Readonly<Record<string, string>>;
+  } = {}
+) =>
+  send(form.action, {
+    method: "POST",
+    headers: {
+      ...(options.headers ?? { origin: BASE }),
+      ...(options.cookie === undefined ? {} : { cookie: options.cookie })
+    },
+    body: new URLSearchParams({
+      userId: form.userId,
+      shown: form.shown,
+      action,
+      ...options.fields
+    })
+  });
+
+const consentRows = Effect.flatMap(
+  SqlClient.SqlClient,
+  (sql) => sql<{ count: number }>`SELECT count(*)::int AS count FROM agent_consents`
+).pipe(Effect.map((rows) => rows[0]!.count));
+
+/** A member of the dev company, who isn't an admin. */
+const member = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+    VALUES ('usr_consent_member', 'clerk_consent_member', ${DEV_SEED.companyId},
+      'member@consent.test', 'Mia Member', 'member')
+    ON CONFLICT (id) DO NOTHING`;
+  return sessionOf("clerk_consent_member", "member@consent.test");
+});
+
 it.layer(services)("the authorization server's endpoints", (it) => {
   it.effect("sends someone not signed in only to sign in, fetching nothing", () =>
     Effect.gen(function* () {
@@ -174,6 +286,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
 
   it.effect("shows a signed-in person why a refused request can't connect, sending nowhere", () =>
     Effect.gen(function* () {
+      yield* setAccess(true);
       const { challenge } = pkce();
       const page = (fields: Record<string, string>) =>
         send(`/oauth/authorize?${authorizeQuery(challenge, fields)}`, {
@@ -364,6 +477,269 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         { base: dev }
       );
       assert.strictEqual(devPreflight.status, 404);
+    })
+  );
+  it.effect("asks who meets whom, what the agent can and can't do, and where the answer goes", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const query = authorizeQuery(pkce().challenge);
+      const page = yield* consentPage(query);
+      assert.strictEqual(page.status, 200);
+      const html = yield* text(page);
+      for (const says of [
+        "Connect an agent",
+        '<strong>Agent</strong><br><span class="supporting-text">agent.example</span>',
+        "wants to act as",
+        '<strong>Patchy Dev</strong><br><span class="supporting-text">dev@patchy.local</span>',
+        "Connect Agent to Patchy Dev?",
+        "Agent will be able to",
+        "Find Patchy Dev’s patches you can open",
+        "Use the agent tools their builders added, as you",
+        "Agent won’t be able to",
+        "Do anything you can’t",
+        "Every change it makes is logged as Patchy Dev via Agent.",
+        "Your answer goes back to <strong>agent.example</strong>",
+        '<a href="/machines">Your machines</a>',
+        "Use another account"
+      ])
+        assert.include(html, says);
+      assert.notInclude(html, "a program on this computer");
+      const form = formOf(html);
+      assert.deepStrictEqual(
+        [form.action, form.userId],
+        [`/oauth/authorize?${query}`, DEV_SEED.userId]
+      );
+      // The answer's redirect is the only other place a form may land, and nothing frames it.
+      const csp = page.headers.get("content-security-policy")!;
+      assert.include(csp, "form-action 'self' https://agent.example;");
+      assert.include(csp, "frame-ancestors 'none'");
+      assert.strictEqual(page.headers.get("cache-control"), "private, no-store");
+    })
+  );
+
+  it.effect("warns when the answer goes to a program on this computer, naming its address", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const { challenge } = pkce();
+      for (const [redirect, shown, source] of [
+        ["http://127.0.0.1:33418/callback", "127.0.0.1:33418", "http://127.0.0.1:33418"],
+        // CSP can't name an IPv6 host, so only the scheme is allowed.
+        ["http://[::1]:33418/callback", "[::1]:33418", "http:"]
+      ] as const) {
+        const page = yield* consentPage(
+          authorizeQuery(challenge, { client_id: LOCAL, redirect_uri: redirect })
+        );
+        const html = yield* text(page);
+        assert.include(html, "Your answer goes to a program on this computer");
+        assert.include(
+          html,
+          `<code>${shown}</code>. Allow only if you just started connecting it.`
+        );
+        assert.include(html, `Your answer goes back to <strong>${shown}</strong>`);
+        assert.include(
+          page.headers.get("content-security-policy")!,
+          `form-action 'self' ${source};`
+        );
+      }
+    })
+  );
+
+  it.effect("escapes and cuts what a stranger's document names its client", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const page = yield* consentPage(
+        authorizeQuery(pkce().challenge, {
+          client_id: HOSTILE,
+          redirect_uri: "https://hostile.example/callback"
+        })
+      );
+      const html = yield* text(page);
+      assert.notInclude(html, "<img");
+      assert.notInclude(html, "\u202e");
+      assert.include(html, "&lt;img src=x onerror=alert(1)&gt;");
+      // Cut to 64 characters, as the agent connection keeps it.
+      assert.include(html, `&lt;img src=x onerror=alert(1)&gt;${"a".repeat(36)}</strong>`);
+      assert.notInclude(html, "a".repeat(37));
+    })
+  );
+
+  it.effect("Allow sends a code back with state and iss, which the client exchanges", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const pair = pkce();
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pair.challenge))));
+      const allowed = yield* answer(form, "allow", { cookie: sessionOf() });
+      assert.strictEqual(allowed.status, 303);
+      assert.strictEqual(allowed.headers.get("referrer-policy"), "no-referrer");
+      const location = new URL(allowed.headers.get("location")!);
+      assert.strictEqual(`${location.origin}${location.pathname}`, CALLBACK);
+      assert.deepStrictEqual(
+        [location.searchParams.get("state"), location.searchParams.get("iss")],
+        ["opaque", BASE]
+      );
+      const exchanged = yield* token({
+        ...exchangeFields({ code: location.searchParams.get("code")!, verifier: pair.verifier }),
+        redirect_uri: CALLBACK
+      });
+      assert.strictEqual(exchanged.status, 200);
+    })
+  );
+
+  it.effect("Deny tells the client no and records nothing", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pkce().challenge))));
+      const before = yield* consentRows;
+      const denied = yield* answer(form, "deny", { cookie: sessionOf() });
+      assert.strictEqual(denied.status, 303);
+      const location = new URL(denied.headers.get("location")!);
+      assert.deepStrictEqual(
+        [
+          location.searchParams.get("error"),
+          location.searchParams.get("state"),
+          location.searchParams.get("code")
+        ],
+        ["access_denied", "opaque", null]
+      );
+      assert.strictEqual(yield* consentRows, before);
+    })
+  );
+
+  it.effect("refuses an answer another site sends, before anything is read or recorded", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pkce().challenge))));
+      const before = yield* consentRows;
+      const elsewhere: ReadonlyArray<Record<string, string>> = [
+        { origin: "https://evil.example" },
+        { origin: "null" },
+        // No Origin at all: only the browser's own word that it came from here counts.
+        { "sec-fetch-site": "cross-site" },
+        {}
+      ];
+      for (const headers of elsewhere) {
+        const refused = yield* answer(form, "allow", { cookie: sessionOf(), headers });
+        assert.strictEqual(refused.status, 403);
+        assert.isNull(refused.headers.get("location"));
+      }
+      assert.strictEqual(yield* consentRows, before);
+    })
+  );
+
+  it.effect("asks again when the signed-in account changed while the page was open", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pkce().challenge))));
+      const before = yield* consentRows;
+      // The page was shown to someone else; the dev person is signed in now.
+      const again = yield* answer({ ...form, userId: "usr_someone_else" }, "allow", {
+        cookie: sessionOf()
+      });
+      assert.strictEqual(again.status, 409);
+      assert.isNull(again.headers.get("location"));
+      const html = yield* text(again);
+      assert.include(html, "You signed in as someone else while this page was open.");
+      assert.strictEqual(formOf(html).userId, DEV_SEED.userId);
+      assert.strictEqual(yield* consentRows, before);
+    })
+  );
+
+  it.effect("says a page answered after ten minutes ran out, sending nothing back", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pkce().challenge))));
+      yield* TestClock.adjust("10 minutes");
+      assert.strictEqual((yield* answer(form, "deny", { cookie: sessionOf() })).status, 303);
+      yield* TestClock.adjust("1 second");
+      const late = yield* answer(form, "allow", { cookie: sessionOf() });
+      assert.strictEqual(late.status, 410);
+      assert.isNull(late.headers.get("location"));
+      const html = yield* text(late);
+      assert.include(html, "This request has run out");
+      assert.include(html, "Nothing was connected. Start connecting again from Agent.");
+    })
+  );
+
+  it.effect("with agent access off, names the admins, and Back to the agent tells it no", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const query = authorizeQuery(pkce().challenge);
+      const shownWhileOn = formOf(yield* text(yield* consentPage(query)));
+      yield* setAccess(false);
+
+      const asMember = yield* consentPage(query, yield* member);
+      assert.strictEqual(asMember.status, 200);
+      const memberHtml = yield* text(asMember);
+      assert.include(memberHtml, "Agent access is off at Patchy Dev");
+      assert.include(
+        memberHtml,
+        "Agent can’t connect until an admin turns it on. At Patchy Dev that’s Patchy Dev."
+      );
+      assert.notInclude(memberHtml, "Turn it on at Company");
+      assert.notInclude(memberHtml, 'value="allow"');
+
+      const adminHtml = yield* text(yield* consentPage(query));
+      assert.include(adminHtml, "You’re an admin: turn it on, then connect again from Agent.");
+      assert.include(adminHtml, '<a class="btn btn-primary" href="/company#agent-access">');
+
+      // Allow from a page shown while it was on is refused; Back to the agent denies.
+      const allowed = yield* answer(shownWhileOn, "allow", { cookie: sessionOf() });
+      assert.strictEqual(allowed.status, 409);
+      assert.isNull(allowed.headers.get("location"));
+      assert.include(yield* text(allowed), "Agent access is off at Patchy Dev");
+      const back = yield* answer(formOf(adminHtml), "deny", { cookie: sessionOf() });
+      assert.strictEqual(
+        new URL(back.headers.get("location")!).searchParams.get("error"),
+        "access_denied"
+      );
+    })
+  );
+
+  it.effect("an answer signed out since goes back to the page, answering nothing", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pkce().challenge))));
+      const before = yield* consentRows;
+      const signedOut = yield* answer(form, "allow");
+      assert.strictEqual(signedOut.status, 303);
+      assert.strictEqual(signedOut.headers.get("location"), form.action);
+      assert.strictEqual(yield* consentRows, before);
+    })
+  );
+
+  it.effect("an answer to a redirect the document doesn't list goes nowhere, Deny included", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pkce().challenge))));
+      const action = form.action.replace(
+        encodeURIComponent(CALLBACK),
+        encodeURIComponent("https://evil.example/")
+      );
+      const denied = yield* answer({ ...form, action }, "deny", { cookie: sessionOf() });
+      assert.strictEqual(denied.status, 400);
+      assert.isNull(denied.headers.get("location"));
+      assert.include(yield* text(denied), "check its redirect_uri");
+    })
+  );
+
+  it.effect("limits consent pages per address once the person is signed in", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const query = authorizeQuery(pkce().challenge);
+      const load = (cookie: string | undefined, address: string) =>
+        send(`/oauth/authorize?${query}`, cookie === undefined ? {} : { headers: { cookie } }, {
+          address,
+          limits: { "oauth.consent.perMinute": 2 }
+        });
+      // Signed-out loads only reach the sign-in door, and spend nothing.
+      for (let attempt = 0; attempt < 3; attempt++)
+        assert.strictEqual((yield* load(undefined, "198.51.100.40")).status, 401);
+      for (let attempt = 0; attempt < 2; attempt++)
+        assert.strictEqual((yield* load(sessionOf(), "198.51.100.40")).status, 200);
+      const limited = yield* load(sessionOf(), "198.51.100.40");
+      assert.strictEqual(limited.status, 429);
+      assert.match(limited.headers.get("retry-after")!, /^\d+$/);
+      assert.strictEqual((yield* load(sessionOf(), "198.51.100.41")).status, 200);
     })
   );
 });

@@ -1,8 +1,11 @@
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
 import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
@@ -57,15 +60,27 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
       );
 });
 
+/** Sign out, then to the sign-in door; Use another account names the page to sign in back to. */
 const logout = Effect.gen(function* () {
   const claims = yield* RequireSession.SignedIn;
   const session = yield* Session.Session;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = yield* request.urlParamsBody.pipe(
+    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(4_096))
+  );
+  const back = returnPath(
+    Option.getOrNull(UrlParams.getFirst(form, "return")),
+    session.publicBaseUrl
+  );
   yield* session.revoke(claims.sid);
   return withCookies(
-    HttpServerResponse.redirect("/login", {
-      status: 303,
-      headers: { "cache-control": "private, no-store" }
-    }),
+    HttpServerResponse.redirect(
+      back === null ? "/login" : `/login?return=${encodeURIComponent(back)}`,
+      {
+        status: 303,
+        headers: { "cache-control": "private, no-store" }
+      }
+    ),
     session.signOutCookies()
   );
 });

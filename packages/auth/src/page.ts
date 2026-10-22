@@ -9,6 +9,11 @@ export interface Page {
   readonly styles?: string;
   readonly heading?: string;
   readonly app?: AppShell;
+  /**
+   * Where else a form's answer may land, as CSP sources: browsers hold a form's redirects to
+   * `form-action`, so a page whose answer redirects to another site names that site here.
+   */
+  readonly formActions?: ReadonlyArray<string>;
 }
 
 /** A page's session scripts come from Clerk when it signs people in; dev personas need none. */
@@ -33,8 +38,9 @@ export function returnPath(value: string | null, publicBaseUrl: string): string 
     : null;
 }
 
-export const signOutForm = (notYou = false) =>
-  `<form class="auth-signout" method="post" action="/logout">${notYou ? "Not you? " : ""}<button class="btn btn-quiet" type="submit">Sign out</button></form>`;
+/** Sign out; with `returnTo`, Use another account, which signs in again back at that path. */
+export const signOutForm = (notYou = false, returnTo?: string) =>
+  `<form class="auth-signout" method="post" action="/logout">${returnTo === undefined ? "" : `<input type="hidden" name="return" value="${escapeAttribute(returnTo)}">`}${notYou ? "Not you? " : ""}<button class="btn btn-quiet" type="submit">${returnTo === undefined ? "Sign out" : "Use another account"}</button></form>`;
 
 /** Cookie collections normally key by name, which would lose distinct Domain/Path setters. */
 export function withCookies(
@@ -87,7 +93,7 @@ export function pageResponse(
           "style-src 'unsafe-inline'",
           "img-src https: data:",
           "base-uri 'none'",
-          "form-action 'self'",
+          ["form-action 'self'", ...(page.formActions ?? [])].join(" "),
           "frame-ancestors 'none'",
           // App pages run the shell's own What's new script, which posts back here.
           ...(clerk

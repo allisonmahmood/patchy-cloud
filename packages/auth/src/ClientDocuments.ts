@@ -159,6 +159,10 @@ export const redirectAllowed = (document: ClientDocument, redirectUri: string): 
   );
 };
 
+/** Whether an answer to `redirectUri` goes to a program on the person's own computer. */
+export const returnsToThisComputer = (redirectUri: string): boolean =>
+  loopback(redirectUri) !== undefined;
+
 /** A redirect URI a document may list: absolute, without a fragment. */
 const RedirectUri = Schema.String.check(
   Schema.makeFilter((uri) => URL.canParse(uri) && !uri.includes("#"), {
