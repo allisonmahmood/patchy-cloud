@@ -568,8 +568,9 @@ it.layer(layer)("DeviceLogins", (it) => {
         yield* TestClock.setTime(NOW + MINUTE);
         yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Cancelled" });
         yield* logins.confirm({ userCode: older.userCode, userId, machineName: "Also cancelled" });
-        // A release before confirmations were stamped leaves none; its start stands in.
-        yield* sql`UPDATE device_logins SET confirmed_at = NULL WHERE user_code = ${older.userCode}`;
+        // A release before confirmations were stamped leaves none, whatever its clock said.
+        yield* sql`UPDATE device_logins SET confirmed_at = NULL, created_at = now() + interval '1 hour'
+          WHERE user_code = ${older.userCode}`;
         yield* TestClock.setTime(NOW);
         yield* end(userId);
         for (const ended of [login, older]) {
