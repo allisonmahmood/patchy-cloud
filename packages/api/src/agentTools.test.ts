@@ -543,6 +543,21 @@ describe("tool call answers", () => {
       },
       isError: true
     });
+    // A long name is shortened, so the patch's words still fit.
+    const named = readAnswer(
+      patch,
+      "y".repeat(50_000),
+      patchRefusal(patch.name, "y".repeat(50_000), {
+        code: "stage_closed",
+        details: { message: "pick an open stage", open: ["x".repeat(readAnswerChars)] }
+      })
+    );
+    expect(named.content[0].text).toMatch(
+      new RegExp(
+        `^New Business refused y{127}… \\(stage_closed\\): pick an open stage\\. Its details`,
+        "u"
+      )
+    );
     // Words past 2,000 characters are cut too, and a retry's wait stays.
     const wordy = toolRefusal({
       code: "busy",

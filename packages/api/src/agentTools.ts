@@ -450,6 +450,16 @@ export const toolRefusal = (error: ToolRefusal, text = error.message): ToolCallR
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 
 /**
+ * What a refusal repeats of a tool's name, as the agent sent it or a builder chose it, or of a
+ * schema's words about the arguments, cut short so the refusal's own words always reach the
+ * agent within the read cap.
+ */
+const repeated = (text: string, limit: number) =>
+  [...text].length > limit ? `${[...text].slice(0, limit - 1).join("")}…` : text;
+const repeatedName = 128;
+const repeatedProblem = 2_000;
+
+/**
  * A patch's own refusal of a tool, such as "New Business refused addLead (missing_fields):
  * give every field." A string `message` in its details says what to do; the rest of the
  * details follow in the text, and all of them stay in `structuredContent` unchanged.
@@ -467,7 +477,7 @@ export const patchRefusal = (
       ? details
       : Object.fromEntries(Object.entries(record).filter(([key]) => key !== "message"));
   // Without its own words, the tool's description is where the agent learns what to do.
-  const message = `${patch} refused ${tool} (${failure.code})${said === undefined ? ". Its description in open_patch says when it refuses and what to do." : `: ${sentence(said)}`}`;
+  const message = `${patch} refused ${repeated(tool, repeatedName)} (${failure.code})${said === undefined ? ". Its description in open_patch says when it refuses and what to do." : `: ${sentence(said)}`}`;
   const extra =
     rest === undefined || (Predicate.isObject(rest) && Object.keys(rest).length === 0)
       ? ""
@@ -484,15 +494,6 @@ export const patchRefusal = (
 };
 
 /** The tools a patch has now, read from the version a call would run on, and where to look. */
-/**
- * What a refusal repeats of what the agent sent, a tool's name or a schema's words about its
- * arguments, cut short so the refusal's own instructions always reach the agent.
- */
-const repeated = (text: string, limit: number) =>
-  [...text].length > limit ? `${[...text].slice(0, limit - 1).join("")}…` : text;
-const repeatedName = 128;
-const repeatedProblem = 2_000;
-
 const toolsNow = (tools: readonly string[]) =>
   `${tools.length === 0 ? "It has no agent tools now." : `Its tools now: ${tools.join(", ")}.`} Call open_patch to see what each does and takes.`;
 
