@@ -40,9 +40,9 @@ capability's `src/migrations.ts`, the handler descriptor schemas
 deploys the PR onto data the live release seeded, rolls back to the live
 release, and fails naming the step that broke; otherwise it passes at once.
 Once the PR's CLI writes read-only actions, the PR publishes a tier 2 patch with
-one and an agent tool, and the live release must serve it and enforce both. [Rolling back](OPERATIONS.md#rolling-back) says what
-it covers. `pnpm verify` leaves it out, because it rehearses commits against the
-commit production runs. `pnpm test:rollback-rehearsal` runs it on HEAD, reading
+one and an agent tool, and the live release must serve it and enforce both.
+[Rolling back](OPERATIONS.md#rolling-back) says what it covers. `pnpm verify`
+leaves it out, because it rehearses commits against the commit production runs. `pnpm test:rollback-rehearsal` runs it on HEAD, reading
 the Deploy runs with `gh`; `--live <sha>` rehearses against another commit.
 
 CI pins every job to `ubuntu-24.04`, and every job that runs the repository's
