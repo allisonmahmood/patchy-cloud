@@ -31,6 +31,7 @@ import * as Invocation from "./Invocation.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
 import * as LoadedVersions from "./LoadedVersions.js";
+import { mint } from "./MutationTransaction.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as ServerBundles from "./ServerBundles.js";
@@ -554,6 +555,197 @@ it.live(
       });
       for (const handler of ["demo.peekSave", "agent.lookup", "demo.reach"])
         assert.strictEqual((yield* refusal(handler)).code, "access_denied", handler);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  30_000
+);
+
+it.live(
+  "an agent's call runs its tool as the person, with its agent at every depth, rechecks company callbacks and names it in the log",
+  () =>
+    Effect.gen(function* () {
+      const platform = yield* SqlClient.SqlClient;
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const tables = yield* Tables.Tables;
+      const area: Binding.Binding["Service"] = {
+        ...binding,
+        patchId: "localagent02",
+        manifest: {
+          ...binding.manifest,
+          uses: { members: { kind: "members" } },
+          handlers: {
+            "deals.who": { kind: "query", args: {}, result: { kind: "json" } },
+            ...Object.fromEntries(
+              (
+                [
+                  ["who", "query"],
+                  ["nested", "action"],
+                  ["save", "mutation"],
+                  ["member", "action"]
+                ] as const
+              ).map(([tool, kind]) => [
+                `agent.${tool}`,
+                {
+                  kind,
+                  description: `The ${tool} tool.`,
+                  agentTool: true,
+                  args: {},
+                  result: { kind: "json" }
+                }
+              ])
+            )
+          }
+        }
+      };
+      yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES (${area.patchId}, ${area.companyId}, 'usr_dev', 'Agent calls', 'agent-calls-local')`;
+      yield* databases.ensureReady(area.companyId);
+      yield* platform.withTransaction(
+        Effect.gen(function* () {
+          yield* platform`SELECT id FROM patches WHERE id = ${area.patchId} FOR UPDATE`;
+          yield* databases.withCompany(area.companyId)(
+            databases.withPatchLock(area.patchId)(tables.provision(area.patchId, area.manifest))
+          );
+        })
+      );
+      let memberReads = 0;
+      const gateway = yield* CallbackGateway.make({
+        ...(yield* TableOperations.make),
+        "members.get": {
+          kind: "read",
+          run: () =>
+            Effect.sync(() => {
+              memberReads++;
+              return null;
+            })
+        }
+      });
+      const listener = yield* CallbackGatewayApi.listen().pipe(
+        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+      );
+      // The build passes agent/ files by name; they fold into the marked `agent` module, and
+      // `who` is the page's handler re-exported as a tool.
+      const source = yield* Effect.promise(
+        async () =>
+          (
+            await build({
+              stdin: {
+                contents: `import { query, mutation, action, createGuest, t } from "patchy/server";
+      const who = query({description:"The who tool.",args:{},result:t.json(),handler:async ctx => ({viewer:ctx.viewer.user.id, agent:ctx.agent})});
+      const nested = action({description:"The nested tool.",args:{},result:t.json(),handler:async ctx => ({agent:ctx.agent, nested:await ctx.run.deals.who({})})});
+      const save = mutation({description:"The save tool.",args:{},result:t.json(),handler:async ctx => { await ctx.tables.notes.insert({title:"From an agent"}); return ctx.agent; }});
+      const member = action({description:"The member tool.",args:{},result:t.json(),handler:async ctx => { await ctx.members.get(ctx.viewer.user.id); return ctx.members.get(ctx.viewer.user.id); }});
+      export default createGuest({ deals: { who } }, [], { tools: { who, nested, save, member } });`,
+                resolveDir: new URL("../../patchy", import.meta.url).pathname,
+                sourcefile: "agent-call-invocation-fixture.ts"
+              },
+              bundle: true,
+              write: false,
+              platform: "browser",
+              format: "esm",
+              target: "es2022",
+              conditions: ["development"]
+            })
+          ).outputFiles[0]!.text
+      );
+      const bundle: GuestProtocol.Bundle = {
+        companyId: area.companyId,
+        patchId: area.patchId,
+        versionId: area.versionId,
+        sha256: sha256(source),
+        bundle: source
+      };
+      const executor = yield* Local.make({
+        companyId: area.companyId,
+        callbackUrls: [listener.url],
+        environment: "test"
+      }).pipe(Effect.provide(WideEvents.layerNoop));
+      yield* executor.bind(bundle);
+      const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+        Effect.provideService(Executor.Executor, executor),
+        Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
+      );
+      const agentCall = (
+        tool: string,
+        options: { readonly recheck?: Invocation.AgentCall["recheck"]; readonly key?: string } = {}
+      ) =>
+        Invocation.callAgent({
+          version: area,
+          person: viewer,
+          agent: { name: "Claude" },
+          tool,
+          args: {},
+          ...(options.key === undefined ? {} : { mutationKey: options.key }),
+          recheck: options.recheck ?? Effect.succeed(viewer)
+        }).pipe(Effect.provideService(Invocation.Invocation, invocations));
+      const claude = { name: "Claude" };
+      assert.deepStrictEqual(yield* agentCall("who"), {
+        ok: true,
+        value: { viewer: "usr_dev", agent: claude }
+      });
+      // The page's own call of the handler the tool re-exports has no agent.
+      assert.deepStrictEqual(
+        yield* invocations.call(
+          { handler: "deals.who", args: {} },
+          { ...area, correlationId: newInternalId("call") },
+          Effect.succeed(viewer)
+        ),
+        { ok: true, value: { viewer: "usr_dev", agent: null } }
+      );
+      assert.deepStrictEqual(yield* agentCall("nested"), {
+        ok: true,
+        value: { agent: claude, nested: { viewer: "usr_dev", agent: claude } }
+      });
+      const saved = yield* agentCall("save", { key: yield* mint });
+      assert.isTrue(saved.ok);
+      if (saved.ok) assert.deepStrictEqual(saved.value, claude);
+      // A failing recheck stops the call at its next company callback.
+      let rechecks = 0;
+      const refused = yield* agentCall("member", {
+        recheck: Effect.suspend(() =>
+          ++rechecks === 1 ? Effect.succeed(viewer) : Effect.fail(new Runtime.AccessDenied({}))
+        )
+      }).pipe(Effect.flip);
+      assert.strictEqual(refused.code, "access_denied");
+      assert.deepStrictEqual([rechecks, memberReads], [2, 1]);
+      // Every logged invocation of the agent's calls, nested ones included, names the agent
+      // beside its person; its write names the agent connection as its credential.
+      const log = yield* InvocationLog.InvocationLog;
+      const { entries } = yield* log.page({
+        companyId: area.companyId,
+        patchId: area.patchId,
+        limit: 10
+      });
+      assert.deepStrictEqual(
+        entries.map(({ invocation }) => [
+          invocation.handler,
+          invocation.initiatingViewerId,
+          invocation.agent
+        ]),
+        [
+          ["agent.member", "usr_dev", claude],
+          ["agent.save", "usr_dev", claude],
+          ["agent.nested", "usr_dev", claude]
+        ]
+      );
+      const child = entries[2]!.tree.find((step) => step.type === "invocation")!;
+      assert.deepStrictEqual(
+        (yield* log.find({ companyId: area.companyId, invocationId: child.id }))?.agent,
+        claude
+      );
+      const write = entries[1]!.tree.find((step) => step.name === "tables.insert")!;
+      const [row] = yield* platform<{
+        correlationId: string;
+      }>`SELECT correlation_id AS "correlationId" FROM runtime_calls WHERE id = ${write.id}`;
+      const call = yield* (yield* RuntimeLog.RuntimeLog).find({
+        companyId: area.companyId,
+        correlationId: row!.correlationId
+      });
+      assert.include(call, {
+        credentialKind: "agent",
+        effectivePrincipal: "patch",
+        outcome: "success"
+      });
+      assert.deepStrictEqual(call?.agent, claude);
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000
 );

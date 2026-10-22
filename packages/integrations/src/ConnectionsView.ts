@@ -433,9 +433,11 @@ const from = (call: RuntimeLog.Call, names: CallNames) => {
 const credential = (call: RuntimeLog.Call) =>
   call.machine !== null
     ? `The machine key ${call.machine.name}, reading the real connection while building a patch`
-    : call.credentialKind === "admin"
-      ? "Admin, managing the connection"
-      : "A viewer's session";
+    : call.agent !== null
+      ? `A person's agent, ${call.agent.name}, using a patch's agent tool`
+      : call.credentialKind === "admin"
+        ? "Admin, managing the connection"
+        : "A viewer's session";
 const took = (call: RuntimeLog.Call) =>
   [
     call.durationMs === null

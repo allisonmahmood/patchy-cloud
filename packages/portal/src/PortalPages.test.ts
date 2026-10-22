@@ -2176,6 +2176,7 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
     handler: input.handler,
     kind: input.kind,
     initiatingViewerId: viewer.id,
+    agent: null,
     parentId: input.parentId ?? null,
     correlationId: `correlation-${id}`,
     startedAt,

@@ -207,6 +207,7 @@ export interface ContextBase {
   /**
    * The worker agent calling through Patchy MCP, by the name its person approved: a label, never
    * proof. Null when a page calls, including a page's call to a handler an agent tool re-exports.
+   * The handlers an agent tool's action reaches through `ctx.run` see the same agent.
    */
   readonly agent: { readonly name: string } | null;
   log(message: string, details?: Json): void;

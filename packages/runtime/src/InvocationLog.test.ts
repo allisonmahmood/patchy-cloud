@@ -18,6 +18,7 @@ const begin = (id: string): InvocationLog.Begin => ({
   handler: "leads.approve",
   kind: "mutation",
   initiatingViewerId: DEV_SEED.userId,
+  agent: null,
   parentId: null,
   correlationId: `correlation-${id}`,
   startedAt: NOW,

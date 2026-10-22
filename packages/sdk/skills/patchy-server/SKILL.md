@@ -368,7 +368,8 @@ access is a company switch, off until an admin turns it on at
 A tool runs as the person who connected the agent. `ctx.viewer` is that person,
 under the same access rules as their page calls. `ctx.agent` is
 `{ name } | null`: the client's name, a label the person approved and never
-proof of who is calling. It is null for page calls. A patch can use it to hold
+proof of who is calling. It is null for page calls, and the handlers a tool's
+action reaches through `ctx.run` see the same agent. A patch can use it to hold
 agents to stricter rules than people, tag the rows they write, log their calls
 or refuse them. A tool of its own can require what the page leaves optional; its
 schema then tells the agent, and a call missing the field is refused before the

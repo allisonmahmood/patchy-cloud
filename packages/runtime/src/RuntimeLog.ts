@@ -17,7 +17,7 @@ const MUTATION_DEADLINE_MS = registry["runtime.mutation.deadline"].default;
  * The credentials this release records calls under. Every read filters to them, so a call a later
  * release recorded under a new kind stays hidden after a rollback instead of failing to decode.
  */
-export const credentialKinds = ["session", "admin", "machine"] as const;
+export const credentialKinds = ["session", "admin", "machine", "agent"] as const;
 export type CredentialKind = (typeof credentialKinds)[number];
 const MAX_SQL_BYTES = 8_192;
 const encoder = new TextEncoder();
@@ -36,13 +36,22 @@ interface BeginFields {
   readonly deadlineMs?: number;
 }
 
-/** A viewer's session or an admin acts from a patch or the connection pages; a machine from `patchy dev`. */
+/**
+ * A viewer's session or an admin acts from a patch or the connection pages; a person's worker
+ * agent from a patch's agent tool; a machine from `patchy dev`.
+ */
 export type Begin = BeginFields &
   (
     | {
-        readonly credentialKind: Exclude<CredentialKind, "machine">;
+        readonly credentialKind: "session" | "admin";
         readonly patchId: string | null;
         readonly versionId: string | null;
+      }
+    | {
+        readonly credentialKind: "agent";
+        readonly agent: Agent;
+        readonly patchId: string;
+        readonly versionId: string;
       }
     | {
         readonly credentialKind: "machine";
@@ -55,6 +64,9 @@ export type Begin = BeginFields &
 /** The machine token a dev read came through, as it was named then. */
 export const Machine = Schema.Struct({ id: Schema.String, name: Schema.String });
 export type Machine = typeof Machine.Type;
+/** The worker agent a call ran for, by the client name its person approved at the time. */
+export const Agent = Schema.Struct({ name: Schema.String });
+export type Agent = typeof Agent.Type;
 
 export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   id: Schema.String,
@@ -68,6 +80,8 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   credentialKind: Schema.Literals(credentialKinds),
   /** Only for `machine`, which never names a patch or version. */
   machine: Schema.NullOr(Machine),
+  /** Only for `agent`: the person is `userId` for company resources, the agent this one. */
+  agent: Schema.NullOr(Agent),
   op: Schema.String,
   resource: Schema.NullOr(Schema.String),
   connectionId: Schema.NullOr(Schema.String),
@@ -119,7 +133,9 @@ export const make = Effect.gen(function* () {
     user_id AS "userId", effective_principal AS "effectivePrincipal",
     invocation_id AS "invocationId", credential_kind AS "credentialKind",
     CASE WHEN machine_id IS NULL THEN NULL
-      ELSE json_build_object('id', machine_id, 'name', machine_name) END AS machine, op, resource,
+      ELSE json_build_object('id', machine_id, 'name', machine_name) END AS machine,
+    CASE WHEN agent_name IS NULL THEN NULL ELSE json_build_object('name', agent_name) END AS agent,
+    op, resource,
     connection_id AS "connectionId",
     CASE WHEN outcome = 'pending'
       AND at + deadline_ms * interval '1 millisecond' < to_timestamp(${now / 1_000})
@@ -179,6 +195,7 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const id = newInternalId("call");
     const machine = input.credentialKind === "machine" ? input.machine : null;
+    const agent = input.credentialKind === "agent" ? input.agent : null;
     let query: string | null = null;
     // Every integration's query operation is `<integration>.query`, matching the column's check.
     if (input.op.endsWith(".query") && input.sql !== undefined) {
@@ -190,12 +207,12 @@ export const make = Effect.gen(function* () {
     }
     yield* sql`
       INSERT INTO runtime_calls (id, at, company_id, patch_id, version_id, user_id,
-        effective_principal, invocation_id, credential_kind, machine_id, machine_name, op,
-        resource, connection_id, correlation_id, deadline_ms, sql)
+        effective_principal, invocation_id, credential_kind, machine_id, machine_name,
+        agent_name, op, resource, connection_id, correlation_id, deadline_ms, sql)
       VALUES (${id}, to_timestamp(${now / 1_000}), ${input.companyId}, ${input.patchId},
         ${input.versionId}, ${input.userId}, ${input.effectivePrincipal ?? input.userId},
         ${input.invocationId ?? null}, ${input.credentialKind}, ${machine?.id ?? null},
-        ${machine?.name ?? null}, ${input.op},
+        ${machine?.name ?? null}, ${agent?.name ?? null}, ${input.op},
         ${input.resource === null ? null : toPostgresText(input.resource)}, ${input.connectionId},
         ${input.correlationId},
         ${input.deadlineMs ?? MUTATION_DEADLINE_MS}, ${query})`;
