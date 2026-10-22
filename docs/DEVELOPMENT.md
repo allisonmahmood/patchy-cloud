@@ -285,8 +285,9 @@ An environment is this instance plus what a multi-person check or demo needs:
   and none of your settings, skills, plugins, connectors or instruction files,
   with auto memory off and Claude Code's default permissions, so it asks before
   every call. Claude Code keeps the sign-in in your own
-  `~/.claude/.credentials.json`, whatever the config, as one entry for this
-  worktree that the next sign-in replaces. `down` leaves it: your running
+  `~/.claude/.credentials.json`, whatever the config, keyed by the server's name
+  and address: one entry for this worktree's address, which the next sign-in
+  there replaces. `down` leaves it: your running
   Claude Code sessions rewrite that file when they refresh, and a second writer
   could lose a refresh and sign you out. Before `down`, `/mcp` › the server ›
   Clear authentication removes it. Trusting the `workers/` folder is recorded in

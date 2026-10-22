@@ -7,7 +7,7 @@ import { categories, checkRequest, refusals, statuses } from "../helpers/spend.j
 
 export { approve as approveRequest, reject as rejectRequest } from "../server/requests.js";
 
-/** At most this many requests per answer, so a read stays small; `total` says how many matched. */
+/** At most this many requests per answer, so a read stays small; `next` continues the list. */
 const LISTED = 50;
 
 const listedRequest = t.object({
@@ -26,19 +26,34 @@ const listedRequest = t.object({
 
 export const listRequests = query({
   description:
-    `Lists spend requests, newest first, at most ${LISTED} at a time; total counts every match. ` +
-    "Names are people's names. The ids in the answer are what approveRequest and rejectRequest take. " +
-    "Changes nothing.",
-  args: { status: t.enum(statuses).optional().describe("Only requests with this status.") },
-  result: t.object({ requests: t.array(listedRequest), total: t.integer() }),
+    `Lists spend requests, newest first, ${LISTED} at a time; total counts every match, and next, when ` +
+    "there are more, is the from that continues the list. Names are people's names. The ids in the answer " +
+    "are what approveRequest and rejectRequest take. Changes nothing.",
+  args: {
+    status: t.enum(statuses).optional().describe("Only requests with this status."),
+    from: t.integer().optional().describe("Where to continue: the previous answer's next.")
+  },
+  result: t.object({
+    requests: t.array(listedRequest),
+    total: t.integer(),
+    next: t.nullable(t.integer())
+  }),
   handler: async (ctx, args) => {
-    const { rows } = await ctx.tables.requests.list({
-      index: "bySubmitted",
-      order: "desc",
-      limit: 1000
-    });
+    const rows = [];
+    let cursor: string | null = null;
+    do {
+      const page = await ctx.tables.requests.list({
+        index: "bySubmitted",
+        order: "desc",
+        limit: 1000,
+        ...(cursor === null ? {} : { cursor })
+      });
+      rows.push(...page.rows);
+      cursor = page.cursor;
+    } while (cursor !== null);
+    const from = Math.max(0, args.from ?? 0);
     const matches = rows.filter((row) => args.status === undefined || row.status === args.status);
-    const listed = matches.slice(0, LISTED);
+    const listed = matches.slice(from, from + LISTED);
     const ids = new Set(
       listed.flatMap((row) =>
         row.approver === null ? [row.requester] : [row.requester, row.approver]
@@ -51,6 +66,7 @@ export const listRequests = query({
     const name = (id: string) => names.get(id) ?? "Someone who left";
     return {
       total: matches.length,
+      next: from + LISTED < matches.length ? from + LISTED : null,
       requests: listed.map((row) => ({
         id: row.id,
         title: row.title,

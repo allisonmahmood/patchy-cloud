@@ -83,7 +83,7 @@ Done when `pnpm dev status` exits 0.
   through `/mcp`. `worker-claude` signs in through consent: `/mcp` ›
   Authenticate opens the consent page in the person's browser, where they sign
   in as one of the scenario's people; its sign-in stays in their
-  `~/.claude/.credentials.json` after `down`, one entry per worktree, which
+  `~/.claude/.credentials.json` after `down`, one entry per worktree and address, which
   `/mcp` › Clear authentication removes. `worker-codex <person>` mints a new
   connection as that person on each launch. For one task without a person:
   `…/worker-codex jordan exec --skip-git-repo-check "<task>" < /dev/null`, and

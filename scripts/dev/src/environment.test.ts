@@ -248,6 +248,9 @@ it.layer(NodeServices.layer)("the worker agent launchers", (it) => {
         const config = yield* fs.readFileString(path.join(layout.codexHome, "config.toml"));
         // Nothing of the account's own: its ChatGPT apps and plugins stay out.
         assert.include(config, "apps = false\nplugins = false\nremote_plugin = false\n");
+        // Nor do the commands Codex runs, or a snapshot of their shell, get the token.
+        assert.include(config, "shell_snapshot = false\n");
+        assert.include(config, '[shell_environment_policy]\nexclude = ["PATCHY_MCP_TOKEN"]\n');
         assert.include(
           config,
           `[mcp_servers.${workerServer(worktree)}]\nurl = "${API_URL}/mcp"\nbearer_token_env_var = "PATCHY_MCP_TOKEN"\n`
@@ -262,6 +265,17 @@ it.layer(NodeServices.layer)("the worker agent launchers", (it) => {
         );
         assert.include(again.stdout.split("\n"), "login=");
         assert.isFalse(yield* fs.exists(path.join(own, "auth.json")));
+
+        // From a shell already on the environment's home, its own login stays as it is.
+        const kept = path.join(layout.codexHome, "auth.json");
+        yield* fs.writeFileString(kept, "{}");
+        const inside = yield* launch(
+          layout.codexWorker,
+          { ...env, CODEX_HOME: layout.codexHome, HOME: path.join(dir, "home"), PNPM_LOG: pnpmLog },
+          ["jordan"]
+        );
+        assert.strictEqual(inside.exitCode, 0);
+        assert.strictEqual(yield* fs.readFileString(kept), "{}");
       }).pipe(Effect.scoped)
   );
 

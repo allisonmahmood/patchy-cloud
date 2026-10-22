@@ -457,8 +457,9 @@ const READ_TOKEN = `process.stdout.write(JSON.parse(require("fs").readFileSync(0
  * connectors or instruction files, with auto memory off and Claude Code's own
  * permission prompts, so it asks before each call as a person's own would.
  * Claude Code keeps the sign-in in the developer's `~/.claude/.credentials.json`
- * whatever the config, so the name is per worktree: each later sign-in replaces
- * that one entry, and `down` leaves it (DEVELOPMENT says why).
+ * whatever the config, keyed by the server's name and address, so the name is
+ * per worktree: a later sign-in to the same address replaces its entry, and
+ * `down` leaves it (DEVELOPMENT says why).
  *
  * `worker-codex <person>` mints an agent connection for that person with
  * `pnpm dev mcp-token`, as Codex, and hands its token to Codex in its
@@ -508,12 +509,18 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
       'cli_auth_credentials_store = "file"',
       "check_for_update_on_startup = false",
       "",
-      "# No background server outliving the session, and none of the account's own apps or plugins.",
+      "# No background server outliving the session, none of the account's own apps or plugins,",
+      "# and no shell snapshot, which would write the session's environment to disk.",
       "[features]",
       "daemon_auto_start = false",
       "apps = false",
       "plugins = false",
       "remote_plugin = false",
+      "shell_snapshot = false",
+      "",
+      "# The door's token is for Codex alone, never for the commands it runs.",
+      "[shell_environment_policy]",
+      'exclude = ["PATCHY_MCP_TOKEN"]',
       "",
       `[projects.${tomlString(layout.workers)}]`,
       'trust_level = "trusted"',
@@ -536,7 +543,9 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
       "# The developer's own Codex login, linked so a refresh is written to it; nothing else of theirs.",
       "own=${CODEX_HOME:-$HOME/.codex}",
       `export CODEX_HOME=${quote(layout.codexHome)}`,
-      'if [ -f "$own/auth.json" ]; then ln -sfn "$own/auth.json" "$CODEX_HOME/auth.json" || exit 1',
+      "# Started from a shell already on this home (a worker session's), there is nothing to link.",
+      'if [ "$own" -ef "$CODEX_HOME" ]; then :',
+      'elif [ -f "$own/auth.json" ]; then ln -sfn "$own/auth.json" "$CODEX_HOME/auth.json" || exit 1',
       'elif [ -L "$CODEX_HOME/auth.json" ]; then rm -f "$CODEX_HOME/auth.json"; fi',
       `minted=$(cd ${quote(plan.worktree)} && pnpm --silent dev mcp-token "$person" --client Codex --json) || exit 1`,
       `PATCHY_MCP_TOKEN=$(printf '%s' "$minted" | node -e ${quote(READ_TOKEN)}) || exit 1`,
