@@ -12,6 +12,11 @@ export type Name = (typeof NAMES)[number];
 
 export const isName = (name: string): name is Name => NAMES.some((known) => known === name);
 
+/** The longest strings the catalogue's arguments take, as `tools/list` advertises them. */
+export const SEARCH_CHARS = 200;
+export const CURSOR_CHARS = 2_048;
+export const PATCH_CHARS = 2_048;
+
 /** A tool as `tools/list` shows it. */
 export interface Tool {
   readonly name: Name;
@@ -27,6 +32,8 @@ export interface Tool {
 
 const patch: JsonSchema = {
   type: "string",
+  minLength: 1,
+  maxLength: PATCH_CHARS,
   description:
     "The patch's name as find_patches lists it, its id, or its address. Another company's address is never found."
 };
@@ -45,8 +52,16 @@ export const tools: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        search: { type: "string", description: "Words to look for. Leave it out to list all." },
-        cursor: { type: "string", description: "The next of a previous answer, to continue." },
+        search: {
+          type: "string",
+          maxLength: SEARCH_CHARS,
+          description: "Words to look for. Leave it out to list all."
+        },
+        cursor: {
+          type: "string",
+          maxLength: CURSOR_CHARS,
+          description: "The next of a previous answer, to continue."
+        },
         detail: {
           type: "string",
           enum: ["tools"],
@@ -150,5 +165,11 @@ export const agentAccessOff = (off: {
   toolRefusal({
     code: "agent_access_off",
     from: "patchy",
-    message: `Agent access is off at ${off.company}, so Patchy refuses every agent until an admin turns it on at ${off.turnOnAt}.${off.admins.length === 0 ? " Tell the person." : ` ${off.company}'s admins are ${listed(off.admins)}; tell the person to ask one of them.`}`
+    message: `Agent access is off at ${off.company}, so Patchy refuses every agent until an admin turns it on at ${off.turnOnAt}.${
+      off.admins.length === 0
+        ? " Tell the person."
+        : off.admins.length === 1
+          ? ` ${off.company}'s admin is ${off.admins[0]}; tell the person to ask them.`
+          : ` ${off.company}'s admins are ${listed(off.admins)}; tell the person to ask one of them.`
+    }`
   });

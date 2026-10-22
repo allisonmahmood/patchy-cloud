@@ -381,6 +381,13 @@ it.layer(harness)("the door", (it) => {
           ["find_patches", "open_patch", "read_patch", "change_patch"]
         );
         for (const tool of tools) assert.isAbove(tool.description.length, 50, tool.name);
+        // The limits the catalogue enforces are the ones it advertises.
+        assert.include(at(tools[0], "inputSchema.properties.search"), { maxLength: 200 });
+        assert.include(at(tools[0], "inputSchema.properties.cursor"), { maxLength: 2_048 });
+        assert.include(at(tools[1], "inputSchema.properties.patch"), {
+          minLength: 1,
+          maxLength: 2_048
+        });
         assert.deepStrictEqual(tools[2]!.annotations, { readOnlyHint: true });
         assert.deepStrictEqual(tools[3]!.annotations, {
           readOnlyHint: false,
@@ -474,6 +481,19 @@ it.layer(harness)("the door", (it) => {
         );
         const found = yield* send(call(ben!.token, "find_patches"));
         assert.isUndefined(at(found.json, "result.isError"));
+
+        // One admin is named as one.
+        assert.strictEqual(
+          at(
+            Tools.agentAccessOff({
+              company: "Acme",
+              admins: ["Ada Lovelace"],
+              turnOnAt: "/company"
+            }),
+            "structuredContent.error.message"
+          ),
+          "Agent access is off at Acme, so Patchy refuses every agent until an admin turns it on at /company. Acme's admin is Ada Lovelace; tell the person to ask them."
+        );
       })
   );
 

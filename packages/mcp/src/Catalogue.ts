@@ -24,20 +24,20 @@ import {
 } from "@patchy/api";
 import type { AgentConnections } from "@patchy/auth";
 import { Patches } from "@patchy/patches";
+import * as Tools from "./Tools.js";
 
 /** The most patches one find answers. */
 const PAGE_SIZE = 50;
 /** The most characters of a find's compact JSON text, the read cap every read answer keeps. */
 export const RESULT_CHARS = 100_000;
-const SEARCH_CHARS = 200;
 
 const FindArgs = Schema.Struct({
-  search: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(SEARCH_CHARS))),
-  cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2_048))),
+  search: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(Tools.SEARCH_CHARS))),
+  cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(Tools.CURSOR_CHARS))),
   detail: Schema.optionalKey(Schema.Literal("tools"))
 });
 const OpenArgs = Schema.Struct({
-  patch: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2_048))
+  patch: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(Tools.PATCH_CHARS))
 });
 const strict = { onExcessProperty: "error" } as const;
 const decodeFind = Schema.decodeUnknownResult(FindArgs, strict);
@@ -110,24 +110,25 @@ const matches = (row: Patches.ReadPatch, words: string | undefined) => {
   return words.split(" ").every((word) => fields.some((field) => field.includes(word)));
 };
 
-/**
- * The live patches the person can open, as the portal lists them for them: the same read
- * through the same rule, then their current versions' agent tools.
- */
-const visible = Effect.fn("Catalogue.visible")(function* (
-  identity: AgentConnections.AgentIdentity
+/** The live patches the person can open, as the portal lists them: the same read, through the same rule. */
+const visible = (identity: AgentConnections.AgentIdentity) =>
+  Effect.gen(function* () {
+    const canOpen = yield* Patches.Openability;
+    return yield* (yield* Patches.Patches)
+      .read({
+        companyId: identity.company.id,
+        userId: identity.user.id,
+        canOpen: (patch) => canOpen(patch, identity.user.id),
+        state: "live"
+      })
+      .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die }));
+  });
+
+/** Each patch with its current version's agent tools, read from the manifests' marks alone. */
+const withTools = Effect.fn("Catalogue.withTools")(function* (
+  rows: ReadonlyArray<Patches.ReadPatch>
 ) {
-  const patches = yield* Patches.Patches;
-  const canOpen = yield* Patches.Openability;
-  const rows = yield* patches
-    .read({
-      companyId: identity.company.id,
-      userId: identity.user.id,
-      canOpen: (patch) => canOpen(patch, identity.user.id),
-      state: "live"
-    })
-    .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die }));
-  const tools = yield* patches.agentToolSummaries(
+  const tools = yield* (yield* Patches.Patches).agentToolSummaries(
     rows.flatMap(({ patch }) => (patch.currentVersionId === null ? [] : [patch.currentVersionId]))
   );
   return rows.map((row): Listed => ({
@@ -138,10 +139,14 @@ const visible = Effect.fn("Catalogue.visible")(function* (
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
+/** The most of a name an answer repeats, as `open_patch` cuts its owner. */
+const NAME_CHARS = 200;
+const cut = (name: string) => [...name].slice(0, NAME_CHARS).join("");
+
 /** The answer's first fields, which every page of one find shares. */
 const actingFor = (identity: AgentConnections.AgentIdentity) => ({
-  person: identity.user.name,
-  company: identity.company.name
+  person: cut(identity.user.name),
+  company: cut(identity.company.name)
 });
 
 /**
@@ -177,7 +182,7 @@ export const find = Effect.fn("Catalogue.find")(
       walk = cursor.value;
     }
 
-    const entries = (yield* visible(identity))
+    const entries = (yield* withTools(yield* visible(identity)))
       .filter(({ row }) => matches(row, walk.search))
       .map((listed) => ({ listed, key: keyOf(listed) }))
       .sort((left, right) => compare(left.key, right.key));
@@ -186,7 +191,10 @@ export const find = Effect.fn("Catalogue.find")(
       after === undefined ? entries : entries.filter(({ key }) => compare(key, after) > 0);
 
     const head = { actingFor: actingFor(identity), total: entries.length };
-    const entryOf = ({ row, tools }: Listed) =>
+    const entryOf = (
+      { row, tools }: Listed,
+      form: "detail" | "names" | "none" = walk.detail === "tools" ? "detail" : "names"
+    ) =>
       openPatchAnswer(
         {
           name: row.patch.name,
@@ -194,7 +202,7 @@ export const find = Effect.fn("Catalogue.find")(
           owner: row.owner.name,
           address: Patches.address(publicUrl.href, row.patch.companyHandle, row.patch.name)
         },
-        walk.detail === "tools" ? tools : tools.map(({ name }) => name)
+        form === "detail" ? tools : form === "names" ? tools.map(({ name }) => name) : []
       );
     const nextAfter = (key: Key) =>
       encodeCursor({
@@ -209,18 +217,23 @@ export const find = Effect.fn("Catalogue.find")(
     let endedEarly = false;
     for (const [index, { listed, key }] of remaining.entries()) {
       if (page.length === PAGE_SIZE) break;
-      const entry = entryOf(listed);
-      const grown = chars + jsonLength(entry) + (page.length === 0 ? 0 : 1);
-      const more = index < remaining.length - 1;
       // A cursor is base64url, which JSON never escapes.
-      const withNext = more ? grown + `,"next":""`.length + nextAfter(key).length : grown;
-      // One entry always fits: its tools passed the 60 KiB publish check, and the rest is bounded.
-      if (page.length > 0 && withNext > RESULT_CHARS) {
-        endedEarly = true;
-        break;
+      const next = index < remaining.length - 1 ? `,"next":""`.length + nextAfter(key).length : 0;
+      const grown = (entry: ReturnType<typeof entryOf>) =>
+        chars + jsonLength(entry) + (page.length === 0 ? 0 : 1);
+      const fits = (entry: ReturnType<typeof entryOf>) => grown(entry) + next <= RESULT_CHARS;
+      let entry = entryOf(listed);
+      if (!fits(entry)) {
+        if (page.length > 0) {
+          endedEarly = true;
+          break;
+        }
+        // Alone over the cap, which only tools that skipped the publish check can be: the
+        // patch is listed with its tools' names, or without them, so the walk goes on.
+        entry = fits(entryOf(listed, "names")) ? entryOf(listed, "names") : entryOf(listed, "none");
       }
+      chars = grown(entry);
       page.push(entry);
-      chars = grown;
     }
     const last = remaining[page.length - 1];
     const answer = toolAnswer({
@@ -251,18 +264,18 @@ type PatchRef = "name" | "id" | "address";
  */
 const resolve = Effect.fn("Catalogue.resolve")(function* (
   identity: AgentConnections.AgentIdentity,
-  listed: ReadonlyArray<Listed>,
+  rows: ReadonlyArray<Patches.ReadPatch>,
   patch: string,
   publicUrl: URL
 ) {
   const ref = patch.trim();
-  const byId = new Map(listed.map((entry) => [entry.row.patch.id, entry] as const));
+  const byId = new Map(rows.map((row) => [row.patch.id, row] as const));
   const named = (name: string, by: PatchRef) =>
     Effect.gen(function* () {
       if (!isPatchName(name)) return undefined;
       const resolved = yield* (yield* Patches.Patches).resolveName(identity.company.handle, name);
-      const entry = Option.isSome(resolved) ? byId.get(resolved.value.patchId) : undefined;
-      return entry === undefined ? undefined : { entry, by };
+      const row = Option.isSome(resolved) ? byId.get(resolved.value.patchId) : undefined;
+      return row === undefined ? undefined : { row, by };
     });
   if (/^https?:/iu.test(ref)) {
     const url = URL.parse(ref);
@@ -275,7 +288,7 @@ const resolve = Effect.fn("Catalogue.resolve")(function* (
     return yield* named(name, "address");
   }
   const own = byId.get(ref);
-  if (own !== undefined) return { entry: own, by: "id" as const };
+  if (own !== undefined) return { row: own, by: "id" as const };
   return yield* named(ref, "name");
 });
 
@@ -304,7 +317,7 @@ export const open = Effect.fn("Catalogue.open")(
       publicUrl
     );
     if (found === undefined) return notFound(identity);
-    const { row } = found.entry;
+    const { row } = found;
     yield* WideEvents.enrich({ patchRef: found.by, ...Patches.eventFields(row.patch) });
     // The version the list read, so a publish between the two reads can't mix them.
     const served =

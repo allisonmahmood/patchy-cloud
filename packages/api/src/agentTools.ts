@@ -24,6 +24,8 @@ export interface JsonSchema {
   readonly description?: string;
   readonly format?: "date-time";
   readonly enum?: readonly string[];
+  readonly minLength?: number;
+  readonly maxLength?: number;
   readonly minimum?: number;
   readonly maximum?: number;
   readonly properties?: Readonly<Record<string, JsonSchema>>;

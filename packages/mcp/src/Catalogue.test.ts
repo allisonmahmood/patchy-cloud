@@ -535,4 +535,66 @@ it.layer(harness)("the catalogue", (it) => {
       ]);
     })
   );
+
+  it.effect("keeps every find under the read cap, whatever the names and tools it lists", () =>
+    Effect.gen(function* () {
+      const acme = yield* company("bounded", [["P".repeat(100_000), "admin"]], {
+        name: "C".repeat(100_000)
+      });
+      const person = acme.people[0]!;
+      // Recorded straight to the database: tools no publish would let through, alone over the cap.
+      yield* publish(acme.id, person, "huge-tools", { handlers: wordy(60, 2_000) });
+      yield* publish(acme.id, person, "small-page");
+      const send = yield* door("https://cloud.example", "203.0.113.39");
+      // `found` checks each page against the cap.
+      const answer = found(yield* send(call(person.token, "find_patches", { detail: "tools" })));
+      assert.deepStrictEqual(answer.actingFor, {
+        person: "P".repeat(200),
+        company: "C".repeat(200)
+      });
+      assert.deepStrictEqual(names(answer), ["huge-tools", "small-page"]);
+      // Too large to list with its words, the patch is listed with its tools' names.
+      assert.strictEqual(answer.patches[0]!.tools.length, 60);
+      assert.strictEqual(answer.patches[0]!.tools[0], "tool00");
+    })
+  );
+
+  it.effect("finds and opens only what the person's openability rule lets them open", () =>
+    Effect.gen(function* () {
+      const acme = yield* company("narrower", [["Priya Shah", "admin"]]);
+      const priya = acme.people[0]!;
+      yield* publish(acme.id, priya, "open-board", { handlers: deals });
+      const closed = yield* publish(acme.id, priya, "closed-board", { handlers: deals });
+      const send = yield* door("https://cloud.example", "203.0.113.40");
+      // The portal's rule, narrowed as a credential's reach would narrow it.
+      const narrowed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.provideService(
+          effect,
+          Patches.Openability,
+          (patch) => patch.name !== "closed-board"
+        );
+      const answer = found(yield* narrowed(send(call(priya.token, "find_patches"))));
+      assert.deepStrictEqual(names(answer), ["open-board"]);
+      assert.strictEqual(answer.total, 1);
+      for (const patch of [
+        "closed-board",
+        closed.patchId,
+        "https://cloud.example/door-narrower/closed-board"
+      ]) {
+        const refused = yield* narrowed(send(call(priya.token, "open_patch", { patch })));
+        assert.strictEqual(
+          at(refused.json, "result.structuredContent.error.code"),
+          "not_found",
+          patch
+        );
+      }
+      // Without the narrowing, the same person opens it.
+      assert.isUndefined(
+        at(
+          (yield* send(call(priya.token, "open_patch", { patch: "closed-board" }))).json,
+          "result.isError"
+        )
+      );
+    })
+  );
 });
