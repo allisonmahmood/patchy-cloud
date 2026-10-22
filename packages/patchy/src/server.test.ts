@@ -252,7 +252,7 @@ it("folds agent files into agent tools, keeping a re-exported handler's page nam
   });
 });
 
-it("refuses a tool name two agent files export, naming both, and a server module named agent", () => {
+it("refuses a tool name two agent files export, naming both, and server/agent.ts beside agent/", () => {
   const list = server.query({ args: {}, result: t.boolean(), handler: () => true });
   assert.throws(
     () => foldAgentArea({ crm: { list }, deals: { list } }),
@@ -260,10 +260,14 @@ it("refuses a tool name two agent files export, naming both, and a server module
     "list is exported by agent/crm.ts and agent/deals.ts; each tool needs its own name."
   );
   assert.throws(
-    () => extractHandlerDescriptors({ agent: { list } }),
+    () => extractHandlerDescriptors({ agent: { list } }, foldAgentArea({ deals: { list } })),
     InvalidManifestError,
     "server/agent.ts: Agent tools live in agent/; move these exports there."
   );
+  // Alone, an older version's agent module stays page handlers.
+  assert.deepStrictEqual(Object.keys(extractHandlerDescriptors({ agent: { list } })), [
+    "agent.list"
+  ]);
   for (const area of [{ helper: 1 }, { nested: { list } }])
     assert.throws(() => extractHandlerDescriptors({}, area), InvalidManifestError);
 });

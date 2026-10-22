@@ -330,7 +330,9 @@ export function createGuest(
 ) {
   const agentArea = foldAgentArea(agentFiles);
   const descriptors = extractHandlerDescriptors(modules, agentArea);
-  const definitions: typeof modules = { ...modules, agent: agentArea };
+  // An older version's server module named agent keeps its handlers when there is no agent area.
+  const definitions: typeof modules =
+    Object.keys(agentArea).length === 0 ? modules : { ...modules, agent: agentArea };
   const handlers = new Map(
     Object.entries(descriptors).map(([name, descriptor]) => {
       const dot = name.indexOf(".");

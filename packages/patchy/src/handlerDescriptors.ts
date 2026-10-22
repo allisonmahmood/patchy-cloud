@@ -63,7 +63,10 @@ export function extractHandlerDescriptors(
   modules: Readonly<Record<string, unknown>>,
   agentArea: Readonly<Record<string, unknown>> = {}
 ): Readonly<Record<string, HandlerDescriptor>> {
-  if (Object.hasOwn(modules, "agent")) throw new InvalidManifestError(serverAgentModule);
+  // An older version's server/agent.ts stays a module of page handlers; only beside an agent area
+  // would its names clash. The CLI refuses server/agent.ts outright.
+  if (Object.hasOwn(modules, "agent") && Object.keys(agentArea).length > 0)
+    throw new InvalidManifestError(serverAgentModule);
   const descriptors: Record<string, HandlerDescriptor> = {};
   const extract = (
     module: string,

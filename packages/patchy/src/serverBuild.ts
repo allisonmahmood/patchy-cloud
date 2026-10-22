@@ -28,6 +28,9 @@ const serverCode = (output: readonly ServerOutput[]) => {
   return chunk.code;
 };
 
+type Certainty = "one" | "maybe";
+class UnknownExports extends Error {}
+
 /**
  * Each build's agent area: its files by stem, and what its last build found, each tool's file or
  * the refusal for a name two files export.
@@ -82,32 +85,54 @@ const buildConfig = (
         // lost; here the refusal can name both files.
         async buildEnd(error) {
           if (error !== undefined) return;
-          const exported = async (id: string, seen: Set<string>): Promise<Set<string>> => {
+          // Each name a module exports: "one" when its namespace surely holds the name, "maybe"
+          // when an `export *` leaves that open. Two star sources giving a name may be one
+          // binding or an ambiguity, which ES modules leave out, so only "one" names count.
+          const memo = new Map<string, ReadonlyMap<string, Certainty>>();
+          const exported = async (
+            id: string,
+            visiting: Set<string>
+          ): Promise<ReadonlyMap<string, Certainty>> => {
+            const known = memo.get(id);
+            if (known !== undefined) return known;
             const info = this.getModuleInfo(id);
-            if (info === null || seen.has(id)) return new Set();
-            seen.add(id);
-            const names = new Set(info.exports.filter((name) => name !== "*"));
-            if (!info.exports.includes("*") || info.code === null) return names;
-            // `export *` is listed as "*"; follow each star source as the bundle links it. A
-            // name two star sources give is ambiguous, so the namespace leaves it out, unless
-            // the module exports it itself. A source reached twice counts once, as one binding.
-            const starred = new Map<string, number>();
-            for (const statement of this.parse(info.code).body) {
-              if (statement.type !== "ExportAllDeclaration" || statement.exported !== null)
-                continue;
-              const target = await this.resolve(statement.source.value, id);
-              if (target === null) continue;
-              for (const name of await exported(target.id, seen))
-                if (name !== "default" && !names.has(name))
-                  starred.set(name, (starred.get(name) ?? 0) + 1);
+            // A cycle back into a module adds nothing, as in ES module linking.
+            if (info === null || visiting.has(id)) return new Map();
+            const names = new Map<string, Certainty>(
+              info.exports.filter((name) => name !== "*").map((name) => [name, "one"])
+            );
+            if (info.exports.includes("*")) {
+              // `export *` is listed as "*"; follow each star source as the bundle links it.
+              if (info.code === null) throw new UnknownExports();
+              visiting.add(id);
+              const starred = new Map<string, Certainty>();
+              for (const statement of this.parse(info.code).body) {
+                if (statement.type !== "ExportAllDeclaration" || statement.exported !== null)
+                  continue;
+                const target = await this.resolve(statement.source.value, id);
+                if (target === null) continue;
+                for (const [name, certainty] of await exported(target.id, visiting))
+                  if (name !== "default" && !names.has(name))
+                    starred.set(name, starred.has(name) ? "maybe" : certainty);
+              }
+              visiting.delete(id);
+              for (const [name, certainty] of starred) names.set(name, certainty);
             }
-            for (const [name, sources] of starred) if (sources === 1) names.add(name);
+            memo.set(id, names);
             return names;
           };
           const owners = new Map<string, string>();
           for (const [index, file] of agentPaths.entries()) {
             const stem = agent.files[index]!;
-            for (const name of await exported(file, new Set())) {
+            const names = await exported(file, new Set()).catch((cause: unknown) => {
+              // Without a module's code its star names are unknown; the guest still refuses a
+              // duplicate when the bundle loads, with a plainer message.
+              if (cause instanceof UnknownExports) return undefined;
+              throw cause;
+            });
+            if (names === undefined) return;
+            for (const [name, certainty] of names) {
+              if (certainty !== "one") continue;
               const owner = owners.get(name);
               if (owner !== undefined) {
                 agent.refusal = new LocalError({

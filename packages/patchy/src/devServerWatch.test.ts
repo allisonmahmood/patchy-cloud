@@ -299,12 +299,17 @@ it.live(
       const { root, fs, path } = yield* repo;
       yield* fs.makeDirectory(path.join(root, "agent"));
       yield* fs.makeDirectory(path.join(root, "helpers"));
+      // two.ts stars one.ts but has its own read, and more.ts stars both, reaching one.ts twice.
+      // The two reads are different bindings, so ES modules leave read out of more.ts's
+      // namespace, and leads.ts's read is the only one.
       yield* fs.writeFileString(path.join(root, "helpers/one.ts"), handler("text"));
-      yield* fs.writeFileString(path.join(root, "helpers/two.ts"), handler("number"));
-      // ES modules leave read out of more.ts's namespace, so leads.ts's read is the only one.
+      yield* fs.writeFileString(
+        path.join(root, "helpers/two.ts"),
+        'export * from "./one.js";\n' + handler("number")
+      );
       yield* fs.writeFileString(
         path.join(root, "agent/more.ts"),
-        'export * from "../helpers/one.js";\nexport * from "../helpers/two.js";'
+        'export * from "../helpers/two.js";\nexport * from "../helpers/one.js";'
       );
       yield* fs.writeFileString(path.join(root, "agent/leads.ts"), handler("boolean"));
       yield* fs.writeFileString(
