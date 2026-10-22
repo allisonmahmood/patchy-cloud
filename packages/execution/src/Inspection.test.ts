@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- real workerd hangs require wall-clock deadlines; JSON only serializes test fixtures.
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Inspection from "./inspection.js";
@@ -18,6 +21,32 @@ it.live(
     Effect.gen(function* () {
       expect(yield* Inspection.inspect(source)).toEqual(descriptors);
     }),
+  30_000
+);
+
+it.live(
+  "runs the workerd installed where it's told, as the CLI points it at the patch repo",
+  () =>
+    Effect.gen(function* () {
+      const installed = fileURLToPath(new URL("..", import.meta.url));
+      expect(yield* Inspection.inspect(source, { workerdFrom: installed })).toEqual(descriptors);
+      // A folder whose workerd isn't the pinned one: found there first, then refused.
+      const other = yield* Effect.acquireRelease(
+        Effect.sync(() => mkdtempSync(join(tmpdir(), "patchy-other-workerd-"))),
+        (dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))
+      );
+      mkdirSync(join(other, "node_modules", "workerd"), { recursive: true });
+      writeFileSync(
+        join(other, "node_modules", "workerd", "package.json"),
+        JSON.stringify({ name: "workerd", version: "0.0.0" })
+      );
+      expect(
+        yield* Inspection.inspect(source, { workerdFrom: other }).pipe(Effect.result)
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "process", cause: { stage: "binary", reason: "resolution_failed" } }
+      });
+    }).pipe(Effect.scoped),
   30_000
 );
 

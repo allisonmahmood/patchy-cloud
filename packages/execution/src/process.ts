@@ -58,14 +58,19 @@ const decodeVersion = Schema.decodeUnknownSync(
   Schema.Struct({ version: Schema.Literal(GuestProtocol.workerdVersion) })
 );
 
-/** Resolve the pinned platform executable, never npm's Node launcher. */
-const binary = Effect.gen(function* () {
+/**
+ * Resolve the pinned platform executable, never npm's Node launcher: from `from`'s
+ * `node_modules` when given, otherwise beside this package.
+ */
+const binary = Effect.fnUntraced(function* (from: string | undefined) {
   const name = packages[`${process.platform} ${process.arch}`];
   if (name === undefined)
     return yield* new WorkerdError({ stage: "binary", reason: "unsupported_platform" });
   return yield* Effect.try({
     try: () => {
-      const outer = createRequire(import.meta.url);
+      const outer = createRequire(
+        from === undefined ? import.meta.url : join(from, "package.json")
+      );
       const manifest = outer.resolve("workerd/package.json");
       decodeVersion(outer("workerd/package.json"));
       const inner = createRequire(manifest);
@@ -262,9 +267,14 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
   options: {
     readonly callbackUrls?: readonly string[];
     readonly separateUid?: boolean;
+    /**
+     * A directory whose `node_modules` hold the pinned workerd. The CLI passes the patch repo,
+     * which pins it, so an install of the CLI without one of its own still runs it.
+     */
+    readonly workerdFrom?: string;
   } = {}
 ) {
-  const executable = yield* binary;
+  const executable = yield* binary(options.workerdFrom);
   const loader = yield* loaderSource;
   const configuration = yield* Effect.try({
     try: () => config(options.callbackUrls),

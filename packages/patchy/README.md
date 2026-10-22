@@ -554,7 +554,9 @@ Tier 2 adds a starter handler module in `server/`, config-bound builders in
 `patchy/_generated/server.ts`, and `patchy-server` alongside `patchy-preact` and
 `patchy-loop`. Its page uses generated server query and mutation calls.
 The release's exact `workerd` pin installs with scripts disabled; execution
-spawns its platform package's binary, not a postinstall-created wrapper.
+spawns its platform package's binary, not a postinstall-created wrapper. Publish
+and `patchy dev` run the repo's own pinned `workerd`, so a `patchy` installed
+outside the repo builds tier 2 as the pinned `pnpm patchy` does.
 
 Use actual connection names from `list connections`; inspect one with
 `list connections <integration>/<handle>`, such as `postgres/warehouse`. Shared-table targets come from the discovery

@@ -24,10 +24,14 @@ const decodeReply = Schema.decodeUnknownEffect(GuestProtocol.InspectionReply, {
   onExcessProperty: "error"
 });
 
+interface Options {
+  readonly loadTimeoutMs?: number;
+  /** Where the pinned workerd is installed, when not beside this package; see `startWorkerd`. */
+  readonly workerdFrom?: string;
+}
+
 /** Reuses a credential-free process; each uncached Worker dies with its inspection request. */
-export const make = Effect.fn("Execution.Inspection.make")(function* (
-  options: { readonly loadTimeoutMs?: number } = {}
-) {
+export const make = Effect.fn("Execution.Inspection.make")(function* (options: Options = {}) {
   const timeout = options.loadTimeoutMs ?? 5_000;
   if (!Number.isSafeInteger(timeout) || timeout <= 0)
     return yield* new InspectionError({ reason: "protocol" });
@@ -45,7 +49,9 @@ export const make = Effect.fn("Execution.Inspection.make")(function* (
     function* (bundle: string) {
       if (process === undefined) {
         scope = yield* Scope.make();
-        process = yield* startWorkerd().pipe(
+        process = yield* startWorkerd(
+          options.workerdFrom === undefined ? {} : { workerdFrom: options.workerdFrom }
+        ).pipe(
           Effect.provideService(Scope.Scope, scope),
           Effect.mapError((cause) => new InspectionError({ reason: "process", cause }))
         );
@@ -61,7 +67,7 @@ export const make = Effect.fn("Execution.Inspection.make")(function* (
 /** Describes untrusted code in a throwaway process with no callback authority. */
 export const inspect = Effect.fn("Execution.inspect")(function* (
   bundle: string,
-  options: { readonly loadTimeoutMs?: number } = {}
+  options: Options = {}
 ) {
   const inspection = yield* make(options);
   return yield* inspection.inspect(bundle);

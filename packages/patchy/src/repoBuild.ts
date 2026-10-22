@@ -342,7 +342,8 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const handlers =
     built.server === undefined
       ? undefined
-      : yield* Inspection.inspect(built.server).pipe(
+      : // The repo pins workerd, so a CLI installed without one still inspects its server.
+        yield* Inspection.inspect(built.server, { workerdFrom: cwd }).pipe(
           Effect.mapError(
             (cause) =>
               new LocalError({

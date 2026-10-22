@@ -568,7 +568,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     const execution = yield* DevExecution.make(
       version,
       preparedResources.handlers,
-      options,
+      { ...options, workerdFrom: root },
       (next) => {
         currentVersion = next;
         build++;
