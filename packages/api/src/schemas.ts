@@ -797,6 +797,64 @@ export class PatchDetail extends Schema.Class<PatchDetail>("PatchDetail")({
   reads: Schema.Array(PatchRead)
 }) {}
 
+/** The current static document, read as the machine token's user. */
+export class PatchPage extends Schema.Class<PatchPage>("PatchPage")({
+  id: PatchId,
+  name: Schema.String,
+  title: Schema.String,
+  address: Schema.String,
+  versionNumber: Schema.Int,
+  html: Schema.String
+}) {}
+
+const QueryJsonSchema = Schema.Record(Schema.String, Schema.Json);
+const operationFields = {
+  handler: HandlerName,
+  description: Schema.String,
+  inputSchema: QueryJsonSchema,
+  outputSchema: QueryJsonSchema
+};
+export class PatchOperations extends Schema.Class<PatchOperations>("PatchOperations")({
+  patchId: PatchId,
+  versionId: Schema.String,
+  operations: Schema.Array(
+    Schema.Struct({ ...operationFields, kind: Schema.Literals(["query", "mutation"]) })
+  )
+}) {}
+
+const decodeQueryJsonSchema = Schema.decodeUnknownSync(QueryJsonSchema);
+/** Keep local references with their definitions; never require a schema fetch. */
+const queryJsonSchema = (schema: Schema.Top) => {
+  const document = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" });
+  return decodeQueryJsonSchema({
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    ...document.schema,
+    ...(Object.keys(document.definitions).length === 0 ? {} : { $defs: document.definitions })
+  });
+};
+
+/** Describe stored contracts without loading server code or reading business rows. */
+export const publishedOperations = (
+  manifest: typeof Manifest.Type,
+  description: string
+): PatchOperations["operations"] =>
+  Object.entries(manifest.handlers ?? {})
+    .filter(([, descriptor]) => descriptor.kind !== "action")
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([handler, descriptor]) => ({
+      handler,
+      kind: descriptor.kind as "query" | "mutation",
+      description: descriptor.description ?? description,
+      inputSchema: {
+        ...queryJsonSchema(handlerArgsSchema(descriptor.args, manifest.tables)),
+        // Effect's empty struct accepts arbitrary keys; Runtime.query requires an object
+        // with exactly the declared argument keys, even when there are no arguments.
+        type: "object",
+        additionalProperties: false
+      },
+      outputSchema: queryJsonSchema(handlerValueSchema(descriptor.result, manifest.tables))
+    }));
+
 /** A missing default differs from an explicit JSON null. Stores have no columns or indexes. */
 export class PrimitiveDetail extends Schema.Class<PrimitiveDetail>("PrimitiveDetail")({
   kind: Schema.Literals(["table", "store"]),

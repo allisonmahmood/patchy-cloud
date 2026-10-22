@@ -33,6 +33,8 @@ import {
   LOG_PAGE_MAX,
   PatchSummary,
   PatchDetail,
+  PatchPage,
+  PatchOperations,
   PatchStateFilter,
   PrimitiveDetail,
   PublishUnavailable,
@@ -91,6 +93,8 @@ import {
   RuntimeSuccess,
   RuntimeEventStream,
   ServerCallReply,
+  PatchQuery,
+  PatchMutation,
   RuntimeSubscriptionRequest,
   RuntimeSubscriptionAccepted
 } from "./runtime.js";
@@ -332,6 +336,84 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Reads identify stores with `store`, never a `table` field. " +
           "No versions, dependants or business rows are returned. Machine tokens only. " +
           "Overlong references answer 414. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.get("operations", "/patches/:patchRef/operations", {
+      params: readParams,
+      success: PatchOperations,
+      error: [...patchRouteErrors, WrongState]
+    }).annotateMerge(
+      describe(
+        "Describe current declared queries and mutations of a live company tier 2 Tool. " +
+          "Machine tokens only, with discovery’s company and openability checks. " +
+          "Returns patchId, versionId and operations sorted by handler, each with kind, description and self-contained inputSchema/outputSchema. " +
+          "Actions are excluded. No code executes or business rows are read. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.post("mutation", "/patches/:patchRef/mutation", {
+      params: readParams,
+      payload: PatchMutation,
+      success: Schema.Struct({
+        patchId: Schema.String,
+        versionId: Schema.String,
+        result: ServerCallReply
+      }),
+      error: [
+        ...patchRouteErrors,
+        WrongState,
+        PayloadTooLarge,
+        ...[400, 403, 409, 413, 429, 500, 503, 504].map((status) =>
+          RuntimeFailure.pipe(HttpApiSchema.status(status))
+        )
+      ]
+    }).annotateMerge(
+      describe(
+        "Execute a declared mutation as the machine token's user, using the Tool's normal serializable transaction, input/result validation, attribution and live-update notifications. " +
+          "Requires the discovered versionId; a changed current version answers 409 version_changed without execution. " +
+          "Requires mutationKey: epoch milliseconds, a dash and 16 random bytes in unpadded base64url. Keys are valid 24 hours, with five minutes future skew. " +
+          "Retain the same key, version, handler, arguments and person on retry: committed duplicates replay the stored authoritative value and revisions; mismatched reuse is refused. " +
+          "Never replace a key after an unknown outcome or automatically retry on a new version. " +
+          "Only current live openable company tier 2 mutations are admitted. Queries, actions, arbitrary resources and caller identities are refused. " +
+          "Declared handler errors roll back and return result.ok=false; host errors are non-2xx. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.post("query", "/patches/:patchRef/query", {
+      params: readParams,
+      payload: PatchQuery,
+      success: Schema.Struct({
+        patchId: Schema.String,
+        versionId: Schema.String,
+        result: ServerCallReply
+      }),
+      error: [
+        ...patchRouteErrors,
+        WrongState,
+        PayloadTooLarge,
+        ...[400, 403, 409, 413, 429, 500, 503, 504].map((status) =>
+          RuntimeFailure.pipe(HttpApiSchema.status(status))
+        )
+      ]
+    }).annotateMerge(
+      describe(
+        "Execute a query from the current published tier 2 Tool as the machine token's user, without an open browser. " +
+          "Uses discovery's company and openability checks. Only declared query handlers are allowed; mutations, actions, mutation keys and caller-selected versions are refused. " +
+          "Cloud validates arguments and results and retains runtime rate limits, deadlines, read-only capabilities and execution isolation. " +
+          "Returns the executed version id and the handler reply. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.get("page", "/patches/:patchRef/page", {
+      params: readParams,
+      success: PatchPage,
+      error: [...patchRouteErrors, WrongState]
+    }).annotateMerge(
+      describe(
+        "Read the current published HTML of a live tier 0 Page by canonical id or exact name. " +
+          "Machine tokens only, with the same company and openability checks as discovery, " +
+          "including company-only Pages. No browser session or open viewer is required. " +
+          "Unknown, unopenable, disabled, foreign, gone and deleted-by-name references answer 404. " +
+          "Retired or deleted-by-id patches answer 409 wrong_state; scripted tiers answer 400. " +
+          "Returns the stored document as data, without executing code or fetching linked resources. " +
+          "No historical versions or runtime data are exposed. Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.get("primitive", "/patches/:patchRef/primitives/:name", {

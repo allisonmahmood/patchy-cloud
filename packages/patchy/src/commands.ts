@@ -273,9 +273,42 @@ const authSet = Command.make(
   )
 );
 
+/** Explicit secret-bearing interface for local add-ons; normal command output stays redacted. */
+const authToken = Command.make("token", {}, () =>
+  run(
+    Effect.gen(function* () {
+      const stdio = yield* Stdio.Stdio;
+      if (!(yield* Output.JsonFlag) || (yield* stdio.stdoutIsTerminal))
+        return yield* new LocalError({
+          code: "credential_output_refused",
+          message:
+            "auth token requires --json and redirected stdout. Its output is secret and intended only for local programs."
+        });
+      const { apiUrl } = yield* Instance.Instance;
+      const credential = yield* configuredCredential;
+      if (Option.isNone(credential))
+        return yield* new LocalError({
+          code: "not_logged_in",
+          message: `Sign in to Patchy: patchy login --api-url ${apiUrl} --json`
+        });
+      yield* Console.log(
+        Output.toJson({
+          version: 1,
+          instanceUrl: apiUrl,
+          token: Redacted.value(credential.value.token)
+        })
+      );
+    })
+  )
+).pipe(
+  Command.withDescription(
+    "Export the selected credential to a local program; requires --json and redirected stdout. Never log this output."
+  )
+);
+
 const auth = Command.make("auth").pipe(
   Command.withDescription("Manage CLI authentication."),
-  Command.withSubcommands([authSet])
+  Command.withSubcommands([authSet, authToken])
 );
 
 const login = Command.make(

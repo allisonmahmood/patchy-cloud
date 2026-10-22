@@ -333,6 +333,21 @@ export const MembersSearch = Schema.Struct({
   cursor: Schema.optionalKey(NonEmptyText)
 });
 
+/** Machine callers can request a query, never a mutation key or an action. */
+export const PatchQuery = Schema.Struct({
+  handler: HandlerName,
+  args: Schema.Record(Schema.String, Schema.Json)
+});
+export type PatchQuery = typeof PatchQuery.Type;
+
+/** Machine mutations pin the discovered version and retain one key across retries. */
+export const PatchMutation = Schema.Struct({
+  ...PatchQuery.fields,
+  versionId: RuntimeVersionId,
+  mutationKey: NonEmptyText
+});
+export type PatchMutation = typeof PatchMutation.Type;
+
 export const ServerCall = Schema.Struct({
   handler: HandlerName,
   args: Schema.Record(Schema.String, Schema.Json),
@@ -620,6 +635,7 @@ export const RuntimeCode = Schema.Literals([
   "handler_failed",
   "handler_timeout",
   "write_conflict",
+  "version_changed",
   "patch_paused",
   "server_required",
   "tier2_not_public",

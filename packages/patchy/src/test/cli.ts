@@ -1,7 +1,7 @@
 /**
  * The contract, seen from outside: the bundled CLI as a child process against
  * a stub instance. Exit codes per the ladder, one-line stderr, the `--json`
- * shapes, the token never in argv or output, and the state dir's fail-closed
+ * shapes, secrets absent from argv and normal output (auth token is an explicit pipe), and the state dir's fail-closed
  * files. What the commands do between those edges is the commands' own tests.
  *
  * This is the harness the `cli*.test.ts` suites share. They are separate files

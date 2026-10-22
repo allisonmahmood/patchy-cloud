@@ -150,6 +150,7 @@ export interface MutationUnknownOutcome<Result> extends Error {
 
 export interface HandlerDescriptor {
   readonly kind: HandlerKindName;
+  readonly description?: string;
   readonly args: Readonly<Record<string, ValueDescriptor>>;
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
@@ -293,6 +294,7 @@ export interface HandlerBuilder<K extends HandlerKindName, C extends Config, Con
     const R extends SchemaInput,
     const E extends readonly string[] = readonly []
   >(definition: {
+    readonly description?: string;
     readonly args: A & CheckFields<A, K, C>;
     readonly result: R & CheckSchema<R, K, "result", C, false>;
     readonly errors?: E;
@@ -330,6 +332,7 @@ export interface ServerBuilders<
 const makeBuilder =
   <K extends HandlerKindName>(kind: K) =>
   (definition: {
+    readonly description?: string;
     readonly args: Fields;
     readonly result: SchemaInput;
     readonly errors?: readonly string[];
@@ -346,6 +349,7 @@ const makeBuilder =
     }
     const descriptor = decodeHandlerDescriptor({
       kind,
+      ...(definition.description === undefined ? {} : { description: definition.description }),
       args,
       result: definition.result.toJSON(),
       ...(definition.errors === undefined ? {} : { errors: definition.errors })

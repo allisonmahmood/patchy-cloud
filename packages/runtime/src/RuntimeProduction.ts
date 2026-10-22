@@ -5,7 +5,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { RequireSession, Session } from "@patchy/auth";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import { Authorization, MachineTokens, RequireSession, Session } from "@patchy/auth";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
@@ -27,6 +28,7 @@ export const make = (
 ): Effect.Effect<Runtime.Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
     const log = yield* RuntimeLog.RuntimeLog;
+    const tokens = yield* Effect.serviceOption(MachineTokens.MachineTokens);
     const session = yield* Session.Session;
     const operatingLimits = yield* OperatingLimits.OperatingLimits;
     const companyTokens = yield* TokenBucket.make;
@@ -85,6 +87,23 @@ export const make = (
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,
       identity,
+      machineIdentity: Effect.gen(function* () {
+        if (Option.isNone(tokens)) return yield* new Runtime.AccessDenied({});
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const resolve = Effect.gen(function* () {
+          const current = yield* Authorization.identify.pipe(
+            Effect.provideService(MachineTokens.MachineTokens, tokens.value),
+            Effect.provideService(HttpServerRequest.HttpServerRequest, request)
+          );
+          if (Option.isNone(current)) return yield* new Runtime.AccessDenied({});
+          return {
+            user: current.value.user,
+            company: current.value.company,
+            admin: current.value.role === "admin"
+          };
+        });
+        return { viewer: yield* resolve, reauthorize: resolve };
+      }),
       bootstrapIdentity: Effect.map(principalAdmission.admit, ({ identity, recheck }) => ({
         viewer: identity,
         reauthorize: Effect.map(recheck, (current) => current.identity)

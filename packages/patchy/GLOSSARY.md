@@ -160,3 +160,6 @@ _Avoid_: production sample, seed dump
 **Onboarding probe**:
 The local-only report of publishing state for the resolved instance — `status --json` — that lets onboarding skip settled questions and choose login-then-publish only when no key is available. It reaches no instance and reports the same credential precedence publishing uses, so it is a setup aid, never a per-session check or proof that a key still works.
 _Avoid_: health check, status check, doctor, preflight
+
+**Credential interface**:
+The versioned local-program pipe `auth token --json`, which returns the selected machine credential and its instance. It does not authenticate or mint a token; local add-ons capture its secret output rather than reading the CLI's private state files.

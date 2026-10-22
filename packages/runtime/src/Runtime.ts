@@ -17,6 +17,9 @@ import {
   type RuntimeFailure,
   type RuntimeBodyLimitId,
   type RuntimeEnvelope,
+  type PatchQuery,
+  type PatchMutation,
+  type ServerCallReply,
   type FileBody
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -43,6 +46,14 @@ export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
   readonly status = 400;
   override get message() {
     return "Runtime request refused: invalid_request.";
+  }
+}
+
+export class VersionChanged extends Schema.TaggedError<VersionChanged>()("VersionChanged", {}) {
+  readonly code = "version_changed" as const;
+  readonly status = 409;
+  override get message() {
+    return "The Tool's published version changed. Discover its operations again before a new change.";
   }
 }
 export class AccessDenied extends Schema.TaggedError<AccessDenied>()("AccessDenied", diagnostics) {
@@ -406,7 +417,7 @@ const encodeServerArgs = Schema.encodeUnknownEffect(
 );
 
 /**
- * Admission consumes the current browser request, never a request captured at startup.
+ * Admission consumes the current HTTP request, never a request captured at startup.
  * @effect-expect-leaking HttpServerRequest
  */
 export class Runtime extends Context.Service<
@@ -423,6 +434,22 @@ export class Runtime extends Context.Service<
       input: typeof RuntimeEnvelope.Type,
       byteLength?: number
     ) => Effect.Effect<unknown, RuntimeError, HttpServerRequest.HttpServerRequest>;
+    readonly query: (
+      patchId: string,
+      input: PatchQuery
+    ) => Effect.Effect<
+      { readonly patchId: string; readonly versionId: string; readonly result: ServerCallReply },
+      RuntimeError,
+      HttpServerRequest.HttpServerRequest
+    >;
+    readonly mutation: (
+      patchId: string,
+      input: PatchMutation
+    ) => Effect.Effect<
+      { readonly patchId: string; readonly versionId: string; readonly result: ServerCallReply },
+      RuntimeError,
+      HttpServerRequest.HttpServerRequest
+    >;
     readonly putFile: (
       input: typeof RuntimeEnvelope.Type,
       readBytes: Effect.Effect<Uint8Array, RuntimeError, HttpServerRequest.HttpServerRequest>
@@ -458,6 +485,8 @@ export interface Options {
   >;
   /** The read-only shell handshake may recover a stale cookie before binding its principal. */
   readonly bootstrapIdentity: Options["identity"];
+  /** Published queries and mutations use machine authentication. */
+  readonly machineIdentity?: Options["identity"];
   /** Production operating admission, once per incoming operation, never inside a handler. */
   readonly admitCompany?: (companyId: string) => Effect.Effect<void, RuntimeError>;
   /**
@@ -814,6 +843,75 @@ export const make = (
         }
         return result.value;
       });
+    const machineCall = Effect.fn("Runtime.machineCall")(function* (
+      kind: "query" | "mutation",
+      patchId: string,
+      input: PatchQuery | PatchMutation
+    ) {
+      if (draining) return yield* new Draining();
+      if (options.machineIdentity === undefined) return yield* new AccessDenied({});
+      const admitted = yield* options.machineIdentity;
+      // Mutations pin discovery; queries always read the current version. Identity is server-owned.
+      const loaded = yield* versions
+        .find(patchId)
+        .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
+      if (Option.isNone(loaded)) return yield* new AccessDenied({});
+      const version = loaded.value;
+      if (version.companyId !== admitted.viewer.company.id || version.scope !== "company")
+        return yield* new AccessDenied({});
+      if ("versionId" in input && input.versionId !== version.versionId)
+        return yield* new VersionChanged();
+      const descriptor = version.manifest.handlers?.[input.handler];
+      if (
+        version.manifest.tier !== 2 ||
+        descriptor?.kind !== kind ||
+        !Object.hasOwn(version.manifest.handlers!, input.handler)
+      )
+        return yield* new InvalidRequest({});
+      // Effect's empty struct accepts arbitrary keys; keep a no-input query truly empty.
+      if (Object.keys(input.args).some((key) => !Object.hasOwn(descriptor.args, key)))
+        return yield* new InvalidRequest({});
+      if (version.wireVersion !== WIRE_VERSION) return yield* new ShellOutdated({});
+      const attempt = yield* limits.consume({
+        key: `runtime:${admitted.viewer.user.id}:${patchId}`,
+        limit: settings.callsPerMinute,
+        window: "1 minute"
+      });
+      if (!attempt.allowed)
+        return yield* new RateLimited({
+          retryAfterSeconds: attempt.retryAfterSeconds,
+          limitId: attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
+          value: attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
+        });
+      if (options.admitCompany !== undefined) yield* options.admitCompany(version.companyId);
+      if (draining) return yield* new Draining();
+      if (Option.isNone(invocations)) return yield* new InvocationUnavailable();
+      const identity = yield* admitted.reauthorize;
+      if (identity.user.id !== admitted.viewer.user.id || identity.company.id !== version.companyId)
+        return yield* new AccessDenied({});
+      yield* WideEvents.enrich({
+        patchId,
+        versionId: version.versionId,
+        companyId: version.companyId,
+        viewerId: identity.user.id,
+        tier: 2
+      });
+      const result = yield* invocations.value.call(
+        {
+          handler: input.handler,
+          args: input.args,
+          ...("mutationKey" in input ? { mutationKey: input.mutationKey } : {})
+        },
+        {
+          ...version,
+          identity,
+          principal: { userId: identity.user.id },
+          correlationId: newInternalId("call")
+        },
+        admitted.reauthorize
+      );
+      return { patchId, versionId: version.versionId, result };
+    });
     return Runtime.of({
       drain: Effect.sync(() => {
         draining = true;
@@ -828,6 +926,8 @@ export const make = (
               : Effect.fail(new InvalidRequest({})),
           byteLength
         ),
+      query: (patchId, input) => machineCall("query", patchId, input),
+      mutation: (patchId, input) => machineCall("mutation", patchId, input),
       putFile: (input, readBytes) =>
         dispatch(input, (operation) =>
           operation.transport === "bytes-put"
