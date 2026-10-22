@@ -82,6 +82,7 @@ it.layer(
           HttpClientRequest.setHeaders({ cookie, origin: BASE }),
           HttpClientRequest.bodyUrlParams({
             userId: field("userId"),
+            client: field("client"),
             shown: field("shown"),
             action: "allow"
           })
