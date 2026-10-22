@@ -612,6 +612,21 @@ it.layer(layer)("DeviceLogins", (it) => {
     }).pipe(withDeviceLogins)
   );
 
+  it.effect("a confirmation in the same millisecond as the ending, but after it, mints", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const sql = yield* SqlClient.SqlClient;
+      const userId = yield* addUser("same_millisecond");
+      const login = yield* logins.start({ machineNameHint: "host" });
+      yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Microseconds" });
+      yield* sql`UPDATE users SET credentials_ended_at = '2026-01-01T00:00:00.123100Z' WHERE id = ${userId}`;
+      yield* sql`UPDATE device_logins SET confirmed_at = '2026-01-01T00:00:00.123900Z'
+        WHERE user_code = ${login.userCode}`;
+      assert.strictEqual((yield* logins.poll(login.deviceCode)).status, "complete");
+    }).pipe(withDeviceLogins)
+  );
+
   it.effect(
     "a poll racing Disconnect everything leaves no live token, whichever commits first",
     () =>

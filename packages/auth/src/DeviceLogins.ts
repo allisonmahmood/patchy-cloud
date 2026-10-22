@@ -74,7 +74,6 @@ const LoginRow = Schema.Struct({
   oldTokenId: Schema.NullOr(Schema.String),
   userId: Schema.NullOr(Schema.String),
   machineName: Schema.NullOr(Schema.String),
-  confirmedAt: Schema.NullOr(Schema.Date),
   expiresAt: Schema.Date
 });
 
@@ -143,7 +142,7 @@ export const make = Effect.gen(function* () {
   const analytics = yield* Analytics.Analytics;
   const columns = sql`user_code AS "userCode", state, machine_name_hint AS "machineNameHint",
     old_token_id AS "oldTokenId", user_id AS "userId", machine_name AS "machineName",
-    confirmed_at AS "confirmedAt", expires_at AS "expiresAt"`;
+    expires_at AS "expiresAt"`;
   const byUserCode = SqlSchema.findOneOption({
     Request: Schema.String,
     Result: LoginRow,
@@ -162,11 +161,17 @@ export const make = Effect.gen(function* () {
     execute: ({ id, userId }) => sql`
       SELECT name FROM machine_tokens WHERE id = ${id} AND user_id = ${userId}`
   });
-  const lockedUser = SqlSchema.findOne({
+  // Deactivation and Disconnect everything end each confirmation at or before the user's
+  // credentials_ended_at, compared at the database's precision. One a release before
+  // confirmed_at left unstamped has no time on that clock, so any ending ends it. The
+  // user lock is the one mint and the endings take.
+  const confirmationEnded = SqlSchema.findOne({
     Request: Schema.String,
-    Result: Schema.Struct({ credentialsEndedAt: Schema.NullOr(Schema.Date) }),
-    execute: (userId) => sql`
-      SELECT credentials_ended_at AS "credentialsEndedAt" FROM users WHERE id = ${userId} FOR UPDATE`
+    Result: Schema.Struct({ ended: Schema.Boolean }),
+    execute: (userCode) => sql`
+      SELECT (u.credentials_ended_at >= COALESCE(d.confirmed_at, '-infinity')) IS TRUE AS ended
+      FROM device_logins d JOIN users u ON u.id = d.user_id
+      WHERE d.user_code = ${userCode} FOR UPDATE OF u`
   });
   const confirmingIdentity = SqlSchema.findOne({
     Request: Schema.String,
@@ -321,16 +326,10 @@ export const make = Effect.gen(function* () {
         if (row.userId === null || row.machineName === null) {
           return yield* Effect.die(new Error("Confirmed device login has no user or machine name"));
         }
-        // Deactivation and Disconnect everything end each confirmation at or before the
-        // user's credentials_ended_at. One a release before confirmed_at left unstamped
-        // has no time on that clock, so any ending ends it. Endings take this user lock
-        // too, so one either committed before this read or waits and revokes this mint.
-        const { credentialsEndedAt } = yield* lockedUser(row.userId).pipe(
+        // An ending either committed before this locked read or waits, then revokes this mint.
+        const { ended } = yield* confirmationEnded(row.userCode).pipe(
           Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
         );
-        const ended =
-          credentialsEndedAt !== null &&
-          (row.confirmedAt === null || credentialsEndedAt.getTime() >= row.confirmedAt.getTime());
         // mint re-reads the user and refuses a deactivated one; catching its refusal
         // here lets deletion commit.
         const minted = ended
