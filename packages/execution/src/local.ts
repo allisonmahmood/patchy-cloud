@@ -1,3 +1,4 @@
+import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Executor from "@patchy/runtime/executor";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -21,7 +22,10 @@ const executionError = (cause: Supervisor.SupervisorError) =>
     cause
   });
 
-/** No pool and no replay. Hosts rebind after a killed or evicted generation. */
+/**
+ * No pool and no replay. Hosts rebind after a killed or evicted generation. With no fleet to
+ * collect them, it emits each ended process's wide event itself, within a second.
+ */
 export const make = Effect.fn("LocalExecutor.make")(
   function* (options: Options) {
     const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
@@ -30,9 +34,28 @@ export const make = Effect.fn("LocalExecutor.make")(
         operation: "bind",
         reason: "production_refused"
       });
+    const events = yield* WideEvents.WideEvents;
     const supervisor = yield* Supervisor.make({ ...options, residencyAccounting: "workerd-only" });
     const bindingEpoch = 1;
     yield* supervisor.bind({ companyId: options.companyId, bindingEpoch });
+    // As the fleet's collection does: emit, then acknowledge so the supervisor lets them go.
+    yield* Effect.gen(function* () {
+      const { reports } = yield* supervisor.stats({ bindingEpoch });
+      if (reports.length === 0) return;
+      for (const report of reports) yield* events.emit(report.event);
+      yield* supervisor.stats({
+        bindingEpoch,
+        acknowledgeReports: reports.map((report) => report.reportId)
+      });
+    }).pipe(
+      Effect.catchTags({
+        SupervisorError: (error) =>
+          Effect.logWarning("Local process reports are unavailable", { reason: error.reason })
+      }),
+      Effect.andThen(Effect.sleep("1 second")),
+      Effect.forever,
+      Effect.forkScoped
+    );
     return Executor.Executor.of({
       bind: Effect.fn("LocalExecutor.bind")(function* (bundle) {
         // In process no bytes move, but binding by hash first runs the fleet's path locally.

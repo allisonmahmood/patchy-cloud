@@ -263,9 +263,10 @@ deadline, three seconds for a query. Each `type: "process"` event, emitted when 
 process ends, records `startMs`, from spawn until the process was ready for its
 first call, and `firstOnTask`, true for the first process its company task started
 since being bound: the start a call on a released company waits for after its bind.
-A process that never became ready has no `startMs`; its `cause` says why. Process
-events come from the fleet, on ECS or the local fleet; the default no-pool dev
-executor reports none.
+A process that never became ready has no `startMs`; its `cause` says why. The fleet
+emits process events on ECS and the local fleet, and the default no-pool dev executor
+emits them within a second of the process ending, so `pnpm dev logs` shows them. A
+patch repo's `patchy dev` keeps them to its `--json` log.
 
 ```
 filter type = "process" and ispresent(startMs)

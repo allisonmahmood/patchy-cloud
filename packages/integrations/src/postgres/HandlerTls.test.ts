@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { promisify } from "node:util";
 import { assert, it } from "@effect/vitest";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import { newInternalId, sha256 } from "@patchy/core";
 import { OperatingLimits } from "@patchy/limits";
@@ -356,7 +357,7 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
           companyId: binding.companyId,
           callbackUrls: [listener.url],
           environment: "test"
-        });
+        }).pipe(Effect.provide(WideEvents.layerNoop));
         const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
           Effect.provideService(Executor.Executor, executor),
           Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })

@@ -203,7 +203,7 @@ it.live(
         companyId: binding.companyId,
         callbackUrls: [listener.url],
         environment: "test"
-      });
+      }).pipe(Effect.provide(WideEvents.layerNoop));
       const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
         Effect.provideService(Executor.Executor, executor),
         Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
@@ -420,7 +420,7 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
     companyId: company,
     callbackUrls: [listener.url],
     environment: "test"
-  });
+  }).pipe(Effect.provide(WideEvents.layerNoop));
   const authority = {
     hold: undefined as Deferred.Deferred<void> | undefined,
     reached: yield* Queue.unbounded<void>()

@@ -177,7 +177,7 @@ it.live(
         companyId: binding.companyId,
         callbackUrls: [listener.url],
         environment: "test"
-      });
+      }).pipe(Effect.provide(WideEvents.layerNoop));
       yield* executor.bind(bundle);
       const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
         Effect.provideService(Executor.Executor, executor),
@@ -417,7 +417,7 @@ it.live(
         companyId: resourceFree.companyId,
         callbackUrls: [listener.url],
         environment: "test"
-      });
+      }).pipe(Effect.provide(WideEvents.layerNoop));
       yield* executor.bind(bundle);
       const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
         Effect.provideService(Executor.Executor, executor),
