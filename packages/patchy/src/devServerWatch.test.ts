@@ -264,7 +264,7 @@ it.live(
       assert.deepInclude(yield* next.pipe(Effect.flip), {
         code: "invalid_manifest",
         message:
-          "leads.read's description of result is 2,001 characters; descriptions are at most 2,000. Shorten it. The last successful binding stays served."
+          "server/leads.ts: leads.read's description of result is 2,001 characters; descriptions are at most 2,000. Shorten it. The last successful binding stays served."
       });
       yield* save(source, handler("text"));
       assert.deepStrictEqual((yield* next).handlers, initial.handlers);

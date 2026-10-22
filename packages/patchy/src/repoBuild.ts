@@ -1,4 +1,4 @@
-import { Manifest, descriptionProblem } from "@patchy/api";
+import { Manifest } from "@patchy/api";
 import { workerdVersion } from "@patchy/api/guest";
 import { DEFAULT_MAX_HTML_BYTES, validateHtml } from "@patchy/core";
 import * as Inspection from "@patchy/execution/inspection";
@@ -21,7 +21,11 @@ import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
 import { releaseFromPin } from "./packagePin.js";
-import { discoverServerModules, validateGeneratedServerModules } from "./serverModules.js";
+import {
+  descriptionFailure,
+  discoverServerModules,
+  validateGeneratedServerModules
+} from "./serverModules.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -341,7 +345,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
               })
           )
         );
-  const described = handlers === undefined ? undefined : descriptionProblem(handlers);
+  const described = handlers === undefined ? undefined : descriptionFailure(handlers);
   if (described !== undefined)
     return yield* new LocalError({ message: described, code: "invalid_manifest" });
   const manifest = decodeManifest({

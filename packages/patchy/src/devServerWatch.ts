@@ -1,4 +1,4 @@
-import { descriptionProblem, type HandlerDescriptors, type ReleaseToolchain } from "@patchy/api";
+import type { HandlerDescriptors, ReleaseToolchain } from "@patchy/api";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -11,7 +11,7 @@ import * as Scope from "effect/Scope";
 import { LocalError } from "./CliError.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
 import { watchServer, type BuiltServer } from "./serverBuild.js";
-import { discoverServerModules } from "./serverModules.js";
+import { descriptionFailure, discoverServerModules } from "./serverModules.js";
 
 export interface ServerBuild extends BuiltServer {
   readonly modules: readonly string[];
@@ -187,7 +187,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
               })
           ),
           Effect.flatMap((handlers) => {
-            const problem = descriptionProblem(handlers);
+            const problem = descriptionFailure(handlers);
             return problem === undefined
               ? Effect.succeed(handlers)
               : Effect.fail(

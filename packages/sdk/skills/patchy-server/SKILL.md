@@ -93,7 +93,7 @@ Results are readonly.
 A handler's `description` says what it does, and any handler value takes
 `.describe(text)`, such as `t.text().describe("The customer's legal name.")`.
 Every description is nonblank and at most 2,000 characters; the build refuses
-others with `invalid_manifest`, naming the handler and the fix. When
+others with `invalid_manifest`, naming the file, the handler and the fix. When
 `t.nullable(value)` and its value are both described, the outer description
 wins. Table columns take no `.describe()`: the types and config execution refuse
 it, and the table's description covers its columns.

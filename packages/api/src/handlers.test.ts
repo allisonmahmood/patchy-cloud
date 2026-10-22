@@ -11,6 +11,7 @@ import {
   RuntimeReply,
   RuntimeRequest,
   descriptionProblem,
+  descriptionRefusal,
   handlerArgsSchema,
   handlerValueSchema,
   HandlerSchema
@@ -158,7 +159,7 @@ describe("handler descriptors", () => {
       expect(decodeHandlers({ [name]: { ...query, agentTool: true } })._tag).toBe("Failure");
   });
 
-  it("refuses a blank or over-long description anywhere, naming where and how to fix it", () => {
+  it("finds a blank or over-long description anywhere, and says where and how to fix it", () => {
     const long = "é".repeat(2_000);
     const described = {
       "leads.peek": {
@@ -177,14 +178,19 @@ describe("handler descriptors", () => {
         result: { kind: "integer" as const, description: "How many matched." }
       }
     };
+    const refusal = (handlers: HandlerDescriptors) => {
+      const problem = descriptionProblem(handlers);
+      return problem === undefined ? undefined : descriptionRefusal(problem);
+    };
     expect(descriptionProblem(described)).toBeUndefined();
     expect(
       descriptionProblem({ "leads.peek": { ...described["leads.peek"], description: " \n" } })
-    ).toBe("leads.peek's description is blank. Say what it does, or leave the description out.");
+    ).toEqual({ handler: "leads.peek", violation: "blank", length: 2 });
+    expect(refusal({ "leads.peek": { ...described["leads.peek"], description: " \n" } })).toBe(
+      "leads.peek's description is blank. Say what it does, or leave the description out."
+    );
     // Code points, not UTF-16 units: one astral character is one.
-    expect(
-      descriptionProblem({ "leads.peek": { ...query, description: `${"😀".repeat(2_000)}x` } })
-    ).toBe(
+    expect(refusal({ "leads.peek": { ...query, description: `${"😀".repeat(2_000)}x` } })).toBe(
       "leads.peek's description is 2,001 characters; descriptions are at most 2,000. Shorten it."
     );
     const nested = (description: string) => ({
@@ -203,17 +209,20 @@ describe("handler descriptors", () => {
         }
       }
     });
-    expect(descriptionProblem(nested(""))).toBe(
+    expect(refusal(nested(""))).toBe(
       "leads.peek's description of args.filter.ids[] is blank. Say what it holds, or remove its .describe()."
     );
-    expect(descriptionProblem(nested(`${long}e`))).toMatch(
-      /^leads\.peek's description of args\.filter\.ids\[\] is 2,001 characters;/
-    );
+    expect(descriptionProblem(nested(`${long}e`))).toEqual({
+      handler: "leads.peek",
+      value: "args.filter.ids[]",
+      violation: "long",
+      length: 2_001
+    });
     expect(
       descriptionProblem({
         "leads.peek": { ...query, result: { kind: "boolean", description: "\t" } }
       })
-    ).toMatch(/^leads\.peek's description of result is blank\./);
+    ).toMatchObject({ value: "result", violation: "blank" });
   });
 
   it("rejects table-only modifiers and misplaced capabilities at every nesting depth", () => {

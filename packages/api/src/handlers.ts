@@ -170,67 +170,78 @@ export type HandlerDescriptors = typeof HandlerDescriptors.Type;
 /** The most Unicode code points a handler or value description may have. */
 export const descriptionLimit = 2_000;
 
-const describedProblem = (text: string, what: string, fix: string): string | undefined => {
-  if (text.trim() === "") return `${what} is blank. ${fix}`;
+/** A description that breaks the rule: where it is, and whether it is blank or too long. */
+export const DescriptionProblem = Schema.Struct({
+  /** The handler, `module.export`. */
+  handler: Schema.String,
+  /** The value's path, such as `args.filter.ids[]`; absent for the handler's own description. */
+  value: Schema.optionalKey(Schema.String),
+  violation: Schema.Literals(["blank", "long"]),
+  /** In code points. */
+  length: Schema.Number
+});
+export type DescriptionProblem = typeof DescriptionProblem.Type;
+
+const violation = (text: string) => {
   const length = [...text].length;
-  return length > descriptionLimit
-    ? `${what} is ${length.toLocaleString("en-US")} characters; descriptions are at most ${descriptionLimit.toLocaleString("en-US")}. Shorten it.`
-    : undefined;
+  if (text.trim() === "") return { violation: "blank" as const, length };
+  return length > descriptionLimit ? { violation: "long" as const, length } : undefined;
 };
 
-const schemaDescriptionProblem = (
+const valueProblem = (
   schema: HandlerSchema,
   handler: string,
-  path: string
-): string | undefined => {
-  const own =
-    schema.description === undefined
-      ? undefined
-      : describedProblem(
-          schema.description,
-          `${handler}'s description of ${path}`,
-          "Say what it holds, or remove its .describe()."
-        );
-  if (own !== undefined) return own;
+  value: string
+): DescriptionProblem | undefined => {
+  const own = schema.description === undefined ? undefined : violation(schema.description);
+  if (own !== undefined) return { handler, value, ...own };
   switch (schema.kind) {
     case "object":
       for (const [name, field] of Object.entries(schema.fields)) {
-        const problem = schemaDescriptionProblem(field, handler, `${path}.${name}`);
+        const problem = valueProblem(field, handler, `${value}.${name}`);
         if (problem !== undefined) return problem;
       }
       return undefined;
     case "array":
-      return schemaDescriptionProblem(schema.element, handler, `${path}[]`);
+      return valueProblem(schema.element, handler, `${value}[]`);
     case "nullable":
-      return schemaDescriptionProblem(schema.value, handler, path);
+      return valueProblem(schema.value, handler, value);
     default:
       return undefined;
   }
 };
 
 /**
- * The first description that breaks the rule, nonblank and at most 2,000 code points, as a
- * refusal naming the handler and saying how to fix it. Readers accept any description, so the
- * CLI's build and the instance's publish run this on the descriptors they inspect.
+ * The first description that breaks the rule, nonblank and at most 2,000 code points. Readers
+ * accept any description, so the CLI's build and the instance's publish run this on the
+ * descriptors they inspect.
  */
-export const descriptionProblem = (handlers: HandlerDescriptors): string | undefined => {
-  for (const [name, handler] of Object.entries(handlers)) {
-    if (handler.description !== undefined) {
-      const problem = describedProblem(
-        handler.description,
-        `${name}'s description`,
-        "Say what it does, or leave the description out."
-      );
+export const descriptionProblem = (
+  handlers: HandlerDescriptors
+): DescriptionProblem | undefined => {
+  for (const [handler, descriptor] of Object.entries(handlers)) {
+    const own =
+      descriptor.description === undefined ? undefined : violation(descriptor.description);
+    if (own !== undefined) return { handler, ...own };
+    for (const [field, schema] of Object.entries(descriptor.args)) {
+      const problem = valueProblem(schema, handler, `args.${field}`);
       if (problem !== undefined) return problem;
     }
-    for (const [field, schema] of Object.entries(handler.args)) {
-      const problem = schemaDescriptionProblem(schema, name, `args.${field}`);
-      if (problem !== undefined) return problem;
-    }
-    const problem = schemaDescriptionProblem(handler.result, name, "result");
+    const problem = valueProblem(descriptor.result, handler, "result");
     if (problem !== undefined) return problem;
   }
   return undefined;
+};
+
+/** What a description problem says: the handler, the value and how to fix it. */
+export const descriptionRefusal = (problem: DescriptionProblem): string => {
+  const what =
+    problem.value === undefined
+      ? `${problem.handler}'s description`
+      : `${problem.handler}'s description of ${problem.value}`;
+  if (problem.violation === "blank")
+    return `${what} is blank. ${problem.value === undefined ? "Say what it does, or leave the description out." : "Say what it holds, or remove its .describe()."}`;
+  return `${what} is ${problem.length.toLocaleString("en-US")} characters; descriptions are at most ${descriptionLimit.toLocaleString("en-US")}. Shorten it.`;
 };
 
 export const handlerKinds = (
