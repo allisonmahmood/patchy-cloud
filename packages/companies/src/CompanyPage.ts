@@ -13,7 +13,8 @@ import {
   menuLink,
   menuPost,
   rowMenu,
-  searchField
+  searchField,
+  sentenceList
 } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
@@ -128,13 +129,6 @@ interface Delivery {
   readonly outcome: "sent" | "unsent" | "member" | "invited" | "failed";
 }
 
-/** "a, b and c", escaped. */
-const sentenceList = (items: readonly string[]) => {
-  const escaped = items.map(escapeHtml);
-  return escaped.length < 2
-    ? escaped.join("")
-    : `${escaped.slice(0, -1).join(", ")} and ${escaped.at(-1)}`;
-};
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
 const time = (date: Date) => {

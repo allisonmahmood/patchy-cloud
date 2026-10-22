@@ -25,7 +25,7 @@ The table at `/patches` of every patch the viewer can open: tabs for All, Tools 
 _Avoid_: dashboard, directory, admin list
 
 **Card**:
-One patch's page at `/patches/<name>`, in tabs: **Overview** (its description, owner, current version, who can open it, what reads it, its visits and recent activity), **Log** and **Settings** for its owner and admins, and **Versions**. Its header leads with Open, or Restore for a manager while an off patch can be restored. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
+One patch's page at `/patches/<name>`, in tabs: **Overview** (its description, owner, current version, who can open it, what reads it, its visits and recent activity), **Log** and **Settings** for its owner and admins, and **Versions**. Beside the Overview of a live patch whose current version has agent tools, a panel shows everyone **what agents can do**: each tool, whether it reads or changes, and what it says it does. Its header leads with Open, or Restore for a manager while an off patch can be restored. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Log**:

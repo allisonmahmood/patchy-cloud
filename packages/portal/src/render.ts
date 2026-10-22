@@ -1,5 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import type { AgentTool } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
 import {
@@ -8,7 +9,8 @@ import {
   escapeAttribute,
   escapeHtml,
   patchMark,
-  renderOffPatch
+  renderOffPatch,
+  sentenceList
 } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 
@@ -185,8 +187,8 @@ const offState = (card: Patches.PortalCard, viewer: Viewer, now: number) => {
 
 /**
  * One patch's card at `/patches/<name>`: its mark, name, tags and the act that matters most (Open,
- * or Restore for a manager while recovery is open), then its tabs over `body`. Log and Settings
- * are the owner's and admins'.
+ * or Restore for a manager while recovery is open), then its tabs over `body`, with any `panel`
+ * beside it. Log and Settings are the owner's and admins'.
  */
 export const renderCardFrame = (input: {
   readonly card: Patches.PortalCard;
@@ -198,6 +200,8 @@ export const renderCardFrame = (input: {
   /** Leave out the header's Restore form, as when refusing a form rendered for another patch. */
   readonly readOnly?: boolean;
   readonly body: string;
+  /** A `side-panel` to the card's right, such as `renderAgentPanel`'s. */
+  readonly panel?: string;
 }): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
@@ -230,7 +234,47 @@ export const renderCardFrame = (input: {
         `<a href="${escapeAttribute(cardPath(patch, tab === "overview" ? "" : tab))}"${tab === input.tab ? ' aria-current="page"' : ""}>${label}</a>`
     )
     .join("");
-  return `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(patch.name)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}<p class="portal-card-tags">${tags}</p></div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(patch.name)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
+  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(patch.name)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}<p class="portal-card-tags">${tags}</p></div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(patch.name)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
+  return input.panel ? `<div class="card-split">${article}${input.panel}</div>` : article;
+};
+
+type Admin = Pick<Users.User, "id" | "name">;
+
+/** The admins in a sentence, the viewer, when one of them, as "you" and first. */
+const adminNames = (admins: readonly Admin[], viewerId: string): string => {
+  const others = admins.filter((admin) => admin.id !== viewerId).map(({ name }) => name);
+  return sentenceList(others.length < admins.length ? ["you", ...others] : others);
+};
+
+/**
+ * What agents can do, beside the Overview of a live patch with agent tools: each tool in
+ * `open_patch`'s order with Reads or Changes, its description opening in place, then the link
+ * to connect an agent on Your machines. With agent access off, a note names the admins in place
+ * of that link, and gives an admin the way to turn it on.
+ */
+export const renderAgentPanel = (input: {
+  readonly tools: readonly Pick<AgentTool, "name" | "kind" | "description">[];
+  readonly viewer: Viewer;
+  /** The company's active admins while agent access is off, or null while it is on. */
+  readonly admins: readonly Admin[] | null;
+}): string => {
+  const { viewer, admins } = input;
+  const company = escapeHtml(viewer.company.name);
+  const tools = input.tools
+    .map(
+      (tool) =>
+        `<li class="list-row"><details><summary><code>${escapeHtml(tool.name)}</code><span class="tag">${tool.kind === "read" ? "Reads" : "Changes"}</span></summary><p class="supporting-text">${escapeHtml(tool.description)}</p></details></li>`
+    )
+    .join("");
+  const off =
+    admins === null
+      ? ""
+      : `<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong><p>No agent can use these yet. Only admins can turn it on. At ${company} that’s ${adminNames(admins, viewer.user.id)}.</p>${viewer.role === "admin" ? '<div class="actions"><a class="btn" href="/company#agent-access">Turn it on at Company</a></div>' : ""}</div>`;
+  const connect =
+    admins === null
+      ? '<p class="supporting-text"><a href="/machines#connect-an-agent">Connect your agent</a></p>'
+      : "";
+  return `<aside class="side-panel" aria-labelledby="agent-tools-heading"><h2 class="section-heading" id="agent-tools-heading">What agents can do</h2><p class="supporting-text">As the person who connected them.</p>${off}<ul class="list list-compact">${tools}</ul>${connect}</aside>`;
 };
 
 /** The card's Overview: the description, its facts, an off patch's note and the recent log. */

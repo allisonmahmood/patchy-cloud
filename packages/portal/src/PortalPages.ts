@@ -2,16 +2,17 @@ import * as Clock from "effect/Clock";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { PatchName, PatchState, SharingScope } from "@patchy/api";
+import { agentTools, PatchName, PatchState, SharingScope } from "@patchy/api";
 import { MachineTokens, pageResponse, RequireSession, Session } from "@patchy/auth";
 import { ago, copyScript, copyScriptPath, escapeHtml } from "@patchy/core";
-import { type Companies, Users } from "@patchy/companies";
+import { Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
@@ -23,6 +24,7 @@ import {
   type CardTab,
   type ConfirmationAction,
   type PatchAction,
+  renderAgentPanel,
   renderCardFrame,
   renderConfirmation,
   renderOverview,
@@ -143,6 +145,31 @@ const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
   return renderRecentActivity({ patch: card.patch, now, names, entries });
 });
 
+/**
+ * What agents can do beside a card's Overview: the agent tools of a live patch's current version,
+ * and while agent access is off, who can turn it on. Empty without tools.
+ */
+const agentPanel = Effect.fn("PortalPages.agentPanel")(function* (card: Patches.PortalCard) {
+  if (card.patch.state !== "live" || card.tier !== 2) return "";
+  const served = yield* (yield* Patches.Patches).find(card.patch.id);
+  const tools = Option.match(served, {
+    onNone: () => [],
+    onSome: ({ version }) => agentTools(version.manifest)
+  });
+  if (tools.length === 0) return "";
+  const { viewer } = yield* context;
+  // The viewer's own company: it exists for as long as they can open this page.
+  const access = yield* (yield* Companies.Companies)
+    .agentAccess(viewer.company.id)
+    .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
+  const admins = access.on
+    ? null
+    : (yield* (yield* Users.Users).list(viewer.company.id))
+        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+        .sort((a, b) => a.name.localeCompare(b.name));
+  return renderAgentPanel({ tools, viewer, admins });
+});
+
 const overlongName = errorPage(
   414,
   "Patch name is too long",
@@ -213,6 +240,7 @@ const render = Effect.fn("PortalPages.render")(function* (
       : tab === "versions"
         ? renderVersions({ card, viewer, now })
         : renderOverview({ card, viewer, now, activity: yield* recentActivity(card, now) });
+  const panel = tab === "overview" ? yield* agentPanel(card) : "";
   return pageResponse(
     {
       title: `${card.patch.name}${tab === "overview" ? "" : ` ${tab}`}`,
@@ -225,7 +253,8 @@ const render = Effect.fn("PortalPages.render")(function* (
         tab,
         notice: refused ? settingsForbidden : options.notice,
         readOnly: options.readOnly,
-        body
+        body,
+        panel
       }),
       styles,
       status: refused ? 403 : (options.status ?? 200),
