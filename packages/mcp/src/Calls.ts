@@ -296,7 +296,11 @@ export const read = Effect.fn("Calls.read")(function* (
       Effect.map((reply) =>
         callAnswer(target.patch.patch.name, target.tool, target.versionNumber, reply)
       ),
-      Effect.catch((error) => refused(Runtime.toFailure(error), target.descriptor)),
+      Effect.catch((error) =>
+        isServerStarting(error)
+          ? serverStarting(identity)
+          : refused(Runtime.toFailure(error), target.descriptor)
+      ),
       Effect.map((answer) =>
         readAnswer(
           { name: target.patch.patch.name, owner: target.patch.owner.name },
@@ -351,6 +355,28 @@ const keyBusy = toolRefusal({
   retryAfterSeconds: 1
 });
 
+/** Seconds a call refused at the bind wait is told to wait: a launched task takes about 24. */
+const STARTING_RETRY_SECONDS = 15;
+
+const isLifecycleError = Schema.is(ExecutionLifecycle.LifecycleError);
+
+/** Runtime gave up waiting for the company's released server to start (`execution.pool.wait`). */
+const isServerStarting = (error: Runtime.RuntimeError) =>
+  isLifecycleError(error) && error.code === "busy" && error.limitId === "execution.pool.wait";
+
+/** A call that waited the whole bind wait, in words that name the company and the wait. */
+const serverStarting = (identity: AgentConnections.AgentIdentity) =>
+  WideEvents.enrich({ limitId: "execution.pool.wait" }).pipe(
+    Effect.as(
+      toolRefusal({
+        code: "busy",
+        from: "patchy",
+        message: `${identity.company.name}'s server is starting; try again in ${STARTING_RETRY_SECONDS} seconds.`,
+        retryAfterSeconds: STARTING_RETRY_SECONDS
+      })
+    )
+  );
+
 /** Runtime's refusal of a call as the agent gets it, with the limit it names in the event. */
 const refused = (failure: RuntimeFailure, descriptor: HandlerDescriptor) =>
   WideEvents.enrich(failure.limitId === undefined ? {} : { limitId: failure.limitId }).pipe(
@@ -362,7 +388,12 @@ const refused = (failure: RuntimeFailure, descriptor: HandlerDescriptor) =>
  * the same key, so its refusal says to retry with it; an action that may have partly happened
  * says to read first, as `runtimeRefusal` does.
  */
-const changeRefusal = (error: Runtime.RuntimeError, descriptor: HandlerDescriptor) => {
+const changeRefusal = (
+  identity: AgentConnections.AgentIdentity,
+  error: Runtime.RuntimeError,
+  descriptor: HandlerDescriptor
+) => {
+  if (isServerStarting(error)) return serverStarting(identity);
   const failure = Runtime.toFailure(error);
   return refused(
     descriptor.kind === "mutation" && failure.code === "unknown_outcome"
@@ -509,7 +540,7 @@ const changeOn = Effect.fn("Calls.changeOn")(function* (
           : callAnswer(patch, target.tool, target.versionNumber, reply)
       )
     ),
-    Effect.catch((error) => changeRefusal(error, target.descriptor))
+    Effect.catch((error) => changeRefusal(identity, error, target.descriptor))
   );
   yield* WideEvents.enrich({ replayed: yield* Ref.get(replayed) });
   return changeAnswer(target.tool, target.versionNumber, answer);

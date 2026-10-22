@@ -106,7 +106,9 @@ export const make = Effect.gen(function* () {
   const load = (version: LoadedVersion) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        const admission = yield* restore(lifecycle.acquire(version.companyId, version.patchId));
+        const admission = yield* restore(
+          lifecycle.acquire(version.companyId, version.patchId, "page")
+        );
         yield* restore(
           bundles
             .load(version)

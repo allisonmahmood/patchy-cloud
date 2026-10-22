@@ -534,7 +534,9 @@ both slots readable.
    process at 512 MiB RSS. Dormant patches spawn nothing.
 3. **Idle release counts all work.** Release follows 30 minutes with no active
    tier 2 documents and no work in flight. Retries, nested calls after document
-   departure and transaction cleanup count. Fence new admissions before stopping;
+   departure and transaction cleanup count. A worker agent's call keeps the task
+   a minute after it settles, on a clock of its own that never touches the
+   documents' 30 minutes; release waits for both. Fence new admissions before stopping;
    an open racing release binds fresh. Hidden documents do not retain a task, and
    neither does an open one nobody has used for ten minutes.
 4. **The controller is host code over the platform database.** Atomic claims and

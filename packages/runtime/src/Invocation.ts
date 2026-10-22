@@ -361,7 +361,11 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             : Option.isSome(lifecycle)
               ? {
                   lease: yield* restore(
-                    lifecycle.value.acquire(binding.companyId, binding.patchId)
+                    lifecycle.value.acquire(
+                      binding.companyId,
+                      binding.patchId,
+                      binding.agent === undefined ? "page" : "agent"
+                    )
                   ),
                   owners: 0
                 }

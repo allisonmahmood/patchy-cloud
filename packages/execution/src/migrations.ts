@@ -1,7 +1,7 @@
 /**
  * The execution fleet: deployments, tasks, bindings, process reports, breakers
  * and the housekeeping lease, id 8 in the global migration sequence. Squashed
- * into one baseline before launch.
+ * into one baseline before launch; later changes take their own ids.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -101,5 +101,12 @@ export const migrations: Migrations = {
     )`,
     `CREATE INDEX execution_breaker_kills_window
       ON execution_breaker_kills(company_id, patch_id, publish_revision, killed_at)`
+  ),
+  // Agent idle: a binding's second clock, from an agent's last call settling, beside the
+  // documents' `last_activity_at` and `idle_since`, which an agent-only binding leaves at 0 and
+  // null. History records whether a released binding was agent-only; earlier rows say nothing.
+  "0025_agent_idle": ddl(
+    `ALTER TABLE execution_bindings ADD COLUMN agent_activity_at DOUBLE PRECISION NOT NULL DEFAULT 0`,
+    `ALTER TABLE execution_binding_history ADD COLUMN agent_only BOOLEAN`
   )
 };

@@ -1,4 +1,5 @@
 import * as Management from "@patchy/api/management";
+import type { Caller } from "@patchy/runtime/execution-lifecycle";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -12,8 +13,16 @@ export class Binding extends Schema.Class<Binding>("Fleet.Binding")({
   ownerId: Schema.String,
   state: Schema.Literals(["claiming", "active", "stopping", "stopped"]),
   boundAt: Schema.Number,
+  /** The documents' clock: a page's last call or document letting go, 0 for none yet. */
   lastActivityAt: Schema.Number,
+  /**
+   * When a housekeeping pass first found no document holding the task since one last did: the
+   * documents' clock runs from no earlier than this, so a holder that went without letting go
+   * still leaves the whole window.
+   */
   idleSince: Schema.NullOr(Schema.Number),
+  /** The agent idle clock: an agent's last call settling, 0 for none. */
+  agentActivityAt: Schema.Number,
   protectedUntil: Schema.Number,
   spareWaitMs: Schema.Number,
   peakProcesses: Schema.Number,
@@ -39,7 +48,9 @@ export class History extends Schema.Class<History>("Fleet.History")({
   boundSeconds: Schema.NullOr(Schema.Number),
   spareWaitMs: Schema.Number,
   peakProcesses: Schema.Number,
-  releaseCause: Schema.NullOr(Schema.String)
+  releaseCause: Schema.NullOr(Schema.String),
+  /** No document held it and no page's work ran on it; null before release and before agents. */
+  agentOnly: Schema.NullOr(Schema.Boolean)
 }) {}
 class Lease extends Schema.Class<Lease>("Fleet.Lease")({ leaseEpoch: Schema.Number }) {}
 class Target extends Schema.Class<Target>("Fleet.Target")({
@@ -66,6 +77,14 @@ const decodeFlags = Schema.decodeUnknownEffect(Schema.Array(Flag));
 const decodeAdmissibleTasks = Schema.decodeUnknownEffect(Schema.Array(AdmissibleTask));
 const reportJson = Schema.encodeSync(Schema.fromJsonString(Management.ProcessReport));
 
+/** A binding's two clocks: the documents' with where its window starts, and the agents'. */
+export type Clocks = Pick<Binding, "lastActivityAt" | "idleSince" | "agentActivityAt">;
+/** The clocks a claim starts: its caller's runs from `now`, the other has not run. */
+export const clocksOf = (caller: Caller, now: number): Clocks =>
+  caller === "agent"
+    ? { lastActivityAt: 0, idleSince: null, agentActivityAt: now }
+    : { lastActivityAt: now, idleSince: null, agentActivityAt: 0 };
+
 export const companyLock = (companyId: string) => `execution/company/${companyId}`;
 export const bindingLock = (bindingId: number) => `execution/binding/${bindingId}`;
 
@@ -74,7 +93,8 @@ export const make = Effect.gen(function* () {
   const bindingColumns =
     sql.literal(`binding_id AS "bindingId", binding_epoch AS "bindingEpoch", company_id AS "companyId",
     task_id AS "taskId", owner_id AS "ownerId", state, bound_at AS "boundAt",
-    last_activity_at AS "lastActivityAt", idle_since AS "idleSince", protected_until AS "protectedUntil",
+    last_activity_at AS "lastActivityAt", idle_since AS "idleSince", agent_activity_at AS "agentActivityAt",
+    protected_until AS "protectedUntil",
     spare_wait_ms AS "spareWaitMs", peak_processes AS "peakProcesses", release_cause AS "releaseCause"`);
   const taskColumns =
     sql.literal(`task_id AS "taskId", deployment_revision AS "deploymentRevision", state,
@@ -128,14 +148,16 @@ export const make = Effect.gen(function* () {
     ) => sql`SELECT binding_id AS "bindingId", binding_epoch AS "bindingEpoch", company_id AS "companyId",
       task_id AS "taskId", deployment_revision AS "deploymentRevision", bound_at AS "boundAt",
       released_at AS "releasedAt", bound_seconds AS "boundSeconds", spare_wait_ms AS "spareWaitMs",
-      peak_processes AS "peakProcesses", release_cause AS "releaseCause"
+      peak_processes AS "peakProcesses", release_cause AS "releaseCause", agent_only AS "agentOnly"
       FROM execution_binding_history WHERE company_id = ${company} ORDER BY binding_epoch`
   });
+  /** Binds a spare to `company` with its two clocks as given, or answers its live binding. */
   const claim = Effect.fn("FleetStore.claim")(function* (
     company: string,
     owner: string,
     now: number,
-    waited: number
+    waited: number,
+    clocks: Clocks
   ) {
     yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`execution/claim/${company}`}, 0))`;
     const existing = yield* findCompany(company);
@@ -147,8 +169,9 @@ export const make = Effect.gen(function* () {
     ) RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
     if (!spare[0]) return undefined;
     const claimed = yield* sql`INSERT INTO execution_bindings
-      (company_id, task_id, owner_id, state, bound_at, last_activity_at, spare_wait_ms)
-      VALUES (${company}, ${spare[0].taskId}, ${owner}, 'claiming', ${now}, ${now}, ${waited})
+      (company_id, task_id, owner_id, state, bound_at, last_activity_at, idle_since, agent_activity_at, spare_wait_ms)
+      VALUES (${company}, ${spare[0].taskId}, ${owner}, 'claiming', ${now}, ${clocks.lastActivityAt},
+        ${clocks.idleSince}, ${clocks.agentActivityAt}, ${waited})
       RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
     const binding = claimed[0]!;
     yield* sql`INSERT INTO execution_binding_history
@@ -194,7 +217,8 @@ export const make = Effect.gen(function* () {
     if (spare.length === 0) return undefined;
     const fenced = yield* fence(previous, "deployment");
     if (!fenced[0]) return undefined;
-    const replacement = yield* claim(company, owner, now, 0);
+    // The replacement keeps both clocks running from where its predecessor's stood.
+    const replacement = yield* claim(company, owner, now, 0, fenced[0]);
     return replacement ? { previous: fenced[0], replacement } : undefined;
   }, sql.withTransaction);
   const adopt = Effect.fn("FleetStore.adopt")(function* (
@@ -210,53 +234,85 @@ export const make = Effect.gen(function* () {
         AND ${admissibleTask}
       RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
   }, sql.withTransaction);
-  const touch = (company: string, now: number) => sql`UPDATE execution_bindings
-    SET last_activity_at = ${now}, idle_since = NULL WHERE company_id = ${company} AND state IN ('claiming', 'active')`;
-  const protect = (binding: Binding, until: number, now: number) =>
+  // The clock admitted work runs: the documents' for a page's, the agent idle clock for an agent's.
+  const clockOf = (caller: Caller) =>
+    sql.literal(caller === "agent" ? "agent_activity_at" : "last_activity_at");
+  // Runs the caller's clock from `now` on the company's admission binding: a document's touch or
+  // a call settling, its own binding or the one that replaced it meanwhile. A clock only moves
+  // forward, so a settlement that lands late never shortens a later one's window. A replacement
+  // that committed while the update waited on its predecessor's row is outside the update's
+  // snapshot, so an update that found no live binding runs once more.
+  const touch = Effect.fn("FleetStore.touch")(function* (
+    company: string,
+    now: number,
+    caller: Caller = "page"
+  ) {
+    const run = sql`UPDATE execution_bindings
+      SET ${clockOf(caller)} = GREATEST(${clockOf(caller)}, ${now})
+      WHERE company_id = ${company} AND state IN ('claiming', 'active') RETURNING binding_id`;
+    if ((yield* run).length === 0) yield* run;
+  });
+  const protect = (binding: Binding, until: number, now: number, caller: Caller) =>
     sql`UPDATE execution_bindings
-    SET protected_until = GREATEST(protected_until, ${until}), last_activity_at = ${now}, idle_since = NULL
+    SET protected_until = GREATEST(protected_until, ${until}),
+      ${clockOf(caller)} = GREATEST(${clockOf(caller)}, ${now})
     WHERE binding_epoch = ${binding.bindingEpoch} AND state = 'active' AND ${admissibleTask}
     RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
-  // Settles an admitted call in one statement. It touches the company's admission binding and,
-  // once no caller holds the call's binding, clears that binding's crash protection, draining
-  // or not. The exclusive try-lock lasts until the statement commits, so a new holder waits
-  // and then protects again.
-  const release = (binding: Binding, now: number) => sql`UPDATE execution_bindings SET
-    last_activity_at = CASE WHEN state IN ('claiming', 'active') THEN ${now} ELSE last_activity_at END,
-    idle_since = CASE WHEN state IN ('claiming', 'active') THEN NULL ELSE idle_since END,
-    protected_until = CASE WHEN binding_id <> ${binding.bindingId} THEN protected_until
-      WHEN pg_try_advisory_xact_lock(hashtextextended(${bindingLock(binding.bindingId)}, 0)) THEN 0
-      ELSE protected_until END
-    WHERE (company_id = ${binding.companyId} AND state IN ('claiming', 'active'))
-      OR binding_id = ${binding.bindingId}`;
+  // Once no caller holds the call's binding, clears its crash protection, draining or not. The
+  // exclusive try-lock lasts until the statement commits, so a new holder waits and then
+  // protects again.
+  const release = (binding: Binding) => sql`UPDATE execution_bindings SET protected_until = 0
+    WHERE binding_id = ${binding.bindingId}
+      AND pg_try_advisory_xact_lock(hashtextextended(${bindingLock(binding.bindingId)}, 0))`;
   const exclusive = (key: string) =>
     sql`SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS acquired`.pipe(
       Effect.flatMap(decodeFlags),
       Effect.map((rows) => rows[0]!.acquired)
     );
+  /**
+   * Releases a binding once no document holds it, no admitted work is in flight on it or on a
+   * binding of the company still draining, and both clocks have run out: `idleMs` from the
+   * documents' last activity, `agentIdleMs` from an agent's last call settling. Work in flight
+   * moves neither clock until it settles.
+   */
   const idleFence = Effect.fn("FleetStore.idleFence")(function* (
     binding: Binding,
     now: number,
-    idleMs: number
+    idle: { readonly idleMs: number; readonly agentIdleMs: number }
   ) {
-    if (
-      !(yield* exclusive(companyLock(binding.companyId))) ||
-      !(yield* exclusive(bindingLock(binding.bindingId)))
-    ) {
+    if (!(yield* exclusive(companyLock(binding.companyId)))) {
       yield* sql`UPDATE execution_bindings SET idle_since = NULL
         WHERE binding_epoch = ${binding.bindingEpoch} AND state = 'active'`;
       return [];
     }
+    // No document holds it, so the documents' window, once a document or a page's work has run
+    // their clock, starts no later than now, whatever work is in flight.
+    yield* sql`UPDATE execution_bindings SET idle_since = ${now}
+      WHERE binding_epoch = ${binding.bindingEpoch} AND state = 'active'
+        AND idle_since IS NULL AND last_activity_at > 0`;
+    if (!(yield* exclusive(bindingLock(binding.bindingId)))) return [];
+    // Work on a binding this one replaced settles onto this one's clocks.
+    const drained = yield* sql`SELECT COALESCE(bool_and(protected_until <= ${now}
+        AND pg_try_advisory_xact_lock(hashtextextended('execution/binding/' || binding_id, 0))), true)
+        AS acquired
+      FROM execution_bindings WHERE company_id = ${binding.companyId} AND state = 'stopping'`.pipe(
+      Effect.flatMap(decodeFlags),
+      Effect.map((rows) => rows[0]!.acquired)
+    );
+    if (!drained) return [];
     const rows = yield* sql`SELECT ${bindingColumns} FROM execution_bindings
       WHERE binding_epoch = ${binding.bindingEpoch} AND owner_id = ${binding.ownerId}
         AND state = 'active' FOR UPDATE`.pipe(Effect.flatMap(decodeBindings));
     const current = rows[0];
     if (!current || current.protectedUntil > now) return [];
-    if (current.idleSince === null) {
-      yield* sql`UPDATE execution_bindings SET idle_since = ${now} WHERE binding_epoch = ${current.bindingEpoch}`;
+    // The documents' window, from no earlier than the first pass to find no document holding
+    // the task. Agents never move it.
+    if (
+      current.lastActivityAt > 0 &&
+      now - Math.max(current.idleSince ?? now, current.lastActivityAt) < idle.idleMs
+    )
       return [];
-    }
-    if (now - Math.max(current.idleSince, current.lastActivityAt) < idleMs) return [];
+    if (now - current.agentActivityAt < idle.agentIdleMs) return [];
     return yield* fence(current, "idle");
   }, sql.withTransaction);
   const drained = Effect.fn("FleetStore.drained")(function* (binding: Binding, now: number) {
@@ -277,7 +333,8 @@ export const make = Effect.gen(function* () {
       WHERE task_id = ${taskId}`;
     yield* sql`UPDATE execution_binding_history h SET released_at = ${stoppedAt},
       bound_seconds = GREATEST(0, ${stoppedAt} - h.bound_at) / 1000,
-      release_cause = b.release_cause, peak_processes = b.peak_processes
+      release_cause = b.release_cause, peak_processes = b.peak_processes,
+      agent_only = (b.last_activity_at = 0)
       FROM execution_bindings b WHERE h.binding_id = b.binding_id AND h.task_id = ${taskId}
         AND h.released_at IS NULL`;
   }, sql.withTransaction);
@@ -418,7 +475,8 @@ export const make = Effect.gen(function* () {
       () => sql`SELECT binding_id AS "bindingId", binding_epoch AS "bindingEpoch", company_id AS "companyId", task_id AS "taskId",
       deployment_revision AS "deploymentRevision", bound_at AS "boundAt", released_at AS "releasedAt",
       bound_seconds AS "boundSeconds", spare_wait_ms AS "spareWaitMs", peak_processes AS "peakProcesses",
-      release_cause AS "releaseCause" FROM execution_binding_history WHERE released_at IS NOT NULL AND NOT event_emitted`
+      release_cause AS "releaseCause", agent_only AS "agentOnly"
+      FROM execution_binding_history WHERE released_at IS NOT NULL AND NOT event_emitted`
   });
   const markEvent = (bindingId: number) =>
     sql`UPDATE execution_binding_history SET event_emitted = true WHERE binding_id = ${bindingId}`;

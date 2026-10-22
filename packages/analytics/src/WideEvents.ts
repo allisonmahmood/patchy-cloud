@@ -74,7 +74,14 @@ const invocationMetrics = {
    * The tier 2 call or re-run went back to bind once more after its invoke was refused before
    * dispatch, its process reaped or replaced since bind. Set whatever came of that.
    */
-  rebound: Schema.optionalKey(Schema.Boolean)
+  rebound: Schema.optionalKey(Schema.Boolean),
+  /**
+   * How a tier 2 call found its company's server: already `bound`, a ready `spare` bound to it,
+   * or a `launch` it waited for because the pool was empty, and how long admission waited for
+   * it, a wait refused at `execution.pool.wait` included.
+   */
+  companyBind: Schema.optionalKey(Schema.Literals(["bound", "spare", "launch"])),
+  bindWaitMs: Schema.optionalKey(Schema.Number)
 };
 /**
  * How a content URL's document reached its reader: from the host's memory, a read it started,
@@ -216,7 +223,9 @@ const processMetrics = {
 const bindingMetrics = {
   spareWaitMs: Schema.optionalKey(Schema.Number),
   peakProcesses: Schema.optionalKey(Schema.Number),
-  releaseCause: Schema.optionalKey(Schema.String)
+  releaseCause: Schema.optionalKey(Schema.String),
+  /** No document held the binding and no page's work ran on it: only agents' calls kept it. */
+  agentOnly: Schema.optionalKey(Schema.Boolean)
 };
 const count = Schema.optionalKey(Schema.Number);
 /** How long one host kept an open tier 2 version's process warm, and what that took. */
