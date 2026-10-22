@@ -465,6 +465,42 @@ describe("patchy auth set", async () => {
   });
 });
 
+describe("patchy auth token", () => {
+  it("exports a versioned host-bound credential only with explicit JSON and uses normal precedence", async () => {
+    const stateDir = tempDir();
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    await runCli(["auth", "set", "--api-url", instance.url, "--token-stdin"], {
+      stateDir,
+      input: "stored-secret"
+    });
+    const refused = await runCli(["auth", "token", "--api-url", instance.url], { stateDir });
+    expect(refused).toMatchObject({ status: 1, stdout: "" });
+    expect(refused.stderr).not.toContain("stored-secret");
+    const saved = await runCli(["auth", "token", "--api-url", instance.url, "--json"], {
+      stateDir
+    });
+    expect(saved).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(saved.stdout)).toEqual({
+      version: 1,
+      instanceUrl: instance.url,
+      token: "stored-secret"
+    });
+    const override = await runCli(["auth", "token", "--api-url", instance.url, "--json"], {
+      stateDir,
+      env: { PATCHY_API_TOKEN: "env-secret" }
+    });
+    expect(JSON.parse(override.stdout).token).toBe("env-secret");
+    const foreign = await runCli(
+      ["auth", "token", "--api-url", "https://other.example", "--json"],
+      { stateDir }
+    );
+    expect(foreign).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(foreign.stderr)).toMatchObject({ kind: "local", code: "not_logged_in" });
+    expect(foreign.stderr).not.toContain("stored-secret");
+    expect(instance.requests).toHaveLength(0);
+  });
+});
+
 describe("patchy whoami", async () => {
   it("prints the identity as text or as the wire document", async () => {
     const instance = await stubInstance((_, respond) => respond(200, identity));

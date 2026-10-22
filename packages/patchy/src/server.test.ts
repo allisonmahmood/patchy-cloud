@@ -32,6 +32,7 @@ const decodeDescriptors = Schema.decodeUnknownSync(HandlerDescriptors);
 const decodeManifest = Schema.decodeUnknownSync(Manifest);
 const descriptor: HandlerDescriptor = {
   kind: "query",
+  description: "Find sales leads by search and stage.",
   args: {
     search: { kind: "text", optional: true },
     stage: { kind: "nullable", value: { kind: "enum", values: ["open", "closed"] } }
@@ -42,6 +43,7 @@ const descriptor: HandlerDescriptor = {
 
 it("extracts serializable descriptors without executing handlers", () => {
   const list = server.query({
+    description: "Find sales leads by search and stage.",
     args: { search: t.text().optional(), stage: t.nullable(t.enum(["open", "closed"])) },
     result: t.array(t.row("leads")),
     errors: ["not_allowed"],

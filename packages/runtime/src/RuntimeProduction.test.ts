@@ -16,7 +16,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
-import { Session } from "@patchy/auth";
+import { MachineTokens, Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, PUBLIC_BASE_URL, signSession, signedInCookies } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
@@ -109,6 +109,7 @@ const version: LoadedVersions.LoadedVersion = {
   }
 };
 const dependencies = Layer.mergeAll(
+  MachineTokens.layer,
   Users.layer,
   Companies.layer,
   OperatingLimits.layer,
@@ -292,5 +293,56 @@ it.effect("does not rebind an invocation when the Clerk subject resolves to anot
       VALUES ('usr_rebound', ${DEV_SEED.clerkUserId}, ${DEV_SEED.companyId},
         ${DEV_SEED.email}, 'Rebound', 'admin')`;
     assert.instanceOf(yield* reauthorize.pipe(Effect.flip), Runtime.AccessDenied);
+  }).pipe(Effect.provide(dependencies))
+);
+
+it.effect("machine query admission rechecks token revocation and never needs a session", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    const tokens = yield* MachineTokens.MachineTokens;
+    const machine = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Query test" });
+    let recheck: Runtime.AdmittedIdentity["reauthorize"] | undefined;
+    const runtime = yield* RuntimeProduction.make({}).pipe(
+      Effect.provide(StreamAdmission.layer),
+      Effect.provideService(LoadedVersions.LoadedVersions, {
+        find: () =>
+          Effect.succeed(
+            Option.some({
+              ...version,
+              patchTier: 2,
+              manifest: {
+                ...version.manifest,
+                handlers: {
+                  "queue.blocked": { kind: "query", args: {}, result: { kind: "integer" } }
+                }
+              }
+            })
+          )
+      }),
+      Effect.provideService(Invocation.Invocation, {
+        call: (_args, binding, reauthorize) =>
+          Effect.sync(() => {
+            assert.strictEqual(binding.identity?.user.id, DEV_SEED.userId);
+            recheck = reauthorize;
+            return { ok: true as const, value: 2 };
+          })
+      })
+    );
+    const query = runtime.query(version.patchId, { handler: "queue.blocked", args: {} }).pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request(`${PUBLIC_BASE_URL}/api/patches/launch-queue/query`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${machine.token}` }
+          })
+        )
+      )
+    );
+    assert.deepStrictEqual((yield* query).result, { ok: true, value: 2 });
+    assert.isDefined(recheck);
+    yield* tokens.revoke(machine.id);
+    assert.instanceOf(yield* recheck!.pipe(Effect.flip), Runtime.AccessDenied);
+    assert.instanceOf(yield* query.pipe(Effect.flip), Runtime.AccessDenied);
   }).pipe(Effect.provide(dependencies))
 );

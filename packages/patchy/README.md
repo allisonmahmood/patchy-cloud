@@ -190,6 +190,27 @@ never imports server implementations to decide whether retry is safe. Missing or
 invalid kind metadata disables retry. Actions and delivered refusals are never
 automatically retried.
 
+Builders accept an optional `description` (1–500 characters, nonblank):
+`query({ description: "Find products by category.", args, result, handler })`.
+Publish retains it in the inspected handler contract. Machine callers discover
+current queries and mutations through `GET /api/patches/:patchRef/operations`, then call
+`POST /api/patches/:patchRef/query` with `{ handler, args }`. Discovery returns
+`{ patchId, versionId, operations: [{ handler, kind, description, inputSchema, outputSchema }] }`.
+The schemas are self-contained JSON Schema draft 2020-12 derived from the same
+validators as execution, with row shapes expanded. `outputSchema` describes the
+successful `result.value`. A missing handler description falls back to the Tool's
+description. Discovery excludes actions; query execution accepts only queries and rechecks current
+access and the current version's schemas. The `(patchId, handler)` pair is stable
+across publishes; a renamed handler is a different query.
+
+Machine callers execute declared mutations through
+`POST /api/patches/:patchRef/mutation`. These machine API endpoints add no CLI
+command. They reuse the saved login, Tool permissions, validated handler contracts
+and serializable transaction path. Mutation calls pin the discovered `versionId`
+and retain one `mutationKey` across retries; they return the committed value and
+resource revisions. Actions and arbitrary table access remain unavailable. See
+[the API contract](../../docs/API.md) for the exact request and retry rules.
+
 `t` adds objects, arrays, enums, nullable values, full rows, result-only file
 handles and action-argument uploads. Optional argument keys may be absent;
 optional columns remain nullable. Defaults and refs are table-only. Queries
@@ -926,6 +947,23 @@ printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PA
 ```
 
 <!-- patchy-packed-cli-e2e:end -->
+
+### `patchy auth token --json [--api-url <url>]`
+
+A stable credential interface for local programs such as the separate Patchy MCP
+add-on. Requires redirected stdout; refuses text mode and a terminal. It returns
+`{ version: 1, instanceUrl, token }`, using the normal instance selection and key
+precedence. It sends no request and changes no saved state. No key is local exit 1,
+`code: not_logged_in`; refusing unsafe output is local exit 1,
+`code: credential_output_refused`. Consumers must reject unknown versions or an
+instance mismatch and re-read for each call so a completed re-login takes effect.
+
+**This output is secret.** Capture it privately through a pipe. Never run this
+command to display or copy a token, record its output, or paste it into agent
+configuration. Use `login`, `whoami` and `status` for ordinary setup; those keep
+credentials out of their output. A Cloud 401 means sign in again with `patchy login
+--api-url <url> --json`, relay the URL and code to the person, complete the returned
+`next` command, then retry. An environment token still overrides the saved login.
 
 ### `patchy whoami [--api-url <url>]`
 

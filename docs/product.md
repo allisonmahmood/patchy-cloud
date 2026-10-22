@@ -327,9 +327,46 @@ Not a **connection** (a connected source belongs to the company, or in the futur
 
 ## Runtime tiers
 
-A tier determines where a patch's code runs. Tier 0 is static, with no patch code execution. Tier 1 runs in the viewer's browser, as the viewer. Tier 2 adds server handlers that Patchy runs while someone has the patch open. Tier 3, execution with no viewer present, is the next line of work. Tier 4, an agent's own computer, remains beyond it.
+A tier determines where a patch's code runs. Tier 0 is static, with no patch code execution. Tier 1 runs in the viewer's browser, as the viewer. Tier 2 adds server handlers that Patchy runs for a signed-in viewer. A narrow machine-token API also runs published queries and declared mutations as the token’s user without an open browser; actions still require the browser runtime. Tier 3, unattended execution such as inbound routes, webhooks and schedules, is the next line of work. Tier 4, an agent's own computer, remains beyond it.
 
 ### What a tier changes, and what it never changes
+
+Machine callers read current static Pages and discover declared queries and mutations through
+`GET /api/patches/:patchRef/operations`; actions are excluded. Each operation has
+its kind, stable `(patchId, handler)` identity, version id, description (falling
+back to the Tool description) and self-contained JSON Schemas from execution's
+validators, with expanded row shapes. Discovery executes no code or business reads.
+
+`POST /api/patches/:patchRef/query` executes only declared queries against the
+current live company Tool. Cloud rechecks the machine token, membership and
+openability, validates inputs and results and uses the existing isolated executor
+and read-only capabilities. The response names the actual executed version.
+No browser session, historical version selection or action is accepted.
+
+`POST /api/patches/:patchRef/mutation` requires `handler`, `args`, the discovered
+`versionId` and a `mutationKey`. It admits only a current live openable company
+Tool's declared mutation. A changed version returns `409 version_changed`
+without running code; the client must never automatically reapply an uncertain
+change on a new version. The query door remains read-only.
+
+Machine mutations use the same serializable transaction, handler rules,
+argument/result validation, initiating-user attribution and revision/wake path
+as the Tool's browser calls. Only validated success commits; a business error,
+throw or invalid result rolls back. The reply carries the committed value and
+resource revisions, including on an identical-key replay. The normal page's
+live queries observe the changes without a new refresh mechanism.
+
+One intended change retains one key across retries: epoch milliseconds, a dash
+and 16 random bytes in unpadded base64url. The existing 24-hour key window and
+five-minute future skew apply. A committed key is bound to the person, patch,
+version, handler and canonical arguments; changed reuse is refused. Clients
+must preserve pending envelopes to retain protection across their own restart
+and never mint a replacement key for an unknown outcome. This endpoint cannot
+recover an older version's committed result after republish. Existing invocation
+logs name the initiating person, not the MCP machine; callback logs retain their
+browser credential label. Machine-specific attribution remains a gap, rather
+than a new audit system in this prototype. No arbitrary resource access, actions,
+file writes or external side effects are added.
 
 A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev/test instances and production hosts configured with the ECS fleet.
 
@@ -340,7 +377,7 @@ this release's supported runtime.
 
 ### Tier 0 — static
 
-The published document runs no script, so **the patch cannot watch you**. The [serving guarantees](../packages/serving/GLOSSARY.md) distinguish patch content from its first-party shell: a public tier 0 shell needs no script; a public tier 1 shell starts only Patchy's broker, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer. A public tier 1 shell activates the same session maintenance when it authenticates directory access. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in, and remembers what each member opened so their own Home can put their usual patches first; nobody else, owner or admin, sees that record. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
+The published document runs no script, so **the patch cannot watch you**. The [serving guarantees](../packages/serving/GLOSSARY.md) distinguish patch content from its first-party shell: a public tier 0 shell needs no script; a public tier 1 shell starts only Patchy's broker, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer. A public tier 1 shell activates the same session maintenance when it authenticates directory access. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent can read a live company-only tier 0 Page through its user's signed-in browser or the machine-authenticated `GET /api/patches/:patchRef/page` API. The API returns the current stored HTML with the same company and openability checks as discovery; it grants no scripted runtime access. The host knows who opened a company page in order to let them in, and remembers what each member opened so their own Home can put their usual patches first; nobody else, owner or admin, sees that record. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
 
 ### Tier 1 — browser
 
@@ -529,11 +566,12 @@ An action's database time includes its nested queries and mutations.
 
 The promise: **A tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
-internet: everything it does goes through Patchy, as you, while you have the
-patch open. It reaches outside systems only through your company's integrations,
+internet: everything it does goes through Patchy, as you, from an open
+patch or an authenticated machine query or mutation. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.**
 
-Patchy admits new work while a viewer has the patch open. Already-admitted work
+Patchy admits browser work while a viewer has the patch open and declared queries and mutations
+through the machine-token API without a document. Already-admitted work
 finishes after departure. An open patch keeps its company's task only while its
 viewer is using it: after ten minutes with no calls and no change to what it
 subscribes to, the tab lets go, though its screen stays usable and live updates
@@ -543,7 +581,7 @@ cleanup, so the next action after that may wait for the company to start again. 
 it is not supported.
 
 Server-side calls use two identities. The **initiating viewer** is the person
-whose live session admitted the invocation. The gateway chooses the **effective
+whose session or machine token admitted the invocation. The gateway chooses the **effective
 principal** for every callback: the patch identity for its own tables and stores,
 the viewer for shared resources and company integrations. Own resources inherit
 admission; access to company resources is re-checked live. The patch identity is
@@ -747,6 +785,12 @@ A person's agent works on a machine — their laptop, a server, later a sandbox 
 A machine token is **the user's**, shared by every agent using that machine's saved login — Claude Code now and Codex an hour later use the same credential and name. Re-authenticating offers the old name and replaces the previous key only when the completing poll mints for the same user; until then the old key keeps working. The token is Patchy's own, so publishing does not call Clerk. It expires **90 days** after minting or after **30 idle days**, whichever comes first. Every version records its creating machine token, so the responsible machine remains traceable after revocation; agents sharing that token are not separate identities.
 
 **Your machines** lists a user's live tokens by name, creation, last use and expiry, revokes one or all, and signs the browser out. Deactivating a user revokes every token and ends their company access on the next request, including runtime calls from an open tier 1 patch. `PATCHY_API_TOKEN` already accepts a user-owned token for non-interactive CLI use; a dedicated CI provisioning flow is not offered. Your machines has no create or rename action. There is no company-owned or non-human token kind, so everything published has a human owner. Company-owned tokens for CI that is nobody's come back when someone needs them.
+
+Local programs can reuse the same saved machine login through the versioned
+`auth token --json` pipe interface. Its output is secret; programs capture it
+privately rather than reading the CLI's state file. It adds no identity or login
+service. Consumers re-read after a completed device login; environment credentials
+retain their existing precedence.
 
 **First publish is login, then publish.** Machine logout forgets its saved login even if revocation cannot complete; it does not sign the browser out. Browser sign-out remains available before company membership and after deactivation. Commands, credential precedence and output are defined in [the CLI contract](./adr/ADR-0004-cli-contract-for-agents.md).
 

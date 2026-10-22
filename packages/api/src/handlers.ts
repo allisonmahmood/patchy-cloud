@@ -124,6 +124,14 @@ const schemaProblem = (
 
 export const HandlerDescriptor = Schema.Struct({
   kind: HandlerKind,
+  description: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isBetweenLength(1, 500),
+      Schema.makeFilter(
+        (value) => value.trim().length > 0 || "Handler description must not be blank."
+      )
+    )
+  ),
   args: fields(HandlerSchema),
   result: HandlerSchema,
   errors: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isMinLength(1))))
