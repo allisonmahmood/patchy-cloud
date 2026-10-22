@@ -331,12 +331,13 @@ const WORKSPACE_INSTRUCTIONS = "Make each new patch or page directly in this fol
  * loads instruction files from every folder above its working directory, the
  * developer's HOME among them; those are excluded, so only the workspace's own
  * load. Each session starts clean: auto memory is off, and `TMPDIR` is a folder
- * of its own, made in `$TMPDIR` or `/tmp` and deleted when Claude Code exits.
- * Its commands still run as the developer, with their HOME and npm prefix, so
- * it must never be given the portal's setup line or run `patchy setup`: both
- * write to the developer's own machine, and `down` undoes neither. Permissions
- * come as flags, so the workspace needs no trust prompt. Arguments pass
- * through, and Claude Code's exit code is the launcher's.
+ * of its own, made in `$TMPDIR` or `/tmp`, which a later launch deletes once
+ * that session has ended. Its commands still run as the developer, with their
+ * HOME and npm prefix, so it must never be given the portal's setup line or run
+ * `patchy setup`: both write to the developer's own machine, and `down` undoes
+ * neither. Permissions come as flags, so the workspace needs no trust prompt.
+ * Arguments pass through, and the launcher execs Claude Code, so signals and
+ * the exit code are its own.
  */
 export const writeAgent = Effect.fn("writeAgent")(function* (layout: Layout, apiUrl: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -373,11 +374,16 @@ export const writeAgent = Effect.fn("writeAgent")(function* (layout: Layout, api
       `export PATCHY_STATE_DIR=${quote(layout.state)}`,
       "export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
       `cd ${quote(layout.workspace)} || exit 1`,
-      // Not exec'd, so the trap deletes the session's temp folder when Claude Code exits.
-      'TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/patchy-agent.XXXXXX") || exit 1',
+      "# Each session's temp folder is named for its pid, which exec keeps for Claude Code;",
+      "# a later launch deletes the folders whose process is gone.",
+      'for old in "${TMPDIR:-/tmp}"/patchy-agent-*.*; do',
+      "  pid=${old##*/patchy-agent-}; pid=${pid%%.*}",
+      '  case $pid in "" | *[!0-9]*) continue ;; esac',
+      '  [ -O "$old" ] && ! kill -0 "$pid" 2>/dev/null && rm -rf "$old"',
+      "done",
+      'TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/patchy-agent-$$.XXXXXX") || exit 1',
       "export TMPDIR",
-      `trap 'rm -rf "$TMPDIR"' EXIT`,
-      `claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir "$TMPDIR" --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
+      `exec claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir "$TMPDIR" --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
       ""
     ].join("\n"),
     { mode: 0o755 }

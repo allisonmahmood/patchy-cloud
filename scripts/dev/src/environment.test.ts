@@ -24,14 +24,14 @@ const environmentWith = Effect.fn(function* (script: string) {
   return { dir, layout, PATH: `${stubs}:${yield* Config.String("PATH")}` };
 });
 
-/** Runs the launcher with exactly `env`, returning its exit code and stdout. */
+/** Runs the launcher with exactly `env`, returning its pid, exit code and stdout. */
 const launch = Effect.fn(function* (agent: string, env: Record<string, string>) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* spawner.spawn(
     ChildProcess.make(agent, [], { env, extendEnv: false, stdin: "ignore" })
   );
   const stdout = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
-  return { exitCode: yield* child.exitCode, stdout };
+  return { pid: child.pid, exitCode: yield* child.exitCode, stdout };
 });
 
 it.layer(NodeServices.layer)("the agent launcher", (it) => {
@@ -53,32 +53,41 @@ it.layer(NodeServices.layer)("the agent launcher", (it) => {
     }).pipe(Effect.scoped)
   );
 
-  it.effect("gives each session a temp folder of its own and deletes it when claude exits", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const { dir, layout, PATH } = yield* environmentWith(
-        `printf 'TMPDIR=%s\\n' "$TMPDIR"; printf '%s\\n' "$@"; exit 7`
-      );
-      const scratch = path.join(dir, "scratch");
-      yield* fs.makeDirectory(scratch);
-      const session = Effect.fn(function* (env: Record<string, string>) {
-        const { exitCode, stdout } = yield* launch(layout.agent, { PATH, ...env });
-        assert.strictEqual(exitCode, 7);
-        const lines = stdout.split("\n");
-        const temp = lines[0]!.slice("TMPDIR=".length);
-        assert.strictEqual(lines[lines.indexOf("--add-dir") + 1], temp);
-        assert.isFalse(yield* fs.exists(temp));
-        return temp;
-      });
+  it.effect(
+    "gives each session a temp folder of its own, deleted by a later launch once it ends",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { dir, layout, PATH } = yield* environmentWith(
+          `printf 'TMPDIR=%s\\n' "$TMPDIR"; printf '%s\\n' "$@"; exit 7`
+        );
+        const scratch = path.join(dir, "scratch");
+        // A running session's folder, named for this test's own live pid.
+        const live = path.join(scratch, `patchy-agent-${process.pid}.running`);
+        yield* fs.makeDirectory(live, { recursive: true });
+        const session = Effect.fn(function* (env: Record<string, string>) {
+          const { pid, exitCode, stdout } = yield* launch(layout.agent, { PATH, ...env });
+          // Claude Code's own exit code: the launcher execs it, keeping the pid the folder is named for.
+          assert.strictEqual(exitCode, 7);
+          const lines = stdout.split("\n");
+          const temp = lines[0]!.slice("TMPDIR=".length);
+          assert.strictEqual(lines[lines.indexOf("--add-dir") + 1], temp);
+          assert.isTrue(path.basename(temp).startsWith(`patchy-agent-${pid}.`));
+          return temp;
+        });
 
-      const first = yield* session({ TMPDIR: scratch });
-      const second = yield* session({ TMPDIR: scratch });
-      assert.strictEqual(path.dirname(first), scratch);
-      assert.strictEqual(path.dirname(second), scratch);
-      assert.notStrictEqual(first, second);
-      assert.strictEqual(path.dirname(yield* session({})), "/tmp");
-    }).pipe(Effect.scoped)
+        const first = yield* session({ TMPDIR: scratch });
+        assert.strictEqual(path.dirname(first), scratch);
+        assert.isTrue(yield* fs.exists(first));
+        const second = yield* session({ TMPDIR: scratch });
+        assert.strictEqual(path.dirname(second), scratch);
+        assert.isFalse(yield* fs.exists(first));
+        assert.isTrue(yield* fs.exists(live));
+        const fallback = yield* session({});
+        assert.strictEqual(path.dirname(fallback), "/tmp");
+        yield* fs.remove(fallback, { recursive: true });
+      }).pipe(Effect.scoped)
   );
 
   it.effect(

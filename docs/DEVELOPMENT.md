@@ -215,11 +215,13 @@ An environment is this instance plus what a multi-person check or demo needs:
   `down` removes it, and never in your `~/Patchy`. `up` writes it when it is
   missing and never over one that exists. The launcher sets `PATCHY_API_URL` to
   this instance: a command in a repo bound to another one, production included,
-  is refused with an instance mismatch before anything is sent. An explicit
-  `--api-url` still wins, so it's a guard, not a sandbox. Each session starts
-  clean, with auto memory off and a temp folder of its own, made in `$TMPDIR` or
-  `/tmp` and deleted when Claude Code exits. Sessions can run side by side; one
-  builder agent per patch is the norm, and nothing enforces it.
+  is refused with an instance mismatch before anything is sent. It's a guard,
+  not a sandbox: an explicit `--api-url` still wins, and so does the
+  `.local/dev/env` of another checkout running `pnpm dev`, which only ever names
+  a local instance. Each session starts clean, with auto memory off and a temp
+  folder of its own, made in `$TMPDIR` or `/tmp`; a later launch deletes it once
+  that session has ended. Sessions can run side by side; one builder agent per
+  patch is the norm, and nothing enforces it.
 
   Its commands still run as you, with your HOME and npm prefix, so never give it
   the portal's setup line or have it run `patchy setup`. The setup line replaces

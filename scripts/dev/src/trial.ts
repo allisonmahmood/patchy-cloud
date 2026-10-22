@@ -715,7 +715,7 @@ export const trialMarkdown = (input: {
     "",
     ...input.provenance,
     "",
-    `Each side gave the task to a fresh agent: the environment's \`agent\` launcher, Claude Code on \`${input.model}\` as the scenario's publisher, with the release's Patchy skill and no personal instructions or settings, run without a person within ${plural(input.budget.maxTurns, "turn")} and ${plural(input.budget.minutes, "minute")}. ` +
+    `Each side gave the task to a fresh agent: after's \`agent\` launcher in the side's environment, Claude Code on \`${input.model}\` as the scenario's publisher, with the side's release of the Patchy skill and no personal instructions or settings, run without a person within ${plural(input.budget.maxTurns, "turn")} and ${plural(input.budget.minutes, "minute")}. ` +
       "The log keeps each tool call, commands with their exit codes, and one line per failure; not the agent's reasoning or what its commands printed. " +
       input.redaction,
     "",
