@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 import type { RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import type { LoadedVersion } from "./LoadedVersions.js";
 
@@ -17,6 +18,11 @@ export class Binding extends Context.Service<
      * from a request. Absent, it is a page's operation, which no agent tool admits.
      */
     readonly agent?: { readonly name: string };
+    /**
+     * Told when a mutation answers with its key's outcome stored by an earlier invocation, so
+     * nothing ran now. Only Patchy's agent callers listen, to say a retried change replayed.
+     */
+    readonly onReplay?: Effect.Effect<void>;
     /**
      * When the caller's deadline for this operation fires, in epoch milliseconds. An integration
      * that queues for a slot stops waiting before it, so a refused wait is never a timeout.

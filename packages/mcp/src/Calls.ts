@@ -15,6 +15,7 @@
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { SqlError } from "effect/sql/SqlError";
@@ -60,7 +61,8 @@ export type CallArgs = typeof CallArgs.Type;
 /** What `change_patch` takes: a call and the change key the agent names it by. */
 export const ChangeArgs = Schema.Struct({
   ...CallArgs.fields,
-  key: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(Tools.KEY_CHARS))
+  // Any string: Patchy keeps only its hash.
+  key: Schema.String
 });
 
 const strict = { onExcessProperty: "error" } as const;
@@ -231,14 +233,16 @@ const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections
 
 /**
  * Runs a reached tool on the version the call read, as the person through their agent, with
- * `mutationKey` for a change: Runtime's reply, or its refusal. A host without an invocation
- * runs no patch code.
+ * `mutationKey` for a change: Runtime's reply, or its refusal. `onReplay` is told when the reply
+ * is the key's outcome an earlier invocation committed. A host without an invocation runs no
+ * patch code.
  */
 export const invoke = Effect.fn("Calls.invoke")(function* (
   identity: AgentConnections.AgentIdentity,
   target: Target,
   invocation: Option.Option<Invocation.Invocation["Service"]>,
-  mutationKey?: string
+  mutationKey?: string,
+  onReplay?: Effect.Effect<void>
 ): Effect.fn.Return<
   ServerCallReply,
   Runtime.RuntimeError,
@@ -253,6 +257,7 @@ export const invoke = Effect.fn("Calls.invoke")(function* (
     tool: target.tool,
     args: target.args,
     ...(mutationKey === undefined ? {} : { mutationKey }),
+    ...(onReplay === undefined ? {} : { onReplay }),
     recheck: recheck(identity).pipe(Effect.provideContext(services))
   }).pipe(Effect.provideService(Invocation.Invocation, invocation.value));
 });
@@ -315,6 +320,17 @@ const keyUsed = (tool: string) =>
     from: "patchy",
     message: `${tool} is an action, and it already ran with this key; an action that writes is not safe to retry, so Patchy never runs its key twice. Read what it changes first, then retry with a new key if it still needs doing.`
   });
+
+/**
+ * A retry of a mutation whose outcome Patchy doesn't know, too near the end of its key's 24 hours
+ * for Runtime to be sure to keep that outcome until the retry finishes.
+ */
+const keyExpiring = toolRefusal({
+  code: "key_expired",
+  from: "patchy",
+  message:
+    "Patchy doesn't know whether your first try with this key happened, and the key is too close to the end of its 24 hours to retry safely. Read what it changes first, then use a new key if it still needs doing."
+});
 
 /** A try while the key's first try, or an earlier retry, is still running. */
 const keyBusy = toolRefusal({
@@ -394,6 +410,8 @@ export const change = Effect.fn("Calls.change")(function* (
       return keyUsed(target.tool);
     case "Busy":
       return keyBusy;
+    case "TooLate":
+      return keyExpiring;
     case "Replay":
       yield* WideEvents.enrich({ replayed: true });
       return toolAnswer({
@@ -403,8 +421,16 @@ export const change = Effect.fn("Calls.change")(function* (
       } satisfies CallSuccess);
     case "Run":
   }
-  yield* WideEvents.enrich({ replayed: false });
-  const answer = yield* invoke(identity, target, invocation, claimed.mutationKey).pipe(
+  // Runtime says when its own record of the mutation key answered a retry Patchy hadn't seen
+  // commit, such as one after an unknown outcome: that change replayed too.
+  const replayed = yield* Ref.make(false);
+  const answer = yield* invoke(
+    identity,
+    target,
+    invocation,
+    claimed.mutationKey,
+    Ref.set(replayed, true)
+  ).pipe(
     Effect.onExit((exit) =>
       claimed
         .settle(
@@ -420,8 +446,19 @@ export const change = Effect.fn("Calls.change")(function* (
         )
     ),
     Effect.uninterruptible,
-    Effect.map((reply) => callAnswer(patch, target.tool, target.versionNumber, reply)),
+    Effect.flatMap((reply) =>
+      Effect.map(Ref.get(replayed), (again) =>
+        again && reply.ok
+          ? toolAnswer({
+              result: reply.value,
+              version: target.versionNumber,
+              replayed: true
+            } satisfies CallSuccess)
+          : callAnswer(patch, target.tool, target.versionNumber, reply)
+      )
+    ),
     Effect.catch((error) => Effect.succeed(changeRefusal(error, target.descriptor)))
   );
+  yield* WideEvents.enrich({ replayed: yield* Ref.get(replayed) });
   return changeAnswer(target.tool, target.versionNumber, answer);
 });

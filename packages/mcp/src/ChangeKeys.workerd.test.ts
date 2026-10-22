@@ -2,8 +2,8 @@
  * `change_patch` onto real workerd, through two doors over one database, each with its own
  * invocation, as two host replicas are: a change logs three calls once, its retry on the other
  * replica answers the first result and writes nothing, a retry whose first result the door never
- * recorded resolves through Runtime's own mutation key without writing again, and an action
- * runs once per key.
+ * recorded resolves through Runtime's own mutation key, replayed and without writing again, and
+ * an action runs once per key.
  */
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -159,13 +159,17 @@ it.layer(services, { excludeTestServices: true, timeout: 90_000 })(
           assert.strictEqual(yield* count, 3);
 
           // A first try whose result the door never kept, as when its answer was an unknown
-          // outcome: the retry runs under the same mutation key, which Runtime committed once.
+          // outcome: the retry runs under the same mutation key, which Runtime committed once,
+          // so Runtime's own record answers it, and it replayed.
           const sql = yield* SqlClient.SqlClient;
           yield* sql`UPDATE change_keys SET result = NULL WHERE patch_id = ${published.patchId}`;
-          assert.deepStrictEqual(answer(yield* change(two, "logCalls", log, "import-monday")), {
+          const resolved = yield* change(two, "logCalls", log, "import-monday");
+          assert.deepStrictEqual(answer(resolved), {
             result: { logged: 3 },
-            version: 1
+            version: 1,
+            replayed: true
           });
+          assert.include(resolved.event, { replayed: true });
           assert.strictEqual(yield* count, 3);
           assert.strictEqual(
             answer(yield* change(one, "logCalls", log, "import-monday"))["replayed"],

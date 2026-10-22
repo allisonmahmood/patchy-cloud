@@ -4,8 +4,10 @@
  * patch for 24 hours, the lifetime of a page's mutation keys, and keeps its first try's
  * version, tool and arguments. A mutation's first try is given a fresh mutation key from
  * Patchy, which every retry reuses, so Runtime commits it once; once Patchy has seen it commit,
- * the record answers its result to any replica without running anything. An action's key runs
- * once and never again.
+ * the record answers its result to any replica without running anything. A retry that Patchy
+ * hasn't seen commit runs again under that mutation key only while Runtime is sure to keep its
+ * outcome, which ends a few minutes before the 24 hours do; after that it is refused. An
+ * action's key runs once and never again.
  *
  * Every time here is the database's clock, read in the statement that uses it, so replicas
  * whose clocks disagree answer a retry alike. The key itself is never stored, only its hash,
@@ -46,8 +48,8 @@ export interface Change {
 /**
  * What a key's record says of a try: run it, with the mutation key every try of a mutation
  * shares, and settle the key when it ends; answer a committed mutation's result again; or refuse
- * it, because a try is still running, the key named another change or version, or an action
- * already took it.
+ * it, because a try is still running, the key named another change or version, an action already
+ * took it, or a mutation's outcome is unknown too near the end of its 24 hours to retry safely.
  */
 export type Claim =
   | {
@@ -60,17 +62,8 @@ export type Claim =
   | { readonly _tag: "Busy" }
   | { readonly _tag: "Conflict" }
   | { readonly _tag: "VersionChanged" }
-  | { readonly _tag: "Used" };
-
-export class ChangeKeys extends Context.Service<
-  ChangeKeys,
-  {
-    /** Claims a change's key for this try, or says why the try must not run. */
-    readonly claim: (change: Change) => Effect.Effect<Claim, SqlError>;
-    /** Drops every key past its 24 hours. A key past them is new again, swept or not. */
-    readonly sweep: Effect.Effect<void, SqlError>;
-  }
->()("@patchy/mcp/ChangeKeys") {}
+  | { readonly _tag: "Used" }
+  | { readonly _tag: "TooLate" };
 
 /** A key's record: its connection, its patch and the key's hash. */
 const Keyed = Schema.Struct({
@@ -87,8 +80,19 @@ const Stored = Schema.Struct({
   kind: Schema.Literals(["mutation", "action"]),
   result: Schema.NullOr(Schema.String),
   running: Schema.Boolean,
+  retryable: Schema.Boolean,
   expired: Schema.Boolean
 });
+
+export class ChangeKeys extends Context.Service<
+  ChangeKeys,
+  {
+    /** Claims a change's key for this try, or says why the try must not run. */
+    readonly claim: (change: Change) => Effect.Effect<Claim, SqlError>;
+    /** Drops every key past its 24 hours. A key past them is new again, swept or not. */
+    readonly sweep: Effect.Effect<void, SqlError>;
+  }
+>()("@patchy/mcp/ChangeKeys") {}
 
 /** A claim that found the record changing under it gives up after this many reads, as busy. */
 const ROUNDS = 3;
@@ -104,25 +108,41 @@ export const make = Effect.gen(function* () {
     action:
       ((yield* ContractLimits.get("tier2.action.deadline")) + cleanup + START_ALLOWANCE_MS) / 1000
   };
+  // A retry under the first try's mutation key must finish while Runtime still keeps that key's
+  // outcome. Runtime ages the key on its hosts' clocks, which may run ahead of the database's by
+  // its allowed skew, so retries stop that much and one try's longest run before the 24 hours end.
+  const retryWindow =
+    lifetime - leases.mutation - (yield* ContractLimits.get("tier2.mutation.keyFutureSkew")) / 1000;
   const live = sql`created_at > clock_timestamp() - make_interval(secs => ${lifetime})`;
+  const retryable = sql`created_at > clock_timestamp() - make_interval(secs => ${retryWindow})`;
 
   const where = (keyed: Keyed) =>
     sql`connection_id = ${keyed.connectionId} AND patch_id = ${keyed.patchId} AND key_hash = ${keyed.keyHash}`;
 
-  /** The try's hold ends; a committed mutation's result stays, whichever try settles first. */
+  /**
+   * The try's hold ends; a committed mutation's result stays, whichever try settles first. It
+   * waits at most the settlement cleanup for the row, so a stalled database can't hold the
+   * request open: the hold then lasts until its lease runs out.
+   */
   const settle = (keyed: Keyed, attempt: string) => (result: string | undefined) =>
-    Effect.asVoid(
-      sql`
-      UPDATE change_keys SET running_until = NULL, result = COALESCE(${result ?? null}, result)
-      WHERE ${where(keyed)} AND attempt = ${attempt}`
-    ).pipe(Effect.withSpan("ChangeKeys.settle"));
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`SELECT set_config('statement_timeout', ${String(cleanup)}, true)`;
+          yield* sql`
+            UPDATE change_keys SET running_until = NULL, result = COALESCE(${result ?? null}, result)
+            WHERE ${where(keyed)} AND attempt = ${attempt}`;
+        })
+      )
+      .pipe(Effect.withSpan("ChangeKeys.settle"));
 
   const read = SqlSchema.findOneOption({
     Request: Keyed,
     Result: Stored,
     execute: (keyed) => sql`
       SELECT version_id AS "versionId", tool, args_hash AS "argsHash", kind, result,
-        COALESCE(running_until > clock_timestamp(), false) AS running, NOT ${live} AS expired
+        COALESCE(running_until > clock_timestamp(), false) AS running, ${retryable} AS retryable,
+        NOT ${live} AS expired
       FROM change_keys WHERE ${where(keyed)}`
   });
 
@@ -167,7 +187,7 @@ export const make = Effect.gen(function* () {
         WHERE ${where(keyed)} AND kind = 'mutation' AND result IS NULL
           AND (running_until IS NULL OR running_until <= clock_timestamp())
           AND version_id = ${change.versionId} AND tool = ${change.tool}
-          AND args_hash = ${argsHash} AND ${live}
+          AND args_hash = ${argsHash} AND ${retryable}
         RETURNING mutation_key AS "mutationKey"`;
       if (retry !== undefined) return run(attempt, retry.mutationKey);
 
@@ -181,14 +201,16 @@ export const make = Effect.gen(function* () {
       if (found.running) return { _tag: "Busy" } as const;
       if (found.kind === "action") return { _tag: "Used" } as const;
       if (found.result !== null) return { _tag: "Replay", result: found.result } as const;
+      if (!found.retryable) return { _tag: "TooLate" } as const;
       // Its try settled without a result since the update: try the retry again.
     }
     return { _tag: "Busy" } as const;
   });
 
-  const sweep = Effect.asVoid(sql`DELETE FROM change_keys WHERE NOT ${live}`).pipe(
-    Effect.withSpan("ChangeKeys.sweep")
-  );
+  // One cutoff for the whole statement, so the sweep reads the expiry index.
+  const sweep = Effect.asVoid(
+    sql`DELETE FROM change_keys WHERE created_at <= now() - make_interval(secs => ${lifetime})`
+  ).pipe(Effect.withSpan("ChangeKeys.sweep"));
 
   return ChangeKeys.of({ claim, sweep });
 });

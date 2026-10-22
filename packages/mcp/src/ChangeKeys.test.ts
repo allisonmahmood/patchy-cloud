@@ -13,6 +13,7 @@ import type * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { HandlerDescriptors, ServerCallReply } from "@patchy/api";
 import { AgentConnections } from "@patchy/auth";
+import { sha256 } from "@patchy/core";
 import { Invocation, Runtime } from "@patchy/runtime";
 import * as ChangeKeys from "./ChangeKeys.js";
 import {
@@ -236,18 +237,28 @@ it.layer(harness)("change_patch", (it) => {
   );
 
   it.effect(
-    "a try that didn't commit leaves its key to the same change, which runs again under the same mutation key",
+    "a try that didn't commit leaves its key to the same change, which runs again under the same mutation key and says when Runtime's record answered",
     () =>
       Effect.gen(function* () {
         const acme = yield* company("change-unknown", [["Priya Shah", "admin"]]);
         const priya = acme.people[0]!;
         yield* publish(acme.id, priya, "new-business", { handlers: leads });
-        const replies: Array<Effect.Effect<ServerCallReply, Runtime.RuntimeError>> = [
-          Effect.fail(new Runtime.UnknownOutcome({ cause: "lost", correlationId: "cor_unknown" })),
-          Effect.succeed({ ok: false, source: "handler", code: "duplicate_lead" }),
-          ok({ id: "lead-3" })
+        const replies: Array<
+          (handed: Handed) => Effect.Effect<ServerCallReply, Runtime.RuntimeError>
+        > = [
+          () =>
+            Effect.fail(
+              new Runtime.UnknownOutcome({ cause: "lost", correlationId: "cor_unknown" })
+            ),
+          // Runtime finds its key committed by the first try: its record answers, and it says so.
+          (handed) =>
+            (handed.binding.onReplay ?? Effect.void).pipe(Effect.andThen(ok({ id: "lead-3" }))),
+          () => Effect.succeed({ ok: false, source: "handler", code: "duplicate_lead" }),
+          () => ok({ id: "lead-4" })
         ];
-        const fake = yield* runtime(() => replies.shift() ?? Effect.die("called too often"));
+        const fake = yield* runtime(
+          (handed) => replies.shift()?.(handed) ?? Effect.die("called too often")
+        );
         const send = yield* doorTo(fake.service, "203.0.113.64");
         const add = { tool: "addLead", args: { name: "Ada", score: 3 }, key: "k-unknown" };
 
@@ -258,22 +269,32 @@ it.layer(harness)("change_patch", (it) => {
           message:
             "Runtime request refused: unknown_outcome. Retry with the same key: Patchy answers its result if it happened and makes it if it didn't. Correlation id: cor_unknown."
         });
-        assert.strictEqual(refusal(yield* change(send, priya, add))["code"], "duplicate_lead");
-        assert.deepStrictEqual(structured(yield* change(send, priya, add)), {
+        assert.include(unknown.event, { replayed: false });
+        const resolved = yield* change(send, priya, add);
+        assert.deepStrictEqual(structured(resolved), {
           result: { id: "lead-3" },
-          version: 1
+          version: 1,
+          replayed: true
         });
-        // Every try ran under the first try's mutation key, so Runtime commits it at most once.
-        assert.strictEqual(fake.handed.length, 3);
-        const keys = new Set(fake.handed.map(mutationKeyOf));
-        assert.strictEqual(keys.size, 1);
-        // Committed now, it is answered from the record.
+        assert.include(resolved.event, { replayed: true });
+        // Both tries ran under the first try's mutation key, so Runtime commits it at most once.
+        assert.strictEqual(fake.handed.length, 2);
+        assert.strictEqual(new Set(fake.handed.map(mutationKeyOf)).size, 1);
+        // Recorded now, it is answered from the record without reaching Runtime.
         assert.deepStrictEqual(structured(yield* change(send, priya, add)), {
           result: { id: "lead-3" },
           version: 1,
           replayed: true
         });
-        assert.strictEqual(fake.handed.length, 3);
+        assert.strictEqual(fake.handed.length, 2);
+
+        // A patch's own refusal rolled the change back, so its retry runs it, and nothing replayed.
+        const other = { ...add, key: "k-refused" };
+        assert.strictEqual(refusal(yield* change(send, priya, other))["code"], "duplicate_lead");
+        const ran = yield* change(send, priya, other);
+        assert.deepStrictEqual(structured(ran), { result: { id: "lead-4" }, version: 1 });
+        assert.include(ran.event, { replayed: false });
+        assert.strictEqual(mutationKeyOf(fake.handed[3]), mutationKeyOf(fake.handed[2]));
       })
   );
 
@@ -354,51 +375,78 @@ it.layer(harness)("change_patch", (it) => {
   );
 
   it.effect(
-    "keeps only hashes, a key lives 24 hours and is a new change past them, and the sweep drops it",
+    "keeps only hashes, a key lives 24 hours and is a new change past them, a retry stops before Runtime's record goes, and the sweep",
     () =>
       Effect.gen(function* () {
         const acme = yield* company("change-expiry", [["Priya Shah", "admin"]]);
         const priya = acme.people[0]!;
         const published = yield* publish(acme.id, priya, "new-business", { handlers: leads });
-        const fake = yield* runtime(() => ok({ id: "lead-5" }));
+        let unknown = false;
+        const fake = yield* runtime(() =>
+          unknown
+            ? Effect.fail(new Runtime.UnknownOutcome({ cause: "lost", correlationId: "cor_late" }))
+            : ok({ id: "lead-5" })
+        );
         const send = yield* doorTo(fake.service, "203.0.113.67");
-        const add = {
+        const add = (key: string) => ({
           tool: "addLead",
           args: { name: "Ada Lovelace", score: 5 },
-          key: "import-monday"
-        };
+          key
+        });
         const sql = yield* SqlClient.SqlClient;
-        const rows = () =>
-          sql`SELECT * FROM change_keys WHERE patch_id = ${published.patchId} ORDER BY created_at`;
+        /** Makes a key's first try `interval` older. */
+        const age = (key: string, interval: string) =>
+          sql`UPDATE change_keys SET created_at = created_at - ${interval}::interval
+            WHERE patch_id = ${published.patchId} AND key_hash = ${sha256(key)}`;
 
-        yield* change(send, priya, add);
-        const stored = JSON.stringify(yield* rows());
+        yield* change(send, priya, add("import-monday"));
+        const stored = JSON.stringify(
+          yield* sql`SELECT * FROM change_keys WHERE patch_id = ${published.patchId}`
+        );
         for (const leak of ["import-monday", "Ada Lovelace"]) assert.notInclude(stored, leak);
 
         // Just inside its 24 hours it is the same change; past them, a new one.
-        yield* sql`UPDATE change_keys SET created_at = created_at - interval '23 hours 59 minutes'
-          WHERE patch_id = ${published.patchId}`;
-        assert.strictEqual(structured(yield* change(send, priya, add))["replayed"], true);
-        yield* sql`UPDATE change_keys SET created_at = created_at - interval '2 minutes'
-          WHERE patch_id = ${published.patchId}`;
-        const again = yield* change(send, priya, add);
+        yield* age("import-monday", "23 hours 59 minutes");
+        assert.strictEqual(
+          structured(yield* change(send, priya, add("import-monday")))["replayed"],
+          true
+        );
+        yield* age("import-monday", "2 minutes");
+        const again = yield* change(send, priya, add("import-monday"));
         assert.notProperty(structured(again), "replayed");
         assert.include(again.event, { replayed: false });
         assert.strictEqual(fake.handed.length, 2);
         assert.notStrictEqual(mutationKeyOf(fake.handed[1]), mutationKeyOf(fake.handed[0]));
 
+        // A mutation whose outcome Patchy doesn't know runs again under its mutation key only
+        // while Runtime is sure to keep that key's outcome, which ends minutes before 24 hours.
+        unknown = true;
+        assert.strictEqual(
+          refusal(yield* change(send, priya, add("import-late")))["code"],
+          "unknown_outcome"
+        );
+        unknown = false;
+        yield* age("import-late", "23 hours 55 minutes");
+        assert.deepStrictEqual(refusal(yield* change(send, priya, add("import-late"))), {
+          code: "key_expired",
+          from: "patchy",
+          message:
+            "Patchy doesn't know whether your first try with this key happened, and the key is too close to the end of its 24 hours to retry safely. Read what it changes first, then use a new key if it still needs doing."
+        });
+        assert.strictEqual(fake.handed.length, 3);
+
         // The sweep drops keys past their 24 hours and keeps the rest.
-        yield* change(send, priya, { ...add, key: "import-tuesday" });
-        yield* sql`UPDATE change_keys SET created_at = created_at - interval '24 hours'
-          WHERE patch_id = ${published.patchId} AND tool = 'addLead'
-            AND created_at = (SELECT min(created_at) FROM change_keys WHERE patch_id = ${published.patchId})`;
+        yield* age("import-late", "1 hour");
         yield* ChangeKeys.ChangeKeys.use((keys) => keys.sweep);
-        assert.strictEqual((yield* rows()).length, 1);
+        assert.deepStrictEqual(
+          yield* sql`SELECT key_hash AS "keyHash" FROM change_keys WHERE patch_id = ${published.patchId}`,
+          [{ keyHash: sha256("import-monday") }]
+        );
       })
   );
 
   it.effect(
-    "refuses arguments without a usable key, a read tool and a host without patch code, keeping the key free",
+    "refuses arguments without a string key, a read tool and a host without patch code, keeping the key free, and takes any string as a key",
     () =>
       Effect.gen(function* () {
         const acme = yield* company("change-args", [["Priya Shah", "admin"]]);
@@ -410,8 +458,6 @@ it.layer(harness)("change_patch", (it) => {
 
         for (const sent of [
           { patch: "new-business", tool: "addLead", args },
-          { patch: "new-business", tool: "addLead", args, key: "" },
-          { patch: "new-business", tool: "addLead", args, key: "k".repeat(257) },
           { patch: "new-business", tool: "addLead", args, key: 7 }
         ]) {
           const refused = refusal(yield* send(call(priya.token, "change_patch", sent)));
@@ -440,6 +486,16 @@ it.layer(harness)("change_patch", (it) => {
           yield* sql`SELECT count(*)::int AS count FROM change_keys WHERE patch_id = ${published.patchId}`,
           [{ count: 0 }]
         );
+        // Any string is a key, the empty one and a long one included.
+        for (const key of ["", "k".repeat(5_000), "import-monday ✓"])
+          assert.deepStrictEqual(
+            structured(yield* change(send, priya, { tool: "addLead", args, key })),
+            {
+              result: { id: "lead-6" },
+              version: 1
+            }
+          );
+        assert.strictEqual(fake.handed.length, 3);
       })
   );
 });

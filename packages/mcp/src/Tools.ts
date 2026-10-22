@@ -21,8 +21,6 @@ export const PATCH_CHARS = 2_048;
  * a name is ASCII, and a patch's tools fit in `agentToolsBytes`.
  */
 export const TOOL_CHARS = agentToolsBytes;
-/** The longest change key `change_patch` takes. Patchy keeps only its hash. */
-export const KEY_CHARS = 256;
 
 /** A tool as `tools/list` shows it. */
 export interface Tool {
@@ -124,8 +122,6 @@ export const tools: readonly Tool[] = [
         args,
         key: {
           type: "string",
-          minLength: 1,
-          maxLength: KEY_CHARS,
           description:
             "Your name for this one change, such as import-monday: fresh for each change, the same on a retry. It lasts 24 hours."
         }

@@ -666,7 +666,11 @@ it.live(
       );
       const agentCall = (
         tool: string,
-        options: { readonly recheck?: Invocation.AgentCall["recheck"]; readonly key?: string } = {}
+        options: {
+          readonly recheck?: Invocation.AgentCall["recheck"];
+          readonly key?: string;
+          readonly onReplay?: Invocation.AgentCall["onReplay"];
+        } = {}
       ) =>
         Invocation.callAgent({
           version: area,
@@ -675,6 +679,7 @@ it.live(
           tool,
           args: {},
           ...(options.key === undefined ? {} : { mutationKey: options.key }),
+          ...(options.onReplay === undefined ? {} : { onReplay: options.onReplay }),
           recheck: options.recheck ?? Effect.succeed(viewer)
         }).pipe(Effect.provideService(Invocation.Invocation, invocations));
       const claude = { name: "Claude" };
@@ -695,7 +700,11 @@ it.live(
         ok: true,
         value: { agent: claude, nested: { viewer: "usr_dev", agent: claude } }
       });
-      const saved = yield* agentCall("save", { key: yield* mint });
+      const key = yield* mint;
+      let replays = 0;
+      const onReplay = Effect.sync(() => void replays++);
+      const saved = yield* agentCall("save", { key, onReplay });
+      assert.strictEqual(replays, 0);
       assert.isTrue(saved.ok);
       if (saved.ok) assert.deepStrictEqual(saved.value, claude);
       // A failing recheck stops the call at its next company callback.
@@ -746,6 +755,9 @@ it.live(
         outcome: "success"
       });
       assert.deepStrictEqual(call?.agent, claude);
+      // Retried under its key, the change answers with its first outcome and says so.
+      assert.deepStrictEqual(yield* agentCall("save", { key, onReplay }), saved);
+      assert.strictEqual(replays, 1);
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000
 );

@@ -25,6 +25,7 @@ import { MutationTransaction } from "@patchy/runtime/core";
 import { Invocation, Runtime, type LoadedVersions } from "@patchy/runtime/dev";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type { AgentReply, AgentRequest } from "./devState.js";
 
@@ -97,13 +98,15 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
   // Each change gets a fresh change key; in dev a mutation's becomes its mutation key, kept by
   // its retries, so a retried mutation writes once. An action is never retried.
   const mutationKey = descriptor.kind === "mutation" ? yield* MutationTransaction.mint : undefined;
+  // A retry answered with the outcome an earlier try committed replayed, as at the door.
+  const replayed = yield* Ref.make(false);
   const call = Invocation.callAgent({
     version,
     person: mount.person,
     agent,
     tool,
     args,
-    ...(mutationKey === undefined ? {} : { mutationKey }),
+    ...(mutationKey === undefined ? {} : { mutationKey, onReplay: Ref.set(replayed, true) }),
     recheck: Effect.succeed(mount.person)
   }).pipe(Effect.provideService(Invocation.Invocation, invocation.value));
   const events = yield* WideEvents.WideEvents;
@@ -114,7 +117,13 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
       : // An unknown outcome resolves on a retry with the same key.
         call.pipe(Effect.retry({ times: 2, while: (error) => error.code === "unknown_outcome" }))
     ).pipe(
-      Effect.map((reply) => callAnswer(dev.patch.name, tool, build, reply)),
+      Effect.flatMap((reply) =>
+        Effect.map(Ref.get(replayed), (again) =>
+          again && reply.ok
+            ? toolAnswer({ result: reply.value, version: build, replayed: true })
+            : callAnswer(dev.patch.name, tool, build, reply)
+        )
+      ),
       Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor))),
       // Answers keep the read cap here as at the door: a read past it is refused, and a change
       // past it succeeds with its result left out.
