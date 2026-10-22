@@ -1,0 +1,28 @@
+# Overlay on compose.yaml; secrets and public hostname come from the private env file.
+services:
+  db:
+    restart: unless-stopped
+  redis:
+    restart: unless-stopped
+  nango:
+    restart: unless-stopped
+    environment:
+      NANGO_SERVER_URL: https://${NANGO_HOST:?Set the prototype hostname}
+      NANGO_PUBLIC_SERVER_URL: https://${NANGO_HOST}
+      NANGO_PUBLIC_CONNECT_URL: https://${NANGO_HOST}
+      NANGO_DASHBOARD_API_URL: "/"
+  https:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    restart: unless-stopped
+    environment:
+      NANGO_HOST: ${NANGO_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+    depends_on:
+      - nango
+volumes:
+  certificates:

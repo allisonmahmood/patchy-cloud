@@ -1,4 +1,4 @@
-# Local technical proof only. No Azure or production resources.
+# Prototype only. Loopback bindings also keep Azure administration private.
 name: patchy-nango-proof
 services:
   db:

@@ -1,0 +1,29 @@
+{$NANGO_HOST} {
+	# Only browser authorization routes reach the API. Admin and secret-key APIs
+	# remain on VM loopback, reached through SSH by the prototype Patchy server.
+	@authorization path /oauth/connect/* /oauth/callback /connect/session /connect/telemetry
+	handle @authorization {
+		reverse_proxy nango:3003
+	}
+	@catalog {
+		method GET OPTIONS
+		path /integrations /providers /providers/*
+	}
+	handle @catalog {
+		reverse_proxy nango:3003
+	}
+	@socket {
+		path /
+		header Upgrade websocket
+	}
+	handle @socket {
+		reverse_proxy nango:3003
+	}
+	@private path /api /api/* /integrations /integrations/* /providers /providers/* /connection /connection/* /connections /connections/* /proxy /proxy/* /connect/sessions /connect/sessions/* /health /ready /env.js /providers.json /internal /internal/*
+	handle @private {
+		respond 404
+	}
+	handle {
+		reverse_proxy nango:3009
+	}
+}

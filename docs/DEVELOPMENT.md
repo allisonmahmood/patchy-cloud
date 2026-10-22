@@ -405,11 +405,20 @@ Stop patch sessions with `pnpm patchy dev stop` before stopping the cloud.
 
 ## Local Nango / Salesforce proof
 
-This prototype does not provision Azure or change production. Nango's free
+This prototype never uses Patchy production. Nango's free
 Auth/Proxy server is pinned in `scripts/nango/compose.yaml` to `hosted-0.71.12`
 and its image digest. Postgres and Redis stay on its private Compose network;
 the dashboard/API and Connect UI bind to loopback only. Existing Postgres and
 PostHog provider implementations are unchanged.
+
+The connector rollout requires no integration-vendor subscription and no
+Patchy-owned provider app registration, manual review or vendor outreach.
+This Salesforce technical proof still requires OAuth app credentials and
+therefore does not meet that rollout requirement. The running free instance
+has no Nango-provided Salesforce or Gmail OAuth app credentials. API-key and
+automatically registered MCP connectors are candidates for a subsequent proof;
+none of those new providers, nor Gmail or personal connections, is implemented
+by this branch.
 
 Prepare local secrets without starting anything:
 
@@ -455,8 +464,8 @@ Dev reads real data as the machine token's user, following ADR-0013.
 Offline suites simulate Nango and Salesforce over an injected HTTP client;
 they exercise real storage, encryption, authorization binding, result decoding,
 generated code and runtime handlers. They do not verify real OAuth, refresh,
-or the pinned server's free-edition endpoint behavior. Those remain explicit
-checks before an Azure hosting decision. Stop the local stack with the same
+or the pinned server's free-edition endpoint behavior. Verify those separately
+against the running prototype. Stop the local stack with the same
 Compose command and `down`; its named database volume survives.
 
 Another company-scoped provider reuses `Nango.ts`, `NangoConnect.ts`, the
@@ -466,8 +475,52 @@ operations and metadata discovery, then register its schemas, generation and
 CLI declaration in the same places as Salesforce. No arbitrary HTTP escape
 hatch or Nango sync/tool features are exposed. Personal Gmail additionally
 requires a personal-connection access model; do not register it company-wide.
-Commercial licensing for Patchy's use remains unresolved. Azure provisioning,
-production rollout and production credential use are outside this proof.
+Commercial licensing for Patchy's use remains unresolved. Production rollout
+and production credential use are outside this proof.
+
+### Azure Nango prototype
+
+The isolated stack lives in `rg-patchy-nango-prototype`, VM
+`vm-patchy-nango-prototype`, East US, subscription
+`4187e24f-78c8-44f9-865f-72e0ea53594f`. It runs Ubuntu 24.04 x64 on
+`Standard_D2as_v4` with a 64 GiB Standard SSD. All providers share this instance.
+The public hostname is
+`patchy-nango-prototype-4187.eastus.cloudapp.azure.com`; Salesforce's exact callback
+is `https://patchy-nango-prototype-4187.eastus.cloudapp.azure.com/oauth/callback`.
+
+`scripts/nango/azure.yaml` adds HTTPS and restart policies to the same pinned
+Compose stack. Caddy forwards only browser authorization, session and provider
+catalog routes to Nango. The dashboard, secret-key administration and proxy APIs
+remain private on VM loopback; Postgres and Redis have no published ports.
+The NSG allows ports 80/443, and SSH only from the operator's public IP.
+
+Files live under `/opt/patchy-nango` on the VM. Private operator settings are in
+this worktree's ignored `.local/nango/`; never commit or print its `env` file.
+Preserve `NANGO_ENCRYPTION_KEY` with the database. To update the stack after
+copying the Compose files and Caddyfile to the VM:
+
+```sh
+cd /opt/patchy-nango
+sudo docker compose --env-file .local/nango/env \
+  -f scripts/nango/compose.yaml -f scripts/nango/azure.yaml up -d
+```
+
+Reach the admin UI and server API through an SSH tunnel (substitute the VM IP):
+
+```sh
+ssh -N -L 3003:127.0.0.1:3003 patchy@<vm-ip>
+```
+
+Then open `http://127.0.0.1:3003` with the private dashboard credentials. Configure
+the `salesforce` integration in Nango's **dev** environment using the test org's
+OAuth app and the scopes above. A separately authorized, non-production Patchy
+server can use `PATCHY_NANGO_URL=http://127.0.0.1:3003` through that tunnel and
+the private `NANGO_SECRET_KEY_DEV`. No Patchy production configuration changes.
+
+Deallocate the VM when the proof is idle to stop compute charges; the disk and
+public IP still incur charges. Start it again before testing. Compose restarts
+the services after boot. Removing the prototype resource group permanently
+removes its database and connections, so export anything needed first.
 
 ## What to exercise for a change
 

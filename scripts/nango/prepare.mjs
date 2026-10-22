@@ -1,5 +1,5 @@
 // Writes local secrets only. Does not start services or contact any endpoint.
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 const directory = new URL("../../.local/nango/", import.meta.url);
 await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -10,7 +10,7 @@ const environment = {
   NANGO_ADMIN_KEY: secret(),
   NANGO_DASHBOARD_USERNAME: "patchy-local",
   NANGO_DASHBOARD_PASSWORD: secret(),
-  NANGO_SECRET_KEY_DEV: secret()
+  NANGO_SECRET_KEY_DEV: randomUUID()
 };
 try {
   await writeFile(
