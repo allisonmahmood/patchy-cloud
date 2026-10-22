@@ -180,9 +180,9 @@ it.layer(services)("the authorization server's endpoints", (it) => {
           headers: { cookie: signedIn }
         });
       for (const [fields, status, says] of [
-        [{ redirect_uri: "https://evil.example/" }, 400, "doesn't list"],
-        [{ code_challenge_method: "plain" }, 400, "PKCE"],
-        [{ resource: "https://other.example/mcp" }, 400, "other than Patchy MCP"],
+        [{ redirect_uri: "https://evil.example/" }, 400, "check its redirect_uri"],
+        [{ code_challenge_method: "plain" }, 400, "check its code_challenge_method"],
+        [{ resource: "https://other.example/mcp" }, 400, "check its resource"],
         [{ client_id: "https://agent.example/missing.json" }, 502, "could not be loaded"]
       ] as const) {
         const response = yield* page(fields);
@@ -316,33 +316,32 @@ it.layer(services)("the authorization server's endpoints", (it) => {
     })
   );
 
-  it.effect("limits refreshes per agent connection, without spending the address's failures", () =>
+  it.effect("limits rotations per agent connection, not retries or the address's failures", () =>
     Effect.gen(function* () {
       const address = "192.0.2.20";
-      let tokens = yield* json(yield* token(exchangeFields(yield* approved), address));
-      for (let rotation = 0; rotation < 2; rotation++) {
-        const refreshed = yield* token(
-          { grant_type: "refresh_token", refresh_token: String(tokens.refresh_token) },
-          address
-        );
-        assert.strictEqual(refreshed.status, 200);
-        tokens = yield* json(refreshed);
+      const refresh = (refreshToken: unknown) =>
+        token({ grant_type: "refresh_token", refresh_token: String(refreshToken) }, address);
+      const first = yield* json(yield* token(exchangeFields(yield* approved), address));
+      const rotated = yield* refresh(first.refresh_token);
+      assert.strictEqual(rotated.status, 200);
+      const second = yield* json(rotated);
+      // Retries within the minute get the same tokens and spend no rotation.
+      for (let retry = 0; retry < 3; retry++) {
+        const retried = yield* refresh(first.refresh_token);
+        assert.strictEqual(retried.status, 200);
+        assert.strictEqual((yield* json(retried)).refresh_token, second.refresh_token);
       }
+      const again = yield* refresh(second.refresh_token);
+      assert.strictEqual(again.status, 200);
+      const third = yield* json(again);
       for (let attempt = 0; attempt < 4; attempt++) {
-        const limited = yield* token(
-          { grant_type: "refresh_token", refresh_token: String(tokens.refresh_token) },
-          address
-        );
+        const limited = yield* refresh(third.refresh_token);
         assert.strictEqual(limited.status, 429);
         assert.match(limited.headers.get("retry-after")!, /^\d+$/);
       }
-      // Another connection refreshes from the same address.
+      // Another connection rotates from the same address.
       const other = yield* json(yield* token(exchangeFields(yield* approved), address));
-      const refreshed = yield* token(
-        { grant_type: "refresh_token", refresh_token: String(other.refresh_token) },
-        address
-      );
-      assert.strictEqual(refreshed.status, 200);
+      assert.strictEqual((yield* refresh(other.refresh_token)).status, 200);
     })
   );
 

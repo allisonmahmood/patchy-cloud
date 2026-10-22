@@ -9,8 +9,9 @@
  * its own transaction. Then the code's row, then the person's: a code is made on the database's
  * clock under the person's row lock, the one Disconnect everything and deactivation stamp under,
  * so a code made at or before that stamp is dead and one made after it is never older than it.
- * A code lasts a minute and is exchanged once; a second exchange ends the connection the first
- * made, committed before it is refused.
+ * A code lasts a minute and is exchanged once. An exchanged code's hash stays as long as its
+ * connection does, so a second exchange, however late, ends the connection the first made,
+ * committed before it is refused.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -46,36 +47,28 @@ const CHALLENGE = /^[\w-]{43}$/;
 const VERIFIER = /^[\w.~-]{43,128}$/;
 
 /**
- * The request breaks a rule its client's document doesn't decide, so nothing goes back to the
- * client and the person sees why: a parameter sent twice, a response type other than `code`, no
- * S256 PKCE challenge, a resource other than Patchy MCP's door, or a redirect the document
- * doesn't list.
+ * The request breaks a rule its client's document doesn't decide, at `parameter`, so nothing
+ * goes back to the client and the person sees why: a parameter sent twice, a response type other
+ * than `code`, no S256 PKCE challenge, a resource other than Patchy MCP's door, or a redirect the
+ * document doesn't list.
  */
 export class AuthorizeRequestRefused extends Schema.TaggedError<AuthorizeRequestRefused>()(
   "AuthorizeRequestRefused",
   {
-    reason: Schema.Literals([
-      "duplicate",
+    parameter: Schema.Literals([
       "response_type",
+      "client_id",
+      "redirect_uri",
       "code_challenge",
+      "code_challenge_method",
       "resource",
-      "redirect_uri"
+      "state",
+      "scope"
     ])
   }
 ) {
   override get message() {
-    switch (this.reason) {
-      case "duplicate":
-        return "The agent's request sends a parameter more than once.";
-      case "response_type":
-        return "The agent's request doesn't ask for an authorization code.";
-      case "code_challenge":
-        return "The agent's request has no S256 PKCE code challenge.";
-      case "resource":
-        return "The agent's request is for something other than Patchy MCP.";
-      case "redirect_uri":
-        return "The agent's request returns somewhere its client document doesn't list.";
-    }
+    return `The agent's request can't be answered: check its ${this.parameter}.`;
   }
 }
 
@@ -89,11 +82,10 @@ export class AgentAccessOff extends Schema.TaggedError<AgentAccessOff>()("AgentA
 }
 
 /**
- * The token endpoint refuses the code: `invalid_target` for a resource other than the door,
- * `invalid_grant` otherwise. `reason` is for the request's event: unknown or cancelled, expired,
- * already exchanged (whose connection this refusal ended), issued to another client or redirect,
- * a verifier that doesn't answer its challenge, agent access off, or the person's credentials
- * ended after it was approved.
+ * The token endpoint answers `invalid_grant`. `reason` is diagnostic, for tests and traces:
+ * unknown or cancelled, expired, already exchanged (whose connection this refusal ended), issued to another
+ * client or redirect, a verifier that doesn't answer its challenge, agent access off, or the
+ * person's credentials ended after it was approved.
  */
 export class CodeRefused extends Schema.TaggedError<CodeRefused>()("CodeRefused", {
   reason: Schema.Literals([
@@ -104,26 +96,22 @@ export class CodeRefused extends Schema.TaggedError<CodeRefused>()("CodeRefused"
     "redirect_uri",
     "verifier",
     "agent_access_off",
-    "ended",
-    "resource"
+    "ended"
   ])
 }) {
-  get error() {
-    return this.reason === "resource" ? "invalid_target" : "invalid_grant";
-  }
   override get message() {
-    switch (this.reason) {
-      case "resource":
-        return "Patchy's only resource is its MCP door.";
-      case "replayed":
-        return "This code was already exchanged, so the agent connection it made has ended.";
-      case "agent_access_off":
-        return "Agent access is off at this company.";
-      default:
-        return "This code is unknown, expired, or was issued for another request.";
-    }
+    return "This code is unknown, expired, already exchanged, or was issued for another request.";
   }
 }
+
+/** A token request names a resource other than Patchy MCP's door: `invalid_target`. */
+export class ResourceRefused extends Schema.TaggedError<ResourceRefused>()("ResourceRefused", {}) {
+  override get message() {
+    return "Patchy's only resource is its MCP door.";
+  }
+}
+
+const isResourceRefused = Schema.is(ResourceRefused);
 
 /** A request every rule passed: what consent shows, and what an approval binds its code to. */
 export interface ConsentRequest {
@@ -172,7 +160,7 @@ export class Consents extends Context.Service<
       readonly clientId: string;
       readonly redirectUri?: string | undefined;
       readonly resource?: string | undefined;
-    }) => Effect.Effect<AgentConnections.Connected, CodeRefused | SqlError>;
+    }) => Effect.Effect<AgentConnections.Connected, CodeRefused | ResourceRefused | SqlError>;
     /** Whether `resource`, when a client names one, is Patchy MCP's door. */
     readonly resourceAllowed: (resource: string) => boolean;
   }
@@ -203,20 +191,22 @@ export const make = Effect.gen(function* () {
   };
 
   const check = Effect.fn("Consents.check")(function* (params: URLSearchParams) {
-    if (SINGLE.some((name) => params.getAll(name).length > 1))
-      return yield* new AuthorizeRequestRefused({ reason: "duplicate" });
+    const twice = SINGLE.find((name) => params.getAll(name).length > 1);
+    if (twice !== undefined) return yield* new AuthorizeRequestRefused({ parameter: twice });
     if (params.get("response_type") !== "code")
-      return yield* new AuthorizeRequestRefused({ reason: "response_type" });
+      return yield* new AuthorizeRequestRefused({ parameter: "response_type" });
     const codeChallenge = params.get("code_challenge") ?? "";
-    if (params.get("code_challenge_method") !== "S256" || !CHALLENGE.test(codeChallenge))
-      return yield* new AuthorizeRequestRefused({ reason: "code_challenge" });
+    if (!CHALLENGE.test(codeChallenge))
+      return yield* new AuthorizeRequestRefused({ parameter: "code_challenge" });
+    if (params.get("code_challenge_method") !== "S256")
+      return yield* new AuthorizeRequestRefused({ parameter: "code_challenge_method" });
     const resource = params.get("resource");
     if (resource !== null && !resourceAllowed(resource))
-      return yield* new AuthorizeRequestRefused({ reason: "resource" });
+      return yield* new AuthorizeRequestRefused({ parameter: "resource" });
     const client = yield* documents.load(params.get("client_id") ?? "");
     const redirectUri = params.get("redirect_uri") ?? "";
     if (!ClientDocuments.redirectAllowed(client, redirectUri))
-      return yield* new AuthorizeRequestRefused({ reason: "redirect_uri" });
+      return yield* new AuthorizeRequestRefused({ parameter: "redirect_uri" });
     return {
       client,
       redirectUri,
@@ -240,8 +230,11 @@ export const make = Effect.gen(function* () {
     readonly companyId: string;
   }) {
     const code = `pwc_${randomToken(32)}`;
-    // On its own, before any lock is held: expired codes are dead whether or not this runs.
-    yield* sql`DELETE FROM agent_consents WHERE expires_at <= clock_timestamp()`;
+    // On its own, before any lock is held: an expired code is dead whether or not this runs.
+    // An exchanged one stays with its connection, so a replay at any time ends it.
+    yield* sql`
+      DELETE FROM agent_consents
+      WHERE connection_id IS NULL AND expires_at <= clock_timestamp()`;
     yield* sql.withTransaction(
       Effect.gen(function* () {
         const on = yield* companies
@@ -326,7 +319,8 @@ export const make = Effect.gen(function* () {
             readonly userId: string;
             readonly companyId: string;
           }
-        | CodeRefused["reason"],
+        | CodeRefused["reason"]
+        | ResourceRefused,
         SqlError
       > {
         const company = yield* codeCompany(codeHash).pipe(
@@ -350,7 +344,8 @@ export const make = Effect.gen(function* () {
         if (input.clientId !== code.clientId) return "client";
         if (input.redirectUri !== undefined && input.redirectUri !== code.redirectUri)
           return "redirect_uri";
-        if (input.resource !== undefined && !resourceAllowed(input.resource)) return "resource";
+        if (input.resource !== undefined && !resourceAllowed(input.resource))
+          return new ResourceRefused();
         if (!answers(input.codeVerifier, code.codeChallenge)) return "verifier";
         if (!on) return "agent_access_off";
         const person = yield* personLive(codeHash).pipe(
@@ -367,6 +362,7 @@ export const make = Effect.gen(function* () {
       })
     );
     if (typeof outcome === "string") return yield* new CodeRefused({ reason: outcome });
+    if (isResourceRefused(outcome)) return yield* outcome;
     yield* WideEvents.enrich({ viewerId: outcome.userId, companyId: outcome.companyId });
     return outcome.connected;
   });

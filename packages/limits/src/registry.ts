@@ -991,7 +991,7 @@ export const registry = {
     unit: "attempts/minute",
     scope: "viewer",
     measure:
-      "Refresh attempts per agent connection per host replica, a retry within its minute included",
+      "Refresh token rotations per agent connection per host replica: refreshes that present the connection's current refresh token. A retry within its minute is not one",
     refusal: "rate_limited",
     overridable: false
   },

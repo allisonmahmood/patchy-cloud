@@ -10,8 +10,8 @@
  * `POST /oauth/token` is the client's: the code exchange and refresh, as form fields, answered
  * in OAuth's JSON and never cached. A failed attempt counts against its address, and a failure
  * past the minute's limit is answered 429, so an exchange or refresh that succeeds is never
- * refused, from a hosted client's shared address included. Refreshes are limited per agent
- * connection. In production it answers CORS for any origin without credentials; a dev instance
+ * refused, from a hosted client's shared address included. Rotations are limited per agent
+ * connection; a retry within its minute is not a rotation. In production it answers CORS for any origin without credentials; a dev instance
  * answers none, and serves it on its `127.0.0.1` alias like every route.
  */
 import * as ByteSize from "effect/ByteSize";
@@ -223,20 +223,19 @@ export const layer: Layer.Layer<
         const refreshToken = sent("refresh_token")!;
         const resource = sent("resource");
         if (resource !== undefined && !consents.resourceAllowed(resource))
-          return yield* new TokenRequestRefused({
-            error: "invalid_target",
-            description: "Patchy's only resource is its MCP door.",
-            status: 400
-          });
+          return yield* new Consents.ResourceRefused();
         const chain = yield* connections.chainOf(refreshToken);
         const clientId = sent("client_id");
         if (chain === null || (clientId !== undefined && clientId !== chain.clientId))
           return yield* new AgentConnections.RefreshRefused({ reason: "unknown" });
-        const admitted = yield* (yield* Limits.Limits).consume({
-          key: `oauth-token-rotations:${chain.id}`,
-          limit: rotationsPerMinute,
-          window: Duration.minutes(1)
-        });
+        // Only a current token rotates; a retry within its minute or a reuse spends nothing.
+        const admitted = chain.current
+          ? yield* (yield* Limits.Limits).consume({
+              key: `oauth-token-rotations:${chain.id}`,
+              limit: rotationsPerMinute,
+              window: Duration.minutes(1)
+            })
+          : { allowed: true as const };
         if (!admitted.allowed) {
           yield* WideEvents.enrich({ limitId: "oauth.token.rotations.perMinute" });
           return limited(
@@ -296,7 +295,8 @@ export const layer: Layer.Layer<
       Effect.catchTags({
         TokenRequestRefused: (refused) =>
           failed(refused.error, refused.description, refused.status),
-        CodeRefused: (refused) => failed(refused.error, refused.message, 400),
+        CodeRefused: (refused) => failed("invalid_grant", refused.message, 400),
+        ResourceRefused: (refused) => failed("invalid_target", refused.message, 400),
         RefreshRefused: (refused) => failed("invalid_grant", refused.message, 400),
         SqlError: () =>
           Effect.succeed(

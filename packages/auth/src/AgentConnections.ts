@@ -97,12 +97,19 @@ export class AgentConnections extends Context.Service<
     /** The `work` bearer check: who the access token acts as, or `null`. A call stamps last used. */
     readonly authenticate: (accessToken: string) => Effect.Effect<AgentIdentity | null, SqlError>;
     /**
-     * The connection a refresh token was issued to, current or not, and its client's id, or
-     * `null`: what the token endpoint checks and limits by before it calls `refresh`.
+     * The connection a refresh token was issued to, its client's id and whether the token is the
+     * chain's current one, which `refresh` would rotate, or `null`: what the token endpoint checks
+     * and limits by before it calls `refresh`. Unlocked, so `current` can be stale by the time
+     * `refresh` runs; only a limit reads it.
      */
-    readonly chainOf: (
-      refreshToken: string
-    ) => Effect.Effect<{ readonly id: string; readonly clientId: string } | null, SqlError>;
+    readonly chainOf: (refreshToken: string) => Effect.Effect<
+      {
+        readonly id: string;
+        readonly clientId: string;
+        readonly current: boolean;
+      } | null,
+      SqlError
+    >;
     /** Rotates the chain, or answers a retry within the minute; any other reuse ends it. */
     readonly refresh: (refreshToken: string) => Effect.Effect<Tokens, RefreshRefused | SqlError>;
     /** Drops every retry copy whose minute is up; the server runs it every few seconds. */
@@ -198,10 +205,12 @@ export const make = Effect.gen(function* () {
     Result: Schema.Struct({
       connectionId: Schema.String,
       userId: Schema.String,
-      clientId: Schema.String
+      clientId: Schema.String,
+      current: Schema.Boolean
     }),
     execute: (tokenHash) => sql`
-      SELECT c.id AS "connectionId", c.user_id AS "userId", c.client_id AS "clientId"
+      SELECT c.id AS "connectionId", c.user_id AS "userId", c.client_id AS "clientId",
+        r.rotated_at IS NULL AS current
       FROM agent_connection_refresh_tokens r JOIN agent_connections c ON c.id = r.connection_id
       WHERE r.token_hash = ${tokenHash}`
   });
@@ -279,13 +288,17 @@ export const make = Effect.gen(function* () {
     return Option.isSome(used) ? used.value.identity : null;
   });
 
-  // A connection's client never changes, so this read needs no lock.
+  // A connection's client never changes; whether the token is current only feeds a limit.
   const chainOf = Effect.fn("AgentConnections.chainOf")(function* (refreshToken: string) {
     const owner = yield* chainOwner(sha256(refreshToken)).pipe(
       Effect.catchTags({ SchemaError: Effect.die })
     );
     return Option.isSome(owner)
-      ? { id: owner.value.connectionId, clientId: owner.value.clientId }
+      ? {
+          id: owner.value.connectionId,
+          clientId: owner.value.clientId,
+          current: owner.value.current
+        }
       : null;
   });
 

@@ -217,25 +217,25 @@ it.layer(layer)("Consent", (it) => {
         consents.check(params).pipe(
           Effect.flip,
           Effect.map((error) =>
-            error._tag === "AuthorizeRequestRefused" ? error.reason : error._tag
+            error._tag === "AuthorizeRequestRefused" ? error.parameter : error._tag
           )
         );
       seen.length = 0;
       const doubled = request(challenge);
       doubled.append("redirect_uri", "https://evil.example/");
-      assert.strictEqual(yield* refused(doubled), "duplicate");
+      assert.strictEqual(yield* refused(doubled), "redirect_uri");
       assert.strictEqual(
         yield* refused(request(challenge, { response_type: "token" })),
         "response_type"
       );
       // A PKCE downgrade: no method, plain, or no challenge at all.
-      for (const fields of [
-        { code_challenge_method: undefined },
-        { code_challenge_method: "plain" },
-        { code_challenge: undefined },
-        { code_challenge: "short" }
-      ])
-        assert.strictEqual(yield* refused(request(challenge, fields)), "code_challenge");
+      for (const [fields, parameter] of [
+        [{ code_challenge_method: undefined }, "code_challenge_method"],
+        [{ code_challenge_method: "plain" }, "code_challenge_method"],
+        [{ code_challenge: undefined }, "code_challenge"],
+        [{ code_challenge: "short" }, "code_challenge"]
+      ] as const)
+        assert.strictEqual(yield* refused(request(challenge, fields)), parameter);
       for (const resource of [`${BASE}/api`, "https://other.example/mcp", `${BASE}/mcp?x=1`])
         assert.strictEqual(yield* refused(request(challenge, { resource })), "resource");
       assert.deepStrictEqual(
@@ -340,6 +340,25 @@ it.layer(layer)("Consent", (it) => {
     })
   );
 
+  it.effect("a replay long after the code expired still ends the connection it made", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const person = yield* company("late-replay");
+      const code = yield* approved(person);
+      const connected = yield* exchange(code);
+      const abandoned = yield* approved(person);
+      yield* sql`
+        UPDATE agent_consents SET expires_at = clock_timestamp() - interval '1 day'
+        WHERE user_id = ${person.userId}`;
+      // The next approval sweeps expired codes: the abandoned one goes, the exchanged one stays.
+      yield* approved(person);
+      assert.strictEqual(yield* refusal(exchange(abandoned)), "unknown");
+      assert.isTrue(yield* works(connected));
+      assert.strictEqual(yield* refusal(exchange(code)), "replayed");
+      assert.isFalse(yield* works(connected));
+    })
+  );
+
   it.effect("a refused exchange leaves its code to the request it was approved for", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -360,13 +379,7 @@ it.layer(layer)("Consent", (it) => {
         "redirect_uri"
       );
       const target = yield* exchange(code, { resource: `${BASE}/api` }).pipe(Effect.flip);
-      assert.deepStrictEqual(
-        [
-          target._tag === "CodeRefused" && target.reason,
-          target._tag === "CodeRefused" && target.error
-        ],
-        ["resource", "invalid_target"]
-      );
+      assert.strictEqual(target._tag, "ResourceRefused");
       // None of those spent it: the request it was approved for still exchanges it.
       const connected = yield* exchange(code);
       assert.isTrue(yield* works(connected));

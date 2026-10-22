@@ -79,8 +79,8 @@ export const migrations: Migrations = {
   // An approved consent awaiting its code exchange: the code's hash and what it was approved
   // for, nothing else. `created_at` is the database's clock under the person's row lock, so a
   // code made at or before their credentials-ended stamp is dead. The exchange sets
-  // `connection_id`, and the row stays until it expires so a replay can end that connection.
-  // Agent access off deletes the company's codes not yet exchanged.
+  // `connection_id`, and the row then stays with that connection, so a replay at any time ends
+  // it. Codes not yet exchanged are deleted once expired, and by agent access off.
   "0023_agent_consents": ddl(
     `CREATE TABLE agent_consents (
     code_hash TEXT PRIMARY KEY,
@@ -94,6 +94,7 @@ export const migrations: Migrations = {
     connection_id TEXT REFERENCES agent_connections(id) ON DELETE CASCADE
     )`,
     `CREATE INDEX agent_consents_user_id_idx ON agent_consents(user_id)`,
-    `CREATE INDEX agent_consents_expires_at_idx ON agent_consents(expires_at)`
+    `CREATE INDEX agent_consents_unexchanged_idx
+    ON agent_consents(expires_at) WHERE connection_id IS NULL`
   )
 };
