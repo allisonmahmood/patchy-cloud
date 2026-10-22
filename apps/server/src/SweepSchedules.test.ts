@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { AgentConnections } from "@patchy/auth";
 import { OrphanSweep } from "@patchy/company-database";
+import { ChangeKeys } from "@patchy/mcp";
 import { DeletionSweep } from "@patchy/patches";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -25,6 +26,7 @@ it.effect(
       let deletionPasses = 0;
       let orphanPasses = 0;
       let retryPasses = 0;
+      let changeKeyPasses = 0;
       const deletion = Layer.succeed(DeletionSweep.DeletionSweep, {
         sweep: Effect.gen(function* () {
           yield* Queue.offer(deletionRuns, ++deletionPasses);
@@ -54,11 +56,18 @@ it.effect(
           sweepRetries: Effect.sync(() => void retryPasses++)
         })
       );
+      const changeKeys = Layer.succeed(
+        ChangeKeys.ChangeKeys,
+        ChangeKeys.ChangeKeys.of({
+          claim: () => Effect.die("not swept"),
+          sweep: Effect.sync(() => void changeKeyPasses++)
+        })
+      );
       const scope = yield* Scope.make();
       yield* Effect.gen(function* () {
         yield* Layer.buildWithScope(
           Server.sweeper.pipe(
-            Layer.provide([deletion, orphan, connections]),
+            Layer.provide([deletion, orphan, connections, changeKeys]),
             Layer.provide(
               Logger.layer([
                 Logger.make((event) => {
@@ -71,12 +80,15 @@ it.effect(
         );
         assert.strictEqual(yield* Queue.take(deletionRuns), 1);
         assert.strictEqual(yield* Queue.take(orphanRuns), 1);
+        assert.strictEqual(changeKeyPasses, 1);
         // Retry copies are swept every 15 seconds, whatever the hourly sweeps are doing.
         yield* TestClock.adjust("15 seconds");
         assert.strictEqual(retryPasses, 2);
         yield* TestClock.adjust("1 hour");
         assert.strictEqual(yield* Queue.take(deletionRuns), 2);
         assert.strictEqual(yield* Queue.take(orphanRuns), 2);
+        // Change keys past their 24 hours are swept hourly.
+        assert.strictEqual(changeKeyPasses, 2);
         yield* TestClock.adjust("1 hour");
         assert.strictEqual(yield* Queue.take(deletionRuns), 3);
         assert.strictEqual(orphanPasses, 2);

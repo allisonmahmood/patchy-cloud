@@ -513,6 +513,9 @@ importers:
       '@patchy/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@patchy/sql':
+        specifier: workspace:*
+        version: link:../sql
       effect:
         specifier: 4.0.1
         version: 4.0.1
@@ -535,9 +538,6 @@ importers:
       '@patchy/primitives':
         specifier: workspace:*
         version: link:../primitives
-      '@patchy/sql':
-        specifier: workspace:*
-        version: link:../sql
       esbuild:
         specifier: 0.28.2
         version: 0.28.2

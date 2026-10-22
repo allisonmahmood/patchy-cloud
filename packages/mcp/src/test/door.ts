@@ -1,6 +1,6 @@
 /**
  * The door over a migrated database, a request at a time as the router hands it over, with
- * what its tools read: Patches, Companies and Users. Each suite builds its own door per test,
+ * what its tools read and write: Patches, Companies, Users and change keys. Each suite builds its own door per test,
  * so its in-memory buckets start full, and sends from its own address.
  */
 import { assert } from "@effect/vitest";
@@ -20,7 +20,9 @@ import {
   MANIFEST_VERSION,
   WIRE_VERSION,
   type HandlerDescriptors,
-  type Manifest
+  type Manifest,
+  type RuntimeMe,
+  type ServerCallReply
 } from "@patchy/api";
 import { AgentConnections, MachineTokens } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
@@ -30,8 +32,10 @@ import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
+import { type Binding, Invocation, type Runtime } from "@patchy/runtime";
 import { Wakes } from "@patchy/runtime/core";
 import * as Testing from "@patchy/sql/testing";
+import * as ChangeKeys from "../ChangeKeys.js";
 import * as Door from "../Door.js";
 
 export const PRODUCTION = "https://cloud.example";
@@ -51,6 +55,7 @@ const sink = Layer.succeed(WideEvents.Sink)(
 export const harnessWith = (connections: ReadonlyArray<ConnectionStoreDev.DevConnection>) =>
   Layer.mergeAll(
     AgentConnections.layer,
+    ChangeKeys.layer,
     MachineTokens.layer,
     Limits.layer,
     OperatingLimits.layer,
@@ -157,6 +162,38 @@ export const door = (base: string, address: string) =>
       };
     });
   });
+
+/** What the door handed Runtime for one call. */
+export interface Handed {
+  readonly call: unknown;
+  readonly binding: Binding.Binding["Service"];
+  readonly recheck: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>;
+}
+
+/**
+ * Runtime's invocation as an alternate layer: it records each call and answers with `answer`,
+ * run with the test's services.
+ */
+export const runtime = <R>(
+  answer: (handed: Handed) => Effect.Effect<ServerCallReply, Runtime.RuntimeError, R>
+) =>
+  Effect.gen(function* () {
+    const context = yield* Effect.context<R>();
+    const handed: Handed[] = [];
+    const service = Invocation.Invocation.of({
+      call: (call, binding, recheck) =>
+        Effect.suspend(() => {
+          const one = { call, binding, recheck };
+          handed.push(one);
+          return answer(one).pipe(Effect.provideContext(context));
+        })
+    });
+    return { handed, service };
+  });
+
+/** A production door whose calls reach `service`. */
+export const doorTo = (service: Invocation.Invocation["Service"], address: string) =>
+  door(PRODUCTION, address).pipe(Effect.provideService(Invocation.Invocation, service));
 
 export const meta = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",

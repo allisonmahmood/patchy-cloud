@@ -8,13 +8,24 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
-import type { HandlerDescriptors, RuntimeMe, ServerCallReply } from "@patchy/api";
+import type { HandlerDescriptors, ServerCallReply } from "@patchy/api";
 import { AgentConnections } from "@patchy/auth";
 import { Companies } from "@patchy/companies";
 import { dateLabel } from "@patchy/core";
 import { Patches } from "@patchy/patches";
-import { type Binding, Invocation, Runtime } from "@patchy/runtime";
-import { at, call, company, door, harness, objectAt, PRODUCTION, publish } from "./test/door.js";
+import { Runtime } from "@patchy/runtime";
+import {
+  at,
+  call,
+  company,
+  door,
+  doorTo,
+  harness,
+  objectAt,
+  PRODUCTION,
+  publish,
+  runtime
+} from "./test/door.js";
 import * as Tools from "./Tools.js";
 
 /** An agent tool's descriptor, taking `stage` unless it says otherwise. */
@@ -32,38 +43,6 @@ const deals: HandlerDescriptors = {
   "agent.summary": { ...tool("action", "Summarise the pipeline.", {}), readOnly: true },
   "deals.list": { kind: "query", args: {}, result: { kind: "json" } }
 };
-
-/** What the door handed Runtime for one call. */
-interface Handed {
-  readonly call: unknown;
-  readonly binding: Binding.Binding["Service"];
-  readonly recheck: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>;
-}
-
-/**
- * Runtime's invocation as an alternate layer: it records each call and answers with `answer`,
- * run with the test's services.
- */
-const runtime = <R>(
-  answer: (handed: Handed) => Effect.Effect<ServerCallReply, Runtime.RuntimeError, R>
-) =>
-  Effect.gen(function* () {
-    const context = yield* Effect.context<R>();
-    const handed: Handed[] = [];
-    const service = Invocation.Invocation.of({
-      call: (call, binding, recheck) =>
-        Effect.suspend(() => {
-          const one = { call, binding, recheck };
-          handed.push(one);
-          return answer(one).pipe(Effect.provideContext(context));
-        })
-    });
-    return { handed, service };
-  });
-
-/** A door whose calls reach `service`. */
-const doorTo = (service: Invocation.Invocation["Service"], address: string) =>
-  door(PRODUCTION, address).pipe(Effect.provideService(Invocation.Invocation, service));
 
 const answered = (response: { readonly json: unknown }) => objectAt(response.json, "result");
 const refusal = (response: { readonly json: unknown }) =>

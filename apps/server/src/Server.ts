@@ -59,7 +59,7 @@ import {
   PostHogOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { Door } from "@patchy/mcp";
+import { ChangeKeys, Door } from "@patchy/mcp";
 import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
 import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
@@ -215,6 +215,7 @@ const services = Layer.mergeAll(
       contentStore,
       MachineTokens.layer,
       AgentConnections.layer,
+      ChangeKeys.layer,
       Patches.layer,
       Companies.layer,
       Users.layer,
@@ -244,8 +245,9 @@ const services = Layer.mergeAll(
 
 /**
  * Each sweep runs once on the way up and then on its own interval in its own
- * scoped fiber: deletion and orphans hourly, agent connections' retry copies
- * every 15 seconds, so none outlives its minute by more. A slow or defective
+ * scoped fiber: deletion, orphans and change keys past their 24 hours hourly,
+ * agent connections' retry copies every 15 seconds, so none outlives its minute
+ * by more. A slow or defective
  * pass must not stop another. Contain pass failures inside each repeat so the
  * next tick retries, but never swallow shutdown.
  */
@@ -254,12 +256,14 @@ export const sweeper = Layer.effectDiscard(
     const deletion = yield* DeletionSweep.DeletionSweep;
     const orphan = yield* OrphanSweep.OrphanSweep;
     const connections = yield* AgentConnections.AgentConnections;
+    const changeKeys = yield* ChangeKeys.ChangeKeys;
     const sweeps: ReadonlyArray<
       readonly [name: string, sweep: Effect.Effect<void, SqlError>, every: Duration.Input]
     > = [
       ["deletion", Effect.asVoid(deletion.sweep), "1 hour"],
       ["orphan", Effect.asVoid(orphan.sweep), "1 hour"],
-      ["agent connection retries", connections.sweepRetries, "15 seconds"]
+      ["agent connection retries", connections.sweepRetries, "15 seconds"],
+      ["change keys", changeKeys.sweep, "1 hour"]
     ];
     for (const [name, sweep, every] of sweeps) {
       yield* sweep.pipe(

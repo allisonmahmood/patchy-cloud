@@ -10,6 +10,7 @@ import {
   agentToolKind,
   agentTools,
   callAnswer,
+  changeAnswer,
   handlerArgsSchema,
   invalidArgsRefusal,
   openPatchAnswer,
@@ -115,9 +116,12 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
     ).pipe(
       Effect.map((reply) => callAnswer(dev.patch.name, tool, build, reply)),
       Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor))),
-      // A read's answer keeps the read cap here as at the door.
+      // Answers keep the read cap here as at the door: a read past it is refused, and a change
+      // past it succeeds with its result left out.
       Effect.map((answer) =>
-        agentToolKind(descriptor) === "read" ? readAnswer(dev.patch, tool, answer) : answer
+        agentToolKind(descriptor) === "read"
+          ? readAnswer(dev.patch, tool, answer)
+          : changeAnswer(tool, build, answer)
       )
     )
   );

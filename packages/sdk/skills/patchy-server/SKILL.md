@@ -398,7 +398,8 @@ these rules, naming its file; publish lists the tools as reads and changes.
 
 Read results over 100,000 characters are refused, so large reads need paging.
 The agent reads every result in full; a row result carries `id`, `createdAt`
-and `updatedAt` besides its columns.
+and `updatedAt` besides its columns. A change key makes a mutation's retry write
+once; an action that writes is not safe to retry.
 
 `pnpm patchy dev agent` lists the tools as an agent sees them, and
 `pnpm patchy dev agent <tool> '<json>'` calls one as the dev viewer, or as the

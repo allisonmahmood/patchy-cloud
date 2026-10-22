@@ -21,6 +21,8 @@ export const PATCH_CHARS = 2_048;
  * a name is ASCII, and a patch's tools fit in `agentToolsBytes`.
  */
 export const TOOL_CHARS = agentToolsBytes;
+/** The longest change key `change_patch` takes. Patchy keeps only its hash. */
+export const KEY_CHARS = 256;
 
 /** A tool as `tools/list` shows it. */
 export interface Tool {
@@ -122,7 +124,10 @@ export const tools: readonly Tool[] = [
         args,
         key: {
           type: "string",
-          description: "Your name for this one change: fresh for each change, the same on a retry."
+          minLength: 1,
+          maxLength: KEY_CHARS,
+          description:
+            "Your name for this one change, such as import-monday: fresh for each change, the same on a retry. It lasts 24 hours."
         }
       },
       required: ["patch", "tool", "args", "key"],
@@ -150,14 +155,6 @@ export const instructions = (identity: {
   const company = cut(identity.company.name);
   return `You act for ${person} at ${company} through Patchy, where the company's internal tools are patches. find_patches lists the ones they can open, open_patch shows one's tools, then read_patch runs a read and change_patch a change. You reach only the tools each patch's builder added for agents; when one is missing, say so and name the patch's owner. Every change you make is logged as them, via you.`;
 };
-
-/** `change_patch` until change keys land (#855): a refusal, so nothing is changed. */
-export const notBuilt = (name: Name): ToolCallResult =>
-  toolRefusal({
-    code: "not_built",
-    from: "patchy",
-    message: `${name} isn't built on this instance yet, so nothing was read or changed. Tell the person Patchy's MCP isn't ready here.`
-  });
 
 /** "Ada", "Ada and Ben", "Ada, Ben and Cleo". */
 const listed = (names: readonly string[]) =>

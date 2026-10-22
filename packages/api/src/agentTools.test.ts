@@ -6,6 +6,7 @@ import {
   agentToolSummaries,
   argsJsonSchema,
   callAnswer,
+  changeAnswer,
   checkAgentArea,
   handlerJsonSchema,
   invalidArgsRefusal,
@@ -582,6 +583,35 @@ describe("tool call answers", () => {
     expect(invalidArgsRefusal("listDeals", "y".repeat(5_000), ["listDeals"]).content[0].text).toBe(
       `listDeals's arguments don't fit its schema: ${"y".repeat(1_999)}…. ${now}`
     );
+  });
+
+  it("answers a change past the read cap as a success with its result left out", () => {
+    const change = (value: string) =>
+      changeAnswer(
+        "importLeads",
+        4,
+        callAnswer("New Business", "importLeads", 4, { ok: true, value })
+      );
+    const around = JSON.stringify({ result: "", version: 4 }).length;
+    const fits = "x".repeat(readAnswerChars - around);
+    expect(change(fits)).toEqual(toolAnswer({ result: fits, version: 4 }));
+    expect(change(`${fits}x`)).toEqual(
+      toolAnswer({
+        version: 4,
+        resultLeftOut:
+          "importLeads succeeded, but its result came to 100,001 characters, more than the 100,000 an agent reads in one answer, so it was left out. Read what you need of the change through the patch's read tools."
+      })
+    );
+    // A refusal is cut as a read's is.
+    const wordy = toolRefusal({
+      code: "busy",
+      from: "patchy",
+      message: "y".repeat(readAnswerChars + 1)
+    });
+    expect(changeAnswer("importLeads", 4, wordy).structuredContent["error"]).toMatchObject({
+      code: "busy",
+      message: expect.stringMatching(/Its details were left out/)
+    });
   });
 
   it("says where arguments miss their schema, and names the tools there are now", () => {

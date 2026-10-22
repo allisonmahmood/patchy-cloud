@@ -1,6 +1,6 @@
 /**
- * The door's calls of a patch's agent tools: `read_patch` here, and `change_patch` on the same
- * path once change keys land (docs/product.md › The door). A call finds the patch among those
+ * The door's calls of a patch's agent tools, `read_patch` and `change_patch` (docs/product.md ›
+ * The door). A call finds the patch among those
  * the person can open, reads the tool from the version served when the call arrives, and checks
  * its kind and arguments against that same version, so a publish can't turn a read into a
  * write. It runs there through Runtime's agent invocation as the person, `ctx.agent` being the
@@ -8,9 +8,12 @@
  * the company's agent access, on the database's clock.
  *
  * Every refusal is a tool result, and nothing runs until the checks pass. A patch the person
- * couldn't open is "not found"; a retired one they could says who retired it and when.
+ * couldn't open is "not found"; a retired one they could says who retired it and when. A
+ * change then claims its change key (`ChangeKeys`), which decides whether it runs, answers its
+ * first result again or is refused, before Runtime sees it.
  */
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -21,6 +24,8 @@ import {
   agentToolKind,
   type AgentToolKind,
   callAnswer,
+  type CallSuccess,
+  changeAnswer,
   handlerArgsSchema,
   type HandlerDescriptor,
   invalidArgsRefusal,
@@ -28,6 +33,7 @@ import {
   runtimeRefusal,
   type RuntimeMe,
   type ServerCallReply,
+  toolAnswer,
   type ToolCallResult,
   toolRefusal,
   unknownToolRefusal,
@@ -40,6 +46,7 @@ import { ContractLimits } from "@patchy/limits";
 import { LoadedVersions, Patches } from "@patchy/patches";
 import { Invocation, type LoadedVersions as Served, Runtime } from "@patchy/runtime";
 import * as Catalogue from "./Catalogue.js";
+import * as ChangeKeys from "./ChangeKeys.js";
 import * as Tools from "./Tools.js";
 
 /** What `read_patch` takes, and `change_patch` with its key. */
@@ -50,9 +57,17 @@ export const CallArgs = Schema.Struct({
 });
 export type CallArgs = typeof CallArgs.Type;
 
+/** What `change_patch` takes: a call and the change key the agent names it by. */
+export const ChangeArgs = Schema.Struct({
+  ...CallArgs.fields,
+  key: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(Tools.KEY_CHARS))
+});
+
 const strict = { onExcessProperty: "error" } as const;
 const decodeRead = Schema.decodeUnknownResult(CallArgs, strict);
+const decodeChange = Schema.decodeUnknownResult(ChangeArgs, strict);
 const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
+const parseJsonText = Schema.decodeSync(Schema.fromJsonString(Schema.Json));
 const encoder = new TextEncoder();
 
 const counted = (count: number) => count.toLocaleString("en-US");
@@ -275,4 +290,138 @@ export const read = Effect.fn("Calls.read")(function* (
     target.tool,
     answer
   );
+});
+
+/** The same key on another tool or other arguments: a key names one change. */
+const keyConflict = (patch: string) =>
+  toolRefusal({
+    code: "key_conflict",
+    from: "patchy",
+    message: `That key was used for a different change to ${patch}; pick a new one. A key names one change: one tool with the same arguments.`
+  });
+
+/** A retry after a publish: the key is bound to the version its first try ran on. */
+const versionChanged = (patch: string) =>
+  toolRefusal({
+    code: "version_changed",
+    from: "patchy",
+    message: `${patch} was published since your first try with this key; read before retrying. If the change still needs making, make it with a new key.`
+  });
+
+/** A later try with an action's key, which never runs again. */
+const keyUsed = (tool: string) =>
+  toolRefusal({
+    code: "key_used",
+    from: "patchy",
+    message: `${tool} is an action, and it already ran with this key; an action that writes is not safe to retry, so Patchy never runs its key twice. Read what it changes first, then retry with a new key if it still needs doing.`
+  });
+
+/** A try while the key's first try, or an earlier retry, is still running. */
+const keyBusy = toolRefusal({
+  code: "busy",
+  from: "patchy",
+  message: "The first try with this key is still running. Try again in a second with the same key.",
+  retryAfterSeconds: 1
+});
+
+/**
+ * Runtime's refusal of a change. A mutation whose outcome is unknown resolves on a retry under
+ * the same key, so its refusal says to retry with it; an action that may have partly happened
+ * says to read first, as `runtimeRefusal` does.
+ */
+const changeRefusal = (error: Runtime.RuntimeError, descriptor: HandlerDescriptor) => {
+  const failure = Runtime.toFailure(error);
+  return runtimeRefusal(
+    descriptor.kind === "mutation" && failure.code === "unknown_outcome"
+      ? {
+          ...failure,
+          error: `${failure.error} Retry with the same key: Patchy answers its result if it happened and makes it if it didn't.`
+        }
+      : failure,
+    descriptor
+  );
+};
+
+/**
+ * `change_patch { patch, tool, args, key }`: runs a change tool, a mutation or an action that
+ * can write, under the agent's change key, and answers `{ result, version }`, with the result
+ * left out when an agent couldn't read it, or the patch's own refusal or Patchy's. A retry of
+ * a committed mutation answers its first result with `replayed: true` and runs nothing. A try
+ * runs to its end even if the agent goes away, so its key always records how it ended.
+ */
+export const change = Effect.fn("Calls.change")(function* (
+  identity: AgentConnections.AgentIdentity,
+  args: unknown,
+  publicUrl: URL,
+  invocation: Option.Option<Invocation.Invocation["Service"]>
+) {
+  const decoded = decodeChange(args ?? {});
+  if (Result.isFailure(decoded))
+    return Catalogue.invalidArgs(
+      "change_patch",
+      Catalogue.problemOf(decoded.failure),
+      "Send { patch, tool, args, key }: a patch find_patches listed, one of its change tools from open_patch, that tool's arguments as an object, and a key naming this change."
+    );
+  const { key, ...call } = decoded.success;
+  const reached = yield* reach(identity, call, publicUrl, "change");
+  if ("refused" in reached) return reached.refused;
+  const { target } = reached;
+  const patch = target.patch.patch.name;
+  // A host that runs no patch code refuses before the key is taken, so the key stays free.
+  if (Option.isNone(invocation))
+    return runtimeRefusal(
+      Runtime.toFailure(new Runtime.InvocationUnavailable()),
+      target.descriptor
+    );
+  const kind = target.descriptor.kind === "mutation" ? "mutation" : "action";
+  const claimed = yield* (yield* ChangeKeys.ChangeKeys)
+    .claim({
+      connectionId: identity.agentConnection.id,
+      patchId: target.patch.patch.id,
+      key,
+      versionId: target.version.versionId,
+      tool: target.tool,
+      args: target.args,
+      kind
+    })
+    .pipe(Effect.catchTags({ SqlError: Effect.die }));
+  switch (claimed._tag) {
+    case "Conflict":
+      return keyConflict(patch);
+    case "VersionChanged":
+      return versionChanged(patch);
+    case "Used":
+      return keyUsed(target.tool);
+    case "Busy":
+      return keyBusy;
+    case "Replay":
+      yield* WideEvents.enrich({ replayed: true });
+      return toolAnswer({
+        result: parseJsonText(claimed.result),
+        version: target.versionNumber,
+        replayed: true
+      } satisfies CallSuccess);
+    case "Run":
+  }
+  yield* WideEvents.enrich({ replayed: false });
+  const answer = yield* invoke(identity, target, invocation, claimed.mutationKey).pipe(
+    Effect.onExit((exit) =>
+      claimed
+        .settle(
+          kind === "mutation" && Exit.isSuccess(exit) && exit.value.ok
+            ? jsonText(exit.value.value)
+            : undefined
+        )
+        .pipe(
+          // The key stays held until its lease runs out, and a retry then resolves it.
+          Effect.catchTags({
+            SqlError: (cause) => Effect.logError("A change key's try was not settled.", cause)
+          })
+        )
+    ),
+    Effect.uninterruptible,
+    Effect.map((reply) => callAnswer(patch, target.tool, target.versionNumber, reply)),
+    Effect.catch((error) => Effect.succeed(changeRefusal(error, target.descriptor)))
+  );
+  return changeAnswer(target.tool, target.versionNumber, answer);
 });
