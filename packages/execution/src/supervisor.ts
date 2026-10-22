@@ -110,6 +110,8 @@ interface Resident {
   readonly startedAt: number;
   readonly eventId: string;
   readonly epoch: number;
+  /** From spawn to ready for its first call, once it got there. */
+  startMs?: number;
   process?: WorkerdProcess;
   engine?: Executor.Executor["Service"];
   alive: boolean;
@@ -288,6 +290,9 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         cpuSeconds: resident.cpuSeconds,
         peakRssBytes: resident.peakRssBytes,
         callsServed: resident.callsServed,
+        ...(resident.startMs === undefined ? {} : { startMs: resident.startMs }),
+        // A supervisor serves one company for its life and counts generations from one.
+        firstOnTask: resident.generation === 1,
         limits: [
           {
             limitId: "execution.process.rss",
@@ -659,6 +664,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           if (!resident.alive) return;
           resident.loading = false;
           resident.idleSince = Date.now();
+          resident.startMs = resident.idleSince - resident.startedAt;
           stampPeaks();
           yield* Deferred.succeed(resident.ready, {
             bindingEpoch: request.bindingEpoch,

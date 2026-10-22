@@ -161,7 +161,11 @@ const processMetrics = {
   cause: Schema.optionalKey(Schema.String),
   cpuSeconds: Schema.optionalKey(Schema.Number),
   peakRssBytes: Schema.optionalKey(Schema.Number),
-  callsServed: Schema.optionalKey(Schema.Number)
+  callsServed: Schema.optionalKey(Schema.Number),
+  /** From spawn until the process was ready for its first call. Unset when it never was. */
+  startMs: Schema.optionalKey(Schema.Number),
+  /** The first process its company task started since being bound to the company. */
+  firstOnTask: Schema.optionalKey(Schema.Boolean)
 };
 const bindingMetrics = {
   spareWaitMs: Schema.optionalKey(Schema.Number),

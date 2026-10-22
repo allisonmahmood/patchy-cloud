@@ -56,6 +56,10 @@ _Avoid_: retry (nothing ran the first time), replay
 The wide event for one host keeping an open tier 2 version warm, from its first active document's ready stream to its last active document going idle or leaving, which `endReason` says. It counts `peakDocuments`, the [touches](../runtime/GLOSSARY.md) by what each found and the warmups by what each came to. A touch that found `absent` means the version was evicted or reaped while open; `unsupported` means its task runs a release without touches; `paused` and `unbound` sent none. A warmup is `resident` or `loading` when a touch found the process, `loaded` when a bind followed, `bound` when an older supervisor took a normal bind, and `failed` when that bind failed.
 _Avoid_: heartbeat log, presence record
 
+**Process start**:
+`startMs` on a process event: how long a tier 2 version's process took from spawn until it was ready for its first call. A call that has to load the version waits this long, inside its handler's deadline. A process that never got there, such as a `load_failed` one, has none. `firstOnTask` says it was the first process its company task started since being bound: the start a call on a released company waits for after its bind. Later ones, after a reap, an eviction or for another version, are not. The process event carries both and is emitted when the process ends.
+_Avoid_: cold start (the task launch the spare pool measures), bind wait (`spareWaitMs`, outside the deadline)
+
 **Limit peak**:
 The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.
 _Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)
