@@ -44,6 +44,44 @@ describe("the Host gate", () => {
       assert.isFalse(RequestTrust.isOwnHost(host, dev), host);
     assert.isFalse(RequestTrust.isOwnHost("127.0.0.1:3001", new URL("http://127.0.0.1:3000")));
   });
+
+  it("treats a trailing dot on the configured host the same way", () => {
+    const dotted = new URL("https://cloud.patchyhq.com.");
+    for (const host of ["cloud.patchyhq.com", "cloud.patchyhq.com.", "cloud.patchyhq.com:443"])
+      assert.isTrue(RequestTrust.isOwnHost(host, dotted), host);
+  });
+
+  it("reads an absolute-form target's authority, and refuses two Host fields", () => {
+    const node = (rawHeaders: string[]) => ({ rawHeaders });
+    assert.strictEqual(
+      RequestTrust.requestAuthority({
+        url: "/mcp",
+        headers: { host: "cloud.patchyhq.com" },
+        source: node(["Host", "cloud.patchyhq.com"])
+      }),
+      "cloud.patchyhq.com"
+    );
+    assert.strictEqual(
+      RequestTrust.requestAuthority({
+        url: "http://evil.example/mcp",
+        headers: { host: "cloud.patchyhq.com" },
+        source: node(["Host", "cloud.patchyhq.com"])
+      }),
+      "evil.example"
+    );
+    assert.isUndefined(
+      RequestTrust.requestAuthority({
+        url: "/mcp",
+        headers: { host: "cloud.patchyhq.com" },
+        source: node(["Host", "cloud.patchyhq.com", "host", "evil.example"])
+      })
+    );
+    // A request built from a web Request has no raw fields: one Host is all it can carry.
+    assert.strictEqual(
+      RequestTrust.requestAuthority({ url: "/mcp", headers: { host: "a.example" }, source: {} }),
+      "a.example"
+    );
+  });
 });
 
 describe("the Origin rules", () => {
@@ -58,7 +96,9 @@ describe("the Origin rules", () => {
       "vscode-webview://1a2b3c",
       "chrome-extension://abcdefghijklmnop",
       "tauri://localhost",
-      "https://evil.example"
+      "https://evil.example",
+      "https://%C3%A9.example",
+      "http://[v1.fe]:8080"
     ])
       assert.strictEqual(RequestTrust.checkOrigin(origin, production), "allowed", String(origin));
   });
@@ -79,7 +119,12 @@ describe("the Origin rules", () => {
       // How Node hands over two Origin headers.
       "https://claude.ai, https://evil.example",
       "https://claude.ai,https://evil.example",
-      "https://cla ude.ai"
+      "https://cla ude.ai",
+      "https://[:::]",
+      "https://[1]",
+      "https://%",
+      "https://%zz.example",
+      "https://[::1"
     ])
       assert.strictEqual(RequestTrust.checkOrigin(origin, production), "malformed", origin);
   });

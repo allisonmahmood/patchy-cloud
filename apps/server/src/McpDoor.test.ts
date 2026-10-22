@@ -178,6 +178,16 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
         assert.isUndefined(answer.headers["www-authenticate"]);
         assert.include(events[0], { route: "/mcp", code: "invalid_host", outcome: "refused" });
       }
+      // An absolute-form target names the host it was sent to, whatever Host says.
+      const absolute = yield* raw(
+        `POST http://evil.example/mcp HTTP/1.1\nhost: ${HOST}\nauthorization: Bearer ${minted.token}\ncontent-length: 0`
+      );
+      assert.strictEqual(absolute.status, 421);
+      // Node keeps the first of two Host fields; the door refuses both.
+      const twoHosts = yield* raw(
+        `POST /mcp HTTP/1.1\nhost: ${HOST}\nhost: evil.example:29276\nauthorization: Bearer ${minted.token}\ncontent-length: 0`
+      );
+      assert.strictEqual(twoHosts.status, 421);
       // Two Origin headers arrive joined, which no single origin is.
       const twice = yield* post(
         `host: ${HOST}\norigin: ${BASE}\norigin: ${BASE}\nauthorization: Bearer ${minted.token}`,
@@ -206,7 +216,7 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
     })
   );
 
-  it.effect("answers HEAD like GET, and never parses a body over the cap", () =>
+  it.effect("answers HEAD like GET, and 413 to a body over the cap however it is sent", () =>
     Effect.gen(function* () {
       const head = yield* raw(`HEAD /mcp HTTP/1.1\nhost: ${HOST}`);
       assert.strictEqual(head.status, 405);
@@ -230,8 +240,9 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
           chunked
         )
       );
-      // The reader drops the connection at the cap, so the 413 rarely arrives; nothing is parsed.
-      assert.notStrictEqual(answer.status, 200);
+      // Read on past the cap and dropped, so the refusal still reaches the client.
+      assert.strictEqual(answer.status, 413);
+      assert.strictEqual(answer.headers["connection"], "close");
       assert.strictEqual(events.length, 1);
       assert.include(events[0], { status: 413, code: "too_large" });
       assert.isUndefined(events[0]!.mcpMethod);

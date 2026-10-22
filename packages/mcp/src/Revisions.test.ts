@@ -101,12 +101,37 @@ describe("which era a request belongs to", () => {
       assert.strictEqual(Revisions.negotiate(requested), "2025-11-25", String(requested));
   });
 
-  it("acknowledges a notification in either era", () => {
-    for (const body of [
-      { jsonrpc: "2.0", method: "notifications/initialized" },
-      { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1, _meta: meta() } }
-    ])
-      assert.deepStrictEqual(Revisions.classify({ body, headers: {} }), { kind: "notification" });
+  it("acknowledges a notification in either era, keeping what spoke it", () => {
+    assert.deepStrictEqual(
+      Revisions.classify({
+        body: { jsonrpc: "2.0", method: "notifications/initialized" },
+        headers: { protocolVersion: "2025-06-18" }
+      }),
+      {
+        kind: "notification",
+        era: "legacy",
+        method: "notifications/initialized",
+        version: "2025-06-18",
+        clientInfo: undefined
+      }
+    );
+    assert.deepStrictEqual(
+      Revisions.classify({
+        body: {
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: 1, _meta: meta() }
+        },
+        headers: {}
+      }),
+      {
+        kind: "notification",
+        era: "modern",
+        method: "notifications/cancelled",
+        version: Revisions.MODERN,
+        clientInfo: { name: "claude-code", version: "2.1.308" }
+      }
+    );
   });
 });
 
@@ -147,6 +172,22 @@ describe("the modern status table", () => {
       assert.strictEqual(refused.status, 400, JSON.stringify(headers));
       assert.strictEqual(refused.error.code, -32020, JSON.stringify(headers));
       assert.strictEqual(refused.reason, "header_mismatch");
+    }
+    // prompts/get and resources/read mirror theirs too, though the door serves neither.
+    for (const [method, params, header] of [
+      ["prompts/get", { name: "summary" }, undefined],
+      ["prompts/get", { name: "summary" }, "other"],
+      ["resources/read", { uri: "file:///a" }, undefined],
+      ["resources/read", { uri: "file:///a" }, "file:///b"]
+    ] as const) {
+      const request = modern(method, params);
+      const refused = refusal(
+        Revisions.classify({
+          body: request.body,
+          headers: { protocolVersion: Revisions.MODERN, method, name: header }
+        })
+      );
+      assert.strictEqual(refused.error.code, -32020, `${method} ${header}`);
     }
     // The base64 sentinel carries a name a header can't; it decodes before comparing.
     assert.include(

@@ -63,6 +63,8 @@ interface Sent {
   readonly headers?: Record<string, string>;
   readonly body?: unknown;
   readonly raw?: string;
+  /** Sends the body as a stream with no declared length. */
+  readonly chunked?: boolean;
 }
 
 /**
@@ -88,21 +90,24 @@ const door = (base: string, address: string) =>
       const body = sent.raw ?? (sent.body === undefined ? undefined : JSON.stringify(sent.body));
       const headers: Record<string, string> = {
         host: new URL(base).host,
-        ...(body === undefined
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...(body === undefined || sent.chunked === true
           ? {}
-          : {
-              "content-type": "application/json",
-              "content-length": String(Buffer.byteLength(body))
-            }),
+          : { "content-length": String(Buffer.byteLength(body)) }),
         ...(sent.token === undefined ? {} : { authorization: `Bearer ${sent.token}` }),
         ...sent.headers
       };
+      const init: RequestInit & { duplex?: "half" } = {
+        method: sent.method ?? "POST",
+        headers,
+        ...(body === undefined
+          ? {}
+          : sent.chunked === true
+            ? { body: new Blob([body]).stream(), duplex: "half" }
+            : { body })
+      };
       const request = HttpServerRequest.fromWeb(
-        new Request(new URL(sent.path ?? "/mcp", base), {
-          method: sent.method ?? "POST",
-          headers,
-          ...(body === undefined ? {} : { body })
-        })
+        new Request(new URL(sent.path ?? "/mcp", base), init)
       ).modify({ remoteAddress: Option.some(address) });
       const before = recorded.length;
       const response = yield* wide
@@ -353,6 +358,34 @@ it.layer(layer)("the door", (it) => {
       const over = yield* send({ token, raw: "x".repeat(cap + 1) });
       assert.strictEqual(over.status, 413);
       assert.strictEqual(over.event.code, "too_large");
+      assert.strictEqual(over.headers.get("connection"), "close");
+      // With no declared length the body is read to the cap, never parsed past it.
+      const streamed = yield* send({ token, raw: "x".repeat(cap + 1), chunked: true });
+      assert.strictEqual(streamed.status, 413);
+      const fits = yield* send({ ...legacy(token, "ping"), chunked: true });
+      assert.strictEqual(fits.status, 200);
+    })
+  );
+
+  it.effect("spends the person's minute on a request too large to read", () =>
+    Effect.gen(function* () {
+      const person = yield* connected("oversized");
+      yield* OperatingLimits.OperatingLimits.use((limits) =>
+        limits.setOverride({
+          companyId: person.company,
+          limitId: "mcp.requests.perMinute",
+          value: 2,
+          actor: "test"
+        })
+      );
+      const send = yield* door(PRODUCTION, "203.0.113.17");
+      const cap = 1024 * 1024 + 64 * 1024;
+      assert.strictEqual(
+        (yield* send({ token: person.token, raw: "x".repeat(cap + 1) })).status,
+        413
+      );
+      assert.strictEqual((yield* send(legacy(person.token, "ping"))).status, 200);
+      assert.strictEqual((yield* send(legacy(person.token, "ping"))).status, 429);
     })
   );
 
@@ -403,6 +436,10 @@ it.layer(layer)("the door", (it) => {
       });
       assert.strictEqual(initialized.status, 202);
       assert.strictEqual(initialized.text, "");
+      assert.include(initialized.event, {
+        protocolEra: "legacy",
+        mcpMethod: "notifications/initialized"
+      });
     })
   );
 

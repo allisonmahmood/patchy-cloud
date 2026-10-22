@@ -4,16 +4,20 @@
  * client runs: these rules keep a stranger's page off a dev instance by DNS rebinding, and
  * refuse what can't be read as one request from one origin.
  *
- * `Host` is the gate. The load balancer passes it through unchanged and nothing in front of
- * the door forwards another, so the door reads `Host` alone and never believes a forwarded
- * host. Node keeps the first of two `Host` headers, which a browser can't send anyway.
+ * `Host` is the gate. The door never believes a forwarded host. The load balancer sends the
+ * host each request was addressed to: an absolute-form target's authority, without the
+ * listener's own port. Behind no proxy, the door applies the same rule itself, and refuses a
+ * request that carried two `Host` fields, since Node keeps only the first.
  */
+import * as Predicate from "effect/Predicate";
 import { Session } from "@patchy/auth";
 
 /** An authority as `Host` carries it: a name or bracketed IPv6 address, then an optional port. */
 const authority = /^(\[[0-9a-f:.]+\]|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.?)(?::(\d{1,5}))?$/;
 
 const defaultPort = (url: URL) => (url.protocol === "https:" ? 443 : 80);
+
+const withoutTrailingDot = (name: string) => (name.endsWith(".") ? name.slice(0, -1) : name);
 
 /**
  * Whether `host` names the instance served at `publicUrl`: compared lowercased, with a trailing
@@ -22,21 +26,52 @@ const defaultPort = (url: URL) => (url.protocol === "https:" ? 443 : 80);
 export const isOwnHost = (host: string | undefined, publicUrl: URL): boolean => {
   const parsed = authority.exec(host?.toLowerCase() ?? "");
   if (parsed === null) return false;
-  const name = parsed[1]!.endsWith(".") ? parsed[1]!.slice(0, -1) : parsed[1]!;
   const port = parsed[2] === undefined ? defaultPort(publicUrl) : Number(parsed[2]);
   return (
-    name === publicUrl.hostname &&
+    withoutTrailingDot(parsed[1]!) === withoutTrailingDot(publicUrl.hostname) &&
     port === (publicUrl.port === "" ? defaultPort(publicUrl) : Number(publicUrl.port))
   );
 };
 
 /**
- * An origin as browsers serialize it (RFC 6454): `null`, or a scheme, `://`, a host and an
- * optional port, with no path, user or second value. Node joins two `Origin` headers with a
- * comma, which no host here may hold, so a duplicated one is malformed too.
+ * The authority a request was addressed to, as RFC 9112 reads it: an absolute-form target's,
+ * else its one `Host` field. `undefined` when it carried two, which Node's own headers can't
+ * show: only the raw fields a Node request keeps can.
  */
-const serializedOrigin =
-  /^[a-z][a-z0-9+.-]*:\/\/(?:\[[0-9a-f:.]+\]|[a-z0-9\-._~!$&'()*+;=%]+)(?::\d+)?$/i;
+export const requestAuthority = (request: {
+  readonly url: string;
+  readonly headers: { readonly [name: string]: string | undefined };
+  readonly source: object;
+}): string | undefined => {
+  const raw = Predicate.hasProperty(request.source, "rawHeaders")
+    ? request.source.rawHeaders
+    : undefined;
+  if (
+    Array.isArray(raw) &&
+    raw.filter((field, at) => at % 2 === 0 && String(field).toLowerCase() === "host").length > 1
+  )
+    return undefined;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(request.url)) return URL.parse(request.url)?.host;
+  return request.headers["host"];
+};
+
+/** A reg-name host: unreserved and sub-delim characters or percent escapes, without a comma. */
+const regName = /^(?:[a-z0-9\-._~!$&'()*+;=]|%[0-9a-f]{2})+$/i;
+const ipFuture = /^\[v[0-9a-f]+\.[a-z0-9\-._~!$&'()*+;=:]+\]$/i;
+
+/**
+ * An origin as RFC 6454 serializes it: `null`, or a scheme, `://`, a host and an optional port,
+ * with no path, user or second value. Node joins two `Origin` headers with a comma, which no
+ * host here may hold, so a duplicated one is malformed too.
+ */
+const isSerializedOrigin = (origin: string): boolean => {
+  if (origin === "null") return true;
+  const parts = /^[a-z][a-z0-9+.-]*:\/\/(\[[^\]]*\]|[^:/?#[\]@]*)(?::\d+)?$/i.exec(origin);
+  if (parts === null) return false;
+  const host = parts[1]!;
+  if (!host.startsWith("[")) return regName.test(host);
+  return ipFuture.test(host) || URL.canParse(`http://${host}`);
+};
 
 /** What the Origin rules make of a request: `malformed` and `foreign` are both answered 403. */
 export type OriginCheck = "allowed" | "malformed" | "foreign";
@@ -48,7 +83,7 @@ export type OriginCheck = "allowed" | "malformed" | "foreign";
  */
 export const checkOrigin = (origin: string | undefined, publicUrl: URL): OriginCheck => {
   if (origin === undefined) return "allowed";
-  if (origin !== "null" && !serializedOrigin.test(origin)) return "malformed";
+  if (!isSerializedOrigin(origin)) return "malformed";
   if (!Session.isLoopback(publicUrl)) return "allowed";
   return origin.toLowerCase() === publicUrl.origin ? "allowed" : "foreign";
 };

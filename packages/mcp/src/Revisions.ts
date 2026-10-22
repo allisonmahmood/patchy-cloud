@@ -61,7 +61,13 @@ export type Classified =
       readonly version: string | undefined;
       readonly clientInfo: ClientInfo | undefined;
     }
-  | { readonly kind: "notification" }
+  | {
+      readonly kind: "notification";
+      readonly era: Era;
+      readonly method: string;
+      readonly version: string | undefined;
+      readonly clientInfo: ClientInfo | undefined;
+    }
   | {
       readonly kind: "refused";
       readonly status: 400;
@@ -75,6 +81,13 @@ export type Classified =
 const VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
 const CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
 const CLIENT_KEY = "io.modelcontextprotocol/clientInfo";
+
+/** The methods whose `Mcp-Name` header mirrors a body field, and that field. */
+const NAMED_BY: Readonly<Record<string, string>> = {
+  "tools/call": "name",
+  "prompts/get": "name",
+  "resources/read": "uri"
+};
 
 /** Modern revisions are dated on or after the first one, as the SDK reads them. */
 const isModern = (version: string) => version >= MODERN;
@@ -162,11 +175,22 @@ export const classify = (request: {
   const id = isRequestId(body["id"]) ? body["id"] : undefined;
   if (!Predicate.isReadonlyObject(params))
     return invalidRequest("A request's params must be an object.", id);
-  // No client notification means anything to a stateless door; each is acknowledged.
-  if (!hasId) return { kind: "notification" };
+  const meta = Predicate.isReadonlyObject(params["_meta"]) ? params["_meta"] : undefined;
+  // No client notification means anything to a stateless door; each is acknowledged, and its
+  // event still says what spoke it.
+  if (!hasId) {
+    const said = meta?.[VERSION_KEY];
+    const version = typeof said === "string" ? said : headers.protocolVersion;
+    return {
+      kind: "notification",
+      era: version !== undefined && isModern(version) ? "modern" : "legacy",
+      method,
+      version,
+      clientInfo: asClientInfo(meta?.[CLIENT_KEY])
+    };
+  }
   if (id === undefined) return invalidRequest("A request's id must be a string or a number.");
 
-  const meta = Predicate.isReadonlyObject(params["_meta"]) ? params["_meta"] : undefined;
   const claim = meta !== undefined && Object.hasOwn(meta, VERSION_KEY);
   const valid = claim && envelopeProblem(meta) === undefined;
   const claimed = valid && typeof meta[VERSION_KEY] === "string" ? meta[VERSION_KEY] : undefined;
@@ -208,15 +232,16 @@ export const classify = (request: {
       return headerMismatch("A request needs its MCP-Protocol-Version header.", id);
     if (headers.method === undefined)
       return headerMismatch("A request needs its Mcp-Method header.", id);
-    if (method === "tools/call" && typeof params["name"] === "string") {
+    const mirrored = Object.hasOwn(NAMED_BY, method) ? params[NAMED_BY[method]!] : undefined;
+    if (typeof mirrored === "string") {
       if (headers.name === undefined)
-        return headerMismatch("A tools/call request needs its Mcp-Name header.", id);
+        return headerMismatch(`A ${method} request needs its Mcp-Name header.`, id);
       const name = decodeName(headers.name);
-      if (name !== params["name"])
+      if (name !== mirrored)
         return headerMismatch(
           name === undefined
             ? "Mcp-Name holds an invalid base64 value."
-            : `Mcp-Name says ${name} but the body calls ${params["name"]}.`,
+            : `Mcp-Name says ${name} but the body names ${mirrored}.`,
           id
         );
     }

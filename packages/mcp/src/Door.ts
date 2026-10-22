@@ -17,7 +17,6 @@
  * revision and method, the door's tool, the `Origin` and each refusal's code. Arguments,
  * results, tokens, change keys and instructions never reach it.
  */
-import * as ByteSize from "effect/ByteSize";
 import type * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -25,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -48,6 +48,9 @@ const DISCOVER_TTL_MS = 60 * 60 * 1000;
 const TOOLS_TTL_MS = 24 * 60 * 60 * 1000;
 
 const MAX_BODY_BYTES = registry["mcp.body.bytes"].default;
+/** How far past the cap a chunked body is read and dropped so its 413 still arrives. */
+const DRAIN_BYTES = 4 * MAX_BODY_BYTES;
+const decoder = new TextDecoder();
 
 /** How much of what a client sends about itself an event keeps. */
 const RECORDED_ORIGIN = 256;
@@ -56,6 +59,23 @@ const RECORDED_TEXT = 128;
 const parseJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
 
 const recorded = (text: string, limit = RECORDED_TEXT) => [...text].slice(0, limit).join("");
+
+/** What a message says of the revision and client that sent it, cut short for its event. */
+const spoken = (classified: Revisions.Classified): WideEvents.EventFields => {
+  const { era, version } = classified;
+  const clientInfo = classified.kind === "refused" ? undefined : classified.clientInfo;
+  return {
+    ...(era === undefined ? {} : { protocolEra: era }),
+    ...(classified.kind === "refused" ? {} : { mcpMethod: recorded(classified.method, 64) }),
+    ...(version === undefined ? {} : { protocolVersion: recorded(version, 32) }),
+    ...(clientInfo === undefined
+      ? {}
+      : {
+          clientInfoName: recorded(clientInfo.name),
+          clientInfoVersion: recorded(clientInfo.version)
+        })
+  };
+};
 
 export const layer: Layer.Layer<
   never,
@@ -152,15 +172,37 @@ export const layer: Layer.Layer<
     });
 
     /** The body, unparsed, or `undefined` past the cap. */
+    /**
+     * The body as text, `too_large` past the cap, or `unreadable` when the client went away. A
+     * declared length past the cap is refused unread. A chunked body is read on past the cap
+     * and dropped, so its 413 can still be answered on the connection, until it has run on for
+     * a few caps more, when the connection is cut instead.
+     */
     const body = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      if (Number(request.headers["content-length"]) > MAX_BODY_BYTES) return undefined;
-      // A chunked body that runs past the cap ends the connection mid-read.
-      const read = yield* request.text.pipe(
-        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_BODY_BYTES)),
+      if (Number(request.headers["content-length"]) > MAX_BODY_BYTES) return "too_large" as const;
+      const read = yield* request.stream.pipe(
+        Stream.scan(
+          () => ({ bytes: 0, kept: [] as ReadonlyArray<Uint8Array> }),
+          (read, chunk) => {
+            const bytes = read.bytes + chunk.length;
+            return { bytes, kept: bytes <= MAX_BODY_BYTES ? [...read.kept, chunk] : read.kept };
+          }
+        ),
+        Stream.takeUntil((read) => read.bytes > DRAIN_BYTES),
+        Stream.runLast,
         Effect.result
       );
-      return Result.isSuccess(read) ? read.success : undefined;
+      if (Result.isFailure(read)) return "unreadable" as const;
+      const { bytes, kept } = Option.getOrElse(read.success, () => ({ bytes: 0, kept: [] }));
+      if (bytes > MAX_BODY_BYTES) return "too_large" as const;
+      const joined = new Uint8Array(bytes);
+      let at = 0;
+      for (const chunk of kept) {
+        joined.set(chunk, at);
+        at += chunk.length;
+      }
+      return { text: decoder.decode(joined) };
     });
 
     /** The person's requests a minute: undefined while they have some left, else the wait. */
@@ -273,7 +315,7 @@ export const layer: Layer.Layer<
       const origin = request.headers.origin;
       if (origin !== undefined)
         yield* WideEvents.enrich({ origin: recorded(origin, RECORDED_ORIGIN) });
-      if (!RequestTrust.isOwnHost(request.headers.host, publicUrl))
+      if (!RequestTrust.isOwnHost(RequestTrust.requestAuthority(request), publicUrl))
         return yield* refuse(
           421,
           "invalid_host",
@@ -305,14 +347,20 @@ export const layer: Layer.Layer<
         clientSite: identity.agentConnection.clientSite
       });
 
-      const text = yield* body;
-      if (text === undefined)
+      // Every request the person sends spends their minute, an oversized one included.
+      const limited = yield* spend(identity);
+      const read = yield* body;
+      if (read === "too_large")
         return yield* refuse(
           413,
           "too_large",
-          `A request body is at most ${MAX_BODY_BYTES} bytes: the ${registry["tier2.args.bytes"].default}-byte argument cap and its envelope.`
+          `A request body is at most ${MAX_BODY_BYTES} bytes: the ${registry["tier2.args.bytes"].default}-byte argument cap and its envelope.`,
+          // Whatever the client still sends is never read.
+          { connection: "close" }
         );
-      const parsed = parseJson(text);
+      if (read === "unreadable")
+        return yield* refuse(400, "unreadable_body", "The request body couldn't be read.");
+      const parsed = parseJson(read.text);
       const classified = Result.isSuccess(parsed)
         ? Revisions.classify({
             body: parsed.success,
@@ -323,30 +371,8 @@ export const layer: Layer.Layer<
             }
           })
         : undefined;
-      if (classified?.kind === "request") {
-        yield* WideEvents.enrich({
-          protocolEra: classified.era,
-          mcpMethod: recorded(classified.method, 64),
-          ...(classified.version === undefined
-            ? {}
-            : { protocolVersion: recorded(classified.version, 32) }),
-          ...(classified.clientInfo === undefined
-            ? {}
-            : {
-                clientInfoName: recorded(classified.clientInfo.name),
-                clientInfoVersion: recorded(classified.clientInfo.version)
-              })
-        });
-      } else if (classified?.kind === "refused" && classified.era !== undefined) {
-        yield* WideEvents.enrich({
-          protocolEra: classified.era,
-          ...(classified.version === undefined
-            ? {}
-            : { protocolVersion: recorded(classified.version, 32) })
-        });
-      }
+      if (classified !== undefined) yield* WideEvents.enrich(spoken(classified));
 
-      const limited = yield* spend(identity);
       if (limited !== undefined) {
         const message = `You sent Patchy's MCP more than ${limited.value} requests in a minute; try again in ${limited.retryAfterSeconds} seconds.`;
         if (classified?.kind === "request" && classified.method === "tools/call")
