@@ -39,7 +39,8 @@ export const make = Effect.fn("LocalExecutor.make")(
     const bindingEpoch = 1;
     yield* supervisor.bind({ companyId: options.companyId, bindingEpoch });
     // As the fleet's collection does: emit, then acknowledge so the supervisor lets them go.
-    yield* Effect.gen(function* () {
+    // Uninterruptible, so closing never cuts between the two and sends a report twice.
+    const emitReports = Effect.gen(function* () {
       const { reports } = yield* supervisor.stats({ bindingEpoch });
       if (reports.length === 0) return;
       for (const report of reports) yield* events.emit(report.event);
@@ -48,10 +49,24 @@ export const make = Effect.fn("LocalExecutor.make")(
         acknowledgeReports: reports.map((report) => report.reportId)
       });
     }).pipe(
+      Effect.uninterruptible,
       Effect.catchTags({
         SupervisorError: (error) =>
           Effect.logWarning("Local process reports are unavailable", { reason: error.reason })
-      }),
+      })
+    );
+    // Finalizers run in reverse, so this runs after the loop below stops and before the
+    // supervisor's own: stopping it first reports the processes still running.
+    yield* Effect.addFinalizer(() =>
+      supervisor.stop({ bindingEpoch }).pipe(
+        Effect.catchTags({
+          SupervisorError: (error) =>
+            Effect.logWarning("Local processes did not stop", { reason: error.reason })
+        }),
+        Effect.andThen(emitReports)
+      )
+    );
+    yield* emitReports.pipe(
       Effect.andThen(Effect.sleep("1 second")),
       Effect.forever,
       Effect.forkScoped

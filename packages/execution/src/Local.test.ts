@@ -159,7 +159,7 @@ it.live(
 );
 
 it.live(
-  "forwards each process's report as a wide event, with how long it took to start",
+  "emits each process's wide event, with how long it took to start, when it idles out or the executor closes",
   () =>
     Effect.gen(function* () {
       const delivered = yield* Queue.unbounded<WideEvents.WideEvent>();
@@ -168,27 +168,29 @@ it.live(
           write: (event) => Queue.offer(delivered, event).pipe(Effect.asVoid)
         })
       );
-      const local = yield* Local.make({
-        ...options,
-        operatingLimits: { "execution.process.idle": 1_000, "execution.probe.interval": 25 }
-      }).pipe(Effect.provideService(WideEvents.WideEvents, events));
-      const first = yield* local.bind(bundle);
-      const second = yield* local.bind({ ...bundle, versionId: "ver_second" });
-      // Both idle out, and the executor forwards their reports with no fleet to collect them.
-      const reported = [yield* Queue.take(delivered), yield* Queue.take(delivered)];
-      const process = (generation: number | undefined) =>
-        reported.find(
-          (event) => event.type === "process" && event.processGeneration === generation
-        );
-      expect(process(first.processGeneration)).toMatchObject({
+      const second = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const local = yield* Local.make({
+            ...options,
+            operatingLimits: { "execution.process.idle": 1_000, "execution.probe.interval": 25 }
+          }).pipe(Effect.provideService(WideEvents.WideEvents, events));
+          const first = yield* local.bind(bundle);
+          // It idles out, and with no fleet to collect its report the executor emits it.
+          expect(yield* Queue.take(delivered)).toMatchObject({
+            type: "process",
+            processGeneration: first.processGeneration,
+            cause: "idle",
+            firstOnTask: true,
+            startMs: expect.any(Number)
+          });
+          return yield* local.bind({ ...bundle, versionId: "ver_second" });
+        })
+      );
+      // Closing the executor stops the second, and its event still goes out.
+      expect(yield* Queue.take(delivered)).toMatchObject({
         type: "process",
-        cause: "idle",
-        firstOnTask: true,
-        startMs: expect.any(Number)
-      });
-      expect(process(second.processGeneration)).toMatchObject({
-        type: "process",
-        cause: "idle",
+        processGeneration: second.processGeneration,
+        cause: "stopped",
         firstOnTask: false,
         startMs: expect.any(Number)
       });
