@@ -35,7 +35,8 @@ const isExports = (value: unknown): value is Readonly<Record<string, unknown>> =
 export function foldAgentArea(
   files: Readonly<Record<string, unknown>>
 ): Readonly<Record<string, unknown>> {
-  const folded: Record<string, unknown> = {};
+  // No prototype, so an export named __proto__ is a key like any other.
+  const folded: Record<string, unknown> = Object.create(null);
   const owners = new Map<string, string>();
   for (const [file, exports] of Object.entries(files)) {
     if (!isModuleName(file) || !isExports(exports))

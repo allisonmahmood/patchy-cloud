@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import { watch } from "./devServerWatch.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
 import toolchain from "./toolchain.json" with { type: "json" };
+import * as Inspection from "@patchy/execution/inspection";
 import { buildServer } from "./serverBuild.js";
 
 const handler = (kind: "text" | "number" | "boolean") => `
@@ -288,6 +289,37 @@ it.live(
       yield* save(intake, own);
       assert.deepStrictEqual((yield* next).handlers, built.handlers);
     }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, DirectoryWatch.layer])),
+  30_000
+);
+
+it.live(
+  "keeps a file named __proto__, and leaves out a name two export * sources make ambiguous",
+  () =>
+    Effect.gen(function* () {
+      const { root, fs, path } = yield* repo;
+      yield* fs.makeDirectory(path.join(root, "agent"));
+      yield* fs.makeDirectory(path.join(root, "helpers"));
+      yield* fs.writeFileString(path.join(root, "helpers/one.ts"), handler("text"));
+      yield* fs.writeFileString(path.join(root, "helpers/two.ts"), handler("number"));
+      // ES modules leave read out of more.ts's namespace, so leads.ts's read is the only one.
+      yield* fs.writeFileString(
+        path.join(root, "agent/more.ts"),
+        'export * from "../helpers/one.js";\nexport * from "../helpers/two.js";'
+      );
+      yield* fs.writeFileString(path.join(root, "agent/leads.ts"), handler("boolean"));
+      yield* fs.writeFileString(
+        path.join(root, "agent/__proto__.ts"),
+        handler("text").replace("export const read", "export const count")
+      );
+      const built = yield* Effect.tryPromise(() =>
+        buildServer(root, [], ["__proto__", "leads", "more"], toolchain, [])
+      );
+      assert.deepStrictEqual(built.agentTools, { count: "__proto__", read: "leads" });
+      assert.deepStrictEqual(yield* Inspection.inspect(built.server), {
+        "agent.count": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true },
+        "agent.read": { kind: "query", args: {}, result: { kind: "boolean" }, agentTool: true }
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   30_000
 );
 

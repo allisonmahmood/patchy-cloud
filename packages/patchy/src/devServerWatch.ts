@@ -70,10 +70,9 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
     agent: { replaced: true, watch: undefined }
   };
   let builder: { close(): Promise<void> } | undefined;
-  let sources: { readonly modules: readonly string[]; readonly agentFiles: readonly string[] } = {
-    modules: [],
-    agentFiles: []
-  };
+  // The last discovery, absent until the first, which reminds about no module.
+  let sources:
+    { readonly modules: readonly string[]; readonly agentFiles: readonly string[] } | undefined;
   let generation = 0;
   let sourcesPending = false;
   const changed = () => {
@@ -153,17 +152,18 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
     const agentFiles = yield* discoverAgentFiles(root);
     if (
       builder !== undefined &&
+      sources !== undefined &&
       same(sources.modules, modules) &&
       same(sources.agentFiles, agentFiles)
     )
       return false;
-    if (builder !== undefined) {
+    if (sources !== undefined) {
       for (const name of modules) {
         if (!sources.modules.includes(name))
           yield* Console.log(`new server module ${name}: run pnpm patchy refresh for types`);
       }
     }
-    if (!same(sources.agentFiles, agentFiles)) {
+    if (!same(sources?.agentFiles ?? [], agentFiles)) {
       const skipped = agentTypecheckWarning(root, agentFiles);
       if (skipped !== undefined) yield* Console.log(skipped);
     }
@@ -201,7 +201,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       const built = change.result;
       return {
         ...built,
-        ...sources,
+        ...sources!,
         inspect: inspection.inspect(built.server).pipe(
           Effect.mapError(
             (cause) =>

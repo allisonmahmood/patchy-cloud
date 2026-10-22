@@ -268,6 +268,14 @@ it("refuses a tool name two agent files export, naming both, and a server module
     assert.throws(() => extractHandlerDescriptors({}, area), InvalidManifestError);
 });
 
+it("keeps an agent tool named __proto__ as a tool, not the fold's prototype", () => {
+  const list = server.query({ args: {}, result: t.boolean(), handler: () => true });
+  const file = Object.defineProperty({}, "__proto__", { value: list, enumerable: true });
+  assert.deepStrictEqual(Object.keys(extractHandlerDescriptors({}, foldAgentArea({ file }))), [
+    "agent.__proto__"
+  ]);
+});
+
 it("validates structural handler descriptors without invoking callbacks or serializers", () => {
   const list = {
     kind: "query",

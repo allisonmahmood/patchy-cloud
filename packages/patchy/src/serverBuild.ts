@@ -58,7 +58,8 @@ const buildConfig = (
         `import * as module${index} from ${JSON.stringify(path.join(root, "server", `${name}.ts`))};`
     ),
     ...agentPaths.map((file, index) => `import * as agent${index} from ${JSON.stringify(file)};`),
-    `export default createGuest({${modules.map((name, index) => `${JSON.stringify(name)}: module${index}`).join(",")}},${JSON.stringify(sharedStores)},{${agent.files.map((name, index) => `${JSON.stringify(name)}: agent${index}`).join(",")}});`
+    // Computed keys, so a file named __proto__ is a key rather than the object's prototype.
+    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}});`
   ].join("\n");
   return {
     configFile: false,
@@ -81,27 +82,32 @@ const buildConfig = (
         // lost; here the refusal can name both files.
         async buildEnd(error) {
           if (error !== undefined) return;
-          const exported = async (id: string, seen: Set<string>): Promise<readonly string[]> => {
+          const exported = async (id: string, seen: Set<string>): Promise<Set<string>> => {
             const info = this.getModuleInfo(id);
-            if (info === null || seen.has(id)) return [];
+            if (info === null || seen.has(id)) return new Set();
             seen.add(id);
-            const names = info.exports.filter((name) => name !== "*");
+            const names = new Set(info.exports.filter((name) => name !== "*"));
             if (!info.exports.includes("*") || info.code === null) return names;
-            // `export *` is listed as "*"; follow each star source as the bundle links it.
+            // `export *` is listed as "*"; follow each star source as the bundle links it. A
+            // name two star sources give is ambiguous, so the namespace leaves it out, unless
+            // the module exports it itself. A source reached twice counts once, as one binding.
+            const starred = new Map<string, number>();
             for (const statement of this.parse(info.code).body) {
               if (statement.type !== "ExportAllDeclaration" || statement.exported !== null)
                 continue;
               const target = await this.resolve(statement.source.value, id);
               if (target === null) continue;
               for (const name of await exported(target.id, seen))
-                if (name !== "default") names.push(name);
+                if (name !== "default" && !names.has(name))
+                  starred.set(name, (starred.get(name) ?? 0) + 1);
             }
+            for (const [name, sources] of starred) if (sources === 1) names.add(name);
             return names;
           };
           const owners = new Map<string, string>();
           for (const [index, file] of agentPaths.entries()) {
             const stem = agent.files[index]!;
-            for (const name of new Set(await exported(file, new Set()))) {
+            for (const name of await exported(file, new Set())) {
               const owner = owners.get(name);
               if (owner !== undefined) {
                 agent.refusal = new LocalError({
