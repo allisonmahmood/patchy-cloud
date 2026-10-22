@@ -944,6 +944,21 @@ it.layer(
       };
       const card = yield* service.portalCard(source.patchId, access);
       assert.deepStrictEqual(card.dependants, [{ ...expected[0]!, store: "photos" }]);
+      // `list` answers the same patches by the same rule, without the edges `read` scans for.
+      const all = { ...access, state: "all" as const };
+      const read = yield* service.read(all);
+      assert.isTrue(read.some((row) => row.dependants.length > 0 || row.reads.length > 0));
+      assert.deepStrictEqual(
+        yield* service.list(all),
+        read.map(({ patch, owner, currentVersion, tier, publishedAt, visits }) => ({
+          patch,
+          owner,
+          currentVersion,
+          tier,
+          publishedAt,
+          visits
+        }))
+      );
       yield* service.retire(source.patchId, owner, true);
       yield* service.retire(consumer.patchId, { userId: reader.user.id, admin: false });
       const off = yield* service.restore(consumer.patchId, administrator).pipe(Effect.flip);

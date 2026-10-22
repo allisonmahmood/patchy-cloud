@@ -89,7 +89,7 @@ const RECORDED_TOOL = 128;
 
 /** What a call reaches once every check passes: the tool on the version served at arrival. */
 export interface Target {
-  readonly patch: Patches.ReadPatch;
+  readonly patch: Patches.ListedPatch;
   /** The version served when the call arrived: the checks read it and the call runs on it. */
   readonly version: Served.LoadedVersion;
   /** That version's number, which a success answers as `version`. */
@@ -112,7 +112,7 @@ const personOf = (identity: AgentConnections.AgentIdentity): NonNullable<Runtime
 /** A retired patch, to someone who could open it: who retired it and when, and what to do. */
 const retired = Effect.fn("Calls.retired")(function* (
   access: Patches.ReadAccess,
-  row: Patches.ReadPatch
+  row: Patches.ListedPatch
 ) {
   const notice = yield* (yield* Patches.Patches).addressNotice(row.patch.id, access);
   const by = Option.isSome(notice) ? notice.value.actorName : null;
@@ -150,7 +150,7 @@ export const reach = Effect.fn("Calls.reach")(
     };
     // Retired patches too, so one the person could open can say who retired it.
     const rows = yield* patches
-      .read({ ...access, state: "all" })
+      .list({ ...access, state: "all" })
       .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die }));
     const found = yield* Catalogue.resolve(identity, rows, call.patch, publicUrl);
     if (found === undefined || found.row.patch.state === "deleted")

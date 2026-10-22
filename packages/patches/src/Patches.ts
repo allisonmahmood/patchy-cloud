@@ -319,6 +319,13 @@ export interface ReadPatch {
   })[];
 }
 
+/**
+ * A patch as `read` answers it, without its shared-read edges (`reads` and `dependants`): what
+ * `list` answers for callers that never show them, since those edges scan every version's
+ * declarations of every patch in the company.
+ */
+export type ListedPatch = Omit<ReadPatch, "reads" | "dependants">;
+
 /** One member's record of opening one patch, read only to build that member's own Home. */
 export interface Open {
   readonly patchId: string;
@@ -742,6 +749,10 @@ export class Patches extends Context.Service<
     readonly read: (
       options: ReadOptions
     ) => Effect.Effect<readonly ReadPatch[], PatchUnavailable | WrongState | SqlError>;
+    /** The same patches as `read`, by the same rule, without their shared-read edges. */
+    readonly list: (
+      options: ReadOptions
+    ) => Effect.Effect<readonly ListedPatch[], PatchUnavailable | WrongState | SqlError>;
     readonly portalCard: (
       patchId: string,
       access: ReadAccess
@@ -1146,30 +1157,39 @@ export const make = Effect.gen(function* () {
         AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL`
   });
 
+  // The shared tables and stores a patch declares it reads, in any version it ever had.
+  const declaredReads = sql`
+    COALESCE((
+      SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(declarations))
+        ORDER BY declarations.alias, declarations."patchId", declarations."table", declarations.store)
+      FROM (
+        SELECT DISTINCT declaration.key AS alias,
+          declaration.value->>'patchId' AS "patchId",
+          declaration.value->>'table' AS "table", declaration.value->>'store' AS store
+        FROM patch_versions
+        CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
+        WHERE patch_versions.patch_id = patches.id
+          AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
+          AND declaration.value->>'id' = (declaration.value->>'patchId') || '/' ||
+            COALESCE(declaration.value->>'table', declaration.value->>'store')
+      ) declarations
+    ), '[]'::jsonb)`;
+
   const companyPatchRows = SqlSchema.findAll({
-    Request: Schema.Struct({ companyId: Schema.String, userId: Schema.String }),
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      userId: Schema.String,
+      /** Whether to read the shared-read declarations, across every version of every patch. */
+      sharing: Schema.Boolean
+    }),
     Result: ReadPatchRow,
-    execute: ({ companyId, userId }) => sql`
+    execute: ({ companyId, userId, sharing }) => sql`
       SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName",
         owner.deactivated_at IS NOT NULL AS "ownerDeactivated",
         current_version.version_number AS "currentVersion", current_version.tier,
         current_version.created_at AS "publishedAt",
         LEAST(patches.visit_count, 2147483647)::int AS visits,
-        COALESCE((
-          SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(declarations))
-            ORDER BY declarations.alias, declarations."patchId", declarations."table", declarations.store)
-          FROM (
-            SELECT DISTINCT declaration.key AS alias,
-              declaration.value->>'patchId' AS "patchId",
-              declaration.value->>'table' AS "table", declaration.value->>'store' AS store
-            FROM patch_versions
-            CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
-            WHERE patch_versions.patch_id = patches.id
-              AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
-              AND declaration.value->>'id' = (declaration.value->>'patchId') || '/' ||
-                COALESCE(declaration.value->>'table', declaration.value->>'store')
-          ) declarations
-        ), '[]'::jsonb) AS reads
+        ${sharing ? declaredReads : sql`'[]'::jsonb`} AS reads
       FROM patches
       JOIN companies ON companies.id = patches.company_id
       JOIN users owner ON owner.id = patches.owner_user_id
@@ -1503,8 +1523,13 @@ export const make = Effect.gen(function* () {
       );
   }, Effect.catchTags(dieOnSchemaError));
 
-  const read = Effect.fn("Patches.read")(function* (options: ReadOptions) {
-    const rows = yield* companyPatchRows(options);
+  /** The patches `options` selects that the person can open, with or without sharing edges. */
+  const select = Effect.fn("Patches.select")(function* (options: ReadOptions, sharing: boolean) {
+    const rows = yield* companyPatchRows({
+      companyId: options.companyId,
+      userId: options.userId,
+      sharing
+    });
     const sourceStates = new Map<string, PatchState>();
     const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
     for (const row of rows) {
@@ -1533,6 +1558,28 @@ export const make = Effect.gen(function* () {
           selected.push(entry);
       }
     }
+    return { selected, openable, sourceStates };
+  });
+
+  const listed = ({ row, patch }: { row: ReadPatchRow; patch: Patch }): ListedPatch => ({
+    patch,
+    owner: {
+      id: patch.ownerUserId,
+      name: row.ownerName,
+      deactivated: row.ownerDeactivated
+    },
+    currentVersion: row.currentVersion,
+    tier: row.tier,
+    publishedAt: iso(row.publishedAt),
+    visits: row.visits
+  });
+
+  const list = Effect.fn("Patches.list")(function* (options: ReadOptions) {
+    return (yield* select(options, false)).selected.map(listed);
+  }, Effect.catchTags(dieOnSchemaError));
+
+  const read = Effect.fn("Patches.read")(function* (options: ReadOptions) {
+    const { selected, openable, sourceStates } = yield* select(options, true);
     if (selected.length === 0) return [];
 
     const dependants = new Map<string, Array<ReadPatch["dependants"][number]>>();
@@ -1557,16 +1604,7 @@ export const make = Effect.gen(function* () {
       }
     }
     return selected.map(({ row, patch }): ReadPatch => ({
-      patch,
-      owner: {
-        id: patch.ownerUserId,
-        name: row.ownerName,
-        deactivated: row.ownerDeactivated
-      },
-      currentVersion: row.currentVersion,
-      tier: row.tier,
-      publishedAt: iso(row.publishedAt),
-      visits: row.visits,
+      ...listed({ row, patch }),
       reads: row.reads.map((declaration): ReadPatch["reads"][number] => {
         const source = openable.get(declaration.patchId)?.patch;
         return {
@@ -2552,6 +2590,7 @@ export const make = Effect.gen(function* () {
     preflight,
     inventory,
     read,
+    list,
     portalCard,
     addressNotice,
     withDependencyLock,

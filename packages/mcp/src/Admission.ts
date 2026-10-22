@@ -39,7 +39,7 @@ export type Retain = Effect.Effect<Effect.Effect<void>>;
  */
 export type Admit = <E, R>(
   identity: AgentConnections.AgentIdentity,
-  patch: Patches.ReadPatch,
+  patch: Patches.ListedPatch,
   work: (retain: Retain) => Effect.Effect<ToolCallResult, E, R>
 ) => Effect.Effect<ToolCallResult, E, R>;
 
