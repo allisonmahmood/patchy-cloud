@@ -4,10 +4,10 @@
  * client runs: these rules keep a stranger's page off a dev instance by DNS rebinding, and
  * refuse what can't be read as one request from one origin.
  *
- * `Host` is the gate. The door never believes a forwarded host. The load balancer sends the
- * host each request was addressed to: an absolute-form target's authority, without the
- * listener's own port. Behind no proxy, the door applies the same rule itself, and refuses a
- * request that carried two `Host` fields, since Node keeps only the first.
+ * `Host` is the gate. The door never believes a forwarded host: the load balancer preserves the
+ * `Host` a client sent, port and duplicates included. The door reads an absolute-form target's
+ * authority instead, as RFC 9112 does, and refuses a request that carried two `Host` fields,
+ * since Node keeps only the first.
  */
 import * as Predicate from "effect/Predicate";
 import { Session } from "@patchy/auth";
@@ -51,7 +51,16 @@ export const requestAuthority = (request: {
     raw.filter((field, at) => at % 2 === 0 && String(field).toLowerCase() === "host").length > 1
   )
     return undefined;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(request.url)) return URL.parse(request.url)?.host;
+  const absolute = /^(https?):\/\/([^/?#]*)/i.exec(request.url);
+  if (absolute !== null) {
+    // The target's own port, or its scheme's default: never the public origin's by omission.
+    const [, scheme, target] = absolute;
+    if (target!.includes("@")) return undefined;
+    return /:\d+$/.test(target!)
+      ? target
+      : `${target}:${scheme!.toLowerCase() === "https" ? 443 : 80}`;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(request.url)) return undefined;
   return request.headers["host"];
 };
 

@@ -48,8 +48,6 @@ const DISCOVER_TTL_MS = 60 * 60 * 1000;
 const TOOLS_TTL_MS = 24 * 60 * 60 * 1000;
 
 const MAX_BODY_BYTES = registry["mcp.body.bytes"].default;
-/** How far past the cap a chunked body is read and dropped so its 413 still arrives. */
-const DRAIN_BYTES = 4 * MAX_BODY_BYTES;
 const decoder = new TextDecoder();
 
 /** How much of what a client sends about itself an event keeps. */
@@ -62,11 +60,10 @@ const recorded = (text: string, limit = RECORDED_TEXT) => [...text].slice(0, lim
 
 /** What a message says of the revision and client that sent it, cut short for its event. */
 const spoken = (classified: Revisions.Classified): WideEvents.EventFields => {
-  const { era, version } = classified;
-  const clientInfo = classified.kind === "refused" ? undefined : classified.clientInfo;
+  const { era, method, version, clientInfo } = classified;
   return {
     ...(era === undefined ? {} : { protocolEra: era }),
-    ...(classified.kind === "refused" ? {} : { mcpMethod: recorded(classified.method, 64) }),
+    ...(method === undefined ? {} : { mcpMethod: recorded(method, 64) }),
     ...(version === undefined ? {} : { protocolVersion: recorded(version, 32) }),
     ...(clientInfo === undefined
       ? {}
@@ -171,12 +168,11 @@ export const layer: Layer.Layer<
       );
     });
 
-    /** The body, unparsed, or `undefined` past the cap. */
     /**
      * The body as text, `too_large` past the cap, or `unreadable` when the client went away. A
-     * declared length past the cap is refused unread. A chunked body is read on past the cap
-     * and dropped, so its 413 can still be answered on the connection, until it has run on for
-     * a few caps more, when the connection is cut instead.
+     * declared length past the cap is refused unread. A chunked body is read to its end,
+     * keeping only the cap, so its 413 still reaches the client: stopping early would end the
+     * connection first. Node's request timeout bounds how long that read can take.
      */
     const body = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
@@ -189,7 +185,6 @@ export const layer: Layer.Layer<
             return { bytes, kept: bytes <= MAX_BODY_BYTES ? [...read.kept, chunk] : read.kept };
           }
         ),
-        Stream.takeUntil((read) => read.bytes > DRAIN_BYTES),
         Stream.runLast,
         Effect.result
       );

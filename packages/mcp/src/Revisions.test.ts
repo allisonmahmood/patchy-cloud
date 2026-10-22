@@ -172,6 +172,9 @@ describe("the modern status table", () => {
       assert.strictEqual(refused.status, 400, JSON.stringify(headers));
       assert.strictEqual(refused.error.code, -32020, JSON.stringify(headers));
       assert.strictEqual(refused.reason, "header_mismatch");
+      // Its event still says what the request said of itself.
+      assert.include(refused, { era: "modern", method: "tools/call", version: Revisions.MODERN });
+      assert.deepStrictEqual(refused.clientInfo, { name: "claude-code", version: "2.1.308" });
     }
     // prompts/get and resources/read mirror theirs too, though the door serves neither.
     for (const [method, params, header] of [

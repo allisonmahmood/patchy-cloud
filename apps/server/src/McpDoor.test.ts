@@ -253,6 +253,28 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
       );
       assert.strictEqual(declared.status, 413);
       assert.strictEqual(JSON.parse(declared.body).error, "too_large");
+      // Sent in full, the 413 still arrives before the connection closes.
+      const sentWhole = yield* raw(
+        `POST /mcp HTTP/1.1\nhost: ${HOST}\nauthorization: Bearer ${minted.token}\ncontent-type: application/json\ncontent-length: 2000000`,
+        Buffer.alloc(2_000_000, "x")
+      );
+      assert.strictEqual(sentWhole.status, 413);
+      // Far past the cap, a chunked body is still read to its end so its 413 arrives.
+      const huge = Buffer.concat([
+        ...Array.from({ length: 24 }, () =>
+          Buffer.concat([
+            Buffer.from(`${chunk.length.toString(16)}\r\n`),
+            chunk,
+            Buffer.from("\r\n")
+          ])
+        ),
+        Buffer.from("0\r\n\r\n")
+      ]);
+      const far = yield* raw(
+        `POST /mcp HTTP/1.1\nhost: ${HOST}\nauthorization: Bearer ${minted.token}\ncontent-type: application/json\ntransfer-encoding: chunked`,
+        huge
+      );
+      assert.strictEqual(far.status, 413);
     })
   );
 });

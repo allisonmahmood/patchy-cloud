@@ -75,7 +75,10 @@ export type Classified =
       readonly error: RpcError;
       readonly id?: RequestId;
       readonly era?: Era;
+      /** What a readable request said of itself, for its event. */
+      readonly method?: string;
       readonly version?: string;
+      readonly clientInfo?: ClientInfo;
     };
 
 const VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
@@ -155,8 +158,34 @@ const envelopeProblem = (meta: Readonly<Record<string, unknown>>): string | unde
   return undefined;
 };
 
-/** The era and checks of one parsed request body and the headers it came with. */
+/**
+ * The era and checks of one parsed request body and the headers it came with. A refusal keeps
+ * whatever the request said of its method, version and client.
+ */
 export const classify = (request: {
+  readonly body: unknown;
+  readonly headers: MirroredHeaders;
+}): Classified => {
+  const classified = ladder(request);
+  if (classified.kind !== "refused" || !Predicate.isReadonlyObject(request.body)) return classified;
+  const { body, headers } = request;
+  const params = body["params"];
+  const meta =
+    Predicate.isReadonlyObject(params) && Predicate.isReadonlyObject(params["_meta"])
+      ? params["_meta"]
+      : undefined;
+  const said = meta?.[VERSION_KEY];
+  const version = classified.version ?? (typeof said === "string" ? said : headers.protocolVersion);
+  const clientInfo = asClientInfo(meta?.[CLIENT_KEY]);
+  return {
+    ...classified,
+    ...(typeof body["method"] === "string" ? { method: body["method"] } : {}),
+    ...(version === undefined ? {} : { version }),
+    ...(clientInfo === undefined ? {} : { clientInfo })
+  };
+};
+
+const ladder = (request: {
   readonly body: unknown;
   readonly headers: MirroredHeaders;
 }): Classified => {

@@ -67,8 +67,45 @@ describe("the Host gate", () => {
         headers: { host: "cloud.patchyhq.com" },
         source: node(["Host", "cloud.patchyhq.com"])
       }),
-      "evil.example"
+      "evil.example:80"
     );
+    // A scheme's default port is the target's, never the public origin's by omission.
+    for (const [url, authority] of [
+      ["http://cloud.patchyhq.com/mcp", "cloud.patchyhq.com:80"],
+      ["https://cloud.patchyhq.com/mcp", "cloud.patchyhq.com:443"],
+      ["https://cloud.patchyhq.com:8443/mcp", "cloud.patchyhq.com:8443"],
+      ["HTTPS://Cloud.PatchyHQ.com/mcp", "Cloud.PatchyHQ.com:443"]
+    ] as const)
+      assert.strictEqual(
+        RequestTrust.requestAuthority({ url, headers: {}, source: node([]) }),
+        authority,
+        url
+      );
+    assert.isTrue(
+      RequestTrust.isOwnHost(
+        RequestTrust.requestAuthority({
+          url: "HTTPS://Cloud.PatchyHQ.com/mcp",
+          headers: {},
+          source: node([])
+        }),
+        production
+      )
+    );
+    assert.isFalse(
+      RequestTrust.isOwnHost(
+        RequestTrust.requestAuthority({
+          url: "http://cloud.patchyhq.com/mcp",
+          headers: {},
+          source: node([])
+        }),
+        production
+      )
+    );
+    for (const url of ["https://user@cloud.patchyhq.com/mcp", "ftp://cloud.patchyhq.com/mcp"])
+      assert.isUndefined(
+        RequestTrust.requestAuthority({ url, headers: { host: "cloud.patchyhq.com" }, source: {} }),
+        url
+      );
     assert.isUndefined(
       RequestTrust.requestAuthority({
         url: "/mcp",

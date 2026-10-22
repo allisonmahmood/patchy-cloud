@@ -587,6 +587,15 @@ it.layer(layer)("the door", (it) => {
         assert.strictEqual(response.status, status, JSON.stringify(sent.body));
         assert.strictEqual(at(response.json, "error.code"), code, JSON.stringify(sent.body));
       }
+      // A refused request's event still names what it said of itself.
+      const mismatched = yield* send(cases[2]![0]);
+      assert.include(mismatched.event, {
+        protocolEra: "modern",
+        protocolVersion: "2026-07-28",
+        mcpMethod: "tools/call",
+        clientInfoName: "claude-code",
+        code: "header_mismatch"
+      });
       const unsupported = yield* send(cases[0]![0]);
       assert.deepStrictEqual(at(unsupported.json, "error.data"), {
         supported: ["2026-07-28", "2025-11-25", "2025-06-18"],
