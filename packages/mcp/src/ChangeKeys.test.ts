@@ -300,6 +300,45 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
   );
 
   it.effect(
+    "keeps a key held when its agent goes away mid-try, until its lease runs out and a retry resolves it",
+    () =>
+      Effect.gen(function* () {
+        const acme = yield* company("change-gone", [["Priya Shah", "admin"]]);
+        const priya = acme.people[0]!;
+        const published = yield* publish(acme.id, priya, "new-business", { handlers: leads });
+        const started = yield* Deferred.make<void>();
+        let first = true;
+        const fake = yield* runtime((handed) =>
+          first
+            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+            : (handed.binding.onReplay ?? Effect.void).pipe(Effect.andThen(ok({ id: "lead-7" })))
+        );
+        const send = yield* doorTo(fake.service, "203.0.113.70");
+        const add = { tool: "addLead", args: { name: "Ada", score: 7 }, key: "k-gone" };
+
+        // The agent hangs up while Runtime still has the try.
+        const gone = yield* Effect.forkChild(change(send, priya, add));
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(gone);
+        first = false;
+        assert.strictEqual(refusal(yield* change(send, priya, add))["code"], "busy");
+        assert.strictEqual(fake.handed.length, 1);
+
+        // Once its lease runs out, the retry runs under the same mutation key, and Runtime's
+        // record of it answers.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE change_keys SET running_until = clock_timestamp()
+          WHERE patch_id = ${published.patchId}`;
+        assert.deepStrictEqual(structured(yield* change(send, priya, add)), {
+          result: { id: "lead-7" },
+          version: 1,
+          replayed: true
+        });
+        assert.strictEqual(mutationKeyOf(fake.handed[1]), mutationKeyOf(fake.handed[0]));
+      })
+  );
+
+  it.effect(
     "runs an action once per key: a later try is refused unrun, a timeout may have partly happened, and a large result is left out",
     () =>
       Effect.gen(function* () {

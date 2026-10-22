@@ -14,7 +14,6 @@
  */
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -363,8 +362,7 @@ const changeRefusal = (error: Runtime.RuntimeError, descriptor: HandlerDescripto
  * `change_patch { patch, tool, args, key }`: runs a change tool, a mutation or an action that
  * can write, under the agent's change key, and answers `{ result, version }`, with the result
  * left out when an agent couldn't read it, or the patch's own refusal or Patchy's. A retry of
- * a committed mutation answers its first result with `replayed: true` and runs nothing. A try
- * runs to its end even if the agent goes away, so its key records how it ended.
+ * a committed mutation answers its first result with `replayed: true` and runs nothing.
  */
 export const change = Effect.fn("Calls.change")(function* (
   identity: AgentConnections.AgentIdentity,
@@ -425,30 +423,24 @@ export const change = Effect.fn("Calls.change")(function* (
   // Runtime says when its own record of the mutation key answered a retry Patchy hadn't seen
   // commit, such as one after an unknown outcome: that change replayed too.
   const replayed = yield* Ref.make(false);
-  // The try and its settling run in a fiber of their own, which the request only joins: if the
-  // agent goes away, the try still runs to its end and settles its key, and nothing, shutdown
-  // included, waits on them.
-  const tried = yield* Effect.forkDetach(
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        invoke(identity, target, invocation, claimed.mutationKey, Ref.set(replayed, true))
-      );
-      yield* claimed
-        .settle(
-          kind === "mutation" && Exit.isSuccess(exit) && exit.value.ok
-            ? jsonText(exit.value.value)
-            : undefined
-        )
-        .pipe(
-          // The key stays held until its lease runs out, and a retry then resolves it.
-          Effect.catchTags({
-            SqlError: (cause) => Effect.logError("A change key's try was not settled.", cause)
-          })
-        );
-      return yield* exit;
-    })
+  // A try that ends settles its key, keeping a committed mutation's result. If the agent goes
+  // away first, Runtime finishes the try without it and the key stays held until its lease runs
+  // out, since the try may still be running; a retry then resolves through Runtime's record.
+  const exit = yield* Effect.exit(
+    invoke(identity, target, invocation, claimed.mutationKey, Ref.set(replayed, true))
   );
-  const answer = yield* Fiber.join(tried).pipe(
+  yield* claimed
+    .settle(
+      kind === "mutation" && Exit.isSuccess(exit) && exit.value.ok
+        ? jsonText(exit.value.value)
+        : undefined
+    )
+    .pipe(
+      Effect.catchTags({
+        SqlError: (cause) => Effect.logError("A change key's try was not settled.", cause)
+      })
+    );
+  const answer = yield* exit.pipe(
     Effect.flatMap((reply) =>
       Effect.map(Ref.get(replayed), (again) =>
         again && reply.ok
