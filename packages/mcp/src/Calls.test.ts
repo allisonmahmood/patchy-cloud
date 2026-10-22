@@ -230,6 +230,35 @@ it.layer(harness)("read_patch", (it) => {
       })
   );
 
+  it.effect("keeps a refusal that names a long tool within the read cap", () =>
+    Effect.gen(function* () {
+      const acme = yield* company("long-name", [["Priya Shah", "admin"]]);
+      const priya = acme.people[0]!;
+      // A name as long as a patch's tools allow, which the refusals repeat.
+      const long = "y".repeat(50_000);
+      yield* publish(acme.id, priya, "new-business", {
+        handlers: { [`agent.${long}`]: tool("mutation", "Changes something.", {}) }
+      });
+      const fake = yield* runtime(() => Effect.die("nothing runs"));
+      const send = yield* doorTo(fake.service, "203.0.113.48");
+      for (const [name, code] of [
+        [long, "wrong_kind"],
+        ["z".repeat(60_000), "unknown_tool"]
+      ] as const) {
+        const response = yield* send(
+          call(priya.token, "read_patch", { patch: "new-business", tool: name, args: {} })
+        );
+        const text = String(at(answered(response), "content.0.text"));
+        assert.isAtMost(text.length, 100_000, code);
+        assert.include(refusal(response), { code, from: "patchy" });
+        assert.match(
+          text,
+          /Its details were left out: the refusal came to 1\d\d,\d{3} characters/u
+        );
+      }
+    })
+  );
+
   it.effect(
     "runs a call on the version served when it arrived, however a publish lands, and refuses what a publish changed",
     () =>

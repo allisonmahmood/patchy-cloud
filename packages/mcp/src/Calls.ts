@@ -21,6 +21,7 @@ import {
   agentToolKind,
   type AgentToolKind,
   callAnswer,
+  fitRefusal,
   handlerArgsSchema,
   type HandlerDescriptor,
   invalidArgsRefusal,
@@ -197,10 +198,9 @@ const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections
         .current(identity.agentConnection.id)
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
       (yield* Companies.Companies).agentAccess(identity.company.id).pipe(
-        Effect.catchTags({
-          CompanyNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
-          SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
-        })
+        // A company outlives every live connection of its people.
+        Effect.catchTags({ CompanyNotFound: Effect.die }),
+        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
       )
     ],
     { concurrency: "unbounded" }
@@ -255,13 +255,16 @@ export const read = Effect.fn("Calls.read")(function* (
 ) {
   const decoded = decodeRead(args ?? {});
   if (Result.isFailure(decoded))
-    return Catalogue.invalidArgs(
-      "read_patch",
-      Catalogue.problemOf(decoded.failure),
-      "Send { patch, tool, args }: a patch find_patches listed, one of its read tools from open_patch, and that tool's arguments as an object."
+    return fitRefusal(
+      Catalogue.invalidArgs(
+        "read_patch",
+        Catalogue.problemOf(decoded.failure),
+        "Send { patch, tool, args }: a patch find_patches listed, one of its read tools from open_patch, and that tool's arguments as an object."
+      )
     );
   const reached = yield* reach(identity, decoded.success, publicUrl, "read");
-  if ("refused" in reached) return reached.refused;
+  // A refusal may name a long tool or quote long arguments; the read cap holds for it too.
+  if ("refused" in reached) return fitRefusal(reached.refused);
   const { target } = reached;
   const answer = yield* invoke(identity, target, invocation).pipe(
     Effect.map((reply) =>

@@ -584,26 +584,23 @@ const counted = (count: number) => count.toLocaleString("en-US");
 const decodeRefusal = Schema.decodeUnknownOption(ToolRefusal);
 
 /**
- * A read's answer as the agent gets it, measured once on the compact JSON text it reads: a
- * result past `readAnswerChars` is refused `too_large` without it, and a refusal past it keeps
- * its code, its words (cut at 2,000 characters) and any retry wait, leaving its details out.
+ * A refusal within the read cap, measured once on the compact JSON text the agent reads: past
+ * `readAnswerChars` it keeps its code, its words (cut at 2,000 characters) and any retry wait,
+ * leaving its details out. A long tool name or a schema's words about long arguments can make
+ * even Patchy's own refusal that long.
  */
-export const readAnswer = (
-  patch: { readonly name: string; readonly owner: string },
-  tool: string,
-  answer: ToolCallResult
-): ToolCallResult => {
+export const fitRefusal = (answer: ToolCallResult): ToolCallResult => {
   const chars = answer.content[0].text.length;
-  if (chars <= readAnswerChars) return answer;
-  const refused =
-    answer.isError === true ? decodeRefusal(answer.structuredContent["error"]) : Option.none();
-  if (Option.isNone(refused))
-    return toolRefusal({
+  if (answer.isError !== true || chars <= readAnswerChars) return answer;
+  const { code, from, message, retryAfterSeconds } = Option.getOrElse(
+    decodeRefusal(answer.structuredContent["error"]),
+    (): ToolRefusal => ({
       code: "too_large",
       from: "patchy",
-      message: `${patch.name}'s ${tool} answered with ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, ${[...patch.owner].slice(0, ownerLimit).join("")}, can add paging.`
-    });
-  const { code, from, message, retryAfterSeconds } = refused.value;
+      message: "The refusal was too long to send."
+    })
+  );
+
   const words =
     [...message].length > keptWords ? `${[...message].slice(0, keptWords - 1).join("")}…` : message;
   return toolRefusal({
@@ -611,5 +608,24 @@ export const readAnswer = (
     from,
     message: `${words} Its details were left out: the refusal came to ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer.`,
     ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds })
+  });
+};
+
+/**
+ * A read's answer as the agent gets it, measured once on the compact JSON text it reads: a
+ * result past `readAnswerChars` is refused `too_large` without it, and a refusal is `fitRefusal`'s.
+ */
+export const readAnswer = (
+  patch: { readonly name: string; readonly owner: string },
+  tool: string,
+  answer: ToolCallResult
+): ToolCallResult => {
+  const chars = answer.content[0].text.length;
+  if (answer.isError === true) return fitRefusal(answer);
+  if (chars <= readAnswerChars) return answer;
+  return toolRefusal({
+    code: "too_large",
+    from: "patchy",
+    message: `${patch.name}'s ${tool} answered with ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, ${[...patch.owner].slice(0, ownerLimit).join("")}, can add paging.`
   });
 };
