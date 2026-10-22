@@ -370,7 +370,10 @@ export const layer: Layer.Layer<
 
       if (limited !== undefined) {
         const message = `You sent Patchy's MCP more than ${limited.value} requests in a minute; try again in ${limited.retryAfterSeconds} seconds.`;
-        if (classified?.kind === "request" && classified.method === "tools/call")
+        if (classified?.kind === "request" && classified.method === "tools/call") {
+          const name = classified.params["name"];
+          if (typeof name === "string" && Tools.isName(name))
+            yield* WideEvents.enrich({ mcpTool: name });
           return yield* toolAnswer(
             classified.era,
             classified.id,
@@ -381,6 +384,7 @@ export const layer: Layer.Layer<
               retryAfterSeconds: limited.retryAfterSeconds
             })
           );
+        }
         return yield* rpcError(
           429,
           classified?.kind === "request" || classified?.kind === "refused"

@@ -175,10 +175,36 @@ export const classify = (request: {
       ? params["_meta"]
       : undefined;
   const said = meta?.[VERSION_KEY];
-  const version = classified.version ?? (typeof said === "string" ? said : headers.protocolVersion);
-  const clientInfo = asClientInfo(meta?.[CLIENT_KEY]);
+  // A legacy initialize says its version and client in params; anything else in _meta or headers.
+  const handshake =
+    body["method"] === "initialize" && !(typeof said === "string" && isModern(said))
+      ? params
+      : undefined;
+  const offered = Predicate.isReadonlyObject(handshake) ? handshake["protocolVersion"] : undefined;
+  const version =
+    classified.version ??
+    (handshake !== undefined
+      ? typeof offered === "string"
+        ? offered
+        : undefined
+      : typeof said === "string"
+        ? said
+        : headers.protocolVersion);
+  const era: Era | undefined =
+    classified.era ??
+    (handshake !== undefined
+      ? "legacy"
+      : version === undefined
+        ? undefined
+        : isModern(version)
+          ? "modern"
+          : "legacy");
+  const clientInfo = asClientInfo(
+    Predicate.isReadonlyObject(handshake) ? handshake["clientInfo"] : meta?.[CLIENT_KEY]
+  );
   return {
     ...classified,
+    ...(era === undefined ? {} : { era }),
     ...(typeof body["method"] === "string" ? { method: body["method"] } : {}),
     ...(version === undefined ? {} : { version }),
     ...(clientInfo === undefined ? {} : { clientInfo })

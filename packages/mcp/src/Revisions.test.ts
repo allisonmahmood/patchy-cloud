@@ -275,6 +275,32 @@ describe("one request is one message", () => {
     }
   });
 
+  it("keeps what an unreadable id's request said of its revision and client", () => {
+    const initialize = refusal(
+      Revisions.classify({
+        body: {
+          jsonrpc: "2.0",
+          id: null,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            clientInfo: { name: "codex-mcp-client", version: "0.163.0" }
+          }
+        },
+        headers: {}
+      })
+    );
+    assert.include(initialize, { era: "legacy", method: "initialize", version: "2025-06-18" });
+    assert.deepStrictEqual(initialize.clientInfo, { name: "codex-mcp-client", version: "0.163.0" });
+    const modern = refusal(
+      Revisions.classify({
+        body: { jsonrpc: "2.0", id: null, method: "tools/list", params: { _meta: meta() } },
+        headers: {}
+      })
+    );
+    assert.include(modern, { era: "modern", version: Revisions.MODERN, method: "tools/list" });
+  });
+
   it("echoes the id of a request it can read", () => {
     const refused = refusal(
       Revisions.classify({

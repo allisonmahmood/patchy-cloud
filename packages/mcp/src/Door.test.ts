@@ -643,6 +643,7 @@ it.layer(layer)("the door", (it) => {
 
         const called = yield* send(modern(person.token, "tools/call", { name: "open_patch" }));
         assert.strictEqual(called.status, 200);
+        assert.include(called.event, { mcpTool: "open_patch", code: "rate_limited" });
         const refusal = objectAt(called.json, "result.structuredContent.error");
         assert.include(refusal, { code: "rate_limited", from: "patchy" });
         assert.isAtLeast(Number(refusal["retryAfterSeconds"]), 1);
