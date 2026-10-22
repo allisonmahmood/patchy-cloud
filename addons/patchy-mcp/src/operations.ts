@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import * as z from "zod/v4";
 import { CloudApiError, request, type PatchyRequest } from "./api.js";
 
-const jsonObject = z.record(z.string(), z.json());
+export const jsonObject = z.record(z.string(), z.json());
 export const mutationKey = z
   .string()
   .regex(
@@ -73,7 +73,7 @@ export const mutationResult = z.object({
     })
     .optional(),
 });
-const replySchema = z.object({
+export const operationReply = z.object({
   patchId: z.string().min(1),
   versionId: z.string().min(1),
   result: z.discriminatedUnion("ok", [
@@ -148,7 +148,7 @@ export async function runMutation(
       `/api/patches/${encodeURIComponent(patch)}/mutation`,
       { versionId, handler, args, mutationKey },
     );
-    const parsed = replySchema.safeParse(response);
+    const parsed = operationReply.safeParse(response);
     if (
       !parsed.success ||
       parsed.data.patchId !== patch ||

@@ -12,7 +12,7 @@ import { normalizeUrl } from "./api.js";
 import { createOAuth } from "./oauth.js";
 import { homedir } from "node:os";
 import path from "node:path";
-import { version, buildId } from "./version.js";
+import { version } from "./version.js";
 
 export function createHttpApp(
   origin: string,
@@ -55,7 +55,6 @@ export function createHttpApp(
       .json({
         ok: true,
         version,
-        buildId,
         instanceUrl: selected,
         mcpUrl: oauth.resource.href,
       }),
@@ -137,7 +136,7 @@ export async function serveHttp(
   const { app, close } = createHttpApp(origin, apiUrl, { stateDir });
   const server = app.listen(port, "127.0.0.1", () =>
     console.error(
-      `Patchy MCP ${version} (${buildId.slice(0, 12)}): ${origin}/mcp (Cloud: ${normalizeUrl(apiUrl)}). Local only; OAuth required. State: ${stateDir}`,
+      `Patchy MCP ${version}: ${origin}/mcp (Cloud: ${normalizeUrl(apiUrl)}). Local only; OAuth required. State: ${stateDir}`,
     ),
   );
   server.on("error", () => {

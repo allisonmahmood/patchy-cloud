@@ -52,8 +52,6 @@ import {
   PatchSummary,
   PatchDetail,
   PatchPage,
-  PatchQueries,
-  publishedQueries,
   PatchOperations,
   publishedOperations,
   PatchQuery,
@@ -94,7 +92,6 @@ const encodeInventory = Schema.encodeSync(PatchInventory);
 const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
 const encodePage = Schema.encodeSync(PatchPage);
-const encodeQueries = Schema.encodeSync(PatchQueries);
 const encodeOperations = Schema.encodeSync(PatchOperations);
 const encodePrimitive = Schema.encodeSync(PrimitiveDetail);
 const encodeLog = Schema.encodeSync(PatchLog);
@@ -709,38 +706,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 rows.map((row) => summary(row, identity.user.id, publicBaseUrl))
               )
             },
-            { headers: readHeaders }
-          );
-        })
-      )
-      .handleRaw("queries", ({ params }) =>
-        Effect.gen(function* () {
-          const identity = yield* CurrentIdentity;
-          const row = yield* readOne(params.patchRef, "live", identity);
-          if (HttpServerResponse.isHttpServerResponse(row)) return row;
-          const found = yield* patches
-            .find(row.patch.id)
-            .pipe(Effect.catchTags({ SqlError: Effect.die }));
-          if (
-            Option.isNone(found) ||
-            found.value.patch.companyId !== identity.company.id ||
-            !openability(found.value.patch, identity.user.id)
-          )
-            return notFound();
-          const { patch, version } = found.value;
-          if (version.tier !== 2 || patch.scope !== "company")
-            return refuse(BadRequest, {
-              ok: false,
-              error: "Only company tier 2 Tools have published queries."
-            });
-          return HttpServerResponse.jsonUnsafe(
-            encodeQueries(
-              new PatchQueries({
-                patchId: patch.id,
-                versionId: version.id,
-                queries: publishedQueries(version.manifest, patch.description)
-              })
-            ),
             { headers: readHeaders }
           );
         })

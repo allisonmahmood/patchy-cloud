@@ -193,15 +193,23 @@ automatically retried.
 Builders accept an optional `description` (1–500 characters, nonblank):
 `query({ description: "Find products by category.", args, result, handler })`.
 Publish retains it in the inspected handler contract. Machine callers discover
-current read-only queries through `GET /api/patches/:patchRef/queries`, then call
+current queries and mutations through `GET /api/patches/:patchRef/operations`, then call
 `POST /api/patches/:patchRef/query` with `{ handler, args }`. Discovery returns
-`{ patchId, versionId, queries: [{ handler, description, inputSchema, outputSchema }] }`.
+`{ patchId, versionId, operations: [{ handler, kind, description, inputSchema, outputSchema }] }`.
 The schemas are self-contained JSON Schema draft 2020-12 derived from the same
 validators as execution, with row shapes expanded. `outputSchema` describes the
 successful `result.value`. A missing handler description falls back to the Tool's
-description. Discovery excludes mutations and actions; execution rechecks current
+description. Discovery excludes actions; query execution accepts only queries and rechecks current
 access and the current version's schemas. The `(patchId, handler)` pair is stable
 across publishes; a renamed handler is a different query.
+
+Machine callers execute declared mutations through
+`POST /api/patches/:patchRef/mutation`. These machine API endpoints add no CLI
+command. They reuse the saved login, Tool permissions, validated handler contracts
+and serializable transaction path. Mutation calls pin the discovered `versionId`
+and retain one `mutationKey` across retries; they return the committed value and
+resource revisions. Actions and arbitrary table access remain unavailable. See
+[the API contract](../../docs/API.md) for the exact request and retry rules.
 
 `t` adds objects, arrays, enums, nullable values, full rows, result-only file
 handles and action-argument uploads. Optional argument keys may be absent;
@@ -1588,12 +1596,3 @@ Report vulnerabilities privately by following the [security policy](https://gith
 ## License
 
 All rights reserved for now. See [LICENSE](https://github.com/allisonmahmood/patchy-cloud/blob/main/LICENSE).
-
-The separate MCP also discovers declared queries and mutations through
-`GET /api/patches/:patchRef/operations` and executes mutations through
-`POST /api/patches/:patchRef/mutation`. These machine API endpoints add no CLI
-command. They reuse the saved login, Tool permissions, validated handler contracts
-and serializable transaction path. Mutation calls pin the discovered `versionId`
-and retain one `mutationKey` across retries; they return the committed value and
-resource revisions. Actions and arbitrary table access remain unavailable. See
-[the API contract](../../docs/API.md) for the exact request and retry rules.

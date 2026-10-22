@@ -76,14 +76,6 @@ const queueValue = z
     total: z.number().int().nonnegative(),
   })
   .refine((value) => value.total === value.blocked.length);
-const queueReply = z.object({
-  patchId: z.string().min(1),
-  versionId: z.string().min(1),
-  result: z.discriminatedUnion("ok", [
-    z.object({ ok: z.literal(true), value: queueValue }),
-    z.object({ ok: z.literal(false), code: z.string().optional() }),
-  ]),
-});
 
 export function createServer(
   call: PatchyRequest = request,
@@ -188,7 +180,7 @@ export function createServer(
     async ({ patch }) => {
       try {
         const result = await listQueries(patch, call);
-        return { ...answer(result), structuredContent: result };
+        return answer(result);
       } catch (error) {
         return failure(error);
       }
@@ -222,7 +214,7 @@ export function createServer(
     async ({ patch, handler, args }) => {
       try {
         const result = await runQuery(patch, handler, args, call);
-        return { ...answer(result), structuredContent: result };
+        return answer(result);
       } catch (error) {
         return failure(error);
       }
@@ -236,17 +228,9 @@ export function createServer(
       description:
         "Check the published Launch Queue Tool for blocked launch items. Returns each blocked item's title, owner and blocker, plus a total count. Reads live company data as you; makes no changes. Use this when asked what is blocking a launch.",
       inputSchema: z.strictObject({}),
-      outputSchema: z.object({
+      outputSchema: queueValue.safeExtend({
         patchId: z.string(),
         versionId: z.string(),
-        blocked: z.array(
-          z.object({
-            title: z.string(),
-            owner: z.string(),
-            blocker: z.string(),
-          }),
-        ),
-        total: z.number().int().nonnegative(),
       }),
       annotations: {
         readOnlyHint: true,
@@ -257,27 +241,13 @@ export function createServer(
     },
     async () => {
       try {
-        const parsed = queueReply.safeParse(
-          await call(
-            `/api/patches/${encodeURIComponent(launchQueuePatch)}/query`,
-            { handler: "queue.blocked", args: {} },
-          ),
-        );
-        if (!parsed.success)
-          throw new Error(
-            "Launch Queue returned an invalid response. Expected patch/version ids and blocked items with a matching total. No queue data was returned.",
-          );
-        const response = parsed.data;
-        if (!response.result.ok)
-          throw new Error(
-            `Launch Queue refused the query: ${response.result.code ?? "unknown"}.`,
-          );
+        const reply = await runQuery(launchQueuePatch, "queue.blocked", {}, call);
         const result = {
-          patchId: response.patchId,
-          versionId: response.versionId,
-          ...response.result.value,
+          patchId: reply.patchId,
+          versionId: reply.versionId,
+          ...parseReply(queueValue, reply.value),
         };
-        return { ...answer(result), structuredContent: result };
+        return answer(result);
       } catch (error) {
         return failure(error);
       }

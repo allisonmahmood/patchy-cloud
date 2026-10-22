@@ -24,24 +24,26 @@ const identitySchema = z.object({
   machine: z.object({ id: text }),
 });
 type Identity = z.infer<typeof identitySchema>;
-type Client = {
-  id: string;
-  name: string;
-  redirects: string[];
-  method: string;
-  secretHash?: string;
-};
-type Grant = {
-  clientId: string;
-  cloudToken: string;
-  identity: Identity;
-  instanceUrl: string;
-  expiresAt: number;
-  credentialExpiresAt: number;
-  scopes: string[];
-  refreshHash: string;
-  spentRefreshHashes: string[];
-};
+const clientSchema = z.object({
+  id: text,
+  name: text,
+  redirects: z.array(text),
+  method: z.enum(["none", "client_secret_post", "client_secret_basic"]),
+  secretHash: text.optional(),
+});
+const grantSchema = z.object({
+  clientId: text,
+  cloudToken: text,
+  identity: identitySchema,
+  instanceUrl: text,
+  expiresAt: z.number(),
+  credentialExpiresAt: z.number(),
+  scopes: z.array(z.enum([scope, writeScope])).min(1),
+  refreshHash: text,
+  spentRefreshHashes: z.array(text),
+});
+type Client = z.infer<typeof clientSchema>;
+type Grant = z.infer<typeof grantSchema>;
 type Access = { grantId: string; expiresAt: number };
 type Login = {
   client: Client;
@@ -59,7 +61,7 @@ type Login = {
     interval: number;
   };
   nextPoll: number;
-  scopes: string[];
+  scopes: Grant["scopes"];
   direct?: boolean;
 };
 type Code = Omit<Grant, "refreshHash" | "spentRefreshHashes"> & {
@@ -99,24 +101,6 @@ export function createOAuth(
   try {
     const saved = storage.read();
     if (saved !== undefined) {
-      const clientSchema = z.object({
-        id: text,
-        name: text,
-        redirects: z.array(text),
-        method: z.enum(["none", "client_secret_post", "client_secret_basic"]),
-        secretHash: text.optional(),
-      });
-      const grantSchema = z.object({
-        clientId: text,
-        cloudToken: text,
-        identity: identitySchema,
-        instanceUrl: text,
-        expiresAt: z.number(),
-        credentialExpiresAt: z.number(),
-        scopes: z.array(z.enum([scope, writeScope])).min(1),
-        refreshHash: text,
-        spentRefreshHashes: z.array(text),
-      });
       const state = z
         .object({
           format: z.literal(1),
@@ -149,7 +133,7 @@ export function createOAuth(
       accesses: [...accesses],
     });
   }
-  function scopeList(value: unknown, fallback: string[] = [scope]): string[] {
+  function scopeList(value: unknown, fallback: Grant["scopes"] = [scope]): Grant["scopes"] {
     if (value === undefined) return [...fallback];
     const list = [...new Set(parameter(value).split(" "))];
     if (!list.includes(scope) || list.some((s) => !scopes.includes(s)))
@@ -157,7 +141,7 @@ export function createOAuth(
         "invalid_scope",
         "Use patchy:tools for reads, optionally with patchy:write.",
       );
-    return list;
+    return list as Grant["scopes"];
   }
   function accessGrant(token: string) {
     storage.check();

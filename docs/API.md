@@ -105,23 +105,9 @@ Responses:
 - `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
-### `GET /api/patches/:patchRef/queries`
-
-Describe the current published queries of a live company tier 2 Tool by canonical id or exact name. Machine tokens only, with discovery's company and openability checks. Only queries are listed, sorted by handler name; mutations and actions are excluded. The stable identity is (patchId, handler); versionId identifies the described version. Each query has its published description (falling back to the patch description) and self-contained draft 2020-12 inputSchema and outputSchema derived from execution's validators, including expanded row shapes. outputSchema describes result.value on success, not the reply envelope. No code executes or business rows are read. Other tiers answer 400; unknown or inaccessible patches answer 404; off patches answer 409 wrong_state. Discovery grants no execution permission: POST query reauthorizes and validates the current published version on every call. Responses are private, no-store.
-
-Responses:
-
-- `200` [PatchQueries](#patchqueries)
-- `400` { ok: false, error: string }
-- `401` { ok: false, error: "Missing or invalid API token." }
-- `404` { ok: false, error: string }
-- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
-- `414` { ok: false, error: string }
-- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
-
 ### `GET /api/patches/:patchRef/operations`
 
-Describe current declared queries and mutations of a live company tier 2 Tool. Uses the same machine-token, company and openability checks as query discovery. Returns patchId, versionId and operations sorted by handler, each with kind, description and self-contained inputSchema/outputSchema. Actions are excluded. No code executes or business rows are read. Responses are private, no-store.
+Describe current declared queries and mutations of a live company tier 2 Tool. Machine tokens only, with discovery’s company and openability checks. Returns patchId, versionId and operations sorted by handler, each with kind, description and self-contained inputSchema/outputSchema. Actions are excluded. No code executes or business rows are read. Responses are private, no-store.
 
 Responses:
 
@@ -1445,16 +1431,6 @@ RuntimeSuccess | HandlerFailure
   patchId: string,
   versionId: string,
   operations: { handler: string, description: string, inputSchema: { [key: string]: unknown }, outputSchema: { [key: string]: unknown }, kind: "query" | "mutation" }[]
-}
-```
-
-### PatchQueries
-
-```
-{
-  patchId: string,
-  versionId: string,
-  queries: { handler: string, description: string, inputSchema: { [key: string]: unknown }, outputSchema: { [key: string]: unknown } }[]
 }
 ```
 

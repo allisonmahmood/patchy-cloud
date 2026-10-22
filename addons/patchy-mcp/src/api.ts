@@ -85,7 +85,7 @@ export async function getToken(url: string): Promise<string> {
       );
     // Never forward process errors: execFile's message may contain secret stdout/stderr.
     throw new Error(
-      `Page and Tool reads require a Patchy CLI with 'auth token --json'. Install the CLI supplied by ${url}/llms.txt. Discovery alone can work with an older CLI. For a disposable test, PATCHY_API_TOKEN can supply the instance's machine token directly.`,
+      `Page and Tool reads require a Patchy CLI with 'auth token --json'. Install the CLI supplied by ${url}/llms.txt. For a disposable test, PATCHY_API_TOKEN can supply the instance's machine token directly.`,
     );
   }
   let body: unknown;
@@ -103,68 +103,6 @@ export async function getToken(url: string): Promise<string> {
     );
   }
   return result.data.token;
-}
-
-/** Public CLI JSON commands are the stable saved-login interface for discovery. */
-async function readCli(args: string[], url: string): Promise<unknown> {
-  try {
-    const { stdout } = await exec(
-      "patchy",
-      [...args, "--api-url", url, "--json"],
-      {
-        timeout: 30_000,
-        maxBuffer: 8 * 1024 * 1024,
-        windowsHide: true,
-      },
-    );
-    try {
-      return JSON.parse(stdout);
-    } catch {
-      throw new Error(
-        "Patchy CLI returned an invalid JSON response. Update it using the instance's existing installer.",
-      );
-    }
-  } catch (error) {
-    const failure = error as { code?: unknown; stderr?: string };
-    if (failure.code === "ENOENT")
-      throw new Error(
-        `Install the Patchy CLI using ${url}/llms.txt, then run ${loginCommand(url)}.`,
-      );
-    if (failure.code === "ETIMEDOUT" || (error as { killed?: boolean }).killed)
-      throw unavailable(url);
-    if (failure.stderr !== undefined) {
-      let body: { error?: string; kind?: string; code?: string } = {};
-      try {
-        const decoded = z
-          .object({
-            error: z.string().optional(),
-            kind: z.string().optional(),
-            code: z.string().optional(),
-          })
-          .safeParse(JSON.parse(failure.stderr));
-        if (decoded.success) body = decoded.data;
-      } catch {
-        /* Never relay raw process output. */
-      }
-      if (
-        body.code === "not_logged_in" ||
-        body.error?.startsWith("Missing or invalid API token.") ||
-        body.error?.startsWith("No publishing key is stored for ")
-      )
-        throw new SignInRequired(url);
-      if (body.kind === "unreachable") throw unavailable(url);
-      if (body.kind === "local" && typeof body.error === "string")
-        throw new Error(
-          `${body.error} For missing login, run ${loginCommand(url)} and complete its browser handoff. Follow the CLI repair instructions if local state is damaged.`,
-        );
-      if (typeof body.error === "string" && body.kind === "rejected")
-        throw new Error(body.error);
-      throw new Error(
-        `Patchy CLI could not complete the request. Run patchy-mcp doctor --api-url '${url}' to check setup.`,
-      );
-    }
-    throw error;
-  }
 }
 
 const unavailable = (
@@ -192,27 +130,7 @@ export async function request(
   payload?: unknown,
   url = apiUrl,
 ): Promise<unknown> {
-  url = normalizeUrl(url);
-  if (!process.env.PATCHY_API_TOKEN && payload === undefined) {
-    if (path === "/api/me") return readCli(["whoami"], url);
-    if (path === "/api/patches") {
-      const body = z
-        .object({ patches: z.array(z.unknown()) })
-        .safeParse(await readCli(["list"], url));
-      if (!body.success)
-        throw new Error("Patchy CLI returned an invalid patch inventory.");
-      return body.data;
-    }
-    const detail = /^\/api\/patches\/([^/]+)$/.exec(path);
-    if (detail) return readCli(["list", decodeURIComponent(detail[1])], url);
-  }
-  return cloudRequest(
-    url,
-    await getToken(url),
-    path,
-    payload,
-    () => new SignInRequired(url),
-  );
+  return credentialRequest(url)(path, payload);
 }
 
 /** Pin one saved credential for an operation spanning discovery and a write. */

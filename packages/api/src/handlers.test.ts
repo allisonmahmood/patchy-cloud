@@ -12,7 +12,6 @@ import {
   RuntimeRequest,
   handlerArgsSchema,
   handlerValueSchema,
-  publishedQueries,
   publishedOperations,
   HandlerSchema
 } from "./index.js";
@@ -96,8 +95,8 @@ describe("handler descriptors", () => {
     expect(decodeDescriptor(query)._tag).toBe("Success");
   });
 
-  it("describes only queries with self-contained validation schemas and expanded rows", () => {
-    const queries = publishedQueries(
+  it("describes operations with self-contained validation schemas and expanded rows", () => {
+    const operations = publishedOperations(
       decodeManifest({
         ...manifest,
         handlers: {
@@ -118,13 +117,17 @@ describe("handler descriptors", () => {
       }),
       "Fallback Tool description."
     );
-    expect(queries.map((entry) => entry.handler)).toEqual(["leads.empty", "leads.find"]);
-    expect(queries[0]).toMatchObject({
+    expect(operations.map((entry) => entry.handler)).toEqual([
+      "leads.empty",
+      "leads.find",
+      "leads.write"
+    ]);
+    expect(operations[0]).toMatchObject({
       description: "Fallback Tool description.",
       inputSchema: { type: "object", additionalProperties: false },
       outputSchema: { type: "boolean" }
     });
-    expect(queries[1]).toMatchObject({
+    expect(operations[1]).toMatchObject({
       description: "Find leads by stage.",
       inputSchema: {
         $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -155,7 +158,7 @@ describe("handler descriptors", () => {
       }
     });
     // Table rows carry arbitrary JSON; every generated reference must resolve inside this schema.
-    for (const entry of queries) {
+    for (const entry of operations) {
       for (const schema of [entry.inputSchema, entry.outputSchema]) {
         const refs = JSON.stringify(schema).matchAll(/"\$ref":"([^"]+)"/g);
         for (const [, ref] of refs) {
@@ -164,7 +167,7 @@ describe("handler descriptors", () => {
         }
       }
     }
-    expect(publishedQueries(decodeManifest(manifest), "No handlers")).toEqual([]);
+    expect(publishedOperations(decodeManifest(manifest), "No handlers")).toEqual([]);
   });
 
   it("round-trips all handler kinds and recursive descriptors through the manifest", () => {

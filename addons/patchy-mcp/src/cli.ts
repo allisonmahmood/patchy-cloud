@@ -9,7 +9,7 @@ import {
   request,
 } from "./api.js";
 
-import { version, buildId } from "./version.js";
+import { version } from "./version.js";
 const args = process.argv.slice(2);
 
 function run(command: string, args: string[]): Promise<number> {
@@ -69,14 +69,9 @@ async function main() {
     console.log(version);
     return;
   }
-  if (args[0] === "--build-info") {
-    console.log(JSON.stringify({ version, buildId }));
-    return;
-  }
   if (args[0] === "--help") {
     console.log(`Patchy MCP ${version}
 Usage: patchy-mcp                         Start the local stdio MCP server
-       patchy-mcp --build-info            Identify the installed build
        patchy-mcp serve --api-url URL [--port PORT] [--state-dir DIR]  Local HTTP with per-user OAuth
        patchy-mcp login [Patchy flags]    Existing Patchy device login
        patchy-mcp logout [Patchy flags]   Existing machine logout

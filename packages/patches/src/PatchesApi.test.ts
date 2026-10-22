@@ -2890,7 +2890,7 @@ const tier2Bundle = Effect.promise(async () => {
 });
 
 it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
-  it.effect("discovers current queries as an admitted member without executing them", () =>
+  it.effect("discovers current operations as an admitted member without executing them", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
       const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
@@ -2913,35 +2913,29 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
       });
       const created = yield* owner.publish({ payload });
       for (const patchRef of [created.patchId, created.name]) {
-        const [found, response] = yield* colleague.queries({
+        const [found, response] = yield* colleague.operations({
           params: { patchRef },
           responseMode: "decoded-and-response"
         });
         assert.strictEqual(found.patchId, created.patchId);
         assert.strictEqual(found.versionId, created.versionId);
         assert.deepStrictEqual(
-          found.queries.map((entry) => entry.handler),
-          ["demo.read"]
+          found.operations.map((entry) => entry.handler),
+          ["demo.read", "demo.write"]
         );
-        assert.strictEqual(found.queries[0]!.description, "Read the demo value.");
-        assert.deepStrictEqual(found.queries[0]!.outputSchema, {
+        assert.strictEqual(found.operations[0]!.description, "Read the demo value.");
+        assert.deepStrictEqual(found.operations[0]!.outputSchema, {
           $schema: "https://json-schema.org/draft/2020-12/schema",
           type: "string"
         });
         assert.strictEqual(response.headers["cache-control"], "private, no-store");
-        const [operations, operationResponse] = yield* colleague.operations({
-          params: { patchRef },
-          responseMode: "decoded-and-response"
-        });
-        assert.strictEqual(operations.versionId, created.versionId);
         assert.deepStrictEqual(
-          operations.operations.map(({ handler, kind }) => ({ handler, kind })),
+          found.operations.map(({ handler, kind }) => ({ handler, kind })),
           [
             { handler: "demo.read", kind: "query" },
             { handler: "demo.write", kind: "mutation" }
           ]
         );
-        assert.strictEqual(operationResponse.headers["cache-control"], "private, no-store");
       }
       const updated = yield* owner.publish({
         payload: publishRequest({
@@ -2951,22 +2945,13 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         })
       });
       const params = { patchRef: created.patchId };
-      assert.strictEqual((yield* colleague.queries({ params })).versionId, updated.versionId);
       assert.strictEqual((yield* colleague.operations({ params })).versionId, updated.versionId);
       assert.strictEqual(
         (yield* anonymous.operations({ params, responseMode: "response-only" })).status,
         401
       );
-      assert.strictEqual(
-        (yield* anonymous.queries({ params, responseMode: "response-only" })).status,
-        401
-      );
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${created.patchId}`;
-      assert.strictEqual(
-        (yield* colleague.queries({ params, responseMode: "response-only" })).status,
-        404
-      );
       assert.strictEqual(
         (yield* colleague.operations({ params, responseMode: "response-only" })).status,
         404
@@ -2974,8 +2959,8 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
       yield* sql`UPDATE patches SET disabled_at = NULL WHERE id = ${created.patchId}`;
       yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_queries_foreign', 'queries-foreign', 'Foreign')`;
       yield* sql`UPDATE patches SET company_id = 'cmp_queries_foreign' WHERE id = ${created.patchId}`;
-      const foreign = yield* colleague.queries({ params, responseMode: "response-only" });
-      const missing = yield* colleague.queries({
+      const foreign = yield* colleague.operations({ params, responseMode: "response-only" });
+      const missing = yield* colleague.operations({
         params: { patchRef: "missing" },
         responseMode: "response-only"
       });
@@ -2988,12 +2973,12 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
       yield* sql`UPDATE patches SET company_id = ${uploader.company.id} WHERE id = ${created.patchId}`;
       yield* owner.retire({ params: { patchId: created.patchId }, payload: new ForceRequest({}) });
       assert.strictEqual(
-        (yield* colleague.queries({ params, responseMode: "response-only" })).status,
+        (yield* colleague.operations({ params, responseMode: "response-only" })).status,
         409
       );
       const page = yield* owner.publish({ payload: publishRequest({ html: html("A Page") }) });
       assert.strictEqual(
-        (yield* colleague.queries({
+        (yield* colleague.operations({
           params: { patchRef: page.patchId },
           responseMode: "response-only"
         })).status,

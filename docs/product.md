@@ -341,26 +341,18 @@ A tier determines where a patch's code runs. Tier 0 is static, with no patch cod
 
 ### What a tier changes, and what it never changes
 
-The local MCP prototype is a separate project. Its `check_launch_queue` tool calls
-`POST /api/patches/:patchRef/query` with `queue.blocked` and empty arguments. Cloud
-resolves the current published version, checks company membership and openability,
-requires a declared query, validates inputs and results, and uses the existing
-isolated executor and read-only query capabilities. The machine token is rechecked
-before invocation and for viewer-authorized callbacks. No browser cookie, document
-stream, historical version selection or write handler is accepted through the query API.
-This is an on-demand call as a user, not a scheduler or a general agent runtime.
-Agents discover published queries with `GET /api/patches/:patchRef/queries`.
-It describes only queries from the current live company tier 2 version: the
-stable `(patchId, handler)` identity, version id, an author-written description
-(falling back to the Tool description), and self-contained JSON Schema for
-arguments and the successful value. The schemas use execution's own validators
-and expand table rows without reading their contents. Discovery executes no
-patch code and grants no authority; calls still reauthorize and validate the
-current version, so agents refresh discovery when a publish changes a contract.
+Machine callers read current static Pages and discover declared queries and mutations through
+`GET /api/patches/:patchRef/operations`; actions are excluded. Each operation has
+its kind, stable `(patchId, handler)` identity, version id, description (falling
+back to the Tool description) and self-contained JSON Schemas from execution's
+validators, with expanded row shapes. Discovery executes no code or business reads.
 
-Machine callers discover declared queries and mutations together through
-`GET /api/patches/:patchRef/operations`; actions are excluded. The catalog adds
-`kind` to each operation and keeps the query catalog's descriptions and schemas.
+`POST /api/patches/:patchRef/query` executes only declared queries against the
+current live company Tool. Cloud rechecks the machine token, membership and
+openability, validates inputs and results and uses the existing isolated executor
+and read-only capabilities. The response names the actual executed version.
+No browser session, historical version selection or action is accepted.
+
 `POST /api/patches/:patchRef/mutation` requires `handler`, `args`, the discovered
 `versionId` and a `mutationKey`. It admits only a current live openable company
 Tool's declared mutation. A changed version returns `409 version_changed`
@@ -586,10 +578,10 @@ An action's database time includes its nested queries and mutations.
 The promise: **A tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
 internet: everything it does goes through Patchy, as you, from an open
-patch or an authenticated machine query. It reaches outside systems only through your company's integrations,
+patch or an authenticated machine query or mutation. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.**
 
-Patchy admits browser work while a viewer has the patch open and published queries
+Patchy admits browser work while a viewer has the patch open and declared queries and mutations
 through the machine-token API without a document. Already-admitted work
 finishes after departure. An open patch keeps its company's task only while its
 viewer is using it: after ten minutes with no calls and no change to what it
@@ -805,13 +797,11 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 
 **Your machines** lists a user's live tokens by name, creation, last use and expiry, revokes one or all, and signs the browser out. Deactivating a user revokes every token and ends their company access on the next request, including runtime calls from an open tier 1 patch. `PATCHY_API_TOKEN` already accepts a user-owned token for non-interactive CLI use; a dedicated CI provisioning flow is not offered. Your machines has no create or rename action. There is no company-owned or non-human token kind, so everything published has a human owner. Company-owned tokens for CI that is nobody's come back when someone needs them.
 
-Local add-ons reuse the same saved machine login through the CLI's versioned
-`auth token --json` pipe interface. They do not read its private credentials file
-or ask the person to copy a token. The separate MCP add-on re-reads that credential
-for each Cloud request; after a 401 it directs the agent through the existing
-device-login flow, then retries with the replacement credential. Its first setup
-target is Codex CLI, using a packaged executable and Codex's own MCP registration
-command. This adds no login service or separate MCP identity.
+Local programs can reuse the same saved machine login through the versioned
+`auth token --json` pipe interface. Its output is secret; programs capture it
+privately rather than reading the CLI's state file. It adds no identity or login
+service. Consumers re-read after a completed device login; environment credentials
+retain their existing precedence.
 
 **First publish is login, then publish.** Machine logout forgets its saved login even if revocation cannot complete; it does not sign the browser out. Browser sign-out remains available before company membership and after deactivation. Commands, credential precedence and output are defined in [the CLI contract](./adr/ADR-0004-cli-contract-for-agents.md).
 

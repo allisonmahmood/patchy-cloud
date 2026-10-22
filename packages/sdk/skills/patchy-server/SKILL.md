@@ -73,12 +73,13 @@ builders and bound context types from `patchy/_generated/server.js`, and `t` and
 `HandlerError` from `patchy/server`.
 Each builder takes `{ description?, args, result, errors?, handler }`. Give queries
 a short `description` (1–500 characters, nonblank) explaining what they read and
-why an agent would call them. Published company queries are discoverable through
-`GET /api/patches/:patchRef/queries`: the patch id and handler name form their
+why an agent would call them. Published company queries and mutations are discoverable through
+`GET /api/patches/:patchRef/operations`: the patch id and handler name form their
 stable identity, and JSON Schema describes arguments and the successful value.
 Older handlers fall back to the Tool description. Discovery executes no code;
 `POST /api/patches/:patchRef/query` still checks access and validates the current
-published version. Mutations and actions are excluded from this machine API.
+published version. The query route accepts only queries; declared mutations use the mutation route
+with a pinned version and retained key. Actions are excluded.
 `args` is a field map;
 `result` is one descriptor. The handler receives `(ctx, args)`.
 

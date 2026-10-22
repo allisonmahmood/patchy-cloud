@@ -1,5 +1,8 @@
 import * as z from "zod/v4";
 import { request, type PatchyRequest } from "./api.js";
+import {
+  jsonObject, listOperations, operationReply, operationCatalog,
+} from "./operations.js";
 
 export const patchReference = z
   .string()
@@ -10,32 +13,8 @@ export const patchReference = z
     "Provide a patch id or exact name.",
   );
 
-const jsonObject = z.record(z.string(), z.json());
-export const queryCatalog = z.object({
-  patchId: z.string().min(1),
-  versionId: z.string().min(1),
-  queries: z.array(
-    z.object({
-      handler: z.string().min(1),
-      description: z.string(),
-      inputSchema: jsonObject,
-      outputSchema: jsonObject,
-    }),
-  ),
-});
-
-const queryReply = z.object({
-  patchId: z.string().min(1),
-  versionId: z.string().min(1),
-  result: z.discriminatedUnion("ok", [
-    z.object({ ok: z.literal(true), value: z.json() }),
-    z.object({
-      ok: z.literal(false),
-      source: z.literal("handler"),
-      code: z.string().min(1),
-      details: z.json().optional(),
-    }),
-  ]),
+export const queryCatalog = operationCatalog.omit({ operations: true }).extend({
+  queries: z.array(operationCatalog.shape.operations.element.omit({ kind: true })),
 });
 
 export const queryResult = z.object({
@@ -45,18 +24,15 @@ export const queryResult = z.object({
   value: z.json(),
 });
 
-export async function listQueries(
-  patch: string,
-  call: PatchyRequest = request,
-) {
-  const parsed = queryCatalog.safeParse(
-    await call(`/api/patches/${encodeURIComponent(patch)}/queries`),
-  );
-  if (!parsed.success)
-    throw new Error(
-      "Patchy Cloud returned an invalid query catalog. Expected patch/version ids and queries with descriptions and input/output schemas. No operations were discovered.",
-    );
-  return parsed.data;
+export async function listQueries(patch: string, call: PatchyRequest = request) {
+  const catalog = await listOperations(patch, call);
+  return {
+    patchId: catalog.patchId,
+    versionId: catalog.versionId,
+    queries: catalog.operations
+      .filter((operation) => operation.kind === "query")
+      .map(({ kind, ...query }) => query),
+  };
 }
 
 export async function runQuery(
@@ -66,15 +42,15 @@ export async function runQuery(
   call: PatchyRequest = request,
 ) {
   // Refresh the catalog on every call. A new Tool or changed login needs no MCP rebuild.
-  const catalog = await listQueries(patch, call);
-  if (!catalog.queries.some((query) => query.handler === handler))
+  const catalog = await listOperations(patch, call);
+  if (!catalog.operations.some((op) => op.handler === handler && op.kind === "query"))
     throw new Error(
       `No published read-only query '${handler}' is available on this Tool. Use list_queries to see its current operations. Mutations and actions cannot be called.`,
     );
 
   // Cloud reauthorizes and validates the current version, including all argument/result rules.
   // Keep schemas as data; no local schema interpreter, remote schema fetch or patch code loading.
-  const parsed = queryReply.safeParse(
+  const parsed = operationReply.safeParse(
     await call(`/api/patches/${encodeURIComponent(catalog.patchId)}/query`, {
       handler,
       args,

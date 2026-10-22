@@ -34,7 +34,6 @@ import {
   PatchSummary,
   PatchDetail,
   PatchPage,
-  PatchQueries,
   PatchOperations,
   PatchStateFilter,
   PrimitiveDetail,
@@ -339,21 +338,6 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Overlong references answer 414. Responses are private, no-store."
       )
     ),
-    HttpApiEndpoint.get("queries", "/patches/:patchRef/queries", {
-      params: readParams,
-      success: PatchQueries,
-      error: [...patchRouteErrors, WrongState]
-    }).annotateMerge(
-      describe(
-        "Describe the current published queries of a live company tier 2 Tool by canonical id or exact name. " +
-          "Machine tokens only, with discovery's company and openability checks. Only queries are listed, sorted by handler name; mutations and actions are excluded. " +
-          "The stable identity is (patchId, handler); versionId identifies the described version. " +
-          "Each query has its published description (falling back to the patch description) and self-contained draft 2020-12 inputSchema and outputSchema derived from execution's validators, including expanded row shapes. " +
-          "outputSchema describes result.value on success, not the reply envelope. No code executes or business rows are read. " +
-          "Other tiers answer 400; unknown or inaccessible patches answer 404; off patches answer 409 wrong_state. " +
-          "Discovery grants no execution permission: POST query reauthorizes and validates the current published version on every call. Responses are private, no-store."
-      )
-    ),
     HttpApiEndpoint.get("operations", "/patches/:patchRef/operations", {
       params: readParams,
       success: PatchOperations,
@@ -361,7 +345,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     }).annotateMerge(
       describe(
         "Describe current declared queries and mutations of a live company tier 2 Tool. " +
-          "Uses the same machine-token, company and openability checks as query discovery. " +
+          "Machine tokens only, with discovery’s company and openability checks. " +
           "Returns patchId, versionId and operations sorted by handler, each with kind, description and self-contained inputSchema/outputSchema. " +
           "Actions are excluded. No code executes or business rows are read. Responses are private, no-store."
       )

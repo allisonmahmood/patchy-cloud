@@ -814,12 +814,6 @@ const operationFields = {
   inputSchema: QueryJsonSchema,
   outputSchema: QueryJsonSchema
 };
-export class PatchQueries extends Schema.Class<PatchQueries>("PatchQueries")({
-  patchId: PatchId,
-  versionId: Schema.String,
-  queries: Schema.Array(Schema.Struct(operationFields))
-}) {}
-
 export class PatchOperations extends Schema.Class<PatchOperations>("PatchOperations")({
   patchId: PatchId,
   versionId: Schema.String,
@@ -840,19 +834,6 @@ const queryJsonSchema = (schema: Schema.Top) => {
 };
 
 /** Describe stored contracts without loading server code or reading business rows. */
-export const publishedQueries = (
-  manifest: typeof Manifest.Type,
-  description: string
-): PatchQueries["queries"] =>
-  publishedOperations(manifest, description)
-    .filter((operation) => operation.kind === "query")
-    .map(({ handler, description, inputSchema, outputSchema }) => ({
-      handler,
-      description,
-      inputSchema,
-      outputSchema
-    }));
-
 export const publishedOperations = (
   manifest: typeof Manifest.Type,
   description: string

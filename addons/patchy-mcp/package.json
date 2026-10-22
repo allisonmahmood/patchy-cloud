@@ -14,14 +14,8 @@
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "pretest": "npm run build",
-    "test": "node --test test/mcp.test.js test/queries.test.js test/login.test.js test/protocol.test.js test/http.test.js test/operations.test.js",
-    "test:cloud": "npm run build && node --test test/cloud.test.js",
-    "test:codex": "node --test test/codex.test.js",
-    "test:business": "npm run build && node --test --test-concurrency=1 test/business-cloud.test.js test/business-agent.test.js",
-    "prepack": "npm run build",
-    "release": "node scripts/release.mjs",
-    "test:packed": "node --test test/packed.test.js",
-    "test:http-cloud": "npm run build && node --test test/http-cloud.test.js"
+    "test": "node --test test/*.test.js",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.2",
@@ -32,12 +26,12 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
-    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "@types/express": "^5.0.6"
   },
-  "description": "An MCP connector for published Patchy Pages and existing Tools\u2019 declared queries and mutations, with stdio and local OAuth HTTP.",
+  "description": "An independent MCP prototype for Patchy Pages and existing Tool handlers, with per-user authentication.",
   "files": [
     "dist",
     "README.md",
