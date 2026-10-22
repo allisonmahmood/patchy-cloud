@@ -20,29 +20,30 @@ const outcome = {
   onSuccess: () => "ok",
   onFailure: (error: { readonly _tag: string }) => error._tag
 };
-// Waits until a session on this test's database waits on a lock.
-const lockWait = Effect.flatMap(SqlClient.SqlClient, (sql) =>
-  sql`SELECT pid FROM pg_stat_activity
-    WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
-    Effect.repeat({ until: (rows) => rows.length === 1 })
-  )
-);
 // Runs `effect` in a transaction left open, holding its locks, until `release` commits it.
+// `waiter` waits until another session waits on one of those locks.
 const held = Effect.fn("held")(function* <A, E>(effect: Effect.Effect<A, E>) {
   const sql = yield* SqlClient.SqlClient;
-  const ran = yield* Deferred.make<void>();
+  const ran = yield* Deferred.make<number>();
   const commit = yield* Deferred.make<void>();
   const fiber = yield* sql
     .withTransaction(
-      effect.pipe(
-        Effect.tap(() =>
-          Deferred.succeed(ran, undefined).pipe(Effect.andThen(Deferred.await(commit)))
-        )
-      )
+      Effect.gen(function* () {
+        const result = yield* effect;
+        const [session] = yield* sql<{ readonly pid: number }>`SELECT pg_backend_pid() AS pid`;
+        yield* Deferred.succeed(ran, session!.pid);
+        yield* Deferred.await(commit);
+        return result;
+      })
     )
     .pipe(Effect.forkScoped);
-  yield* Deferred.await(ran);
-  return { release: Deferred.succeed(commit, undefined).pipe(Effect.andThen(Fiber.join(fiber))) };
+  const holder = yield* Deferred.await(ran);
+  return {
+    waiter: sql`SELECT pid FROM pg_stat_activity WHERE ${holder} = ANY(pg_blocking_pids(pid))`.pipe(
+      Effect.repeat({ until: (rows) => rows.length > 0 })
+    ),
+    release: Deferred.succeed(commit, undefined).pipe(Effect.andThen(Fiber.join(fiber)))
+  };
 });
 
 it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Testing.layer())))(
@@ -477,16 +478,16 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           // An exchange holding the switch keeps its "off" until it commits.
           const exchange = yield* held(companies.holdAgentAccess(company.id));
           const turnOn = yield* set(true).pipe(Effect.forkScoped);
-          yield* lockWait;
-          assert.deepStrictEqual(yield* exchange.release, { on: false, latest: null });
+          yield* exchange.waiter;
+          assert.isFalse(yield* exchange.release);
           assert.isTrue((yield* Fiber.join(turnOn)).changed);
 
           // A hold during an uncommitted "off" reads the "off" once it commits, never the "on".
           const turnOff = yield* held(set(false));
           const waiting = yield* companies.holdAgentAccess(company.id).pipe(Effect.forkScoped);
-          yield* lockWait;
+          yield* turnOff.waiter;
           assert.isTrue((yield* turnOff.release).changed);
-          assert.isFalse((yield* Fiber.join(waiting)).on);
+          assert.isFalse(yield* Fiber.join(waiting));
         }).pipe(Effect.scoped)
     );
 

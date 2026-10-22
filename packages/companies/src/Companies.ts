@@ -174,13 +174,13 @@ export class Companies extends Context.Service<
       companyId: string
     ) => Effect.Effect<AgentAccess, CompanyNotFound | SqlError>;
     /**
-     * Reads agent access and holds it until the caller's transaction ends: a change waits for
+     * Whether agent access is on, held until the caller's transaction ends: a change waits for
      * the holder, and the read waits for a change in flight. Code issuance and the code exchange
      * hold it, so neither acts on an on that an off has already replaced.
      */
     readonly holdAgentAccess: (
       companyId: string
-    ) => Effect.Effect<AgentAccess, CompanyNotFound | SqlError>;
+    ) => Effect.Effect<boolean, CompanyNotFound | SqlError>;
     /** Turns agent access on or off; asking for the state it already has changes nothing. */
     readonly setAgentAccess: (
       input: AgentAccessInput
@@ -303,19 +303,26 @@ export const make = Effect.gen(function* () {
   });
 
   const agentAccessRow = SqlSchema.findOneOption({
-    Request: Schema.Struct({ companyId: Schema.String, hold: Schema.Boolean }),
+    Request: Schema.String,
     Result: Schema.Struct({
       on: Schema.Boolean,
       byId: Schema.NullOr(Schema.String),
       byName: Schema.NullOr(Schema.String),
       at: Schema.NullOr(Schema.Date)
     }),
-    // A share lock on the company row: changes update that row, so they wait for its holders.
-    execute: ({ companyId, hold }) => sql`
+    execute: (companyId) => sql`
       SELECT c.agent_access_on AS "on", u.id AS "byId", u.name AS "byName",
         c.agent_access_changed_at AS "at"
       FROM companies c LEFT JOIN users u ON u.id = c.agent_access_changed_by
-      WHERE c.id = ${companyId} ${hold ? sql`FOR SHARE OF c` : sql``}`
+      WHERE c.id = ${companyId}`
+  });
+  // A share lock on the company row: changes update that row, so they wait for its holders. It
+  // reads the switch alone, because a read that waited re-reads only the locked row, not a join.
+  const heldAgentAccess = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ on: Schema.Boolean }),
+    execute: (companyId) => sql`
+      SELECT agent_access_on AS "on" FROM companies WHERE id = ${companyId} FOR SHARE`
   });
   const changeAgentAccess = SqlSchema.findAll({
     Request: Schema.Struct({
@@ -439,11 +446,8 @@ export const make = Effect.gen(function* () {
       )
   );
 
-  const readAgentAccess = Effect.fn("Companies.readAgentAccess")(function* (
-    companyId: string,
-    hold: boolean
-  ) {
-    const row = yield* agentAccessRow({ companyId, hold }).pipe(Effect.catchTags(dieOnSchemaError));
+  const agentAccess = Effect.fn("Companies.agentAccess")(function* (companyId: string) {
+    const row = yield* agentAccessRow(companyId).pipe(Effect.catchTags(dieOnSchemaError));
     if (Option.isNone(row)) return yield* new CompanyNotFound({ companyId });
     const { on, byId, byName, at } = row.value;
     return {
@@ -454,8 +458,11 @@ export const make = Effect.gen(function* () {
           : { by: { id: byId, name: byName }, at }
     } satisfies AgentAccess;
   });
-  const agentAccess = (companyId: string) => readAgentAccess(companyId, false);
-  const holdAgentAccess = (companyId: string) => readAgentAccess(companyId, true);
+  const holdAgentAccess = Effect.fn("Companies.holdAgentAccess")(function* (companyId: string) {
+    const row = yield* heldAgentAccess(companyId).pipe(Effect.catchTags(dieOnSchemaError));
+    if (Option.isNone(row)) return yield* new CompanyNotFound({ companyId });
+    return row.value.on;
+  });
   const setAgentAccess = Effect.fn("Companies.setAgentAccess")((input: AgentAccessInput) =>
     sql.withTransaction(
       Effect.gen(function* () {
