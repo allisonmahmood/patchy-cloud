@@ -76,7 +76,8 @@ const change = (
 const ok = (value: typeof Schema.Json.Type): Effect.Effect<ServerCallReply> =>
   Effect.succeed({ ok: true, value });
 
-it.layer(harness)("change_patch", (it) => {
+// Mutation keys carry the real time, which the retry window reads, so these run on the real clock.
+it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
   it.effect(
     "gives a first try a fresh mutation key, and answers its retry from the record on any replica without running it",
     () =>
@@ -394,10 +395,13 @@ it.layer(harness)("change_patch", (it) => {
           key
         });
         const sql = yield* SqlClient.SqlClient;
-        /** Makes a key's first try `interval` older. */
+        const keyed = (key: string) =>
+          sql`patch_id = ${published.patchId} AND key_hash = ${sha256(JSON.stringify(key))}`;
+        /** Makes a key's first try, and the mutation key it was given, `interval` older. */
         const age = (key: string, interval: string) =>
-          sql`UPDATE change_keys SET created_at = created_at - ${interval}::interval
-            WHERE patch_id = ${published.patchId} AND key_hash = ${sha256(key)}`;
+          sql`UPDATE change_keys SET created_at = created_at - ${interval}::interval,
+              issued_at = issued_at - ${interval}::interval
+            WHERE ${keyed(key)}`;
 
         yield* change(send, priya, add("import-monday"));
         const stored = JSON.stringify(
@@ -426,7 +430,9 @@ it.layer(harness)("change_patch", (it) => {
           "unknown_outcome"
         );
         unknown = false;
-        yield* age("import-late", "23 hours 55 minutes");
+        // Runtime ages the mutation key from the time in it, however late its row was written.
+        yield* sql`UPDATE change_keys SET issued_at = issued_at - interval '23 hours 55 minutes'
+          WHERE ${keyed("import-late")}`;
         assert.deepStrictEqual(refusal(yield* change(send, priya, add("import-late"))), {
           code: "key_expired",
           from: "patchy",
@@ -436,11 +442,11 @@ it.layer(harness)("change_patch", (it) => {
         assert.strictEqual(fake.handed.length, 3);
 
         // The sweep drops keys past their 24 hours and keeps the rest.
-        yield* age("import-late", "1 hour");
+        yield* age("import-late", "24 hours");
         yield* ChangeKeys.ChangeKeys.use((keys) => keys.sweep);
         assert.deepStrictEqual(
           yield* sql`SELECT key_hash AS "keyHash" FROM change_keys WHERE patch_id = ${published.patchId}`,
-          [{ keyHash: sha256("import-monday") }]
+          [{ keyHash: sha256(JSON.stringify("import-monday")) }]
         );
       })
   );
@@ -486,8 +492,9 @@ it.layer(harness)("change_patch", (it) => {
           yield* sql`SELECT count(*)::int AS count FROM change_keys WHERE patch_id = ${published.patchId}`,
           [{ count: 0 }]
         );
-        // Any string is a key, the empty one and a long one included.
-        for (const key of ["", "k".repeat(5_000), "import-monday ✓"])
+        // Any string is a key, the empty one, a long one and lone surrogates included, and two
+        // strings UTF-8 can't tell apart are still two keys.
+        for (const key of ["", "k".repeat(5_000), "import-monday ✓", "\ud800", "\ud801"])
           assert.deepStrictEqual(
             structured(yield* change(send, priya, { tool: "addLead", args, key })),
             {
@@ -495,7 +502,7 @@ it.layer(harness)("change_patch", (it) => {
               version: 1
             }
           );
-        assert.strictEqual(fake.handed.length, 3);
+        assert.strictEqual(fake.handed.length, 5);
       })
   );
 });

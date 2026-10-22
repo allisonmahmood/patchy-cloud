@@ -8,9 +8,10 @@ export const migrations: Migrations = {
   // One row per change key, for its agent connection and patch, kept 24 hours from its first try
   // by the database's clock and then swept. The key itself is never stored, only its hash, and
   // the arguments only as the hash of their canonical JSON. `mutation_key` is the one Patchy gave
-  // a mutation's first try, and `result` that mutation's committed result as compact JSON text,
-  // byte for byte. `attempt` names the try that holds the key until `running_until`, the latest
-  // a try can still be running if its host died. Rows go with their connection or patch.
+  // a mutation's first try, `issued_at` the time in it, on the clock of the host that minted it,
+  // which Runtime ages it from, and `result` that mutation's committed result as compact JSON
+  // text, byte for byte. `attempt` names the try that holds the key until `running_until`, the
+  // latest a try can still be running if its host died. Rows go with their connection or patch.
   "0024_change_keys": ddl(
     `CREATE TABLE change_keys (
     connection_id TEXT NOT NULL REFERENCES agent_connections(id) ON DELETE CASCADE,
@@ -21,6 +22,7 @@ export const migrations: Migrations = {
     args_hash TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('mutation', 'action')),
     mutation_key TEXT CHECK ((kind = 'mutation') = (mutation_key IS NOT NULL)),
+    issued_at TIMESTAMPTZ CHECK ((kind = 'mutation') = (issued_at IS NOT NULL)),
     result TEXT CHECK (result IS NULL OR kind = 'mutation'),
     attempt TEXT NOT NULL,
     running_until TIMESTAMPTZ,

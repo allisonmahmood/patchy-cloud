@@ -109,39 +109,36 @@ export const make = Effect.gen(function* () {
       ((yield* ContractLimits.get("tier2.action.deadline")) + cleanup + START_ALLOWANCE_MS) / 1000
   };
   // A retry under the first try's mutation key must finish while Runtime still keeps that key's
-  // outcome. Runtime ages the key on its hosts' clocks, which may run ahead of the database's by
-  // its allowed skew, so retries stop that much and one try's longest run before the 24 hours end.
+  // outcome. Runtime ages the key from the time in it, on hosts' clocks that may run ahead of the
+  // database's by its allowed skew, so retries stop that much and one try's longest run before
+  // the key's own 24 hours end.
   const retryWindow =
     lifetime - leases.mutation - (yield* ContractLimits.get("tier2.mutation.keyFutureSkew")) / 1000;
   const live = sql`created_at > clock_timestamp() - make_interval(secs => ${lifetime})`;
-  const retryable = sql`created_at > clock_timestamp() - make_interval(secs => ${retryWindow})`;
+  const retryable = sql`issued_at > clock_timestamp() - make_interval(secs => ${retryWindow})`;
 
   const where = (keyed: Keyed) =>
     sql`connection_id = ${keyed.connectionId} AND patch_id = ${keyed.patchId} AND key_hash = ${keyed.keyHash}`;
 
   /**
    * The try's hold ends; a committed mutation's result stays, whichever try settles first. It
-   * waits at most the settlement cleanup for the row, so a stalled database can't hold the
-   * request open: the hold then lasts until its lease runs out.
+   * waits at most the settlement cleanup, for a connection and the row alike: past that the hold
+   * lasts until its lease runs out, and a retry then resolves it.
    */
   const settle = (keyed: Keyed, attempt: string) => (result: string | undefined) =>
-    sql
-      .withTransaction(
-        Effect.gen(function* () {
-          yield* sql`SELECT set_config('statement_timeout', ${String(cleanup)}, true)`;
-          yield* sql`
-            UPDATE change_keys SET running_until = NULL, result = COALESCE(${result ?? null}, result)
-            WHERE ${where(keyed)} AND attempt = ${attempt}`;
-        })
-      )
-      .pipe(Effect.withSpan("ChangeKeys.settle"));
+    Effect.asVoid(
+      sql`
+        UPDATE change_keys SET running_until = NULL, result = COALESCE(${result ?? null}, result)
+        WHERE ${where(keyed)} AND attempt = ${attempt}`
+    ).pipe(Effect.timeoutOption(cleanup), Effect.asVoid, Effect.withSpan("ChangeKeys.settle"));
 
   const read = SqlSchema.findOneOption({
     Request: Keyed,
     Result: Stored,
     execute: (keyed) => sql`
       SELECT version_id AS "versionId", tool, args_hash AS "argsHash", kind, result,
-        COALESCE(running_until > clock_timestamp(), false) AS running, ${retryable} AS retryable,
+        COALESCE(running_until > clock_timestamp(), false) AS running,
+        COALESCE(${retryable}, false) AS retryable,
         NOT ${live} AS expired
       FROM change_keys WHERE ${where(keyed)}`
   });
@@ -150,7 +147,8 @@ export const make = Effect.gen(function* () {
     const keyed: Keyed = {
       connectionId: change.connectionId,
       patchId: change.patchId,
-      keyHash: sha256(change.key)
+      // As JSON, so strings UTF-8 can't tell apart, such as two lone surrogates, stay apart.
+      keyHash: sha256(JSON.stringify(change.key))
     };
     const argsHash = sha256(canonicalArgs(change.args));
     const lease = leases[change.kind];
@@ -164,15 +162,19 @@ export const make = Effect.gen(function* () {
       // The first try, or the first since the key's 24 hours ran out.
       const attempt = newInternalId("try");
       const minted = change.kind === "mutation" ? yield* MutationTransaction.mint : null;
+      // Runtime's key is `<ms>-<random>`: the milliseconds Runtime ages it from.
+      const issuedAt = minted === null ? null : Number(minted.slice(0, minted.indexOf("-")));
       const [first] = yield* sql<{ readonly mutationKey: string | null }>`
         INSERT INTO change_keys AS k (connection_id, patch_id, key_hash, version_id, tool,
-          args_hash, kind, mutation_key, attempt, running_until, created_at)
+          args_hash, kind, mutation_key, issued_at, attempt, running_until, created_at)
         VALUES (${keyed.connectionId}, ${keyed.patchId}, ${keyed.keyHash}, ${change.versionId},
-          ${change.tool}, ${argsHash}, ${change.kind}, ${minted}, ${attempt},
+          ${change.tool}, ${argsHash}, ${change.kind}, ${minted},
+          to_timestamp(${issuedAt}::double precision / 1000), ${attempt},
           clock_timestamp() + make_interval(secs => ${lease}), clock_timestamp())
         ON CONFLICT (connection_id, patch_id, key_hash) DO UPDATE SET
           version_id = EXCLUDED.version_id, tool = EXCLUDED.tool, args_hash = EXCLUDED.args_hash,
-          kind = EXCLUDED.kind, mutation_key = EXCLUDED.mutation_key, result = NULL,
+          kind = EXCLUDED.kind, mutation_key = EXCLUDED.mutation_key,
+          issued_at = EXCLUDED.issued_at, result = NULL,
           attempt = EXCLUDED.attempt, running_until = EXCLUDED.running_until,
           created_at = EXCLUDED.created_at
         WHERE k.created_at <= clock_timestamp() - make_interval(secs => ${lifetime})

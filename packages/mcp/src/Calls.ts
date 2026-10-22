@@ -14,6 +14,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -363,7 +364,7 @@ const changeRefusal = (error: Runtime.RuntimeError, descriptor: HandlerDescripto
  * can write, under the agent's change key, and answers `{ result, version }`, with the result
  * left out when an agent couldn't read it, or the patch's own refusal or Patchy's. A retry of
  * a committed mutation answers its first result with `replayed: true` and runs nothing. A try
- * runs to its end even if the agent goes away, so its key always records how it ended.
+ * runs to its end even if the agent goes away, so its key records how it ended.
  */
 export const change = Effect.fn("Calls.change")(function* (
   identity: AgentConnections.AgentIdentity,
@@ -424,15 +425,15 @@ export const change = Effect.fn("Calls.change")(function* (
   // Runtime says when its own record of the mutation key answered a retry Patchy hadn't seen
   // commit, such as one after an unknown outcome: that change replayed too.
   const replayed = yield* Ref.make(false);
-  const answer = yield* invoke(
-    identity,
-    target,
-    invocation,
-    claimed.mutationKey,
-    Ref.set(replayed, true)
-  ).pipe(
-    Effect.onExit((exit) =>
-      claimed
+  // The try and its settling run in a fiber of their own, which the request only joins: if the
+  // agent goes away, the try still runs to its end and settles its key, and nothing, shutdown
+  // included, waits on them.
+  const tried = yield* Effect.forkDetach(
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        invoke(identity, target, invocation, claimed.mutationKey, Ref.set(replayed, true))
+      );
+      yield* claimed
         .settle(
           kind === "mutation" && Exit.isSuccess(exit) && exit.value.ok
             ? jsonText(exit.value.value)
@@ -443,9 +444,11 @@ export const change = Effect.fn("Calls.change")(function* (
           Effect.catchTags({
             SqlError: (cause) => Effect.logError("A change key's try was not settled.", cause)
           })
-        )
-    ),
-    Effect.uninterruptible,
+        );
+      return yield* exit;
+    })
+  );
+  const answer = yield* Fiber.join(tried).pipe(
     Effect.flatMap((reply) =>
       Effect.map(Ref.get(replayed), (again) =>
         again && reply.ok
