@@ -945,6 +945,36 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "oauth.clientDocuments.perMinute": {
+    kind: "operating",
+    default: 30,
+    unit: "starts/minute",
+    scope: "host",
+    measure:
+      "Client metadata document fetches started per host replica, every start counted. One fetch per URL is in flight at a time, and loads of that URL while it runs share its answer",
+    refusal: "rate_limited",
+    overridable: false
+  },
+  "oauth.clientDocuments.entries": {
+    kind: "operating",
+    default: 256,
+    unit: "documents",
+    scope: "host",
+    measure:
+      "Accepted client metadata documents kept in memory per host replica, least recently used evicted first; a refusal or failed fetch is never kept",
+    refusal: null,
+    overridable: false
+  },
+  "oauth.clientDocuments.lifetime": {
+    kind: "operating",
+    default: 3600000,
+    unit: "milliseconds",
+    scope: "host",
+    measure:
+      "Longest a client metadata document is kept; its response's shorter max-age or Expires, less its Age, is honoured, and no-store or no-cache keeps nothing",
+    refusal: null,
+    overridable: false
+  },
   "rate.protectedApi.perMinute": {
     kind: "operating",
     configuration: "legacy",

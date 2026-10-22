@@ -27,7 +27,11 @@ export function renderServerSkillLimits(): string {
     "",
     table(
       entries.filter(
-        ([id]) => !id.startsWith("rate.") && !id.startsWith("look.") && !id.startsWith("invites.")
+        ([id]) =>
+          !id.startsWith("rate.") &&
+          !id.startsWith("look.") &&
+          !id.startsWith("invites.") &&
+          !id.startsWith("oauth.")
       )
     ),
     ""

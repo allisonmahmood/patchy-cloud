@@ -60,12 +60,6 @@ export const config = Config.all({
 export const COOKIE = "patchy_dev_person";
 const LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 
-const isLoopback = (url: URL) =>
-  url.hostname === "localhost" ||
-  url.hostname.endsWith(".localhost") ||
-  url.hostname === "127.0.0.1" ||
-  url.hostname === "[::1]";
-
 const decodeClaims = Schema.decodeUnknownOption(Schema.fromJsonString(Session.SessionClaims));
 
 /** Settings checked once, plus the cookie codec both the Session and the route use. */
@@ -73,7 +67,7 @@ const persona = Effect.gen(function* () {
   const { secret, publicUrl, environment } = yield* config;
   if (environment !== "development" && environment !== "test")
     return yield* new DevPersonasOutsideDevelopment({ environment });
-  if (!isLoopback(publicUrl))
+  if (!Session.isLoopback(publicUrl))
     return yield* new DevPersonasOnPublicOrigin({ origin: publicUrl.origin });
   const mac = (payload: string) =>
     createHmac("sha256", Redacted.value(secret)).update(payload).digest();

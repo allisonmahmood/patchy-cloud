@@ -96,6 +96,16 @@ const isSafeReason = Schema.is(SafeReason);
 /** The origin readers use; shared with the dev personas Session, which refuses production itself. */
 export const publicUrlConfig = Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL");
 
+/**
+ * Whether the origin is this computer's, as only a dev instance is served: dev personas run
+ * only there, and the door and OAuth endpoints answer no CORS there.
+ */
+export const isLoopback = (url: URL) =>
+  url.hostname === "localhost" ||
+  url.hostname.endsWith(".localhost") ||
+  url.hostname === "127.0.0.1" ||
+  url.hostname === "[::1]";
+
 /** A production host serves its origin over HTTPS only. */
 const servedUrl = Config.String("NODE_ENV").pipe(
   Config.withDefault("development"),

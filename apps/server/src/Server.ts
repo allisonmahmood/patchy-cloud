@@ -26,9 +26,12 @@ import {
   AuthApi,
   AuthPages,
   Authorization,
+  ClientDocumentNetwork,
+  ClientDocuments,
   DevPersonas,
   DeviceLogins,
   MachineTokens,
+  OAuthMetadata,
   RequireSession,
   Session
 } from "@patchy/auth";
@@ -156,6 +159,7 @@ const ownedPatches = Layer.effect(
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
 const services = Layer.mergeAll(
   Artifact.layer,
+  ClientDocuments.layer.pipe(Layer.provide(ClientDocumentNetwork.layer)),
   Content.layer,
   DeletionSweep.layer,
   DeviceLogins.layer,
@@ -319,6 +323,7 @@ const app = Layer.mergeAll(
     WhatsNewPages.layer,
     landing,
     AuthPages.layer,
+    OAuthMetadata.layer,
     Layer.unwrap(
       Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
     ),

@@ -119,6 +119,9 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `look.bytes` | contract | 524288 | bytes | company | Published bytes of a look revision's files, embedded fonts included; look publish refuses invalid_look | None | No | release |
 | `look.brief.bytes` | contract | 32768 | bytes | company | A look revision's LOOK.md; look publish refuses invalid_look | None | No | release |
 | `invites.batch` | contract | 50 | addresses | company | Addresses in one invite from the Company page; more are refused before any email goes out | None | No | release |
+| `oauth.clientDocuments.perMinute` | operating | 30 | starts/minute | host | Client metadata document fetches started per host replica, every start counted. One fetch per URL is in flight at a time, and loads of that URL while it runs share its answer | `rate_limited` | No | deployment |
+| `oauth.clientDocuments.entries` | operating | 256 | documents | host | Accepted client metadata documents kept in memory per host replica, least recently used evicted first; a refusal or failed fetch is never kept | None | No | deployment |
+| `oauth.clientDocuments.lifetime` | operating | 3600000 | milliseconds | host | Longest a client metadata document is kept; its response's shorter max-age or Expires, less its Age, is honoured, and no-store or no-cache keeps nothing | None | No | deployment |
 | `rate.protectedApi.perMinute` | operating | 60 | attempts/minute | host | Protected API attempts per source address | `rate_limited` | No | legacy |
 | `rate.deviceLogin.perMinute` | operating | 5 | attempts/minute | host | Device login starts per source address | `rate_limited` | No | legacy |
 | `rate.patchCreate.perMinute` | operating | 10 | attempts/minute | viewer | Patch creates per machine token; deployment-wide configuration | `rate_limited` | No | legacy |
