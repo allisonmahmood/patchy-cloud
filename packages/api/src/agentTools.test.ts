@@ -463,7 +463,7 @@ describe("tool call answers", () => {
           retryAfter: 0.5,
           details: { held: 2 }
         },
-        "action"
+        { kind: "action" }
       ).structuredContent
     ).toEqual({
       error: {
@@ -484,23 +484,26 @@ describe("tool call answers", () => {
       error: "The handler failed. Use the correlation id to find its log.",
       correlationId: "call_1"
     };
-    expect(runtimeRefusal(failure, "mutation").content[0].text).toBe(
+    expect(runtimeRefusal(failure, { kind: "mutation" }).content[0].text).toBe(
       "The handler failed. Use the correlation id to find its log. Correlation id: call_1."
     );
   });
 
-  it("says an action out of time may have partly happened, and a mutation's doesn't", () => {
-    const failure = {
+  it("says an action that can write and didn't finish may have partly happened", () => {
+    const refusal = (code: "handler_timeout" | "timeout" | "unknown_outcome") => ({
       ok: false as const,
       source: "patchy" as const,
-      code: "handler_timeout" as const,
-      error: "The handler exceeded its deadline."
-    };
-    expect(runtimeRefusal(failure, "action").content[0].text).toBe(
-      "The handler exceeded its deadline. It may have partly happened: read what it changes before trying again, with a new change key."
-    );
-    expect(runtimeRefusal(failure, "mutation").content[0].text).toBe(
-      "The handler exceeded its deadline."
-    );
+      code,
+      error: "It didn't finish."
+    });
+    const partly =
+      "It didn't finish. It may have partly happened: read what it changes before trying again, with a new change key.";
+    for (const code of ["handler_timeout", "timeout", "unknown_outcome"] as const)
+      expect(runtimeRefusal(refusal(code), { kind: "action" }).content[0].text, code).toBe(partly);
+    // A read-only action can't write, and a mutation either committed or didn't.
+    for (const tool of [{ kind: "action", readOnly: true }, { kind: "mutation" }] as const)
+      expect(runtimeRefusal(refusal("handler_timeout"), tool).content[0].text).toBe(
+        "It didn't finish."
+      );
   });
 });

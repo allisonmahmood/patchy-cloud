@@ -483,17 +483,20 @@ export const invalidArgsRefusal = (
     message: `${tool}'s arguments don't fit its schema: ${problem}. ${toolsNow(tools)}`
   });
 
+/** The refusals of an action that ran out of time, at any depth, or whose outcome is unknown. */
+const unfinished = new Set<string>(["handler_timeout", "timeout", "unknown_outcome"]);
+
 /**
  * Patchy's own refusal of a call, from Runtime's failure: its code and message, any correlation
  * id the message points to, its details, and the wait before a retry when one is safe. An
- * action that ran out of time or whose outcome is unknown may have written, so it says so.
+ * action that can write and didn't finish may have written some of it, so it says so.
  */
 export const runtimeRefusal = (
   failure: RuntimeFailure,
-  kind: HandlerDescriptor["kind"]
+  tool: Pick<HandlerDescriptor, "kind" | "readOnly">
 ): ToolCallResult => {
   const partly =
-    kind === "action" && (failure.code === "handler_timeout" || failure.code === "unknown_outcome")
+    tool.kind === "action" && agentToolKind(tool) === "change" && unfinished.has(failure.code)
       ? " It may have partly happened: read what it changes before trying again, with a new change key."
       : "";
   const correlation =

@@ -112,9 +112,7 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
         call.pipe(Effect.retry({ times: 2, while: (error) => error.code === "unknown_outcome" }))
     ).pipe(
       Effect.map((reply) => callAnswer(dev.patch.name, tool, build, reply)),
-      Effect.catch((error) =>
-        Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor.kind))
-      )
+      Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor)))
     )
   );
   return answered(result);
