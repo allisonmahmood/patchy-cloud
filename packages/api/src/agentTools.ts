@@ -644,7 +644,8 @@ export const readAnswer = (
 /**
  * A change's answer as the agent gets it, measured as a read's is. A change has happened by the
  * time it answers, so a result past `readAnswerChars` is still a success, on `version`, with
- * the result left out and `resultLeftOut` saying so; a refusal is `fitRefusal`'s.
+ * the result left out and `resultLeftOut` saying so, still `replayed` if it was; a refusal is
+ * `fitRefusal`'s.
  */
 export const changeAnswer = (
   tool: string,
@@ -656,6 +657,7 @@ export const changeAnswer = (
   if (chars <= readAnswerChars) return answer;
   return toolAnswer({
     version,
+    ...(answer.structuredContent["replayed"] === true ? { replayed: true as const } : {}),
     resultLeftOut: `${tool} succeeded, but its result came to ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer, so it was left out. Read what you need of the change through the patch's read tools.`
   } satisfies CallSuccess);
 };

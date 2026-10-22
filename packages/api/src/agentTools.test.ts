@@ -602,6 +602,11 @@ describe("tool call answers", () => {
           "importLeads succeeded, but its result came to 100,001 characters, more than the 100,000 an agent reads in one answer, so it was left out. Read what you need of the change through the patch's read tools."
       })
     );
+    // A replay past the cap still says it replayed.
+    expect(
+      changeAnswer("importLeads", 4, toolAnswer({ result: `${fits}x`, version: 4, replayed: true }))
+        .structuredContent
+    ).toMatchObject({ version: 4, replayed: true });
     // A refusal is cut as a read's is.
     const wordy = toolRefusal({
       code: "busy",

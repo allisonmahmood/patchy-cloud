@@ -413,11 +413,15 @@ export const change = Effect.fn("Calls.change")(function* (
       return keyExpiring;
     case "Replay":
       yield* WideEvents.enrich({ replayed: true });
-      return toolAnswer({
-        result: parseJsonText(claimed.result),
-        version: target.versionNumber,
-        replayed: true
-      } satisfies CallSuccess);
+      return changeAnswer(
+        target.tool,
+        target.versionNumber,
+        toolAnswer({
+          result: parseJsonText(claimed.result),
+          version: target.versionNumber,
+          replayed: true
+        } satisfies CallSuccess)
+      );
     case "Run":
   }
   // Runtime says when its own record of the mutation key answered a retry Patchy hadn't seen
