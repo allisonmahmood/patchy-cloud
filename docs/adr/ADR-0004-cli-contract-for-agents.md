@@ -15,8 +15,8 @@ recoverable publish add commands, not alternative output or identity conventions
 ## Decision
 
 One npm package, `patchy`, owns the binary and its explicit config, client, server,
-dev and Preact entry points at one exact release. It remains private and is distributed by
-the instance until launch, through the installer its `/llms.txt` names. Inside a patch repo, `pnpm patchy` runs the pinned
+dev and Preact entry points at one exact release. It is not published to npm: the
+instance distributes it through the installer its `/llms.txt` names. Inside a patch repo, `pnpm patchy` runs the pinned
 copy. [ADR-0011](./ADR-0011-one-package-one-release.md) owns release distribution
 and the stable runtime wire; this ADR owns the CLI's observable contract.
 
@@ -90,14 +90,12 @@ An instance's HTTP 422 `invalid_description` is still `rejected` (exit 2).
 The tier 2 contract's descriptor extraction refuses a non-handler export from a
 one-level server module with `invalid_manifest`, local exit 1. A handler must
 declare a query, mutation or action with valid argument and result descriptors.
-Tier 2 publication is admitted on dev and test instances. The server inspects
+Dev and test instances admit tier 2 publication. The server inspects
 the stored server bytes in a throwaway process. A descriptor disagreement,
 top-level throw, unresolved module or unfinished initializer is HTTP 422
 `invalid_manifest`, `kind: "rejected"`, exit 2. A tier 2 repo with no handlers
 publishes with a warning. Production admits tier 2 only with
-`EXECUTION_PROVIDER=ecs`. Production infrastructure is written
-([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)) and awaits its
-first deploy ([#416](https://github.com/allisonmahmood/patchy-cloud/issues/416)).
+`EXECUTION_PROVIDER=ecs`, which it runs on.
 
 The browser runtime has its own refusal contract in [API](../API.md), not CLI
 exit codes. It includes `handler_failed`, `handler_timeout`, `write_conflict`,

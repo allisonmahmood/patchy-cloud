@@ -41,5 +41,5 @@ The bounded queue for a company's occupied connection slots, shared by both tier
 _Avoid_: retry, invocation queue
 
 **Inventory upgrade**:
-An idempotent change to an existing company's inventory structures that preserves its resource definitions and data. None exist since the inventory was squashed before launch; the first one returns with its tests.
+An idempotent change to an existing company's inventory structures that preserves its resource definitions and data. None exist since the inventory was squashed before launch. Production company databases hold data to keep, so the next change to an existing structure adds the first one, with its tests.
 _Avoid_: platform migration

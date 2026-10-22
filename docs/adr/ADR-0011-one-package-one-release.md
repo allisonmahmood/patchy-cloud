@@ -15,7 +15,7 @@ refused state rather than a compatibility matrix. The package lives in
 release and tooling installed before it is told to upgrade. A deploy without a
 What's new release keeps the name, though its bytes may change.
 
-The package stays private until launch. An instance distributes its packed bytes
+The package is not published to npm. An instance distributes its packed bytes
 at unauthenticated, immutable `GET /sdk/patchy-<release>-<digest>.tgz` and reports
 their SHA-512 integrity at `GET /api/release`. The digest is the tarball's full
 lowercase SHA-256. A rebuild with the same version and different bytes gets a

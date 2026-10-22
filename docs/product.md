@@ -2,23 +2,13 @@
 
 The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `GLOSSARY.md` defines its context's terms; this file describes the product.
 
-Built today: tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres and PostHog connections.
+Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres and PostHog connections.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Portal, Company, Connections and Your machines share one app shell and component set.
 
 Tier 2 repos publish an HTML artifact and an inspected server artifact. The local dev loop runs the hosted handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller and ECS Fargate provider are built, including spare claims, stopping and drain, crash metering and the patch breaker. Production admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
-
-## Tier 2 delivery status
-
-The build in PRs #417 through #453 implements the tier 2 map's handler, sync, execution, SDK and portal contracts. This documentation reconciliation records those capabilities as built, not as proposals. It does not mean the platform is deployed or every acceptance check has passed:
-
-- [#413](https://github.com/allisonmahmood/patchy-cloud/issues/413)'s reference CRM journey and tier-picking check run by hand after the stack merges. The automated acceptance work is built; those two checks have not run.
-- Version revocation remains an open question on [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425). The `revoked` frame exists, but there is no way to revoke a version.
-- Production infrastructure and its deploy workflow are written in `apps/infra` and `.github/workflows/deploy.yml` ([#415](https://github.com/allisonmahmood/patchy-cloud/issues/415)); the first deploy, [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416), has not happened.
-
-This is the closing documentation pass for [#294](https://github.com/allisonmahmood/patchy-cloud/issues/294). Allison closes the map and its issues after merge.
 
 ## Patches
 
@@ -521,8 +511,7 @@ the supervisor and all loaded processes. Process separation does not promise
 unchanged sibling latency under CPU contention. The local task provider exercises
 the controller with separate supervisor processes; it does not prove Fargate
 containment. [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md)
-records the engine and hosting contract, and the [delivery status](#tier-2-delivery-status)
-separates built code from pending acceptance and deployment.
+records the engine and hosting contract.
 
 While the company starts, the shell holds handler calls before admission or
 deadlines begin. After two seconds, a cover replaces the frame on first open
