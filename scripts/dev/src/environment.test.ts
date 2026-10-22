@@ -6,72 +6,106 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { layoutOf, writeLauncher } from "./environment.js";
+import { layoutOf, writeAgent } from "./environment.js";
+
+const API_URL = "http://env.localhost:4100";
+
+/** An environment in a temp folder with its agent written, and a `claude` stub printing `script`'s output. */
+const environmentWith = Effect.fn(function* (script: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = yield* fs.makeTempDirectoryScoped();
+  const layout = layoutOf(path.join(dir, "environment"), path);
+  yield* fs.makeDirectory(layout.workspace, { recursive: true });
+  yield* writeAgent(layout, API_URL);
+  const stubs = path.join(dir, "stubs");
+  yield* fs.makeDirectory(stubs);
+  yield* fs.writeFileString(path.join(stubs, "claude"), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  return { dir, layout, PATH: `${stubs}:${yield* Config.String("PATH")}` };
+});
+
+/** Runs the launcher with exactly `env`, returning its pid, exit code and stdout. */
+const launch = Effect.fn(function* (agent: string, env: Record<string, string>) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(
+    ChildProcess.make(agent, [], { env, extendEnv: false, stdin: "ignore" })
+  );
+  const stdout = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
+  return { pid: child.pid, exitCode: yield* child.exitCode, stdout };
+});
 
 it.layer(NodeServices.layer)("the agent launcher", (it) => {
-  it.effect("starts claude without the shell's PATCHY_API_URL and PATCHY_API_TOKEN", () =>
+  it.effect("aims the CLI at its instance, drops the shell's token and turns auto memory off", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const dir = yield* fs.makeTempDirectoryScoped();
-      const layout = layoutOf(path.join(dir, "environment"), path);
-      yield* fs.makeDirectory(layout.workspace, { recursive: true });
-      yield* writeLauncher(layout);
-      const stubs = path.join(dir, "stubs");
-      yield* fs.makeDirectory(stubs);
-      yield* fs.writeFileString(path.join(stubs, "claude"), "#!/bin/sh\nenv\n", { mode: 0o755 });
+      const { layout, PATH } = yield* environmentWith("env");
+      const { exitCode, stdout } = yield* launch(layout.agent, {
+        PATH,
+        PATCHY_API_URL: "https://elsewhere.invalid",
+        PATCHY_API_TOKEN: "patchy_elsewhere"
+      });
 
-      const child = yield* spawner.spawn(
-        ChildProcess.make(layout.agent, [], {
-          env: {
-            PATH: `${stubs}:${yield* Config.String("PATH")}`,
-            PATCHY_API_URL: "https://elsewhere.invalid",
-            PATCHY_API_TOKEN: "patchy_elsewhere"
-          },
-          stdin: "ignore"
-        })
-      );
-      const env = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
-
-      assert.strictEqual(yield* child.exitCode, 0);
+      assert.strictEqual(exitCode, 0);
+      const env = stdout.split("\n");
+      assert.include(env, `PATCHY_API_URL=${API_URL}`);
       assert.include(env, `PATCHY_STATE_DIR=${layout.state}`);
-      assert.notInclude(env, "PATCHY_API_URL");
-      assert.notInclude(env, "PATCHY_API_TOKEN");
+      assert.include(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1");
+      assert.notInclude(stdout, "PATCHY_API_TOKEN");
     }).pipe(Effect.scoped)
   );
 
-  it.effect("lets claude use $TMPDIR as its temp folder, or /tmp without one", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const dir = yield* fs.makeTempDirectoryScoped();
-      const layout = layoutOf(path.join(dir, "environment"), path);
-      yield* fs.makeDirectory(layout.workspace, { recursive: true });
-      yield* writeLauncher(layout);
-      const stubs = path.join(dir, "stubs");
-      yield* fs.makeDirectory(stubs);
-      yield* fs.writeFileString(path.join(stubs, "claude"), `#!/bin/sh\nprintf '%s\\n' "$@"\n`, {
-        mode: 0o755
-      });
-      const addDir = Effect.fn(function* (env: Record<string, string>) {
-        const child = yield* spawner.spawn(
-          ChildProcess.make(layout.agent, [], {
-            env: { PATH: `${stubs}:${yield* Config.String("PATH")}`, ...env },
-            extendEnv: false,
-            stdin: "ignore"
-          })
+  it.effect(
+    "gives each session a temp folder of its own, deleted by a later launch once it ends",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { dir, layout, PATH } = yield* environmentWith(
+          `printf 'TMPDIR=%s\\n' "$TMPDIR"; printf '%s\\n' "$@"; exit 7`
         );
-        const args = (yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString)).split("\n");
-        return args[args.indexOf("--add-dir") + 1];
-      });
+        const scratch = path.join(dir, "scratch");
+        // A running session's folder, named for this test's own live pid.
+        const live = path.join(scratch, `patchy-agent-${process.pid}.running`);
+        yield* fs.makeDirectory(live, { recursive: true });
+        const session = Effect.fn(function* (env: Record<string, string>) {
+          const { pid, exitCode, stdout } = yield* launch(layout.agent, { PATH, ...env });
+          // Claude Code's own exit code: the launcher execs it, keeping the pid the folder is named for.
+          assert.strictEqual(exitCode, 7);
+          const lines = stdout.split("\n");
+          const temp = lines[0]!.slice("TMPDIR=".length);
+          assert.strictEqual(lines[lines.indexOf("--add-dir") + 1], temp);
+          assert.isTrue(path.basename(temp).startsWith(`patchy-agent-${pid}.`));
+          return temp;
+        });
 
-      assert.strictEqual(
-        yield* addDir({ TMPDIR: path.join(dir, "scratch") }),
-        path.join(dir, "scratch")
-      );
-      assert.strictEqual(yield* addDir({}), "/tmp");
-    }).pipe(Effect.scoped)
+        const first = yield* session({ TMPDIR: scratch });
+        assert.strictEqual(path.dirname(first), scratch);
+        assert.isTrue(yield* fs.exists(first));
+        const second = yield* session({ TMPDIR: scratch });
+        assert.strictEqual(path.dirname(second), scratch);
+        assert.isFalse(yield* fs.exists(first));
+        assert.isTrue(yield* fs.exists(live));
+        const fallback = yield* session({});
+        assert.strictEqual(path.dirname(fallback), "/tmp");
+        yield* fs.remove(fallback, { recursive: true });
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "tells the agent to make new work in the workspace, keeping a CLAUDE.md that exists",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { layout } = yield* environmentWith("true");
+        const file = path.join(layout.workspace, "CLAUDE.md");
+
+        assert.strictEqual(
+          yield* fs.readFileString(file),
+          "Make each new patch or page directly in this folder.\n"
+        );
+        yield* fs.writeFileString(file, "Your own notes.\n");
+        yield* writeAgent(layout, API_URL);
+        assert.strictEqual(yield* fs.readFileString(file), "Your own notes.\n");
+      }).pipe(Effect.scoped)
   );
 });

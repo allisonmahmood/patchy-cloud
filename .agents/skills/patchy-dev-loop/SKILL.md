@@ -45,9 +45,14 @@ Done when `pnpm dev status` exits 0.
   environment person's key or first name.
 - **The environment's agent.** `pnpm dev up` prints an `agent` launcher:
   Claude Code in the environment's workspace with the Patchy skill, publishing
-  as the scenario's publisher. It ignores the shell's `PATCHY_API_URL` and
-  `PATCHY_API_TOKEN` and loads no `CLAUDE.md` from the folders above its
-  workspace. Give it a task with `…/agent -p "<task>"`. It is a Patchy user who
+  as the scenario's publisher. It ignores the shell's `PATCHY_API_TOKEN` and
+  loads no `CLAUDE.md` from the folders above its workspace. The workspace's
+  own `CLAUDE.md` puts its new patches and pages in the workspace, where
+  `pnpm dev down` removes them. Its `PATCHY_API_URL` is the environment's
+  instance, so a repo bound to another one, production included, refuses its
+  commands unless it passes `--api-url`. Each session has auto memory off and a
+  temp folder of its own. One builder agent per patch is the norm; nothing
+  enforces it. Give it a task with `…/agent -p "<task>"`. It is a Patchy user who
   has already set up, and its commands run as the person, with their HOME and
   npm prefix: never give it the portal's setup line or have it run
   `patchy setup`. The setup line replaces the person's global `patchy`, both
@@ -104,10 +109,10 @@ prerequisites; the `pr-evidence` skill says what each shows.
   both sides as the scenario's signed-in CLI and compares each line's output,
   exit code and time.
 - `pnpm dev trial "<task>" [--model sonnet] [--max-turns 30] [--minutes 10]`
-  gives the task to a fresh agent on both sides, each side's `agent` launcher
-  run without a person, and logs how each attempt went: finished or not, its
-  answer in brief, its commands with exit codes and a line per failure. Each
-  side is a model run. Phrase the task as a person would ask their agent,
+  gives the task to a fresh agent on both sides, this checkout's `agent`
+  launcher written into each side and run without a person, and logs how each
+  attempt went: finished or not, its answer in brief, its commands with exit
+  codes and a line per failure. Each side is a model run. Phrase the task as a person would ask their agent,
   never for `patchy setup` or the portal's setup line: its commands run as
   you.
 - "Before" is where `HEAD` left `origin/main`; `--base <ref>` picks another

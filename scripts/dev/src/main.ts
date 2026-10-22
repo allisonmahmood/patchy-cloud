@@ -1448,11 +1448,7 @@ const trial = Command.make(
           const found = yield* agentShell(root, before.side).pipe(
             Effect.catchTags({
               NoWorkspace: () =>
-                Effect.succeed("Its environment isn't where this checkout looks for it."),
-              OldLauncher: () =>
-                Effect.succeed(
-                  "Its `agent` launcher predates the one that keeps your own instruction files out."
-                )
+                Effect.succeed("Its environment isn't where this checkout looks for it.")
             })
           );
           if (typeof found === "string")

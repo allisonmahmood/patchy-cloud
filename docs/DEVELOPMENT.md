@@ -207,8 +207,21 @@ An environment is this instance plus what a multi-person check or demo needs:
   the environment's CLI first on `PATH`, and pre-approved `patchy` and `pnpm`
   commands; arguments pass through, e.g. `…/agent -p "<task>"`. It loads no
   `CLAUDE.md`, `AGENTS.md` or rules from the folders above the workspace, your
-  HOME's included, and ignores your shell's `PATCHY_API_URL` and
-  `PATCHY_API_TOKEN`, so it publishes here as the scenario's publisher.
+  HOME's included, and ignores your shell's `PATCHY_API_TOKEN`, so it publishes
+  here as the scenario's publisher.
+
+  The workspace's own `CLAUDE.md` says "Make each new patch or page directly in
+  this folder", so the agent's new work lands beside the scenario's repos, where
+  `down` removes it, and never in your `~/Patchy`. `up` writes it when it is
+  missing and never over one that exists. The launcher sets `PATCHY_API_URL` to
+  this instance: a command in a repo bound to another one, production included,
+  is refused with an instance mismatch before anything is sent. It's a guard,
+  not a sandbox: an explicit `--api-url` still wins, and so does the
+  `.local/dev/env` of another checkout running `pnpm dev`, which only ever names
+  a local instance. Each session starts clean, with auto memory off and a temp
+  folder of its own, made in `$TMPDIR` or `/tmp`; a later launch deletes it once
+  that session has ended. Sessions can run side by side; one builder agent per
+  patch is the norm, and nothing enforces it.
 
   Its commands still run as you, with your HOME and npm prefix, so never give it
   the portal's setup line or have it run `patchy setup`. The setup line replaces
@@ -282,7 +295,7 @@ email address outside the reserved domains the scenarios use (`.example`,
 runner passes. The section says which matched. Redaction is a backstop, not a guarantee; read the section before publishing.
 
 `pnpm dev trial "<task>"` gives a task, in a person's words, to a fresh agent
-on each side: the side's `agent` launcher, run without a person. The task goes
+on each side: the `agent` launcher, run without a person. The task goes
 in on stdin to Claude Code's `-p`, with its stream-json events, `--max-turns`
 (30), `--no-session-persistence` and auto memory off, and the run is stopped
 after `--minutes` (10). Both sides run at once. `--model` passes through to
@@ -293,14 +306,12 @@ and `CLAUDE_CODE_OAUTH_TOKEN` pass when set. The launcher's limits hold: its
 commands run as you, so a task that mentions `patchy setup` or the portal's
 setup line is refused, and `patchy setup` and global `pnpm add`s are denied to
 the agent. The launcher pre-approves only some commands, and with no one there
-to approve the rest, those are denied and the log says so. The launcher adds
-your temp folder (`$TMPDIR`, or `/tmp`); a trial sets `TMPDIR` to a scratch
-folder of each side's own, deleted when the run ends, so the agent can't read
-other sessions' files in the machine's `/tmp`. A base whose launcher adds
-`/tmp` itself runs as a copy with only that swapped, so both sides have the
-same limits. The launcher isn't a sandbox: `node`, which it pre-approves, can
-read whatever you can. A base whose launcher predates the one that excludes
-the instruction files above the workspace (#701) shows after only.
+to approve the rest, those are denied and the log says so. Both sides run
+this checkout's launcher and workspace `CLAUDE.md`, written over each side's
+own, so whatever commit built a side, its agent has the same limits: new work
+in the side's workspace, `PATCHY_API_URL` at the side's instance and a temp
+folder of its own. The launcher isn't a sandbox: `node`, which it
+pre-approves, can read whatever you can.
 
 Of the agent's event stream only a filtered log is kept: whether it finished
 and its final answer cut to a sentence or two, each tool call with commands'

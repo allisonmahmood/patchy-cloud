@@ -17,6 +17,8 @@ The rollback rehearsal (`pnpm test:rollback-rehearsal`) seeds `brightline` with 
 
 File patches are static pages in `files/`, published with their `name` and `description`.
 
+An agent started from the environment's `agent` launcher makes new patches and pages in the workspace beside these repos, as the workspace's `CLAUDE.md` tells it, so `pnpm dev down` removes them with the rest. One builder agent per patch is the norm; nothing enforces it.
+
 | Scenario     | What it is                                                                                                                                                                                  |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `team`       | The default. Acme Co: Ada (admin), Ben and Cleo. No patches.                                                                                                                                |
