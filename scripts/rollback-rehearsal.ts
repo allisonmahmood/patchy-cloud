@@ -1257,7 +1257,7 @@ const report = async (message: string, details: ReadonlyArray<string> = []) => {
 
 const short = (commit: string) => commit.slice(0, 7);
 
-/** The three steps on a scratch worktree, which it removes again, instance and all. */
+/** The four steps on a scratch worktree, which it removes again, instance and all. */
 const rehearse = async (live: string, head: string) => {
   const steps: ReadonlyArray<Step> = [
     { number: 1, title: `the live commit (${short(live)}) seeds the data`, commit: live },
