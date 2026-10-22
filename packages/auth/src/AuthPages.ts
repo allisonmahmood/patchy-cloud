@@ -60,13 +60,19 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
       );
 });
 
+/**
+ * Use another account carries a whole authorization request's address: at most Node's 16 KiB of
+ * headers, and up to three times that once encoded again as a form field.
+ */
+const MAX_LOGOUT_BYTES = 65_536;
+
 /** Sign out, then to the sign-in door; Use another account names the page to sign in back to. */
 const logout = Effect.gen(function* () {
   const claims = yield* RequireSession.SignedIn;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = yield* request.urlParamsBody.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(4_096))
+    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_LOGOUT_BYTES))
   );
   const back = returnPath(
     Option.getOrNull(UrlParams.getFirst(form, "return")),

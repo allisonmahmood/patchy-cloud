@@ -220,10 +220,11 @@ const unescaped = (value: string) =>
     .replaceAll("&gt;", ">")
     .replaceAll("&amp;", "&");
 
-/** A page's answer form: where it posts, and the account and time it was shown. */
+/** A page's answer form: where it posts, and the account, client name and time it was shown. */
 const formOf = (html: string) => ({
   action: unescaped(/<form(?: class="actions")? method="post" action="([^"]*)"/.exec(html)![1]!),
   userId: unescaped(/name="userId" value="([^"]*)"/.exec(html)![1]!),
+  client: unescaped(/name="client" value="([^"]*)"/.exec(html)![1]!),
   shown: /name="shown" value="([^"]*)"/.exec(html)![1]!
 });
 
@@ -245,6 +246,7 @@ const answer = (
     },
     body: new URLSearchParams({
       userId: form.userId,
+      client: form.client,
       shown: form.shown,
       action,
       ...options.fields
@@ -640,6 +642,25 @@ it.layer(services)("the authorization server's endpoints", (it) => {
       const html = yield* text(again);
       assert.include(html, "You signed in as someone else while this page was open.");
       assert.strictEqual(formOf(html).userId, DEV_SEED.userId);
+      assert.strictEqual(yield* consentRows, before);
+    })
+  );
+
+  it.effect("asks again when the client renamed itself since the page was shown", () =>
+    Effect.gen(function* () {
+      yield* setAccess(true);
+      const form = formOf(yield* text(yield* consentPage(authorizeQuery(pkce().challenge))));
+      assert.strictEqual(form.client, "Agent");
+      const before = yield* consentRows;
+      // The page showed another name than the document gives now; the connection would keep this one.
+      const again = yield* answer({ ...form, client: "Old Agent" }, "allow", {
+        cookie: sessionOf()
+      });
+      assert.strictEqual(again.status, 409);
+      assert.isNull(again.headers.get("location"));
+      const html = yield* text(again);
+      assert.include(html, "The agent changed its name while this page was open.");
+      assert.strictEqual(formOf(html).client, "Agent");
       assert.strictEqual(yield* consentRows, before);
     })
   );

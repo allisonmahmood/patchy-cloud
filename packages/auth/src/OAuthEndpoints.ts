@@ -74,11 +74,12 @@ class TokenRequestRefused extends Schema.TaggedError<TokenRequestRefused>()("Tok
   }
 }
 
-// The account the page showed and when, in epoch seconds: an answer counts only as that account,
-// and only while the page lasts.
+// The account the page showed, the client name it showed and when, in epoch seconds: an answer
+// counts only as that account, for that name, and only while the page lasts.
 const decodeAnswer = Schema.decodeUnknownEffect(
   Schema.Struct({
     userId: Schema.String,
+    client: Schema.String,
     shown: Schema.FiniteFromString,
     action: Schema.Literals(["allow", "deny"])
   })
@@ -94,8 +95,17 @@ interface Shown {
   readonly at: number;
 }
 
-const accountChangedNote =
-  '<div class="note note-warn" role="alert">You signed in as someone else while this page was open. Check who’s signed in, then answer again.</div>';
+/** What changed since the page was shown, so the person is asked again. */
+type Changed = "account" | "client";
+
+const changedNote = (changed: Changed | undefined) =>
+  changed === undefined
+    ? ""
+    : `<div class="note note-warn" role="alert">${
+        changed === "account"
+          ? "You signed in as someone else while this page was open. Check who’s signed in, then answer again."
+          : "The agent changed its name while this page was open. Check who’s asking, then answer again."
+      }</div>`;
 
 /**
  * Where an answer to `redirectUri` lands, as a CSP source: its origin, or only its scheme when
@@ -107,11 +117,11 @@ const formActionSource = (redirectUri: string) => {
 };
 
 /**
- * The answer's form, posting to the request's own address with the account and time the page
- * was shown. Its redirect's site joins `form-action`, which browsers hold redirects to.
+ * The answer's form, posting to the request's own address with the account, client name and time
+ * the page was shown. Its redirect's site joins `form-action`, which browsers hold redirects to.
  */
 const answerForm = (shown: Shown, buttons: string, className?: string) =>
-  `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(`/oauth/authorize${shown.search}`)}"><input type="hidden" name="userId" value="${escapeAttribute(shown.viewer.user.id)}"><input type="hidden" name="shown" value="${shown.at}">${buttons}</form>`;
+  `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(`/oauth/authorize${shown.search}`)}"><input type="hidden" name="userId" value="${escapeAttribute(shown.viewer.user.id)}"><input type="hidden" name="client" value="${escapeAttribute(shown.request.client.name)}"><input type="hidden" name="shown" value="${shown.at}">${buttons}</form>`;
 
 /** Use another account: signs out and signs in again back at this request. */
 const anotherAccount = (shown: Shown) => signOutForm(true, `/oauth/authorize${shown.search}`);
@@ -127,7 +137,7 @@ const styles = `
  * and cut to 64 characters (`AgentConnections.clientName`) and the site is a host Patchy fetched
  * from, and both are escaped here like every other value.
  */
-const consentPage = (shown: Shown, accountChanged: boolean): Page => {
+const consentPage = (shown: Shown, changed: Changed | undefined): Page => {
   const { request, viewer } = shown;
   const agent = escapeHtml(request.client.name);
   const company = escapeHtml(viewer.company.name);
@@ -140,10 +150,10 @@ const consentPage = (shown: Shown, accountChanged: boolean): Page => {
     : "";
   return {
     title: `Connect ${request.client.name} to ${viewer.company.name}?`,
-    heading: `${kicker}${accountChanged ? accountChangedNote : ""}${strip}<h1 class="page-heading">Connect ${agent} to ${company}?</h1>`,
+    heading: `${kicker}${changedNote(changed)}${strip}<h1 class="page-heading">Connect ${agent} to ${company}?</h1>`,
     body: `<p class="can-head">${agent} will be able to</p><ul class="list list-compact can-list can-list-yes"><li class="list-row">Find ${company}’s patches you can open</li><li class="list-row">Use the agent tools their builders added, as you</li></ul><p class="can-head">${agent} won’t be able to</p><ul class="list list-compact can-list can-list-no"><li class="list-row">Do anything you can’t</li><li class="list-row">Publish</li></ul><p>Every change it makes is logged as ${escapeHtml(person)} via ${agent}.</p>${local}${answerForm(shown, '<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="allow">Allow</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div>')}<p class="supporting-text consent-foot">Your answer goes back to <strong>${host}</strong>. Disconnect it any time on <a href="/machines">Your machines</a>.</p>${anotherAccount(shown)}`,
     styles,
-    status: accountChanged ? 409 : 200,
+    status: changed === undefined ? 200 : 409,
     formActions: [formActionSource(request.redirectUri)]
   };
 };
@@ -155,7 +165,7 @@ const consentPage = (shown: Shown, accountChanged: boolean): Page => {
 const accessOffPage = (
   shown: Shown,
   admins: ReadonlyArray<string>,
-  options: { readonly accountChanged: boolean; readonly status: number }
+  options: { readonly changed: Changed | undefined; readonly status: number }
 ): Page => {
   const { request, viewer } = shown;
   const agent = escapeHtml(request.client.name);
@@ -163,7 +173,7 @@ const accessOffPage = (
   const admin = viewer.role === "admin";
   return {
     title: `Agent access is off at ${viewer.company.name}`,
-    heading: `${kicker}${options.accountChanged ? accountChangedNote : ""}<h1 class="page-heading">Agent access is off at ${company}</h1>`,
+    heading: `${kicker}${changedNote(options.changed)}<h1 class="page-heading">Agent access is off at ${company}</h1>`,
     body: `<p>${agent} can’t connect until an admin turns it on. ${admin ? `You’re an admin: turn it on, then connect again from ${agent}.` : `At ${company} that’s ${sentenceList(admins)}.`}</p>${answerForm(shown, `${admin ? '<a class="btn btn-primary" href="/company#agent-access">Turn it on at Company</a>' : ""}<button class="btn" type="submit" name="action" value="deny">Back to ${agent}</button>`, "actions")}<p class="supporting-text consent-foot">Signed in as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>. Back to ${agent} tells it no.</p>${anotherAccount(shown)}`,
     styles,
     status: options.status,
@@ -195,16 +205,19 @@ const adminNames = Effect.fn("OAuthEndpoints.adminNames")(function* (companyId: 
     .sort((a, b) => a.localeCompare(b));
 });
 
-/** What a sound request asks the person: the consent page, or that agent access is off. */
-const ask = Effect.fn("OAuthEndpoints.ask")(function* (shown: Shown, accountChanged: boolean) {
+/**
+ * What a sound request asks the person: the consent page, or that agent access is off. `changed`
+ * says why an answer is being asked again.
+ */
+const ask = Effect.fn("OAuthEndpoints.ask")(function* (shown: Shown, changed?: Changed) {
   const session = yield* Session.Session;
   const access = yield* (yield* Companies.Companies)
     .agentAccess(shown.viewer.company.id)
     .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
-  if (access.on) return pageResponse(consentPage(shown, accountChanged), session);
+  if (access.on) return pageResponse(consentPage(shown, changed), session);
   const admins = yield* adminNames(shown.viewer.company.id);
   return pageResponse(
-    accessOffPage(shown, admins, { accountChanged, status: accountChanged ? 409 : 200 }),
+    accessOffPage(shown, admins, { changed, status: changed === undefined ? 200 : 409 }),
     session
   );
 });
@@ -350,11 +363,12 @@ export const layer: Layer.Layer<
         });
       });
 
-    const authorize = sound((shown) => ask(shown, false));
+    const authorize = sound((shown) => ask(shown));
 
     /**
      * Allow or Deny, as the account the page showed and while the page lasts. An answer from a
-     * page left open across an account switch asks again as whoever is signed in now.
+     * page left open across an account switch asks again as whoever is signed in now, and an
+     * Allow whose client has renamed itself since asks again with the name it would record.
      */
     const answer = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
@@ -374,7 +388,7 @@ export const layer: Layer.Layer<
         Effect.option
       );
       if (Option.isNone(form)) return unread;
-      const { userId, shown: shownAt, action } = form.value;
+      const { userId, client, shown: shownAt, action } = form.value;
       // Signed out since: back to the page once signed in, never an answer.
       const returnTo = returnPath(request.url, session.publicBaseUrl) ?? "/";
       return yield* RequireSession.withViewer(
@@ -386,12 +400,17 @@ export const layer: Layer.Layer<
             }
             if (userId !== shown.viewer.user.id) {
               yield* WideEvents.enrich({ code: "consent_account_changed" });
-              return yield* ask(shown, true);
+              return yield* ask(shown, "account");
             }
             const consents = yield* Consents.Consents;
             if (action === "deny") {
               yield* WideEvents.enrich({ code: "consent_denied" });
               return answered(consents.deny(shown.request));
+            }
+            // The document is fetched again for the answer; its connection keeps this name.
+            if (client !== shown.request.client.name) {
+              yield* WideEvents.enrich({ code: "consent_client_changed" });
+              return yield* ask(shown, "client");
             }
             return yield* consents
               .approve({
@@ -406,7 +425,7 @@ export const layer: Layer.Layer<
                   AgentAccessOff: () =>
                     Effect.map(adminNames(shown.viewer.company.id), (admins) =>
                       pageResponse(
-                        accessOffPage(shown, admins, { accountChanged: false, status: 409 }),
+                        accessOffPage(shown, admins, { changed: undefined, status: 409 }),
                         session
                       )
                     ),
