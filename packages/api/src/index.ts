@@ -9,6 +9,7 @@ export * from "./posthogSnapshot.js";
 export * from "./devRead.js";
 export * from "./limits.js";
 export * from "./handlers.js";
+export * from "./agentTools.js";
 export * from "./canonicalArgs.js";
 export * as GuestProtocol from "./guest.js";
 export * from "./install.js";

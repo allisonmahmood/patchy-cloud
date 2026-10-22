@@ -46,6 +46,9 @@ import {
   LookRestored,
   LookRestoreRequest,
   type LookRestore,
+  type Manifest,
+  agentToolEntries,
+  agentToolKind,
   type LookRevision
 } from "@patchy/api";
 import { newInternalId, sha256, validateHtml } from "@patchy/core";
@@ -422,6 +425,19 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
 
 // --- publish ----------------------------------------------------------------
 
+/**
+ * What publish says about the agent tools in the manifest it sent, which a recovered publish
+ * keeps even when today's source differs. JSON's `handlers` already lists them.
+ */
+const agentToolsLine = (handlers: typeof Manifest.Type.handlers, apiUrl: string) => {
+  const tools = agentToolEntries(handlers);
+  if (tools.length === 0) return [];
+  const listed = tools.map(([name, descriptor]) => `${name} (${agentToolKind(descriptor)})`);
+  return [
+    `Agent tools: ${listed.join(", ")}. People's agents use these through Patchy's MCP at ${apiUrl.replace(/\/+$/, "")}/mcp.`
+  ];
+};
+
 /** A replay uses only its saved request and application context, never today's file or flags. */
 const sendPublish = Effect.fn("sendPublish")(function* (
   attempt: State.PendingPublish,
@@ -514,7 +530,8 @@ const sendPublish = Effect.fn("sendPublish")(function* (
           ([resource, names]) =>
             `${kind === "provisioned" ? "Provisioned" : "Unused"} ${resource}: ${names.length ? names.join(", ") : "none"}.`
         )
-      )
+      ),
+      ...agentToolsLine(attempt.request.manifest.handlers, instance.apiUrl)
     ]
   );
   for (const warning of allWarnings) yield* Output.warn(`Warning: ${warning}`);

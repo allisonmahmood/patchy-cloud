@@ -22,6 +22,7 @@ import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
 import { releaseFromPin } from "./packagePin.js";
 import {
+  agentAreaFailure,
   agentTypecheckWarning,
   descriptionFailure,
   discoverAgentFiles,
@@ -353,10 +354,13 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
               })
           )
         );
-  const described =
-    handlers === undefined ? undefined : descriptionFailure(handlers, built.agentTools);
-  if (described !== undefined)
-    return yield* new LocalError({ message: described, code: "invalid_manifest" });
+  const refusal =
+    handlers === undefined
+      ? undefined
+      : (descriptionFailure(handlers, built.agentTools) ??
+        agentAreaFailure({ tables: configured.tables, handlers }, built.agentTools));
+  if (refusal !== undefined)
+    return yield* new LocalError({ message: refusal, code: "invalid_manifest" });
   const manifest = decodeManifest({
     ...configured,
     sdkImports: built.sdkImports,

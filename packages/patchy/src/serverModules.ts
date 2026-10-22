@@ -2,9 +2,12 @@
 import * as path from "node:path";
 import {
   HandlerModuleName,
+  agentAreaRefusal,
+  checkAgentArea,
   descriptionProblem,
   descriptionRefusal,
-  type HandlerDescriptors
+  type HandlerDescriptors,
+  type Manifest
 } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -150,6 +153,10 @@ export const validateGeneratedServerModules = Effect.fn("validateGeneratedServer
   }
 );
 
+/** The file under `agent/` the build found exporting a tool. */
+const agentFile = (agentTools: Readonly<Record<string, string>>, tool: string) =>
+  `agent/${Object.hasOwn(agentTools, tool) ? agentTools[tool] : "*"}.ts`;
+
 /**
  * The build's refusal for the first bad description in its handlers, naming the handler's file.
  * An agent tool's file is the one the build found exporting it; a re-exported server handler is
@@ -165,9 +172,22 @@ export const descriptionFailure = (
   const module = problem.handler.slice(0, dot);
   const tool = problem.handler.slice(dot + 1);
   // A tool the build found no file for, such as one only an `export *` gives, names none.
-  const file =
-    module === "agent"
-      ? `agent/${Object.hasOwn(agentTools, tool) ? agentTools[tool] : "*"}.ts`
-      : `server/${module}.ts`;
+  const file = module === "agent" ? agentFile(agentTools, tool) : `server/${module}.ts`;
   return `${file}: ${descriptionRefusal(problem)}`;
+};
+
+/**
+ * The build's refusal from the agent area check the instance also runs, naming the tool's file;
+ * the size refusal belongs to the whole folder. Its argument warnings come back from publish.
+ */
+export const agentAreaFailure = (
+  manifest: Pick<typeof Manifest.Type, "tables" | "handlers">,
+  agentTools: Readonly<Record<string, string>>
+): string | undefined => {
+  const { problem } = checkAgentArea(manifest);
+  if (problem === undefined) return undefined;
+  const refusal = agentAreaRefusal(problem);
+  return problem._tag === "TooLarge"
+    ? refusal
+    : `${agentFile(agentTools, problem.tool)}: ${refusal}`;
 };

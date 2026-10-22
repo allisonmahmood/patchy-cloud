@@ -1,4 +1,4 @@
-import type { HandlerDescriptors, ReleaseToolchain } from "@patchy/api";
+import type { HandlerDescriptors, Manifest, ReleaseToolchain } from "@patchy/api";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -12,6 +12,7 @@ import { LocalError } from "./CliError.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
 import { watchServer, type BuiltServer } from "./serverBuild.js";
 import {
+  agentAreaFailure,
   agentTypecheckWarning,
   descriptionFailure,
   discoverAgentFiles,
@@ -39,7 +40,9 @@ type SourceFolder = "server" | "agent";
 export const watch = Effect.fn("Dev.watchServer")(function* (
   root: string,
   toolchain: typeof ReleaseToolchain.Type,
-  sharedStores: readonly string[]
+  sharedStores: readonly string[],
+  /** The running manifest's tables, which the agent area check resolves rows against. */
+  tables: (typeof Manifest.Type)["tables"]
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -215,7 +218,9 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
               })
           ),
           Effect.flatMap((handlers) => {
-            const problem = descriptionFailure(handlers, built.agentTools);
+            const problem =
+              descriptionFailure(handlers, built.agentTools) ??
+              agentAreaFailure({ tables, handlers }, built.agentTools);
             return problem === undefined
               ? Effect.succeed(handlers)
               : Effect.fail(

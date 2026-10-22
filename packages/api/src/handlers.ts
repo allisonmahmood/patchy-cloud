@@ -92,8 +92,7 @@ const schemaProblem = (
   schema: HandlerSchema,
   kind: HandlerKind,
   position: "args" | "result",
-  field: boolean,
-  tables?: Readonly<Record<string, unknown>>
+  field: boolean
 ): string | undefined => {
   if (schema.optional === true && !field) return "Only object and argument fields may be optional.";
   switch (schema.kind) {
@@ -107,18 +106,14 @@ const schemaProblem = (
         : "Uploads are allowed only in action arguments.";
     case "object":
       for (const child of Object.values(schema.fields)) {
-        const problem = schemaProblem(child, kind, position, true, tables);
+        const problem = schemaProblem(child, kind, position, true);
         if (problem !== undefined) return problem;
       }
       return undefined;
     case "array":
-      return schemaProblem(schema.element, kind, position, false, tables);
+      return schemaProblem(schema.element, kind, position, false);
     case "nullable":
-      return schemaProblem(schema.value, kind, position, false, tables);
-    case "row":
-      return tables === undefined || Object.hasOwn(tables, schema.table)
-        ? undefined
-        : `Row schema names unknown table "${schema.table}".`;
+      return schemaProblem(schema.value, kind, position, false);
     default:
       return undefined;
   }
@@ -251,18 +246,55 @@ export const handlerKinds = (
     Object.entries(handlers ?? {}).map(([name, descriptor]) => [name, descriptor.kind])
   );
 
-/** Resolve every row descriptor against this manifest, including nested descriptors. */
+/** An agent tool's name: its export, the handler name after `agent.`. */
+export const agentToolName = (handler: string) => handler.slice("agent.".length);
+
+/**
+ * Each value in a handler's arguments and result, outermost first, at its path such as
+ * `args.filter.ids[]`. A nullable value shares its wrapper's path.
+ */
+export function* handlerValues(
+  descriptor: Pick<HandlerDescriptor, "args" | "result">
+): Generator<{ readonly path: string; readonly schema: HandlerSchema }> {
+  function* walk(
+    schema: HandlerSchema,
+    path: string
+  ): Generator<{ readonly path: string; readonly schema: HandlerSchema }> {
+    yield { path, schema };
+    switch (schema.kind) {
+      case "object":
+        for (const [name, field] of Object.entries(schema.fields))
+          yield* walk(field, `${path}.${name}`);
+        return;
+      case "array":
+        return yield* walk(schema.element, `${path}[]`);
+      case "nullable":
+        return yield* walk(schema.value, path);
+    }
+  }
+  for (const [name, field] of Object.entries(descriptor.args)) yield* walk(field, `args.${name}`);
+  yield* walk(descriptor.result, "result");
+}
+
+/** What a row naming a table its patch doesn't define says, naming the handler or tool. */
+export const unknownRowRefusal = (name: string, value: string, table: string) =>
+  `${name}'s ${value} is t.row("${table}"), but this patch defines no table ${table}. Define the table in patchy.config.ts, or name one it defines.`;
+
+/**
+ * Resolve every row descriptor against this manifest, including nested descriptors. The
+ * refusal names an agent tool by its tool name and any other handler by `module.export`.
+ */
 export const handlerTablesValid = (manifest: {
   readonly tables: Readonly<Record<string, unknown>>;
   readonly handlers?: HandlerDescriptors;
 }): true | string => {
-  for (const handler of Object.values(manifest.handlers ?? {})) {
-    for (const field of Object.values(handler.args)) {
-      const problem = schemaProblem(field, handler.kind, "args", true, manifest.tables);
-      if (problem !== undefined) return problem;
-    }
-    const problem = schemaProblem(handler.result, handler.kind, "result", false, manifest.tables);
-    if (problem !== undefined) return problem;
-  }
+  for (const [name, handler] of Object.entries(manifest.handlers ?? {}))
+    for (const { path, schema } of handlerValues(handler))
+      if (schema.kind === "row" && !Object.hasOwn(manifest.tables, schema.table))
+        return unknownRowRefusal(
+          handler.agentTool === true ? agentToolName(name) : name,
+          path,
+          schema.table
+        );
   return true;
 };

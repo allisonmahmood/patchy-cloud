@@ -1,0 +1,385 @@
+/**
+ * What an agent is shown of a patch's agent area, shared so the door, `patchy dev agent`, the
+ * card and the publish check all show the same thing: handler descriptors as JSON Schema
+ * 2020-12, `open_patch`'s tools, the agent area check, and the shapes of a tool call's answer
+ * (docs/product.md › Patchy MCP).
+ */
+import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
+import {
+  agentToolName,
+  handlerValues,
+  unknownRowRefusal,
+  type HandlerDescriptor,
+  type HandlerDescriptors,
+  type HandlerSchema
+} from "./handlers.js";
+import type { HandlerFailure } from "./runtime.js";
+import type { ColumnDefinition, TableDefinition } from "./schemas.js";
+
+/** The subset of JSON Schema 2020-12 that handler values map onto. `{}` is any value. */
+export interface JsonSchema {
+  readonly type?: "string" | "integer" | "number" | "boolean" | "object" | "array" | "null";
+  readonly description?: string;
+  readonly format?: "date-time";
+  readonly enum?: readonly string[];
+  readonly minimum?: number;
+  readonly maximum?: number;
+  readonly properties?: Readonly<Record<string, JsonSchema>>;
+  readonly required?: readonly string[];
+  readonly additionalProperties?: false;
+  readonly items?: JsonSchema;
+  readonly anyOf?: readonly JsonSchema[];
+}
+
+type Tables = Readonly<Record<string, typeof TableDefinition.Type>>;
+
+const int32 = { type: "integer", minimum: -2147483648, maximum: 2147483647 } as const;
+const dateTime = { type: "string", format: "date-time" } as const;
+
+const described = (schema: JsonSchema, description: string | undefined): JsonSchema =>
+  description === undefined ? schema : { ...schema, description };
+
+/** The value or null. The value's description moves to the wrapper, where an outer one wins. */
+const nullable = ({ description, ...value }: JsonSchema): JsonSchema =>
+  described({ anyOf: [value, { type: "null" }] }, description);
+
+const column = (definition: typeof ColumnDefinition.Type): JsonSchema => {
+  switch (definition.kind) {
+    case "text":
+    case "member":
+    case "ref":
+      return { type: "string" };
+    case "integer":
+      return int32;
+    case "number":
+      return { type: "number" };
+    case "boolean":
+      return { type: "boolean" };
+    case "timestamp":
+      return dateTime;
+    case "json":
+      return {};
+  }
+};
+
+/** The full stored row, all keys required and optional columns nullable. */
+const row = (name: string, tables: Tables): JsonSchema => {
+  const table = Object.hasOwn(tables, name) ? tables[name] : undefined;
+  // The agent area check refuses an unknown table before anything is shaped.
+  if (table === undefined) throw new TypeError(`Unknown row table "${name}".`);
+  const columns = Object.entries(table.columns).map(
+    ([field, definition]): readonly [string, JsonSchema] => [
+      field,
+      definition.optional === true ? nullable(column(definition)) : column(definition)
+    ]
+  );
+  const properties = Object.fromEntries<JsonSchema>([
+    ["id", { type: "string" }],
+    ["createdAt", dateTime],
+    ["updatedAt", dateTime],
+    ...columns
+  ]);
+  return {
+    type: "object",
+    description: `A row of ${name}: ${table.description}`,
+    properties,
+    required: Object.keys(properties),
+    additionalProperties: false
+  };
+};
+
+/**
+ * One handler value as JSON Schema, keeping its description. A row describes itself by its
+ * table unless the value has its own description. Uploads and file handles never cross
+ * Patchy MCP, so the agent area check refuses them before anything is shaped.
+ */
+export const handlerJsonSchema = (schema: HandlerSchema, tables: Tables): JsonSchema => {
+  switch (schema.kind) {
+    case "text":
+      return described({ type: "string" }, schema.description);
+    case "integer":
+      return described(int32, schema.description);
+    case "number":
+      return described({ type: "number" }, schema.description);
+    case "boolean":
+      return described({ type: "boolean" }, schema.description);
+    case "timestamp":
+      return described(dateTime, schema.description);
+    case "json":
+      return described({}, schema.description);
+    case "enum":
+      return described({ type: "string", enum: schema.values }, schema.description);
+    case "object":
+      return described(argsJsonSchema(schema.fields, tables), schema.description);
+    case "array":
+      return described(
+        { type: "array", items: handlerJsonSchema(schema.element, tables) },
+        schema.description
+      );
+    case "nullable":
+      return described(nullable(handlerJsonSchema(schema.value, tables)), schema.description);
+    case "row":
+      return described(row(schema.table, tables), schema.description);
+    case "fileHandle":
+    case "upload":
+      throw new TypeError(`An agent tool can't take or return t.${schema.kind}().`);
+  }
+};
+
+/** A handler's arguments, or an object's fields, as one closed object. */
+export const argsJsonSchema = (
+  fields: Readonly<Record<string, HandlerSchema>>,
+  tables: Tables
+): JsonSchema => {
+  const entries = Object.entries(fields);
+  return {
+    type: "object",
+    properties: Object.fromEntries(
+      entries.map(([name, field]) => [name, handlerJsonSchema(field, tables)] as const)
+    ),
+    required: entries.filter(([, field]) => field.optional !== true).map(([name]) => name),
+    additionalProperties: false
+  };
+};
+
+/** A read never runs a Patchy write: a query or a read-only action. Everything else changes. */
+export type AgentToolKind = "read" | "change";
+
+export const agentToolKind = (
+  descriptor: Pick<HandlerDescriptor, "kind" | "readOnly">
+): AgentToolKind =>
+  descriptor.kind === "query" || descriptor.readOnly === true ? "read" : "change";
+
+/**
+ * A manifest's agent tools by tool name, in the order every surface shows them: by name, by
+ * code unit, so it holds however the manifest's keys were stored.
+ */
+export const agentToolEntries = (
+  handlers: HandlerDescriptors | undefined
+): ReadonlyArray<readonly [tool: string, descriptor: HandlerDescriptor]> =>
+  Object.entries(handlers ?? {})
+    .filter(([, descriptor]) => descriptor.agentTool === true)
+    .map(([handler, descriptor]) => [agentToolName(handler), descriptor] as const)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+
+/** One tool as `open_patch` shows it. `refusals` lists the tool's declared error codes. */
+export interface AgentTool {
+  readonly name: string;
+  readonly kind: AgentToolKind;
+  readonly description: string;
+  readonly args: JsonSchema;
+  readonly returns: JsonSchema;
+  readonly refusals?: readonly string[];
+}
+
+/** A checked manifest's agent tools, rows expanded. */
+export const agentTools = (manifest: {
+  readonly tables: Tables;
+  readonly handlers?: HandlerDescriptors;
+}): readonly AgentTool[] =>
+  agentToolEntries(manifest.handlers).map(([name, descriptor]) => ({
+    name,
+    kind: agentToolKind(descriptor),
+    // The check refuses a tool without one.
+    description: descriptor.description ?? "",
+    args: argsJsonSchema(descriptor.args, manifest.tables),
+    returns: handlerJsonSchema(descriptor.result, manifest.tables),
+    ...(descriptor.errors === undefined || descriptor.errors.length === 0
+      ? {}
+      : { refusals: descriptor.errors })
+  }));
+
+/** The most UTF-8 bytes of `open_patch`'s compact JSON answer. */
+export const openPatchBytes = 64 * 1024;
+/**
+ * The most a patch's tools may take of it. The other 4 KiB holds the patch's name, its
+ * description (at most 500 characters), its owner (cut at 200) and its address, which change
+ * without a publish, so no edit or reassignment pushes a published patch past the answer's cap.
+ */
+export const agentToolsBytes = 60 * 1024;
+const ownerLimit = 200;
+
+/** `open_patch`'s answer: the patch, who owns it and its tools. */
+export const openPatchAnswer = (
+  patch: {
+    readonly name: string;
+    readonly description: string;
+    readonly owner: string;
+    readonly address: string;
+  },
+  tools: readonly AgentTool[]
+) => ({
+  name: patch.name,
+  description: patch.description,
+  owner: [...patch.owner].slice(0, ownerLimit).join(""),
+  address: patch.address,
+  tools
+});
+
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
+
+/**
+ * The agent area check's refusal. Each names the tool; the CLI adds the file, and the size
+ * belongs to the whole area.
+ */
+export const AgentAreaProblem = Schema.Union([
+  Schema.TaggedStruct("Undescribed", { tool: Schema.String }),
+  Schema.TaggedStruct("FileValue", {
+    tool: Schema.String,
+    value: Schema.String,
+    uses: Schema.Literals(["upload", "fileHandle"])
+  }),
+  Schema.TaggedStruct("UnknownTable", {
+    tool: Schema.String,
+    value: Schema.String,
+    table: Schema.String
+  }),
+  Schema.TaggedStruct("TooLarge", { bytes: Schema.Number })
+]);
+export type AgentAreaProblem = typeof AgentAreaProblem.Type;
+
+/** What a problem says: what's wrong, then how to fix it. */
+export const agentAreaRefusal = (problem: AgentAreaProblem): string => {
+  switch (problem._tag) {
+    case "Undescribed":
+      return `${problem.tool} needs a description: it is all an agent knows about the tool. Say what it does, what it changes and when it refuses.`;
+    case "FileValue":
+      return `${problem.tool} uses t.${problem.uses}() in ${problem.value}. Agent tools exchange JSON only; files stay on the page.`;
+    case "UnknownTable":
+      return unknownRowRefusal(problem.tool, problem.value, problem.table);
+    case "TooLarge":
+      return `An agent reads all of this patch's tools in one answer of at most ${openPatchBytes / 1024} KiB, and the tools get ${agentToolsBytes / 1024} KiB of it; yours come to ${Math.ceil(problem.bytes / 1024)} KiB. Shorten descriptions or drop tools.`;
+  }
+};
+
+const toolProblem = (
+  tool: string,
+  descriptor: HandlerDescriptor,
+  tables: Tables
+): AgentAreaProblem | undefined => {
+  if (descriptor.description === undefined) return { _tag: "Undescribed", tool };
+  for (const { path, schema } of handlerValues(descriptor)) {
+    if (schema.kind === "upload" || schema.kind === "fileHandle")
+      return { _tag: "FileValue", tool, value: path, uses: schema.kind };
+    if (schema.kind === "row" && !Object.hasOwn(tables, schema.table))
+      return { _tag: "UnknownTable", tool, value: path, table: schema.table };
+  }
+  return undefined;
+};
+
+/**
+ * The agent area check, run by the CLI in watched dev builds and before sending a publish, and
+ * by the instance on the descriptors it inspects from the stored bundle. Description length is
+ * `descriptionProblem`'s, for every handler. Tools are checked in name order, so both report the
+ * same first problem. `warnings` name undescribed top-level arguments, at publish only.
+ */
+export const checkAgentArea = (manifest: {
+  readonly tables: Tables;
+  readonly handlers?: HandlerDescriptors;
+}): { readonly problem?: AgentAreaProblem; readonly warnings: readonly string[] } => {
+  const entries = agentToolEntries(manifest.handlers);
+  for (const [tool, descriptor] of entries) {
+    const problem = toolProblem(tool, descriptor, manifest.tables);
+    if (problem !== undefined) return { problem, warnings: [] };
+  }
+  const tools = agentTools(manifest);
+  const bytes = utf8Bytes(JSON.stringify(tools));
+  if (bytes > agentToolsBytes) return { problem: { _tag: "TooLarge", bytes }, warnings: [] };
+  const warnings = tools.flatMap((tool) => {
+    const undescribed = Object.entries(tool.args.properties ?? {})
+      .filter(([, schema]) => schema.description === undefined)
+      .map(([name]) => name);
+    if (undescribed.length === 0) return [];
+    const names =
+      undescribed.length === 1
+        ? `argument ${undescribed[0]} has`
+        : `arguments ${undescribed.slice(0, -1).join(", ")} and ${undescribed.at(-1)} have`;
+    return [
+      `${tool.name}'s ${names} no description, so an agent knows only the name and type. Add .describe() where the name doesn't say enough.`
+    ];
+  });
+  return { warnings };
+};
+
+/**
+ * A refusal's structured part: who refused, the code, and the message that says what
+ * happened and then what to do. A patch's own refusal keeps its code and details unchanged.
+ */
+export const ToolRefusal = Schema.Struct({
+  code: Schema.String,
+  from: Schema.Literals(["patch", "patchy"]),
+  message: Schema.String,
+  details: Schema.optionalKey(Schema.Json),
+  retryAfterSeconds: Schema.optionalKey(Schema.Int)
+});
+export type ToolRefusal = typeof ToolRefusal.Type;
+
+/**
+ * A `read_patch` or `change_patch` success: the result and the version the call ran on.
+ * `replayed` marks a change key's retry of a committed change, which wrote nothing.
+ */
+export const CallSuccess = Schema.Struct({
+  result: Schema.Json,
+  version: Schema.Int,
+  replayed: Schema.optionalKey(Schema.Literal(true))
+});
+export type CallSuccess = typeof CallSuccess.Type;
+
+/**
+ * A tool call's answer. A success carries its document twice, as compact JSON text and as
+ * `structuredContent`; a refusal's text is its message, followed by any details a patch gave.
+ */
+export interface ToolCallResult {
+  readonly content: readonly [{ readonly type: "text"; readonly text: string }];
+  readonly structuredContent: Readonly<Record<string, unknown>>;
+  readonly isError?: true;
+}
+
+/** A catalogue answer, or a read or change's `CallSuccess`. */
+export const toolAnswer = (document: Readonly<Record<string, unknown>>): ToolCallResult => ({
+  content: [{ type: "text", text: JSON.stringify(document) }],
+  structuredContent: document
+});
+
+/** A refusal. Patchy's messages say what happened and then what to do on their own. */
+export const toolRefusal = (error: ToolRefusal, text = error.message): ToolCallResult => ({
+  content: [{ type: "text", text }],
+  structuredContent: { error },
+  isError: true
+});
+
+const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+
+/**
+ * A patch's own refusal of a tool, such as "New Business refused addLead (missing_fields):
+ * give every field." A string `message` in its details says what to do; the rest of the
+ * details follow in the text, and all of them stay in `structuredContent` unchanged.
+ */
+export const patchRefusal = (
+  patch: string,
+  tool: string,
+  failure: Pick<HandlerFailure, "code" | "details">
+): ToolCallResult => {
+  const { details } = failure;
+  const record = Predicate.isObject(details) ? details : undefined;
+  const said = Predicate.isString(record?.["message"]) ? record["message"] : undefined;
+  const rest =
+    record === undefined
+      ? details
+      : Object.fromEntries(Object.entries(record).filter(([key]) => key !== "message"));
+  const message = `${patch} refused ${tool} (${failure.code})${said === undefined ? "." : `: ${sentence(said)}`}`;
+  const extra =
+    rest === undefined || (Predicate.isObject(rest) && Object.keys(rest).length === 0)
+      ? ""
+      : ` Details: ${JSON.stringify(rest)}`;
+  return toolRefusal(
+    {
+      code: failure.code,
+      from: "patch",
+      message,
+      ...(details === undefined ? {} : { details })
+    },
+    `${message}${extra}`
+  );
+};

@@ -90,7 +90,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
           toolchain,
           Object.entries(prepared.manifest.uses)
             .filter(([, declaration]) => declaration.kind === "sharedStore")
-            .map(([alias]) => alias)
+            .map(([alias]) => alias),
+          prepared.manifest.tables
         )
       : undefined;
   const initialServer = nextServer === undefined ? undefined : yield* nextServer;

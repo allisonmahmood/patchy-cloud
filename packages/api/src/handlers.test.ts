@@ -1,3 +1,4 @@
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -268,6 +269,26 @@ describe("handler descriptors", () => {
           }
         })._tag
       ).toBe("Failure");
+    }
+    // The refusal names the handler, or an agent tool by its tool name, and the fix.
+    const decodeUnknown = Schema.decodeUnknownResult(Manifest);
+    for (const [name, agentTool, said] of [
+      ["leads.list", undefined, "leads.list"],
+      ["agent.listDeals", true as const, "listDeals"]
+    ] as const) {
+      const decoded = decodeUnknown({
+        ...manifest,
+        handlers: {
+          [name]: {
+            ...query,
+            ...(agentTool === undefined ? {} : { agentTool }),
+            result: { kind: "array", element: { kind: "row", table: "missing" } }
+          }
+        }
+      });
+      expect(Result.isFailure(decoded) && decoded.failure.message).toBe(
+        `${said}'s result[] is t.row("missing"), but this patch defines no table missing. Define the table in patchy.config.ts, or name one it defines.`
+      );
     }
   });
 
