@@ -69,6 +69,9 @@ const time = (date: Date, now: number, suffix = "") =>
   `<time datetime="${escapeAttribute(date.toISOString())}">${escapeHtml(when(date, now))}${suffix}</time>`;
 
 const person = (names: LogNames, id: string) => names.people.get(id) ?? id;
+/** Who made the call: "Jordan Lee", or "Jordan Lee via Claude" with the client name approved at consent. */
+const who = (names: LogNames, entry: InvocationLog.Invocation) =>
+  `${person(names, entry.initiatingViewerId)}${entry.agent === null ? "" : ` via ${entry.agent.name}`}`;
 const version = (names: LogNames, id: string) => {
   const number = names.versions.get(id);
   return number === undefined ? "an unknown version" : `v${number}`;
@@ -76,7 +79,7 @@ const version = (names: LogNames, id: string) => {
 
 /** "Alice · Sales CRM v12 · leads.import (action)": who ran what, in the reader's words. */
 const sentence = (entry: InvocationLog.Invocation, names: LogNames) =>
-  `${person(names, entry.initiatingViewerId)} · ${names.patch} ${version(names, entry.versionId)} · ${entry.handler} (${entry.kind})`;
+  `${who(names, entry)} · ${names.patch} ${version(names, entry.versionId)} · ${entry.handler} (${entry.kind})`;
 
 /** Timing facts for a top-level entry: duration, retries and a reply its page never got. */
 const timing = (entry: InvocationLog.Invocation) =>
@@ -133,11 +136,15 @@ const logLines = (lines: ReadonlyArray<LogLine>) =>
     ? ""
     : `<pre class="code-panel"><code>${escapeHtml(lines.map(lineText).join("\n"))}</code></pre>`;
 
-/** The steps under one invocation in sentence form, nested handlers carrying their own steps. */
+/**
+ * The steps under one invocation in sentence form, nested handlers carrying their own steps. A step
+ * that acted as the entry's person names them as the entry does, via their agent.
+ */
 const tree = (
   parentId: string,
   children: ReadonlyMap<string, ReadonlyArray<InvocationLog.TreeItem>>,
-  names: LogNames
+  names: LogNames,
+  entry: InvocationLog.Invocation
 ): string => {
   const items = children.get(parentId) ?? [];
   if (items.length === 0) return "";
@@ -149,13 +156,17 @@ const tree = (
           ? `${connectionCall(item, names)} (${callLabel(item.name)})`
           : `${item.name}${item.resource === null ? "" : ` ${resource(item.resource)}`} (${callLabel(item.name)})`;
     const as =
-      item.effectivePrincipal === "patch" ? "the patch" : person(names, item.effectivePrincipal);
+      item.effectivePrincipal === "patch"
+        ? "the patch"
+        : item.effectivePrincipal === entry.initiatingViewerId
+          ? who(names, entry)
+          : person(names, item.effectivePrincipal);
     const facts = [
       duration(item.durationMs),
       item.rowCount === null ? null : `${item.rowCount} ${item.rowCount === 1 ? "row" : "rows"}`,
       item.attempts > 1 ? `${item.attempts} attempts` : null
     ].filter((part) => part !== null);
-    return `<li class="list-row"><p class="log-status"><span>${escapeHtml(`${what} · as ${as}`)}</span>${outcome(item.outcome, item.outcomeCode)}${facts.length === 0 ? "" : `<span class="supporting-text">${escapeHtml(facts.join(" · "))}</span>`}</p>${item.type === "invocation" ? tree(item.id, children, names) + logLines(item.logLines) : ""}</li>`;
+    return `<li class="list-row"><p class="log-status"><span>${escapeHtml(`${what} · as ${as}`)}</span>${outcome(item.outcome, item.outcomeCode)}${facts.length === 0 ? "" : `<span class="supporting-text">${escapeHtml(facts.join(" · "))}</span>`}</p>${item.type === "invocation" ? tree(item.id, children, names, entry) + logLines(item.logLines) : ""}</li>`;
   });
   return `<ol class="list list-compact list-tree">${rows.join("")}</ol>`;
 };
@@ -179,7 +190,7 @@ const expansion = (entry: InvocationLog.Entry, names: LogNames) => {
     ? `<p class="supporting-text">Showing ${steps} calls, outermost first. This entry made more.</p>`
     : "";
   const open = entry.invocation.outcome === "success" ? "" : " open";
-  return `<tr class="table-expand"><td colspan="7"><details${open}><summary>${escapeHtml(summary)}</summary>${tree(entry.invocation.id, children, names)}${cut}${logLines(entry.invocation.logLines)}</details></td></tr>`;
+  return `<tr class="table-expand"><td colspan="7"><details${open}><summary>${escapeHtml(summary)}</summary>${tree(entry.invocation.id, children, names, entry.invocation)}${cut}${logLines(entry.invocation.logLines)}</details></td></tr>`;
 };
 
 const entryId = (entry: InvocationLog.Invocation) => `entry-${entry.id}`;
@@ -264,7 +275,7 @@ export const renderLog = (input: {
   }
   const rows = input.entries.map((entry) => {
     const { invocation } = entry;
-    return `<tr id="${escapeAttribute(entryId(invocation))}"><td>${time(invocation.startedAt, now)}</td><td>${escapeHtml(person(names, invocation.initiatingViewerId))}</td><td>${escapeHtml(version(names, invocation.versionId))}</td><td><code>${escapeHtml(invocation.handler)}</code></td><td>${escapeHtml(invocation.kind)}</td><td>${outcome(invocation.outcome, invocation.outcomeCode)}</td><td>${escapeHtml(timing(invocation))}</td></tr>${expansion(entry, names)}`;
+    return `<tr id="${escapeAttribute(entryId(invocation))}"><td>${time(invocation.startedAt, now)}</td><td>${escapeHtml(who(names, invocation))}</td><td>${escapeHtml(version(names, invocation.versionId))}</td><td><code>${escapeHtml(invocation.handler)}</code></td><td>${escapeHtml(invocation.kind)}</td><td>${outcome(invocation.outcome, invocation.outcomeCode)}</td><td>${escapeHtml(timing(invocation))}</td></tr>${expansion(entry, names)}`;
   });
   return `${intro}${form}<p class="supporting-text">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p><div class="portal-table"><table class="table log-table" aria-label="Log entries"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Person</th><th scope="col">Version</th><th scope="col">Handler</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${window}${paging}`;
 };

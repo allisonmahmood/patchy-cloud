@@ -355,6 +355,15 @@ it.layer(services)("company connection pages", (it) => {
           durationMs: 40,
           rowCount: 3
         });
+        // A read by the owner's worker agent, named by a client the owner approved.
+        yield* audit.begin({
+          ...begin,
+          credentialKind: "agent",
+          agent: { name: "Claude <Code>" },
+          correlationId: "visible-agent",
+          op: "postgres.list",
+          resource: "public.orders"
+        });
         yield* audit.begin({
           ...begin,
           companyId: foreign.company.id,
@@ -412,8 +421,10 @@ it.layer(services)("company connection pages", (it) => {
           "The machine key Laptop &lt;one&gt;, reading the real connection while building a patch"
         );
         assert.notInclude(row("visible-dev"), "Patch / version");
+        assert.include(row("visible-agent"), `<td>${owner.user.name} via Claude &lt;Code&gt;</td>`);
         for (const forbidden of [
           sql,
+          "Claude <Code>",
           "<script>patch</script>",
           "generated-SQL-not-visible",
           "foreign-company-SQL",

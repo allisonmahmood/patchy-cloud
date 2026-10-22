@@ -430,6 +430,11 @@ const from = (call: RuntimeLog.Call, names: CallNames) => {
     version === undefined ? "A patch since deleted" : `${version.patch} v${version.number}`
   );
 };
+/** Whose authority a call used: the patch, or its person, "via Claude" when their agent called. */
+const as = (call: RuntimeLog.Call, names: CallNames) =>
+  call.effectivePrincipal === "patch"
+    ? "the patch"
+    : `${names.people.get(call.effectivePrincipal) ?? call.effectivePrincipal}${call.agent === null ? "" : ` via ${call.agent.name}`}`;
 const credential = (call: RuntimeLog.Call) =>
   call.machine !== null
     ? `The machine key ${call.machine.name}, reading the real connection while building a patch`
@@ -464,7 +469,7 @@ const recentCalls = (calls: ReadonlyArray<RuntimeLog.Call> | "unavailable", name
         : `<div class="connections-table"><table class="table connections-calls"><thead><tr><th scope="col">When (UTC)</th><th scope="col">From</th><th scope="col">Call</th><th scope="col">As</th><th scope="col">Took</th><th scope="col">Outcome</th></tr></thead><tbody>${calls
             .map(
               (call) =>
-                `<tr><td>${minute(call.at)}</td><td>${from(call, names)}</td><td><code>${escapeHtml(callName(call))}</code></td><td>${escapeHtml(call.effectivePrincipal === "patch" ? "the patch" : (names.people.get(call.effectivePrincipal) ?? call.effectivePrincipal))}</td><td>${escapeHtml(took(call))}</td><td>${outcome(call)}</td></tr><tr class="table-expand"><td colspan="6"><details><summary>Details</summary><dl class="facts">${call.patchId === null ? "" : `<dt>Patch / version</dt><dd><code>${escapeHtml(call.patchId)}</code> / <code>${escapeHtml(call.versionId ?? "unknown")}</code></dd>`}<dt>Correlation ID</dt><dd><code>${escapeHtml(call.correlationId)}</code></dd><dt>Credential</dt><dd>${escapeHtml(credential(call))}</dd></dl>${call.sql === null ? "" : `<pre class="code-panel"><code>${escapeHtml(call.sql)}</code></pre>`}</details></td></tr>`
+                `<tr><td>${minute(call.at)}</td><td>${from(call, names)}</td><td><code>${escapeHtml(callName(call))}</code></td><td>${escapeHtml(as(call, names))}</td><td>${escapeHtml(took(call))}</td><td>${outcome(call)}</td></tr><tr class="table-expand"><td colspan="6"><details><summary>Details</summary><dl class="facts">${call.patchId === null ? "" : `<dt>Patch / version</dt><dd><code>${escapeHtml(call.patchId)}</code> / <code>${escapeHtml(call.versionId ?? "unknown")}</code></dd>`}<dt>Correlation ID</dt><dd><code>${escapeHtml(call.correlationId)}</code></dd><dt>Credential</dt><dd>${escapeHtml(credential(call))}</dd></dl>${call.sql === null ? "" : `<pre class="code-panel"><code>${escapeHtml(call.sql)}</code></pre>`}</details></td></tr>`
             )
             .join("")}</tbody></table></div>`;
   return `<section class="section" aria-labelledby="connection-calls"><h2 class="section-heading" id="connection-calls">Recent calls</h2>${intro}${body}</section>`;

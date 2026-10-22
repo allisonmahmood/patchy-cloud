@@ -39,8 +39,8 @@ written; the instance logs PostHog dev reads.
 
 When someone says a published patch is broken, read its log before guessing:
 `pnpm patchy logs --failed --json`, or without `--failed` to see what led up to
-it. Each entry gives the version, handler, outcome and code, who opened the
-patch, the correlation id a browser's failure shows, its `ctx.log` lines with a
+it. Each entry gives the version, handler, outcome and code, who made the call
+and any agent they called through, the correlation id a browser's failure shows, its `ctx.log` lines with a
 thrown error's message and stack, and the steps it made, including writes that
 succeeded before it failed. Stacks point into the minified bundle, so the
 message is the clue. Pages hold up to 25 entries; continue with
@@ -376,6 +376,10 @@ agents to stricter rules than people, tag the rows they write, log their calls
 or refuse them. A tool of its own can require what the page leaves optional; its
 schema then tells the agent, and a call missing the field is refused before the
 handler runs.
+
+Patchy's log records each change and action as "Person via Client", failures
+included. A query that succeeds without `ctx.log` leaves no row; a patch that
+wants agent reads seen logs them itself, using `ctx.agent` for the name.
 
 Each export is a `query`, `mutation` or `action` from the same generated
 builders as `server/`, with shared code in `helpers/`. Files only organise

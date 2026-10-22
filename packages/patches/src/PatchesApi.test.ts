@@ -91,6 +91,8 @@ const logCall = (
     readonly outcome: InvocationLog.Finish["outcome"];
     readonly code?: string;
     readonly logLines?: InvocationLog.Finish["logLines"];
+    /** The reader's worker agent made the call; absent for the reader's page. */
+    readonly agent?: { readonly name: string };
   }
 ) =>
   Effect.gen(function* () {
@@ -104,7 +106,7 @@ const logCall = (
       handler: "leads.import",
       kind: "action",
       initiatingViewerId: reader.user.id,
-      agent: null,
+      agent: call.agent ?? null,
       parentId: null,
       correlationId: `cor_${id}`,
       startedAt: call.at,
@@ -3579,11 +3581,13 @@ it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
         message: "Cannot read properties of undefined (reading 'email')",
         details: { stack: "TypeError: Cannot read properties of undefined\n    at server.js:1:20" }
       };
+      // The reader's agent made the failing call.
       const failed = yield* logCall(published, {
         at: at + 1_000,
         outcome: "failure",
         code: "handler_failed",
-        logLines: [thrown]
+        logLines: [thrown],
+        agent: { name: "Codex" }
       });
       // The write that landed before the throw is part of the story.
       const runtimeLog = yield* RuntimeLog.RuntimeLog;
@@ -3596,7 +3600,8 @@ it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
         resource: "leads",
         connectionId: null,
         correlationId: `cor_${failed}_insert`,
-        credentialKind: "session",
+        credentialKind: "agent",
+        agent: { name: "Codex" },
         patchId: published.patchId,
         versionId: published.versionId
       });
@@ -3610,10 +3615,16 @@ it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
       const log = yield* owner.log({ params: { patchId: published.patchId }, query: {} });
       expect(log).toMatchObject({ ok: true, patchId: published.patchId, next: null });
       assert.deepStrictEqual(
-        log.entries.map((entry) => [entry.id, entry.version, entry.viewer, entry.outcome]),
+        log.entries.map((entry) => [
+          entry.id,
+          entry.version,
+          entry.viewer,
+          entry.agent,
+          entry.outcome
+        ]),
         [
-          [failed, 1, { id: reader.user.id, name: reader.user.name }, "failure"],
-          [succeeded, 1, { id: reader.user.id, name: reader.user.name }, "success"]
+          [failed, 1, { id: reader.user.id, name: reader.user.name }, { name: "Codex" }, "failure"],
+          [succeeded, 1, { id: reader.user.id, name: reader.user.name }, null, "success"]
         ]
       );
       expect(log.entries[0]).toMatchObject({
