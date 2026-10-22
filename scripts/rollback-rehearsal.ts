@@ -539,16 +539,12 @@ const serverEvents = (text: string) =>
   });
 
 /**
- * Every failed event: a request, a call, or a live query's re-run that no page shows. The agent
- * area's refusals are what the exercise asks for, so they don't count.
+ * Every failed event: a request, a call, or a live query's re-run that no page shows. A refusal,
+ * such as the agent area's `access_denied`, is recorded as refused, not failed.
  */
-const serverFailures = (text: string, agentArea: AgentArea | undefined) =>
+const serverFailures = (text: string) =>
   serverEvents(text)
-    .filter(
-      (event) =>
-        event.outcome === "failure" &&
-        !(event.patchId === agentArea?.patchId && event.code === "access_denied")
-    )
+    .filter((event) => event.outcome === "failure")
     .map(
       ({ type, route, handler, code }) =>
         `the server's ${[type, route ?? handler, code].filter(Boolean).join(" ")} failed`
@@ -988,7 +984,7 @@ const exercise = async (
       baseline,
       log
     );
-    problems.push(...pages.problems, ...serverFailures(await logSince(log, started), agentArea));
+    problems.push(...pages.problems, ...serverFailures(await logSince(log, started)));
     const seen = baseline ?? { rehearsalPage: cli.rehearsalPage, delivered: pages.delivered };
     return {
       problems,
