@@ -13,7 +13,7 @@ A company's globally unique short name, fixed once created. It uses 3–32 lower
 _Avoid_: slug, subdomain, namespace (what the handle opens, not the handle)
 
 **User**:
-One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md). A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does.
+One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md), and their agents through agent connections. A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does.
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
@@ -21,7 +21,7 @@ The role every user has who is not an admin. A member builds — publishes patch
 _Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that manages the company's invitations, roles, deactivation, reactivation, [connections](../integrations/GLOSSARY.md) and look, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
+A user with the role that manages the company's invitations, roles, deactivation, reactivation, [connections](../integrations/GLOSSARY.md), look and agent access, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Directory revision**:
@@ -72,12 +72,16 @@ _Avoid_: allowed domain, auto-join (the effect, not the thing)
 Company sign-in through its own identity provider instead of the ordinary sign-in choices. Its future domain enforcement and setup are recorded in [the product](../../docs/product.md#signing-in).
 _Avoid_: enterprise connection (Clerk's word), SAML (one of the two shapes)
 
+**Agent access**:
+A company's switch, off until an admin turns it on, that lets its people's worker agents use the company's patches through Patchy MCP. Off refuses every agent's calls and new connections and cancels consents in progress, but ends no agent connection; on again, the same connections work.
+_Avoid_: MCP enabled, agent permission, agent mode
+
 **Deactivation**:
-An admin ending a user's company access and revoking every machine token while keeping their data, reversible except that the last active admin cannot be deactivated. The pick page offers to keep their patches live or retire some or all in the same act, with confirmation of what breaks outside the selection.
+An admin ending a user's company access and revoking every machine token and agent connection while keeping their data, reversible except that the last active admin cannot be deactivated. The pick page offers to keep their patches live or retire some or all in the same act, with confirmation of what breaks outside the selection.
 _Avoid_: ban, suspend (the operator's act on a company), delete (the later act)
 
 **Reactivation**:
-An admin restoring a deactivated user's access to the same company and data, with a pick page offering to keep their patches retired or restore some or all, warned about sources that stay off. The user needs fresh machine tokens; reassigned patches stay with their new owners and deleted patches stay deleted.
+An admin restoring a deactivated user's access to the same company and data, with a pick page offering to keep their patches retired or restore some or all, warned about sources that stay off. The user needs fresh machine tokens and agent connections; reassigned patches stay with their new owners and deleted patches stay deleted.
 _Avoid_: un-revoke, restore token
 
 **Suspension**:
