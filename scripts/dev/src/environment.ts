@@ -20,7 +20,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { hostLabel, type Plan } from "./plan.js";
-import { Person, publisherToken, type Scenario } from "./scenario.js";
+import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
 export class StepExited extends Schema.TaggedError<StepExited>()("StepExited", {
@@ -48,6 +48,15 @@ export class SampleDataFailed extends Schema.TaggedError<SampleDataFailed>()("Sa
 }) {
   override get message() {
     return `Loading sample data in ${this.patch} failed. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again to finish, or press "Load sample data" yourself.`;
+  }
+}
+
+export class ConnectFailed extends Schema.TaggedError<ConnectFailed>()("ConnectFailed", {
+  connection: Schema.String,
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return `Connecting ${this.connection} failed: ${String(this.cause)}`;
   }
 }
 
@@ -365,6 +374,55 @@ export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layou
   );
 });
 
+/**
+ * PROTOTYPE (Pidgeon): submits a connection's connect form as `email`, through the persona sign-in,
+ * so the scenario's patches can declare it. One already connected under the handle is left be.
+ */
+const connectSource = Effect.fn("connectSource")(function* (
+  apiUrl: string,
+  email: string,
+  connection: ScenarioConnection
+) {
+  const name = `${connection.integration}/${connection.handle}`;
+  yield* Console.error(`  ${name}: connecting as ${email}`);
+  yield* Effect.tryPromise({
+    try: async () => {
+      // @effect-diagnostics-next-line globalFetchInEffect:off -- prototype (Pidgeon): a persona cookie, read by hand
+      const signIn = await fetch(
+        `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=%2F`,
+        { redirect: "manual" }
+      );
+      const cookie = signIn.headers
+        .getSetCookie()
+        .map((value) => value.split(";")[0])
+        .join("; ");
+      // @effect-diagnostics-next-line globalFetchInEffect:off -- prototype (Pidgeon): the connect form, as a browser posts it
+      const response = await fetch(
+        `${apiUrl}/company/connections/connect/${connection.integration}`,
+        {
+          method: "POST",
+          redirect: "manual",
+          headers: {
+            cookie,
+            origin: new URL(apiUrl).origin,
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            handle: connection.handle,
+            description: connection.description,
+            ...connection.fields
+          })
+        }
+      );
+      if (response.status === 303) return;
+      const text = await response.text();
+      if (text.includes("connection_handle_taken")) return;
+      throw new Error(`the connect form answered ${response.status}`);
+    },
+    catch: (cause) => new ConnectFailed({ connection: name, cause })
+  });
+});
+
 /** Presses a patch's "Load sample data" as `email`, through the persona sign-in. */
 const loadSampleData = Effect.fn("loadSampleData")(function* (
   apiUrl: string,
@@ -470,6 +528,8 @@ const materialize = Effect.fn("materialize")(function* (
       };
       yield* fs.writeFileString(layout.manifest, encodeManifest(current));
     });
+  for (const connection of scenario.connections ?? [])
+    yield* connectSource(manifest.apiUrl, publisher.email, connection);
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;
     let entry = current.patches.find((done) => done.key === key);

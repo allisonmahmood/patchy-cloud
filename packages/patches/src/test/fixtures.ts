@@ -33,7 +33,8 @@ import {
   SqlConnectionStore,
   CredentialKeys,
   PostgresSource,
-  PostHogSource
+  PostHogSource,
+  PidgeonSource
 } from "@patchy/integrations";
 import { RuntimeLog, Wakes } from "@patchy/runtime";
 import type * as Content from "../Content.js";
@@ -241,6 +242,7 @@ export const integrations = SqlConnectionStore.layer.pipe(
       CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)),
       PostgresSource.layer,
       PostHogSource.layer,
+      PidgeonSource.layer,
       RuntimeLog.layer
     )
   )
