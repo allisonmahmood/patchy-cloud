@@ -20,6 +20,7 @@ import {
   agentToolEntries,
   agentToolKind,
   type AgentToolKind,
+  callAnswer,
   handlerArgsSchema,
   type HandlerDescriptor,
   invalidArgsRefusal,
@@ -55,6 +56,9 @@ const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const encoder = new TextEncoder();
 
 const counted = (count: number) => count.toLocaleString("en-US");
+
+/** The most of a tool's name an event keeps. */
+const RECORDED_TOOL = 128;
 
 /** What a call reaches once every check passes: the tool on the version served at arrival. */
 export interface Target {
@@ -109,7 +113,7 @@ export const reach = Effect.fn("Calls.reach")(
     publicUrl: URL,
     door: AgentToolKind
   ): Effect.fn.Return<Reached, SqlError, Patches.Patches> {
-    yield* WideEvents.enrich({ agentTool: call.tool });
+    yield* WideEvents.enrich({ agentTool: [...call.tool].slice(0, RECORDED_TOOL).join("") });
     const patches = yield* Patches.Patches;
     const canOpen = yield* Patches.Openability;
     const access: Patches.ReadAccess = {
@@ -186,22 +190,28 @@ export const reach = Effect.fn("Calls.reach")(
  * allows agents. It answers the person as they are now, so a role change shows at once.
  */
 const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections.AgentIdentity) {
-  const current = yield* (yield* AgentConnections.AgentConnections)
-    .current(identity.agentConnection.id)
-    .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+  // Both reads at once, so a callback waits for one round trip.
+  const [current, access] = yield* Effect.all(
+    [
+      (yield* AgentConnections.AgentConnections)
+        .current(identity.agentConnection.id)
+        .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
+      (yield* Companies.Companies).agentAccess(identity.company.id).pipe(
+        Effect.catchTags({
+          CompanyNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
+          SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
+        })
+      )
+    ],
+    { concurrency: "unbounded" }
+  );
   if (
     current === null ||
     current.user.id !== identity.user.id ||
-    current.company.id !== identity.company.id
+    current.company.id !== identity.company.id ||
+    !access.on
   )
     return yield* new Runtime.AccessDenied({});
-  const access = yield* (yield* Companies.Companies).agentAccess(current.company.id).pipe(
-    Effect.catchTags({
-      CompanyNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
-      SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
-    })
-  );
-  if (!access.on) return yield* new Runtime.AccessDenied({});
   return personOf(current);
 });
 
@@ -253,17 +263,17 @@ export const read = Effect.fn("Calls.read")(function* (
   const reached = yield* reach(identity, decoded.success, publicUrl, "read");
   if ("refused" in reached) return reached.refused;
   const { target } = reached;
-  return yield* invoke(identity, target, invocation).pipe(
+  const answer = yield* invoke(identity, target, invocation).pipe(
     Effect.map((reply) =>
-      readAnswer(
-        { name: target.patch.patch.name, owner: target.patch.owner.name },
-        target.tool,
-        target.versionNumber,
-        reply
-      )
+      callAnswer(target.patch.patch.name, target.tool, target.versionNumber, reply)
     ),
     Effect.catch((error) =>
       Effect.succeed(runtimeRefusal(Runtime.toFailure(error), target.descriptor))
     )
+  );
+  return readAnswer(
+    { name: target.patch.patch.name, owner: target.patch.owner.name },
+    target.tool,
+    answer
   );
 });

@@ -15,6 +15,7 @@ import { dateLabel } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 import { type Binding, Invocation, Runtime } from "@patchy/runtime";
 import { at, call, company, door, harness, objectAt, PRODUCTION, publish } from "./test/door.js";
+import * as Tools from "./Tools.js";
 
 /** An agent tool's descriptor, taking `stage` unless it says otherwise. */
 const tool = (
@@ -173,14 +174,15 @@ it.layer(harness)("read_patch", (it) => {
           outcome: "refused"
         });
 
-        for (const name of ["deals.list", "list", "agent.listDeals"]) {
+        for (const name of ["deals.list", "list", "agent.listDeals", "x".repeat(129)]) {
           const unknown = yield* read({ patch: "new-business", tool: name, args: {} });
           assert.deepStrictEqual(refusal(unknown), {
             code: "unknown_tool",
             from: "patchy",
             message: `new-business has no tool ${name}. ${now}`
           });
-          assert.include(unknown.event, { agentTool: name, code: "unknown_tool" });
+          // An event keeps 128 characters of a name.
+          assert.include(unknown.event, { agentTool: name.slice(0, 128), code: "unknown_tool" });
         }
         const page = yield* read({ patch: "kickoff", tool: "listDeals", args: {} });
         assert.strictEqual(
@@ -206,7 +208,7 @@ it.layer(harness)("read_patch", (it) => {
           { patch: "new-business", tool: "listDeals", args: [] },
           { patch: "new-business", tool: "listDeals", args: {}, key: "k1" },
           { patch: "new-business", tool: "", args: {} },
-          { patch: "new-business", tool: "x".repeat(129), args: {} }
+          { patch: "new-business", tool: "x".repeat(Tools.TOOL_CHARS + 1), args: {} }
         ]) {
           const invalid = yield* read(args);
           const error = refusal(invalid);
@@ -452,6 +454,24 @@ it.layer(harness)("read_patch", (it) => {
         'new-business refused listDeals (stage_closed): pick an open stage. Details: {"open":["lead"]}'
       );
       assert.include(own.event, { code: "stage_closed", outcome: "refused" });
+
+      // Past the read cap, a refusal keeps its code and words, and leaves its details out.
+      reply = Effect.succeed({
+        ok: false,
+        source: "handler",
+        code: "stage_closed",
+        details: { message: "pick an open stage", open: ["x".repeat(100_000)] }
+      });
+      const long = answered(yield* read(send));
+      assert.match(
+        String(at(long, "content.0.text")),
+        /^new-business refused listDeals \(stage_closed\): pick an open stage\. Its details were left out: the refusal came to 100,\d{3} characters, more than the 100,000 an agent reads in one answer\.$/u
+      );
+      assert.deepStrictEqual(Object.keys(objectAt(long, "structuredContent.error")).sort(), [
+        "code",
+        "from",
+        "message"
+      ]);
 
       reply = Effect.fail(new Runtime.AccessDenied({}));
       assert.deepStrictEqual(refusal(yield* read(send)), {

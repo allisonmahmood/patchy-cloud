@@ -113,13 +113,12 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
       : // An unknown outcome resolves on a retry with the same key.
         call.pipe(Effect.retry({ times: 2, while: (error) => error.code === "unknown_outcome" }))
     ).pipe(
-      // A read past the read cap is refused here as at the door.
-      Effect.map((reply) =>
-        agentToolKind(descriptor) === "read"
-          ? readAnswer(dev.patch, tool, build, reply)
-          : callAnswer(dev.patch.name, tool, build, reply)
-      ),
-      Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor)))
+      Effect.map((reply) => callAnswer(dev.patch.name, tool, build, reply)),
+      Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor))),
+      // A read's answer keeps the read cap here as at the door.
+      Effect.map((answer) =>
+        agentToolKind(descriptor) === "read" ? readAnswer(dev.patch, tool, answer) : answer
+      )
     )
   );
   return answered(result);

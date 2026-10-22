@@ -501,35 +501,62 @@ describe("tool call answers", () => {
 
   it("answers a read of up to 100,000 characters of compact JSON and refuses a longer one", () => {
     const patch = { name: "New Business", owner: "Priya Shah" };
+    const read = (value: string) =>
+      readAnswer(patch, "listDeals", callAnswer(patch.name, "listDeals", 4, { ok: true, value }));
     // Characters, not bytes: each "é" is two bytes of UTF-8 and one character.
     const around = JSON.stringify({ result: "", version: 4 }).length;
     const fits = "é".repeat(readAnswerChars - around);
-    expect(readAnswer(patch, "listDeals", 4, { ok: true, value: fits })).toEqual(
-      toolAnswer({ result: fits, version: 4 })
-    );
+    expect(read(fits)).toEqual(toolAnswer({ result: fits, version: 4 }));
     // An escaped quote is two characters of the text the agent reads.
-    const over = `${fits.slice(1)}"`;
-    expect(readAnswer(patch, "listDeals", 4, { ok: true, value: over })).toEqual({
+    const message =
+      "New Business's listDeals answered with 100,001 characters, more than the 100,000 an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, Priya Shah, can add paging.";
+    expect(read(`${fits.slice(1)}"`)).toEqual({
+      content: [{ type: "text", text: message }],
+      structuredContent: { error: { code: "too_large", from: "patchy", message } },
+      isError: true
+    });
+  });
+
+  it("keeps a refusal past the read cap's code and words, leaving its details out", () => {
+    const patch = { name: "New Business", owner: "Priya Shah" };
+    const failure = (details: { readonly message: string; readonly open: readonly string[] }) =>
+      patchRefusal(patch.name, "listDeals", { code: "stage_closed", details });
+    const small = failure({ message: "pick an open stage", open: ["lead"] });
+    expect(readAnswer(patch, "listDeals", small)).toEqual(small);
+    const large = failure({ message: "pick an open stage", open: ["x".repeat(readAnswerChars)] });
+    const left = (chars: number) =>
+      ` Its details were left out: the refusal came to ${chars.toLocaleString("en-US")} characters, more than the 100,000 an agent reads in one answer.`;
+    const chars = large.content[0].text.length;
+    expect(readAnswer(patch, "listDeals", large)).toEqual({
       content: [
         {
           type: "text",
-          text: "New Business's listDeals answered with 100,001 characters, more than the 100,000 an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, Priya Shah, can add paging."
+          text: `New Business refused listDeals (stage_closed): pick an open stage.${left(chars)}`
         }
       ],
       structuredContent: {
         error: {
-          code: "too_large",
-          from: "patchy",
-          message:
-            "New Business's listDeals answered with 100,001 characters, more than the 100,000 an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, Priya Shah, can add paging."
+          code: "stage_closed",
+          from: "patch",
+          message: `New Business refused listDeals (stage_closed): pick an open stage.${left(chars)}`
         }
       },
       isError: true
     });
-    const failure = { ok: false as const, source: "handler" as const, code: "closed" };
-    expect(readAnswer(patch, "listDeals", 4, failure)).toEqual(
-      patchRefusal("New Business", "listDeals", failure)
-    );
+    // Words past 2,000 characters are cut too, and a retry's wait stays.
+    const wordy = toolRefusal({
+      code: "busy",
+      from: "patchy",
+      message: "y".repeat(readAnswerChars + 1),
+      retryAfterSeconds: 3
+    });
+    const kept = readAnswer(patch, "listDeals", wordy).structuredContent["error"];
+    expect(kept).toEqual({
+      code: "busy",
+      from: "patchy",
+      message: `${"y".repeat(1_999)}…${left(readAnswerChars + 1)}`,
+      retryAfterSeconds: 3
+    });
   });
 
   it("says where arguments miss their schema, and names the tools there are now", () => {

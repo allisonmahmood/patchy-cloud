@@ -4,7 +4,7 @@
  * (docs/product.md › The door › What a client learns first). The tool list is identical for
  * everyone, so it carries the loop in its descriptions for clients that skip instructions.
  */
-import { type JsonSchema, type ToolCallResult, toolRefusal } from "@patchy/api";
+import { agentToolsBytes, type JsonSchema, type ToolCallResult, toolRefusal } from "@patchy/api";
 
 /** The door's tool names, in the order `tools/list` shows them. */
 export const NAMES = ["find_patches", "open_patch", "read_patch", "change_patch"] as const;
@@ -16,8 +16,11 @@ export const isName = (name: string): name is Name => NAMES.some((known) => know
 export const SEARCH_CHARS = 200;
 export const CURSOR_CHARS = 2_048;
 export const PATCH_CHARS = 2_048;
-/** The longest tool name `read_patch` and `change_patch` take: an export's name is far shorter. */
-export const TOOL_CHARS = 128;
+/**
+ * The longest tool name `read_patch` and `change_patch` take. No published tool's is longer:
+ * a name is ASCII, and a patch's tools fit in `agentToolsBytes`.
+ */
+export const TOOL_CHARS = agentToolsBytes;
 
 /** A tool as `tools/list` shows it. */
 export interface Tool {
