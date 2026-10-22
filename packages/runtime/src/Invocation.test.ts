@@ -1338,6 +1338,39 @@ it.layer(services)("Invocation", (it) => {
         yield* Deferred.await(waiting);
         yield* Fiber.interrupt(starting);
         assert.deepStrictEqual(holds, []);
+
+        // Work the action starts through ctx.run holds it too, after the action has settled.
+        const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+        const actionDone = yield* Deferred.make<void>();
+        const childDone = yield* Deferred.make<void>();
+        const nesting = yield* makeInvocation((request) =>
+          Queue.offer(seen, request).pipe(
+            Effect.andThen(
+              Deferred.await(request.handler === "agent.gather" ? actionDone : childDone)
+            ),
+            Effect.as({
+              outcome: "returned" as const,
+              reply: { ok: true as const, value: 1 },
+              guestMs: 1
+            })
+          )
+        );
+        const parent = yield* agent("gather", nesting).pipe(Effect.forkChild);
+        const request = yield* Queue.take(seen);
+        const capability = yield* capabilities.resolve(request.callback.capability, request);
+        const child = yield* capability.run!({ handler: "demo.query", args: { id: 1 } }).pipe(
+          Effect.forkChild
+        );
+        yield* Queue.take(seen);
+        yield* Deferred.succeed(actionDone, undefined);
+        yield* Fiber.join(parent);
+        const outstanding = () =>
+          holds.filter((hold) => hold.endsWith("held")).length -
+          holds.filter((hold) => hold.endsWith("let go")).length;
+        assert.strictEqual(outstanding(), 1);
+        yield* Deferred.succeed(childDone, undefined);
+        yield* Fiber.join(child);
+        assert.strictEqual(outstanding(), 0);
       })
   );
 });

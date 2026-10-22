@@ -992,9 +992,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           Effect.ensuring(releaseAdmission)
         );
         // Taken with the fork, so whatever the caller holds for this work is let go when the
-        // work settles, never before and never missed.
-        const held =
-          parent === undefined && binding.retain !== undefined ? yield* binding.retain : undefined;
+        // work settles, never before and never missed. Every run takes its own, nested ones
+        // too: a child an action started through `ctx.run` can outlast the action.
+        const held = binding.retain === undefined ? undefined : yield* binding.retain;
         const owner = yield* Effect.forkIn(
           Effect.interruptible(run).pipe(
             Effect.provideService(DatabaseMeter.current, meter),
@@ -1073,9 +1073,9 @@ export interface AgentCall {
    */
   readonly onReplay?: Effect.Effect<void>;
   /**
-   * Run once as the tool's work is dispatched; what it answers runs once that work settles,
-   * however it ends, even after the caller went away. A call refused before dispatch never runs
-   * it, so the caller's own hold is all there is.
+   * Run as each of the tool's runs is dispatched, its own and any it starts through `ctx.run`;
+   * what it answers runs once that run settles, however it ends, even after the caller went
+   * away. A call refused before dispatch never runs it, so the caller's own hold is all there is.
    */
   readonly retain?: Effect.Effect<Effect.Effect<void>>;
   /**

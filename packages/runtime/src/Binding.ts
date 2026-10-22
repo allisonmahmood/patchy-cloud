@@ -24,9 +24,9 @@ export class Binding extends Context.Service<
      */
     readonly onReplay?: Effect.Effect<void>;
     /**
-     * Run once as the top-level call's work is dispatched, its result once that work settles,
-     * however it ends and whether or not the caller still waits. Only Patchy's agent callers
-     * pass one, to hold the person's in-flight slot past a caller that went away.
+     * Run as each run of the call's work is dispatched, nested ones included, its result once
+     * that run settles, however it ends and whether or not the caller still waits. Only
+     * Patchy's agent callers pass one, to hold the person's in-flight slot until all of it ends.
      */
     readonly retain?: Effect.Effect<Effect.Effect<void>>;
     /**

@@ -11,10 +11,10 @@
  * event; the door answers it over HTTP 200.
  *
  * An admitted call holds its slot until its work settles, so the cap bounds work, not open
- * requests. The request holds it while it runs, and Runtime retains it when it dispatches the
- * work, letting go when that work settles. A client that goes away before dispatch, such as
- * during the wait for the company's server, gives the slot back at once; one that goes away
- * after leaves it held until Runtime's work ends.
+ * requests. The request holds it while it runs, and Runtime retains it for each run it
+ * dispatches, an action's nested calls included, letting go as each settles. A client that goes
+ * away before dispatch, such as during the wait for the company's server, gives the slot back at
+ * once; one that goes away after leaves it held until all of Runtime's work ends.
  */
 import * as Effect from "effect/Effect";
 import * as WideEvents from "@patchy/analytics/wide-events";
