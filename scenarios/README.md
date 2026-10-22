@@ -7,6 +7,7 @@ Each folder holds a `scenario.json`:
 - `company`: name and handle.
 - `people`: `key`, `name`, `email` and `admin` or `member` role. Use `.example` addresses; no mail is ever sent.
 - `publisher`: the admin the environment's CLI publishes as.
+- `connections` (prototype, #815): company connections the publisher makes through the connect form before any patch publishes.
 - `patches`: repo patches (`repo`, `tier`, `description`, optional `sampleData`) and file patches (`file`, `name`, `description`), published in order.
 
 A repo patch's source is `patches/<repo>/`, holding only builder-owned files: `src/`, `server/`, `helpers/`, `fixtures/`, `index.html`, `patchy.config.ts` and `AGENTS.md`. `up` runs `patchy init` at the scenario's tier, copies these over the starter, refreshes and publishes. Managed files (pins, lockfile, `patchy/_generated/`, project skills) always come from the instance's current release.
@@ -21,3 +22,4 @@ File patches are static pages in `files/`, published with their `name` and `desc
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `team`       | The default. Acme Co: Ada (admin), Ben and Cleo. No patches.                                                                                                                                |
 | `brightline` | A brand and digital agency: New Business (tier 2 CRM board), Spend Requests (tier 2 approvals with receipts), Kudos (tier 1) and a tier 0 kickoff brief. Five people, Allison is the admin. |
+| `shopify`    | PROTOTYPE (#815). Northwind Coffee Co.: a `shopify/store` connection to an in-memory demo store, and Store pulse (tier 1) over it. Three people, Allison is the admin.                      |

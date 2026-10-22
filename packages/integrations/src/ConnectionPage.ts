@@ -12,6 +12,7 @@ import * as ConnectionStore from "./ConnectionStore.js";
 import * as View from "./ConnectionsView.js";
 import * as PostgresPage from "./postgres/Page.js";
 import * as PostHogPage from "./posthog/Page.js";
+import * as ShopifyPage from "./shopify/Page.js";
 
 /** A page to read. */
 export type Target =
@@ -69,7 +70,8 @@ interface IntegrationPage {
 }
 const pages: { readonly [K in Integration]: IntegrationPage } = {
   postgres: PostgresPage,
-  posthog: PostHogPage
+  posthog: PostHogPage,
+  shopify: ShopifyPage
 };
 const offers = integrations.map((integration) => pages[integration].offer);
 const isIntegration = Schema.is(Integration);
@@ -78,12 +80,16 @@ const isIntegration = Schema.is(Integration);
 const about = (connection: ConnectionStore.Connection) =>
   connection.integration === "postgres"
     ? { source: PostgresPage.source(connection), facts: PostgresPage.facts(connection) }
-    : { source: PostHogPage.source(connection), facts: PostHogPage.facts(connection) };
+    : connection.integration === "posthog"
+      ? { source: PostHogPage.source(connection), facts: PostHogPage.facts(connection) }
+      : { source: ShopifyPage.source(connection), facts: ShopifyPage.facts(connection) };
 /** What a snapshot lets patches read, in its integration's words. */
 const readsOf = (metadata: ConnectionStore.Metadata) =>
   metadata.integration === "postgres"
     ? PostgresPage.reads(metadata.snapshot)
-    : PostHogPage.reads(metadata.snapshot);
+    : metadata.integration === "posthog"
+      ? PostHogPage.reads(metadata.snapshot)
+      : ShopifyPage.reads(metadata.snapshot);
 
 /** The field each refusal is about, when it is about one. */
 const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>
@@ -468,7 +474,17 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
     connectForm(
       integration,
       submitted,
-      atField(page, notice, ["handle", "description", "credentials", "region", "project", "key"])
+      atField(page, notice, [
+        "handle",
+        "description",
+        "credentials",
+        "region",
+        "project",
+        "key",
+        "shop",
+        "client",
+        "secret"
+      ])
     );
   if (form === null) return refused(unreadable);
   return yield* Effect.gen(function* () {
@@ -514,7 +530,15 @@ const act = Effect.fn("ConnectionPage.act")(function* (
           const { page } = yield* connectionView(viewer, id);
           return yield* confirmationPage(viewer, id, kind, {
             submitted,
-            notice: atField(page, notice, ["credentials", "region", "project", "key"])
+            notice: atField(page, notice, [
+              "credentials",
+              "region",
+              "project",
+              "key",
+              "shop",
+              "client",
+              "secret"
+            ])
           });
         }
         case "description": {

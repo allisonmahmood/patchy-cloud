@@ -17,7 +17,7 @@ import {
   type TableDefinition
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
-import { ConnectionStore, Postgres, PostHog } from "@patchy/integrations";
+import { ConnectionStore, Postgres, PostHog, Shopify } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
@@ -62,13 +62,13 @@ export class UnsafeGeneratedPath extends Schema.TaggedError<UnsafeGeneratedPath>
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog"]),
+    integration: Schema.Literals(["postgres", "posthog", "shopify"]),
     handle: Schema.String
   }
 ) {
   readonly code = "connection_not_connected" as const;
   override get message() {
-    return `${this.integration === "postgres" ? "Postgres" : "PostHog"} connection ${this.handle} is not connected. Ask an administrator at /company/connections.`;
+    return `${this.integration === "postgres" ? "Postgres" : this.integration === "posthog" ? "PostHog" : "Shopify"} connection ${this.handle} is not connected. Ask an administrator at /company/connections.`;
   }
 }
 export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
@@ -117,7 +117,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "members" }
+    { kind: "postgres" | "posthog" | "shopify" | "members" }
   >
 ) => {
   const source =
@@ -149,6 +149,7 @@ const knownSkills = [
   "patchy-server",
   "patchy-postgres",
   "patchy-posthog",
+  "patchy-shopify",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -271,15 +272,17 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const metadata: {
     postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]>;
     posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]>;
+    shopify: Record<string, NonNullable<(typeof DeclarationMetadata.Type)["shopify"]>[string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
     posthog: Object.create(null),
+    shopify: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
   const available = Object.values(request.manifest.uses).some(
-    (entry) => entry.kind === "postgres" || entry.kind === "posthog"
+    (entry) => entry.kind === "postgres" || entry.kind === "posthog" || entry.kind === "shopify"
   )
     ? yield* connections.list(companyId).pipe(
         Effect.mapError(
@@ -296,7 +299,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
     if (declaration.kind === "members") continue;
     const context = `${root}/context/${alias}.md`;
     const client = `${root}/uses/${alias}.ts`;
-    if (declaration.kind === "postgres" || declaration.kind === "posthog") {
+    if (
+      declaration.kind === "postgres" ||
+      declaration.kind === "posthog" ||
+      declaration.kind === "shopify"
+    ) {
       const connection = available.find(
         (entry) =>
           entry.integration === declaration.kind &&
@@ -347,6 +354,23 @@ export const generate = Effect.fn("Generation.generate")(function* (
           fixture
         });
         skills.add("patchy-postgres");
+      } else if (stored.integration === "shopify") {
+        // PROTOTYPE (#815): Shopify has no fixture either; dev reads the real store.
+        const declared = { kind: "shopify" as const, ...resolved };
+        metadata.shopify[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Shopify.shopify.generate({ ...described, kind: "shopify" }, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          skill: ".agents/skills/patchy-shopify/SKILL.md",
+          context,
+          client
+        });
+        skills.add("patchy-shopify");
       } else {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };
@@ -559,7 +583,9 @@ export const generate = Effect.fn("Generation.generate")(function* (
   return {
     ok: true as const,
     files: [...files].map(([path, contents]) => ({ path, contents })),
-    metadata,
+    // PROTOTYPE (#815): Shopify's key only when declared, so existing outputs are unchanged.
+    metadata: (({ shopify, ...rest }) =>
+      Object.keys(shopify).length === 0 ? rest : { ...rest, shopify })(metadata),
     uses: uses.map(({ alias, id, revision }) => ({ alias, id, revision }))
   };
 });

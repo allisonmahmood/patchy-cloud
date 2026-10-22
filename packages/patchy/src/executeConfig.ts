@@ -13,6 +13,7 @@ import {
   MembersDeclaration,
   PostgresDeclaration,
   PostHogDeclaration,
+  ShopifyDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -103,6 +104,10 @@ const configSchema = Schema.Struct({
         handle: PostHogDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: ShopifyDeclaration.fields.kind,
+        handle: ShopifyDeclaration.fields.handle
+      }),
+      Schema.Struct({
         kind: SharedStoreDeclaration.fields.kind,
         patchId: SharedStoreDeclaration.fields.patchId,
         store: SharedStoreDeclaration.fields.store
@@ -125,6 +130,7 @@ const generatedIndexSchema = Schema.Struct({
       declaration: Schema.Union([
         PostgresDeclaration,
         PostHogDeclaration,
+        ShopifyDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
@@ -301,6 +307,8 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
         (generated.kind !== "postgres" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "posthog" &&
         (generated.kind !== "posthog" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "shopify" &&
+        (generated.kind !== "shopify" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "sharedStore" &&
         (generated.kind !== "sharedStore" ||
           declaration.patchId !== generated.patchId ||

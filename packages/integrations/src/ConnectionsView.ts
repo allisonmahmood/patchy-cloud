@@ -50,7 +50,16 @@ export interface Notice {
 }
 
 /** The connection forms' fields a refusal can sit at; an integration names its own credential fields. */
-export type Field = "handle" | "description" | "credentials" | "region" | "project" | "key";
+export type Field =
+  | "handle"
+  | "description"
+  | "credentials"
+  | "region"
+  | "project"
+  | "key"
+  | "shop"
+  | "client"
+  | "secret";
 
 export type View = "all" | "attention" | "unused";
 export interface Filters {
@@ -413,7 +422,7 @@ const relation = (value: string) =>
 const callName = (call: RuntimeLog.Call) => {
   const method = call.op.slice(call.op.indexOf(".") + 1);
   if (call.resource === null) return method;
-  return call.op.startsWith("posthog.")
+  return call.op.startsWith("posthog.") || call.op.startsWith("shopify.")
     ? `${method} ${call.resource}`
     : `${relation(call.resource)}.${method}`;
 };

@@ -13,3 +13,5 @@ export * from "./canonicalArgs.js";
 export * as GuestProtocol from "./guest.js";
 export * from "./install.js";
 export * from "./cli.js";
+export * from "./shopify.js";
+export * from "./shopifySnapshot.js";

@@ -3,7 +3,8 @@ import {
   type ConnectionDetail,
   integrations,
   type Integration,
-  PostHogSnapshot
+  PostHogSnapshot,
+  ShopifySnapshot
 } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
@@ -37,6 +38,7 @@ import {
   Metadata,
   PostgresConnection,
   PostHogConnection,
+  ShopifyConnection,
   StaleGenerated,
   type ConnectInput,
   type CredentialsInput,
@@ -46,6 +48,7 @@ import {
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as PostgresSource from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
+import * as ShopifySource from "./shopify/Source.js";
 
 const isDescription = Schema.is(Description);
 const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
@@ -53,14 +56,20 @@ const encodePostgresSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot)
 const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
+const encodeShopifySnapshot = Schema.encodeSync(Schema.fromJsonString(ShopifySnapshot));
+const encodeShopifyDisplay = Schema.encodeSync(Schema.fromJsonString(ShopifySource.Display));
 const encodeSnapshot = (metadata: Metadata) =>
   metadata.integration === "postgres"
     ? encodePostgresSnapshot(metadata.snapshot)
-    : encodePostHogSnapshot(metadata.snapshot);
+    : metadata.integration === "posthog"
+      ? encodePostHogSnapshot(metadata.snapshot)
+      : encodeShopifySnapshot(metadata.snapshot);
 const encodeDisplay = (target: Target) =>
   target.integration === "postgres"
     ? encodePostgresDisplay(target.display)
-    : encodePostHogDisplay(target.display);
+    : target.integration === "posthog"
+      ? encodePostHogDisplay(target.display)
+      : encodeShopifyDisplay(target.display);
 /** Credentials for the same destination may replace each other; anything else is a retarget. */
 const sameTarget = (current: Target, next: Target) =>
   current.integration === "postgres"
@@ -68,13 +77,18 @@ const sameTarget = (current: Target, next: Target) =>
       next.display.host === current.display.host &&
       next.display.port === current.display.port &&
       next.display.database === current.display.database
-    : next.integration === "posthog" &&
-      next.display.region === current.display.region &&
-      next.display.projectId === current.display.projectId;
+    : current.integration === "posthog"
+      ? next.integration === "posthog" &&
+        next.display.region === current.display.region &&
+        next.display.projectId === current.display.projectId
+      : next.integration === "shopify" &&
+        next.display.shop === current.display.shop &&
+        next.display.clientId === current.display.clientId;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostgresConnection.fields, ...secret }),
-  Schema.Struct({ ...PostHogConnection.fields, ...secret })
+  Schema.Struct({ ...PostHogConnection.fields, ...secret }),
+  Schema.Struct({ ...ShopifyConnection.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 const detailFields = {
@@ -94,6 +108,11 @@ const SnapshotDetail = Schema.Union([
     ...detailFields,
     integration: Schema.Literal("posthog"),
     snapshot: Schema.NullOr(PostHogSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("shopify"),
+    snapshot: Schema.NullOr(ShopifySnapshot)
   })
 ]);
 const Lookup = Schema.Struct({
@@ -107,6 +126,7 @@ export const make = Effect.gen(function* () {
   const keys = yield* CredentialKeys.CredentialKeys;
   const postgres = yield* PostgresSource.Source;
   const posthog = yield* PostHogSource.Source;
+  const shopify = yield* ShopifySource.Source;
   const audit = yield* RuntimeLog.RuntimeLog;
   const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
     display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
@@ -237,15 +257,20 @@ export const make = Effect.gen(function* () {
         return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
       const { revision, takenAt, ...row } = found.value;
       const stamp = takenAt === null ? null : { revision, takenAt };
-      return row.integration === "postgres"
-        ? {
-            ...row,
-            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
-          }
-        : ({
-            ...row,
-            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
-          } satisfies ConnectionDetail);
+      if (row.integration === "postgres")
+        return {
+          ...row,
+          snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+        } satisfies ConnectionDetail;
+      if (row.integration === "posthog")
+        return {
+          ...row,
+          snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+        } satisfies ConnectionDetail;
+      return {
+        ...row,
+        snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+      } satisfies ConnectionDetail;
     },
     Effect.catchTags(safe("detail"))
   );
@@ -292,7 +317,9 @@ export const make = Effect.gen(function* () {
     const target: Target =
       integration === "postgres"
         ? { integration, display: yield* postgres.test(credentials) }
-        : { integration, display: yield* posthog.test(credentials) };
+        : integration === "posthog"
+          ? { integration, display: yield* posthog.test(credentials) }
+          : { integration, display: yield* shopify.test(credentials) };
     return target;
   });
   /** Tests and discovers; the snapshot is decoded again before it is stored. */
@@ -302,6 +329,13 @@ export const make = Effect.gen(function* () {
   ) {
     if (integration === "postgres") {
       const { display, snapshot } = yield* postgres.inspect(credentials);
+      return {
+        target: { integration, display } satisfies Target as Target,
+        metadata: { integration, snapshot } satisfies Metadata as Metadata
+      };
+    }
+    if (integration === "shopify") {
+      const { display, snapshot } = yield* shopify.inspect(credentials);
       return {
         target: { integration, display } satisfies Target as Target,
         metadata: { integration, snapshot } satisfies Metadata as Metadata

@@ -1,0 +1,33 @@
+{
+  "company": { "name": "Northwind Coffee Co.", "handle": "northwind" },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@northwind.example",
+      "role": "admin"
+    },
+    { "key": "dev", "name": "Dev Okafor", "email": "dev@northwind.example", "role": "member" },
+    { "key": "mei", "name": "Mei Lindqvist", "email": "mei@northwind.example", "role": "member" }
+  ],
+  "publisher": "allison",
+  "connections": [
+    {
+      "integration": "shopify",
+      "handle": "store",
+      "description": "Northwind's Shopify store: online, Seattle shop and Instagram orders, coffee and gear, two stock locations.",
+      "fields": {
+        "shop": "northwind-demo.myshopify.com",
+        "client": "northwind-demo-app",
+        "secret": "northwind-demo-secret"
+      }
+    }
+  ],
+  "patches": [
+    {
+      "repo": "store-pulse",
+      "tier": 1,
+      "description": "How the store is doing today: orders and sales against last month, which items are moving, what's waiting to ship and what's running low."
+    }
+  ]
+}

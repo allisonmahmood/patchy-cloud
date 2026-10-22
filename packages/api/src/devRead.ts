@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { PostHogDevQuery } from "./posthog.js";
+import { ShopifyDevRead } from "./shopify.js";
 
 /** Where `patchy dev` sends a read, under the instance's `/api`. */
 export const DEV_READ_PATH = "/connections/dev-read";
@@ -28,6 +29,11 @@ export const DevRead = Schema.Union([
     op: Schema.Literal("posthog.query"),
     connection: DevReadConnection,
     args: PostHogDevQuery
+  }),
+  Schema.Struct({
+    op: Schema.Literal("shopify.read"),
+    connection: DevReadConnection,
+    args: ShopifyDevRead
   })
 ]).annotate({ identifier: "DevRead" });
 export type DevRead = typeof DevRead.Type;

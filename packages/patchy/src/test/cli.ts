@@ -526,7 +526,12 @@ export const generateProjectResponse = (
       path: `.agents/skills/${skill}/SKILL.md`,
       contents: readFileSync(path.join(packageDir, "../sdk/skills", skill, "SKILL.md"), "utf8")
     });
-  return { ok: true, files, metadata: { postgres, posthog, shared: sharedMetadata }, uses };
+  return {
+    ok: true,
+    files,
+    metadata: { postgres, posthog, shopify: {}, shared: sharedMetadata },
+    uses
+  };
 };
 
 export const projectHandler: Handler = (request, respond) => {

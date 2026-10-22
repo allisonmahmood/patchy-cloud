@@ -29,6 +29,9 @@ import { postgres } from "./postgres/index.js";
 import { posthog } from "./posthog/index.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as PostHogSource from "./posthog/Source.js";
+import { shopify } from "./shopify/index.js";
+import * as ShopifyOperations from "./shopify/Operations.js";
+import * as ShopifySource from "./shopify/Source.js";
 
 /** The token stopped authenticating while the read waited for a slot; nothing was sent. */
 export class KeyRefused extends Schema.TaggedError<KeyRefused>()("DevReadKeyRefused", {}) {
@@ -64,13 +67,32 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
 
 /** Only what a definition's `live` names reaches this door; every Postgres operation is refused. */
 const live = new Set(
-  [postgres, posthog].flatMap((integration) =>
+  [postgres, posthog, shopify].flatMap((integration) =>
     (integration.live ?? []).map((operation) => `${integration.name}.${operation}`)
   )
 );
-const runners = PostHogOperations.devReads;
-const isLive = (op: string): op is keyof typeof runners =>
-  live.has(op) && Object.hasOwn(runners, op);
+/** One live operation as this door runs it, whichever integration owns it. */
+interface Runner {
+  readonly resource: (args: unknown) => string | null;
+  readonly rowCount: (value: unknown) => number | null;
+  readonly sql: (args: unknown) => string | undefined;
+  readonly run: <E extends Runtime.RuntimeError>(
+    target: PostHogOperations.Target<E>,
+    args: unknown
+  ) => Effect.Effect<
+    unknown,
+    | Runtime.RuntimeError
+    | ConnectionStore.ConnectionNotFound
+    | ConnectionStore.ConnectionNotConnected
+    | E,
+    PostHogSource.Source | ShopifySource.Source | ConnectionStore.ConnectionStore
+  >;
+}
+const runners: Readonly<Record<string, Runner>> = {
+  ...PostHogOperations.devReads,
+  ...ShopifyOperations.devReads
+};
+const isLive = (op: string) => live.has(op) && Object.hasOwn(runners, op);
 
 const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(DevReadEnvelope), {
   onExcessProperty: "error"
@@ -86,6 +108,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     const tokens = yield* MachineTokens.MachineTokens;
     const connections = yield* ConnectionStore.ConnectionStore;
     const source = yield* PostHogSource.Source;
+    const shopifySource = yield* ShopifySource.Source;
     const settings = yield* Effect.all({
       callsPerMinute: ContractLimits.get("runtime.calls.perMinute"),
       maxBytes: ContractLimits.get("runtime.posthog.bytes"),
@@ -168,6 +191,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           )
           .pipe(
             Effect.provideService(PostHogSource.Source, source),
+            Effect.provideService(ShopifySource.Source, shopifySource),
             Effect.provideService(ConnectionStore.ConnectionStore, connections),
             Effect.catchTags({
               ConnectionNotFound: (cause) =>
