@@ -1622,6 +1622,9 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         const original = (yield* provider.stats(admitted.binding.taskId, {
           bindingEpoch: admitted.binding.bindingEpoch
         })).reports[0]!.event;
+        // The company's first process on its local task says how long it took to start.
+        assert.isTrue(original.firstOnTask);
+        assert.isAbove(original.startMs!, 0);
         const captured = yield* recording;
         let loseAcknowledgement = true;
         const unreliable = TaskProvider.TaskProvider.of({

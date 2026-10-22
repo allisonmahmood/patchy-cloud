@@ -550,6 +550,33 @@ it.live(
 );
 
 it.live(
+  "reports how long each process took to start, and whether it was its task's first",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: largeAggregate
+      });
+      const started = Date.now();
+      const first = yield* bind(supervisor, "ver_first");
+      const firstBindMs = Date.now() - started;
+      const second = yield* bind(supervisor, "ver_second");
+      for (const loaded of [first, second])
+        yield* supervisor.stop({ bindingEpoch: 1, processGeneration: loaded.processGeneration });
+      const firstEvent = (yield* reportFor(supervisor, first.processGeneration!)).event;
+      const secondEvent = (yield* reportFor(supervisor, second.processGeneration!)).event;
+      expect(firstEvent.firstOnTask).toBe(true);
+      expect(firstEvent.startMs).toBeGreaterThan(0);
+      expect(firstEvent.startMs).toBeLessThanOrEqual(firstBindMs);
+      expect(firstEvent.startMs).toBeLessThanOrEqual(firstEvent.durationMs);
+      expect(secondEvent.firstOnTask).toBe(false);
+      expect(secondEvent.startMs).toBeGreaterThan(0);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
   "evicts the oldest idle version past the process limit and fences its replaced generation",
   () =>
     Effect.gen(function* () {
@@ -976,6 +1003,8 @@ it.live(
       const report = yield* reportFor(supervisor, pending.processes[0]!.processGeneration);
       expect(report).toMatchObject({ cause: "load_failed", callsServed: 0, invocations: [] });
       expect(report.endedAt - started).toBeGreaterThanOrEqual(2_000);
+      // It never became ready, so it never finished starting.
+      expect(report.event.startMs).toBeUndefined();
       const replacement = yield* bind(supervisor, "ver_replacement");
       expect(yield* supervisor.invoke(invocation(replacement, host.url))).toMatchObject({
         outcome: "returned",

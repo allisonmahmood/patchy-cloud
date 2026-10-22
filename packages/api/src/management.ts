@@ -164,7 +164,10 @@ export const ProcessEvent = Schema.Struct({
   cause: Schema.optionalKey(Schema.String),
   cpuSeconds: Schema.optionalKey(Schema.Number),
   peakRssBytes: Schema.optionalKey(Schema.Number),
-  callsServed: Schema.optionalKey(Schema.Number)
+  callsServed: Schema.optionalKey(Schema.Number),
+  // Optional so hosts and supervisors of neighbouring releases keep decoding each other's reports.
+  startMs: Schema.optionalKey(Schema.Number),
+  firstOnTask: Schema.optionalKey(Schema.Boolean)
 });
 export type ProcessEvent = typeof ProcessEvent.Type;
 export const ProcessReport = Schema.Struct({

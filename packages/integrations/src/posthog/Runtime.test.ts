@@ -403,7 +403,7 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
             companyId: binding.companyId,
             callbackUrls: [listener.url],
             environment: "test"
-          });
+          }).pipe(Effect.provide(WideEvents.layerNoop));
           const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
             Effect.provideService(Executor.Executor, executor),
             Effect.provideService(ServerBundles.ServerBundles, {

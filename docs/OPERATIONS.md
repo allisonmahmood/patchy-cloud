@@ -256,6 +256,23 @@ fields @timestamp, companyId, documentId, idled, reactivated, closeReason
 | sort @timestamp desc
 ```
 
+#### Timing process starts
+
+A call that loads its version waits for the process to start inside its handler's
+deadline, three seconds for a query. Each `type: "process"` event, emitted when the
+process ends, records `startMs`, from spawn until the process was ready for its
+first call, and `firstOnTask`, true for the first process its company task started
+since being bound: the start a call on a released company waits for after its bind.
+A process that never became ready has no `startMs`; its `cause` says why. The fleet
+emits process events on ECS and the local fleet, and the default no-pool dev executor
+emits them within a second of the process ending, so `pnpm dev logs` shows them. A
+patch repo's `patchy dev` keeps them to its `--json` log.
+
+```
+filter type = "process" and ispresent(startMs)
+| stats count(*) as starts, pct(startMs, 50) as p50, pct(startMs, 90) as p90, max(startMs) as slowest by firstOnTask
+```
+
 The patch repo's local runtime uses the same record with compact stdout output.
 `@patchy/analytics/wide-events` exposes `formatDev(event, { json: true })` and
 `layerDev({ json: true })` for full records. Structured `dev.log` retrieval belongs

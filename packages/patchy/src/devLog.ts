@@ -35,7 +35,10 @@ export const invocation = Effect.fn("DevLog.invocation")(function* (
   yield* Console.log(lines.join("\n"));
 });
 
-/** Handler calls have a settlement line; JSON retains the complete request and re-run events. */
+/**
+ * Handler calls have a settlement line; JSON retains the complete request, re-run and process
+ * events. Compact lines stay about calls, so a process's start and lifetime are JSON only.
+ */
 export const layer = (json: boolean) =>
   Layer.effect(
     WideEvents.WideEvents,
@@ -55,6 +58,7 @@ export const layer = (json: boolean) =>
           Effect.gen(function* () {
             const current = yield* settlement;
             if (!json && "handler" in event && current?.logged) return;
+            if (!json && event.type === "process") return;
             yield* Console.log(WideEvents.formatDev(event, { json }));
           })
       })

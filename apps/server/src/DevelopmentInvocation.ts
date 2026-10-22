@@ -1,3 +1,4 @@
+import type * as WideEvents from "@patchy/analytics/wide-events";
 import type { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as Local from "@patchy/execution/local";
 import type { OperatingLimits } from "@patchy/limits";
@@ -42,7 +43,8 @@ type Dependencies =
   | SqlClient.SqlClient
   | RuntimeQuerySnapshot.QuerySnapshot
   | RuntimeMutationTransaction.MutationTransaction
-  | OperatingLimits.OperatingLimits;
+  | OperatingLimits.OperatingLimits
+  | WideEvents.WideEvents;
 
 /** Every dev and test host uses the supervised local executor. */
 export const enabled = Config.map(
@@ -60,7 +62,7 @@ export const make: (
     return yield* new Executor.ExecutionError({ operation: "bind", reason: "production_refused" });
 
   const scope = yield* Effect.scope;
-  const context = yield* Effect.context<HttpClient.HttpClient>();
+  const context = yield* Effect.context<HttpClient.HttpClient | WideEvents.WideEvents>();
   const gateway = yield* CallbackGateway.make(handlers);
   const listener = yield* CallbackGatewayApi.listen().pipe(
     Effect.provideService(CallbackGateway.CallbackGateway, gateway)
@@ -114,6 +116,7 @@ export const layer = (
   | RuntimeLog.RuntimeLog
   | ServerBundles.ServerBundles
   | SqlClient.SqlClient
+  | WideEvents.WideEvents
 > =>
   Layer.effect(Invocation.Invocation, make(handlers)).pipe(
     Layer.provide([InvocationLog.layer, QuerySnapshot.layer, MutationTransaction.layer]),

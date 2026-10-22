@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off -- Real workerd watchdogs use wall-clock deadlines and content hashes.
 import { createHash } from "node:crypto";
 import { expect, it } from "@effect/vitest";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Executor from "@patchy/runtime/executor";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Local from "./local.js";
 import * as Supervisor from "./supervisor.js";
@@ -89,7 +91,9 @@ it.live(
       expect((yield* fleet.stats({ bindingEpoch: 1 })).aggregateRssBytes).toBeGreaterThanOrEqual(
         ceiling
       );
-      const local = yield* Local.make({ ...options, operatingLimits });
+      const local = yield* Local.make({ ...options, operatingLimits }).pipe(
+        Effect.provide(WideEvents.layerNoop)
+      );
       const first = yield* local.bind(bundle);
       expect(yield* local.invoke(invocation(first, "demo.read", "host_pressure"))).toMatchObject({
         outcome: "returned",
@@ -113,7 +117,7 @@ it.live(
   "recovers a watchdog-killed local generation only on a fresh host bind, without replay",
   () =>
     Effect.gen(function* () {
-      const local = yield* Local.make(options);
+      const local = yield* Local.make(options).pipe(Effect.provide(WideEvents.layerNoop));
       const first = yield* local.bind(bundle);
       expect(yield* local.invoke(invocation(first, "demo.read", "first"))).toMatchObject({
         outcome: "returned",
@@ -155,6 +159,46 @@ it.live(
 );
 
 it.live(
+  "emits each process's wide event, with how long it took to start, when it idles out or the executor closes",
+  () =>
+    Effect.gen(function* () {
+      const delivered = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(delivered, event).pipe(Effect.asVoid)
+        })
+      );
+      const second = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const local = yield* Local.make({
+            ...options,
+            operatingLimits: { "execution.process.idle": 1_000, "execution.probe.interval": 25 }
+          }).pipe(Effect.provideService(WideEvents.WideEvents, events));
+          const first = yield* local.bind(bundle);
+          // It idles out, and with no fleet to collect its report the executor emits it.
+          expect(yield* Queue.take(delivered)).toMatchObject({
+            type: "process",
+            processGeneration: first.processGeneration,
+            cause: "idle",
+            firstOnTask: true,
+            startMs: expect.any(Number)
+          });
+          return yield* local.bind({ ...bundle, versionId: "ver_second" });
+        })
+      );
+      // Closing the executor stops the second, and its event still goes out.
+      expect(yield* Queue.take(delivered)).toMatchObject({
+        type: "process",
+        processGeneration: second.processGeneration,
+        cause: "stopped",
+        firstOnTask: false,
+        startMs: expect.any(Number)
+      });
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
   "refuses production construction even when callers request a test environment",
   () =>
     Effect.gen(function* () {
@@ -162,7 +206,10 @@ it.live(
         ConfigProvider.fromUnknown({ NODE_ENV: "production" })
       );
       expect(
-        yield* Local.make(options).pipe(Effect.provide(production), Effect.result)
+        yield* Local.make(options).pipe(
+          Effect.provide([production, WideEvents.layerNoop]),
+          Effect.result
+        )
       ).toMatchObject({
         _tag: "Failure",
         failure: { reason: "production_refused" }
@@ -172,7 +219,7 @@ it.live(
       );
       expect(
         yield* Local.make({ ...options, environment: "production" }).pipe(
-          Effect.provide(development),
+          Effect.provide([development, WideEvents.layerNoop]),
           Effect.result
         )
       ).toMatchObject({ _tag: "Failure", failure: { reason: "production_refused" } });
