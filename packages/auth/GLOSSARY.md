@@ -17,7 +17,7 @@ One person's consent for one install of an MCP client, such as Claude or Codex, 
 _Avoid_: connection on its own (Integrations' company source), integration, app (the client, not the connection), grant
 
 **Consent**:
-The person's answer, in their signed-in browser, to a client asking to connect as them. It is asked every time and counts only for the account the page showed; only the client's code exchange creates the agent connection.
+The person's answer, in their signed-in browser, to a client asking to connect as them. It is asked every time and counts only for the account the page showed. A yes records nothing but a code for that account, good for a minute and bound to the client, its redirect and its PKCE challenge; a no records nothing. Only the client's code exchange creates the agent connection, once: a replayed code ends the connection it made. Disconnect everything, deactivation and agent access off cancel a code not yet exchanged.
 _Avoid_: authorization (the protocol), approval
 
 **Client document**:

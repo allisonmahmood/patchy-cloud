@@ -18,7 +18,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/http/HttpServer";
-import { DevPersonas, Session } from "@patchy/auth";
+import { ClientDocumentNetwork, DevPersonas, Session } from "@patchy/auth";
 import { PgCompanyDatabases } from "@patchy/company-database";
 import { S3ContentStore } from "@patchy/content-store";
 import { CredentialKeys } from "@patchy/integrations";
@@ -61,7 +61,11 @@ const server = Layer.effectDiscard(
     );
     yield* announce;
   })
-).pipe(Layer.provideMerge(Server.layer), Layer.provide(Sql.layer), Layer.provide(httpServer));
+).pipe(
+  Layer.provideMerge(Server.layer),
+  Layer.provide([Sql.layer, ClientDocumentNetwork.layer]),
+  Layer.provide(httpServer)
+);
 
 // Check required settings before acquiring Postgres, so an unreachable database
 // cannot hide a missing Clerk key (or personas secret) or public origin behind a connection error.

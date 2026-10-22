@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Clerk browser sessions, user-owned machine tokens and agent connections, client metadata documents and Patchy's authorization metadata, bearer authentication, auth pages, migrations, and the development seed.",
+  "description": "Clerk browser sessions, user-owned machine tokens and agent connections, client metadata documents, consent and Patchy's authorization server, bearer authentication, auth pages, migrations, and the development seed.",
   "exports": {
     ".": {
       "development": "./src/index.ts",

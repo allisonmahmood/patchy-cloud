@@ -5,9 +5,10 @@
  * and the deletion sweep forked in the same scope. Wiring only; every rule
  * lives in the package that owns it.
  *
- * Needs a `SqlClient` and an `HttpServer` from whoever launches it: `start.ts`
- * brings Postgres from `DATABASE_URL` and a Node server on `PORT`; a test
- * brings a fresh database and `NodeHttpServer.layerTest`.
+ * Needs a `SqlClient`, an `HttpServer` and the client document network from
+ * whoever launches it: `start.ts` brings Postgres from `DATABASE_URL`, a Node
+ * server on `PORT` and the pinned network; a test brings a fresh database,
+ * `NodeHttpServer.layerTest` and, when it connects agents, fixture documents.
  */
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
@@ -26,11 +27,13 @@ import {
   AuthApi,
   AuthPages,
   Authorization,
-  ClientDocumentNetwork,
+  type ClientDocumentNetwork,
   ClientDocuments,
+  Consents,
   DevPersonas,
   DeviceLogins,
   MachineTokens,
+  OAuthEndpoints,
   OAuthMetadata,
   RequireSession,
   Session
@@ -83,6 +86,9 @@ import * as FleetInvocation from "./FleetInvocation.js";
 import * as MemberDirectory from "./MemberDirectory.js";
 import { migrations } from "./migrations.js";
 import * as RequestEvents from "./RequestEvents.js";
+
+/** Where client documents come from, which the launcher brings: the pinned network, or fixtures. */
+export type DocumentNetwork = ClientDocumentNetwork.ClientDocumentNetwork;
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -159,7 +165,7 @@ const ownedPatches = Layer.effect(
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
 const services = Layer.mergeAll(
   Artifact.layer,
-  ClientDocuments.layer.pipe(Layer.provide(ClientDocumentNetwork.layer)),
+  Consents.layer.pipe(Layer.provideMerge(ClientDocuments.layer)),
   Content.layer,
   DeletionSweep.layer,
   DeviceLogins.layer,
@@ -324,6 +330,7 @@ const app = Layer.mergeAll(
     landing,
     AuthPages.layer,
     OAuthMetadata.layer,
+    OAuthEndpoints.layer,
     Layer.unwrap(
       Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
     ),

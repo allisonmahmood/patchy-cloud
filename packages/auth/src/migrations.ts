@@ -2,7 +2,8 @@
  * Machine credentials and device-login state, id 2 in the global migration
  * sequence; Companies owns their user foreign keys. Squashed into one baseline
  * before launch; id 19 records when a person's credentials ended and when each
- * device login was confirmed, and id 22 adds agent connections and their tokens.
+ * device login was confirmed, id 22 adds agent connections and their tokens, and id 23 the
+ * codes a consent's approval issues.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -74,5 +75,25 @@ export const migrations: Migrations = {
     ON agent_connection_refresh_tokens(connection_id) WHERE rotated_at IS NULL`,
     `CREATE INDEX agent_connection_refresh_tokens_retry_idx
     ON agent_connection_refresh_tokens(rotated_at) WHERE retry IS NOT NULL`
+  ),
+  // An approved consent awaiting its code exchange: the code's hash and what it was approved
+  // for, nothing else. `created_at` is the database's clock under the person's row lock, so a
+  // code made at or before their credentials-ended stamp is dead. The exchange sets
+  // `connection_id`, and the row stays until it expires so a replay can end that connection.
+  // Agent access off deletes the company's codes not yet exchanged.
+  "0023_agent_consents": ddl(
+    `CREATE TABLE agent_consents (
+    code_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    client_id TEXT NOT NULL,
+    client_name TEXT NOT NULL CHECK (char_length(client_name) BETWEEN 1 AND 64),
+    redirect_uri TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    connection_id TEXT REFERENCES agent_connections(id) ON DELETE CASCADE
+    )`,
+    `CREATE INDEX agent_consents_user_id_idx ON agent_consents(user_id)`,
+    `CREATE INDEX agent_consents_expires_at_idx ON agent_consents(expires_at)`
   )
 };

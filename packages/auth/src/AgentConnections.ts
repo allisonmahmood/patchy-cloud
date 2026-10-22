@@ -96,6 +96,13 @@ export class AgentConnections extends Context.Service<
     }) => Effect.Effect<Connected, UserUnavailable | SqlError>;
     /** The `work` bearer check: who the access token acts as, or `null`. A call stamps last used. */
     readonly authenticate: (accessToken: string) => Effect.Effect<AgentIdentity | null, SqlError>;
+    /**
+     * The connection a refresh token was issued to, current or not, and its client's id, or
+     * `null`: what the token endpoint checks and limits by before it calls `refresh`.
+     */
+    readonly chainOf: (
+      refreshToken: string
+    ) => Effect.Effect<{ readonly id: string; readonly clientId: string } | null, SqlError>;
     /** Rotates the chain, or answers a retry within the minute; any other reuse ends it. */
     readonly refresh: (refreshToken: string) => Effect.Effect<Tokens, RefreshRefused | SqlError>;
     /** Drops every retry copy whose minute is up; the server runs it every few seconds. */
@@ -188,9 +195,13 @@ export const make = Effect.gen(function* () {
 
   const chainOwner = SqlSchema.findOneOption({
     Request: Schema.String,
-    Result: Schema.Struct({ connectionId: Schema.String, userId: Schema.String }),
+    Result: Schema.Struct({
+      connectionId: Schema.String,
+      userId: Schema.String,
+      clientId: Schema.String
+    }),
     execute: (tokenHash) => sql`
-      SELECT c.id AS "connectionId", c.user_id AS "userId"
+      SELECT c.id AS "connectionId", c.user_id AS "userId", c.client_id AS "clientId"
       FROM agent_connection_refresh_tokens r JOIN agent_connections c ON c.id = r.connection_id
       WHERE r.token_hash = ${tokenHash}`
   });
@@ -268,6 +279,16 @@ export const make = Effect.gen(function* () {
     return Option.isSome(used) ? used.value.identity : null;
   });
 
+  // A connection's client never changes, so this read needs no lock.
+  const chainOf = Effect.fn("AgentConnections.chainOf")(function* (refreshToken: string) {
+    const owner = yield* chainOwner(sha256(refreshToken)).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return Option.isSome(owner)
+      ? { id: owner.value.connectionId, clientId: owner.value.clientId }
+      : null;
+  });
+
   const refresh = Effect.fn("AgentConnections.refresh")(function* (refreshToken: string) {
     const tokenHash = sha256(refreshToken);
     // A refusal is a value until the transaction commits, so a reuse's ending lands first.
@@ -334,7 +355,14 @@ export const make = Effect.gen(function* () {
     if (rows.length === 0) return yield* new AgentConnectionNotFound({ id: input.id });
   });
 
-  return AgentConnections.of({ create, authenticate, refresh, sweepRetries, disconnect });
+  return AgentConnections.of({
+    create,
+    authenticate,
+    chainOf,
+    refresh,
+    sweepRetries,
+    disconnect
+  });
 });
 
 export const layer = Layer.effect(AgentConnections, make);

@@ -16,16 +16,25 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
+import { ClientDocumentNetwork } from "@patchy/auth";
 import { clerkEnv } from "@patchy/auth/testing";
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
 
-export const server = (env: Record<string, string | undefined> = {}) =>
+/**
+ * `network` is where client documents come from: the real, pinned network unless a test
+ * that connects agents serves fixtures (`layerClientDocumentNetwork`).
+ */
+export const server = (
+  env: Record<string, string | undefined> = {},
+  network: Layer.Layer<Server.DocumentNetwork> = ClientDocumentNetwork.layer
+) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const storageDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-server-" });
       return Server.layer.pipe(
+        Layer.provide(network),
         Layer.provideMerge(NodeHttpServer.layerTest),
         Layer.provideMerge(Testing.layer()),
         Layer.provide(

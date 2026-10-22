@@ -975,6 +975,26 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "oauth.token.failures.perMinute": {
+    kind: "operating",
+    default: 60,
+    unit: "attempts/minute",
+    scope: "host",
+    measure:
+      "Failed token endpoint attempts per source address per host replica, counted after each fails; a failure past it is answered 429, and an exchange or refresh that succeeds is never refused",
+    refusal: "rate_limited",
+    overridable: false
+  },
+  "oauth.token.rotations.perMinute": {
+    kind: "operating",
+    default: 10,
+    unit: "attempts/minute",
+    scope: "viewer",
+    measure:
+      "Refresh attempts per agent connection per host replica, a retry within its minute included",
+    refusal: "rate_limited",
+    overridable: false
+  },
   "rate.protectedApi.perMinute": {
     kind: "operating",
     configuration: "legacy",
