@@ -529,7 +529,7 @@ it.live(
         companyId: marked.companyId,
         callbackUrls: [listener.url],
         environment: "test"
-      });
+      }).pipe(Effect.provide(WideEvents.layerNoop));
       // The loader decodes the bundle's own description of its handlers.
       yield* executor.bind(bundle);
       const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
