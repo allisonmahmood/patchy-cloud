@@ -48,6 +48,18 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         })
     );
 
+    it.effect("keeps the MCP door's and its authorization server's paths off company handles", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        for (const handle of ["mcp", "oauth"]) {
+          assert.strictEqual(
+            (yield* companies.create(companyInput(handle)).pipe(Effect.flip))._tag,
+            "ReservedHandle"
+          );
+        }
+      })
+    );
+
     it.effect(
       "creates a company and its initial admin together, rolling back either user uniqueness conflict",
       () =>

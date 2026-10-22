@@ -38,7 +38,10 @@ export const RESERVED_HANDLES: ReadonlyArray<string> = [
   "invite",
   "signup",
   "signin",
-  "whats-new"
+  "whats-new",
+  // The Patchy MCP door and its authorization server (docs/product.md › The door)
+  "mcp",
+  "oauth"
 ];
 
 export class Company extends Schema.Class<Company>("Company")({
