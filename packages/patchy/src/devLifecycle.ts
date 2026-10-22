@@ -48,6 +48,8 @@ const decodeFailure = Schema.decodeUnknownSync(
 const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
 const decodeAgentReply = Schema.decodeUnknownEffect(AgentReply);
 const decodeToolRefusal = Schema.decodeUnknownEffect(ToolRefusal);
+/** An answer as text: indented JSON, for a person or an agent to read. */
+const indentedJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 const decodeToolArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json))
 );
@@ -518,6 +520,6 @@ export const agent = Effect.fn("Dev.agent")(function* (
     stale.length === 0
       ? answer.structuredContent
       : { ...answer.structuredContent, warnings: stale },
-    [JSON.stringify(answer.structuredContent, null, 2), answered]
+    [indentedJson(answer.structuredContent), answered]
   );
 });
