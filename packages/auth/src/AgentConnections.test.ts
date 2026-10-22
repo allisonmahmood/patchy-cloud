@@ -361,6 +361,49 @@ it.layer(layer)("AgentConnections", (it) => {
     })
   );
 
+  it.effect("lists a person's live connections, newest first, with when each ends on its own", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const userId = yield* person("list");
+      const old = yield* connect(userId, "Claude Code");
+      yield* authenticate(old.tokens.accessToken);
+      yield* sql`
+          UPDATE agent_connections SET created_at = clock_timestamp() - interval '20 days',
+            last_used_at = clock_timestamp() - interval '10 days'
+          WHERE id = ${old.connection.id}`;
+      const idle = yield* connect(userId, "Idle");
+      yield* sql`
+          UPDATE agent_connections SET created_at = clock_timestamp() - interval '30 days 1 minute'
+          WHERE id = ${idle.connection.id}`;
+      const disconnected = yield* connect(userId, "Disconnected");
+      yield* AgentConnections.AgentConnections.use((connections) =>
+        connections.disconnect({ id: disconnected.connection.id, userId })
+      );
+      const fresh = yield* connect(userId, "Claude Code");
+      yield* connect(yield* person("list_other"), "Someone else's");
+
+      const listed = yield* AgentConnections.AgentConnections.use((connections) =>
+        connections.list(userId)
+      );
+      assert.deepStrictEqual(
+        listed.map(({ id, clientName, clientSite }) => ({ id, clientName, clientSite })),
+        [
+          { id: fresh.connection.id, clientName: "Claude Code", clientSite: "claude.ai" },
+          { id: old.connection.id, clientName: "Claude Code", clientSite: "claude.ai" }
+        ]
+      );
+      const [newest, oldest] = listed;
+      assert.isNull(newest!.lastUsedAt, "never called");
+      const days = (from: string, to: string) => (Date.parse(to) - Date.parse(from)) / 86_400_000;
+      // Calendar days in the database's time zone, as the connection's own ending counts them,
+      // so a daylight saving change moves them by an hour.
+      const hour = 1 / 24 + 1e-6;
+      assert.closeTo(days(newest!.connectedAt, newest!.endsAt), 30, hour);
+      assert.closeTo(days(oldest!.connectedAt, oldest!.lastUsedAt!), 10, hour);
+      assert.closeTo(days(oldest!.lastUsedAt!, oldest!.endsAt), 30, hour);
+    })
+  );
+
   it.effect("a dev-minted connection's access token outlives the hour", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

@@ -48,6 +48,7 @@ it.effect(
           authenticate: () => Effect.die("not swept"),
           chainOf: () => Effect.die("not swept"),
           refresh: () => Effect.die("not swept"),
+          list: () => Effect.die("not swept"),
           disconnect: () => Effect.die("not swept"),
           sweepRetries: Effect.sync(() => void retryPasses++)
         })

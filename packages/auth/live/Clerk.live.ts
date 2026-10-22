@@ -12,6 +12,7 @@ import { Analytics } from "@patchy/analytics";
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
+import * as AgentConnections from "../src/AgentConnections.js";
 import * as AuthPages from "../src/AuthPages.js";
 import * as DeviceLogins from "../src/DeviceLogins.js";
 import * as MachineTokens from "../src/MachineTokens.js";
@@ -39,6 +40,7 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
+  Layer.provideMerge(AgentConnections.layer),
   Layer.provideMerge(Layer.mergeAll(Limits.layer, Analytics.layerNoop)),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(config))

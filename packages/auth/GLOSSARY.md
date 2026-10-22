@@ -49,5 +49,5 @@ The authorization of a machine through a short-lived URL and code that the perso
 _Avoid_: device flow (the protocol), OAuth (how agent connections are made), paste your token
 
 **Your machines**:
-The user's list of their live agent connections and machine tokens, with disconnect one agent, revoke one machine, and disconnect everything, which also cancels approvals not yet collected. The user's control over which agents and machines may act for them; browser sign-out lives here too.
+The user's list of their live agent connections and machine tokens, with disconnect one agent, revoke one machine, and disconnect everything, which also cancels approvals not yet collected. It opens with each agent's steps to connect. The user's control over which agents and machines may act for them; browser sign-out lives here too.
 _Avoid_: sessions (a browser's), API keys

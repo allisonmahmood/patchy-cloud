@@ -23,7 +23,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION, type Manifest } from "@patchy/api";
-import { AuthPages, DeviceLogins, MachineTokens, Session } from "@patchy/auth";
+import { AgentConnections, AuthPages, DeviceLogins, MachineTokens, Session } from "@patchy/auth";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Limits } from "@patchy/limits";
@@ -108,6 +108,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
       Companies.layer,
       Users.layer,
       MachineTokens.layer,
+      AgentConnections.layer,
       Limits.layer,
       InviteMail.layerRecording
     )
