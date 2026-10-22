@@ -319,6 +319,8 @@ The events, by area:
 - Connections: `connection.connected`, `connection.deleted`.
 - Company look: `look.published`, `look.restored`, each after its change commits. Restoring
   the revision that is already current reports nothing.
+- Agent access: `agent_access.changed`, with `on`, after the change commits. Asking for the
+  state it already has reports nothing.
 
 ## Clerk
 

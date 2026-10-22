@@ -73,7 +73,7 @@ Company sign-in through its own identity provider instead of the ordinary sign-i
 _Avoid_: enterprise connection (Clerk's word), SAML (one of the two shapes)
 
 **Agent access**:
-A company's switch, off until an admin turns it on, that lets its people's worker agents use the company's patches through Patchy MCP. Off refuses every agent's calls and new connections and cancels consents in progress, but ends no agent connection; on again, the same connections work.
+A company's switch, off until an admin turns it on, that lets its people's worker agents use the company's patches through Patchy MCP. Off refuses every agent's calls and new connections and cancels consents in progress, but ends no agent connection; on again, the same connections work. Admins turn it on and off at the foot of Company, which shows every member who made the latest change and when.
 _Avoid_: MCP enabled, agent permission, agent mode
 
 **Deactivation**:

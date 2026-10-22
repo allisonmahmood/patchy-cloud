@@ -3,7 +3,8 @@
  * (`packages/sql/GLOSSARY.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
- * names the people stored without one and id 16 records the look's latest restore.
+ * names the people stored without one, id 16 records the look's latest restore and id 20
+ * adds the agent access switch.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -124,6 +125,17 @@ export const migrations: Migrations = {
       ADD CONSTRAINT companies_look_restore_check CHECK (
         (look_restored_by IS NULL) = (look_restored_at IS NULL)
         AND (look_restore_note IS NULL OR look_restored_by IS NOT NULL)
+      )`
+  ),
+  // Agent access starts off, for every company already here and every new one. The latest change
+  // records who made it and when; a later change overwrites it, and the starting Off has none.
+  "0020_agent_access": ddl(
+    `ALTER TABLE companies
+      ADD COLUMN agent_access_on BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN agent_access_changed_by TEXT REFERENCES users(id),
+      ADD COLUMN agent_access_changed_at TIMESTAMPTZ,
+      ADD CONSTRAINT companies_agent_access_change_check CHECK (
+        (agent_access_changed_by IS NULL) = (agent_access_changed_at IS NULL)
       )`
   )
 };

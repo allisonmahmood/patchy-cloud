@@ -51,6 +51,18 @@ export class Company extends Schema.Class<Company>("Company")({
   createdAt: Schema.Date
 }) {}
 
+/**
+ * A company's agent access switch (docs/product.md › Patchy MCP) and its latest change, which
+ * is null for the starting Off. Only the latest change is kept.
+ */
+export interface AgentAccess {
+  readonly on: boolean;
+  readonly latest: {
+    readonly by: { readonly id: string; readonly name: string };
+    readonly at: Date;
+  } | null;
+}
+
 // Clerk's application invitation default: https://clerk.com/docs/reference/backend/invitations/create-invitation
 export const INVITATION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 
@@ -120,6 +132,12 @@ export interface CreateInput {
   readonly email: string;
   readonly userName: string;
 }
+export interface AgentAccessInput {
+  readonly companyId: string;
+  readonly on: boolean;
+  /** The admin making the change. */
+  readonly by: string;
+}
 export interface InviteInput {
   readonly companyId: string;
   readonly email: string;
@@ -152,6 +170,24 @@ export class Companies extends Context.Service<
     readonly consumeInvite: (
       input: Claims & { readonly inviteId: string }
     ) => Effect.Effect<User, AlreadyInCompany | InviteUnavailable | SqlError>;
+    readonly agentAccess: (
+      companyId: string
+    ) => Effect.Effect<AgentAccess, CompanyNotFound | SqlError>;
+    /**
+     * Reads agent access and holds it until the caller's transaction ends: a change waits for
+     * the holder, and the read waits for a change in flight. Code issuance and the code exchange
+     * hold it, so neither acts on an on that an off has already replaced.
+     */
+    readonly holdAgentAccess: (
+      companyId: string
+    ) => Effect.Effect<AgentAccess, CompanyNotFound | SqlError>;
+    /** Turns agent access on or off; asking for the state it already has changes nothing. */
+    readonly setAgentAccess: (
+      input: AgentAccessInput
+    ) => Effect.Effect<
+      { readonly access: AgentAccess; readonly changed: boolean },
+      CompanyNotFound | SqlError
+    >;
   }
 >()("@patchy/companies/Companies") {}
 
@@ -266,6 +302,35 @@ export const make = Effect.gen(function* () {
         AND revoked_at IS NULL AND consumed_at IS NULL FOR UPDATE`
   });
 
+  const agentAccessRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ companyId: Schema.String, hold: Schema.Boolean }),
+    Result: Schema.Struct({
+      on: Schema.Boolean,
+      byId: Schema.NullOr(Schema.String),
+      byName: Schema.NullOr(Schema.String),
+      at: Schema.NullOr(Schema.Date)
+    }),
+    // A share lock on the company row: changes update that row, so they wait for its holders.
+    execute: ({ companyId, hold }) => sql`
+      SELECT c.agent_access_on AS "on", u.id AS "byId", u.name AS "byName",
+        c.agent_access_changed_at AS "at"
+      FROM companies c LEFT JOIN users u ON u.id = c.agent_access_changed_by
+      WHERE c.id = ${companyId} ${hold ? sql`FOR SHARE OF c` : sql``}`
+  });
+  const changeAgentAccess = SqlSchema.findAll({
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      on: Schema.Boolean,
+      by: Schema.String,
+      now: Schema.Number
+    }),
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ companyId, on, by, now }) => sql`
+      UPDATE companies SET agent_access_on = ${on}, agent_access_changed_by = ${by},
+        agent_access_changed_at = to_timestamp(${now / 1_000})
+      WHERE id = ${companyId} AND agent_access_on <> ${on} RETURNING id`
+  });
+
   const findById = Effect.fn("Companies.findById")((companyId: string) =>
     companyById(companyId).pipe(Effect.catchTags(dieOnSchemaError), Effect.map(Option.getOrNull))
   );
@@ -374,6 +439,35 @@ export const make = Effect.gen(function* () {
       )
   );
 
+  const readAgentAccess = Effect.fn("Companies.readAgentAccess")(function* (
+    companyId: string,
+    hold: boolean
+  ) {
+    const row = yield* agentAccessRow({ companyId, hold }).pipe(Effect.catchTags(dieOnSchemaError));
+    if (Option.isNone(row)) return yield* new CompanyNotFound({ companyId });
+    const { on, byId, byName, at } = row.value;
+    return {
+      on,
+      latest:
+        byId === null || byName === null || at === null
+          ? null
+          : { by: { id: byId, name: byName }, at }
+    } satisfies AgentAccess;
+  });
+  const agentAccess = (companyId: string) => readAgentAccess(companyId, false);
+  const holdAgentAccess = (companyId: string) => readAgentAccess(companyId, true);
+  const setAgentAccess = Effect.fn("Companies.setAgentAccess")((input: AgentAccessInput) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const changed = yield* changeAgentAccess({ ...input, now }).pipe(
+          Effect.catchTags(dieOnSchemaError)
+        );
+        return { access: yield* agentAccess(input.companyId), changed: changed.length > 0 };
+      })
+    )
+  );
+
   return Companies.of({
     create,
     findById,
@@ -382,7 +476,10 @@ export const make = Effect.gen(function* () {
     listInvites,
     findInvitesByEmail,
     revokeInvite,
-    consumeInvite
+    consumeInvite,
+    agentAccess,
+    holdAgentAccess,
+    setAgentAccess
   });
 });
 
