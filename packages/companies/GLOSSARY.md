@@ -77,7 +77,7 @@ A company's switch, off until an admin turns it on, that lets its people's worke
 _Avoid_: MCP enabled, agent permission, agent mode
 
 **Deactivation**:
-An admin ending a user's company access and revoking every machine token and agent connection while keeping their data, reversible except that the last active admin cannot be deactivated. The pick page offers to keep their patches live or retire some or all in the same act, with confirmation of what breaks outside the selection.
+An admin ending a user's company access and revoking every machine token, agent connection and approval not yet collected while keeping their data, reversible except that the last active admin cannot be deactivated. The pick page offers to keep their patches live or retire some or all in the same act, with confirmation of what breaks outside the selection.
 _Avoid_: ban, suspend (the operator's act on a company), delete (the later act)
 
 **Reactivation**:

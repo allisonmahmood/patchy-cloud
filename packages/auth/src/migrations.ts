@@ -1,7 +1,8 @@
 /**
  * Machine credentials and device-login state, id 2 in the global migration
  * sequence; Companies owns their user foreign keys. Squashed into one baseline
- * before launch.
+ * before launch; id 19 records when a person's credentials ended and when each
+ * device login was confirmed.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -29,5 +30,14 @@ export const migrations: Migrations = {
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`
+  ),
+  // When each person's credentials last all ended, by deactivation or by revoking every machine,
+  // kept on Companies' user row and written in the ending's transaction. An approval at or before
+  // it stays ended, whichever release ended it, so device logins now record when they were
+  // confirmed. Both are the database's clock, read under the user's row lock, so servers whose
+  // clocks disagree can't misorder them. Nothing before this step recorded either.
+  "0019_credentials_ended": ddl(
+    `ALTER TABLE users ADD COLUMN credentials_ended_at TIMESTAMPTZ`,
+    `ALTER TABLE device_logins ADD COLUMN confirmed_at TIMESTAMPTZ`
   )
 };

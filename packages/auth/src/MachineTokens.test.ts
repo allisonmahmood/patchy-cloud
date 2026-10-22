@@ -238,8 +238,11 @@ it.layer(MachineTokens.layer.pipe(Layer.provideMerge(Testing.layer())))("Machine
       const earlier = yield* tokens.mint({ userId, name: "Earlier" });
       const foreign = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Unaffected" });
       yield* tokens.revoke(earlier.id);
+      const endedAt = sql<{ endedAt: Date }>`
+        SELECT credentials_ended_at AS "endedAt" FROM users WHERE id = ${userId}`;
       yield* TestClock.adjust(HOUR);
       yield* tokens.revokeAll(userId);
+      const [first] = yield* endedAt;
       yield* TestClock.adjust(HOUR);
       yield* tokens.revokeAll(userId);
       assert.deepStrictEqual(yield* tokens.list(userId), []);
@@ -254,6 +257,9 @@ it.layer(MachineTokens.layer.pipe(Layer.provideMerge(Testing.layer())))("Machine
         { name: "Earlier", revokedAt: new Date(NOW) },
         { name: "Laptop", revokedAt: new Date(NOW + HOUR) }
       ]);
+      // Each revoke all records, on the database's clock, when the user's credentials last ended.
+      const [second] = yield* endedAt;
+      assert.isAbove(second!.endedAt.getTime(), first!.endedAt.getTime());
     })
   );
 });

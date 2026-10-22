@@ -283,8 +283,12 @@ export const make = Effect.gen(function* () {
         const user = yield* lockUser(input);
         yield* preserveAdmin(user);
         const now = yield* Clock.currentTimeMillis;
+        // Deactivation ends every credential: Auth refuses an approval at or before
+        // credentials_ended_at, and reactivation leaves the stamp. The stamp is the
+        // database's clock under this lock, as Auth's own ending and confirmation use.
         yield* sql`
-        UPDATE users SET deactivated_at = to_timestamp(${now / 1_000})
+        UPDATE users SET deactivated_at = to_timestamp(${now / 1_000}),
+          credentials_ended_at = GREATEST(credentials_ended_at, clock_timestamp())
         WHERE id = ${input.userId} AND deactivated_at IS NULL`;
         // Auth owns the rows. Keep this revocation in the user transaction, and
         // preserve earlier revocation stamps; reactivation never revives keys.

@@ -161,6 +161,18 @@ export const make = Effect.gen(function* () {
     execute: ({ id, userId }) => sql`
       SELECT name FROM machine_tokens WHERE id = ${id} AND user_id = ${userId}`
   });
+  // Deactivation and Disconnect everything end each confirmation at or before the user's
+  // credentials_ended_at, compared at the database's precision. One a release before
+  // confirmed_at left unstamped has no time on that clock, so any ending ends it. The
+  // user lock is the one mint and the endings take.
+  const confirmationEnded = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: Schema.Struct({ ended: Schema.Boolean }),
+    execute: (userCode) => sql`
+      SELECT (u.credentials_ended_at >= COALESCE(d.confirmed_at, '-infinity')) IS TRUE AS ended
+      FROM device_logins d JOIN users u ON u.id = d.user_id
+      WHERE d.user_code = ${userCode} FOR UPDATE OF u`
+  });
   const confirmingIdentity = SqlSchema.findOne({
     Request: Schema.String,
     Result: Schema.Struct({
@@ -259,9 +271,13 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* readPending(input.userCode);
         yield* MachineTokens.validateMachineName(input.machineName);
+        // Under the user lock the endings take, and on the database's clock they stamp
+        // with: a confirmation that commits before an ending is always older than it.
+        yield* sql`SELECT id FROM users WHERE id = ${input.userId} FOR SHARE`;
         yield* sql`
           UPDATE device_logins SET state = 'confirmed', user_id = ${input.userId},
-            machine_name = ${input.machineName} WHERE user_code = ${input.userCode}`;
+            machine_name = ${input.machineName}, confirmed_at = clock_timestamp()
+          WHERE user_code = ${input.userCode}`;
       })
     );
   });
@@ -310,14 +326,20 @@ export const make = Effect.gen(function* () {
         if (row.userId === null || row.machineName === null) {
           return yield* Effect.die(new Error("Confirmed device login has no user or machine name"));
         }
-        // mint locks and re-reads the user under this transaction, serializing
-        // with deactivation; catching its refusal here lets deletion commit.
-        const minted = yield* tokens.mint({ userId: row.userId, name: row.machineName }).pipe(
-          Effect.catchTags({
-            UserUnavailable: () => Effect.succeed(null),
-            InvalidMachineName: Effect.die
-          })
+        // An ending either committed before this locked read or waits, then revokes this mint.
+        const { ended } = yield* confirmationEnded(row.userCode).pipe(
+          Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
         );
+        // mint re-reads the user and refuses a deactivated one; catching its refusal
+        // here lets deletion commit.
+        const minted = ended
+          ? null
+          : yield* tokens.mint({ userId: row.userId, name: row.machineName }).pipe(
+              Effect.catchTags({
+                UserUnavailable: () => Effect.succeed(null),
+                InvalidMachineName: Effect.die
+              })
+            );
         if (minted === null) {
           yield* remove;
           return { reply: new DeviceLoginUnknown({}) };
