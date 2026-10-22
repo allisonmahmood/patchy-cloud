@@ -1,6 +1,6 @@
 // Deal handlers. The page reads the board and a deal's timeline through the two queries and
 // changes deals only through the mutations below; every mutation writes its activity row in
-// the same transaction.
+// the same transaction. agent/deals.ts gives people's agents `move` and `addNote` as they are.
 import type { Id } from "patchy/config";
 import {
   HandlerError,
@@ -10,6 +10,7 @@ import {
   type MutationContext
 } from "../patchy/_generated/server.js";
 import { checkDeal, type DealDraft, type DealFields } from "../helpers/dealInput.js";
+import { addLead, assigning, checkedDraft, requireCandidate } from "../helpers/leads.js";
 import { personSchema, resolvePeople } from "../helpers/people.js";
 import {
   COMMITTED_STAGES,
@@ -78,30 +79,7 @@ export const create = mutation({
   args: { ...draftArgs, owner: t.nullable(t.text()) },
   errors: ["invalid_input", "not_a_member"],
   result: t.row("deals"),
-  handler: async (ctx, { owner, ...draft }) => {
-    const fields = checked(draft);
-    if (owner !== null) await requireCandidate(ctx, owner);
-    const now = new Date().toISOString();
-    return assigning(async () => {
-      const deal = await ctx.tables.deals.insert({
-        ...fields,
-        stage: "lead",
-        owner,
-        openedAt: now,
-        stageEnteredAt: now,
-        lastActivityAt: now
-      });
-      await ctx.tables.activity.insert({
-        deal: deal.id,
-        kind: "created",
-        actor: ctx.viewer.user.id,
-        toStage: "lead",
-        assignee: owner,
-        at: now
-      });
-      return deal;
-    });
-  }
+  handler: (ctx, { owner, ...draft }) => addLead(ctx, draft, owner)
 });
 
 /**
@@ -112,7 +90,16 @@ export const create = mutation({
  * stage clears it, so reopening a deal forgets why it was lost.
  */
 export const move = mutation({
-  args: { deal: t.text(), stage: t.enum(STAGES), reason: t.enum(LOST_REASONS).optional() },
+  description:
+    "Moves a deal to another stage, the one way a deal changes stage, as the board's drag and drop does. " +
+    "Proposal, Negotiation and Won need a value above zero and an owner (needs_value_and_owner lists what's missing). " +
+    "Entering or leaving Won or Lost is for the deal's owner or an admin (owner_or_admin_only names the owner). " +
+    "Lost needs a reason (reason_required). Moving a deal to the stage it is in changes nothing.",
+  args: {
+    deal: t.text().describe("The deal's id."),
+    stage: t.enum(STAGES).describe("The stage to move it to."),
+    reason: t.enum(LOST_REASONS).optional().describe("Why it was lost; only for stage lost.")
+  },
   errors: ["not_found", "owner_or_admin_only", "needs_value_and_owner", "reason_required"],
   result: t.row("deals"),
   handler: async (ctx, args) => {
@@ -157,7 +144,7 @@ export const update = mutation({
   result: t.row("deals"),
   handler: async (ctx, { deal: id, ...draft }) => {
     const deal = await requireDeal(ctx, id);
-    const fields = checked(draft);
+    const fields = checkedDraft(draft);
     if (missingFor(deal.stage, { value: fields.value, owner: deal.owner }).includes("value"))
       throw new HandlerError("value_required", { stage: deal.stage });
 
@@ -213,7 +200,12 @@ export const assign = mutation({
 
 /** Adds a note to a deal's timeline. */
 export const addNote = mutation({
-  args: { deal: t.text(), note: t.text() },
+  description:
+    "Adds a note to a deal's timeline, as the person, and marks the deal active now. Notes are under 2,000 characters.",
+  args: {
+    deal: t.text().describe("The deal's id."),
+    note: t.text().describe("The note's text.")
+  },
   errors: ["not_found", "invalid_input"],
   result: t.row("activity"),
   handler: async (ctx, args) => {
@@ -325,30 +317,6 @@ async function requireOwnerOrAdmin(
   if (ctx.viewer.admin || deal.owner === ctx.viewer.user.id) return;
   const owner = deal.owner === null ? null : await ctx.members.get(deal.owner);
   throw new HandlerError("owner_or_admin_only", { action, owner: owner?.name ?? null });
-}
-
-/** Rule 4, checked up front for a clear message; the member column check is the backstop. */
-async function requireCandidate(ctx: MutationContext, id: string) {
-  const member = await ctx.members.get(id);
-  if (member === null || !member.active) throw new HandlerError("not_a_member", { owner: id });
-}
-
-/** Maps the platform's refusal of a member assignment to the patch's own business error. */
-async function assigning<T>(write: () => Promise<T>) {
-  try {
-    return await write();
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "invalid_row")
-      throw new HandlerError("not_a_member", { message: error.message });
-    throw error;
-  }
-}
-
-function checked(draft: DealDraft): DealFields {
-  const result = checkDeal(draft);
-  if (!result.ok)
-    throw new HandlerError("invalid_input", { field: result.field, message: result.message });
-  return result.fields;
 }
 
 const usd = (value: number | null) =>

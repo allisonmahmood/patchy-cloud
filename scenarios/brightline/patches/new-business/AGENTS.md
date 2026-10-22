@@ -12,6 +12,7 @@ Installation already ran. Do not reinstall to start building. Run `pnpm patchy -
 - `patchy.config.ts`: the tier, owned tables and file stores with their descriptions, and declared connections/shared tables/shared stores.
 - `src/`, `index.html`: the page UI. Browser code runs at tier 1 or above; `vite.config.ts` builds one HTML file. Tier 1 calls declared resources directly; tier 2 calls generated `patchy.server.*` handlers.
 - `server/`: hosted handlers when tier 2 is declared. Import bound builders from `patchy/_generated/server.ts`. Keep server implementation out of the page; page imports from here must be type-only.
+- `agent/`: tools for people's agents, used through Patchy MCP (tier 2).
 - `helpers/`: company-owned code shared by the page or server. Keep each helper's imports compatible with where it runs.
 - `fixtures/`: invented local rows and files, never production data.
 - `patchy/_generated/index.json`: generated index linking every declaration, revision, context and skill. Never edit generated files.
@@ -22,13 +23,14 @@ Installation already ran. Do not reinstall to start building. Run `pnpm patchy -
 - `.agents/skills/patchy-files/SKILL.md`: owned files.
 - Read declaration skills when using their resources: `.agents/skills/patchy-postgres/SKILL.md`, `.agents/skills/patchy-shared-tables/SKILL.md`, or `.agents/skills/patchy-shared-stores/SKILL.md`.
 
-Run `pnpm typecheck` and, when `package.json` declares it, `pnpm lint` before publishing. Run `pnpm patchy refresh` after editing declarations, changing tier or adding, removing or renaming server modules. Refresh never edits `src/`, `server/` or `helpers/`. Deleting `.patchy/` destroys local rows and files.
+Run `pnpm typecheck` and, when `package.json` declares it, `pnpm lint` before publishing. Run `pnpm patchy refresh` after editing declarations, changing tier or adding, removing or renaming server modules. Refresh never edits `src/`, `server/`, `agent/` or `helpers/`. Deleting `.patchy/` destroys local rows and files.
 
 # Where things are
 
 - `helpers/pipeline.ts`: stages, services, sources, stage odds and the stage rules (`missingFor`, `needsOwnerOrAdmin`), shared by page and server.
 - `helpers/dealInput.ts`: validation of the editable deal fields; the page's forms and CSV preview use the same check as the server.
 - `server/deals.ts`: the board and timeline queries and every deal mutation. Each mutation writes its `activity` row in the same transaction. `deals.move` is the only way a deal changes stage.
+- `agent/deals.ts`: tools for people's agents. `listDeals` and `addLead` are its own; `moveDeal`, `addNote` and `findPeople` re-export `deals.move`, `deals.addNote` and `team.people`. `helpers/leads.ts` adds a lead for both `deals.create` and `addLead`, which also requires a next step.
 - `server/sample.ts`: "Load sample data" for an empty board. `server/team.ts`: member search for owner pickers.
 - `src/App.tsx`: page state; `moveDeal` sends every stage change (drag and drop and the drawer) to `deals.move`.
 - `src/components/StageMover.tsx`: the drawer's stage controls (stepper and "Mark as lost"). `Board.tsx`: columns, cards and drag and drop. `DealDrawer.tsx`: owner, details, notes and the timeline sentences (`describeEvent`).

@@ -10,9 +10,11 @@ import {
   safeFileName,
   type Refusal
 } from "../helpers/spend.js";
+import { insertSubmitted } from "../helpers/requests.js";
 
 // The page calls only these handlers. Every spend rule is enforced here, against
-// ctx.viewer, so nobody can skip a rule by calling a handler from devtools.
+// ctx.viewer, so nobody can skip a rule by calling a handler from devtools. agent/requests.ts
+// gives people's agents `approve` and `reject` as they are.
 
 const refuse = (code: Refusal) => new HandlerError(code, { message: refusals[code] });
 
@@ -137,20 +139,7 @@ export const create = mutation({
       throw refuse("receipt_unavailable");
     const broken = checkRequest(args, claim !== null);
     if (broken !== null) throw refuse(broken);
-    const now = new Date().toISOString();
-    const request = await ctx.tables.requests.insert({
-      title: args.title.trim(),
-      project: args.project.trim(),
-      category: args.category,
-      amountCents: args.amountCents,
-      status: "submitted",
-      requester: me,
-      receipt: claim?.name ?? null,
-      submittedAt: now
-    });
-    if (claim !== null) await ctx.tables.receiptFiles.update(claim.id, { request: request.id });
-    await ctx.tables.events.insert({ request: request.id, kind: "submitted", actor: me, at: now });
-    return request;
+    return insertSubmitted(ctx, args, claim);
   }
 });
 
@@ -236,7 +225,14 @@ function cleanNote(note: string | undefined) {
 
 /** Approve a submitted request: not your own, and $2,500 or more needs an admin. */
 export const approve = mutation({
-  args: { id: t.text(), note: t.text().optional() },
+  description:
+    "Approves a submitted spend request, as the person, with an optional note. Nobody approves their own " +
+    "request (own_approval), requests of $2,500 or more need an admin (admin_required), and a request " +
+    "already decided can't be approved again (not_submitted).",
+  args: {
+    id: t.text().describe("The request's id."),
+    note: t.text().optional().describe("Why it was approved, under 1,000 characters.")
+  },
   result: t.row("requests"),
   errors: ["request_missing", "not_submitted", "own_approval", "admin_required", "note_too_long"],
   handler: async (ctx, args) => {
@@ -267,7 +263,13 @@ export const approve = mutation({
 
 /** Reject a submitted request with a note saying why; not your own. */
 export const reject = mutation({
-  args: { id: t.text(), note: t.text() },
+  description:
+    "Rejects a submitted spend request, as the person, with a note saying why (note_required). Nobody rejects " +
+    "their own request (own_rejection), and a request already decided can't be rejected (not_submitted).",
+  args: {
+    id: t.text().describe("The request's id."),
+    note: t.text().describe("Why it was rejected, under 1,000 characters.")
+  },
   result: t.row("requests"),
   errors: ["request_missing", "not_submitted", "own_rejection", "note_required", "note_too_long"],
   handler: async (ctx, args) => {

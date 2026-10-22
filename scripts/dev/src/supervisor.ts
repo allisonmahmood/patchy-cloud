@@ -207,7 +207,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     : clerk;
   if (plan.environment !== undefined) {
     const { scenario } = yield* loadScenario(plan.worktree, plan.environment.scenario);
-    yield* seedScenario(plan.databaseUrl, scenario).pipe(
+    yield* seedScenario(scenario).pipe(
+      Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))),
       Effect.mapError((cause) => new DatabaseSetupError({ cause }))
     );
     yield* say(`scenario ${plan.environment.scenario} seeded`);

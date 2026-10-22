@@ -1,5 +1,5 @@
 {
-  "company": { "name": "Brightline Studio", "handle": "brightline" },
+  "company": { "name": "Brightline Studio", "handle": "brightline", "agentAccess": true },
   "people": [
     {
       "key": "allison",

@@ -5,8 +5,9 @@
  * never loads the repo's CLAUDE.md: `$XDG_DATA_HOME/patchy-dev/<worktree>/`
  * holds the CLI installed from the instance's release, that CLI's own state
  * (logged in as the scenario's publisher), the agent workspace with the
- * scenario's patch repos, browser profiles per person, the `agent` launcher
- * and `environment.json`, the manifest the card is printed from.
+ * scenario's patch repos, browser profiles per person, the builder `agent`
+ * launcher, the worker agent launchers with their folder and state, and
+ * `environment.json`, the manifest the card is printed from.
  */
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -19,7 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { hostLabel, type Plan } from "./plan.js";
+import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { Person, publisherToken, type Scenario } from "./scenario.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
@@ -132,6 +133,14 @@ export const layoutOf = (dir: string, path: Path.Path) => ({
   workspace: path.join(dir, "workspace"),
   browsers: path.join(dir, "browsers"),
   agent: path.join(dir, "agent"),
+  /** Where worker agents start: a folder of their own, empty until they make something. */
+  workers: path.join(dir, "workers"),
+  /** Worker agents' CLI state, which never logs in. */
+  workerCli: path.join(dir, "worker-state", "cli"),
+  /** Codex's home for worker sessions: its `config.toml`, sessions and a link to the login. */
+  codexHome: path.join(dir, "worker-state", "codex"),
+  claudeWorker: path.join(dir, "worker-claude"),
+  codexWorker: path.join(dir, "worker-codex"),
   manifest: path.join(dir, "environment.json")
 });
 type Layout = ReturnType<typeof layoutOf>;
@@ -309,30 +318,82 @@ const ALLOWED_TOOLS = [
   "Bash(wc:*)"
 ];
 
-/** The settings the launcher passes to Claude Code with `--settings`. */
+/** The settings a launcher passes to Claude Code with `--settings`. */
 const encodeAgentSettings = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ claudeMdExcludes: Schema.Array(Schema.String) }))
 );
+
+const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
+/**
+ * `--settings` for a Claude Code launcher. Claude Code loads instruction files
+ * from every folder above its working directory, the developer's HOME among
+ * them, walking up from the resolved path, past any symlink. Excluding every
+ * folder from the environment's up leaves only the working folder's own.
+ */
+const claudeSettings = Effect.fn("claudeSettings")(function* (layout: Layout) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const above: Array<string> = [];
+  for (let dir = yield* fs.realPath(layout.dir); !above.includes(dir); dir = path.dirname(dir))
+    above.push(dir);
+  // Each folder's CLAUDE.md, CLAUDE.local.md and AGENTS.md, those in its
+  // .claude, and its .claude/rules. Claude Code's patterns take no escapes, so
+  // a glob character in a folder's name becomes `?`, matching any one character.
+  return encodeAgentSettings({
+    claudeMdExcludes: above
+      .map((dir) => dir.replace(/[*?[\]{}()\\]/g, "?"))
+      .flatMap((dir) => [
+        path.join(dir, "*.md"),
+        path.join(dir, ".claude", "*.md"),
+        path.join(dir, ".claude", "rules", "**")
+      ])
+  });
+});
+
+/**
+ * What every launcher does before it execs its client: the guard, then a temp
+ * folder of the session's own. The shell's `PATCHY_API_TOKEN` is cleared and
+ * `PATCHY_API_URL` is the environment's instance, so a command in a repo bound
+ * to another one, production included, is refused before anything is sent; an
+ * explicit `--api-url` still wins. `PATCHY_STATE_DIR` is the environment's, so
+ * the developer's `~/.patchy` is never read. `TMPDIR` is a folder made in
+ * `$TMPDIR` or `/tmp`, named for the launcher's pid, which `exec` keeps for the
+ * client; a later launch of any of them deletes the folders whose process is gone.
+ */
+const sessionLines = (
+  layout: Layout,
+  options: { readonly apiUrl: string; readonly state: string; readonly cwd: string }
+) => [
+  "unset PATCHY_API_TOKEN",
+  `export PATCHY_API_URL=${quote(options.apiUrl)}`,
+  `export PATH=${quote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
+  `export PATCHY_STATE_DIR=${quote(options.state)}`,
+  `cd ${quote(options.cwd)} || exit 1`,
+  "# Each session's temp folder is named for its pid, which exec keeps for the client;",
+  "# a later launch deletes the folders whose process is gone.",
+  'for old in "${TMPDIR:-/tmp}"/patchy-agent-*.*; do',
+  "  pid=${old##*/patchy-agent-}; pid=${pid%%.*}",
+  '  case $pid in "" | *[!0-9]*) continue ;; esac',
+  '  [ -O "$old" ] && ! kill -0 "$pid" 2>/dev/null && rm -rf "$old"',
+  "done",
+  'TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/patchy-agent-$$.XXXXXX") || exit 1',
+  "export TMPDIR"
+];
 
 /** The workspace's `CLAUDE.md`: the "folder they name" of the Patchy skill, so new work lands where `down` finds it. */
 const WORKSPACE_INSTRUCTIONS = "Make each new patch or page directly in this folder.\n";
 
 /**
- * The environment's agent: the `agent` launcher, and the workspace's
+ * The environment's builder agent: the `agent` launcher, and the workspace's
  * `CLAUDE.md` unless one exists. `up` writes both every time, and a trial
  * writes this checkout's over each side's.
  *
  * The launcher starts Claude Code in the workspace as a Patchy user who has
  * already set up, with no personal settings, skills, connectors or instruction
- * files. `PATCHY_API_URL` is the environment's instance, so a command in a repo
- * bound to another one, production included, is refused before anything is
- * sent; an explicit `--api-url` still wins. The shell's `PATCHY_API_TOKEN` is
- * cleared, so the environment's login decides as whom it publishes. Claude Code
- * loads instruction files from every folder above its working directory, the
- * developer's HOME among them; those are excluded, so only the workspace's own
- * load. Each session starts clean: auto memory is off, and `TMPDIR` is a folder
- * of its own, made in `$TMPDIR` or `/tmp`, which a later launch deletes once
- * that session has ended. Its commands still run as the developer, with their
+ * files, behind the guard in `sessionLines`; the environment's login decides as
+ * whom it publishes. Each session starts clean: auto memory is off, and its
+ * temp folder is its own. Its commands still run as the developer, with their
  * HOME and npm prefix, so it must never be given the portal's setup line or run
  * `patchy setup`: both write to the developer's own machine, and `down` undoes
  * neither. Permissions come as flags, so the workspace needs no trust prompt.
@@ -345,45 +406,144 @@ export const writeAgent = Effect.fn("writeAgent")(function* (layout: Layout, api
   const instructions = path.join(layout.workspace, "CLAUDE.md");
   if (!(yield* fs.exists(instructions)))
     yield* fs.writeFileString(instructions, WORKSPACE_INSTRUCTIONS);
-  const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-  // Claude Code walks up from the resolved working directory, past any symlink.
-  const above: Array<string> = [];
-  for (let dir = yield* fs.realPath(layout.dir); !above.includes(dir); dir = path.dirname(dir))
-    above.push(dir);
-  // Each folder's CLAUDE.md, CLAUDE.local.md and AGENTS.md, those in its
-  // .claude, and its .claude/rules. Claude Code's patterns take no escapes, so
-  // a glob character in a folder's name becomes `?`, matching any one character.
-  const settings = encodeAgentSettings({
-    claudeMdExcludes: above
-      .map((dir) => dir.replace(/[*?[\]{}()\\]/g, "?"))
-      .flatMap((dir) => [
-        path.join(dir, "*.md"),
-        path.join(dir, ".claude", "*.md"),
-        path.join(dir, ".claude", "rules", "**")
-      ])
-  });
+  const settings = yield* claudeSettings(layout);
   yield* fs.writeFileString(
     layout.agent,
     [
       "#!/usr/bin/env bash",
       "# Claude Code in this Patchy environment's workspace, as a Patchy user who has set up.",
       "# Its commands run as you: never give it the portal's setup line or `patchy setup`.",
-      "unset PATCHY_API_TOKEN",
-      `export PATCHY_API_URL=${quote(apiUrl)}`,
-      `export PATH=${quote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
-      `export PATCHY_STATE_DIR=${quote(layout.state)}`,
+      ...sessionLines(layout, { apiUrl, state: layout.state, cwd: layout.workspace }),
       "export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
-      `cd ${quote(layout.workspace)} || exit 1`,
-      "# Each session's temp folder is named for its pid, which exec keeps for Claude Code;",
-      "# a later launch deletes the folders whose process is gone.",
-      'for old in "${TMPDIR:-/tmp}"/patchy-agent-*.*; do',
-      "  pid=${old##*/patchy-agent-}; pid=${pid%%.*}",
-      '  case $pid in "" | *[!0-9]*) continue ;; esac',
-      '  [ -O "$old" ] && ! kill -0 "$pid" 2>/dev/null && rm -rf "$old"',
-      "done",
-      'TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/patchy-agent-$$.XXXXXX") || exit 1',
-      "export TMPDIR",
       `exec claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir "$TMPDIR" --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
+      ""
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+});
+
+/** Claude Code's `--mcp-config`: the one server a worker session may use. */
+const encodeMcpConfig = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      mcpServers: Schema.Record(
+        Schema.String,
+        Schema.Struct({ type: Schema.Literal("http"), url: Schema.String })
+      )
+    })
+  )
+);
+
+/** A TOML basic string; JSON's escapes are TOML's for every character a path or URL holds. */
+const tomlString = (value: string) => JSON.stringify(value);
+
+/** Each worker client's name for the environment's door: one per worktree, short enough for tool names. */
+export const workerServer = (worktree: string) => `patchy-dev-${worktreeHash(worktree)}`;
+
+/** How `worker-codex` reads the token out of `pnpm dev mcp-token --json`, without printing anything else. */
+const READ_TOKEN = `process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8")).token)`;
+
+/**
+ * The environment's worker agents: people's own agents using its patches
+ * through Patchy MCP at `<instance>/mcp`, as a client of their own would. `up`
+ * writes both launchers every time. Both start in `workers/` behind the guard
+ * in `sessionLines`, with a CLI state that never logs in, so they reach Patchy
+ * only through the door and never with the developer's or the publisher's
+ * login. Both name the door `workerServer(worktree)`.
+ *
+ * `worker-claude` connects through consent: its `/mcp` opens the consent page
+ * in the developer's browser, where they sign in as one of the scenario's
+ * people. It loads only that server, none of the developer's settings, skills,
+ * connectors or instruction files, with auto memory off and Claude Code's own
+ * permission prompts, so it asks before each call as a person's own would.
+ * Claude Code keeps the sign-in in the developer's `~/.claude/.credentials.json`
+ * whatever the config, so the name is per worktree: each later sign-in replaces
+ * that one entry, and `down` leaves it (DEVELOPMENT says why).
+ *
+ * `worker-codex <person>` mints an agent connection for that person with
+ * `pnpm dev mcp-token`, as Codex, and hands its token to Codex in its
+ * environment only. Codex runs on a home of its own: `CODEX_HOME` is the
+ * environment's, whose `config.toml` names only the door and turns off the
+ * account's own apps and plugins, and `HOME` is the session's temp folder, so
+ * none of the developer's config, instructions, skills or shell profile load. The developer's Codex login is linked in, and
+ * Codex writes a refreshed login through the link, into that one file, as
+ * another session of theirs would. With no login of theirs, Codex signs in
+ * inside the environment, and `down` deletes it.
+ *
+ * Arguments pass through to each client, which the launcher execs.
+ */
+export const writeWorkers = Effect.fn("writeWorkers")(function* (
+  layout: Layout,
+  plan: Pick<Plan, "worktree" | "apiUrl">
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const dir of [layout.workers, layout.workerCli, layout.codexHome])
+    yield* fs.makeDirectory(dir, { recursive: true });
+  const server = workerServer(plan.worktree);
+  const door = `${plan.apiUrl}/mcp`;
+  const session = sessionLines(layout, {
+    apiUrl: plan.apiUrl,
+    state: layout.workerCli,
+    cwd: layout.workers
+  });
+  const mcpConfig = encodeMcpConfig({ mcpServers: { [server]: { type: "http", url: door } } });
+  yield* fs.writeFileString(
+    layout.claudeWorker,
+    [
+      "#!/usr/bin/env bash",
+      "# Claude Code as a person's worker agent, using this environment's patches through Patchy MCP.",
+      "# /mcp signs in on the consent page: pick one of the environment's people there.",
+      ...session,
+      "export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+      `exec claude "$@" --setting-sources project --settings ${quote(yield* claudeSettings(layout))} --strict-mcp-config --mcp-config ${quote(mcpConfig)} --permission-mode default --add-dir "$TMPDIR"`,
+      ""
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+  yield* fs.writeFileString(
+    path.join(layout.codexHome, "config.toml"),
+    [
+      "# Codex for this Patchy environment's worker agent, written by `pnpm dev up`.",
+      'cli_auth_credentials_store = "file"',
+      "check_for_update_on_startup = false",
+      "",
+      "# No background server outliving the session, and none of the account's own apps or plugins.",
+      "[features]",
+      "daemon_auto_start = false",
+      "apps = false",
+      "plugins = false",
+      "remote_plugin = false",
+      "",
+      `[projects.${tomlString(layout.workers)}]`,
+      'trust_level = "trusted"',
+      "",
+      `[mcp_servers.${server}]`,
+      `url = ${tomlString(door)}`,
+      'bearer_token_env_var = "PATCHY_MCP_TOKEN"',
+      ""
+    ].join("\n")
+  );
+  yield* fs.writeFileString(
+    layout.codexWorker,
+    [
+      "#!/usr/bin/env bash",
+      "# Codex as a person's worker agent, using this environment's patches through Patchy MCP.",
+      "# worker-codex <person> [codex arguments]: a person's key, email or first name.",
+      'person=${1:?"usage: worker-codex <person> [codex arguments]"}',
+      "shift",
+      ...session,
+      "# The developer's own Codex login, linked so a refresh is written to it; nothing else of theirs.",
+      "own=${CODEX_HOME:-$HOME/.codex}",
+      `export CODEX_HOME=${quote(layout.codexHome)}`,
+      'if [ -f "$own/auth.json" ]; then ln -sfn "$own/auth.json" "$CODEX_HOME/auth.json" || exit 1',
+      'elif [ -L "$CODEX_HOME/auth.json" ]; then rm -f "$CODEX_HOME/auth.json"; fi',
+      `minted=$(cd ${quote(plan.worktree)} && pnpm --silent dev mcp-token "$person" --client Codex --json) || exit 1`,
+      `PATCHY_MCP_TOKEN=$(printf '%s' "$minted" | node -e ${quote(READ_TOKEN)}) || exit 1`,
+      "unset minted",
+      "export PATCHY_MCP_TOKEN",
+      'export HOME="$TMPDIR"',
+      'exec codex "$@"',
       ""
     ].join("\n"),
     { mode: 0o755 }
@@ -553,9 +713,9 @@ const materialize = Effect.fn("materialize")(function* (
 
 /**
  * Builds everything outside the instance, resuming an `up` that stopped
- * halfway. A finished environment only rewrites its agent (`writeAgent`) and moves
- * its CLI and workspace repos to the instance's current release, which changes
- * when bundled code changed.
+ * halfway. A finished environment only rewrites its launchers (`writeAgent`,
+ * `writeWorkers`) and moves its CLI and workspace repos to the instance's
+ * current release, which changes when bundled code changed.
  */
 export const setUp = Effect.fn("Environment.setUp")(function* (
   plan: Plan,
@@ -569,6 +729,7 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   const existing = yield* readManifest(layout);
   if (Option.isSome(existing) && existing.value.complete) {
     yield* writeAgent(layout, plan.apiUrl);
+    yield* writeWorkers(layout, plan);
     if (existing.value.release === release) return existing.value;
     yield* Console.error("The instance's release changed; updating the CLI and workspace repos.");
     yield* installCli(layout, release);
@@ -604,6 +765,7 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   );
   yield* writeWorkspace(layout);
   yield* writeAgent(layout, plan.apiUrl);
+  yield* writeWorkers(layout, plan);
   // Repos published before an interruption are bound to the release they were
   // built on; move them to this one before the manifest records it.
   if (started.release !== release)
@@ -634,6 +796,8 @@ export const printCard = (manifest: Manifest, layout: Layout) => {
       ...(patches.length === 0 ? [] : ["", "  Patches", ...patches]),
       "",
       `  Agent        ${layout.agent}`,
+      `  Workers      ${layout.claudeWorker}  (Claude Code; /mcp signs in on the consent page)`,
+      `               ${layout.codexWorker} <person>  (Codex, as that person)`,
       `  Workspace    ${layout.workspace}`,
       "  End          pnpm dev down"
     ].join("\n")
