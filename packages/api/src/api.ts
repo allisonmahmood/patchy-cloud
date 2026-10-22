@@ -233,7 +233,9 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The agent area check runs on the inspected `agent.*` handlers marked as agent tools: a tool with no " +
           "description, `t.upload()` or `t.fileHandle()` anywhere in its arguments or result, and tools whose " +
           "`open_patch` rendering, rows expanded, exceeds 60 KiB of UTF-8 are `invalid_manifest`, naming the tool " +
-          "and the fix. A row naming a table the manifest doesn't define is `invalid_manifest` naming the handler " +
+          "and the fix. So is an `agent.*` handler without the agent tool mark, which only `server/agent.ts` " +
+          "builds; read from an older version it stays a page handler. A row naming a table the manifest " +
+          "doesn't define is `invalid_manifest` naming the handler " +
           "(an agent tool by its tool name), as is any manifest-wide check, in its own words. Undescribed " +
           "top-level agent tool arguments warn, and so does a version with agent tools while the company's agent " +
           "access is off, naming where an admin turns it on. `handlers` lists agent tools as `agent.<export>` with " +

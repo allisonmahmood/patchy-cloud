@@ -106,7 +106,8 @@ The agent area check refuses an agent tool with no description, an upload or
 file handle in its arguments or result, a row naming an undefined table, and
 tools that don't fit 60 KiB of `open_patch`'s 64 KiB answer, each as
 `invalid_manifest` with its fix: exit 1 from dev builds and before sending,
-naming the file, and exit 2 from the instance, naming the tool. Undescribed
+naming the file, and exit 2 from the instance, naming the tool; the instance
+also refuses an unmarked `agent.*` handler, as `server/agent.ts` builds. Undescribed
 top-level tool arguments warn at publish. A publish with agent tools prints
 `Agent tools: <tool> (read|change), …. People's agents use these through
 Patchy's MCP at <instance>/mcp.`, from the manifest it sent; its JSON adds no

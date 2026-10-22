@@ -97,7 +97,7 @@ One export of an agent area: a described query, mutation or action that a worker
 _Avoid_: MCP tool (Patchy MCP's four fixed tools), endpoint
 
 **Agent area check**:
-The one shared check of a patch's agent tools that watched dev builds and publish run before sending and the instance runs on the stored bundle: each tool described, JSON only, rows naming defined tables, and all the tools fitting 60 KiB of the `open_patch` answer an agent reads. The CLI's refusals name the file, the instance's the tool.
+The one shared check of a patch's agent tools that watched dev builds and publish run before sending and the instance runs on the stored bundle: no `agent.*` handler without the agent tool mark, each tool described, JSON only, rows naming defined tables, and all the tools fitting 60 KiB of the `open_patch` answer an agent reads. The CLI's refusals name the file, the instance's the tool.
 _Avoid_: MCP validation, tool lint
 
 **Read-only action**:

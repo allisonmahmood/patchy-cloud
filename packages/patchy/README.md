@@ -1088,7 +1088,8 @@ on the instance. It refuses an agent tool with no description, `t.upload()` or
 the patch doesn't define, and tools that don't fit 60 KiB of the 64 KiB
 `open_patch` answer people's agents read, measured with rows expanded. Each is
 `invalid_manifest` with its fix: exit 1 locally, naming the tool's file, and
-exit 2 from the instance, naming the tool. A failed dev build keeps serving the
+exit 2 from the instance, naming the tool. The instance also refuses the
+unmarked `agent.*` handlers a hand-rolled `server/agent.ts` publish carries. A failed dev build keeps serving the
 last good binding. Publish warns about undescribed top-level tool arguments. A
 publish with agent tools adds a line built from the manifest it sent, such as
 `Agent tools: addLead (change), listDeals (read). People's agents use these

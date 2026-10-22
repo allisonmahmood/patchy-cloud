@@ -177,8 +177,8 @@ export const descriptionFailure = (
 };
 
 /**
- * The build's refusal from the agent area check the instance also runs, naming the tool's file;
- * the size refusal belongs to the whole folder. Its argument warnings come back from publish.
+ * The build's refusal from the agent area check the instance also runs, naming the tool's file.
+ * Its argument warnings come back from publish.
  */
 export const agentAreaFailure = (
   manifest: Pick<typeof Manifest.Type, "tables" | "handlers">,
@@ -187,7 +187,8 @@ export const agentAreaFailure = (
   const { problem } = checkAgentArea(manifest);
   if (problem === undefined) return undefined;
   const refusal = agentAreaRefusal(problem);
-  return problem._tag === "TooLarge"
+  // The size belongs to the whole folder, and server/agent.ts is refused before any build.
+  return problem._tag === "TooLarge" || problem._tag === "ServerAgentModule"
     ? refusal
     : `${agentFile(agentTools, problem.tool)}: ${refusal}`;
 };

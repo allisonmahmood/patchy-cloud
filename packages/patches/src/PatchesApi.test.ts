@@ -3186,6 +3186,59 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
   );
 
   it.effect(
+    "refuses an unmarked agent.* handler, as server/agent.ts builds, naming it and the fix",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        // The CLI refuses server/agent.ts before building; a hand-rolled publish skips that.
+        const built = yield* Effect.promise(() =>
+          build({
+            stdin: {
+              contents: `import { createGuest, query, t } from "patchy/server";
+                export default createGuest({
+                  agent: { listDeals: query({ description: "Lists deals.", args: {}, result: t.text(), handler: async () => "deals" }) }
+                });`,
+              resolveDir: new URL("../../patchy", import.meta.url).pathname,
+              sourcefile: "server-agent-module.ts"
+            },
+            bundle: true,
+            write: false,
+            platform: "browser",
+            format: "esm",
+            target: "es2022",
+            conditions: ["development"]
+          })
+        );
+        const refused = yield* api.publish({
+          payload: publishRequest({
+            html: html("Server agent module"),
+            server: built.outputFiles[0]!.text,
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2 as const,
+              handlers: {
+                "agent.listDeals": {
+                  kind: "query" as const,
+                  description: "Lists deals.",
+                  args: {},
+                  result: { kind: "text" as const }
+                }
+              }
+            }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(refused.status, 422);
+        assert.deepInclude(yield* refused.json, {
+          code: "invalid_manifest",
+          error:
+            "agent.listDeals comes from server/agent.ts. Agent tools live in agent/; move these exports there."
+        });
+      }),
+    30_000
+  );
+
+  it.effect(
     "warns about undescribed arguments, and that no agent can use the tools while access is off",
     () =>
       Effect.gen(function* () {

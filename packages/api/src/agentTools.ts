@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import {
   agentToolName,
   handlerValues,
+  serverAgentModuleFix,
   unknownRowRefusal,
   type HandlerDescriptor,
   type HandlerDescriptors,
@@ -182,7 +183,9 @@ export const agentToolEntries = (
   Object.entries(handlers ?? {})
     .filter(([, descriptor]) => descriptor.agentTool === true)
     .map(([handler, descriptor]) => [agentToolName(handler), descriptor] as const)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    .sort(([left], [right]) => byCodeUnit(left, right));
+
+const byCodeUnit = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
 /** One tool as `open_patch` shows it. `refusals` lists the tool's declared error codes. */
 export interface AgentTool {
@@ -271,8 +274,8 @@ const jsonBytes = (value: unknown, counted = new WeakMap<object, number>()): num
 };
 
 /**
- * The agent area check's refusal. Each names the tool; the CLI adds the file, and the size
- * belongs to the whole area.
+ * The agent area check's refusal. Each names the tool, or the handler `server/agent.ts` built;
+ * the CLI adds a tool's file, and the size belongs to the whole area.
  */
 export const AgentAreaProblem = Schema.Union([
   Schema.TaggedStruct("Undescribed", { tool: Schema.String }),
@@ -286,7 +289,9 @@ export const AgentAreaProblem = Schema.Union([
     value: Schema.String,
     table: Schema.String
   }),
-  Schema.TaggedStruct("TooLarge", { bytes: Schema.Number })
+  Schema.TaggedStruct("TooLarge", { bytes: Schema.Number }),
+  /** An `agent.*` handler without the agent tool mark, which only `server/agent.ts` builds. */
+  Schema.TaggedStruct("ServerAgentModule", { handler: Schema.String })
 ]);
 export type AgentAreaProblem = typeof AgentAreaProblem.Type;
 
@@ -299,6 +304,8 @@ export const agentAreaRefusal = (problem: AgentAreaProblem): string => {
       return `${problem.tool} uses t.${problem.uses}() in ${problem.value}. Agent tools exchange JSON only; files stay on the page.`;
     case "UnknownTable":
       return unknownRowRefusal(problem.tool, problem.value, problem.table);
+    case "ServerAgentModule":
+      return `${problem.handler} comes from server/agent.ts. ${serverAgentModuleFix}`;
     case "TooLarge":
       return `An agent reads all of this patch's tools in one answer of at most ${openPatchBytes / 1024} KiB, and the tools get ${agentToolsBytes / 1024} KiB of it; yours come to ${Math.ceil(problem.bytes / 1024)} KiB. Shorten descriptions or drop tools.`;
   }
@@ -322,13 +329,22 @@ const toolProblem = (
 /**
  * The agent area check, run by the CLI in watched dev builds and before sending a publish, and
  * by the instance on the descriptors it inspects from the stored bundle. Description length is
- * `descriptionProblem`'s, for every handler. Tools are checked in name order, so both report the
- * same first problem. `warnings` name undescribed top-level arguments, at publish only.
+ * `descriptionProblem`'s, for every handler. An unmarked `agent.*` handler is refused first, then
+ * tools are checked in name order, so both report the same first problem. `warnings` name
+ * undescribed top-level arguments, at publish only.
  */
 export const checkAgentArea = (manifest: {
   readonly tables: Tables;
   readonly handlers?: HandlerDescriptors;
 }): { readonly problem?: AgentAreaProblem; readonly warnings: readonly string[] } => {
+  // Only server/agent.ts builds an agent.* handler without the mark. Read from an older version
+  // it stays a page handler; a new version is refused.
+  const [unmarked] = Object.entries(manifest.handlers ?? {})
+    .filter(([name, descriptor]) => name.startsWith("agent.") && descriptor.agentTool !== true)
+    .map(([name]) => name)
+    .sort(byCodeUnit);
+  if (unmarked !== undefined)
+    return { problem: { _tag: "ServerAgentModule", handler: unmarked }, warnings: [] };
   const entries = agentToolEntries(manifest.handlers);
   for (const [tool, descriptor] of entries) {
     const problem = toolProblem(tool, descriptor, manifest.tables);

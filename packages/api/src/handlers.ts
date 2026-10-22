@@ -260,6 +260,9 @@ export const handlerKinds = (
     Object.entries(handlers ?? {}).map(([name, descriptor]) => [name, descriptor.kind])
   );
 
+/** How to fix `server/agent.ts`, whose handlers would clash with the agent area's names. */
+export const serverAgentModuleFix = "Agent tools live in agent/; move these exports there.";
+
 /** An agent tool's name: its export, the handler name after `agent.`. */
 export const agentToolName = (handler: string) => handler.slice("agent.".length);
 

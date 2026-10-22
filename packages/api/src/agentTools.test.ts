@@ -228,6 +228,21 @@ describe("the agent area check", () => {
     ).toEqual({ warnings: [] });
   });
 
+  it("refuses an unmarked agent.* handler, which only server/agent.ts builds", () => {
+    const legacy = { kind: "query" as const, args: {}, result: { kind: "boolean" as const } };
+    const cases: readonly HandlerDescriptors[] = [
+      { "agent.listDeals": legacy },
+      { "agent.listDeals": legacy, "agent.addLead": tool({ kind: "mutation" }) }
+    ];
+    for (const handlers of cases) {
+      const { problem } = area(handlers);
+      expect(problem).toEqual({ _tag: "ServerAgentModule", handler: "agent.listDeals" });
+      expect(agentAreaRefusal(problem!)).toBe(
+        "agent.listDeals comes from server/agent.ts. Agent tools live in agent/; move these exports there."
+      );
+    }
+  });
+
   it("refuses each problem with its fix, in tool name order", () => {
     const cases: ReadonlyArray<readonly [HandlerDescriptors, string]> = [
       [
