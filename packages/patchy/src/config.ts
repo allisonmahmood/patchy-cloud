@@ -29,7 +29,7 @@ export type ValueDescriptor = (
   | { readonly kind: "nullable"; readonly value: ValueDescriptor }
   | { readonly kind: "row"; readonly table: string }
   | { readonly kind: "fileHandle" | "upload" }
-) & { readonly optional?: true };
+) & { readonly optional?: true; readonly description?: string };
 type ColumnDescriptor<
   K extends ColumnKind,
   Optional extends boolean,
@@ -46,7 +46,7 @@ export type Descriptor = (
   | { readonly kind: "enum"; readonly values: readonly string[] }
   | { readonly kind: "nullable"; readonly value: Descriptor }
   | { readonly kind: "fileHandle" | "upload" }
-) & { readonly optional?: true; readonly default?: unknown };
+) & { readonly optional?: true; readonly default?: unknown; readonly description?: string };
 export interface SchemaInput {
   readonly isOptional: boolean;
   toJSON(): Descriptor;
@@ -67,6 +67,13 @@ export class ValueSchema<D extends object, Optional extends boolean = false> {
 
   optional(this: ValueSchema<D, false>): ValueSchema<D, true> {
     return new ValueSchema(this.descriptor, true);
+  }
+
+  /** What an agent reads about this value: nonblank, at most 2,000 characters. */
+  describe<const Text extends string>(
+    text: NonEmptyString<Text>
+  ): ValueSchema<D & { readonly description: string }, Optional> {
+    return new ValueSchema({ ...this.descriptor, description: text }, this.isOptional);
   }
 
   toJSON(): D & (Optional extends true ? { readonly optional: true } : unknown) {
@@ -128,6 +135,27 @@ export class Column<
     if (value === null || value === undefined)
       throw new Error("A default cannot be null or undefined.");
     return new Column(this.kind, false, true, this.table, value);
+  }
+
+  /**
+   * Describes a handler value. The result is no longer a column: table columns take no
+   * description, since their table's description covers them.
+   */
+  describe<const Text extends string>(
+    this: Column<K, Optional, false, Target>,
+    text: NonEmptyString<Text>
+  ): ValueSchema<
+    ColumnDescriptor<K, false, false, Target> & { readonly description: string },
+    Optional
+  > {
+    return new ValueSchema(
+      {
+        kind: this.kind,
+        ...(this.kind === "ref" ? { table: this.table } : {}),
+        description: text
+      } as ColumnDescriptor<K, false, false, Target> & { readonly description: string },
+      this.isOptional
+    );
   }
 
   /** Only JSON descriptors cross the process and wire boundary. */

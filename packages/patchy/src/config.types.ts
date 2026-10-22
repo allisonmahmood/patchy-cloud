@@ -200,6 +200,10 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   table("Notes identified by id.", { nested: t.object({ title: t.text() }) });
   // @ts-expect-error file handles are handler results, not table columns
   table("Notes identified by id.", { file: t.fileHandle() });
+  // @ts-expect-error table columns take no description; the table's covers them
+  table("Notes identified by id.", { title: t.text().describe("The note's title.") });
+  // @ts-expect-error an optional column takes no description either
+  table("Notes identified by id.", { title: t.text().optional().describe("The note's title.") });
   // @ts-expect-error composite schemas have no table default modifier
   t.object({ title: t.text() }).default({});
   return {

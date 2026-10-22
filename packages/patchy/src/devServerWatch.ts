@@ -1,4 +1,4 @@
-import type { HandlerDescriptors, ReleaseToolchain } from "@patchy/api";
+import { descriptionProblem, type HandlerDescriptors, type ReleaseToolchain } from "@patchy/api";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -185,7 +185,18 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
                   "Could not inspect the server bundle. Its modules must load and export only valid handlers; the last successful binding stays served.",
                 cause
               })
-          )
+          ),
+          Effect.flatMap((handlers) => {
+            const problem = descriptionProblem(handlers);
+            return problem === undefined
+              ? Effect.succeed(handlers)
+              : Effect.fail(
+                  new LocalError({
+                    code: "invalid_manifest",
+                    message: `${problem} The last successful binding stays served.`
+                  })
+                );
+          })
         )
       };
     }

@@ -18,7 +18,8 @@ import {
   type MutationBuilder,
   type MutationContext as BoundMutationContext,
   type QueryBuilder,
-  type QueryContext as BoundQueryContext
+  type QueryContext as BoundQueryContext,
+  type ReadOnlyActionContext as BoundReadOnlyActionContext
 } from "./server.js";
 import type * as leads from "./server.types.js";
 
@@ -58,3 +59,9 @@ export const action: ActionBuilder<typeof config, ServerModules, Shared, Connect
 export type QueryContext = BoundQueryContext<typeof config, Shared>;
 export type MutationContext = BoundMutationContext<typeof config>;
 export type ActionContext = BoundActionContext<typeof config, ServerModules, Shared, Connections>;
+export type ReadOnlyActionContext = BoundReadOnlyActionContext<
+  typeof config,
+  ServerModules,
+  Shared,
+  Connections
+>;

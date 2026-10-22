@@ -445,7 +445,7 @@ it.live(
 );
 
 it.live(
-  "loads a hand-built bundle with descriptions, holds its read-only action to reads and keeps its agent tool from pages",
+  "loads an SDK-built bundle with descriptions, holds its read-only action to reads and keeps its agent tool from pages",
   () =>
     Effect.gen(function* () {
       const platform = yield* SqlClient.SqlClient;
@@ -484,27 +484,26 @@ it.live(
       const listener = yield* CallbackGatewayApi.listen().pipe(
         Effect.provideService(CallbackGateway.CallbackGateway, gateway)
       );
-      // Nothing writes these fields yet, so each handler's descriptor is extended by hand.
-      const descriptors = JSON.stringify(marked.manifest.handlers);
+      // The SDK writes descriptions and the read-only flag; the agent tool mark comes only from
+      // a build of agent/, so it is added by hand.
       const source = yield* Effect.promise(
         async () =>
           (
             await build({
               stdin: {
                 contents: `import { query, mutation, action, createGuest, t } from "patchy/server";
-      const described = ${descriptors};
-      const as = (name, handler) => ({ ...handler, descriptor: described[name] });
-      const viewer = query({args:{},result:t.json(),handler:async ctx => ctx.viewer.user.id});
+      const tool = (handler) => ({ ...handler, descriptor: { ...handler.descriptor, agentTool: true } });
+      const viewer = (description) => query({...description,args:{},result:t.json(),handler:async ctx => ctx.viewer.user.id});
       export default createGuest({
         demo: {
-          viewer: as("demo.viewer", viewer),
-          save: as("demo.save", mutation({args:{},result:t.json(),handler:async () => "saved"})),
-          peek: as("demo.peek", action({args:{},result:t.json(),handler:async ctx => ctx.tables.notes.insert({title:"forced"})})),
-          peekSave: as("demo.peekSave", action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.save({})})),
-          peekRead: as("demo.peekRead", action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.viewer({})})),
-          reach: as("demo.reach", action({args:{},result:t.json(),handler:async ctx => ctx.run.agent.lookup({})}))
+          viewer: query({description:"Who is looking.",args:{},result:t.json().describe("Their user id."),handler:async ctx => ctx.viewer.user.id}),
+          save: mutation({args:{},result:t.json(),handler:async () => "saved"}),
+          peek: action({readOnly:true,args:{},result:t.json(),handler:async ctx => ctx.tables.notes.insert({title:"forced"})}),
+          peekSave: action({readOnly:true,args:{},result:t.json(),handler:async ctx => ctx.run.demo.save({})}),
+          peekRead: action({readOnly:true,args:{},result:t.json(),handler:async ctx => ctx.run.demo.viewer({})}),
+          reach: action({args:{},result:t.json(),handler:async ctx => ctx.run.agent.lookup({})})
         },
-        agent: { lookup: as("agent.lookup", viewer), legacy: as("agent.legacy", viewer) }
+        agent: { lookup: tool(viewer({description:"Looks the viewer up, for agents."})), legacy: viewer({}) }
       });`,
                 resolveDir: new URL("../../patchy", import.meta.url).pathname,
                 sourcefile: "agent-area-invocation-fixture.ts"

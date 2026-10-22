@@ -9,7 +9,7 @@ export function generateServer(options: ServerTemplateOptions): string {
   const imports = [
     'import type config from "../../patchy.config.js";',
     'import { bindServer } from "patchy/server";',
-    'import type { QueryBuilder, MutationBuilder, ActionBuilder, QueryContext as BoundQueryContext, MutationContext as BoundMutationContext, ActionContext as BoundActionContext } from "patchy/server";'
+    'import type { QueryBuilder, MutationBuilder, ActionBuilder, QueryContext as BoundQueryContext, MutationContext as BoundMutationContext, ActionContext as BoundActionContext, ReadOnlyActionContext as BoundReadOnlyActionContext } from "patchy/server";'
   ];
   const modules = [...new Set(options.modules)].sort();
   for (const [index, module] of modules.entries()) {
@@ -39,6 +39,7 @@ export const action: ActionBuilder<typeof config, ServerModules, Shared, Connect
 export type QueryContext = BoundQueryContext<typeof config, Shared>;
 export type MutationContext = BoundMutationContext<typeof config>;
 export type ActionContext = BoundActionContext<typeof config, ServerModules, Shared, Connections>;
+export type ReadOnlyActionContext = BoundReadOnlyActionContext<typeof config, ServerModules, Shared, Connections>;
 export { HandlerError, t } from "patchy/server";
 `;
 }

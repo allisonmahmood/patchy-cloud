@@ -10,6 +10,7 @@ import {
   Manifest,
   RuntimeReply,
   RuntimeRequest,
+  descriptionProblem,
   handlerArgsSchema,
   handlerValueSchema,
   HandlerSchema
@@ -155,6 +156,64 @@ describe("handler descriptors", () => {
     expect(decodeHandlers({ "agent.list": { ...query, agentTool: true } })._tag).toBe("Success");
     for (const name of ["leads.list", "agents.list", "agentx.list"])
       expect(decodeHandlers({ [name]: { ...query, agentTool: true } })._tag).toBe("Failure");
+  });
+
+  it("refuses a blank or over-long description anywhere, naming where and how to fix it", () => {
+    const long = "é".repeat(2_000);
+    const described = {
+      "leads.peek": {
+        kind: "action" as const,
+        description: long,
+        readOnly: true as const,
+        args: {
+          filter: {
+            kind: "nullable" as const,
+            value: {
+              kind: "object" as const,
+              fields: { ids: { kind: "array" as const, element: { kind: "text" as const } } }
+            }
+          }
+        },
+        result: { kind: "integer" as const, description: "How many matched." }
+      }
+    };
+    expect(descriptionProblem(described)).toBeUndefined();
+    expect(
+      descriptionProblem({ "leads.peek": { ...described["leads.peek"], description: " \n" } })
+    ).toBe("leads.peek's description is blank. Say what it does, or leave the description out.");
+    // Code points, not UTF-16 units: one astral character is one.
+    expect(
+      descriptionProblem({ "leads.peek": { ...query, description: `${"😀".repeat(2_000)}x` } })
+    ).toBe(
+      "leads.peek's description is 2,001 characters; descriptions are at most 2,000. Shorten it."
+    );
+    const nested = (description: string) => ({
+      "leads.peek": {
+        ...query,
+        args: {
+          filter: {
+            kind: "nullable" as const,
+            value: {
+              kind: "object" as const,
+              fields: {
+                ids: { kind: "array" as const, element: { kind: "text" as const, description } }
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(descriptionProblem(nested(""))).toBe(
+      "leads.peek's description of args.filter.ids[] is blank. Say what it holds, or remove its .describe()."
+    );
+    expect(descriptionProblem(nested(`${long}e`))).toMatch(
+      /^leads\.peek's description of args\.filter\.ids\[\] is 2,001 characters;/
+    );
+    expect(
+      descriptionProblem({
+        "leads.peek": { ...query, result: { kind: "boolean", description: "\t" } }
+      })
+    ).toMatch(/^leads\.peek's description of result is blank\./);
   });
 
   it("rejects table-only modifiers and misplaced capabilities at every nesting depth", () => {
