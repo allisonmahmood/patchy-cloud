@@ -15,9 +15,9 @@
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { isIP } from "node:net";
 import type { Duplex } from "node:stream";
-import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -87,6 +87,8 @@ export class ClientDocumentsBusy extends Schema.TaggedError<ClientDocumentsBusy>
   }
 }
 
+type LoadFailure = ClientDocumentRefused | ClientDocumentUnavailable | ClientDocumentsBusy;
+
 /** An accepted document: what consent shows and where its answer may go. */
 export interface ClientDocument {
   /** The document's URL, which is the client's id. */
@@ -102,12 +104,7 @@ export class ClientDocuments extends Context.Service<
   ClientDocuments,
   {
     /** The accepted document `clientId` names, kept or fetched under the rules above. */
-    readonly load: (
-      clientId: string
-    ) => Effect.Effect<
-      ClientDocument,
-      ClientDocumentRefused | ClientDocumentUnavailable | ClientDocumentsBusy
-    >;
+    readonly load: (clientId: string) => Effect.Effect<ClientDocument, LoadFailure>;
   }
 >()("@patchy/auth/ClientDocuments") {}
 
@@ -126,10 +123,19 @@ const fetchable = (clientId: string): URL | undefined => {
   return url;
 };
 
-/** Plain http back to this computer, as written without its port; otherwise undefined. */
+/**
+ * Plain http back to this computer, without its port, when written as the URL parser writes it;
+ * otherwise undefined. Only the port may vary, so a host or path the parser would rewrite, such
+ * as `LOCALHOST` or `/a/../callback`, matches nothing.
+ */
 const loopback = (uri: string): string | undefined => {
   const url = URL.parse(uri);
-  if (url === null || url.protocol !== "http:" || !LOOPBACK_HOSTS.has(url.hostname))
+  if (
+    url === null ||
+    url.href !== uri ||
+    url.protocol !== "http:" ||
+    !LOOPBACK_HOSTS.has(url.hostname)
+  )
     return undefined;
   url.port = "";
   return url.href;
@@ -146,17 +152,24 @@ export const redirectAllowed = (document: ClientDocument, redirectUri: string): 
   if (url === null || redirectUri.includes("#") || url.username !== "" || url.password !== "")
     return false;
   if (url.protocol === "https:") return document.redirectUris.includes(redirectUri);
-  const requested = url.href === redirectUri ? loopback(redirectUri) : undefined;
+  const requested = loopback(redirectUri);
   return (
     requested !== undefined &&
     document.redirectUris.some((listed) => loopback(listed) === requested)
   );
 };
 
+/** A redirect URI a document may list: absolute, without a fragment. */
+const RedirectUri = Schema.String.check(
+  Schema.makeFilter((uri) => URL.canParse(uri) && !uri.includes("#"), {
+    expected: "an absolute URI without a fragment"
+  })
+);
+
 const Metadata = Schema.Struct({
   client_id: Schema.String,
-  client_name: Schema.optionalKey(Schema.String),
-  redirect_uris: Schema.NonEmptyArray(Schema.String),
+  client_name: Schema.String,
+  redirect_uris: Schema.NonEmptyArray(RedirectUri),
   token_endpoint_auth_method: Schema.optionalKey(Schema.String),
   token_endpoint_auth_methods_supported: Schema.optionalKey(Schema.Array(Schema.String))
 });
@@ -184,7 +197,7 @@ const accept = Effect.fnUntraced(function* (url: URL, body: Uint8Array) {
     return yield* new ClientDocumentRefused({ reason: "auth_method", site });
   return {
     clientId: url.href,
-    name: clientName(document.client_name ?? "", url.href),
+    name: clientName(document.client_name, url.href),
     site,
     redirectUris: document.redirect_uris
   } satisfies ClientDocument;
@@ -198,7 +211,8 @@ const header = (headers: IncomingHttpHeaders, name: string) => {
 /**
  * How long a response may be kept, in milliseconds, at most `lifetime`: `no-store` and
  * `no-cache` keep nothing, a `max-age` sets it, `Expires` less `Date` sets it otherwise, and
- * `Age` counts against it. A malformed or repeated `max-age` keeps nothing.
+ * `lifetime` does when neither is sent; `Age` counts against all three. A malformed or repeated
+ * `max-age` keeps nothing.
  */
 const freshness = (headers: IncomingHttpHeaders, now: number, lifetime: number): number => {
   const directives = (header(headers, "cache-control") ?? "")
@@ -215,9 +229,9 @@ const freshness = (headers: IncomingHttpHeaders, now: number, lifetime: number):
     fresh = Number(seconds) * 1_000;
   } else {
     const expires = header(headers, "expires");
-    if (expires === undefined) return lifetime;
     const date = Date.parse(header(headers, "date") ?? "");
-    fresh = Date.parse(expires) - (Number.isNaN(date) ? now : date);
+    fresh =
+      expires === undefined ? lifetime : Date.parse(expires) - (Number.isNaN(date) ? now : date);
     if (Number.isNaN(fresh)) return 0;
   }
   const age = /^\d+$/.test(header(headers, "age") ?? "") ? Number(headers.age) * 1_000 : 0;
@@ -287,6 +301,7 @@ export const make = Effect.gen(function* () {
   const deployment = yield* DeploymentConfig.load;
   const perMinute = deployment.get("oauth.clientDocuments.perMinute");
   const lifetime = deployment.get("oauth.clientDocuments.lifetime");
+  const entries = deployment.get("oauth.clientDocuments.entries");
 
   const fetchDocument = (url: URL) =>
     Effect.gen(function* () {
@@ -315,33 +330,68 @@ export const make = Effect.gen(function* () {
       })
     );
 
-  // A miss starts a fetch; a hit spends nothing. The cache shares a fetch in flight with every
-  // load of the same URL, and keeps a success only as long as `kept` says.
-  const cache = yield* Cache.makeWith(
-    Effect.fn("ClientDocuments.fetch")(function* (clientId: string) {
-      const url = new URL(clientId);
-      const admitted = yield* limits.consume({
-        key: "oauth.clientDocuments",
-        limit: perMinute,
-        window: Duration.minutes(1)
-      });
-      if (!admitted.allowed)
-        return yield* new ClientDocumentsBusy({ retryAfterSeconds: admitted.retryAfterSeconds });
-      const fetched = yield* fetchDocument(url);
-      const document = yield* accept(url, fetched.body);
-      const kept = freshness(fetched.headers, yield* Clock.currentTimeMillis, lifetime);
-      return { document, kept };
-    }),
-    {
-      capacity: deployment.get("oauth.clientDocuments.entries"),
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? exit.value.kept : 0)
+  const scope = yield* Effect.scope;
+
+  // Accepted documents, least recently used first, and the one fetch running for each URL. A
+  // running fetch isn't an entry, so keeping documents never evicts it.
+  const kept = new Map<string, { readonly document: ClientDocument; readonly expiresAt: number }>();
+  const running = new Map<string, Deferred.Deferred<ClientDocument, LoadFailure>>();
+
+  /** Starts a fetch if the minute allows one, and keeps what it accepts as its headers say. */
+  const fetchAndKeep = Effect.fn("ClientDocuments.fetch")(function* (url: URL) {
+    const admitted = yield* limits.consume({
+      key: "oauth.clientDocuments",
+      limit: perMinute,
+      window: Duration.minutes(1)
+    });
+    if (!admitted.allowed)
+      return yield* new ClientDocumentsBusy({ retryAfterSeconds: admitted.retryAfterSeconds });
+    // Freshness counts from the request, so time spent fetching counts against it.
+    const started = yield* Clock.currentTimeMillis;
+    const fetched = yield* fetchDocument(url);
+    const document = yield* accept(url, fetched.body);
+    const fresh = freshness(fetched.headers, started, lifetime);
+    if (fresh > 0) {
+      kept.set(url.href, { document, expiresAt: started + fresh });
+      for (const oldest of kept.keys()) {
+        if (kept.size <= entries) break;
+        kept.delete(oldest);
+      }
     }
-  );
+    return document;
+  });
 
   const load = Effect.fn("ClientDocuments.load")(function* (clientId: string) {
-    if (fetchable(clientId) === undefined)
-      return yield* new ClientDocumentRefused({ reason: "client_id_url" });
-    return (yield* Cache.get(cache, clientId)).document;
+    const url = fetchable(clientId);
+    if (url === undefined) return yield* new ClientDocumentRefused({ reason: "client_id_url" });
+    const now = yield* Clock.currentTimeMillis;
+    // One synchronous step, so no other load acts on this URL between the look and the claim.
+    const found = yield* Effect.sync(() => {
+      const hit = kept.get(clientId);
+      kept.delete(clientId);
+      if (hit !== undefined && now < hit.expiresAt) {
+        kept.set(clientId, hit);
+        return { kind: "kept", document: hit.document } as const;
+      }
+      const fetching = running.get(clientId);
+      if (fetching !== undefined) return { kind: "running", fetching } as const;
+      const started = Deferred.makeUnsafe<ClientDocument, LoadFailure>();
+      running.set(clientId, started);
+      return { kind: "starts", fetching: started } as const;
+    });
+    if (found.kind === "kept") return found.document;
+    // The fetch belongs to the service, not this load, so it finishes for everyone waiting.
+    if (found.kind === "starts")
+      yield* fetchAndKeep(url).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            running.delete(clientId);
+            Deferred.doneUnsafe(found.fetching, exit);
+          })
+        ),
+        Effect.forkIn(scope)
+      );
+    return yield* Deferred.await(found.fetching);
   });
 
   return ClientDocuments.of({ load });

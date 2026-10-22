@@ -36,11 +36,10 @@ export const preflight = HttpServerResponse.empty({
   }
 });
 
-/** The token endpoint clients are told: a dev environment's host becomes `127.0.0.1`. */
-const tokenEndpoint = (publicUrl: URL) => {
+/** The token endpoint clients are told: a dev instance's is on `127.0.0.1`, where it listens. */
+const tokenEndpoint = (publicUrl: URL, dev: boolean) => {
   const url = new URL("/oauth/token", publicUrl);
-  if (url.hostname === "localhost" || url.hostname.endsWith(".localhost"))
-    url.hostname = "127.0.0.1";
+  if (dev) url.hostname = "127.0.0.1";
   return url.href;
 };
 
@@ -64,7 +63,7 @@ export const layer = HttpRouter.use((router) =>
       {
         issuer: base,
         authorization_endpoint: `${base}/oauth/authorize`,
-        token_endpoint: tokenEndpoint(publicUrl),
+        token_endpoint: tokenEndpoint(publicUrl, dev),
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
         code_challenge_methods_supported: ["S256"],

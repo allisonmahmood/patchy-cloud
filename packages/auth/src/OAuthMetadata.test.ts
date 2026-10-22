@@ -115,7 +115,8 @@ it.effect("on a dev instance, has no CORS and sends tokens to 127.0.0.1", () =>
     for (const [base, tokenEndpoint] of [
       ["http://patchy-abc.localhost:29276", "http://127.0.0.1:29276/oauth/token"],
       ["http://localhost:29276", "http://127.0.0.1:29276/oauth/token"],
-      ["http://127.0.0.1:29276", "http://127.0.0.1:29276/oauth/token"]
+      ["http://127.0.0.1:29276", "http://127.0.0.1:29276/oauth/token"],
+      ["http://[::1]:29276", "http://127.0.0.1:29276/oauth/token"]
     ] as const) {
       const server = yield* send(base, SERVER, { headers: { origin: "https://claude.ai" } });
       const metadata = yield* Effect.promise(() => server.json());

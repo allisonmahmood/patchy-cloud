@@ -172,6 +172,9 @@ describe("accepting a document", () => {
         agentDocument({ redirect_uris: "https://agent.example/callback" }).body,
         agentDocument({ redirect_uris: ["https://agent.example/callback", 7] }).body,
         agentDocument({ client_name: 7 }).body,
+        agentDocument({ client_name: undefined }).body,
+        agentDocument({ redirect_uris: ["https://agent.example/callback", "not a uri"] }).body,
+        agentDocument({ redirect_uris: ["https://agent.example/callback#x"] }).body,
         agentDocument({ token_endpoint_auth_methods_supported: "none" }).body,
         // Invalid UTF-8 is refused, not replaced.
         Buffer.concat([
@@ -213,13 +216,13 @@ describe("accepting a document", () => {
       })
   );
 
-  it.effect("shows the name cleaned, or the site when the document gives none", () =>
+  it.effect("shows the name cleaned, or the site when nothing is left of it", () =>
     Effect.gen(function* () {
       for (const [name, shown] of [
-        ["  Agent‮\u0007 Pro ", "Agent Pro"],
+        ["  Agent\u202e\u0007 Pro ", "Agent Pro"],
         ["x".repeat(80), "x".repeat(64)],
-        [undefined, "agent.example"],
-        ["\u0007", "agent.example"]
+        ["\u0007", "agent.example"],
+        ["  ", "agent.example"]
       ] as const) {
         const host = yield* clientDocumentHost(
           serveDocuments([agentDocument({ client_name: name })])
@@ -487,6 +490,8 @@ describe("caching", () => {
         [{ "cache-control": "max-age=300", age: "301" }, 0],
         [{ "cache-control": "max-age=7200" }, 3_600],
         [{}, 3_600],
+        [{ age: "600" }, 3_000],
+        [{ age: "999999" }, 0],
         [{ "cache-control": "no-store" }, 0],
         [{ "cache-control": "max-age=300, no-store" }, 0],
         [{ "cache-control": "no-cache" }, 0],
@@ -536,6 +541,33 @@ describe("caching", () => {
       yield* documents.load(AGENT);
       yield* documents.load(AGENT);
       assert.strictEqual(host.seen.requests.length, 3);
+    })
+  );
+
+  it.effect("keeps one fetch per URL in flight even when the kept documents are full", () =>
+    Effect.gen(function* () {
+      const slow = "https://slow.example/client.json";
+      const quick = "https://quick.example/client.json";
+      const arrived = signal();
+      const release = signal();
+      const documents = [slow, quick].map((url) => ({ ...agentDocument({ client_id: url }), url }));
+      const host = yield* clientDocumentHost((request, response) => {
+        if (request.headers.host !== "slow.example")
+          return serveDocuments(documents)(request, response);
+        arrived.settle();
+        void release.settled.then(() => serveDocuments(documents)(request, response));
+      });
+      const loader1 = yield* loader(host.network, { "oauth.clientDocuments.entries": 1 });
+      const first = yield* Effect.forkChild(loader1.load(slow));
+      yield* Effect.promise(() => arrived.settled);
+      // A kept document fills the cache while the slow fetch runs; the fetch isn't forgotten.
+      yield* loader1.load(quick);
+      const second = yield* Effect.forkChild(loader1.load(slow));
+      yield* Effect.yieldNow;
+      release.settle();
+      assert.strictEqual((yield* Fiber.join(first)).clientId, slow);
+      assert.strictEqual((yield* Fiber.join(second)).clientId, slow);
+      assert.deepStrictEqual(host.seen.requests, [`GET ${slow}`, `GET ${quick}`]);
     })
   );
 
@@ -691,6 +723,12 @@ describe("redirects", () => {
       "http://LOCALHOST:53682/callback"
     ])
       assert.isFalse(ClientDocuments.redirectAllowed(listed, redirect), redirect);
+    // Only the port varies: a listed loopback that isn't written canonically matches nothing.
+    for (const written of ["http://localhost/a/../callback", "http://LOCALHOST/callback"])
+      assert.isFalse(
+        ClientDocuments.redirectAllowed(document([written]), "http://localhost:49152/callback"),
+        written
+      );
     // A loopback name only matches itself.
     assert.isFalse(
       ClientDocuments.redirectAllowed(

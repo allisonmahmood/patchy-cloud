@@ -971,7 +971,7 @@ export const registry = {
     unit: "milliseconds",
     scope: "host",
     measure:
-      "Longest a client metadata document is kept; its response's shorter max-age or Expires, less its Age, is honoured, and no-store or no-cache keeps nothing",
+      "Longest a client metadata document is kept, counted from its request; a shorter max-age or Expires is honoured, its Age counts against the time kept, and no-store or no-cache keeps nothing",
     refusal: null,
     overridable: false
   },
