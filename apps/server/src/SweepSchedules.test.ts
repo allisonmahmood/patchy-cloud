@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { AgentConnections } from "@patchy/auth";
 import { OrphanSweep } from "@patchy/company-database";
 import { DeletionSweep } from "@patchy/patches";
 import * as Cause from "effect/Cause";
@@ -23,6 +24,7 @@ it.effect(
       const logs: Array<{ message: unknown; cause: Cause.Cause<unknown> }> = [];
       let deletionPasses = 0;
       let orphanPasses = 0;
+      let retryPasses = 0;
       const deletion = Layer.succeed(DeletionSweep.DeletionSweep, {
         sweep: Effect.gen(function* () {
           yield* Queue.offer(deletionRuns, ++deletionPasses);
@@ -39,11 +41,20 @@ it.effect(
           );
         })
       });
+      const connections = Layer.succeed(
+        AgentConnections.AgentConnections,
+        AgentConnections.AgentConnections.of({
+          create: () => Effect.die("not swept"),
+          authenticate: () => Effect.die("not swept"),
+          refresh: () => Effect.die("not swept"),
+          sweepRetries: Effect.sync(() => void retryPasses++)
+        })
+      );
       const scope = yield* Scope.make();
       yield* Effect.gen(function* () {
         yield* Layer.buildWithScope(
           Server.sweeper.pipe(
-            Layer.provide([deletion, orphan]),
+            Layer.provide([deletion, orphan, connections]),
             Layer.provide(
               Logger.layer([
                 Logger.make((event) => {
@@ -56,6 +67,9 @@ it.effect(
         );
         assert.strictEqual(yield* Queue.take(deletionRuns), 1);
         assert.strictEqual(yield* Queue.take(orphanRuns), 1);
+        // Retry copies are swept every 15 seconds, whatever the hourly sweeps are doing.
+        yield* TestClock.adjust("15 seconds");
+        assert.strictEqual(retryPasses, 2);
         yield* TestClock.adjust("1 hour");
         assert.strictEqual(yield* Queue.take(deletionRuns), 2);
         assert.strictEqual(yield* Queue.take(orphanRuns), 2);

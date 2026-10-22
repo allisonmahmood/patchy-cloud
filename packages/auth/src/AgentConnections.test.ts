@@ -157,10 +157,10 @@ it.layer(layer)("AgentConnections", (it) => {
 
   it("shows a client's name without control characters, cut to 64, or its document's host", () => {
     const name = (raw: string) => AgentConnections.clientName(raw, CLAUDE);
-    assert.strictEqual(name("  Cl\u0000au‮de\r\n"), "Claude");
+    assert.strictEqual(name("  Cl\u0000au\u202ede\r\n"), "Claude");
     assert.strictEqual(name("x".repeat(70)), "x".repeat(64));
     assert.strictEqual(name("🤖".repeat(70)), "🤖".repeat(64), "a character is a code point");
-    assert.strictEqual(name("\u0007 ‏  "), "claude.ai");
+    assert.strictEqual(name("\u0007 \u200f\u2028 "), "claude.ai");
     assert.strictEqual(
       AgentConnections.clientName("", "https://ExAmple.com:8443/doc"),
       "example.com:8443"
@@ -191,7 +191,7 @@ it.layer(layer)("AgentConnections", (it) => {
       assert.isNotNull(yield* authenticate(third.accessToken));
       assert.isNull(yield* revokedAt(connection.id));
 
-      // The minute's copy is encrypted, and the first call after the minute drops it.
+      // The minute's copies are encrypted, and the sweep drops each once its minute is up.
       const copies = () => sql<{ retry: string }>`
         SELECT retry FROM agent_connection_refresh_tokens
         WHERE connection_id = ${connection.id} AND retry IS NOT NULL`;
@@ -202,8 +202,10 @@ it.layer(layer)("AgentConnections", (it) => {
           for (const secret of [token.accessToken, token.refreshToken])
             assert.notInclude(retry, secret.slice(4));
       yield* ageRotation(first.refreshToken, 61);
+      yield* AgentConnections.AgentConnections.use((connections) => connections.sweepRetries);
+      assert.strictEqual((yield* copies()).length, 1, "the copy still in its minute stays");
       yield* ageRotation(second.refreshToken, 61);
-      yield* authenticate(third.accessToken);
+      yield* AgentConnections.AgentConnections.use((connections) => connections.sweepRetries);
       assert.deepStrictEqual(yield* copies(), []);
     })
   );
@@ -301,24 +303,20 @@ it.layer(layer)("AgentConnections", (it) => {
     })
   );
 
-  it.effect("calls stamp last used at most hourly; refreshes never do", () =>
+  it.effect("every call stamps last used; refreshes never do", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const { connection, tokens } = yield* connect(yield* person("stamp"));
       const next = yield* refresh(tokens.refreshToken);
       assert.isNull(yield* lastUsedAt(connection.id));
       yield* authenticate(next.accessToken);
-      const age = (minutes: number) => sql`
-        UPDATE agent_connections SET last_used_at = clock_timestamp() - make_interval(mins => ${minutes})
+      assert.isNotNull(yield* lastUsedAt(connection.id));
+      yield* sql`
+        UPDATE agent_connections SET last_used_at = clock_timestamp() - interval '1 minute'
         WHERE id = ${connection.id}`;
-      yield* age(59);
-      const kept = yield* lastUsedAt(connection.id);
+      const aged = (yield* lastUsedAt(connection.id))!.getTime();
       yield* authenticate(next.accessToken);
-      assert.deepStrictEqual(yield* lastUsedAt(connection.id), kept);
-      yield* age(61);
-      const stale = (yield* lastUsedAt(connection.id))!.getTime();
-      yield* authenticate(next.accessToken);
-      assert.isAbove((yield* lastUsedAt(connection.id))!.getTime(), stale + 60 * 60 * 1_000);
+      assert.isAbove((yield* lastUsedAt(connection.id))!.getTime(), aged + 59_000);
     })
   );
 

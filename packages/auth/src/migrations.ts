@@ -43,7 +43,8 @@ export const migrations: Migrations = {
   // Agent connections, the `work` credential, apart from machine tokens so neither door finds
   // the other's tokens. Every stamp is the database's clock. Each refresh token issued stays
   // until its connection goes, so any reuse is recognised; at most one is current, the chain.
-  // `retry` holds the tokens a rotation returned, encrypted under the refresh token it rotated.
+  // `retry` holds the tokens a rotation returned, encrypted under the refresh token it rotated,
+  // until the server's sweep drops it once its minute is up.
   "0022_agent_connections": ddl(
     `CREATE TABLE agent_connections (
     id TEXT PRIMARY KEY,
@@ -72,6 +73,6 @@ export const migrations: Migrations = {
     `CREATE UNIQUE INDEX agent_connection_refresh_tokens_chain_idx
     ON agent_connection_refresh_tokens(connection_id) WHERE rotated_at IS NULL`,
     `CREATE INDEX agent_connection_refresh_tokens_retry_idx
-    ON agent_connection_refresh_tokens(connection_id) WHERE retry IS NOT NULL`
+    ON agent_connection_refresh_tokens(rotated_at) WHERE retry IS NOT NULL`
   )
 };

@@ -2,10 +2,11 @@
 /**
  * Agent connections, the `work` credential: one person's consent for one install of an MCP
  * client, and the tokens that carry it. Access tokens are opaque, last an hour and are checked
- * here on every call. A refresh token rotates on every use, and every token a connection ever
- * issued stays, so any reuse is recognised however far back. A retry within a minute of a
- * rotation gets the same new tokens, kept encrypted under the refresh token it rotated, so only
- * whoever presents that token can read them. Every other secret is stored as a hash.
+ * here on every call, which stamps last used. A refresh token rotates on every use, and every
+ * token a connection ever issued stays, so any reuse is recognised however far back. A retry
+ * within a minute of a rotation gets the same new tokens, kept encrypted under the refresh token
+ * it rotated, so only whoever presents that token can read them, and swept once the minute is
+ * up. Every other secret is stored as a hash.
  *
  * Every time here is the database's clock, read in the statement that uses it: app servers'
  * clocks can disagree, and none of them moves an hour, a minute, 30 idle days or the person's
@@ -84,12 +85,14 @@ export class AgentConnections extends Context.Service<
     readonly authenticate: (accessToken: string) => Effect.Effect<AgentIdentity | null, SqlError>;
     /** Rotates the chain, or answers a retry within the minute; any other reuse ends it. */
     readonly refresh: (refreshToken: string) => Effect.Effect<Tokens, RefreshRefused | SqlError>;
+    /** Drops every retry copy whose minute is up; the server runs it every few seconds. */
+    readonly sweepRetries: Effect.Effect<void, SqlError>;
   }
 >()("@patchy/auth/AgentConnections") {}
 
 // Characters that must never reach a consent page or a log line: controls, lone surrogates,
 // line breaks and the bidirectional controls that could reorder a name to look like another.
-const UNSHOWN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}؜‎‏‪-‮⁦-⁩]/gu;
+const UNSHOWN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
 
 /**
  * The name a consent page shows for a client, which its connection keeps as the "via" name:
@@ -143,30 +146,22 @@ export const make = Effect.gen(function* () {
     AND COALESCE(c.last_used_at, c.created_at) > clock_timestamp() - interval '30 days'
     AND (u.credentials_ended_at IS NULL OR u.credentials_ended_at < c.created_at))`;
 
-  const findIdentity = SqlSchema.findOneOption({
+  // The check and the stamp in one statement: every admitted call is the last use, and a call
+  // that lost a race with the idle boundary or an ending matches nothing and stamps nothing.
+  const useAccessToken = SqlSchema.findOneOption({
     Request: Schema.String,
-    Result: Schema.Struct({
-      identity: AgentIdentity,
-      stampDue: Schema.Boolean,
-      retryStale: Schema.Boolean
-    }),
+    Result: Schema.Struct({ identity: AgentIdentity }),
     execute: (tokenHash) => sql`
-      SELECT json_build_object(
+      UPDATE agent_connections c SET last_used_at = GREATEST(c.last_used_at, clock_timestamp())
+      FROM agent_connection_access_tokens a, users u, companies co
+      WHERE a.token_hash = ${tokenHash} AND c.id = a.connection_id AND u.id = c.user_id
+        AND co.id = u.company_id AND a.expires_at > clock_timestamp() AND ${live}
+      RETURNING json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', co.id, 'handle', co.handle, 'name', co.name),
         'role', u.role,
         'agentConnection', json_build_object('id', c.id, 'clientName', c.client_name)
-      ) AS identity,
-      (c.last_used_at IS NULL OR c.last_used_at <= clock_timestamp() - interval '1 hour')
-        AS "stampDue",
-      EXISTS (SELECT 1 FROM agent_connection_refresh_tokens r
-        WHERE r.connection_id = c.id AND r.retry IS NOT NULL
-          AND r.rotated_at <= clock_timestamp() - interval '1 minute') AS "retryStale"
-      FROM agent_connection_access_tokens a
-      JOIN agent_connections c ON c.id = a.connection_id
-      JOIN users u ON u.id = c.user_id
-      JOIN companies co ON co.id = u.company_id
-      WHERE a.token_hash = ${tokenHash} AND a.expires_at > clock_timestamp() AND ${live}`
+      ) AS identity`
   });
 
   const chainOwner = SqlSchema.findOneOption({
@@ -215,12 +210,6 @@ export const make = Effect.gen(function* () {
       return { ...tokens, expiresIn: ACCESS_SECONDS } satisfies Tokens;
     });
 
-  // The minute's copies are dropped by the first rotation or call after it.
-  const dropStaleRetries = (connectionId: string) => sql`
-    UPDATE agent_connection_refresh_tokens SET retry = NULL
-    WHERE connection_id = ${connectionId} AND retry IS NOT NULL
-      AND rotated_at <= clock_timestamp() - interval '1 minute'`;
-
   const create = Effect.fn("AgentConnections.create")(function* (input: {
     readonly userId: string;
     readonly clientId: string;
@@ -251,23 +240,10 @@ export const make = Effect.gen(function* () {
   });
 
   const authenticate = Effect.fn("AgentConnections.authenticate")(function* (accessToken: string) {
-    const found = yield* findIdentity(sha256(accessToken)).pipe(
+    const used = yield* useAccessToken(sha256(accessToken)).pipe(
       Effect.catchTags({ SchemaError: Effect.die })
     );
-    if (Option.isNone(found)) return null;
-    const { identity, stampDue, retryStale } = found.value;
-    const connectionId = identity.agentConnection.id;
-    if (stampDue) {
-      // Rechecked under the UPDATE's lock: racing calls stamp once an hour, and a call that
-      // raced the idle boundary can't revive the connection.
-      yield* sql`
-        UPDATE agent_connections SET last_used_at = clock_timestamp()
-        WHERE id = ${connectionId} AND revoked_at IS NULL
-          AND (last_used_at IS NULL OR last_used_at <= clock_timestamp() - interval '1 hour')
-          AND COALESCE(last_used_at, created_at) > clock_timestamp() - interval '30 days'`;
-    }
-    if (retryStale) yield* dropStaleRetries(connectionId);
-    return identity;
+    return Option.isSome(used) ? used.value.identity : null;
   });
 
   const refresh = Effect.fn("AgentConnections.refresh")(function* (refreshToken: string) {
@@ -297,7 +273,6 @@ export const make = Effect.gen(function* () {
           yield* sql`
             DELETE FROM agent_connection_access_tokens
             WHERE connection_id = ${connectionId} AND expires_at <= clock_timestamp()`;
-          yield* dropStaleRetries(connectionId);
           return issued;
         }
         if (state.retry !== null) {
@@ -317,7 +292,15 @@ export const make = Effect.gen(function* () {
     return outcome;
   });
 
-  return AgentConnections.of({ create, authenticate, refresh });
+  // Independent of any connection's traffic, so a copy outlives its minute only until the
+  // next pass, whether or not anyone calls again.
+  const sweepRetries = Effect.asVoid(
+    sql`
+    UPDATE agent_connection_refresh_tokens SET retry = NULL
+    WHERE retry IS NOT NULL AND rotated_at <= clock_timestamp() - interval '1 minute'`
+  ).pipe(Effect.withSpan("AgentConnections.sweepRetries"));
+
+  return AgentConnections.of({ create, authenticate, refresh, sweepRetries });
 });
 
 export const layer = Layer.effect(AgentConnections, make);
