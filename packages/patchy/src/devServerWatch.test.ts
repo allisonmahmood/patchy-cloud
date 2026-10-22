@@ -320,6 +320,36 @@ it.live(
         buildServer(root, [], ["__proto__", "leads", "more"], toolchain, [])
       );
       assert.deepStrictEqual(built.agentTools, { count: "__proto__", read: "leads" });
+
+      // A star cycle: a.ts has read and stars b.ts, which stars a.ts and c.ts, whose read is
+      // another binding. first.ts holds a.ts's read; second.ts gets none, since b.ts's is
+      // ambiguous. Walking first.ts cuts the cycle at a.ts, which must not settle b.ts.
+      const cycle = path.join(root, "cycle");
+      yield* fs.makeDirectory(path.join(cycle, "agent"), { recursive: true });
+      yield* fs.makeDirectory(path.join(cycle, "helpers"));
+      yield* fs.symlink(path.join(root, "node_modules"), path.join(cycle, "node_modules"));
+      yield* fs.writeFileString(path.join(cycle, "package.json"), '{"type":"module"}');
+      yield* fs.writeFileString(
+        path.join(cycle, "helpers/a.ts"),
+        handler("text") + 'export * from "./b.js";\n'
+      );
+      yield* fs.writeFileString(
+        path.join(cycle, "helpers/b.ts"),
+        'export * from "./a.js";\nexport * from "./c.js";\n'
+      );
+      yield* fs.writeFileString(path.join(cycle, "helpers/c.ts"), handler("number"));
+      yield* fs.writeFileString(
+        path.join(cycle, "agent/first.ts"),
+        'export * from "../helpers/a.js";\n'
+      );
+      yield* fs.writeFileString(
+        path.join(cycle, "agent/second.ts"),
+        'export * from "../helpers/b.js";\n'
+      );
+      const cyclic = yield* Effect.tryPromise(() =>
+        buildServer(cycle, [], ["first", "second"], toolchain, [])
+      );
+      assert.deepStrictEqual(Object.keys(yield* Inspection.inspect(cyclic.server)), ["agent.read"]);
       assert.deepStrictEqual(yield* Inspection.inspect(built.server), {
         "agent.count": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true },
         "agent.read": { kind: "query", args: {}, result: { kind: "boolean" }, agentTool: true }

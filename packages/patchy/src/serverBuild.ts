@@ -29,6 +29,10 @@ const serverCode = (output: readonly ServerOutput[]) => {
 };
 
 type Certainty = "one" | "maybe";
+interface Exports {
+  readonly names: ReadonlyMap<string, Certainty>;
+  readonly cut: boolean;
+}
 class UnknownExports extends Error {}
 
 /**
@@ -86,21 +90,23 @@ const buildConfig = (
         async buildEnd(error) {
           if (error !== undefined) return;
           // Each name a module exports: "one" when its namespace surely holds the name, "maybe"
-          // when an `export *` leaves that open. Two star sources giving a name may be one
-          // binding or an ambiguity, which ES modules leave out, so only "one" names count.
-          const memo = new Map<string, ReadonlyMap<string, Certainty>>();
-          const exported = async (
-            id: string,
-            visiting: Set<string>
-          ): Promise<ReadonlyMap<string, Certainty>> => {
+          // when an `export *` leaves that open, so only "one" names count. Explicit exports
+          // are always "one". A star name is "one" only when exactly one star source gives it
+          // as "one" and the whole star subtree was walked: two sources may share one binding
+          // or be an ambiguity ES modules leave out, and a cycle cut short hides names.
+          // `cut` marks a result that cut a cycle; it depends on the walk's path, so it is
+          // never reused.
+          const memo = new Map<string, Exports>();
+          const exported = async (id: string, visiting: Set<string>): Promise<Exports> => {
             const known = memo.get(id);
             if (known !== undefined) return known;
             const info = this.getModuleInfo(id);
-            // A cycle back into a module adds nothing, as in ES module linking.
-            if (info === null || visiting.has(id)) return new Map();
+            if (info === null) return { names: new Map(), cut: false };
+            if (visiting.has(id)) return { names: new Map(), cut: true };
             const names = new Map<string, Certainty>(
               info.exports.filter((name) => name !== "*").map((name) => [name, "one"])
             );
+            let cut = false;
             if (info.exports.includes("*")) {
               // `export *` is listed as "*"; follow each star source as the bundle links it.
               if (info.code === null) throw new UnknownExports();
@@ -111,27 +117,30 @@ const buildConfig = (
                   continue;
                 const target = await this.resolve(statement.source.value, id);
                 if (target === null) continue;
-                for (const [name, certainty] of await exported(target.id, visiting))
+                const source = await exported(target.id, visiting);
+                cut ||= source.cut;
+                for (const [name, certainty] of source.names)
                   if (name !== "default" && !names.has(name))
                     starred.set(name, starred.has(name) ? "maybe" : certainty);
               }
               visiting.delete(id);
-              for (const [name, certainty] of starred) names.set(name, certainty);
+              for (const [name, certainty] of starred) names.set(name, cut ? "maybe" : certainty);
             }
-            memo.set(id, names);
-            return names;
+            const result = { names, cut };
+            if (!cut) memo.set(id, result);
+            return result;
           };
           const owners = new Map<string, string>();
           for (const [index, file] of agentPaths.entries()) {
             const stem = agent.files[index]!;
-            const names = await exported(file, new Set()).catch((cause: unknown) => {
+            const area = await exported(file, new Set()).catch((cause: unknown) => {
               // Without a module's code its star names are unknown; the guest still refuses a
               // duplicate when the bundle loads, with a plainer message.
               if (cause instanceof UnknownExports) return undefined;
               throw cause;
             });
-            if (names === undefined) return;
-            for (const [name, certainty] of names) {
+            if (area === undefined) return;
+            for (const [name, certainty] of area.names) {
               if (certainty !== "one") continue;
               const owner = owners.get(name);
               if (owner !== undefined) {
