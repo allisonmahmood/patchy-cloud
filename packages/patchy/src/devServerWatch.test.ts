@@ -259,9 +259,9 @@ it.live(
         "agent.read": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true }
       });
 
-      // `export *` names every handler of its source, so read is now exported twice.
+      // A second file exporting read by name: the build names both files.
       const twice = path.join(root, "agent/more.ts");
-      yield* save(twice, 'export * from "../server/leads.js";');
+      yield* save(twice, 'export { read } from "../server/leads.js";');
       const refusal = {
         code: "invalid_manifest",
         message:
@@ -274,6 +274,9 @@ it.live(
         catch: (cause) => cause
       });
       assert.deepInclude(yield* publishBuild.pipe(Effect.flip), refusal);
+      // One only `export *` gives is left to the guest, which refuses the bundle as it loads.
+      yield* save(twice, 'export * from "../server/leads.js";');
+      assert.strictEqual((yield* next.pipe(Effect.flip)).code, "invalid_manifest");
       yield* fs.remove(twice);
       assert.deepStrictEqual((yield* next).handlers, built.handlers);
 
@@ -293,15 +296,15 @@ it.live(
 );
 
 it.live(
-  "keeps a file named __proto__, and leaves out a name two export * sources make ambiguous",
+  "keeps a file named __proto__, and never refuses a name that only export * gives",
   () =>
     Effect.gen(function* () {
       const { root, fs, path } = yield* repo;
       yield* fs.makeDirectory(path.join(root, "agent"));
       yield* fs.makeDirectory(path.join(root, "helpers"));
-      // two.ts stars one.ts but has its own read, and more.ts stars both, reaching one.ts twice.
-      // The two reads are different bindings, so ES modules leave read out of more.ts's
-      // namespace, and leads.ts's read is the only one.
+      // two.ts stars one.ts but has its own read, and more.ts stars both. The two reads are
+      // different bindings, so ES modules leave read out of more.ts's namespace, and leads.ts's
+      // read is the only one; the build must not take it for a duplicate.
       yield* fs.writeFileString(path.join(root, "helpers/one.ts"), handler("text"));
       yield* fs.writeFileString(
         path.join(root, "helpers/two.ts"),
@@ -321,35 +324,6 @@ it.live(
       );
       assert.deepStrictEqual(built.agentTools, { count: "__proto__", read: "leads" });
 
-      // A star cycle: a.ts has read and stars b.ts, which stars a.ts and c.ts, whose read is
-      // another binding. first.ts holds a.ts's read; second.ts gets none, since b.ts's is
-      // ambiguous. Walking first.ts cuts the cycle at a.ts, which must not settle b.ts.
-      const cycle = path.join(root, "cycle");
-      yield* fs.makeDirectory(path.join(cycle, "agent"), { recursive: true });
-      yield* fs.makeDirectory(path.join(cycle, "helpers"));
-      yield* fs.symlink(path.join(root, "node_modules"), path.join(cycle, "node_modules"));
-      yield* fs.writeFileString(path.join(cycle, "package.json"), '{"type":"module"}');
-      yield* fs.writeFileString(
-        path.join(cycle, "helpers/a.ts"),
-        handler("text") + 'export * from "./b.js";\n'
-      );
-      yield* fs.writeFileString(
-        path.join(cycle, "helpers/b.ts"),
-        'export * from "./a.js";\nexport * from "./c.js";\n'
-      );
-      yield* fs.writeFileString(path.join(cycle, "helpers/c.ts"), handler("number"));
-      yield* fs.writeFileString(
-        path.join(cycle, "agent/first.ts"),
-        'export * from "../helpers/a.js";\n'
-      );
-      yield* fs.writeFileString(
-        path.join(cycle, "agent/second.ts"),
-        'export * from "../helpers/b.js";\n'
-      );
-      const cyclic = yield* Effect.tryPromise(() =>
-        buildServer(cycle, [], ["first", "second"], toolchain, [])
-      );
-      assert.deepStrictEqual(Object.keys(yield* Inspection.inspect(cyclic.server)), ["agent.read"]);
       assert.deepStrictEqual(yield* Inspection.inspect(built.server), {
         "agent.count": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true },
         "agent.read": { kind: "query", args: {}, result: { kind: "boolean" }, agentTool: true }

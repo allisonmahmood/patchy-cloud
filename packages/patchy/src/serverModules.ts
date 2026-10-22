@@ -163,9 +163,11 @@ export const descriptionFailure = (
   if (problem === undefined) return undefined;
   const dot = problem.handler.indexOf(".");
   const module = problem.handler.slice(0, dot);
+  const tool = problem.handler.slice(dot + 1);
+  // A tool the build found no file for, such as one only an `export *` gives, names none.
   const file =
     module === "agent"
-      ? `agent/${agentTools[problem.handler.slice(dot + 1)] ?? "*"}.ts`
+      ? `agent/${Object.hasOwn(agentTools, tool) ? agentTools[tool] : "*"}.ts`
       : `server/${module}.ts`;
   return `${file}: ${descriptionRefusal(problem)}`;
 };

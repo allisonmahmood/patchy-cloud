@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The repo's Vite builds the private guest entry and authored server modules.
 import * as path from "node:path";
 import type { ReleaseToolchain } from "@patchy/api";
-import type { InlineConfig } from "vite";
+import type { ESTree, InlineConfig } from "vite";
 import { LocalError } from "./CliError.js";
 import { duplicateAgentTool } from "./handlerDescriptors.js";
 import { runToolchain } from "./toolchain.js";
@@ -28,12 +28,48 @@ const serverCode = (output: readonly ServerOutput[]) => {
   return chunk.code;
 };
 
-type Certainty = "one" | "maybe";
-interface Exports {
-  readonly names: ReadonlyMap<string, Certainty>;
-  readonly cut: boolean;
-}
-class UnknownExports extends Error {}
+/** The names a module's own export statements declare, without following `export *`. */
+const ownExports = (program: ESTree.Program): ReadonlySet<string> => {
+  const names = new Set<string>();
+  const bind = (pattern: ESTree.BindingPattern | ESTree.BindingRestElement): void => {
+    switch (pattern.type) {
+      case "Identifier":
+        names.add(pattern.name);
+        return;
+      case "ObjectPattern":
+        for (const property of pattern.properties)
+          bind(property.type === "RestElement" ? property : property.value);
+        return;
+      case "ArrayPattern":
+        for (const element of pattern.elements) if (element !== null) bind(element);
+        return;
+      case "AssignmentPattern":
+        bind(pattern.left);
+        return;
+      case "RestElement":
+        bind(pattern.argument);
+    }
+  };
+  const exported = (name: ESTree.ModuleExportName) =>
+    name.type === "Literal" ? name.value : name.name;
+  for (const statement of program.body) {
+    if (statement.type === "ExportDefaultDeclaration") names.add("default");
+    else if (statement.type === "ExportAllDeclaration") {
+      if (statement.exported !== null) names.add(exported(statement.exported));
+    } else if (statement.type === "ExportNamedDeclaration") {
+      const declaration = statement.declaration;
+      if (declaration?.type === "VariableDeclaration")
+        for (const declarator of declaration.declarations) bind(declarator.id);
+      else if (
+        (declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") &&
+        declaration.id !== null
+      )
+        names.add(declaration.id.name);
+      for (const specifier of statement.specifiers) names.add(exported(specifier.exported));
+    }
+  }
+  return names;
+};
 
 /**
  * Each build's agent area: its files by stem, and what its last build found, each tool's file or
@@ -86,62 +122,18 @@ const buildConfig = (
           agent.refusal = undefined;
         },
         // The guest refuses a name two files export too, but inside workerd, where its message is
-        // lost; here the refusal can name both files.
-        async buildEnd(error) {
+        // lost; here the refusal can name both files. It counts only what each file's own export
+        // syntax declares, which is always in its namespace. A name a file gets only through
+        // `export *` may be ambiguous or come from CommonJS, so those duplicates are left to the
+        // guest, and those tools to no file.
+        buildEnd(error) {
           if (error !== undefined) return;
-          // Each name a module exports: "one" when its namespace surely holds the name, "maybe"
-          // when an `export *` leaves that open, so only "one" names count. Explicit exports
-          // are always "one". A star name is "one" only when exactly one star source gives it
-          // as "one" and the whole star subtree was walked: two sources may share one binding
-          // or be an ambiguity ES modules leave out, and a cycle cut short hides names.
-          // `cut` marks a result that cut a cycle; it depends on the walk's path, so it is
-          // never reused.
-          const memo = new Map<string, Exports>();
-          const exported = async (id: string, visiting: Set<string>): Promise<Exports> => {
-            const known = memo.get(id);
-            if (known !== undefined) return known;
-            const info = this.getModuleInfo(id);
-            if (info === null) return { names: new Map(), cut: false };
-            if (visiting.has(id)) return { names: new Map(), cut: true };
-            const names = new Map<string, Certainty>(
-              info.exports.filter((name) => name !== "*").map((name) => [name, "one"])
-            );
-            let cut = false;
-            if (info.exports.includes("*")) {
-              // `export *` is listed as "*"; follow each star source as the bundle links it.
-              if (info.code === null) throw new UnknownExports();
-              visiting.add(id);
-              const starred = new Map<string, Certainty>();
-              for (const statement of this.parse(info.code).body) {
-                if (statement.type !== "ExportAllDeclaration" || statement.exported !== null)
-                  continue;
-                const target = await this.resolve(statement.source.value, id);
-                if (target === null) continue;
-                const source = await exported(target.id, visiting);
-                cut ||= source.cut;
-                for (const [name, certainty] of source.names)
-                  if (name !== "default" && !names.has(name))
-                    starred.set(name, starred.has(name) ? "maybe" : certainty);
-              }
-              visiting.delete(id);
-              for (const [name, certainty] of starred) names.set(name, cut ? "maybe" : certainty);
-            }
-            const result = { names, cut };
-            if (!cut) memo.set(id, result);
-            return result;
-          };
           const owners = new Map<string, string>();
           for (const [index, file] of agentPaths.entries()) {
+            const code = this.getModuleInfo(file)?.code;
+            if (code === null || code === undefined) return;
             const stem = agent.files[index]!;
-            const area = await exported(file, new Set()).catch((cause: unknown) => {
-              // Without a module's code its star names are unknown; the guest still refuses a
-              // duplicate when the bundle loads, with a plainer message.
-              if (cause instanceof UnknownExports) return undefined;
-              throw cause;
-            });
-            if (area === undefined) return;
-            for (const [name, certainty] of area.names) {
-              if (certainty !== "one") continue;
+            for (const name of ownExports(this.parse(code))) {
               const owner = owners.get(name);
               if (owner !== undefined) {
                 agent.refusal = new LocalError({

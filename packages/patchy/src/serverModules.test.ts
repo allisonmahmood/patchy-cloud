@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
   agentTypecheckWarning,
+  descriptionFailure,
   discoverAgentFiles,
   discoverServerModules,
   validateGeneratedServerModules
@@ -147,6 +148,24 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
       }
     })
   );
+
+  it("names an agent tool's file, and none when the build found none", () => {
+    const blank = (name: string) => ({
+      [name]: {
+        kind: "query" as const,
+        description: " ",
+        args: {},
+        result: { kind: "text" as const },
+        agentTool: true as const
+      }
+    });
+    assert.strictEqual(
+      descriptionFailure(blank("agent.count"), { count: "intake" }),
+      "agent/intake.ts: agent.count's description is blank. Say what it does, or leave the description out."
+    );
+    // __proto__ must not resolve through Object.prototype.
+    assert.match(descriptionFailure(blank("agent.__proto__"), {})!, /^agent\/\*\.ts: /);
+  });
 
   it.effect("refuses linked module files and linked server directories", () =>
     Effect.gen(function* () {
