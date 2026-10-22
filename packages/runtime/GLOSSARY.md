@@ -25,7 +25,7 @@ The refusal of a direct operation when a tier 2 document must use handlers, or w
 _Avoid_: revoked, permission lost
 
 **Invocation admission**:
-The decision that a live viewer may start a handler on an eligible loaded version of a live company patch, within its admission limits. Dispatched work retains that admission until settlement.
+The decision that a live viewer, or their worker agent while agent access is on, may start a handler on an eligible loaded version of a live company patch, within its admission limits. An agent's call starts only an agent tool, and a page's never does; an agent tool's own nested calls run ordinary sibling handlers as usual. Dispatched work retains that admission until settlement.
 _Avoid_: callback authorisation, presence lease
 
 **Callback authorisation**:
@@ -42,10 +42,10 @@ _Avoid_: action, individual row write
 
 **Mutation key**:
 The identity of one mutation call, bound to its handler, loaded version, initiating viewer and arguments. Retrying that call preserves its key so a committed result can be recovered without applying its writes twice.
-_Avoid_: correlation id, invocation id, action retry
+_Avoid_: correlation id, invocation id, action retry, change key (Patchy MCP's, which maps onto it)
 
 **Action**:
-A handler for work outside one transaction, including file bytes, company integrations and sibling queries or mutations. It cannot call another action, and each nested mutation owns its own transaction.
+A handler for work outside one transaction, including file bytes, company integrations and sibling queries or mutations. It cannot call another action, and each nested mutation owns its own transaction. A read-only action is held to reads.
 _Avoid_: background job, transaction
 
 **Execution service**:
@@ -61,8 +61,12 @@ An execution task that has never been bound to a company and is available for a 
 _Avoid_: idle company task, recycled task
 
 **Bind / release**:
-Assigning a spare to one company, and ending that assignment after fencing admissions and draining admitted work.
+Assigning a spare to one company, and ending that assignment after fencing admissions and draining admitted work. Release waits until no document holds the task and both the documents' idle window and the agent idle window have run out.
 _Avoid_: publish, process load, connection checkout
+
+**Agent idle**:
+The minute after an agent's last call settles for which a company task stays bound when no document holds it; a person's tab holds it while they use it and for thirty minutes after, on a clock agent work never touches.
+_Avoid_: keep-alive, polling window, wake (Runtime's post-commit hint)
 
 **Housekeeping lease**:
 The temporary exclusive authority for one host replica to maintain the execution fleet.
@@ -141,7 +145,7 @@ The patch whose loaded version defines its owned resources and declares the outs
 _Avoid_: effective principal, patch owner
 
 **Initiating viewer**:
-The user whose live session admits an invocation or a direct browser operation. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
+The user whose live session, or whose agent connection, admits an invocation or a direct browser operation. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
 _Avoid_: principal, machine token, owning patch
 
 **Patch identity**:
@@ -153,7 +157,7 @@ The stable deployed-bundle contract a runtime request speaks, distinct from the 
 _Avoid_: Release, schema revision, transport version
 
 **Runtime log**:
-The attributed record of mutations, integration calls, admin discovery and server invocations. Each call names the credential it came through: a viewer's session, an admin's, or, for a dev read, a machine token, kept as its id and name at the time and with no patch or version. Mutations and actions always have invocation records; queries have them only on logging or failure. Invocation records keep the initiating viewer separate from the effective principal. A pending or unresolved outcome is not evidence that a write failed or is safe to replay.
+The attributed record of mutations, integration calls, admin discovery and server invocations. Each call names the credential it came through: a viewer's session, an admin's, an agent connection, shown as the person via the client's name, or, for a dev read, a machine token, kept as its id and name at the time and with no patch or version. Mutations and actions always have invocation records; queries have them only on logging or failure. Invocation records keep the initiating viewer separate from the effective principal. A pending or unresolved outcome is not evidence that a write failed or is safe to replay.
 _Avoid_: Call log (Integrations' pointer to this record), analytics event
 
 **Request event**:

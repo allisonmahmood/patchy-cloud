@@ -20,6 +20,7 @@
           - "packages/content-store/**"
           - "packages/execution/**"
           - "packages/limits/**"
+          - "packages/mcp/**"
           - "packages/patches/**"
           - "packages/runtime/**"
           - "packages/sdk/**"
