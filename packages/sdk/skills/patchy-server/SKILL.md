@@ -363,7 +363,9 @@ them. Re-exporting a `server/` handler from `agent/`, as
 `export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
 same arguments and rules; a tool of its own can take different ones. Agent
 access is a company switch, off until an admin turns it on at
-`<instance>/company`.
+`<instance>/company`. Each person connects their own agent with the steps at
+`<instance>/machines#connect-an-agent` on Your machines, which also lists the
+agents they've connected, each with Disconnect.
 
 A tool runs as the person who connected the agent. `ctx.viewer` is that person,
 under the same access rules as their page calls. `ctx.agent` is
