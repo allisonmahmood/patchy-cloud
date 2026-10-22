@@ -28,6 +28,7 @@ export const errorCodes = {
   handler_failed: true,
   handler_timeout: true,
   write_conflict: true,
+  version_changed: true,
   patch_paused: true,
   server_required: true,
   tier2_not_public: true,
