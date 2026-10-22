@@ -1574,6 +1574,39 @@ const generateProject = Command.make(
     )
 ).pipe(Command.unlisted);
 
+const devAgent = Command.make(
+  "agent",
+  {
+    tool: Argument.String("tool").pipe(
+      Argument.withDescription(
+        "The agent tool to call; without one, print what open_patch answers"
+      ),
+      Argument.optional
+    ),
+    args: Argument.String("args").pipe(
+      Argument.withDescription(
+        "The tool's arguments as one JSON object, or - to read them from stdin"
+      ),
+      Argument.optional
+    ),
+    colleague: Flag.Boolean("colleague").pipe(
+      Flag.withDescription("Call as the dev colleague instead of the primary dev viewer"),
+      Flag.withDefault(false)
+    )
+  },
+  (input) =>
+    runProject(
+      Effect.gen(function* () {
+        yield* Project.readRepo(yield* Cwd);
+        yield* Dev.agent(yield* Cwd, input);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Call this repo's agent tools as people's agents do, against the running dev binding."
+  )
+);
+
 const dev = Command.make(
   "dev",
   {
@@ -1595,8 +1628,8 @@ const dev = Command.make(
   Command.withDescription(
     "Start this patch repo's local runtime over fixtures (detached and idempotent)."
   ),
-  Command.withSubcommands(
-    (["status", "stop", "logs", "reset"] as const).map((action) =>
+  Command.withSubcommands([
+    ...(["status", "stop", "logs", "reset"] as const).map((action) =>
       Command.make(action, {}, () =>
         runProject(
           Effect.gen(function* () {
@@ -1614,8 +1647,9 @@ const dev = Command.make(
           }[action]
         )
       )
-    )
-  )
+    ),
+    devAgent
+  ])
 );
 
 // --- the tree ---------------------------------------------------------------

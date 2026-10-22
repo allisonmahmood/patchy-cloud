@@ -4,12 +4,16 @@ import {
   agentTools,
   agentToolsBytes,
   argsJsonSchema,
+  callAnswer,
   checkAgentArea,
   handlerJsonSchema,
+  invalidArgsRefusal,
   openPatchAnswer,
   patchRefusal,
+  runtimeRefusal,
   toolAnswer,
   toolRefusal,
+  unknownToolRefusal,
   type HandlerDescriptor,
   type HandlerDescriptors,
   type HandlerSchema
@@ -409,6 +413,61 @@ describe("tool call answers", () => {
       content: [{ type: "text", text: error.message }],
       structuredContent: { error },
       isError: true
+    });
+  });
+
+  it("answers a call with its result and version, or passes the patch's refusal through", () => {
+    expect(callAnswer("New Business", "addLead", 4, { ok: true, value: { id: "lead_1" } })).toEqual(
+      toolAnswer({ result: { id: "lead_1" }, version: 4 })
+    );
+    const failure = { ok: false as const, source: "handler" as const, code: "closed" };
+    expect(callAnswer("New Business", "addLead", 4, failure)).toEqual(
+      patchRefusal("New Business", "addLead", failure)
+    );
+  });
+
+  it("names the tools a patch has now for a tool it doesn't have", () => {
+    expect(
+      unknownToolRefusal("New Business", "addDeal", ["addLead", "listDeals"]).structuredContent
+    ).toEqual({
+      error: {
+        code: "unknown_tool",
+        from: "patchy",
+        message:
+          "New Business has no tool addDeal. Its tools now: addLead, listDeals. Call open_patch to see what each does and takes."
+      }
+    });
+    expect(unknownToolRefusal("New Business", "addDeal", []).content[0].text).toBe(
+      "New Business has no tool addDeal. It has no agent tools now. Call open_patch to see what each does and takes."
+    );
+  });
+
+  it("says where arguments miss their schema", () => {
+    expect(invalidArgsRefusal("addLead", 'Missing key at ["email"]').content[0].text).toBe(
+      "addLead's arguments don't fit its schema: Missing key at [\"email\"]. Fix them from its args in open_patch."
+    );
+  });
+
+  it("keeps Patchy's runtime refusal's code, message and details, its retry in whole seconds", () => {
+    expect(
+      runtimeRefusal({
+        ok: false,
+        source: "patchy",
+        code: "busy",
+        error: "The action concurrency limit is reached. Try again shortly.",
+        limitId: "tier2.actions.viewer",
+        retryAfter: 0.5,
+        details: { held: 2 },
+        correlationId: "call_1"
+      }).structuredContent
+    ).toEqual({
+      error: {
+        code: "busy",
+        from: "patchy",
+        message: "The action concurrency limit is reached. Try again shortly.",
+        details: { held: 2 },
+        retryAfterSeconds: 1
+      }
     });
   });
 });

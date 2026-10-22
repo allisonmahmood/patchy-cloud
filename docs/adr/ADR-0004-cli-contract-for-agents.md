@@ -44,14 +44,16 @@ lists of validation failures; their line count is not the branching contract.
 - **Success:** exactly one stdout JSON document, with the command's shape below.
   Warnings are fields in that document, never JSON-mode stderr; install, build
   and generation progress do not leak into stdout. `status` always uses JSON.
-- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, admins?, warnings? }`, ordinarily
+- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, admins?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
   empty stdout, and the exit code for `kind`. `code` preserves exposed wire
   refusals and identifies [local repo checks](#local-repo-refusal-codes), plus
-  local dev codes such as `not_additive` and `not_running`; not every error has one.
+  local dev codes such as `not_additive`, `not_running` and `no_agent_tools`; not every
+  error has one.
   Discovery's `wrong_state` refusal includes the actual patch `state`.
   Lifecycle refusals retain `owner` for `not_owner`, `dependants` for
   `has_dependants`, `sources` for `sources_off` and `purgeAt` for `patch_deleted`.
-  The look's `admin_required` retains `admins`.
+  The look's `admin_required` retains `admins`. A refusal Patchy MCP's door would
+  give, from `dev agent`, adds the door's `from`, `details` and `retryAfterSeconds`.
   Notices discovered before a later failure remain in `warnings`; text mode
   prints them before the error.
   Terminal device-login refusals currently use `kind` and `error` without a code.
@@ -537,6 +539,7 @@ Edit fixtures and restart to change sources locally; authority changes are not s
 | `dev status`            | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }`         |
 | `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                                                      |
 | `dev logs`              | `{ ok, log, text }`                                                                                  |
+| `dev agent`             | `open_patch`'s answer, or a call's `{ result, version }`, adding `warnings` when stale               |
 
 Start exits 0 only after the first valid single-file bundle and runtime are
 healthy. The daemon persists the checked release and full `/api/me` identity
@@ -546,6 +549,26 @@ current login or release. `stop` is the executable repo-pinned
 local exit 1, `not_running`. Missing fixtures and local provisioning failures are
 local; `not_additive` retains the provisioner's message/code. Instance refusals
 and transport failures use the ordinary ladder.
+
+`dev agent [<tool>] [<json>|-] [--colleague]` tries a tier 2 repo's agent tools
+before publishing, the way Patchy MCP's door calls them, and answers in the door's
+shapes. Without a tool it prints what `open_patch` would answer for the running
+binding. With one it calls it through Runtime's agent invocation as the primary dev
+viewer, or the colleague, with `ctx.agent` `{ name: "patchy dev" }`, its arguments
+one JSON object, from stdin with `-` or `{}` when omitted. Each change gets a fresh
+change key; a mutation's is its mutation key, kept by the daemon's retry of an
+`unknown_outcome`, and an action is never retried. There is no `--key`: running the
+command again is a new change. The company's agent access switch doesn't apply, and
+the daemon serves no MCP endpoint. A result exits 0, its document on stdout. Any
+refusal the door would give exits 2, `rejected`, with its `code`, `from` and any
+`details` and `retryAfterSeconds`: the patch's own, `unknown_tool`, `invalid_args`
+and Patchy's runtime refusals. A dev runtime that isn't healthy (`not_running`), a
+patch below tier 2 or without agent tools (`no_agent_tools`) and arguments that
+aren't one JSON object exit 1. A started call that gets no usable answer exits 3,
+`unreachable`, since it may have run. Each answer names the server build that gave
+it, counted from 1 for the session; a call's `version` is that build. When the
+latest rebuild failed, the answer says the last good build gave it, in `warnings`
+under `--json`.
 
 Vite builds production bundles without HMR. A successful `src/` rebuild replaces
 the page atomically and reloads the shell at its current route. A `server/` edit

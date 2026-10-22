@@ -563,12 +563,15 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     options.instance
   ).pipe(Effect.provideContext(context));
   if (version.manifest.tier === 2) {
+    // Each installed server binding is the next build, the first one 1.
+    let build = 0;
     const execution = yield* DevExecution.make(
       version,
       preparedResources.handlers,
       options,
       (next) => {
         currentVersion = next;
+        build++;
         versions.set(next.patchId, next);
       }
     ).pipe(Effect.provideContext(context));
@@ -576,6 +579,10 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       handlers: preparedResources.handlers,
       get version() {
         return currentVersion;
+      },
+      /** The installed binding's build. Read beside `version`, the two always agree. */
+      get build() {
+        return build;
       },
       context: Context.merge(context, execution.context),
       stage: execution.stage
@@ -586,6 +593,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   ).pipe(Effect.provideContext(context));
   return {
     ...preparedResources,
+    build: 0,
     context: Context.merge(context, subscriptionContext),
     stage: () => Effect.fail(new Runtime.InvocationUnavailable())
   };

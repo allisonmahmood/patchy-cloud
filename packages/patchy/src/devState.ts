@@ -24,6 +24,39 @@ export const Daemon = Schema.Struct({
   logJson: Schema.optionalKey(Schema.Boolean)
 });
 export type Daemon = typeof Daemon.Type;
+
+/**
+ * `patchy dev agent`'s question to a dev mount, which answers as its own person: what
+ * `open_patch` would answer, or one tool's call with its arguments.
+ */
+export const AgentRequest = Schema.Struct({
+  call: Schema.optionalKey(
+    Schema.Struct({ tool: Schema.String, args: Schema.Record(Schema.String, Schema.Json) })
+  )
+});
+export type AgentRequest = typeof AgentRequest.Type;
+
+/**
+ * The mount's answer: the door's tool result and the server build that gave it, saying when the
+ * latest rebuild failed and that build is the last good one; or a local problem, such as a patch
+ * with no agent tools. A refusal's `structuredContent` is `{ error }` in the door's shape.
+ */
+export const AgentReply = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    /** The mount's person, whom a call ran as. */
+    person: Schema.String,
+    build: Schema.Int,
+    rebuildFailed: Schema.Boolean,
+    answer: Schema.Struct({
+      content: Schema.Tuple([Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })]),
+      structuredContent: Schema.Record(Schema.String, Schema.Unknown),
+      isError: Schema.optionalKey(Schema.Literal(true))
+    })
+  }),
+  Schema.Struct({ ok: Schema.Literal(false), code: Schema.String, error: Schema.String })
+]);
+export type AgentReply = typeof AgentReply.Type;
 const decodeDaemon = Schema.decodeUnknownSync(Schema.fromJsonString(Daemon));
 const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
 

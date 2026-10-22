@@ -15,7 +15,7 @@ import {
   type HandlerDescriptors,
   type HandlerSchema
 } from "./handlers.js";
-import type { HandlerFailure } from "./runtime.js";
+import type { HandlerFailure, RuntimeFailure, ServerCallReply } from "./runtime.js";
 import type { ColumnDefinition, TableDefinition } from "./schemas.js";
 
 /** The subset of JSON Schema 2020-12 that handler values map onto. `{}` is any value. */
@@ -451,3 +451,55 @@ export const patchRefusal = (
     `${message}${extra}`
   );
 };
+
+/**
+ * A call naming a tool the patch doesn't have, read from the version the call would run on: it
+ * names the tools the patch has now and says to call `open_patch`.
+ */
+export const unknownToolRefusal = (
+  patch: string,
+  tool: string,
+  tools: readonly string[]
+): ToolCallResult =>
+  toolRefusal({
+    code: "unknown_tool",
+    from: "patchy",
+    message: `${patch} has no tool ${tool}. ${tools.length === 0 ? "It has no agent tools now." : `Its tools now: ${tools.join(", ")}.`} Call open_patch to see what each does and takes.`
+  });
+
+/** Arguments the tool's schema refuses, with the schema's own words for what and where. */
+export const invalidArgsRefusal = (tool: string, problem: string): ToolCallResult =>
+  toolRefusal({
+    code: "invalid_args",
+    from: "patchy",
+    message: `${tool}'s arguments don't fit its schema: ${problem}. Fix them from its args in open_patch.`
+  });
+
+/**
+ * Patchy's own refusal of a call, from Runtime's failure: its code and message, its details,
+ * and the wait before a retry when one is safe.
+ */
+export const runtimeRefusal = (failure: RuntimeFailure): ToolCallResult =>
+  toolRefusal({
+    code: failure.code,
+    from: "patchy",
+    message: failure.error,
+    ...(failure.details === undefined ? {} : { details: failure.details }),
+    ...(failure.retryAfter === undefined
+      ? {}
+      : { retryAfterSeconds: Math.ceil(failure.retryAfter) })
+  });
+
+/**
+ * A started call's answer: its result and the version it ran on, or the patch's own refusal.
+ * Patchy's refusals of the call are `runtimeRefusal`'s.
+ */
+export const callAnswer = (
+  patch: string,
+  tool: string,
+  version: number,
+  reply: ServerCallReply
+): ToolCallResult =>
+  reply.ok
+    ? toolAnswer({ result: reply.value, version } satisfies CallSuccess)
+    : patchRefusal(patch, tool, reply);

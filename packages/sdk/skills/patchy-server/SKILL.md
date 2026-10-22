@@ -394,6 +394,14 @@ date-time string, so an agent must send a time of day; a plain date is a
 `t.text()` the handler checks. Dev builds and publish refuse a tool that breaks
 these rules, naming its file; publish lists the tools as reads and changes.
 
+`pnpm patchy dev agent` lists the tools as an agent sees them, and
+`pnpm patchy dev agent <tool> '<json>'` calls one as the dev viewer, or as the
+colleague with `--colleague`; `-` reads the JSON from stdin. The call runs as an
+agent's does, with `ctx.agent` `{ name: "patchy dev" }`, and dev pages show its
+changes live. It answers what an agent would get, refusals exiting 2, and names
+the server build that answered, saying when the latest rebuild failed and the
+last good one answered instead.
+
 <!-- generated-limits:start -->
 
 ## Limits
