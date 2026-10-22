@@ -746,7 +746,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
   it.effect("refuses a request too long to carry through sign-in, before signing in", () =>
     Effect.gen(function* () {
       seen.length = 0;
-      const query = authorizeQuery(pkce().challenge, { state: "s".repeat(4_096) });
+      const query = authorizeQuery(pkce().challenge, { state: "s".repeat(2_048) });
       for (const cookie of [undefined, sessionOf()]) {
         const page = yield* send(
           `/oauth/authorize?${query}`,
@@ -755,7 +755,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         assert.strictEqual(page.status, 414);
         assert.isNull(page.headers.get("location"));
         assert.isNull(page.headers.get("x-patchy-sign-in-url"));
-        assert.include(yield* text(page), "longer than 4096 characters");
+        assert.include(yield* text(page), "longer than 2048 characters");
       }
       assert.deepStrictEqual(seen, []);
     })

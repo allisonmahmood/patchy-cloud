@@ -177,7 +177,17 @@ it.layer(layer)("auth pages on a socket", (it) => {
         const socket = `http://127.0.0.1:${server.address.port}`;
         // The longest query consent answers, in a character that survives every re-serialization
         // and triples each time it is encoded again.
-        const consent = `/oauth/authorize?state=${"+".repeat(4_090)}`;
+        const consent = `/oauth/authorize?state=${"+".repeat(2_042)}`;
+        // What a browser adds, the page it came from included: the consent page sends
+        // Referrer-Policy: same-origin, so its address rides along through the redirect.
+        const browser = (referer: string) => ({
+          referer,
+          "user-agent": `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36`,
+          accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+          "accept-language": "en-US,en;q=0.9",
+          "sec-fetch-site": "same-origin"
+        });
         const logout = yield* Effect.promise(() =>
           fetch(`${socket}/logout`, {
             method: "POST",
@@ -190,10 +200,21 @@ it.layer(layer)("auth pages on a socket", (it) => {
           })
         );
         assert.strictEqual(logout.status, 303);
+        const login = `${PUBLIC_BASE_URL}${logout.headers.get("location")}`;
+        // The redirect after signing out, and the worst hop after it: a page at that address
+        // linking to a sign-in address as long, as dev personas' does.
+        for (const referer of [`${PUBLIC_BASE_URL}${consent}`, login]) {
+          const hop = yield* Effect.promise(() =>
+            fetch(`${socket}${logout.headers.get("location")}`, {
+              headers: browser(referer),
+              redirect: "manual"
+            })
+          );
+          assert.strictEqual(hop.status, 200);
+        }
         const door = yield* Effect.promise(() =>
           fetch(`${socket}${logout.headers.get("location")}`, { redirect: "manual" })
         );
-        assert.strictEqual(door.status, 200);
         const signIn = new URL(door.headers.get("x-patchy-sign-in-url")!);
         assert.strictEqual(signIn.searchParams.get("redirect_url"), `${PUBLIC_BASE_URL}${consent}`);
       })

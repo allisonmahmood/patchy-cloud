@@ -46,11 +46,13 @@ const MAX_BODY_BYTES = 8_192;
 /** How long a consent page's answer counts once shown: as long as a device login's code. */
 const ANSWER_SECONDS = 10 * 60;
 /**
- * The longest authorization request answered, in characters of its query. Sign-in and Use
- * another account carry the request's address in their own, encoded again at each hop, and
- * every hop must stay inside Node's 16 KiB of request headers.
+ * The longest authorization request answered, in characters of its query; clients' real ones are
+ * well under 1 KiB. Sign-in and Use another account carry the request's address in their own,
+ * encoded again at each hop (up to three times as long), and a browser also sends the page it
+ * came from as `Referer`. A hop holds at most two such copies, about 12 KiB, which leaves room
+ * for the browser's other headers inside Node's 16 KiB.
  */
-const MAX_REQUEST_CHARS = 4_096;
+const MAX_REQUEST_CHARS = 2_048;
 const MAX_ANSWER_BYTES = 4_096;
 /** The token request's parameters, each allowed once. */
 const TOKEN_PARAMS = [
