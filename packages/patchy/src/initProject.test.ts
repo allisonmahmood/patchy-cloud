@@ -41,6 +41,23 @@ it.each([1, 2] as const)(
   }
 );
 
+it.each([1, 2] as const)("typechecks and lints agent/ beside server/ at tier %i", (tier) => {
+  const files = starterFiles({
+    instance: "http://127.0.0.1:1",
+    name: "notes",
+    tier,
+    purpose: "Synthetic notes",
+    tarball: "http://127.0.0.1:1/patchy.tgz"
+  });
+  expect(JSON.parse(files["tsconfig.json"]!).include).toEqual(
+    expect.arrayContaining(["server", "agent"])
+  );
+  expect(files["eslint.config.js"]).toContain('"agent/**/*.{js,jsx,ts,tsx}"');
+  expect(files["AGENTS.md"]).toContain(
+    "- `agent/`: tools for people's agents, used through Patchy MCP (tier 2)."
+  );
+});
+
 it("keeps an already-running caller in the initialized directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "patchy-init-cwd-"));
   const destination = join(root, "project");

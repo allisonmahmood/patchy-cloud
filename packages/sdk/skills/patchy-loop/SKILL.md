@@ -13,11 +13,11 @@ Talk through edge cases and product behaviour with the person before building.
 2. Read `patchy.config.ts` for the tier, owned tables and file stores, and the declarations in `uses`. Choose the page workflow from the tier and existing source:
    - Tier 0 is static HTML. Edit `index.html`; the page cannot run scripts or call resources. It does not need Preact or `src/App.tsx`.
    - Tiers 1 and 2 start with Preact in `src/App.tsx`, mounted by `src/main.tsx`. Read `../patchy-preact/SKILL.md` before changing components or hooks.
-   - Tier 2 puts handlers in `server/`. Read `../patchy-server/SKILL.md`; the page calls `patchy.server.<module>.<handler>`, not tables, named files or connections directly.
+   - Tier 2 puts handlers in `server/`. Read `../patchy-server/SKILL.md`; the page calls `patchy.server.<module>.<handler>`, not tables, named files or connections directly. Tools for people's agents go in `agent/`, the agent area, which the same skill covers.
    - A vanilla tier 1 repo keeps its existing entrypoint and framework-free generated client. Refresh does not convert it to Preact.
      Read `../patchy-tables/SKILL.md` for rows, `../patchy-files/SKILL.md` for bytes, and each declaration's skill and generated context before using it. In a scripted page, import the generated client by relative path; from `src/App.tsx` or `src/main.ts`, use `import { patchy } from "../patchy/_generated/client.js"`.
 3. Edit source, config and invented fixtures. Read `../patchy-look/SKILL.md` before styling a page: the company look it starts in and the order to style by. Run `pnpm patchy refresh` after changing definitions, declarations, tier or server module filenames. The generated index must name every declaration and its context before you use it. Run `pnpm typecheck` and, when `package.json` supplies a lint script, `pnpm lint`; the Preact scaffold supplies both. Repair source or config, never generated output.
-4. Run `pnpm patchy dev --json` and open `url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed non-admin viewer sharing the same local data. Exercise both viewers through the real shell, using invented fixtures. The command is healthy on return and idempotent: a second run joins the running session with `joined: true` and pulls nothing from Patchy. That is routine, not staleness; run `pnpm patchy refresh` when the person wants cloud changes such as a new look or description in the session, not on every join. `src/` rebuilds reload the shell; tier 2 `server/` saves atomically rebind without reload and discover new modules, logging a reminder to refresh types. Existing calls and nested calls finish on their old binding. Subscriptions rerun on the new one, discard crossing results and end permanently for removed handlers or incompatible arguments. Failed builds retain the last good binding. Config and fixture edits need stop/start. A standalone Vite preview cannot exercise capabilities.
+4. Run `pnpm patchy dev --json` and open `url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed non-admin viewer sharing the same local data. Exercise both viewers through the real shell, using invented fixtures. The command is healthy on return and idempotent: a second run joins the running session with `joined: true` and pulls nothing from Patchy. That is routine, not staleness; run `pnpm patchy refresh` when the person wants cloud changes such as a new look or description in the session, not on every join. `src/` rebuilds reload the shell; tier 2 `server/` and `agent/` saves atomically rebind without reload and discover new files; new server modules log a reminder to refresh types, and agent files need none. Existing calls and nested calls finish on their old binding. Subscriptions rerun on the new one, discard crossing results and end permanently for removed handlers or incompatible arguments. Failed builds retain the last good binding. Config and fixture edits need stop/start. A standalone Vite preview cannot exercise capabilities.
 5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declarations and server module names, typechecks and builds the HTML bundle. Tier 2 also builds a closed server module; the instance re-derives its handlers before serving it. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Tier 2 is company-only: publish to a public patch with `--share company`. Report the address, scope, tier, version, artifacts, handlers, provisioned and unused resources.
 
 <!-- sdk-capabilities -->
@@ -35,9 +35,9 @@ neither requires tier 2.
   move into a handler. Use queries for reads, mutations for atomic owned-table
   writes and actions for files or integrations. Publish with `--share company`
   if the patch is currently public.
-- To move from tier 2 to 1, set `tier: 1`, remove `server/`, then run
-  `pnpm patchy refresh`. It removes the `workerd` pin, generated `server.ts` and
-  `patchy-server` skill. The server skill follows the tier; the members skill
+- To move from tier 2 to 1, set `tier: 1`, remove `server/` and `agent/`, then
+  run `pnpm patchy refresh`. It removes the `workerd` pin, generated `server.ts`
+  and `patchy-server` skill. The server skill follows the tier; the members skill
   follows its declaration. Other installed skills stay sticky.
   Run `pnpm typecheck` and rewrite every `patchy.server.*` call it names.
   Tier 1 cannot retain handler-enforced rules or multi-operation transactions.
@@ -53,7 +53,8 @@ For scripted pages, `src/` owns the page; tier 0 keeps static HTML in `index.htm
 On every tier, `index.html`'s `<title>` names the patch's browser tab; init starts
 it from the patch's name, so give it the tool's name as people say it.
 Put reusable company code in `helpers/`; page-only helpers
-may stay under `src/`. `server/` contains tier 2 handler modules.
+may stay under `src/`. `server/` contains tier 2 handler modules, and `agent/`
+the tier 2 agent tools, which only people's agents call.
 Importing a helper at runtime also imports its dependency
 graph: a server import inside a helper leaks into the page. Keep shared helpers
 browser-safe and use `import type` for server contracts.

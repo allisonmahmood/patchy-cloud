@@ -3,11 +3,14 @@ import * as path from "node:path";
 import type { ReleaseToolchain } from "@patchy/api";
 import type { InlineConfig } from "vite";
 import { LocalError } from "./CliError.js";
+import { duplicateAgentTool } from "./handlerDescriptors.js";
 import { runToolchain } from "./toolchain.js";
 
 export interface BuiltServer {
   readonly server: string;
   readonly sdkImports: readonly string[];
+  /** Each agent tool's file under `agent/`, by stem, so refusals can name it. */
+  readonly agentTools: Readonly<Record<string, string>>;
 }
 
 interface ServerOutput {
@@ -25,10 +28,21 @@ const serverCode = (output: readonly ServerOutput[]) => {
   return chunk.code;
 };
 
+/**
+ * Each build's agent area: its files by stem, and what its last build found, each tool's file or
+ * the refusal for a name two files export.
+ */
+interface AgentArea {
+  readonly files: readonly string[];
+  tools: Readonly<Record<string, string>>;
+  refusal: LocalError | undefined;
+}
+
 /** Publish and dev share their private entry, import checks and closed-module check. */
 const buildConfig = (
   root: string,
   modules: readonly string[],
+  agent: AgentArea,
   sharedStores: readonly string[],
   watched?: { readonly outDir: string; readonly complete: (server: string) => void }
 ): InlineConfig => {
@@ -36,13 +50,15 @@ const buildConfig = (
   const input = path.join(root, ".patchy-server-entry.js");
   // Reuse the handler SDK's guest export instead of bundling its schemas a second time.
   const guest = path.join(root, "node_modules/patchy/dist/server.js");
+  const agentPaths = agent.files.map((name) => path.join(root, "agent", `${name}.ts`));
   const source = [
     `import { createGuest } from ${JSON.stringify(guest)};`,
     ...modules.map(
       (name, index) =>
         `import * as module${index} from ${JSON.stringify(path.join(root, "server", `${name}.ts`))};`
     ),
-    `export default createGuest({${modules.map((name, index) => `${JSON.stringify(name)}: module${index}`).join(",")}},${JSON.stringify(sharedStores)});`
+    ...agentPaths.map((file, index) => `import * as agent${index} from ${JSON.stringify(file)};`),
+    `export default createGuest({${modules.map((name, index) => `${JSON.stringify(name)}: module${index}`).join(",")}},${JSON.stringify(sharedStores)},{${agent.files.map((name, index) => `${JSON.stringify(name)}: agent${index}`).join(",")}});`
   ].join("\n");
   return {
     configFile: false,
@@ -56,6 +72,49 @@ const buildConfig = (
         },
         load(id) {
           if (id === entry) return source;
+        },
+        buildStart() {
+          agent.tools = {};
+          agent.refusal = undefined;
+        },
+        // The guest refuses a name two files export too, but inside workerd, where its message is
+        // lost; here the refusal can name both files.
+        async buildEnd(error) {
+          if (error !== undefined) return;
+          const exported = async (id: string, seen: Set<string>): Promise<readonly string[]> => {
+            const info = this.getModuleInfo(id);
+            if (info === null || seen.has(id)) return [];
+            seen.add(id);
+            const names = info.exports.filter((name) => name !== "*");
+            if (!info.exports.includes("*") || info.code === null) return names;
+            // `export *` is listed as "*"; follow each star source as the bundle links it.
+            for (const statement of this.parse(info.code).body) {
+              if (statement.type !== "ExportAllDeclaration" || statement.exported !== null)
+                continue;
+              const target = await this.resolve(statement.source.value, id);
+              if (target === null) continue;
+              for (const name of await exported(target.id, seen))
+                if (name !== "default") names.push(name);
+            }
+            return names;
+          };
+          const owners = new Map<string, string>();
+          for (const [index, file] of agentPaths.entries()) {
+            const stem = agent.files[index]!;
+            for (const name of new Set(await exported(file, new Set()))) {
+              const owner = owners.get(name);
+              if (owner !== undefined) {
+                agent.refusal = new LocalError({
+                  code: "invalid_manifest",
+                  message: duplicateAgentTool(name, owner, stem)
+                });
+                // Bundlers mutate thrown errors; the caller reads the refusal instead.
+                throw new Error(agent.refusal.message);
+              }
+              owners.set(name, stem);
+            }
+          }
+          agent.tools = Object.fromEntries(owners);
         },
         generateBundle(_options, bundle) {
           if (watched !== undefined) watched.complete(serverCode(Object.values(bundle)));
@@ -82,15 +141,19 @@ const buildConfig = (
 export async function buildServer(
   root: string,
   modules: readonly string[],
+  agentFiles: readonly string[],
   toolchain: typeof ReleaseToolchain.Type,
   sharedStores: readonly string[]
 ) {
+  const agent: AgentArea = { files: agentFiles, tools: {}, refusal: undefined };
   const built = await runToolchain(
     root,
     toolchain,
-    buildConfig(root, modules, sharedStores),
+    buildConfig(root, modules, agent, sharedStores),
     "server"
-  );
+  ).catch((cause: unknown) => {
+    throw agent.refusal ?? cause;
+  });
   const result = Array.isArray(built.result)
     ? built.result.length === 1
       ? built.result[0]
@@ -101,23 +164,29 @@ export async function buildServer(
       code: "invalid_manifest",
       message: "The server build did not produce a closed module."
     });
-  return { server: serverCode(result.output), sdkImports: built.sdkImports };
+  return {
+    server: serverCode(result.output),
+    sdkImports: built.sdkImports,
+    agentTools: agent.tools
+  };
 }
 
 /** Keep Vite's dependency graph and transformed modules between ordinary handler saves. */
 export async function watchServer(
   root: string,
   modules: readonly string[],
+  agentFiles: readonly string[],
   toolchain: typeof ReleaseToolchain.Type,
   outDir: string,
   sharedStores: readonly string[],
   complete: (result: BuiltServer | LocalError) => void
 ) {
   let server: string | undefined;
+  const agent: AgentArea = { files: agentFiles, tools: {}, refusal: undefined };
   const loaded = await runToolchain(
     root,
     toolchain,
-    buildConfig(root, modules, sharedStores, {
+    buildConfig(root, modules, agent, sharedStores, {
       outDir,
       complete: (built) => {
         server = built;
@@ -131,10 +200,11 @@ export async function watchServer(
   watcher.on("event", (event) => {
     if (event.code === "BUNDLE_START") server = undefined;
     else if (event.code === "BUNDLE_END" && server !== undefined)
-      complete({ server, sdkImports: loaded.sdkImports });
+      complete({ server, sdkImports: loaded.sdkImports, agentTools: agent.tools });
     else if (event.code === "ERROR")
       complete(
-        loaded.importRefusal?.() ??
+        agent.refusal ??
+          loaded.importRefusal?.() ??
           new LocalError({
             message: "Server build failed; the last successful binding stays served.",
             cause: event.error

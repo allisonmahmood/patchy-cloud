@@ -235,6 +235,63 @@ it.live(
 );
 
 it.live(
+  "folds agent/ files into agent tools with no refresh, and refuses a name two files export",
+  () =>
+    Effect.gen(function* () {
+      const { root, fs, path } = yield* leadsRepo;
+      const next = yield* inspectedChanges(root);
+      assert.deepStrictEqual(Object.keys((yield* next).handlers), ["leads.read"]);
+
+      // The page's handler re-exported for agents, and a tool of its own in another file.
+      yield* fs.makeDirectory(path.join(root, "agent"));
+      yield* save(path.join(root, "agent/leads.ts"), 'export { read } from "../server/leads.js";');
+      yield* save(
+        path.join(root, "agent/intake.ts"),
+        handler("number").replace("export const read", "export const count")
+      );
+      let built = yield* next;
+      while (built.agentFiles.length < 2) built = yield* next;
+      assert.deepStrictEqual(built.agentFiles, ["intake", "leads"]);
+      assert.deepStrictEqual(built.handlers, {
+        "leads.read": { kind: "query", args: {}, result: { kind: "text" } },
+        "agent.count": { kind: "query", args: {}, result: { kind: "number" }, agentTool: true },
+        "agent.read": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true }
+      });
+
+      // `export *` names every handler of its source, so read is now exported twice.
+      const twice = path.join(root, "agent/more.ts");
+      yield* save(twice, 'export * from "../server/leads.js";');
+      const refusal = {
+        code: "invalid_manifest",
+        message:
+          "read is exported by agent/leads.ts and agent/more.ts; each tool needs its own name."
+      };
+      assert.deepInclude(yield* next.pipe(Effect.flip), refusal);
+      // Publish builds through the same check.
+      const publishBuild = Effect.tryPromise({
+        try: () => buildServer(root, ["leads"], ["intake", "leads", "more"], toolchain, []),
+        catch: (cause) => cause
+      });
+      assert.deepInclude(yield* publishBuild.pipe(Effect.flip), refusal);
+      yield* fs.remove(twice);
+      assert.deepStrictEqual((yield* next).handlers, built.handlers);
+
+      // A tool's refusals name its own file under agent/.
+      const intake = path.join(root, "agent/intake.ts");
+      const own = yield* fs.readFileString(intake);
+      yield* save(intake, own.replace("args: {}", 'description: " ", args: {}'));
+      assert.deepInclude(yield* next.pipe(Effect.flip), {
+        code: "invalid_manifest",
+        message:
+          "agent/intake.ts: agent.count's description is blank. Say what it does, or leave the description out. The last successful binding stays served."
+      });
+      yield* save(intake, own);
+      assert.deepStrictEqual((yield* next).handlers, built.handlers);
+    }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, DirectoryWatch.layer])),
+  30_000
+);
+
+it.live(
   "recovers after import refusals, failed builds, invalid handler exports and descriptions",
   () =>
     Effect.gen(function* () {
@@ -327,7 +384,7 @@ export const read = query({ args: {}, result: t.json(), handler: () => optionalM
 `
       );
       const build = Effect.tryPromise({
-        try: () => buildServer(root, ["leads"], toolchain, []),
+        try: () => buildServer(root, ["leads"], [], toolchain, []),
         catch: (cause) => cause
       });
       assert.deepInclude(yield* build.pipe(Effect.flip), { code: "invalid_manifest" });

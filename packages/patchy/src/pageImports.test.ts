@@ -89,14 +89,18 @@ globalThis.csvResult = parse(stringify([["=1", -42], ["a,b", "line\\nnext"]]));
   }
 );
 
-it.each([
-  'import { handler } from "./server/leads.ts"; console.log(handler);',
-  'export { handler } from "./server/leads.ts";',
-  'void import("./server/leads.ts");'
-])("refuses a page runtime import of server code: %s", async (source) => {
+it.each(
+  ["server", "agent"].flatMap((folder) => [
+    `import { handler } from "./${folder}/leads.ts"; console.log(handler);`,
+    `export { handler } from "./${folder}/leads.ts";`,
+    `void import("./${folder}/leads.ts");`
+  ])
+)("refuses a page runtime import of server or agent code: %s", async (source) => {
   const root = page(source);
-  mkdirSync(path.join(root, "server"));
-  writeFileSync(path.join(root, "server/leads.ts"), "export const handler = 1;");
+  for (const folder of ["server", "agent"]) {
+    mkdirSync(path.join(root, folder));
+    writeFileSync(path.join(root, folder, "leads.ts"), "export const handler = 1;");
+  }
   let refusal: LocalError | undefined;
   await expect(
     build({
@@ -111,7 +115,12 @@ it.each([
       build: { write: false }
     })
   ).rejects.toThrow();
-  expect(refusal).toMatchObject({ code: "import_refused" });
+  expect(refusal).toMatchObject({
+    code: "import_refused",
+    message: expect.stringContaining(
+      `but the page can't import ${source.includes("agent") ? "agent" : "server"}/ at runtime.`
+    )
+  });
 });
 
 it.each([

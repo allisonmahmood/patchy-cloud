@@ -11,10 +11,16 @@ import * as Scope from "effect/Scope";
 import { LocalError } from "./CliError.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
 import { watchServer, type BuiltServer } from "./serverBuild.js";
-import { descriptionFailure, discoverServerModules } from "./serverModules.js";
+import {
+  agentTypecheckWarning,
+  descriptionFailure,
+  discoverAgentFiles,
+  discoverServerModules
+} from "./serverModules.js";
 
 export interface ServerBuild extends BuiltServer {
   readonly modules: readonly string[];
+  readonly agentFiles: readonly string[];
   readonly inspect: Effect.Effect<typeof HandlerDescriptors.Type, LocalError>;
 }
 
@@ -27,6 +33,7 @@ type Change =
     }
   | LocalError;
 const isLocalError = Schema.is(LocalError);
+type SourceFolder = "server" | "agent";
 
 /** Consume builds serially; inspect and stage may run together, but installation awaits both. */
 export const watch = Effect.fn("Dev.watchServer")(function* (
@@ -57,13 +64,18 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
         })
     )
   );
-  const serverDirectory = path.join(root, "server");
-  let sourceWatch: Scope.Closeable | undefined;
+  // Each source folder's own watch, restarted when the folder itself is replaced.
+  const folders: Record<SourceFolder, { replaced: boolean; watch: Scope.Closeable | undefined }> = {
+    server: { replaced: true, watch: undefined },
+    agent: { replaced: true, watch: undefined }
+  };
   let builder: { close(): Promise<void> } | undefined;
-  let modules: readonly string[] | undefined;
+  let sources: { readonly modules: readonly string[]; readonly agentFiles: readonly string[] } = {
+    modules: [],
+    agentFiles: []
+  };
   let generation = 0;
   let sourcesPending = false;
-  let serverReplaced = true;
   const changed = () => {
     if (!sourcesPending) {
       sourcesPending = true;
@@ -76,13 +88,17 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       new LocalError({ message: "Could not watch server source files.", cause })
     );
   yield* Effect.addFinalizer(() => Effect.promise(async () => await builder?.close()));
-  // Directory watches see modules come and go; Vite watches what they import. Modules
-  // are one level deep, so neither watch recurses.
+  // Directory watches see modules and agent files come and go; Vite watches what they
+  // import. Both folders are one level deep, so no watch recurses.
   yield* directories
     .watch(root, {
       change: (filename) => {
-        if (filename === null || filename === "server") {
-          serverReplaced = true;
+        if (filename === null) {
+          folders.server.replaced = true;
+          folders.agent.replaced = true;
+          changed();
+        } else if (filename === "server" || filename === "agent") {
+          folders[filename].replaced = true;
           changed();
         }
       },
@@ -93,62 +109,72 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
         (cause) => new LocalError({ message: "Could not watch server source files.", cause })
       )
     );
+  const rewatch = Effect.fn("Dev.watchServer.folder")(function* (name: SourceFolder) {
+    const folder = folders[name];
+    if (!folder.replaced) return;
+    // Clear the flag before any work, so a replacement reported meanwhile is handled
+    // next time. A failure to start, other than a missing folder, sets it again to retry.
+    folder.replaced = false;
+    if (folder.watch !== undefined) yield* Scope.close(folder.watch, Exit.void);
+    const latest = yield* Scope.fork(scope);
+    folder.watch = latest;
+    yield* directories
+      .watch(path.join(root, name), {
+        change: changed,
+        error: (error) => {
+          // A replaced watch's late report is moot.
+          if (folder.watch !== latest) return;
+          if (error._tag === "DirectoryGone") {
+            folder.replaced = true;
+            changed();
+          } else watchError(error);
+        }
+      })
+      .pipe(
+        Scope.provide(latest),
+        // Absent, or deleted since: the root watch reports when the folder appears.
+        Effect.catchTags({ DirectoryGone: () => Effect.void }),
+        Effect.mapError(
+          (cause) => new LocalError({ message: "Could not watch server source files.", cause })
+        ),
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            folder.replaced = true;
+          })
+        )
+      );
+  });
+  const same = (left: readonly string[], right: readonly string[]) =>
+    left.length === right.length && left.every((name, index) => name === right[index]);
   const rediscover = Effect.fn("Dev.watchServer.sources")(function* () {
-    if (serverReplaced) {
-      // Clear the flag before any work, so a replacement reported meanwhile is
-      // handled next time. A failure to start, other than a missing server/,
-      // sets it again to retry.
-      serverReplaced = false;
-      if (sourceWatch !== undefined) yield* Scope.close(sourceWatch, Exit.void);
-      const latest = yield* Scope.fork(scope);
-      sourceWatch = latest;
-      yield* directories
-        .watch(serverDirectory, {
-          change: changed,
-          error: (error) => {
-            // A replaced watch's late report is moot.
-            if (sourceWatch !== latest) return;
-            if (error._tag === "DirectoryGone") {
-              serverReplaced = true;
-              changed();
-            } else watchError(error);
-          }
-        })
-        .pipe(
-          Scope.provide(latest),
-          // Absent, or deleted since: the root watch reports when server/ appears.
-          Effect.catchTags({ DirectoryGone: () => Effect.void }),
-          Effect.mapError(
-            (cause) => new LocalError({ message: "Could not watch server source files.", cause })
-          ),
-          Effect.tapError(() =>
-            Effect.sync(() => {
-              serverReplaced = true;
-            })
-          )
-        );
-    }
-    const discovered = yield* discoverServerModules(root);
+    yield* rewatch("server");
+    yield* rewatch("agent");
+    const modules = yield* discoverServerModules(root);
+    const agentFiles = yield* discoverAgentFiles(root);
     if (
       builder !== undefined &&
-      modules?.length === discovered.length &&
-      modules.every((name, index) => name === discovered[index])
+      same(sources.modules, modules) &&
+      same(sources.agentFiles, agentFiles)
     )
       return false;
-    if (modules !== undefined) {
-      for (const name of discovered) {
-        if (!modules.includes(name))
+    if (builder !== undefined) {
+      for (const name of modules) {
+        if (!sources.modules.includes(name))
           yield* Console.log(`new server module ${name}: run pnpm patchy refresh for types`);
       }
+    }
+    if (!same(sources.agentFiles, agentFiles)) {
+      const skipped = agentTypecheckWarning(root, agentFiles);
+      if (skipped !== undefined) yield* Console.log(skipped);
     }
     const previous = builder;
     builder = undefined;
     const current = ++generation;
     if (previous !== undefined) yield* Effect.promise(() => previous.close());
-    modules = discovered;
+    sources = { modules, agentFiles };
     builder = yield* Effect.tryPromise({
       try: () =>
-        watchServer(root, discovered, toolchain, output, sharedStores, (result) => {
+        watchServer(root, modules, agentFiles, toolchain, output, sharedStores, (result) => {
           Queue.offerUnsafe(changes, { _tag: "Build", generation: current, result });
         }),
       catch: (cause) =>
@@ -175,7 +201,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       const built = change.result;
       return {
         ...built,
-        modules: modules!,
+        ...sources,
         inspect: inspection.inspect(built.server).pipe(
           Effect.mapError(
             (cause) =>
@@ -187,7 +213,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
               })
           ),
           Effect.flatMap((handlers) => {
-            const problem = descriptionFailure(handlers);
+            const problem = descriptionFailure(handlers, built.agentTools);
             return problem === undefined
               ? Effect.succeed(handlers)
               : Effect.fail(

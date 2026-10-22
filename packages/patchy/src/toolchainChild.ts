@@ -64,6 +64,7 @@ try {
       ? await buildServer(
           process.cwd(),
           decodeModules(process.argv[5]),
+          decodeModules(process.argv[7]!),
           toolchain,
           decodeModules(process.argv[6]!)
         )
@@ -74,7 +75,8 @@ try {
     JSON.stringify({
       ok: true,
       warnings: loaded.warnings,
-      sdkImports: [...new Set([...loaded.sdkImports, ...(server?.sdkImports ?? [])])].sort()
+      sdkImports: [...new Set([...loaded.sdkImports, ...(server?.sdkImports ?? [])])].sort(),
+      agentTools: server?.agentTools ?? {}
     })
   );
 } catch (cause) {

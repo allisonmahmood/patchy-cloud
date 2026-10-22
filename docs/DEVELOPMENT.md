@@ -393,7 +393,7 @@ pnpm patchy dev --json
 user and `colleagueUrl` as a fixed non-admin colleague on a second origin;
 writes and subscriptions are shared between them. Config and fixture edits need
 `pnpm patchy dev stop` and a start; `src/` edits rebuild and reload the shell,
-and `server/` edits rebind without a reload. [The CLI's README](../packages/patchy/README.md)
+and `server/` and `agent/` edits rebind without a reload. [The CLI's README](../packages/patchy/README.md)
 covers fixtures, logs and the dev contract.
 
 To run this worktree's runtime source instead of the installed release, from

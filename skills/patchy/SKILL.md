@@ -92,8 +92,9 @@ what it built, not the project. Keep both somewhere lasting:
 When the user wants a tool with its own rows, files or company connections,
 start a patch repo rather than putting JavaScript into a static-file publish.
 Choose tier 1 by default. Choose tier 2 for enforced rules, atomic multi-row
-writes, or server-side work such as combining connection data before the viewer
-sees it. Tier 1 rules are advisory because a viewer can make the same writes
+writes, server-side work such as combining connection data before the viewer
+sees it, or when people's agents should use it: agents reach only a tier 2 agent
+area. Tier 1 rules are advisory because a viewer can make the same writes
 from devtools. Live sync and sequential steps work on tier 1 and do not require
 tier 2.
 

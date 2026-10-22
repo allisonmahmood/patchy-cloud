@@ -79,7 +79,7 @@ instance is `rejected` (exit 2). Not every local failure has a structured code
 | `stale_generated`       | Generated release metadata, declaration stamps or the server module list no longer match the repo. Run `pnpm patchy refresh`.                                                                                                                                                                                                                        |
 | `invalid_manifest`      | Config, manifest or server descriptor extraction failed. Fix the named source, declaration or handler before publishing.                                                                                                                                                                                                                             |
 | `too_large`             | A bundle exceeds its local cap. HTML allows 512 KiB at tier 0 and 10 MiB at tiers 1 and 2. Reduce the resources named in the diagnostic.                                                                                                                                                                                                             |
-| `tier_mismatch`         | The code does not fit its declared or supported tier. `server/` requires tier 2; browser code requires at least tier 1; tiers above 2 are not served.                                                                                                                                                                                                |
+| `tier_mismatch`         | The code does not fit its declared or supported tier. `server/` and `agent/` require tier 2; browser code requires at least tier 1; tiers above 2 are not served.                                                                                                                                                                                    |
 
 Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
@@ -94,6 +94,14 @@ A blank handler or value description, or one over 2,000 characters, is
 `invalid_manifest` naming the handler and the fix: local exit 1 from the build
 and dev builds, which also name its file, and exit 2 from the instance for a
 publish that skipped the check.
+The agent area, `agent/*.ts`, folds into the module `agent`, so its tools are
+`agent.<export>` handlers marked as agent tools; it needs no refresh. Local
+`invalid_manifest`, exit 1, refuses a name two agent files export, naming both
+files and saying each tool needs its own name; `server/agent.ts` ("Agent tools
+live in agent/; move these exports there."); and a nested `agent/` folder. Page
+imports from `agent/` are `import_refused`, as from `server/`. When
+`tsconfig.json` leaves out an agent file, dev builds and publish warn that
+`pnpm typecheck` skips the agent tools and to add `"agent"` to its include list.
 Dev and test instances admit tier 2 publication. The server inspects
 the stored server bytes in a throwaway process. A descriptor disagreement,
 top-level throw, unresolved module or unfinished initializer is HTTP 422

@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import type { Json, Upload, ValueDescriptor } from "./config.js";
 import type { MemberListOptions, MemberSearchOptions } from "./client.js";
 import { decodeError, PatchyError } from "./clientError.js";
-import { extractHandlerDescriptors } from "./handlerDescriptors.js";
+import { extractHandlerDescriptors, foldAgentArea } from "./handlerDescriptors.js";
 import { decodeHandlerError, isHandlerError } from "./handlerError.js";
 import type { Handler, HandlerKindName } from "./server.js";
 
@@ -319,16 +319,22 @@ const resolveUploads = async (
   }
 };
 
-/** Worker entry for server bundles, without importing privileged Workers APIs. */
+/**
+ * Worker entry for server bundles, without importing privileged Workers APIs. The build passes
+ * `server/` modules by name and `agent/` files by filename stem; the files fold into `agent`.
+ */
 export function createGuest(
   modules: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
-  sharedStores: readonly string[] = []
+  sharedStores: readonly string[] = [],
+  agentFiles: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {}
 ) {
-  const descriptors = extractHandlerDescriptors(modules);
+  const agentArea = foldAgentArea(agentFiles);
+  const descriptors = extractHandlerDescriptors(modules, agentArea);
+  const definitions: typeof modules = { ...modules, agent: agentArea };
   const handlers = new Map(
     Object.entries(descriptors).map(([name, descriptor]) => {
       const dot = name.indexOf(".");
-      const definition = modules[name.slice(0, dot)]![name.slice(dot + 1)] as Definition;
+      const definition = definitions[name.slice(0, dot)]![name.slice(dot + 1)] as Definition;
       return [name, { descriptor, handler: definition.handler }] as const;
     })
   );

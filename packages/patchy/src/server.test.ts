@@ -9,7 +9,7 @@ import {
 import { build } from "esbuild";
 import * as Schema from "effect/Schema";
 import { defineConfig, files, t, table } from "./config.js";
-import { extractHandlerDescriptors } from "./handlerDescriptors.js";
+import { extractHandlerDescriptors, foldAgentArea } from "./handlerDescriptors.js";
 import { InvalidManifestError } from "./invalidManifestError.js";
 import { bindServer, HandlerError, isHandlerError, query } from "./server.js";
 import type * as Server from "./server.js";
@@ -211,6 +211,61 @@ it("rejects non-handlers and nested names as invalid_manifest", () => {
     assert.propertyVal(error, "exitCode", 1);
   }
   assert.deepStrictEqual(extractHandlerDescriptors({ empty: {} }), {});
+});
+
+it("folds agent files into agent tools, keeping a re-exported handler's page name unmarked", () => {
+  const list = server.query({
+    description: "Lists leads.",
+    args: {},
+    result: t.boolean(),
+    handler: () => true
+  });
+  const add = server.mutation({
+    description: "Adds a lead.",
+    args: { name: t.text() },
+    result: t.boolean(),
+    handler: () => true
+  });
+  // agent/leads.ts re-exports the page's handler; agent/intake.ts has a tool of its own.
+  const agentArea = foldAgentArea({ intake: { add }, leads: { list } });
+  assert.deepStrictEqual(extractHandlerDescriptors({ leads: { list } }, agentArea), {
+    "leads.list": {
+      kind: "query",
+      description: "Lists leads.",
+      args: {},
+      result: { kind: "boolean" }
+    },
+    "agent.list": {
+      kind: "query",
+      description: "Lists leads.",
+      args: {},
+      result: { kind: "boolean" },
+      agentTool: true
+    },
+    "agent.add": {
+      kind: "mutation",
+      description: "Adds a lead.",
+      args: { name: { kind: "text" } },
+      result: { kind: "boolean" },
+      agentTool: true
+    }
+  });
+});
+
+it("refuses a tool name two agent files export, naming both, and a server module named agent", () => {
+  const list = server.query({ args: {}, result: t.boolean(), handler: () => true });
+  assert.throws(
+    () => foldAgentArea({ crm: { list }, deals: { list } }),
+    InvalidManifestError,
+    "list is exported by agent/crm.ts and agent/deals.ts; each tool needs its own name."
+  );
+  assert.throws(
+    () => extractHandlerDescriptors({ agent: { list } }),
+    InvalidManifestError,
+    "server/agent.ts: Agent tools live in agent/; move these exports there."
+  );
+  for (const area of [{ helper: 1 }, { nested: { list } }])
+    assert.throws(() => extractHandlerDescriptors({}, area), InvalidManifestError);
 });
 
 it("validates structural handler descriptors without invoking callbacks or serializers", () => {
