@@ -51,6 +51,8 @@ export interface Capability {
   readonly binding: Binding.Binding["Service"];
   readonly attempt: GuestProtocol.Attempt;
   readonly kind: HandlerKind;
+  /** A read-only action's: the callback gate refuses its writes and nested admission its changes. */
+  readonly readOnly: boolean;
   readonly reauthorize: Effect.Effect<NonNullable<RuntimeMe>, RuntimeError>;
   readonly tree: TreeBudget;
   readonly counters: Counters;
@@ -72,6 +74,7 @@ export interface Issue {
   readonly binding: Binding.Binding["Service"];
   readonly attempt: GuestProtocol.Attempt;
   readonly kind: HandlerKind;
+  readonly readOnly: boolean;
   readonly reauthorize: Effect.Effect<NonNullable<RuntimeMe>, RuntimeError>;
   readonly tree?: TreeBudget;
   readonly counters?: Counters;
@@ -319,6 +322,7 @@ export const make = Effect.gen(function* () {
       }),
       attempt: Object.freeze({ ...input.attempt }),
       kind: input.kind,
+      readOnly: input.readOnly,
       reauthorize: input.reauthorize,
       tree: input.tree ?? { bytes: 0 },
       snapshot: {},

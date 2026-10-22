@@ -88,6 +88,7 @@ it.layer(services)("Members", (it) => {
       const capability = yield* capabilities.issue({
         binding: { ...binding, manifest: { ...binding.manifest, tier: 2 } },
         kind: "query",
+        readOnly: false,
         attempt: {
           invocationId: "member-snapshot",
           attemptId: "one",

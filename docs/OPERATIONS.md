@@ -756,10 +756,15 @@ filter to the integrations and credential kinds their release knows, so
 connections of unknown integrations and calls of unknown credential kinds stay
 hidden after a rollback. A patch whose current version declares a later
 integration still needs that release to serve or roll back, so recovering it
-means rolling forward.
+means rolling forward. Handler descriptors are read before any CLI writes them:
+descriptions, read-only actions and agent tools reached the readers and their
+rules a release ahead of the CLI, so a rollback lands on a release that reads
+every published patch and still refuses a read-only action's writes and a page's
+call to an agent tool.
 
 CI's `rollback-rehearsal` tries the first of these before a migration merges. On
-a pull request that changes a capability's `src/migrations.ts`, the live release,
+a pull request that changes a capability's `src/migrations.ts`, the handler
+descriptor schemas or the CLI code that writes descriptors, the live release,
 the commit `/healthz/deep` names, starts a fresh dev-runner instance, migrates
 and seeds the brightline scenario; the PR's server starts on that data and
 migrates it; then the live release's server starts on it again. Those two swap
@@ -768,7 +773,10 @@ After each start it exercises the deep health check, that build's CLI (whoami,
 list and a publish) and, in Chromium, the portal and every scenario patch, whose
 live queries must deliver again as they did for the live release and whose
 sample data must still show; meanwhile the server must log no failed request,
-call or live query. A failure names its step. A failure caused by another
+call or live query. Once the PR's CLI writes read-only actions, the PR's step
+also publishes a tier 2 patch with one that forces a write and, once its build
+makes them, an agent tool; the live release must then serve that patch, refuse
+the write and refuse the page's call to the agent tool. A failure names its step. A failure caused by another
 unreleased migration on `main` is real too, since the next release carries it.
 While a Deploy run is unfinished, or the one updated last did not succeed, the
 live commit is uncertain, by the same rule a deploy pins it with (AGENTS.md ›

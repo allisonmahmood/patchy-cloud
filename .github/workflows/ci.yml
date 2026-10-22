@@ -169,8 +169,9 @@ jobs:
         run: pnpm test:packed-tier2-e2e
 
   # A deploy of the PR and a rollback to the live release, rehearsed on one set of
-  # data when the PR changes a migration (or the rehearsal); otherwise it passes at
-  # once, so the check can be required. `pnpm test:rollback-rehearsal`.
+  # data when the PR changes a migration, the handler descriptor schemas, the CLI code
+  # that writes descriptors, or the rehearsal; otherwise it passes at once, so the
+  # check can be required. `pnpm test:rollback-rehearsal`.
   rollback-rehearsal:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -184,11 +185,16 @@ jobs:
         with:
           # The merge commit and its first parent, the base branch: the PR's own changes.
           fetch-depth: 2
-      - name: Look for a changed migration
+      - name: Look for a changed migration or handler descriptor
         id: changed
         run: |
-          if git diff --quiet HEAD^1 HEAD -- ':(glob)**/src/migrations.ts' scripts/rollback-rehearsal.ts; then
-            echo "No migration changed, so there is no rollback to rehearse."
+          if git diff --quiet HEAD^1 HEAD -- ':(glob)**/src/migrations.ts' \
+            packages/api/src/handlers.ts \
+            packages/patchy/src/server.ts packages/patchy/src/handlerDescriptors.ts \
+            packages/patchy/src/guest.ts packages/patchy/src/serverBuild.ts \
+            packages/patchy/src/serverModules.ts packages/patchy/src/repoBuild.ts \
+            scripts/rollback-rehearsal.ts; then
+            echo "No migration or handler descriptor changed, so there is no rollback to rehearse."
           else
             echo "rehearse=true" >> "$GITHUB_OUTPUT"
           fi

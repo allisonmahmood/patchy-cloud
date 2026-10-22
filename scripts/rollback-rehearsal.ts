@@ -6,8 +6,9 @@
  *   pnpm test:rollback-rehearsal --live <sha>  against another commit
  *
  * CI's `rollback-rehearsal` job runs it when a pull request changes a
- * capability's `src/migrations.ts`. It rehearses HEAD, so commit first. On a
- * scratch worktree:
+ * capability's `src/migrations.ts`, the handler descriptor schemas
+ * (`packages/api/src/handlers.ts`) or the CLI code that writes descriptors. It
+ * rehearses HEAD, so commit first. On a scratch worktree:
  *
  *   1. The live commit's `pnpm dev up brightline` starts fresh, migrates, seeds
  *      the scenario and loads its sample data, and the step is exercised.
@@ -29,17 +30,26 @@
  * not show its empty state. Meanwhile the server must log no failed request,
  * call or live query.
  *
+ * From step 2 on, the exercise also covers what HEAD's CLI writes into handler
+ * descriptors, once it writes read-only actions: step 2 publishes a tier 2
+ * patch with a read-only action that forces a write and, once HEAD builds
+ * them, an agent tool. Every later step must serve it, refuse the write and
+ * refuse the page's call to the agent tool. Before HEAD's CLI writes them, the
+ * patch isn't published, so a release that can't read the fields is never
+ * asked to.
+ *
  * The live commit is the revision production's `/healthz/deep` names. When a
  * Deploy run is unfinished, or the one updated last did not succeed, the
  * rehearsal fails rather than guess (`gh` reads the runs).
  */
 import { spawn } from "node:child_process";
-import { appendFile, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { chromium, type Browser, type Page } from "@playwright/test";
+import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { hostLabel, PlanJson } from "./dev/src/plan.js";
@@ -69,7 +79,12 @@ const decodeHealth = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ revision: Schema.String }))
 );
 const decodeIdentity = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Struct({ company: Schema.Struct({ handle: Schema.String }) }))
+  Schema.fromJsonString(
+    Schema.Struct({
+      user: Schema.Struct({ id: Schema.String }),
+      company: Schema.Struct({ handle: Schema.String })
+    })
+  )
 );
 const decodeList = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -81,6 +96,25 @@ const decodeList = Schema.decodeUnknownSync(
 const decodePublish = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({ patchId: Schema.String, versionNumber: Schema.Int, address: Schema.String })
+  )
+);
+const decodeRepoPublish = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      patchId: Schema.String,
+      versionId: Schema.String,
+      address: Schema.String,
+      handlers: Schema.Array(Schema.Struct({ name: Schema.String }))
+    })
+  )
+);
+/** A runtime call's reply: its value, or the refusal's code. */
+const decodeRuntimeReply = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Union([
+      Schema.Struct({ ok: Schema.Literal(true), value: Schema.Unknown }),
+      Schema.Struct({ ok: Schema.Literal(false), code: Schema.String })
+    ])
   )
 );
 /** A server wide event; the server writes each one to stdout as a JSON line. */
@@ -504,10 +538,17 @@ const serverEvents = (text: string) =>
     return Option.isSome(event) ? [event.value] : [];
   });
 
-/** Every failed event: a request, a call, or a live query's re-run that no page shows. */
-const serverFailures = (text: string) =>
+/**
+ * Every failed event: a request, a call, or a live query's re-run that no page shows. The agent
+ * area's refusals are what the exercise asks for, so they don't count.
+ */
+const serverFailures = (text: string, agentArea: AgentArea | undefined) =>
   serverEvents(text)
-    .filter((event) => event.outcome === "failure")
+    .filter(
+      (event) =>
+        event.outcome === "failure" &&
+        !(event.patchId === agentArea?.patchId && event.code === "access_denied")
+    )
     .map(
       ({ type, route, handler, code }) =>
         `the server's ${[type, route ?? handler, code].filter(Boolean).join(" ")} failed`
@@ -528,11 +569,157 @@ interface RehearsalPage {
   readonly address: string;
 }
 
+/** The tier 2 patch step 2 publishes once HEAD's CLI writes read-only actions. */
+interface AgentArea {
+  readonly patchId: string;
+  readonly versionId: string;
+  readonly address: string;
+  /** Whether HEAD's build marked the agent tool, which it does once it builds `agent/`. */
+  readonly agentTool: boolean;
+}
+
+/** The read-only action that forces a write, and the agent tool, as the patch's handlers. */
+const FORCED_WRITE = "rehearsal.forcedWrite";
+const AGENT_TOOL = "agent.countNotes";
+/** The runtime wire every release speaks, `WIRE_VERSION` in `@patchy/api`. */
+const WIRE_VERSION = 1;
+
+/**
+ * Whether the CLI installed in `dir` writes read-only actions into the descriptors it builds.
+ * Its builders drop a key they don't know, so an older CLI's descriptor has none.
+ */
+const writesReadOnly = async (dir: string) => {
+  const sdk = pathToFileURL(path.join(dir, "node_modules", "patchy", "dist", "server.js")).href;
+  const probe = `import { action, t } from ${JSON.stringify(sdk)};
+const built = action({ readOnly: true, description: "Probe.", args: {}, result: t.json(), handler: async () => null });
+process.stdout.write(String(built.descriptor.readOnly === true));`;
+  const answer = await run(process.execPath, ["--input-type=module", "-e", probe], { cwd: dir });
+  return answer.trim() === "true";
+};
+
+/**
+ * HEAD's CLI starts a tier 2 repo beside its own install and adds a described read-only action
+ * that forces a write past its types, and a described agent tool in `agent/`, then publishes it.
+ * Its starter page and `notes` table come from `patchy init`.
+ */
+const publishAgentArea = async (dir: string, env: NodeJS.ProcessEnv): Promise<AgentArea> => {
+  const repo = path.join(dir, "agent-area");
+  // Init installs the release into the new repo.
+  await run(
+    path.join(dir, "node_modules", ".bin", "patchy"),
+    [
+      "init",
+      repo,
+      "--tier",
+      "2",
+      "--purpose",
+      "The rollback rehearsal's read-only action and agent tool.",
+      "--json"
+    ],
+    { cwd: dir, env, timeoutMs: 600_000 }
+  );
+  await writeFile(
+    path.join(repo, "server", "rehearsal.ts"),
+    `import { action, t } from "../patchy/_generated/server.js";
+
+/** Its context has no writes; this one is forced past the types, so Patchy must refuse it. */
+export const forcedWrite = action({
+  readOnly: true,
+  description: "Tries to add a note, which a read-only action may not.",
+  args: {},
+  result: t.json(),
+  handler: async (ctx) =>
+    (ctx as unknown as { tables: { notes: { insert(row: { title: string }): Promise<unknown> } } })
+      .tables.notes.insert({ title: "Written by a read-only action" })
+});
+`
+  );
+  await mkdir(path.join(repo, "agent"), { recursive: true });
+  await writeFile(
+    path.join(repo, "agent", "notes.ts"),
+    `import { query, t } from "../patchy/_generated/server.js";
+
+export const countNotes = query({
+  description: "Counts the notes. Changes nothing.",
+  args: {},
+  result: t.integer(),
+  handler: async (ctx) => (await ctx.tables.notes.list({ limit: 100 })).rows.length
+});
+`
+  );
+  // The repo's pinned CLI, as `pnpm dev up` runs it: it finds the repo's workerd for inspection.
+  const pinned = path.join(repo, "node_modules", "patchy", "dist", "index.js");
+  await run(process.execPath, [pinned, "refresh", "--json"], {
+    cwd: repo,
+    env,
+    timeoutMs: 300_000
+  });
+  const published = decodeRepoPublish(
+    await run(process.execPath, [pinned, "publish", "--json"], {
+      cwd: repo,
+      env,
+      timeoutMs: 300_000
+    })
+  );
+  return {
+    patchId: published.patchId,
+    versionId: published.versionId,
+    address: published.address,
+    agentTool: published.handlers.some((handler) => handler.name === AGENT_TOOL)
+  };
+};
+
+/**
+ * The agent area's calls as the signed-in publisher's page makes them: its query answers, so the
+ * release serves the patch; its read-only action's write is refused and leaves no note; and,
+ * when HEAD built one, its agent tool is refused. Answers what went wrong.
+ */
+const exerciseAgentArea = async (
+  context: BrowserContext,
+  apiUrl: string,
+  agentArea: AgentArea,
+  userId: string
+) => {
+  const principal = { userId };
+  const call = async (handler: string) => {
+    const response = await context.request.post(`${apiUrl}/api/runtime/call`, {
+      headers: {
+        origin: apiUrl,
+        "x-patchy-wire": String(WIRE_VERSION),
+        "x-patchy-principal": JSON.stringify(principal)
+      },
+      data: {
+        patchId: agentArea.patchId,
+        versionId: agentArea.versionId,
+        wire: WIRE_VERSION,
+        principal,
+        op: "server.call",
+        args: { handler, args: {} }
+      }
+    });
+    return decodeRuntimeReply(await response.text());
+  };
+  const problems: Array<string> = [];
+  const expectRefused = async (handler: string, what: string) => {
+    const reply = await call(handler);
+    if (reply.ok || reply.code !== "access_denied")
+      problems.push(`${what} answered ${reply.ok ? "ok" : reply.code}, not access_denied`);
+  };
+  await expectRefused(FORCED_WRITE, "the read-only action's forced write");
+  if (agentArea.agentTool) await expectRefused(AGENT_TOOL, "the page's call to the agent tool");
+  const notes = await call("notes.list");
+  if (!notes.ok) problems.push(`the patch's own query answered ${notes.code}`);
+  else if (!Array.isArray(notes.value) || notes.value.length !== 0)
+    problems.push("a note was written, so the read-only action's write went through");
+  return problems;
+};
+
 /**
  * The build's own CLI from the release its server serves, logged in as the
  * scenario's publisher: who it is, every scenario patch listed, and a new
- * version of the rehearsal page, numbered by the step. Answers the patch ids
- * `list` named, too.
+ * version of the rehearsal page, numbered by the step. At step 2, HEAD's CLI
+ * also publishes the agent area once it writes read-only actions. Answers the
+ * patch ids `list` named and the publisher's user id, too.
  */
 const exerciseCli = async (
   step: Step,
@@ -579,16 +766,24 @@ const exerciseCli = async (
     problems.push(
       `patchy publish made version ${published.versionNumber} of the rehearsal page, not ${step.number}`
     );
+  const agentArea =
+    step.number === 2 && (await writesReadOnly(dir)) ? await publishAgentArea(dir, env) : undefined;
+  if (step.number === 2 && agentArea === undefined)
+    console.log("  HEAD's CLI writes no read-only actions yet, so it publishes no agent area.");
   return {
     problems,
     patchIds: listed,
-    rehearsalPage: { patchId: published.patchId, address: published.address }
+    userId: identity.user.id,
+    rehearsalPage: { patchId: published.patchId, address: published.address },
+    agentArea
   };
 };
 
 /** What step 1 saw, which later steps must see again. */
 interface Baseline {
   readonly rehearsalPage: RehearsalPage;
+  /** Published by HEAD at step 2, when its CLI writes read-only actions. */
+  readonly agentArea?: AgentArea;
   /** The snapshots the server delivered to each patch's page, by address, then by handler. */
   readonly delivered: ReadonlyMap<string, Deliveries>;
 }
@@ -683,15 +878,16 @@ const exercisePage = async (page: Page, url: string, expect: PageExpectation, lo
 };
 
 /**
- * The portal, every scenario patch and the rehearsal page in Chromium, as the
- * scenario's publisher. Answers the problems and each patch page's delivered
- * live queries.
+ * The portal, every scenario patch, the rehearsal page and any agent area in
+ * Chromium, as the scenario's publisher, then the agent area's calls. Answers
+ * the problems and each patch page's delivered live queries.
  */
 const exercisePages = async (
   browser: Browser,
   environment: Environment,
   patchIds: ReadonlyMap<string, string>,
   rehearsalPage: RehearsalPage,
+  agentArea: { readonly patch: AgentArea; readonly userId: string } | undefined,
   baseline: Baseline | undefined,
   log: string
 ) => {
@@ -714,7 +910,8 @@ const exercisePages = async (
         }
       ] as const;
     }),
-    [rehearsalPage.address, none]
+    [rehearsalPage.address, none],
+    ...(agentArea === undefined ? [] : [[agentArea.patch.address, none] as const])
   ];
   const context = await browser.newContext();
   const problems: Array<string> = [];
@@ -741,6 +938,12 @@ const exercisePages = async (
         await page.close();
       }
     }
+    if (agentArea !== undefined)
+      problems.push(
+        ...(await exerciseAgentArea(context, apiUrl, agentArea.patch, agentArea.userId)).map(
+          (problem) => `${new URL(agentArea.patch.address).pathname}: ${problem}`
+        )
+      );
   } finally {
     await context.close();
   }
@@ -764,6 +967,7 @@ const exercise = async (
   if (health.status !== 200) problems.push(`/healthz/deep answered ${health.status}`);
   const cli = await exerciseCli(step, environment, baseline?.rehearsalPage, scratch);
   problems.push(...cli.problems);
+  const agentArea = cli.agentArea ?? baseline?.agentArea;
   proceed();
   // The harness owns shutdown; Playwright's own handlers would exit before cleanup.
   const browser = await chromium.launch({
@@ -777,13 +981,15 @@ const exercise = async (
       environment,
       cli.patchIds,
       cli.rehearsalPage,
+      agentArea === undefined ? undefined : { patch: agentArea, userId: cli.userId },
       baseline,
       log
     );
-    problems.push(...pages.problems, ...serverFailures(await logSince(log, started)));
+    problems.push(...pages.problems, ...serverFailures(await logSince(log, started), agentArea));
+    const seen = baseline ?? { rehearsalPage: cli.rehearsalPage, delivered: pages.delivered };
     return {
       problems,
-      baseline: baseline ?? { rehearsalPage: cli.rehearsalPage, delivered: pages.delivered }
+      baseline: cli.agentArea === undefined ? seen : { ...seen, agentArea: cli.agentArea }
     };
   } finally {
     await browser.close();

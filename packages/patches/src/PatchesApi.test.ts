@@ -2907,6 +2907,101 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
   );
 
   it.effect(
+    "publishes descriptions, a read-only action and an agent tool, and keeps the bundle's word for them",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const handlers = {
+          "demo.peek": {
+            kind: "action" as const,
+            description: "Reads without changing anything.",
+            readOnly: true as const,
+            args: { since: { kind: "timestamp" as const, description: "Oldest to include." } },
+            result: { kind: "text" as const, description: "What it read." }
+          },
+          "agent.lookup": {
+            kind: "query" as const,
+            description: "Looks something up for an agent.",
+            agentTool: true as const,
+            args: {},
+            result: { kind: "text" as const }
+          }
+        };
+        // Nothing writes these fields yet, so each descriptor is extended by hand.
+        const built = yield* Effect.promise(() =>
+          build({
+            stdin: {
+              contents: `import { createGuest, query, action, t } from "patchy/server";
+                const described = ${JSON.stringify(handlers)};
+                const as = (name, handler) => ({ ...handler, descriptor: described[name] });
+                export default createGuest({
+                  demo: { peek: as("demo.peek", action({ args: { since: t.timestamp() }, result: t.text(), handler: async () => "read" })) },
+                  agent: { lookup: as("agent.lookup", query({ args: {}, result: t.text(), handler: async () => "found" })) }
+                });`,
+              resolveDir: new URL("../../patchy", import.meta.url).pathname,
+              sourcefile: "agent-area-publish.ts"
+            },
+            bundle: true,
+            write: false,
+            platform: "browser",
+            format: "esm",
+            target: "es2022",
+            conditions: ["development"]
+          })
+        );
+        const server = built.outputFiles[0]!.text;
+        const manifest = { ...Fixtures.manifest, tier: 2 as const, handlers };
+        const created = yield* api.publish({
+          payload: publishRequest({ html: html("Agent area"), server, manifest })
+        });
+        assert.deepStrictEqual(created.handlers, [
+          { name: "agent.lookup", kind: "query" },
+          { name: "demo.peek", kind: "action" }
+        ]);
+        const patches = yield* Patches.Patches;
+        assert.deepStrictEqual(
+          Option.getOrThrow(yield* patches.find(created.patchId)).version.manifest.handlers,
+          handlers
+        );
+        // A manifest that drops a mark or a description the bundle declares is refused.
+        const { "demo.peek": peek, "agent.lookup": lookup } = handlers;
+        for (const changed of [
+          {
+            ...handlers,
+            "demo.peek": {
+              kind: peek.kind,
+              description: peek.description,
+              args: peek.args,
+              result: peek.result
+            }
+          },
+          {
+            ...handlers,
+            "agent.lookup": {
+              kind: lookup.kind,
+              agentTool: lookup.agentTool,
+              args: lookup.args,
+              result: lookup.result
+            }
+          }
+        ]) {
+          const refused = yield* api.publish({
+            payload: publishRequest({
+              patchId: created.patchId,
+              html: html("Agent area"),
+              server,
+              manifest: { ...manifest, handlers: changed }
+            }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(refused.status, 422);
+          assert.include(yield* refused.json, { code: "invalid_manifest" });
+        }
+      }),
+    30_000
+  );
+
+  it.effect(
     "rejects mismatched handlers and throwing initialization and reclaims both failed artifacts",
     () =>
       Effect.gen(function* () {

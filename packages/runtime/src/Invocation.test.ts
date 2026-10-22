@@ -59,7 +59,22 @@ const binding: Binding.Binding["Service"] = {
         errors: ["approval_required"]
       },
       "demo.mutation": { kind: "mutation", args: {}, result: { kind: "json" } },
-      "demo.action": { kind: "action", args: {}, result: { kind: "json" } }
+      "demo.action": { kind: "action", args: {}, result: { kind: "json" } },
+      "demo.peek": {
+        kind: "action",
+        description: "Reads without changing anything.",
+        readOnly: true,
+        args: {},
+        result: { kind: "json", description: "What it read." }
+      },
+      "agent.lookup": {
+        kind: "query",
+        description: "Looks something up for an agent.",
+        agentTool: true,
+        args: {},
+        result: { kind: "json" }
+      },
+      "agent.legacy": { kind: "query", args: {}, result: { kind: "json" } }
     }
   }
 };
@@ -626,6 +641,128 @@ it.layer(services)("Invocation", (it) => {
       assert.strictEqual(binds, 1);
       yield* Deferred.succeed(actionDone, undefined);
       assert.deepStrictEqual(yield* Fiber.join(parent), { ok: true, value: 42 });
+    })
+  );
+
+  it.effect(
+    "a read-only action's capability carries the flag and its nested calls reach queries only",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+        const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+        const done = yield* Deferred.make<void>();
+        const invocations = yield* makeInvocation((request) =>
+          Queue.offer(seen, request).pipe(
+            Effect.andThen(request.handler === "demo.query" ? Effect.void : Deferred.await(done)),
+            Effect.as({
+              outcome: "returned" as const,
+              reply: { ok: true as const, value: 1 },
+              guestMs: 1
+            })
+          )
+        );
+        const capabilityOf = Effect.fnUntraced(function* (handler: string) {
+          const fiber = yield* invocations
+            .call(
+              { handler, args: {} },
+              { ...binding, correlationId: newInternalId("call") },
+              Effect.succeed(viewer)
+            )
+            .pipe(Effect.forkChild);
+          const request = yield* Queue.take(seen);
+          return {
+            fiber,
+            capability: yield* capabilities.resolve(request.callback.capability, request)
+          };
+        });
+        const action = yield* capabilityOf("demo.action");
+        assert.isFalse(action.capability.readOnly);
+        const peek = yield* capabilityOf("demo.peek");
+        assert.isTrue(peek.capability.readOnly);
+        for (const handler of ["demo.mutation", "demo.action"])
+          assert.strictEqual(
+            (yield* peek.capability.run!({ handler, args: {} }).pipe(Effect.flip)).code,
+            "access_denied"
+          );
+        // Nothing ran for either refusal.
+        assert.strictEqual(yield* Queue.size(seen), 0);
+        assert.deepStrictEqual(
+          yield* peek.capability.run!({ handler: "demo.query", args: { id: 1 } }),
+          {
+            ok: true,
+            value: 1
+          }
+        );
+        yield* Deferred.succeed(done, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(peek.fiber), { ok: true, value: 1 });
+        assert.deepStrictEqual(yield* Fiber.join(action.fiber), { ok: true, value: 1 });
+      })
+  );
+
+  it.effect("only an agent's call reaches a marked agent tool, nested calls included", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+      const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const done = yield* Deferred.make<void>();
+      const invocations = yield* makeInvocation((request) =>
+        Queue.offer(seen, request).pipe(
+          Effect.andThen(request.handler === "demo.action" ? Deferred.await(done) : Effect.void),
+          Effect.as({
+            outcome: "returned" as const,
+            reply: { ok: true as const, value: 1 },
+            guestMs: 1
+          })
+        )
+      );
+      const call = (handler: string, from = binding) =>
+        invocations.call(
+          { handler, args: {} },
+          { ...from, correlationId: newInternalId("call") },
+          Effect.succeed(viewer)
+        );
+      const refused = (effect: Effect.Effect<unknown, { readonly code: string }>) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error) => error.code)
+        );
+      // A page's call, its live query, and an action's nested call are all refused.
+      assert.strictEqual(yield* refused(call("agent.lookup")), "access_denied");
+      assert.strictEqual(
+        yield* refused(
+          invocations.call({ handler: "agent.lookup", args: {} }, binding, Effect.succeed(viewer), {
+            onDependency: () => {},
+            onSnapshot: () => {}
+          })
+        ),
+        "access_denied"
+      );
+      assert.strictEqual(yield* Queue.size(seen), 0);
+      // An agent.* handler with no mark stays an ordinary page handler.
+      assert.deepStrictEqual(yield* call("agent.legacy"), { ok: true, value: 1 });
+      yield* Queue.take(seen);
+      const nestedFrom = Effect.fnUntraced(function* (from: Binding.Binding["Service"]) {
+        const parent = yield* call("demo.action", from).pipe(Effect.forkChild);
+        const request = yield* Queue.take(seen);
+        const capability = yield* capabilities.resolve(request.callback.capability, request);
+        return { parent, run: capability.run! };
+      });
+      const page = yield* nestedFrom(binding);
+      assert.strictEqual(
+        yield* refused(page.run({ handler: "agent.lookup", args: {} })),
+        "access_denied"
+      );
+      // Whether a call came from an agent is Patchy's own invocation context.
+      const agent = { ...binding, agent: { name: "Claude" } };
+      assert.deepStrictEqual(yield* call("agent.lookup", agent), { ok: true, value: 1 });
+      yield* Queue.take(seen);
+      const fromAgent = yield* nestedFrom(agent);
+      assert.deepStrictEqual(yield* fromAgent.run({ handler: "agent.lookup", args: {} }), {
+        ok: true,
+        value: 1
+      });
+      yield* Deferred.succeed(done, undefined);
+      yield* Fiber.join(page.parent);
+      yield* Fiber.join(fromAgent.parent);
     })
   );
 
