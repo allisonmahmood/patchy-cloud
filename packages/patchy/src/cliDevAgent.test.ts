@@ -142,8 +142,9 @@ describe("patchy dev agent", () => {
 
   it("exits 2 with the door's refusal, its from, details and retry", async () => {
     const dev = await running();
+    // A patch's code may be any string, one of Patchy's lifecycle codes included.
     const refusal = patchRefusal("notes", "addNote", {
-      code: "blank",
+      code: "patch_retired",
       details: { message: "give the note a title", field: "title" }
     });
     dev.reply(200, answered(refusal));
@@ -153,7 +154,7 @@ describe("patchy dev agent", () => {
       ok: false,
       error: refusal.content[0].text,
       kind: "rejected",
-      code: "blank",
+      code: "patch_retired",
       from: "patch",
       details: { message: "give the note a title", field: "title" }
     });

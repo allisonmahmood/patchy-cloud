@@ -121,10 +121,15 @@ export const serve = Effect.fn("Dev.serve")(function* (
   let html = yield* nextBuild(prepared.manifest);
   let title = titleOf(html);
   let revision = 1;
-  // A failed rebuild keeps the last good binding serving; `patchy dev agent` says so.
-  let rebuildFailed = false;
+  // A failed rebuild keeps the last good binding serving, and `patchy dev agent` says so until a
+  // newer build installs. Recording the build that was serving keeps the two in step.
+  let failedOver: number | undefined;
   const agentDev: DevAgent.Dev = {
-    binding: () => ({ version: resources.version, build: resources.build, rebuildFailed }),
+    binding: () => ({
+      version: resources.version,
+      build: resources.build,
+      rebuildFailed: failedOver === resources.build
+    }),
     patch: {
       name: prepared.manifest.name ?? "This patch",
       description: prepared.manifest.description ?? "",
@@ -146,17 +151,11 @@ export const serve = Effect.fn("Dev.serve")(function* (
           })
         ),
         Effect.tap(() =>
-          Effect.sync(() => {
-            rebuildFailed = false;
-          }).pipe(
-            Effect.andThen(
-              Console.log(`Server build ${resources.build} ready; waking subscriptions.`)
-            )
-          )
+          Console.log(`Server build ${resources.build} ready; waking subscriptions.`)
         ),
         Effect.catch((error) =>
           Effect.sync(() => {
-            rebuildFailed = true;
+            failedOver = resources.build;
           }).pipe(Effect.andThen(Console.error(error)))
         )
       )

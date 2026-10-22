@@ -797,7 +797,8 @@ Answers take the door's shapes. Text output is the answer as indented JSON,
 then a line naming the server build that answered: builds count from 1 for the
 session, as `dev.log`'s `Server build N ready` lines do, and a call's `version` is
 its build. When the latest rebuild failed, the line says the last good build
-answered instead; under `--json` that line rides in `warnings`.
+answered instead; under `--json` that line rides in `warnings`, and without it the
+newest build answered.
 
 | exit | when                                                                                                                                   | `--json`                                                                                                    |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |

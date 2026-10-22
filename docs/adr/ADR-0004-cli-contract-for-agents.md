@@ -568,7 +568,7 @@ aren't one JSON object exit 1. A started call that gets no usable answer exits 3
 `unreachable`, since it may have run. Each answer names the server build that gave
 it, counted from 1 for the session; a call's `version` is that build. When the
 latest rebuild failed, the answer says the last good build gave it, in `warnings`
-under `--json`.
+under `--json`; without `warnings` the newest build answered.
 
 Vite builds production bundles without HMR. A successful `src/` rebuild replaces
 the page atomically and reloads the shell at its current route. A `server/` edit

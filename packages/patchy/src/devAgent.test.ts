@@ -172,7 +172,7 @@ it.live(
         code: "invalid_args",
         from: "patchy",
         message:
-          "addNote's arguments don't fit its schema: Missing key at [\"title\"]. Fix them from its args in open_patch."
+          "addNote's arguments don't fit its schema: Missing key at [\"title\"]. Its tools now: addNote, broken, notes. Call open_patch to see what each does and takes."
       });
       // The page's own handler is not a tool.
       assert.deepStrictEqual(yield* refused("list"), {

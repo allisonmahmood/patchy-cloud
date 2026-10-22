@@ -442,24 +442,29 @@ describe("tool call answers", () => {
     );
   });
 
-  it("says where arguments miss their schema", () => {
-    expect(invalidArgsRefusal("addLead", 'Missing key at ["email"]').content[0].text).toBe(
-      "addLead's arguments don't fit its schema: Missing key at [\"email\"]. Fix them from its args in open_patch."
+  it("says where arguments miss their schema, and names the tools there are now", () => {
+    expect(
+      invalidArgsRefusal("addLead", 'Missing key at ["email"]', ["addLead", "listDeals"]).content[0]
+        .text
+    ).toBe(
+      "addLead's arguments don't fit its schema: Missing key at [\"email\"]. Its tools now: addLead, listDeals. Call open_patch to see what each does and takes."
     );
   });
 
   it("keeps Patchy's runtime refusal's code, message and details, its retry in whole seconds", () => {
     expect(
-      runtimeRefusal({
-        ok: false,
-        source: "patchy",
-        code: "busy",
-        error: "The action concurrency limit is reached. Try again shortly.",
-        limitId: "tier2.actions.viewer",
-        retryAfter: 0.5,
-        details: { held: 2 },
-        correlationId: "call_1"
-      }).structuredContent
+      runtimeRefusal(
+        {
+          ok: false,
+          source: "patchy",
+          code: "busy",
+          error: "The action concurrency limit is reached. Try again shortly.",
+          limitId: "tier2.actions.viewer",
+          retryAfter: 0.5,
+          details: { held: 2 }
+        },
+        "action"
+      ).structuredContent
     ).toEqual({
       error: {
         code: "busy",
@@ -469,5 +474,33 @@ describe("tool call answers", () => {
         retryAfterSeconds: 1
       }
     });
+  });
+
+  it("names the correlation id the message points to", () => {
+    const failure = {
+      ok: false as const,
+      source: "patchy" as const,
+      code: "handler_failed" as const,
+      error: "The handler failed. Use the correlation id to find its log.",
+      correlationId: "call_1"
+    };
+    expect(runtimeRefusal(failure, "mutation").content[0].text).toBe(
+      "The handler failed. Use the correlation id to find its log. Correlation id: call_1."
+    );
+  });
+
+  it("says an action out of time may have partly happened, and a mutation's doesn't", () => {
+    const failure = {
+      ok: false as const,
+      source: "patchy" as const,
+      code: "handler_timeout" as const,
+      error: "The handler exceeded its deadline."
+    };
+    expect(runtimeRefusal(failure, "action").content[0].text).toBe(
+      "The handler exceeded its deadline. It may have partly happened: read what it changes before trying again, with a new change key."
+    );
+    expect(runtimeRefusal(failure, "mutation").content[0].text).toBe(
+      "The handler exceeded its deadline."
+    );
   });
 });

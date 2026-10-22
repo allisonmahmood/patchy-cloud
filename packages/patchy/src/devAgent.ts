@@ -79,14 +79,8 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
   const descriptor = agentToolEntries(version.manifest.handlers).find(
     ([name]) => name === tool
   )?.[1];
-  if (descriptor === undefined)
-    return answered(
-      unknownToolRefusal(
-        dev.patch.name,
-        tool,
-        tools.map((entry) => entry.name)
-      )
-    );
+  const names = tools.map((entry) => entry.name);
+  if (descriptor === undefined) return answered(unknownToolRefusal(dev.patch.name, tool, names));
   // Checked against the version the call runs on, as the door checks, so the refusal speaks
   // the tool's schema rather than Runtime's.
   const problem = yield* Schema.decodeUnknownEffect(
@@ -96,7 +90,7 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
     Effect.as(undefined),
     Effect.catch((error) => Effect.succeed(error.message.replace(/\s*\n\s*/g, " ")))
   );
-  if (problem !== undefined) return answered(invalidArgsRefusal(tool, problem));
+  if (problem !== undefined) return answered(invalidArgsRefusal(tool, problem, names));
   // Each change gets a fresh change key; in dev a mutation's becomes its mutation key, kept by
   // its retries, so a retried mutation writes once. An action is never retried.
   const mutationKey = descriptor.kind === "mutation" ? yield* MutationTransaction.mint : undefined;
@@ -118,7 +112,9 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
         call.pipe(Effect.retry({ times: 2, while: (error) => error.code === "unknown_outcome" }))
     ).pipe(
       Effect.map((reply) => callAnswer(dev.patch.name, tool, build, reply)),
-      Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error))))
+      Effect.catch((error) =>
+        Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor.kind))
+      )
     )
   );
   return answered(result);

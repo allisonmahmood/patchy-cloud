@@ -452,10 +452,11 @@ export const patchRefusal = (
   );
 };
 
-/**
- * A call naming a tool the patch doesn't have, read from the version the call would run on: it
- * names the tools the patch has now and says to call `open_patch`.
- */
+/** The tools a patch has now, read from the version a call would run on, and where to look. */
+const toolsNow = (tools: readonly string[]) =>
+  `${tools.length === 0 ? "It has no agent tools now." : `Its tools now: ${tools.join(", ")}.`} Call open_patch to see what each does and takes.`;
+
+/** A call naming a tool the patch doesn't have: it names the tools it has now. */
 export const unknownToolRefusal = (
   patch: string,
   tool: string,
@@ -464,31 +465,49 @@ export const unknownToolRefusal = (
   toolRefusal({
     code: "unknown_tool",
     from: "patchy",
-    message: `${patch} has no tool ${tool}. ${tools.length === 0 ? "It has no agent tools now." : `Its tools now: ${tools.join(", ")}.`} Call open_patch to see what each does and takes.`
-  });
-
-/** Arguments the tool's schema refuses, with the schema's own words for what and where. */
-export const invalidArgsRefusal = (tool: string, problem: string): ToolCallResult =>
-  toolRefusal({
-    code: "invalid_args",
-    from: "patchy",
-    message: `${tool}'s arguments don't fit its schema: ${problem}. Fix them from its args in open_patch.`
+    message: `${patch} has no tool ${tool}. ${toolsNow(tools)}`
   });
 
 /**
- * Patchy's own refusal of a call, from Runtime's failure: its code and message, its details,
- * and the wait before a retry when one is safe.
+ * Arguments the tool's schema refuses, in the schema's own words for what and where. A publish
+ * may have changed the schema since the agent read it, so it names the tools the patch has now.
  */
-export const runtimeRefusal = (failure: RuntimeFailure): ToolCallResult =>
+export const invalidArgsRefusal = (
+  tool: string,
+  problem: string,
+  tools: readonly string[]
+): ToolCallResult =>
   toolRefusal({
+    code: "invalid_args",
+    from: "patchy",
+    message: `${tool}'s arguments don't fit its schema: ${problem}. ${toolsNow(tools)}`
+  });
+
+/**
+ * Patchy's own refusal of a call, from Runtime's failure: its code and message, any correlation
+ * id the message points to, its details, and the wait before a retry when one is safe. An
+ * action that ran out of time or whose outcome is unknown may have written, so it says so.
+ */
+export const runtimeRefusal = (
+  failure: RuntimeFailure,
+  kind: HandlerDescriptor["kind"]
+): ToolCallResult => {
+  const partly =
+    kind === "action" && (failure.code === "handler_timeout" || failure.code === "unknown_outcome")
+      ? " It may have partly happened: read what it changes before trying again, with a new change key."
+      : "";
+  const correlation =
+    failure.correlationId === undefined ? "" : ` Correlation id: ${failure.correlationId}.`;
+  return toolRefusal({
     code: failure.code,
     from: "patchy",
-    message: failure.error,
+    message: `${failure.error}${partly}${correlation}`,
     ...(failure.details === undefined ? {} : { details: failure.details }),
     ...(failure.retryAfter === undefined
       ? {}
       : { retryAfterSeconds: Math.ceil(failure.retryAfter) })
   });
+};
 
 /**
  * A started call's answer: its result and the version it ran on, or the patch's own refusal.

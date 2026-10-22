@@ -52,14 +52,8 @@ export const refusalFields = {
 };
 
 const refusal = Schema.Union([
-  AdminRequired,
-  NotOwner,
-  PatchRetired,
-  PatchDeleted,
-  HasDependants,
-  SourcesOff,
-  WrongState,
-  // The door's refusal: who refused, its code, and any details and retry delay.
+  // The door's refusal: who refused, its code, and any details and retry delay. First, because a
+  // patch's own code may be any string, `patch_retired` included; no instance refusal has `from`.
   Schema.Struct({
     ok: Schema.Literal(false),
     error: Schema.String,
@@ -68,6 +62,13 @@ const refusal = Schema.Union([
     details: ToolRefusal.fields.details,
     retryAfterSeconds: ToolRefusal.fields.retryAfterSeconds
   }),
+  AdminRequired,
+  NotOwner,
+  PatchRetired,
+  PatchDeleted,
+  HasDependants,
+  SourcesOff,
+  WrongState,
   Schema.Struct({
     ok: Schema.Literal(false),
     error: Schema.String,
