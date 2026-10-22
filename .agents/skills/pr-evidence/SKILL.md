@@ -90,8 +90,9 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   retries and help lookups are the symptom.
 - **Make** it with `pnpm dev trial "<task>"`, the change committed, the task
   phrased as a person would ask their agent: on `brightline`, "show me the
-  last few log lines of the new-business patch". Each side gives it to its
-  environment's `agent` launcher, Claude Code as the scenario's publisher with
+  last few log lines of the new-business patch". Each side gives it to this
+  checkout's `agent` launcher, written into the side's environment: Claude
+  Code as the scenario's publisher with
   the release's Patchy skill and no personal instructions or settings, run
   without a person within `--max-turns` (30) and `--minutes` (10). `--model`
   passes through; the default `sonnet` is close to what people's agents run.
@@ -113,12 +114,11 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   Claude Code tells its agent which account it is signed in as, so an answer
   can name your email: the trial redacts that account's email and git's, and
   any address outside the scenarios' example domains. Read the section before
-  publishing anyway: the answer is the agent's own words. Each side's agent
-  gets a scratch temp folder instead of the machine's `/tmp`, an older base's
-  launcher included, so it can't read other sessions' files there; `node`
-  still reads whatever you can. A base whose launcher predates #701 shows
-  after only, and an agent that errors or gives no result on the head
-  publishes nothing. The Patchy MCP (#730) isn't part
+  publishing anyway: the answer is the agent's own words. Whatever commit
+  built a side, its agent makes new work in that side's workspace, is refused
+  in a repo bound to another instance, and gets a temp folder of its own
+  instead of the machine's `/tmp`; `node` still reads whatever you can. An
+  agent that errors or gives no result on the head publishes nothing. The Patchy MCP (#730) isn't part
   of the agent yet.
 
 ## A test, red then green
@@ -163,7 +163,8 @@ is done when each thing in Look at carries evidence that matches the PR's head.
   and seeded keys. An exported `PATCHY_API_URL` steers an environment's
   installed CLI, `<env>/bin/patchy` beside the `agent` launcher `pnpm dev up`
   prints, which otherwise reads `~/.patchy`. Any of these can point at
-  production. The launcher clears both and sets its state dir; by hand, run
+  production. The launcher clears the token, sets `PATCHY_API_URL` to its
+  instance and sets its state dir; by hand, run
   `env -u PATCHY_API_URL -u PATCHY_API_TOKEN PATCHY_STATE_DIR=<env>/cli-state <env>/bin/patchy …`.
 
 ## Publishing

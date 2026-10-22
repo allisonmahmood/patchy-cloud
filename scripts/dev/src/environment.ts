@@ -314,23 +314,36 @@ const encodeAgentSettings = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ claudeMdExcludes: Schema.Array(Schema.String) }))
 );
 
+/** The workspace's `CLAUDE.md`: the "folder they name" of the Patchy skill, so new work lands where `down` finds it. */
+const WORKSPACE_INSTRUCTIONS = "Make each new patch or page directly in this folder.\n";
+
 /**
- * `agent`: Claude Code in the workspace as a Patchy user who has already set
- * up, with no personal settings, skills, connectors or instruction files. The
- * shell's `PATCHY_API_URL` and `PATCHY_API_TOKEN` are cleared, so the
- * environment's login decides where and as whom it publishes. Claude Code loads
- * instruction files from every folder above its working directory, the
+ * The environment's agent: the `agent` launcher, and the workspace's
+ * `CLAUDE.md` unless one exists. `up` writes both every time, and a trial
+ * writes this checkout's over each side's.
+ *
+ * The launcher starts Claude Code in the workspace as a Patchy user who has
+ * already set up, with no personal settings, skills, connectors or instruction
+ * files. `PATCHY_API_URL` is the environment's instance, so a command in a repo
+ * bound to another one, production included, is refused before anything is
+ * sent; an explicit `--api-url` still wins. The shell's `PATCHY_API_TOKEN` is
+ * cleared, so the environment's login decides as whom it publishes. Claude Code
+ * loads instruction files from every folder above its working directory, the
  * developer's HOME among them; those are excluded, so only the workspace's own
- * load. Its commands still run as the developer, with their HOME and npm
- * prefix, so it must never be given the portal's setup line or run `patchy
- * setup`: both write to the developer's own machine, and `down` undoes neither.
- * Besides the workspace it may use the temp folder, `$TMPDIR` or `/tmp`; a
- * trial points `TMPDIR` at a scratch folder of its own. Permissions come as
- * flags, so the workspace needs no trust prompt. Arguments pass through.
+ * load. Each session starts clean: auto memory is off, and `TMPDIR` is a folder
+ * of its own, made in `$TMPDIR` or `/tmp` and deleted when Claude Code exits.
+ * Its commands still run as the developer, with their HOME and npm prefix, so
+ * it must never be given the portal's setup line or run `patchy setup`: both
+ * write to the developer's own machine, and `down` undoes neither. Permissions
+ * come as flags, so the workspace needs no trust prompt. Arguments pass
+ * through, and Claude Code's exit code is the launcher's.
  */
-export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layout) {
+export const writeAgent = Effect.fn("writeAgent")(function* (layout: Layout, apiUrl: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const instructions = path.join(layout.workspace, "CLAUDE.md");
+  if (!(yield* fs.exists(instructions)))
+    yield* fs.writeFileString(instructions, WORKSPACE_INSTRUCTIONS);
   const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
   // Claude Code walks up from the resolved working directory, past any symlink.
   const above: Array<string> = [];
@@ -354,11 +367,17 @@ export const writeLauncher = Effect.fn("writeLauncher")(function* (layout: Layou
       "#!/usr/bin/env bash",
       "# Claude Code in this Patchy environment's workspace, as a Patchy user who has set up.",
       "# Its commands run as you: never give it the portal's setup line or `patchy setup`.",
-      "unset PATCHY_API_URL PATCHY_API_TOKEN",
+      "unset PATCHY_API_TOKEN",
+      `export PATCHY_API_URL=${quote(apiUrl)}`,
       `export PATH=${quote(`${layout.bin}${PATH_DELIMITER}`)}"$PATH"`,
       `export PATCHY_STATE_DIR=${quote(layout.state)}`,
+      "export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
       `cd ${quote(layout.workspace)} || exit 1`,
-      `exec claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir "\${TMPDIR:-/tmp}" --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
+      // Not exec'd, so the trap deletes the session's temp folder when Claude Code exits.
+      'TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/patchy-agent.XXXXXX") || exit 1',
+      "export TMPDIR",
+      `trap 'rm -rf "$TMPDIR"' EXIT`,
+      `claude "$@" --setting-sources project --settings ${quote(settings)} --strict-mcp-config --permission-mode acceptEdits --add-dir "$TMPDIR" --allowedTools ${ALLOWED_TOOLS.map(quote).join(" ")}`,
       ""
     ].join("\n"),
     { mode: 0o755 }
@@ -528,7 +547,7 @@ const materialize = Effect.fn("materialize")(function* (
 
 /**
  * Builds everything outside the instance, resuming an `up` that stopped
- * halfway. A finished environment only rewrites its `agent` launcher and moves
+ * halfway. A finished environment only rewrites its agent (`writeAgent`) and moves
  * its CLI and workspace repos to the instance's current release, which changes
  * when bundled code changed.
  */
@@ -543,7 +562,7 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   const release = yield* currentRelease(plan.apiUrl);
   const existing = yield* readManifest(layout);
   if (Option.isSome(existing) && existing.value.complete) {
-    yield* writeLauncher(layout);
+    yield* writeAgent(layout, plan.apiUrl);
     if (existing.value.release === release) return existing.value;
     yield* Console.error("The instance's release changed; updating the CLI and workspace repos.");
     yield* installCli(layout, release);
@@ -578,7 +597,7 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
     { cwd: layout.dir, env, input: publisherToken(scenario) }
   );
   yield* writeWorkspace(layout);
-  yield* writeLauncher(layout);
+  yield* writeAgent(layout, plan.apiUrl);
   // Repos published before an interruption are bound to the release they were
   // built on; move them to this one before the manifest records it.
   if (started.release !== release)
