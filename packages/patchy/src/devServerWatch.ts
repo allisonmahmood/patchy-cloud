@@ -208,7 +208,9 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
               new LocalError({
                 code: "invalid_manifest",
                 message:
-                  "Could not inspect the server bundle. Its modules must load and export only valid handlers; the last successful binding stays served.",
+                  cause.problem === undefined
+                    ? "Could not inspect the server bundle. Its modules must load and export only valid handlers; the last successful binding stays served."
+                    : `${cause.problem} The last successful binding stays served.`,
                 cause
               })
           ),

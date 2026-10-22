@@ -87,7 +87,9 @@ export function extractHandlerDescriptors(
         !("kind" in handler)
       )
         throw new InvalidManifestError(
-          `Server export "${module}.${name}" is not a query, mutation or action.`
+          agentTool
+            ? `Agent tool "${name}" is not a query, mutation or action; every export of agent/ must be one.`
+            : `Server export "${module}.${name}" is not a query, mutation or action.`
         );
       const descriptor = decodeHandlerDescriptor(handler.descriptor);
       if (handler.kind !== descriptor.kind)

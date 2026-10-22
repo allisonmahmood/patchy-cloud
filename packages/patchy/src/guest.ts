@@ -5,6 +5,7 @@ import type { Json, Upload, ValueDescriptor } from "./config.js";
 import type { MemberListOptions, MemberSearchOptions } from "./client.js";
 import { decodeError, PatchyError } from "./clientError.js";
 import { extractHandlerDescriptors, foldAgentArea } from "./handlerDescriptors.js";
+import { InvalidManifestError } from "./invalidManifestError.js";
 import { decodeHandlerError, isHandlerError } from "./handlerError.js";
 import type { Handler, HandlerKindName } from "./server.js";
 
@@ -319,27 +320,46 @@ const resolveUploads = async (
   }
 };
 
-/**
- * Worker entry for server bundles, without importing privileged Workers APIs. The build passes
- * `server/` modules by name and `agent/` files by filename stem; the files fold into `agent`.
- */
-export function createGuest(
-  modules: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
-  sharedStores: readonly string[] = [],
-  agentFiles: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {}
-) {
+type Modules = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+
+/** Each handler by name, with its descriptor and the function the guest runs. */
+const dispatch = (modules: Modules, agentFiles: Modules) => {
   const agentArea = foldAgentArea(agentFiles);
   const descriptors = extractHandlerDescriptors(modules, agentArea);
   // An older version's server module named agent keeps its handlers when there is no agent area.
-  const definitions: typeof modules =
+  const definitions: Modules =
     Object.keys(agentArea).length === 0 ? modules : { ...modules, agent: agentArea };
-  const handlers = new Map(
+  return new Map(
     Object.entries(descriptors).map(([name, descriptor]) => {
       const dot = name.indexOf(".");
       const definition = definitions[name.slice(0, dot)]![name.slice(dot + 1)] as Definition;
       return [name, { descriptor, handler: definition.handler }] as const;
     })
   );
+};
+
+/**
+ * Worker entry for server bundles, without importing privileged Workers APIs. The build passes
+ * `server/` modules by name and `agent/` files by filename stem; the files fold into `agent`.
+ *
+ * Modules that break the handler contract, such as a name two agent files export, are refused
+ * by answering every request with the refusal. A throw here would reach inspection only as a
+ * bundle that failed to load, losing the message that names the fix.
+ */
+export function createGuest(
+  modules: Modules,
+  sharedStores: readonly string[] = [],
+  agentFiles: Modules = {}
+) {
+  let handlers: ReturnType<typeof dispatch>;
+  try {
+    handlers = dispatch(modules, agentFiles);
+  } catch (error) {
+    if (!(error instanceof InvalidManifestError)) throw error;
+    // workerd allows a Response only while handling a request, not at module load.
+    const refusal = failure("invalid_request", error.message);
+    return { fetch: async () => json(refusal) };
+  }
 
   return {
     async fetch(request: Request, _env: unknown, ctx: GuestContext): Promise<Response> {

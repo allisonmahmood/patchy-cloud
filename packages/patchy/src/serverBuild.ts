@@ -3,7 +3,6 @@ import * as path from "node:path";
 import type { ReleaseToolchain } from "@patchy/api";
 import type { ESTree, InlineConfig } from "vite";
 import { LocalError } from "./CliError.js";
-import { duplicateAgentTool } from "./handlerDescriptors.js";
 import { runToolchain } from "./toolchain.js";
 
 export interface BuiltServer {
@@ -71,14 +70,10 @@ const ownExports = (program: ESTree.Program): ReadonlySet<string> => {
   return names;
 };
 
-/**
- * Each build's agent area: its files by stem, and what its last build found, each tool's file or
- * the refusal for a name two files export.
- */
+/** Each build's agent area: its files by stem, and each tool's file as its last build found. */
 interface AgentArea {
   readonly files: readonly string[];
   tools: Readonly<Record<string, string>>;
-  refusal: LocalError | undefined;
 }
 
 /** Publish and dev share their private entry, import checks and closed-module check. */
@@ -119,32 +114,18 @@ const buildConfig = (
         },
         buildStart() {
           agent.tools = {};
-          agent.refusal = undefined;
         },
-        // The guest refuses a name two files export too, but inside workerd, where its message is
-        // lost; here the refusal can name both files. It counts only what each file's own export
-        // syntax declares, which is always in its namespace. A name a file gets only through
-        // `export *` may be ambiguous or come from CommonJS, so those duplicates are left to the
-        // guest, and those tools to no file.
+        // Which file each tool comes from, for refusals that name it. Only what a file's own export
+        // statements declare counts, which is always in its namespace; a tool a file gets only
+        // through `export *` names no file. The guest refuses a name two files export.
         buildEnd(error) {
           if (error !== undefined) return;
           const owners = new Map<string, string>();
           for (const [index, file] of agentPaths.entries()) {
             const code = this.getModuleInfo(file)?.code;
-            if (code === null || code === undefined) return;
-            const stem = agent.files[index]!;
-            for (const name of ownExports(this.parse(code))) {
-              const owner = owners.get(name);
-              if (owner !== undefined) {
-                agent.refusal = new LocalError({
-                  code: "invalid_manifest",
-                  message: duplicateAgentTool(name, owner, stem)
-                });
-                // Bundlers mutate thrown errors; the caller reads the refusal instead.
-                throw new Error(agent.refusal.message);
-              }
-              owners.set(name, stem);
-            }
+            if (code === null || code === undefined) continue;
+            for (const name of ownExports(this.parse(code)))
+              if (!owners.has(name)) owners.set(name, agent.files[index]!);
           }
           agent.tools = Object.fromEntries(owners);
         },
@@ -177,15 +158,13 @@ export async function buildServer(
   toolchain: typeof ReleaseToolchain.Type,
   sharedStores: readonly string[]
 ) {
-  const agent: AgentArea = { files: agentFiles, tools: {}, refusal: undefined };
+  const agent: AgentArea = { files: agentFiles, tools: {} };
   const built = await runToolchain(
     root,
     toolchain,
     buildConfig(root, modules, agent, sharedStores),
     "server"
-  ).catch((cause: unknown) => {
-    throw agent.refusal ?? cause;
-  });
+  );
   const result = Array.isArray(built.result)
     ? built.result.length === 1
       ? built.result[0]
@@ -214,7 +193,7 @@ export async function watchServer(
   complete: (result: BuiltServer | LocalError) => void
 ) {
   let server: string | undefined;
-  const agent: AgentArea = { files: agentFiles, tools: {}, refusal: undefined };
+  const agent: AgentArea = { files: agentFiles, tools: {} };
   const loaded = await runToolchain(
     root,
     toolchain,
@@ -235,8 +214,7 @@ export async function watchServer(
       complete({ server, sdkImports: loaded.sdkImports, agentTools: agent.tools });
     else if (event.code === "ERROR")
       complete(
-        agent.refusal ??
-          loaded.importRefusal?.() ??
+        loaded.importRefusal?.() ??
           new LocalError({
             message: "Server build failed; the last successful binding stays served.",
             cause: event.error

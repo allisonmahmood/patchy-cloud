@@ -8,7 +8,12 @@ import * as Semaphore from "effect/Semaphore";
 import { startWorkerd, type WorkerdProcess } from "./process.js";
 
 export class InspectionError extends Schema.TaggedError<InspectionError>()("InspectionError", {
-  reason: Schema.Literals(["process", "load", "timeout", "protocol"]),
+  reason: Schema.Literals(["process", "load", "refused", "timeout", "protocol"]),
+  /**
+   * For `refused`: the bundle's own refusal of its modules, such as a name two agent files
+   * export. The bundle wrote it, so only its builder's CLI shows it; the instance never echoes it.
+   */
+  problem: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
@@ -67,7 +72,7 @@ const describe = Effect.fn("Execution.Inspection.describe")(function* (
   bundle: string,
   timeout: number
 ) {
-  const body = yield* Effect.tryPromise({
+  const answer = yield* Effect.tryPromise({
     try: async (signal) => {
       const deadline = AbortSignal.timeout(timeout);
       const response = await fetch(`${url}/inspect`, {
@@ -79,7 +84,7 @@ const describe = Effect.fn("Execution.Inspection.describe")(function* (
         } satisfies GuestProtocol.InspectRequest),
         signal: AbortSignal.any([signal, deadline])
       });
-      return (await response.json()) as unknown;
+      return { status: response.status, body: (await response.json()) as unknown };
     },
     catch: (cause) =>
       new InspectionError({
@@ -87,9 +92,14 @@ const describe = Effect.fn("Execution.Inspection.describe")(function* (
         cause
       })
   });
-  const reply = yield* decodeReply(body).pipe(
+  const reply = yield* decodeReply(answer.body).pipe(
     Effect.mapError((cause) => new InspectionError({ reason: "protocol", cause }))
   );
-  if (!reply.ok) return yield* new InspectionError({ reason: "load" });
+  // The loader passes the guest's own answer through; a guest that loaded and refuses its
+  // modules answers invalid_request, while a bundle that failed to load is handler_failed.
+  if (!reply.ok)
+    return yield* answer.status === 200 && reply.code === "invalid_request"
+      ? new InspectionError({ reason: "refused", problem: reply.error })
+      : new InspectionError({ reason: "load" });
   return reply.handlers;
 });

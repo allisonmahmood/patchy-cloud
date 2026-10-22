@@ -346,6 +346,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
             (cause) =>
               new LocalError({
                 message:
+                  cause.problem ??
                   "Could not inspect the server bundle. Its modules must load and export only valid handlers.",
                 code: "invalid_manifest",
                 cause

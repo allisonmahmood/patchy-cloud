@@ -259,24 +259,34 @@ it.live(
         "agent.read": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true }
       });
 
-      // A second file exporting read by name: the build names both files.
+      // A second file exporting read, by name or through `export *`: the guest's fold names both
+      // files, and inspection carries its refusal to the CLI.
       const twice = path.join(root, "agent/more.ts");
-      yield* save(twice, 'export { read } from "../server/leads.js";');
-      const refusal = {
-        code: "invalid_manifest",
-        message:
-          "read is exported by agent/leads.ts and agent/more.ts; each tool needs its own name."
-      };
-      assert.deepInclude(yield* next.pipe(Effect.flip), refusal);
-      // Publish builds through the same check.
-      const publishBuild = Effect.tryPromise({
-        try: () => buildServer(root, ["leads"], ["intake", "leads", "more"], toolchain, []),
-        catch: (cause) => cause
-      });
-      assert.deepInclude(yield* publishBuild.pipe(Effect.flip), refusal);
-      // One only `export *` gives is left to the guest, which refuses the bundle as it loads.
+      const duplicate =
+        "read is exported by agent/leads.ts and agent/more.ts; each tool needs its own name.";
+      for (const source of [
+        'export { read } from "../server/leads.js";',
+        'export * from "../server/leads.js";'
+      ]) {
+        yield* save(twice, source);
+        assert.deepInclude(yield* next.pipe(Effect.flip), {
+          code: "invalid_manifest",
+          message: `${duplicate} The last successful binding stays served.`
+        });
+        // Back to a good build, so the next refusal is a new result rather than a repeat.
+        yield* fs.remove(twice);
+        assert.deepStrictEqual((yield* next).handlers, built.handlers);
+      }
       yield* save(twice, 'export * from "../server/leads.js";');
       assert.strictEqual((yield* next.pipe(Effect.flip)).code, "invalid_manifest");
+      // Publish inspects the same bundle.
+      const published = yield* Effect.tryPromise(() =>
+        buildServer(root, ["leads"], ["intake", "leads", "more"], toolchain, [])
+      );
+      assert.deepInclude(yield* Inspection.inspect(published.server).pipe(Effect.flip), {
+        reason: "refused",
+        problem: duplicate
+      });
       yield* fs.remove(twice);
       assert.deepStrictEqual((yield* next).handlers, built.handlers);
 
