@@ -17,36 +17,6 @@ import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 
-it("refuses non-global addresses, including IPv6 aliases and transition ranges", () => {
-  for (const address of [
-    "127.0.0.1",
-    "10.0.0.1",
-    "172.16.0.1",
-    "192.168.0.1",
-    "169.254.169.254",
-    "100.100.100.200",
-    "168.63.129.16",
-    "0.0.0.0",
-    "224.0.0.1",
-    "255.255.255.255",
-    "::",
-    "::1",
-    "fc00::1",
-    "fe80::1",
-    "::ffff:127.0.0.1",
-    "::ffff:7f00:1",
-    "::ffff:169.254.169.254",
-    "64:ff9b::a9fe:a9fe",
-    "2002:7f00:1::1",
-    "2001:db8::1",
-    "3fff::1",
-    "not-an-ip"
-  ])
-    assert.isFalse(SourceClient.isPublicAddress(address), address);
-  assert.isTrue(SourceClient.isPublicAddress("8.8.8.8"));
-  assert.isTrue(SourceClient.isPublicAddress("2606:4700:4700::1111"));
-});
-
 it.effect("refuses a real non-TLS Postgres server, pins DNS and rechecks on the next attempt", () =>
   Effect.gen(function* () {
     const postgres = new URL(inject("postgres").adminUrl);

@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- IP classification and certificate hostname checks require Node's network APIs.
-import { BlockList, isIP } from "node:net";
+import { isIP } from "node:net";
 import { checkServerIdentity, connect as connectTls, type TLSSocket } from "node:tls";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -7,6 +7,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Pg from "pg";
 import { MAX_SNAPSHOT_BYTES } from "@patchy/api/postgres-snapshot";
+import { isPublicAddress } from "@patchy/core";
 import * as SourceNetwork from "./SourceNetwork.js";
 
 const SecretCause = Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true });
@@ -80,47 +81,6 @@ export class SourceClient extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<unknown>, SourceError>;
   }
 >()("@patchy/integrations/postgres/SourceClient") {}
-
-const privateAddresses = new BlockList();
-for (const [address, prefix] of [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.0.2.0", 24],
-  ["192.88.99.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["198.51.100.0", 24],
-  ["203.0.113.0", 24],
-  ["224.0.0.0", 4],
-  ["240.0.0.0", 4]
-] as const)
-  privateAddresses.addSubnet(address, prefix, "ipv4");
-// Azure's platform virtual address is neither RFC1918 nor link-local.
-privateAddresses.addAddress("168.63.129.16", "ipv4");
-const globalIpv6 = new BlockList();
-globalIpv6.addSubnet("2000::", 3, "ipv6");
-for (const [address, prefix] of [
-  ["2001::", 23],
-  ["2001:db8::", 32],
-  ["2002::", 16],
-  ["3fff::", 20]
-] as const) {
-  privateAddresses.addSubnet(address, prefix, "ipv6");
-}
-
-/** Allow global unicast only; mapped, compatible, NAT64 and other transition IPv6 are refused. */
-export const isPublicAddress = (address: string): boolean => {
-  const family = isIP(address);
-  if (family === 4) return !privateAddresses.check(address, "ipv4");
-  return (
-    family === 6 && globalIpv6.check(address, "ipv6") && !privateAddresses.check(address, "ipv6")
-  );
-};
 
 const resolve = Effect.fn("Postgres.resolve")(function* (host: string) {
   const network = yield* SourceNetwork.SourceNetwork;
