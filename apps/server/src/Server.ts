@@ -47,7 +47,9 @@ import {
   PostgresExecution,
   PostgresOperations,
   PostHogSource,
-  PostHogOperations
+  PostHogOperations,
+  SalesforceOperations,
+  Nango
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
@@ -164,7 +166,16 @@ const services = Layer.mergeAll(
       const members = yield* Members.make;
       const postgres = yield* PostgresOperations.makeHandlers;
       const posthog = yield* PostHogOperations.makeHandlers;
-      const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog };
+      const salesforce = yield* SalesforceOperations.makeHandlers;
+      const handlers = {
+        me,
+        ...tables,
+        ...files,
+        ...members,
+        ...postgres,
+        ...posthog,
+        ...salesforce
+      };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
         Layer.provideMerge(
@@ -208,7 +219,8 @@ const services = Layer.mergeAll(
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
-          Layer.provideMerge(PostHogSource.layer)
+          Layer.provideMerge(PostHogSource.layer),
+          Layer.provideMerge(Nango.layer)
         )
       ),
       Layer.provideMerge(Tables.layer),

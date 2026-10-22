@@ -1,6 +1,6 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres and PostHog connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres and PostHog connections and their discovered metadata are managed here, alongside a local Salesforce proof; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
 
 ## Language
 
@@ -99,3 +99,7 @@ _Avoid_: Dev proxy, impersonated read
 **Fixture**:
 Builder-authored synthetic data for a declaration's local shape, with invented rows for connections and shared tables, or files for shared stores. Fixtures establish local behavior, not production data, authority or volume guarantees; view fixtures contain explicit rows rather than recomputed source data.
 _Avoid_: Sample of production, mock response
+
+**Connector mapping**:
+The private reference from a Patchy connection to the upstream account held by its connector backend. It selects the account only after Patchy has authorized the caller; it grants no access itself.
+_Avoid_: OAuth token, permission, connection handle

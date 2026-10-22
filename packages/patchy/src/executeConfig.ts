@@ -13,6 +13,7 @@ import {
   MembersDeclaration,
   PostgresDeclaration,
   PostHogDeclaration,
+  SalesforceDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -99,6 +100,10 @@ const configSchema = Schema.Struct({
         handle: PostgresDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: SalesforceDeclaration.fields.kind,
+        handle: SalesforceDeclaration.fields.handle
+      }),
+      Schema.Struct({
         kind: PostHogDeclaration.fields.kind,
         handle: PostHogDeclaration.fields.handle
       }),
@@ -125,6 +130,7 @@ const generatedIndexSchema = Schema.Struct({
       declaration: Schema.Union([
         PostgresDeclaration,
         PostHogDeclaration,
+        SalesforceDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
@@ -299,6 +305,8 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
       declaration.kind !== generated.kind ||
       (declaration.kind === "postgres" &&
         (generated.kind !== "postgres" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "salesforce" &&
+        (generated.kind !== "salesforce" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "posthog" &&
         (generated.kind !== "posthog" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "sharedStore" &&

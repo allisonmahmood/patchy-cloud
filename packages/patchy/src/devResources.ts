@@ -15,7 +15,8 @@ import {
   PostgresDev,
   PostgresExecution,
   PostgresOperations,
-  PostHogDev
+  PostHogDev,
+  SalesforceDev
 } from "@patchy/integrations/dev";
 import { Files, Members, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
 import { Binding, LoadedVersions, Wakes, me } from "@patchy/runtime/core";
@@ -295,7 +296,8 @@ const make = Effect.fn("DevResources.make")(function* (
     ...fileHandlers,
     ...postgres,
     // PostHog has no fixture: its reads go to the real connection, through the instance.
-    ...(yield* PostHogDev.handlers(instance))
+    ...(yield* PostHogDev.handlers(instance)),
+    ...(yield* SalesforceDev.handlers(instance))
   };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };

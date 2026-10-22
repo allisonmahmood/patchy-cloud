@@ -1558,3 +1558,15 @@ Report vulnerabilities privately by following the [security policy](https://gith
 ## License
 
 All rights reserved for now. See [LICENSE](https://github.com/allisonmahmood/patchy-cloud/blob/main/LICENSE).
+
+### Salesforce local prototype
+
+The local Nango proof adds `salesforce(handle)` from `patchy/config` and
+`patchy add salesforce/<handle> [--as <alias>]`. Discovery uses the existing
+`patchy list connections` flow and its unchanged JSON envelope. Generated clients
+provide `describe(object)` for fields and `query({ query })` or `query({ cursor })`
+for paginated JSON records. Dev reads through the instance with the machine key;
+tier 2 calls belong in actions. Existing Postgres/PostHog operations are unchanged.
+See the repository's `docs/DEVELOPMENT.md` for the explicit local setup. This
+prototype has not been deployed; real OAuth and free-edition endpoint verification
+remain separate from the offline suites.

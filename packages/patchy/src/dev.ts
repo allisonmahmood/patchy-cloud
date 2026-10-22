@@ -82,9 +82,14 @@ export function run(): void {
       catch: (cause) => new LocalError({ message: "Could not read local runtime metadata.", cause })
     });
     const token = key === "" ? Option.none() : Option.some(Redacted.make(key));
-    if (Option.isNone(token) && Object.keys(prepared.metadata.posthog).length > 0)
+    if (
+      Option.isNone(token) &&
+      Object.keys(prepared.metadata.posthog).length +
+        Object.keys(prepared.metadata.salesforce ?? {}).length >
+        0
+    )
       return yield* new LocalError({
-        message: "patchy dev started without this machine's key, which PostHog reads need."
+        message: "patchy dev started without this machine's key, which live integration reads need."
       });
     return yield* DevServer.serve(prepared, stateDir, record, prepared.toolchain, token).pipe(
       Effect.provide([DevServer.layer, DirectoryWatch.layer])

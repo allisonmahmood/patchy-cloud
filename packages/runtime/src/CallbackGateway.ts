@@ -82,7 +82,9 @@ const connections: Readonly<Record<string, true>> = {
   "postgres.get": true,
   "postgres.getMany": true,
   "postgres.query": true,
-  "posthog.query": true
+  "posthog.query": true,
+  "salesforce.query": true,
+  "salesforce.describe": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||

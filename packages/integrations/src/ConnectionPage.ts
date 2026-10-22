@@ -4,6 +4,9 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
+import { escapeAttribute } from "@patchy/core";
+import * as NangoConnect from "./NangoConnect.js";
+import * as SalesforcePage from "./salesforce/Page.js";
 import { Integration, integrations } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import { Users } from "@patchy/companies";
@@ -23,6 +26,7 @@ export type Target =
 
 /** A change an admin submits. */
 export type Change =
+  | { readonly kind: "finish" }
   | { readonly kind: "connect"; readonly integration: string }
   | {
       readonly kind: "test" | "refresh" | "reconnect" | View.Confirmation;
@@ -69,6 +73,7 @@ interface IntegrationPage {
 }
 const pages: { readonly [K in Integration]: IntegrationPage } = {
   postgres: PostgresPage,
+  salesforce: SalesforcePage,
   posthog: PostHogPage
 };
 const offers = integrations.map((integration) => pages[integration].offer);
@@ -78,12 +83,16 @@ const isIntegration = Schema.is(Integration);
 const about = (connection: ConnectionStore.Connection) =>
   connection.integration === "postgres"
     ? { source: PostgresPage.source(connection), facts: PostgresPage.facts(connection) }
-    : { source: PostHogPage.source(connection), facts: PostHogPage.facts(connection) };
+    : connection.integration === "salesforce"
+      ? { source: SalesforcePage.source(connection), facts: SalesforcePage.facts(connection) }
+      : { source: PostHogPage.source(connection), facts: PostHogPage.facts(connection) };
 /** What a snapshot lets patches read, in its integration's words. */
 const readsOf = (metadata: ConnectionStore.Metadata) =>
   metadata.integration === "postgres"
     ? PostgresPage.reads(metadata.snapshot)
-    : PostHogPage.reads(metadata.snapshot);
+    : metadata.integration === "salesforce"
+      ? SalesforcePage.reads(metadata.snapshot)
+      : PostHogPage.reads(metadata.snapshot);
 
 /** The field each refusal is about, when it is about one. */
 const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>
@@ -456,6 +465,17 @@ const reporter = Effect.fn("ConnectionPage.reporter")(function* (
     });
 });
 
+const authorize = Effect.fn("ConnectionPage.authorize")(function* (
+  viewer: RequireSession.Viewer["Service"],
+  input: Parameters<typeof NangoConnect.begin>[1]
+) {
+  const attempt = yield* NangoConnect.begin(viewer, input);
+  return {
+    title: "Authorize Salesforce",
+    body: `<div class="page-heading"><h1>Connect Salesforce</h1></div><p><a class="btn btn-primary" href="${escapeAttribute(attempt.link)}" target="_blank" rel="noopener noreferrer">Authorize in Salesforce</a></p><p>After authorization succeeds, return to this page. This attempt expires in ten minutes.</p><form method="post" action="/company/connections/finish"><input type="hidden" name="attempt" value="${escapeAttribute(attempt.id)}"><button class="btn btn-primary" type="submit">Finish connecting</button></form>`
+  } satisfies Page;
+});
+
 const connect = Effect.fn("ConnectionPage.connect")(function* (
   viewer: RequireSession.Viewer["Service"],
   integration: Integration
@@ -473,6 +493,7 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
   if (form === null) return refused(unreadable);
   return yield* Effect.gen(function* () {
     const fields = yield* decodeConnect(form);
+    if (integration === "salesforce") return yield* authorize(viewer, { ...fields, integration });
     const credentials = page.credentials(submitted);
     if (!Redacted.isRedacted(credentials)) return refused(credentials);
     const connection = yield* (yield* ConnectionStore.ConnectionStore).connect(
@@ -501,7 +522,7 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
 const act = Effect.fn("ConnectionPage.act")(function* (
   viewer: RequireSession.Viewer["Service"],
   id: string,
-  kind: Exclude<Change["kind"], "connect">
+  kind: Exclude<Change["kind"], "connect" | "finish">
 ) {
   const form = yield* formBody;
   const submitted = submittedOf(form);
@@ -538,6 +559,18 @@ const act = Effect.fn("ConnectionPage.act")(function* (
   return yield* Effect.gen(function* () {
     const store = yield* ConnectionStore.ConnectionStore;
     const input = { companyId: viewer.company.id, userId: viewer.user.id, id };
+    const existing = yield* store.get(viewer.company.id, id);
+    if (
+      existing.integration === "salesforce" &&
+      (kind === "reconnect" || kind === "rotate" || kind === "retarget")
+    )
+      return yield* authorize(viewer, {
+        integration: existing.integration,
+        handle: existing.handle,
+        description: existing.description,
+        connectionId: id,
+        action: kind
+      });
     if (kind === "rotate" || kind === "retarget") {
       const current = yield* store.get(viewer.company.id, id);
       // Replacing credentials keeps where they point; pointing elsewhere names it anew.
@@ -587,8 +620,18 @@ export const submit = Effect.fn("ConnectionPage.submit")(function* (
 ) {
   // Refused before the body is read: a member's form never reaches the store.
   if (viewer.role !== "admin") {
-    if (change.kind === "connect") return yield* index(viewer, new URLSearchParams(), forbidden);
+    if (change.kind === "connect" || change.kind === "finish")
+      return yield* index(viewer, new URLSearchParams(), forbidden);
     return yield* connectionPage(viewer, change.id, forbidden);
+  }
+  if (change.kind === "finish") {
+    const form = yield* formBody;
+    const connection = yield* NangoConnect.finish(viewer, text(form?.attempt) ?? "");
+    return {
+      title: "Connections",
+      body: "",
+      redirect: `${View.connectionPath(connection.id)}?result=connect`
+    } satisfies Page;
   }
   if (change.kind !== "connect") return yield* act(viewer, change.id, change.kind);
   if (!isIntegration(change.integration))

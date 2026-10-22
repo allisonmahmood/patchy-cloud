@@ -1,0 +1,49 @@
+# Prototype only. Loopback bindings also keep Azure administration private.
+name: patchy-nango-proof
+services:
+  db:
+    image: postgres:16.0-alpine
+    environment:
+      POSTGRES_DB: nango
+      POSTGRES_USER: nango
+      POSTGRES_PASSWORD: ${NANGO_DB_PASSWORD:?Run node scripts/nango/prepare.mjs first}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nango"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  redis:
+    image: redis:7.2.4
+  nango:
+    # Free Auth/Proxy server, pinned to hosted-0.71.12 and its immutable image digest.
+    image: nangohq/nango-server:hosted-0.71.12@sha256:af99ee7c7fb0911018bc8adfe9b472df7875a42e9b65d1cfc6b5ebb331e5bcfc
+    platform: linux/amd64
+    env_file: ../../.local/nango/env
+    environment:
+      NANGO_DB_HOST: db
+      NANGO_DB_USER: nango
+      NANGO_DB_NAME: nango
+      NANGO_DB_SSL: "false"
+      NANGO_REDIS_URL: redis://redis:6379
+      SERVER_PORT: "3003"
+      NANGO_SERVER_URL: http://127.0.0.1:3003
+      NANGO_PUBLIC_SERVER_URL: http://127.0.0.1:3003
+      FLAG_SERVE_CONNECT_UI: "true"
+      NANGO_PUBLIC_CONNECT_URL: http://127.0.0.1:3009
+      NANGO_CONNECT_UI_PORT: "3009"
+      FLAG_AUTH_ENABLED: "false"
+      AUTH_ALLOW_SIGNUP: "false"
+      NANGO_LOGS_ENABLED: "false"
+      NANGO_PROXY_BASE_URL_OVERRIDE_ENABLED: "false"
+    ports:
+      - "127.0.0.1:3003:3003"
+      - "127.0.0.1:3009:3009"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+volumes:
+  database:

@@ -734,10 +734,10 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
     }).annotateMerge(
       describe(
         "`patchy dev` reads a connection whose integration reads live in development, today " +
-          "PostHog's `posthog.query`, as the bearer. The machine token is the only authority: " +
+          "PostHog's `posthog.query` and the local Salesforce prototype's `salesforce.query` and `salesforce.describe`, as the bearer. The machine token is the only authority: " +
           "its person, company and machine are read from the token on every call and again " +
           "after any wait for one of the project's query slots, which answers 401 when the token " +
-          "stopped working meanwhile. `connection` only selects: it must name a connected PostHog " +
+          "stopped working meanwhile. `connection` only selects: it must name a connected " +
           "connection of the token's company, which any active member reads through. Other " +
           "operations, including every Postgres one, answer `invalid_request`. `args` are the " +
           "runtime operation's without its `connection` alias. The runtime's bounds apply: a " +

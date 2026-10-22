@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { SalesforceRead, SalesforceObjectName } from "./salesforce.js";
 import { PostHogDevQuery } from "./posthog.js";
 
 /** Where `patchy dev` sends a read, under the instance's `/api`. */
@@ -24,6 +25,16 @@ export type DevReadEnvelope = typeof DevReadEnvelope.Type;
 
 /** Every operation an integration lets dev read live, with its exact arguments. */
 export const DevRead = Schema.Union([
+  Schema.Struct({
+    op: Schema.Literal("salesforce.query"),
+    connection: DevReadConnection,
+    args: Schema.Struct({ request: SalesforceRead })
+  }),
+  Schema.Struct({
+    op: Schema.Literal("salesforce.describe"),
+    connection: DevReadConnection,
+    args: Schema.Struct({ object: SalesforceObjectName })
+  }),
   Schema.Struct({
     op: Schema.Literal("posthog.query"),
     connection: DevReadConnection,

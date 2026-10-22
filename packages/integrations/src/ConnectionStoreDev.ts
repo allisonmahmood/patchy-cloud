@@ -59,11 +59,17 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
                 integration: "postgres",
                 snapshot: { ...found.metadata.snapshot, ...stamp }
               }
-            : {
-                ...base,
-                integration: "posthog",
-                snapshot: { ...found.metadata.snapshot, ...stamp }
-              }
+            : found.metadata.integration === "salesforce"
+              ? {
+                  ...base,
+                  integration: "salesforce",
+                  snapshot: { ...found.metadata.snapshot, ...stamp }
+                }
+              : {
+                  ...base,
+                  integration: "posthog",
+                  snapshot: { ...found.metadata.snapshot, ...stamp }
+                }
         );
       },
       snapshot: (companyId, id, revision) => {

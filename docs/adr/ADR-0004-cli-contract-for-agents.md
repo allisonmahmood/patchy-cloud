@@ -807,3 +807,7 @@ owns the CI commands and their required checks.
   callers do not branch on the signal number.
 - **Branching on refusal prose or retaining old command aliases.** Rejected:
   stable codes and one publish verb keep the agent contract unambiguous.
+
+The local Salesforce prototype reuses connection discovery and
+`patchy add salesforce/<handle> [--as <alias>]`. Its output envelope and exit
+codes follow the same rules; no separate authentication CLI or token input is added.

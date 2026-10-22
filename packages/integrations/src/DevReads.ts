@@ -26,6 +26,9 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as ConnectionStore from "./ConnectionStore.js";
 import { postgres } from "./postgres/index.js";
+import * as SalesforceOperations from "./salesforce/Operations.js";
+import { salesforce } from "./salesforce/index.js";
+import * as Nango from "./Nango.js";
 import { posthog } from "./posthog/index.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as PostHogSource from "./posthog/Source.js";
@@ -64,11 +67,11 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
 
 /** Only what a definition's `live` names reaches this door; every Postgres operation is refused. */
 const live = new Set(
-  [postgres, posthog].flatMap((integration) =>
+  [postgres, posthog, salesforce].flatMap((integration) =>
     (integration.live ?? []).map((operation) => `${integration.name}.${operation}`)
   )
 );
-const runners = PostHogOperations.devReads;
+const runners = { ...PostHogOperations.devReads, ...SalesforceOperations.devReads };
 const isLive = (op: string): op is keyof typeof runners =>
   live.has(op) && Object.hasOwn(runners, op);
 
@@ -86,6 +89,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     const tokens = yield* MachineTokens.MachineTokens;
     const connections = yield* ConnectionStore.ConnectionStore;
     const source = yield* PostHogSource.Source;
+    const nango = yield* Effect.serviceOption(Nango.Nango);
     const settings = yield* Effect.all({
       callsPerMinute: ContractLimits.get("runtime.calls.perMinute"),
       maxBytes: ContractLimits.get("runtime.posthog.bytes"),
@@ -168,6 +172,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           )
           .pipe(
             Effect.provideService(PostHogSource.Source, source),
+            Effect.provideService(
+              Nango.Nango,
+              Option.getOrElse(nango, () =>
+                Nango.Nango.of({
+                  request: () => Effect.fail(new Nango.Failed({ stage: "configuration" }))
+                })
+              )
+            ),
             Effect.provideService(ConnectionStore.ConnectionStore, connections),
             Effect.catchTags({
               ConnectionNotFound: (cause) =>

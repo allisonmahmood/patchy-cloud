@@ -192,6 +192,8 @@ const connectionClient = (
     get(target, name: string | symbol) {
       if (typeof name !== "string") return undefined;
       if (Object.hasOwn(target, name)) return target[name];
+      if (name === "describe")
+        return (object: string) => call("salesforce.describe", { connection, object });
       if (name === "query") {
         type Shape = Readonly<
           Record<
@@ -230,6 +232,8 @@ const connectionClient = (
         return (target[name] = (
           request:
             | string
+            | { readonly cursor: string }
+            | { readonly query: string }
             | {
                 readonly name: string;
                 readonly query: string;
@@ -246,13 +250,15 @@ const connectionClient = (
                 params,
                 shape: wireShape(shape ?? {})
               })
-            : call("posthog.query", {
-                connection,
-                name: request.name,
-                query: request.query,
-                ...(request.values === undefined ? {} : { values: request.values }),
-                shape: wireShape(request.shape)
-              }));
+            : !("shape" in request)
+              ? call("salesforce.query", { connection, request })
+              : call("posthog.query", {
+                  connection,
+                  name: request.name,
+                  query: request.query,
+                  ...(request.values === undefined ? {} : { values: request.values }),
+                  shape: wireShape(request.shape)
+                }));
       }
       // A name is either a public relation or a non-public schema. Its next property selects it.
       const publicRelation = relation("public", name);
