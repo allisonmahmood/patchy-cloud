@@ -190,7 +190,8 @@ jobs:
         run: |
           if git diff --quiet HEAD^1 HEAD -- ':(glob)**/src/migrations.ts' \
             packages/api/src/handlers.ts \
-            packages/patchy/src/server.ts packages/patchy/src/handlerDescriptors.ts \
+            packages/patchy/src/server.ts packages/patchy/src/config.ts \
+            packages/patchy/src/handlerDescriptors.ts \
             packages/patchy/src/guest.ts packages/patchy/src/serverBuild.ts \
             packages/patchy/src/serverModules.ts packages/patchy/src/repoBuild.ts \
             scripts/rollback-rehearsal.ts; then
