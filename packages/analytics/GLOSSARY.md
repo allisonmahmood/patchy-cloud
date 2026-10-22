@@ -20,6 +20,10 @@ _Avoid_: log line, metric, trace (the linkage, not the record)
 The wide event for one server request. Runtime requests record their own, as [Runtime](../runtime/GLOSSARY.md) defines; every other request names its matched route template, never the URL, with the method and the status the client received. A `patchy` CLI request adds the CLI's release, command and coding agent from its `Patchy-Cli` header, each only when it parses. The outcome follows that status: a 4xx is refused with its body's code, a 5xx is a failure. Health probes emit none.
 _Avoid_: access log (it records URLs), request log
 
+**MCP request event**:
+The request event for one request to Patchy MCP's door, refusals included and unsampled. It names the person and company, the agent connection with its client name and document site, the `clientInfo` name and version a request sent, the revision's era and version, the JSON-RPC method, the door's tool when it is one of the four, and the `Origin` cut to 256 characters; a refusal adds its code and any limit id. Arguments, results, tokens, change keys and the instructions are never on it.
+_Avoid_: MCP log, call log (Runtime's)
+
 **Subscription request event**:
 The request event for one subscription POST. It names the desired-set change (`subscriptionRequest`) and its `sequence`, the `documentId` and the generation it named (`streamId`), whether this host holds that document (`documentConnected`) and, when it does, the document's generation and sequence here (`currentStreamId`, `currentSequence`). A 409 names its `refusal`: `stream_replaced` or `stale_sequence`. `balancerCookie` says whether the request carried the load balancer's stickiness cookie, `AWSALB`; its value is never recorded. The `replica` every event carries names the receiving host; with `documentConnected = false` it names where a request landed without its document's stream.
 _Avoid_: control log

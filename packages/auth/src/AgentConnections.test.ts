@@ -109,7 +109,7 @@ it.layer(layer)("AgentConnections", (it) => {
             name: DEV_SEED.companyName
           },
           role: "member",
-          agentConnection: { id: connection.id, clientName: "Claude" }
+          agentConnection: { id: connection.id, clientName: "Claude", clientSite: "claude.ai" }
         });
         assert.isNotNull(yield* lastUsedAt(connection.id));
 

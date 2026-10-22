@@ -96,6 +96,27 @@ const cliFields = {
   cliCommand: Schema.optionalKey(Schema.String),
   agent: Schema.optionalKey(Schema.String)
 };
+/**
+ * A Patchy MCP request: the agent connection and its client, what the client says it is, the
+ * revision it spoke, its JSON-RPC method and the door's tool it called. What a client sends is
+ * cut short; arguments, results, tokens, change keys and instructions are never recorded.
+ */
+const mcpFields = {
+  agentConnectionId: Schema.optionalKey(Schema.String),
+  /** The name shown at consent and its metadata document's site. */
+  clientName: Schema.optionalKey(Schema.String),
+  clientSite: Schema.optionalKey(Schema.String),
+  /** `clientInfo` from `initialize` or a modern request's `_meta`, where sent. */
+  clientInfoName: Schema.optionalKey(Schema.String),
+  clientInfoVersion: Schema.optionalKey(Schema.String),
+  protocolEra: Schema.optionalKey(Schema.Literals(["modern", "legacy"])),
+  protocolVersion: Schema.optionalKey(Schema.String),
+  mcpMethod: Schema.optionalKey(Schema.String),
+  /** One of the door's four tools; an unknown name is recorded as its code alone. */
+  mcpTool: Schema.optionalKey(Schema.String),
+  /** The request's `Origin`, cut to 256 characters. */
+  origin: Schema.optionalKey(Schema.String)
+};
 /** Why a subscription ran: what made it dirty first, while it waited for a slot. */
 export const RerunTrigger = Schema.Literals([
   "initial",
@@ -216,6 +237,7 @@ export const EventFields = Schema.Struct({
   ...contentFields,
   ...routeFields,
   ...cliFields,
+  ...mcpFields,
   ...documentFields,
   ...rerunFields,
   ...subscriptionRequestFields,
@@ -247,6 +269,7 @@ export const RequestEvent = Schema.Struct({
   ...contentFields,
   ...routeFields,
   ...cliFields,
+  ...mcpFields,
   ...documentFields,
   ...subscriptionRequestFields,
   ...operations

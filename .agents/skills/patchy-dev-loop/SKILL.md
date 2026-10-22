@@ -50,7 +50,9 @@ Done when `pnpm dev status` exits 0.
   its access token, which lasts a year; `--json` adds the connection. `<person>`
   is as for `shot`. The token is the `work` credential: the CLI's API answers it 401. The connection ends as any other: disconnected, 30 days without a call,
   or its person's credentials ending. Only this command mints one without
-  consent.
+  consent. Agents send it to the door at `<url>/mcp`, the plan's API URL: the
+  door answers only its own `Host`, so an environment's door is at its
+  `<label>.localhost` host, not `127.0.0.1`.
 - **Consent.** `/oauth/authorize` with a real client's document, such as
   Claude Code's (`https://claude.ai/oauth/claude-code-client-metadata`, any
   `http://127.0.0.1:<port>/callback`), an S256 challenge and a state shows the
