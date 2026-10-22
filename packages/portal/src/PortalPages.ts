@@ -146,12 +146,14 @@ const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
 });
 
 /**
- * What agents can do beside a card's Overview: the agent tools of a live patch's current version,
+ * What agents can do beside a card's Overview: the agent tools of the version the card shows,
  * and while agent access is off, who can turn it on. Empty without tools.
  */
 const agentPanel = Effect.fn("PortalPages.agentPanel")(function* (card: Patches.PortalCard) {
-  if (card.patch.state !== "live" || card.tier !== 2) return "";
-  const served = yield* (yield* Patches.Patches).find(card.patch.id);
+  const versionId = card.patch.currentVersionId;
+  if (card.patch.state !== "live" || card.tier !== 2 || versionId === null) return "";
+  // The card's version, not whatever is current now, so a publish between the reads can't mix them.
+  const served = yield* (yield* Patches.Patches).find(card.patch.id, undefined, versionId);
   const tools = Option.match(served, {
     onNone: () => [],
     onSome: ({ version }) => agentTools(version.manifest)
