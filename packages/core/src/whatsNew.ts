@@ -1,7 +1,8 @@
 /**
  * What's new: the changelog behind the app shell's bell and `/whats-new`. It ships with the
  * server, so production shows the releases its own commit carries, and a rollback shows the
- * older list.
+ * older list. Its New and Improved changes are public too: patchyhq.com reads them from
+ * `/whats-new.json`, without the PRs, `through` or behind-the-scenes lines.
  *
  * The agent that deploys writes the next release, following AGENTS.md › Deploying. Put it
  * first: `id` one above the newest, `date` today, `through` the full sha of `origin/main`
@@ -21,6 +22,7 @@
  *   test and tooling churn needs no line at all.
  * - No PR numbers, file paths, jargon, hype, or "bug fixes and improvements". Announce only
  *   what this deploy makes available: nothing behind a flag or waiting on infrastructure.
+ * - New and Improved changes reach the website too, so they must read well to anyone.
  */
 
 /** New: they could not do it before. Improved: it works better. Fixed: it was broken. */

@@ -77,6 +77,18 @@ export const render = (releases: ReadonlyArray<WhatsNew.Release>, seen: number):
   return `<article class="whats-new"><h1 class="page-heading">What’s new in Patchy</h1><p class="supporting-text">Everything we’ve shipped, newest first.${missed ? " What’s new since your last visit is highlighted." : ""}</p>${sections.join("")}</article>`;
 };
 
+/**
+ * The changelog as anyone may read it, for patchyhq.com: New and Improved changes only, without
+ * their PRs, `through` or behind-the-scenes lines. A release with none of those is left out.
+ */
+export const publicReleases = (releases: ReadonlyArray<WhatsNew.Release>) =>
+  releases.flatMap(({ id, date, changes }) => {
+    const shown = changes.flatMap(({ kind, title, detail }) =>
+      kind === "New" || kind === "Improved" ? [{ kind, title, detail }] : []
+    );
+    return shown.length > 0 ? [{ id, date, changes: shown }] : [];
+  });
+
 /** Opening the bell's panel reports what it showed; the panel's own markup carries `through`. */
 const bellScript = `(() => {
   const panel = document.getElementById("whats-new");
@@ -165,6 +177,15 @@ export const layer: Layer.Layer<
         contentType: "text/javascript",
         headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
       })
+    );
+    // No session: the website fetches it server-side, so it needs no CORS either.
+    yield* router.add(
+      "GET",
+      "/whats-new.json",
+      HttpServerResponse.jsonUnsafe(
+        { releases: publicReleases(WhatsNew.releases) },
+        { headers: { "cache-control": "public, max-age=300" } }
+      )
     );
   })
 );
