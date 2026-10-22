@@ -628,9 +628,12 @@ export const forcedWrite = action({
   description: "Tries to add a note, which a read-only action may not.",
   args: {},
   result: t.json(),
-  handler: async (ctx) =>
-    (ctx as unknown as { tables: { notes: { insert(row: { title: string }): Promise<unknown> } } })
-      .tables.notes.insert({ title: "Written by a read-only action" })
+  handler: async (ctx) => {
+    await (
+      ctx as unknown as { tables: { notes: { insert(row: { title: string }): Promise<unknown> } } }
+    ).tables.notes.insert({ title: "Written by a read-only action" });
+    return null;
+  }
 });
 `
   );
