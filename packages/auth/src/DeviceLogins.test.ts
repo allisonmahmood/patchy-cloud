@@ -564,11 +564,13 @@ it.layer(layer)("DeviceLogins", (it) => {
         const userId = yield* addUser(`ended_${suffix}`);
         const login = yield* logins.start({ machineNameHint: "host" });
         const older = yield* logins.start({ machineNameHint: "older release" });
+        // Confirmed on a server whose clock runs a minute ahead of the one that ends them.
+        yield* TestClock.setTime(NOW + MINUTE);
         yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Cancelled" });
         yield* logins.confirm({ userCode: older.userCode, userId, machineName: "Also cancelled" });
         // A release before confirmations were stamped leaves none; its start stands in.
         yield* sql`UPDATE device_logins SET confirmed_at = NULL WHERE user_code = ${older.userCode}`;
-        // The same instant as both confirmations: an approval at the ending is ended too.
+        yield* TestClock.setTime(NOW);
         yield* end(userId);
         for (const ended of [login, older]) {
           assert.strictEqual(
@@ -598,11 +600,13 @@ it.layer(layer)("DeviceLogins", (it) => {
         const userId = yield* addUser(`after_${suffix}`);
         const login = yield* logins.start({ machineNameHint: "host" });
         yield* end(userId);
-        yield* TestClock.adjust(1);
+        // Confirmed on a server whose clock runs a minute behind the one that ended them.
+        yield* TestClock.setTime(NOW - MINUTE);
         yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Fresh" });
         const result = yield* logins.poll(login.deviceCode);
         if (result.status !== "complete") assert.fail("A later confirmation should mint");
         else assert.strictEqual((yield* tokens.authenticate(result.token))?.user.id, userId);
+        yield* TestClock.setTime(NOW);
       }
     }).pipe(withDeviceLogins)
   );

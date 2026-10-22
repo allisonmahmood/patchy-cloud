@@ -542,7 +542,9 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             "admin"
           );
           const input = { companyId: company.id, userId: member.id };
-          const endedAt = sql`SELECT credentials_ended_at AS "endedAt" FROM users WHERE id = ${member.id}`;
+          const endedAt = sql<{
+            endedAt: Date;
+          }>`SELECT credentials_ended_at AS "endedAt" FROM users WHERE id = ${member.id}`;
           yield* TestClock.setTime(Date.UTC(2026, 0, 1));
           yield* sql`
           INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at, revoked_at)
@@ -561,7 +563,8 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             { id: "tok_reactivate_one", revoked: true },
             { id: "tok_reactivate_two", revoked: true }
           ]);
-          assert.deepStrictEqual(yield* endedAt, [{ endedAt: new Date(Date.UTC(2026, 0, 1)) }]);
+          const [stamped] = yield* endedAt;
+          assert.instanceOf(stamped?.endedAt, Date);
           assert.strictEqual(
             (yield* users.deactivate({ companyId: company.id, userId: admin.id }).pipe(Effect.flip))
               ._tag,
@@ -582,7 +585,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           assert.strictEqual(restored.companyId, company.id);
           assert.deepStrictEqual(yield* users.reactivate(input), restored);
           // A repeat deactivation ended nothing new, and reactivation keeps the stamp.
-          assert.deepStrictEqual(yield* endedAt, [{ endedAt: new Date(Date.UTC(2026, 0, 1)) }]);
+          assert.deepStrictEqual(yield* endedAt, [stamped]);
           assert.deepStrictEqual(
             yield* sql`
           SELECT id, revoked_at IS NOT NULL AS revoked FROM machine_tokens

@@ -267,10 +267,12 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* readPending(input.userCode);
         yield* MachineTokens.validateMachineName(input.machineName);
-        const now = yield* Clock.currentTimeMillis;
+        // Under the user lock the endings take, and on the database's clock they stamp
+        // with: a confirmation that commits before an ending is always older than it.
+        yield* sql`SELECT id FROM users WHERE id = ${input.userId} FOR SHARE`;
         yield* sql`
           UPDATE device_logins SET state = 'confirmed', user_id = ${input.userId},
-            machine_name = ${input.machineName}, confirmed_at = to_timestamp(${now / 1_000})
+            machine_name = ${input.machineName}, confirmed_at = clock_timestamp()
           WHERE user_code = ${input.userCode}`;
       })
     );

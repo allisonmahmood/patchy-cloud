@@ -34,7 +34,8 @@ export const migrations: Migrations = {
   // When each person's credentials last all ended, by deactivation or by revoking every machine,
   // kept on Companies' user row and written in the ending's transaction. An approval at or before
   // it stays ended, whichever release ended it, so device logins now record when they were
-  // confirmed. Nothing before this step recorded either, so both start empty.
+  // confirmed. Both are the database's clock, read under the user's row lock, so servers whose
+  // clocks disagree can't misorder them. Nothing before this step recorded either.
   "0019_credentials_ended": ddl(
     `ALTER TABLE users ADD COLUMN credentials_ended_at TIMESTAMPTZ`,
     `ALTER TABLE device_logins ADD COLUMN confirmed_at TIMESTAMPTZ`

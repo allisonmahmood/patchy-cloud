@@ -235,15 +235,17 @@ export const make = Effect.gen(function* () {
   });
 
   // Disconnect everything. The stamp ends every device login confirmed at or before it
-  // (DeviceLogins.poll); it is read after the user lock mint takes, so it follows every
-  // credential made under that lock before it.
+  // (DeviceLogins.poll). It is the database's clock read under the user lock that mint and
+  // confirmation take, so it follows everything made under that lock before it, and never
+  // moves back.
   const revokeAll = Effect.fn("MachineTokens.revokeAll")((userId: string) =>
     sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
         const now = yield* Clock.currentTimeMillis;
         yield* sql`
-          UPDATE users SET credentials_ended_at = to_timestamp(${now / 1_000}) WHERE id = ${userId}`;
+          UPDATE users SET credentials_ended_at = GREATEST(credentials_ended_at, clock_timestamp())
+          WHERE id = ${userId}`;
         yield* sql`
           UPDATE machine_tokens SET revoked_at = to_timestamp(${now / 1_000})
           WHERE user_id = ${userId} AND revoked_at IS NULL`;
