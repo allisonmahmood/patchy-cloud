@@ -147,6 +147,7 @@ export const layer: Layer.Layer<
     yield* get(cataloguePath, () => ({ kind: "catalogue" }));
     yield* get(`${cataloguePath}/:integration`, integration);
     yield* post(`${cataloguePath}/:integration`, integration);
+    yield* post(`${indexPath}/finish`, () => ({ kind: "finish" }));
     yield* get(`${indexPath}/:id`, (params) => ({ kind: "view", id: params.id ?? "" }));
     for (const kind of ["test", "refresh", "reconnect"] as const)
       yield* post(`${indexPath}/:id/${kind}`, (params) => ({ kind, id: params.id ?? "" }));

@@ -88,6 +88,15 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
     `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`
   ];
   if (connection.snapshot === null) return [...lines, "Snapshot: unavailable"];
+  if (connection.integration === "salesforce")
+    return [
+      `salesforce/${connection.handle} · ${connection.status}`,
+      connection.description,
+      ...(connection.snapshot === null
+        ? []
+        : connection.snapshot.objects.map((object) => `  ${object.name} · ${object.label}`)),
+      "Add it with patchy add salesforce/<handle>; describe(object) discovers its fields."
+    ];
   if (connection.integration === "posthog") {
     const snapshot = connection.snapshot;
     const described = (description: string | undefined) =>

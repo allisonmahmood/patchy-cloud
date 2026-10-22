@@ -193,6 +193,14 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   const { PATCHY_DEV_CLERK_USER_ID, ...clerk } = personas
     ? {}
     : yield* readDeveloperEnv(devEnvFile);
+  const nango = yield* Config.all({
+    PATCHY_NANGO_URL: Config.String("PATCHY_NANGO_URL").pipe(
+      Config.withDefault("http://127.0.0.1:3003")
+    ),
+    PATCHY_NANGO_SECRET_KEY: Config.Redacted("PATCHY_NANGO_SECRET_KEY").pipe(
+      Config.withDefault(Redacted.make(""))
+    )
+  });
   const credentialKeys = yield* readCredentialKeys(path.join(plan.stateDir, "dev.env"));
   yield* Effect.tryPromise({
     try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
@@ -265,6 +273,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           ...signIn,
           NODE_ENV: "development",
           PATCHY_CREDENTIAL_KEYS: Redacted.value(credentialKeys),
+          PATCHY_NANGO_URL: nango.PATCHY_NANGO_URL,
+          PATCHY_NANGO_SECRET_KEY: Redacted.value(nango.PATCHY_NANGO_SECRET_KEY),
           PORT: String(plan.ports.server),
           DATABASE_URL: plan.databaseUrl,
           PATCHY_COMPANY_DB_ADMIN_URL: plan.databaseUrl,

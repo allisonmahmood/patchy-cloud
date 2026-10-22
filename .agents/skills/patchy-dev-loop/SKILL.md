@@ -57,7 +57,8 @@ Done when `pnpm dev status` exits 0.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
   Postgres declarations read invented fixtures. PostHog declarations have none:
   `patchy dev` reads the real connection through this instance, as the CLI's
-  key, and each read shows as a Dev call on the connection's page. Connecting
+  key, and each read shows as a Dev call on the connection's page. The Salesforce local prototype also reads live through the instance; follow
+  DEVELOPMENT's Nango section and use a disposable test org only. Connecting
   PostHog here takes a real key and project, so check dev reads through the
   suites' PostHog double unless the person hands you a disposable project.
 - **Clerk sign-in, its handshake or real invitation mail.** These need

@@ -1119,6 +1119,18 @@ new host or database with discovery, refresh schema, disconnect, reconnect and e
 the description. Rotation and retargeting preserve identity; disconnect keeps data.
 A connection may be deleted only when no stored patch version declares it.
 
+### Salesforce local proof
+
+An unshipped local prototype adds company-scoped Salesforce reads through
+self-hosted Nango Auth/Proxy. Nango owns OAuth credentials and refresh; Patchy
+owns connection identity, company ownership, metadata, declared access and logs.
+It exposes object/field discovery and paginated SOQL reads only. Its generated
+client returns validated JSON records. Dev reads live as the machine token's
+person; hosted reads run in actions. Disconnect denies Patchy access before
+removing the upstream Nango connection; reauthorization keeps Patchy's identity.
+This is not a production rollout or a personal-connection implementation. See
+[the local setup and verification boundaries](DEVELOPMENT.md#local-nango--salesforce-proof).
+
 ### Connecting PostHog
 
 PostHog is read-only and company-wide, for PostHog Cloud only: `us.posthog.com`

@@ -10,6 +10,7 @@ import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
+import { SalesforceSnapshot } from "./salesforceSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
 import {
   HandlerDescriptors,
@@ -500,8 +501,16 @@ export const PostHogDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("posthog")
 });
+export const SalesforceDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("salesforce")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
-export const ConnectionDeclaration = Schema.Union([PostgresDeclaration, PostHogDeclaration]);
+export const ConnectionDeclaration = Schema.Union([
+  PostgresDeclaration,
+  PostHogDeclaration,
+  SalesforceDeclaration
+]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
 export const sharedTableId = (patchId: string, table: string): string => `${patchId}/${table}`;
@@ -588,6 +597,7 @@ export const Manifest = Schema.Struct({
     Schema.Union([
       PostgresDeclaration,
       PostHogDeclaration,
+      SalesforceDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -605,6 +615,11 @@ export const GenerationManifest = Schema.Struct({
       MembersDeclaration,
       Schema.Struct({
         ...PostgresDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
+        ...SalesforceDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
       }),
@@ -628,7 +643,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog"] as const;
+export const integrations = ["postgres", "posthog", "salesforce"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -666,7 +681,12 @@ const detail = <const I extends Integration, F extends Schema.Struct.Fields>(
 export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
-export const ConnectionDetail = Schema.Union([PostgresConnectionDetail, PostHogConnectionDetail]);
+export const SalesforceConnectionDetail = detail("salesforce", SalesforceSnapshot.fields);
+export const ConnectionDetail = Schema.Union([
+  PostgresConnectionDetail,
+  PostHogConnectionDetail,
+  SalesforceConnectionDetail
+]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
 export const ConnectionUnavailable = failure(503, {
@@ -697,6 +717,12 @@ export const isManagedOutputPath = (path: string): boolean => {
   );
 };
 export const DeclarationMetadata = Schema.Struct({
+  salesforce: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ declaration: SalesforceDeclaration, snapshot: SalesforceSnapshot })
+    )
+  ),
   postgres: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: PostgresDeclaration, snapshot: Snapshot })

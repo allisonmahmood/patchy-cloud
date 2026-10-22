@@ -403,6 +403,72 @@ pnpm_config_store_dir="$cache/store" pnpm_config_cache_dir="$cache/cache" \
 
 Stop patch sessions with `pnpm patchy dev stop` before stopping the cloud.
 
+## Local Nango / Salesforce proof
+
+This prototype does not provision Azure or change production. Nango's free
+Auth/Proxy server is pinned in `scripts/nango/compose.yaml` to `hosted-0.71.12`
+and its image digest. Postgres and Redis stay on its private Compose network;
+the dashboard/API and Connect UI bind to loopback only. Existing Postgres and
+PostHog provider implementations are unchanged.
+
+Prepare local secrets without starting anything:
+
+```sh
+node scripts/nango/prepare.mjs
+```
+
+When local service startup is authorized, start the pinned stack explicitly:
+
+```sh
+docker compose --env-file .local/nango/env -f scripts/nango/compose.yaml up -d
+```
+
+Sign in to `http://127.0.0.1:3003` with the dashboard credentials in the local
+env file. In its **dev** environment create the `salesforce` integration with
+your own OAuth application's client id and secret, and scopes
+`api,refresh_token,openid`. Self-hosting does not supply a Nango Cloud OAuth app.
+Export `PATCHY_NANGO_URL=http://127.0.0.1:3003` and set
+`PATCHY_NANGO_SECRET_KEY` to the file's `NANGO_SECRET_KEY_DEV` in the shell
+starting this worktree's `pnpm dev`. Never use a production instance or key.
+The runner forwards these two settings only to its server, not to patch code.
+
+A real-provider check requires a disposable Salesforce Developer Edition or
+sandbox org with API access, test Account records, and an admin who can register
+an [OAuth External Client App](https://developer.salesforce.com/docs/platform/api-rest/guide/intro-oauth-and-connected-apps.html).
+Use Authorization Code flow with a client secret and refresh tokens. Register
+`http://127.0.0.1:3003/oauth/callback` exactly; if the org requires HTTPS, a
+separately authorized test HTTPS address must replace Nango's server URL and
+this callback together. Use the sandbox's hostname when authorizing a sandbox.
+The authorizing Salesforce user should have read access only to the intended
+objects and fields; Patchy's API scope is not a substitute for that policy.
+
+In the local Patchy company, an admin connects Salesforce, follows the
+limited Nango authorization link, then returns and presses **Finish connecting**.
+The server verifies the attempt's user, company, expiry and Nango tags before
+saving the mapping. Then `patchy list connections --all`,
+`patchy add salesforce/<handle> --as crm`, and `patchy dev` use the generated
+client. `crm.describe("Account")` discovers fields; `crm.query({ query:
+"SELECT Id, Name FROM Account LIMIT 100" })` reads a page, and
+`crm.query({ cursor })` reads the next page. Tier 2 uses these methods in actions.
+Dev reads real data as the machine token's user, following ADR-0013.
+
+Offline suites simulate Nango and Salesforce over an injected HTTP client;
+they exercise real storage, encryption, authorization binding, result decoding,
+generated code and runtime handlers. They do not verify real OAuth, refresh,
+or the pinned server's free-edition endpoint behavior. Those remain explicit
+checks before an Azure hosting decision. Stop the local stack with the same
+Compose command and `down`; its named database volume survives.
+
+Another company-scoped provider reuses `Nango.ts`, `NangoConnect.ts`, the
+connection store, permissions, logging and runtime. Add its entry to
+`Nango.providers`, a small provider module containing its explicit read
+operations and metadata discovery, then register its schemas, generation and
+CLI declaration in the same places as Salesforce. No arbitrary HTTP escape
+hatch or Nango sync/tool features are exposed. Personal Gmail additionally
+requires a personal-connection access model; do not register it company-wide.
+Commercial licensing for Patchy's use remains unresolved. Azure provisioning,
+production rollout and production credential use are outside this proof.
+
 ## What to exercise for a change
 
 The tests prove the contracts; this is what to watch work for real before

@@ -3,7 +3,8 @@ import {
   type ConnectionDetail,
   integrations,
   type Integration,
-  PostHogSnapshot
+  PostHogSnapshot,
+  SalesforceSnapshot
 } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
@@ -37,6 +38,7 @@ import {
   Metadata,
   PostgresConnection,
   PostHogConnection,
+  SalesforceConnection,
   StaleGenerated,
   type ConnectInput,
   type CredentialsInput,
@@ -45,10 +47,14 @@ import {
 } from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as PostgresSource from "./postgres/Source.js";
+import * as Nango from "./Nango.js";
+import * as SalesforceSource from "./salesforce/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 
 const isDescription = Schema.is(Description);
 const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
+const encodeSalesforceSnapshot = Schema.encodeSync(Schema.fromJsonString(SalesforceSnapshot));
+const encodeSalesforceDisplay = Schema.encodeSync(Schema.fromJsonString(SalesforceSource.Display));
 const encodePostgresSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot));
 const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
@@ -56,11 +62,15 @@ const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSour
 const encodeSnapshot = (metadata: Metadata) =>
   metadata.integration === "postgres"
     ? encodePostgresSnapshot(metadata.snapshot)
-    : encodePostHogSnapshot(metadata.snapshot);
+    : metadata.integration === "salesforce"
+      ? encodeSalesforceSnapshot(metadata.snapshot)
+      : encodePostHogSnapshot(metadata.snapshot);
 const encodeDisplay = (target: Target) =>
   target.integration === "postgres"
     ? encodePostgresDisplay(target.display)
-    : encodePostHogDisplay(target.display);
+    : target.integration === "salesforce"
+      ? encodeSalesforceDisplay(target.display)
+      : encodePostHogDisplay(target.display);
 /** Credentials for the same destination may replace each other; anything else is a retarget. */
 const sameTarget = (current: Target, next: Target) =>
   current.integration === "postgres"
@@ -68,13 +78,17 @@ const sameTarget = (current: Target, next: Target) =>
       next.display.host === current.display.host &&
       next.display.port === current.display.port &&
       next.display.database === current.display.database
-    : next.integration === "posthog" &&
-      next.display.region === current.display.region &&
-      next.display.projectId === current.display.projectId;
+    : current.integration === "salesforce"
+      ? next.integration === "salesforce" &&
+        next.display.organizationId === current.display.organizationId
+      : next.integration === "posthog" &&
+        next.display.region === current.display.region &&
+        next.display.projectId === current.display.projectId;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostgresConnection.fields, ...secret }),
-  Schema.Struct({ ...PostHogConnection.fields, ...secret })
+  Schema.Struct({ ...PostHogConnection.fields, ...secret }),
+  Schema.Struct({ ...SalesforceConnection.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 const detailFields = {
@@ -85,6 +99,11 @@ const detailFields = {
   takenAt: Schema.NullOr(Schema.String)
 };
 const SnapshotDetail = Schema.Union([
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("salesforce"),
+    snapshot: Schema.NullOr(SalesforceSnapshot)
+  }),
   Schema.Struct({
     ...detailFields,
     integration: Schema.Literal("postgres"),
@@ -242,10 +261,17 @@ export const make = Effect.gen(function* () {
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           }
-        : ({
-            ...row,
-            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
-          } satisfies ConnectionDetail);
+        : row.integration === "salesforce"
+          ? {
+              ...row,
+              snapshot:
+                row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+            }
+          : ({
+              ...row,
+              snapshot:
+                row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+            } satisfies ConnectionDetail);
     },
     Effect.catchTags(safe("detail"))
   );
@@ -292,7 +318,9 @@ export const make = Effect.gen(function* () {
     const target: Target =
       integration === "postgres"
         ? { integration, display: yield* postgres.test(credentials) }
-        : { integration, display: yield* posthog.test(credentials) };
+        : integration === "salesforce"
+          ? { integration, display: yield* SalesforceSource.test(credentials) }
+          : { integration, display: yield* posthog.test(credentials) };
     return target;
   });
   /** Tests and discovers; the snapshot is decoded again before it is stored. */
@@ -302,6 +330,13 @@ export const make = Effect.gen(function* () {
   ) {
     if (integration === "postgres") {
       const { display, snapshot } = yield* postgres.inspect(credentials);
+      return {
+        target: { integration, display } satisfies Target as Target,
+        metadata: { integration, snapshot } satisfies Metadata as Metadata
+      };
+    }
+    if (integration === "salesforce") {
+      const { display, snapshot } = yield* SalesforceSource.inspect(credentials);
       return {
         target: { integration, display } satisfies Target as Target,
         metadata: { integration, snapshot } satisfies Metadata as Metadata
@@ -478,16 +513,33 @@ export const make = Effect.gen(function* () {
     Effect.catchTags(safe("retarget"))
   );
   const disconnect = Effect.fn("ConnectionStore.disconnect")(
-    (input: Identity) =>
-      sql.withTransaction(
+    function* (input: Identity) {
+      const saved = yield* stored(input);
+      if (saved.integration !== "salesforce")
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const current = yield* lock(input);
+            if (current.status === "disconnected") return current;
+            yield* sql`UPDATE connections SET status = 'disconnected', credential_revision = credential_revision + 1 WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        );
+      const mapping =
+        saved.integration === "salesforce"
+          ? yield* SalesforceSource.parseCredentials(yield* keys.decrypt(saved, saved))
+          : undefined;
+      const connection = yield* sql.withTransaction(
         Effect.gen(function* () {
-          const current = yield* lock(input);
+          const current = yield* lock(input, saved);
           if (current.status === "disconnected") return current;
-          yield* sql`UPDATE connections SET status = 'disconnected', credential_revision = credential_revision + 1
-      WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          yield* sql`UPDATE connections SET status = 'disconnected', credential_revision = credential_revision + 1 WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return yield* get(input.companyId, input.id);
         })
-      ),
+      );
+      // Fail closed first. A failed deletion can be retried, including when already disconnected.
+      if (mapping !== undefined) yield* Nango.remove(mapping);
+      return connection;
+    },
     Effect.catchTags(safe("disconnect"))
   );
   const reconnect = Effect.fn("ConnectionStore.reconnect")(
@@ -521,8 +573,14 @@ export const make = Effect.gen(function* () {
     Effect.catchTags(safe("describe"))
   );
   const remove = Effect.fn("ConnectionStore.delete")(
-    (input: Identity, report?: (connection: Connection) => Effect.Effect<void>) =>
-      reportedTransaction(
+    function* (input: Identity, report?: (connection: Connection) => Effect.Effect<void>) {
+      const current = yield* get(input.companyId, input.id);
+      if (current.integration === "salesforce") {
+        if ((yield* usage(input.companyId)).get(input.id)?.declared)
+          return yield* new ConnectionInUse({});
+        yield* disconnect(input);
+      }
+      return yield* reportedTransaction(
         Effect.gen(function* () {
           const connection = yield* lock(input);
           const references = yield* sql`SELECT 1 FROM ${declarations(input.companyId)}
@@ -532,7 +590,8 @@ export const make = Effect.gen(function* () {
           return connection;
         }),
         report
-      ),
+      );
+    },
     Effect.catchTags(safe("delete"))
   );
   const resolve = Effect.fn("ConnectionStore.resolve")(

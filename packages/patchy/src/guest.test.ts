@@ -427,3 +427,49 @@ it.each(["owned", "shared"] as const)(
     });
   }
 );
+
+it("routes Salesforce describe and paginated queries from an action through host callbacks", async () => {
+  type SalesforceClient = {
+    describe(object: string): Promise<Json>;
+    query(request: { query: string } | { cursor: string }): Promise<Json>;
+  };
+  const builders = bindServer<
+    Config,
+    Record<never, never>,
+    Record<never, never>,
+    { crm: SalesforceClient }
+  >();
+  const definition = builders.action({
+    args: {},
+    result: t.json(),
+    handler: async (ctx) => {
+      await ctx.connections.crm.describe("Account");
+      await ctx.connections.crm.query({ query: "SELECT Id FROM Account" });
+      return await ctx.connections.crm.query({ cursor: "locator-200" });
+    }
+  });
+  const calls: GuestProtocol.Callback[] = [];
+  const reply = await invoke(definition, async (value) => {
+    const callback = value as GuestProtocol.Callback;
+    calls.push(callback);
+    return {
+      ok: true,
+      value:
+        callback.op === "salesforce.describe"
+          ? { ok: true, object: "Account", fields: [] }
+          : { ok: true, rows: [], cursor: null, totalSize: 0 }
+    };
+  });
+  assert.deepInclude(reply, { ok: true });
+  assert.deepEqual(
+    calls.map(({ op, args }) => ({ op, args })),
+    [
+      { op: "salesforce.describe", args: { connection: "crm", object: "Account" } },
+      {
+        op: "salesforce.query",
+        args: { connection: "crm", request: { query: "SELECT Id FROM Account" } }
+      },
+      { op: "salesforce.query", args: { connection: "crm", request: { cursor: "locator-200" } } }
+    ]
+  );
+});

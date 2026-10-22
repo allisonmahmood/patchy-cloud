@@ -59,6 +59,11 @@ export const migrations: Migrations = {
   // posthog/warehouse may both exist. One statement swaps the keys, so the two never hold at
   // once. The release before this one connects with a targetless ON CONFLICT and names every
   // snapshot's integration, so it works against both changes.
+  "0019_connector_attempts": ddl(`CREATE TABLE connector_attempts (
+    id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id), user_id TEXT NOT NULL,
+    integration TEXT NOT NULL, handle TEXT NOT NULL, description TEXT NOT NULL,
+    connection_id TEXT, action TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL
+  )`),
   "0013_handles_per_integration": ddl(
     `ALTER TABLE connections
       DROP CONSTRAINT connections_company_id_handle_key,

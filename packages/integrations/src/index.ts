@@ -13,4 +13,7 @@ export * as PostgresOperations from "./postgres/Operations.js";
 export * as PostHog from "./posthog/index.js";
 export * as PostHogSource from "./posthog/Source.js";
 export * as PostHogOperations from "./posthog/Operations.js";
+export * as Nango from "./Nango.js";
+export * as Salesforce from "./salesforce/index.js";
+export * as SalesforceOperations from "./salesforce/Operations.js";
 export { migrations } from "./migrations.js";
