@@ -375,9 +375,16 @@ const changeRefusal = (error: Runtime.RuntimeError, descriptor: HandlerDescripto
   );
 };
 
-/** Runtime refused the call at its own admission, so the handler never started. */
+/**
+ * Runtime refused the call before dispatch, so the handler never started: its action slots or
+ * the company's server at admission, or the execution service at capacity.
+ */
 const neverStarted = Schema.is(
-  Schema.Union([Invocation.InvocationBusy, ExecutionLifecycle.LifecycleError])
+  Schema.Union([
+    Invocation.InvocationBusy,
+    ExecutionLifecycle.LifecycleError,
+    Invocation.ExecutorBusy
+  ])
 );
 
 /**

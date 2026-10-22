@@ -376,6 +376,12 @@ it.layer(harness)("admission", (it) => {
           limitId: "execution.breaker.kills",
           scope: "patch",
           value: 3
+        }),
+        new Invocation.ExecutorBusy({
+          limitId: "execution.residency.processes",
+          scope: "host",
+          retryAfter: 2,
+          cause: new Error("Every process is busy.")
         })
       ];
       let refusing = 0;
@@ -397,11 +403,14 @@ it.layer(harness)("admission", (it) => {
       const paused = yield* digest;
       assert.include(refusal(paused), { code: "patch_paused", retryAfterSeconds: 30 });
       assert.include(paused.event, { limitId: "execution.breaker.kills" });
-      // Neither started, so the same key runs now, once.
+      const full = yield* digest;
+      assert.include(refusal(full), { code: "busy", retryAfterSeconds: 2 });
+      assert.include(full.event, { limitId: "execution.residency.processes" });
+      // None started, so the same key runs now, once.
       const ran = yield* digest;
       assert.isUndefined(answered(ran)["isError"], ran.text);
       assert.include(refusal(yield* digest), { code: "key_used" });
-      assert.strictEqual(fake.handed.length, 3);
+      assert.strictEqual(fake.handed.length, 4);
     })
   );
 });
