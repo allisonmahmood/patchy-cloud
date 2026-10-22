@@ -254,6 +254,11 @@ it.layer(MachineTokens.layer.pipe(Layer.provideMerge(Testing.layer())))("Machine
         { name: "Earlier", revokedAt: new Date(NOW) },
         { name: "Laptop", revokedAt: new Date(NOW + HOUR) }
       ]);
+      // Each revoke all records when the user's credentials last all ended.
+      assert.deepStrictEqual(
+        yield* sql`SELECT credentials_ended_at AS "endedAt" FROM users WHERE id = ${userId}`,
+        [{ endedAt: new Date(NOW + 2 * HOUR) }]
+      );
     })
   );
 });

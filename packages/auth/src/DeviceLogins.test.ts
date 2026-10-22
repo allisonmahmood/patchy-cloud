@@ -37,6 +37,24 @@ const addUser = Effect.fn("DeviceLogins.test.addUser")(function* (suffix: string
   return id;
 });
 
+// The two ways all of a person's credentials end. Reactivation brings none of them back.
+const endings = [
+  [
+    "disconnect",
+    Effect.fn("DeviceLogins.test.disconnect")(function* (userId: string) {
+      yield* (yield* MachineTokens.MachineTokens).revokeAll(userId);
+    })
+  ],
+  [
+    "deactivate",
+    Effect.fn("DeviceLogins.test.deactivate")(function* (userId: string) {
+      const users = yield* Users.Users;
+      yield* users.deactivate({ companyId: DEV_SEED.companyId, userId });
+      yield* users.reactivate({ companyId: DEV_SEED.companyId, userId });
+    })
+  ]
+] as const;
+
 it.layer(layer)("DeviceLogins", (it) => {
   it.effect("starts hash-only, confirms without minting, then returns one 90-day credential", () =>
     Effect.gen(function* () {
@@ -534,6 +552,83 @@ it.layer(layer)("DeviceLogins", (it) => {
         "DeviceLoginUnknown"
       );
     }).pipe(withDeviceLogins)
+  );
+
+  it.effect("Disconnect everything and deactivation cancel confirmations not yet collected", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const tokens = yield* MachineTokens.MachineTokens;
+      const sql = yield* SqlClient.SqlClient;
+      for (const [suffix, end] of endings) {
+        const userId = yield* addUser(`ended_${suffix}`);
+        const login = yield* logins.start({ machineNameHint: "host" });
+        const older = yield* logins.start({ machineNameHint: "older release" });
+        yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Cancelled" });
+        yield* logins.confirm({ userCode: older.userCode, userId, machineName: "Also cancelled" });
+        // A release before confirmations were stamped leaves none; its start stands in.
+        yield* sql`UPDATE device_logins SET confirmed_at = NULL WHERE user_code = ${older.userCode}`;
+        // The same instant as both confirmations: an approval at the ending is ended too.
+        yield* end(userId);
+        for (const ended of [login, older]) {
+          assert.strictEqual(
+            (yield* logins.poll(ended.deviceCode).pipe(Effect.flip))._tag,
+            "DeviceLoginUnknown"
+          );
+          assert.deepStrictEqual(
+            yield* sql`SELECT user_code FROM device_logins WHERE user_code = ${ended.userCode}`,
+            []
+          );
+        }
+        assert.deepStrictEqual(yield* tokens.list(userId), []);
+        assert.deepStrictEqual(
+          events.filter((event) => event.principalId === userId),
+          []
+        );
+      }
+    }).pipe(withDeviceLogins)
+  );
+
+  it.effect("a login confirmed after the ending mints, even one started before it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const tokens = yield* MachineTokens.MachineTokens;
+      for (const [suffix, end] of endings) {
+        const userId = yield* addUser(`after_${suffix}`);
+        const login = yield* logins.start({ machineNameHint: "host" });
+        yield* end(userId);
+        yield* TestClock.adjust(1);
+        yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Fresh" });
+        const result = yield* logins.poll(login.deviceCode);
+        if (result.status !== "complete") assert.fail("A later confirmation should mint");
+        else assert.strictEqual((yield* tokens.authenticate(result.token))?.user.id, userId);
+      }
+    }).pipe(withDeviceLogins)
+  );
+
+  it.effect(
+    "a poll racing Disconnect everything leaves no live token, whichever commits first",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const logins = yield* DeviceLogins.DeviceLogins;
+        const tokens = yield* MachineTokens.MachineTokens;
+        const userId = yield* addUser("racing_ending");
+        const login = yield* logins.start({ machineNameHint: "host" });
+        yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Raced" });
+        yield* TestClock.adjust(1);
+        yield* Effect.all(
+          [
+            logins
+              .poll(login.deviceCode)
+              .pipe(Effect.catchTags({ DeviceLoginUnknown: () => Effect.void })),
+            tokens.revokeAll(userId)
+          ],
+          { concurrency: "unbounded" }
+        );
+        assert.deepStrictEqual(yield* tokens.list(userId), []);
+      }).pipe(withDeviceLogins)
   );
 
   it.effect("a failed terminal delete rolls back mint and replacement and emits no event", () =>

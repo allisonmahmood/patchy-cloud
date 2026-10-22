@@ -74,6 +74,8 @@ const LoginRow = Schema.Struct({
   oldTokenId: Schema.NullOr(Schema.String),
   userId: Schema.NullOr(Schema.String),
   machineName: Schema.NullOr(Schema.String),
+  confirmedAt: Schema.NullOr(Schema.Date),
+  createdAt: Schema.Date,
   expiresAt: Schema.Date
 });
 
@@ -142,7 +144,7 @@ export const make = Effect.gen(function* () {
   const analytics = yield* Analytics.Analytics;
   const columns = sql`user_code AS "userCode", state, machine_name_hint AS "machineNameHint",
     old_token_id AS "oldTokenId", user_id AS "userId", machine_name AS "machineName",
-    expires_at AS "expiresAt"`;
+    confirmed_at AS "confirmedAt", created_at AS "createdAt", expires_at AS "expiresAt"`;
   const byUserCode = SqlSchema.findOneOption({
     Request: Schema.String,
     Result: LoginRow,
@@ -160,6 +162,12 @@ export const make = Effect.gen(function* () {
     Result: Schema.Struct({ name: Schema.String }),
     execute: ({ id, userId }) => sql`
       SELECT name FROM machine_tokens WHERE id = ${id} AND user_id = ${userId}`
+  });
+  const lockedUser = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: Schema.Struct({ credentialsEndedAt: Schema.NullOr(Schema.Date) }),
+    execute: (userId) => sql`
+      SELECT credentials_ended_at AS "credentialsEndedAt" FROM users WHERE id = ${userId} FOR UPDATE`
   });
   const confirmingIdentity = SqlSchema.findOne({
     Request: Schema.String,
@@ -259,9 +267,11 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* readPending(input.userCode);
         yield* MachineTokens.validateMachineName(input.machineName);
+        const now = yield* Clock.currentTimeMillis;
         yield* sql`
           UPDATE device_logins SET state = 'confirmed', user_id = ${input.userId},
-            machine_name = ${input.machineName} WHERE user_code = ${input.userCode}`;
+            machine_name = ${input.machineName}, confirmed_at = to_timestamp(${now / 1_000})
+          WHERE user_code = ${input.userCode}`;
       })
     );
   });
@@ -310,14 +320,26 @@ export const make = Effect.gen(function* () {
         if (row.userId === null || row.machineName === null) {
           return yield* Effect.die(new Error("Confirmed device login has no user or machine name"));
         }
-        // mint locks and re-reads the user under this transaction, serializing
-        // with deactivation; catching its refusal here lets deletion commit.
-        const minted = yield* tokens.mint({ userId: row.userId, name: row.machineName }).pipe(
-          Effect.catchTags({
-            UserUnavailable: () => Effect.succeed(null),
-            InvalidMachineName: Effect.die
-          })
+        // Deactivation and Disconnect everything end each confirmation at or before the
+        // user's credentials_ended_at; a release that stamped no confirmation leaves its
+        // start to stand in. Endings take this user lock too, so one either committed
+        // before this read or waits and revokes what this poll mints.
+        const { credentialsEndedAt } = yield* lockedUser(row.userId).pipe(
+          Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
         );
+        const confirmedAt = row.confirmedAt ?? row.createdAt;
+        const ended =
+          credentialsEndedAt !== null && credentialsEndedAt.getTime() >= confirmedAt.getTime();
+        // mint re-reads the user and refuses a deactivated one; catching its refusal
+        // here lets deletion commit.
+        const minted = ended
+          ? null
+          : yield* tokens.mint({ userId: row.userId, name: row.machineName }).pipe(
+              Effect.catchTags({
+                UserUnavailable: () => Effect.succeed(null),
+                InvalidMachineName: Effect.die
+              })
+            );
         if (minted === null) {
           yield* remove;
           return { reply: new DeviceLoginUnknown({}) };

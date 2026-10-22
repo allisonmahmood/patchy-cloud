@@ -25,7 +25,7 @@ The user, their company and role, and the machine or agent connection acting for
 _Avoid_: account, principal (on the wire), permission set
 
 **Revocation**:
-Permanently ending a machine token's or agent connection's authority, whether by its user, replacement at login, a reused refresh token or the user's deactivation. Its provenance survives, its patches keep their lifecycle state, and reactivation never restores the token.
+Permanently ending a machine token's or agent connection's authority, whether by its user, replacement at login, a reused refresh token or the user's deactivation. Its provenance survives, its patches keep their lifecycle state, and reactivation never restores the token. Disconnect everything and deactivation also record when the person's credentials ended, and nothing made or approved at or before then works again, whichever release ended it.
 _Avoid_: ban, token deletion
 
 **Bearer parsing**:
@@ -41,7 +41,7 @@ The signed-in user, their company and role on a first-party page or at a company
 _Avoid_: bearer, machine, principal
 
 **Device login**:
-The authorization of a machine through a short-lived URL and code that the person confirms, never types, in their signed-in browser. Confirmation records their answer and machine name; only the terminal's poll mints and receives the machine token, once, so an abandoned confirmation creates no credential.
+The authorization of a machine through a short-lived URL and code that the person confirms, never types, in their signed-in browser. Confirmation records their answer and machine name; only the terminal's poll mints and receives the machine token, once, so an abandoned confirmation creates no credential. Disconnect everything and deactivation cancel a confirmation whose terminal hasn't collected its token.
 _Avoid_: device flow (the protocol), OAuth (how agent connections are made), paste your token
 
 **Your machines**:
