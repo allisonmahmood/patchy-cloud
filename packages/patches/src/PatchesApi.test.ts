@@ -3112,6 +3112,21 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
             "lookup uses t.fileHandle() in result. Agent tools exchange JSON only; files stay on the page."
           ],
           [
+            // A page query can't take an upload at all; the descriptor check leaves agent tools to
+            // this one. The SDK's builders and types refuse this position, so only a hand-written descriptor has it.
+            `{ lookup: { ...query({ description: "Finds a file.", args: {}, result: t.text(), handler: async () => "x" }), descriptor: { kind: "query", description: "Finds a file.", args: { file: { kind: "upload" } }, result: { kind: "text" } } } }`,
+            {
+              "agent.lookup": {
+                kind: "query" as const,
+                description: "Finds a file.",
+                agentTool: true as const,
+                args: { file: { kind: "upload" as const } },
+                result: { kind: "text" as const }
+              }
+            },
+            "lookup uses t.upload() in args.file. Agent tools exchange JSON only; files stay on the page."
+          ],
+          [
             `{ lookup: query({ description: "Finds a deal.", args: {}, result: t.row("deals"), handler: async () => null }) }`,
             {
               "agent.lookup": {

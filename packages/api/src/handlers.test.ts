@@ -190,6 +190,12 @@ describe("handler descriptors", () => {
     expect(refusal({ "leads.peek": { ...described["leads.peek"], description: " \n" } })).toBe(
       "leads.peek's description is blank. Say what it does, or leave the description out."
     );
+    // An agent tool must keep one, so its refusal says what to write instead.
+    expect(
+      refusal({ "agent.peek": { ...described["leads.peek"], agentTool: true, description: " " } })
+    ).toBe(
+      "agent.peek's description is blank. Say what it does, what it changes and when it refuses."
+    );
     // Code points, not UTF-16 units: one astral character is one.
     expect(refusal({ "leads.peek": { ...query, description: `${"😀".repeat(2_000)}x` } })).toBe(
       "leads.peek's description is 2,001 characters; descriptions are at most 2,000. Shorten it."
@@ -254,6 +260,14 @@ describe("handler descriptors", () => {
       { kind: "enum", values: ["same", "same"] }
     ]) {
       expect(decodeDescriptor({ ...query, kind: "action", result })._tag).toBe("Failure");
+    }
+    // An agent tool may hold neither anywhere; the agent area check refuses it, naming the fix.
+    for (const [args, result] of [
+      [{ upload: { kind: "upload" } }, { kind: "boolean" }],
+      [{ handle: { kind: "fileHandle" } }, { kind: "upload" }]
+    ] as const) {
+      expect(decodeDescriptor({ ...query, agentTool: true, args, result })._tag).toBe("Success");
+      expect(decodeDescriptor({ ...query, args, result })._tag).toBe("Failure");
     }
   });
 

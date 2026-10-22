@@ -258,6 +258,11 @@ describe("the agent area check", () => {
         "files uses t.fileHandle() in result[].handle. Agent tools exchange JSON only; files stay on the page."
       ],
       [
+        // A page query couldn't take an upload at all; an agent tool gets the agent area's fix.
+        { "agent.find": tool({ args: { file: { kind: "upload" } } }) },
+        "find uses t.upload() in args.file. Agent tools exchange JSON only; files stay on the page."
+      ],
+      [
         { "agent.listDeals": tool({ result: { kind: "row", table: "deals" } }) },
         'listDeals\'s result is t.row("deals"), but this patch defines no table deals. Define the table in patchy.config.ts, or name one it defines.'
       ]
@@ -288,6 +293,38 @@ describe("the agent area check", () => {
     expect(agentAreaRefusal(over!)).toBe(
       `An agent reads all of this patch's tools in one answer of at most 64 KiB, and the tools get 60 KiB of it; yours come to ${Math.ceil(bytes(fits + 1) / 1024)} KiB. Shorten descriptions or drop tools.`
     );
+  });
+
+  it("counts a manifest too large to render as one string, refusing it without building it", () => {
+    // Every argument returns the same wide row: expanded, it is far past what a string can hold.
+    const wide = {
+      description: "w".repeat(100_000),
+      columns: Object.fromEntries(
+        Array.from({ length: 1_597 }, (_, index) => [`column${index}`, { kind: "text" as const }])
+      ),
+      indexes: {}
+    };
+    const handlers = Object.fromEntries(
+      Array.from({ length: 540 }, (_, index) => [
+        `agent.tool${index}`,
+        tool({
+          args: Object.fromEntries(
+            Array.from({ length: 20 }, (_, field) => [
+              `field${field}`,
+              { kind: "row" as const, table: "wide" }
+            ])
+          )
+        })
+      ])
+    );
+    const tools = agentTools({ tables: { wide }, handlers });
+    // One field's share, counted the way JSON.stringify writes it.
+    const rowBytes = new TextEncoder().encode(
+      JSON.stringify(tools[0]!.args.properties!["field0"])
+    ).length;
+    const { problem } = checkAgentArea({ tables: { wide }, handlers });
+    expect(problem?._tag).toBe("TooLarge");
+    expect(problem?._tag === "TooLarge" && problem.bytes).toBeGreaterThan(540 * 20 * rowBytes);
   });
 
   it("warns about undescribed top-level arguments only", () => {
@@ -342,7 +379,7 @@ describe("tool call answers", () => {
       isError: true
     });
     expect(patchRefusal("New Business", "addLead", { code: "closed" }).content[0].text).toBe(
-      "New Business refused addLead (closed)."
+      "New Business refused addLead (closed). Its description in open_patch says when it refuses and what to do."
     );
   });
 

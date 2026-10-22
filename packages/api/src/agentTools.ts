@@ -63,8 +63,20 @@ const column = (definition: typeof ColumnDefinition.Type): JsonSchema => {
   }
 };
 
+/**
+ * The rows one shaping has built, by table: each is built once and shared by every value naming
+ * it, so a row many tools return costs its size once in memory and in `jsonBytes`.
+ */
+type Rows = Map<string, JsonSchema>;
+
 /** The full stored row, all keys required and optional columns nullable. */
-const row = (name: string, tables: Tables): JsonSchema => {
+const row = (name: string, tables: Tables, rows: Rows): JsonSchema => {
+  let shared = rows.get(name);
+  if (shared === undefined) rows.set(name, (shared = tableRow(name, tables)));
+  return shared;
+};
+
+const tableRow = (name: string, tables: Tables): JsonSchema => {
   const table = Object.hasOwn(tables, name) ? tables[name] : undefined;
   // The agent area check refuses an unknown table before anything is shaped.
   if (table === undefined) throw new TypeError(`Unknown row table "${name}".`);
@@ -94,7 +106,16 @@ const row = (name: string, tables: Tables): JsonSchema => {
  * table unless the value has its own description. Uploads and file handles never cross
  * Patchy MCP, so the agent area check refuses them before anything is shaped.
  */
-export const handlerJsonSchema = (schema: HandlerSchema, tables: Tables): JsonSchema => {
+export const handlerJsonSchema = (schema: HandlerSchema, tables: Tables): JsonSchema =>
+  valueSchema(schema, tables, new Map());
+
+/** A handler's arguments, or an object's fields, as one closed object. */
+export const argsJsonSchema = (
+  fields: Readonly<Record<string, HandlerSchema>>,
+  tables: Tables
+): JsonSchema => fieldsSchema(fields, tables, new Map());
+
+const valueSchema = (schema: HandlerSchema, tables: Tables, rows: Rows): JsonSchema => {
   switch (schema.kind) {
     case "text":
       return described({ type: "string" }, schema.description);
@@ -111,32 +132,32 @@ export const handlerJsonSchema = (schema: HandlerSchema, tables: Tables): JsonSc
     case "enum":
       return described({ type: "string", enum: schema.values }, schema.description);
     case "object":
-      return described(argsJsonSchema(schema.fields, tables), schema.description);
+      return described(fieldsSchema(schema.fields, tables, rows), schema.description);
     case "array":
       return described(
-        { type: "array", items: handlerJsonSchema(schema.element, tables) },
+        { type: "array", items: valueSchema(schema.element, tables, rows) },
         schema.description
       );
     case "nullable":
-      return described(nullable(handlerJsonSchema(schema.value, tables)), schema.description);
+      return described(nullable(valueSchema(schema.value, tables, rows)), schema.description);
     case "row":
-      return described(row(schema.table, tables), schema.description);
+      return described(row(schema.table, tables, rows), schema.description);
     case "fileHandle":
     case "upload":
       throw new TypeError(`An agent tool can't take or return t.${schema.kind}().`);
   }
 };
 
-/** A handler's arguments, or an object's fields, as one closed object. */
-export const argsJsonSchema = (
+const fieldsSchema = (
   fields: Readonly<Record<string, HandlerSchema>>,
-  tables: Tables
+  tables: Tables,
+  rows: Rows
 ): JsonSchema => {
   const entries = Object.entries(fields);
   return {
     type: "object",
     properties: Object.fromEntries(
-      entries.map(([name, field]) => [name, handlerJsonSchema(field, tables)] as const)
+      entries.map(([name, field]) => [name, valueSchema(field, tables, rows)] as const)
     ),
     required: entries.filter(([, field]) => field.optional !== true).map(([name]) => name),
     additionalProperties: false
@@ -177,18 +198,20 @@ export interface AgentTool {
 export const agentTools = (manifest: {
   readonly tables: Tables;
   readonly handlers?: HandlerDescriptors;
-}): readonly AgentTool[] =>
-  agentToolEntries(manifest.handlers).map(([name, descriptor]) => ({
+}): readonly AgentTool[] => {
+  const rows: Rows = new Map();
+  return agentToolEntries(manifest.handlers).map(([name, descriptor]) => ({
     name,
     kind: agentToolKind(descriptor),
     // The check refuses a tool without one.
     description: descriptor.description ?? "",
-    args: argsJsonSchema(descriptor.args, manifest.tables),
-    returns: handlerJsonSchema(descriptor.result, manifest.tables),
+    args: fieldsSchema(descriptor.args, manifest.tables, rows),
+    returns: valueSchema(descriptor.result, manifest.tables, rows),
     ...(descriptor.errors === undefined || descriptor.errors.length === 0
       ? {}
       : { refusals: descriptor.errors })
   }));
+};
 
 /** The most UTF-8 bytes of `open_patch`'s compact JSON answer. */
 export const openPatchBytes = 64 * 1024;
@@ -217,7 +240,35 @@ export const openPatchAnswer = (
   tools
 });
 
-const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
+const encoder = new TextEncoder();
+const utf8Bytes = (text: string) => encoder.encode(text).length;
+
+/**
+ * The UTF-8 bytes of `JSON.stringify(value)`, counted without building it. Each object is counted
+ * once however often it appears, so a row every tool repeats costs its size once and the count
+ * stays linear in the manifest, where the string could outgrow what a string may hold.
+ */
+const jsonBytes = (value: unknown, counted = new WeakMap<object, number>()): number => {
+  if (value === null) return 4;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return utf8Bytes(JSON.stringify(value));
+  if (typeof value !== "object") return 0;
+  const known = counted.get(value);
+  if (known !== undefined) return known;
+  // Brackets, and a comma between each pair of entries.
+  let bytes = 2;
+  if (Array.isArray(value)) {
+    for (const item of value) bytes += jsonBytes(item, counted);
+    bytes += Math.max(value.length - 1, 0);
+  } else {
+    const entries = Object.entries(value).filter(([, item]) => item !== undefined);
+    for (const [key, item] of entries)
+      bytes += utf8Bytes(JSON.stringify(key)) + 1 + jsonBytes(item, counted);
+    bytes += Math.max(entries.length - 1, 0);
+  }
+  counted.set(value, bytes);
+  return bytes;
+};
 
 /**
  * The agent area check's refusal. Each names the tool; the CLI adds the file, and the size
@@ -284,7 +335,7 @@ export const checkAgentArea = (manifest: {
     if (problem !== undefined) return { problem, warnings: [] };
   }
   const tools = agentTools(manifest);
-  const bytes = utf8Bytes(JSON.stringify(tools));
+  const bytes = jsonBytes(tools);
   if (bytes > agentToolsBytes) return { problem: { _tag: "TooLarge", bytes }, warnings: [] };
   const warnings = tools.flatMap((tool) => {
     const undescribed = Object.entries(tool.args.properties ?? {})
@@ -368,7 +419,8 @@ export const patchRefusal = (
     record === undefined
       ? details
       : Object.fromEntries(Object.entries(record).filter(([key]) => key !== "message"));
-  const message = `${patch} refused ${tool} (${failure.code})${said === undefined ? "." : `: ${sentence(said)}`}`;
+  // Without its own words, the tool's description is where the agent learns what to do.
+  const message = `${patch} refused ${tool} (${failure.code})${said === undefined ? ". Its description in open_patch says when it refuses and what to do." : `: ${sentence(said)}`}`;
   const extra =
     rest === undefined || (Predicate.isObject(rest) && Object.keys(rest).length === 0)
       ? ""

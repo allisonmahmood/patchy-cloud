@@ -315,7 +315,7 @@ it.live(
       for (const [source, message] of [
         [
           own.replace('description: "Counts leads."', 'description: " "'),
-          "agent/intake.ts: agent.count's description is blank. Say what it does, or leave the description out."
+          "agent/intake.ts: agent.count's description is blank. Say what it does, what it changes and when it refuses."
         ],
         [
           own.replace('description: "Counts leads.", ', ""),
