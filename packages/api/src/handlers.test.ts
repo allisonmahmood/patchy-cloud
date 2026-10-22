@@ -101,6 +101,62 @@ describe("handler descriptors", () => {
     expect(encodeManifest(decodeManifest(wire))).toEqual(wire);
   });
 
+  it("round-trips descriptions, read-only actions and agent tools, and omits them when absent", () => {
+    const wire = {
+      ...manifest,
+      handlers: {
+        "leads.peek": {
+          kind: "action" as const,
+          description: "Counts leads without changing any.",
+          readOnly: true as const,
+          args: {
+            filter: {
+              kind: "nullable" as const,
+              description: "Leads to count, or null for all of them.",
+              value: {
+                kind: "object" as const,
+                description: "Inner descriptions survive too.",
+                fields: { state: { kind: "enum" as const, values: ["open"], description: "" } }
+              }
+            }
+          },
+          result: { kind: "integer" as const, description: "How many matched." }
+        },
+        "agent.addLead": {
+          kind: "mutation" as const,
+          description: "Adds one lead.",
+          agentTool: true as const,
+          args: { name: { kind: "text" as const, optional: true as const, description: "Name." } },
+          result: { kind: "array" as const, element: { kind: "row" as const, table: "leads" } }
+        },
+        // A version built from the prototype's server/agent.ts carries no mark.
+        "agent.legacy": query
+      }
+    };
+    const decoded = decodeManifest(wire);
+    expect(encodeManifest(decoded)).toEqual(wire);
+    expect(Object.keys(decoded.handlers!["agent.legacy"]!)).toEqual(["kind", "args", "result"]);
+  });
+
+  it("allows read-only only on actions and the agent tool mark only on agent handlers", () => {
+    expect(decodeDescriptor({ ...query, kind: "action", readOnly: true })._tag).toBe("Success");
+    for (const kind of ["query", "mutation"])
+      expect(decodeDescriptor({ ...query, kind, readOnly: true })._tag).toBe("Failure");
+    // Absent fields are omitted, never written as false or null.
+    for (const invalid of [
+      { readOnly: false },
+      { readOnly: null },
+      { agentTool: false },
+      { description: null },
+      { args: { value: { kind: "text", description: null } } }
+    ])
+      expect(decodeDescriptor({ ...query, kind: "action", ...invalid })._tag).toBe("Failure");
+    const decodeHandlers = Schema.decodeUnknownExit(HandlerDescriptors);
+    expect(decodeHandlers({ "agent.list": { ...query, agentTool: true } })._tag).toBe("Success");
+    for (const name of ["leads.list", "agents.list", "agentx.list"])
+      expect(decodeHandlers({ [name]: { ...query, agentTool: true } })._tag).toBe("Failure");
+  });
+
   it("rejects table-only modifiers and misplaced capabilities at every nesting depth", () => {
     for (const args of [
       { value: { kind: "text", default: "hidden default" } },

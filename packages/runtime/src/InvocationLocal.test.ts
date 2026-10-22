@@ -443,3 +443,118 @@ it.live(
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000
 );
+
+it.live(
+  "loads a hand-built bundle with descriptions, holds its read-only action to reads and keeps its agent tool from pages",
+  () =>
+    Effect.gen(function* () {
+      const platform = yield* SqlClient.SqlClient;
+      const marked: Binding.Binding["Service"] = {
+        ...binding,
+        patchId: "localagent01",
+        manifest: {
+          ...binding.manifest,
+          tables: {},
+          handlers: {
+            "demo.viewer": {
+              kind: "query",
+              description: "Who is looking.",
+              args: {},
+              result: { kind: "json", description: "Their user id." }
+            },
+            "demo.save": { kind: "mutation", args: {}, result: { kind: "json" } },
+            "demo.peek": { kind: "action", readOnly: true, args: {}, result: { kind: "json" } },
+            "demo.peekSave": { kind: "action", readOnly: true, args: {}, result: { kind: "json" } },
+            "demo.peekRead": { kind: "action", readOnly: true, args: {}, result: { kind: "json" } },
+            "demo.reach": { kind: "action", args: {}, result: { kind: "json" } },
+            "agent.lookup": {
+              kind: "query",
+              description: "Looks the viewer up, for agents.",
+              agentTool: true,
+              args: {},
+              result: { kind: "json" }
+            },
+            "agent.legacy": { kind: "query", args: {}, result: { kind: "json" } }
+          }
+        }
+      };
+      yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES (${marked.patchId}, ${marked.companyId}, 'usr_dev', 'Agent area', 'agent-area-local')`;
+      const gateway = yield* CallbackGateway.make(yield* TableOperations.make);
+      const listener = yield* CallbackGatewayApi.listen().pipe(
+        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+      );
+      // Nothing writes these fields yet, so each handler's descriptor is extended by hand.
+      const descriptors = JSON.stringify(marked.manifest.handlers);
+      const source = yield* Effect.promise(
+        async () =>
+          (
+            await build({
+              stdin: {
+                contents: `import { query, mutation, action, createGuest, t } from "patchy/server";
+      const described = ${descriptors};
+      const as = (name, handler) => ({ ...handler, descriptor: described[name] });
+      const viewer = query({args:{},result:t.json(),handler:async ctx => ctx.viewer.user.id});
+      export default createGuest({
+        demo: {
+          viewer: as("demo.viewer", viewer),
+          save: as("demo.save", mutation({args:{},result:t.json(),handler:async () => "saved"})),
+          peek: as("demo.peek", action({args:{},result:t.json(),handler:async ctx => ctx.tables.notes.insert({title:"forced"})})),
+          peekSave: as("demo.peekSave", action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.save({})})),
+          peekRead: as("demo.peekRead", action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.viewer({})})),
+          reach: as("demo.reach", action({args:{},result:t.json(),handler:async ctx => ctx.run.agent.lookup({})}))
+        },
+        agent: { lookup: as("agent.lookup", viewer), legacy: as("agent.legacy", viewer) }
+      });`,
+                resolveDir: new URL("../../patchy", import.meta.url).pathname,
+                sourcefile: "agent-area-invocation-fixture.ts"
+              },
+              bundle: true,
+              write: false,
+              platform: "browser",
+              format: "esm",
+              target: "es2022",
+              conditions: ["development"]
+            })
+          ).outputFiles[0]!.text
+      );
+      const bundle: GuestProtocol.Bundle = {
+        companyId: marked.companyId,
+        patchId: marked.patchId,
+        versionId: marked.versionId,
+        sha256: sha256(source),
+        bundle: source
+      };
+      const executor = yield* Local.make({
+        companyId: marked.companyId,
+        callbackUrls: [listener.url],
+        environment: "test"
+      }).pipe(Effect.provide(WideEvents.layerNoop));
+      // The loader decodes the bundle's own description of its handlers.
+      yield* executor.bind(bundle);
+      const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+        Effect.provideService(Executor.Executor, executor),
+        Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
+      );
+      const call = (handler: string) =>
+        invocations.call(
+          { handler, args: {} },
+          { ...marked, correlationId: newInternalId("call") },
+          Effect.succeed(viewer)
+        );
+      const refusal = (handler: string) =>
+        call(handler).pipe(
+          Effect.flip,
+          Effect.map((error) => Runtime.toFailure(error))
+        );
+      for (const handler of ["demo.viewer", "demo.peekRead", "agent.legacy"])
+        assert.deepStrictEqual(yield* call(handler), { ok: true, value: "usr_dev" });
+      assert.include(yield* refusal("demo.peek"), {
+        code: "access_denied",
+        error: "A read-only action cannot write."
+      });
+      for (const handler of ["demo.peekSave", "agent.lookup", "demo.reach"])
+        assert.strictEqual((yield* refusal(handler)).code, "access_denied", handler);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  30_000
+);

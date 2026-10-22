@@ -695,6 +695,7 @@ it.layer(shared, { timeout: 30_000 })("read-only operations over one cluster", (
       const capability = yield* capabilities.issue({
         binding: { ...binding, manifest: { ...binding.manifest, tier: 2 } },
         kind: "action",
+        readOnly: false,
         attempt: {
           invocationId: "inv_connection_action",
           attemptId: "attempt_connection_action",

@@ -84,6 +84,83 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
       }).pipe(Effect.scoped)
   );
 
+  it.effect("a read-only action keeps its reads and is refused every table and file write", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const ran: Array<string> = [];
+      const record =
+        (op: string): Runtime.JsonHandler["run"] =>
+        () =>
+          Effect.sync(() => {
+            ran.push(op);
+            return null;
+          });
+      const reads = [
+        "tables.get",
+        "tables.getMany",
+        "tables.list",
+        "members.list",
+        "shared.list",
+        "files.list",
+        "files.stat",
+        "postgres.query",
+        "posthog.query"
+      ];
+      const writes = [
+        "tables.insert",
+        "tables.insertMany",
+        "tables.update",
+        "tables.delete",
+        "files.delete"
+      ];
+      const gateway = yield* CallbackGateway.make({
+        ...Object.fromEntries(reads.map((op) => [op, { kind: "read", run: record(op) }])),
+        ...Object.fromEntries(writes.map((op) => [op, { kind: "mutation", run: record(op) }])),
+        "files.get": {
+          kind: "read",
+          transport: "bytes-get",
+          run: () =>
+            Effect.sync(() => {
+              ran.push("files.get");
+              return { bytes: new Uint8Array([1]), contentType: "text/plain" };
+            })
+        },
+        "files.put": {
+          kind: "mutation",
+          transport: "bytes-put",
+          run: () => Effect.die("A read-only action must not reach a file put.")
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const readOnly = yield* Fixtures.issue(capabilities, { kind: "action", readOnly: true });
+      assert.isTrue(readOnly.readOnly);
+      for (const op of [...writes, "files.put"])
+        assert.deepInclude(
+          yield* gateway.callback(readOnly.token, readOnly.attempt, {
+            op,
+            args: { store: "docs", name: "a.txt", contentType: "text/plain" },
+            ...(op === "files.put"
+              ? { body: { bytes: new Uint8Array([1]), contentType: "text/plain" } }
+              : {})
+          }),
+          { ok: false, code: "access_denied", error: "A read-only action cannot write." }
+        );
+      assert.deepStrictEqual(ran, []);
+      for (const op of [...reads, "files.get"])
+        assert.isTrue(
+          (yield* gateway.callback(readOnly.token, readOnly.attempt, { op, args: {} })).ok,
+          op
+        );
+      assert.deepStrictEqual(ran, [...reads, "files.get"]);
+      // The same writes stay open to an ordinary action.
+      const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+      assert.isFalse(action.readOnly);
+      assert.deepStrictEqual(
+        yield* gateway.callback(action.token, action.attempt, { op: "tables.insert", args: {} }),
+        { ok: true, value: null }
+      );
+    }).pipe(Effect.scoped)
+  );
+
   it.effect(
     "action inspection stays unlogged and JSON adoption uses the files.put mutation log",
     () =>

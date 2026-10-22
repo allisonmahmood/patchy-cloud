@@ -133,7 +133,7 @@ The tier 2 page's typed view of its server handlers, derived from their exports 
 _Avoid_: server bundle, handwritten API wrapper
 
 **Binding**:
-The trusted context of one admitted operation: its company, owning patch, loaded version and manifest, initiating viewer, effective principal, wire version and correlation id.
+The trusted context of one admitted operation: its company, owning patch, loaded version and manifest, initiating viewer, the worker agent it runs for if any, effective principal, wire version and correlation id.
 _Avoid_: Client context, payload identity
 
 **Effective principal**:

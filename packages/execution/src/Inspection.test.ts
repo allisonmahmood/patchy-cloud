@@ -22,6 +22,39 @@ it.live(
 );
 
 it.live(
+  "reads descriptions, read-only actions and agent tools, and refuses the flag on a query",
+  () =>
+    Effect.gen(function* () {
+      const described = {
+        "demo.peek": {
+          kind: "action",
+          description: "Reads without changing anything.",
+          readOnly: true,
+          args: { since: { kind: "timestamp", description: "Oldest to include." } },
+          result: { kind: "text" }
+        },
+        "agent.lookup": {
+          kind: "query",
+          description: "Looks something up.",
+          agentTool: true,
+          args: {},
+          result: { kind: "text" }
+        }
+      };
+      const answering = (handlers: object) =>
+        `export default { fetch() { return Response.json({ ok: true, handlers: ${JSON.stringify(handlers)} }); } };`;
+      const inspection = yield* Inspection.make();
+      expect(yield* inspection.inspect(answering(described))).toEqual(described);
+      expect(
+        yield* inspection
+          .inspect(answering({ "demo.read": { ...descriptors["demo.read"], readOnly: true } }))
+          .pipe(Effect.result)
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "load" } });
+    }).pipe(Effect.scoped),
+  30_000
+);
+
+it.live(
   "inspects each replacement bundle independently and recovers after a refused load",
   () =>
     Effect.gen(function* () {

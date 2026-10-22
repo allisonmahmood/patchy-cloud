@@ -95,6 +95,9 @@ const allowed = (kind: HandlerKind, op: string) =>
       op === "shared.files.get" ||
       Object.hasOwn(actionFile, op) ||
       Object.hasOwn(connections, op)));
+/** What a read-only action may not do; everything else an action may stays open to it. */
+const writes = (op: string) =>
+  Object.hasOwn(writeTable, op) || op === "files.put" || op === "files.delete";
 const viewerAuthority = (op: string) =>
   Object.hasOwn(shared, op) ||
   op === "shared.files.get" ||
@@ -220,6 +223,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         refused("access_denied", "The handler kind cannot use this callback operation."),
         403
       );
+    if (capability.readOnly && writes(request.op))
+      return remember(refused("access_denied", "A read-only action cannot write."), 403);
     const operation = Object.hasOwn(handlers, request.op) ? handlers[request.op] : undefined;
     if (request.op !== "log" && request.op !== "server.call" && operation === undefined)
       return remember(refused("invalid_request", "Unknown callback operation."), 400);

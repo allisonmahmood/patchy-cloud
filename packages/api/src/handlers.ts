@@ -27,9 +27,11 @@ export type HandlerSchema = (
   | { readonly kind: "nullable"; readonly value: HandlerSchema }
   | { readonly kind: "row"; readonly table: string }
   | { readonly kind: "fileHandle" | "upload" }
-) & { readonly optional?: true };
+) & { readonly optional?: true; readonly description?: string };
 
-const modifiers = { optional: Schema.optionalKey(Schema.Literal(true)) };
+/** Readers accept any description; where descriptors are built checks their length. */
+const description = Schema.optionalKey(Schema.String);
+const modifiers = { optional: Schema.optionalKey(Schema.Literal(true)), description };
 // Preserve only `default` for the check; other unknown keys retain normal parser behavior.
 // A pattern-keyed rest schema keeps this forbidden key out of the declared wire properties.
 const forbiddenDefault = Schema.Record(
@@ -122,13 +124,23 @@ const schemaProblem = (
   }
 };
 
+/**
+ * One handler's contract. An action marked `readOnly` is held to reads by the runtime. A handler
+ * built from a patch's `agent/` folder is marked `agentTool`, and only agents may call it. Absent
+ * marks are omitted, never written as false.
+ */
 export const HandlerDescriptor = Schema.Struct({
   kind: HandlerKind,
+  description,
+  readOnly: Schema.optionalKey(Schema.Literal(true)),
+  agentTool: Schema.optionalKey(Schema.Literal(true)),
   args: fields(HandlerSchema),
   result: HandlerSchema,
   errors: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isMinLength(1))))
 }).check(
   Schema.makeFilter((handler) => {
+    if (handler.readOnly === true && handler.kind !== "action")
+      return "Only actions may be read-only.";
     for (const field of Object.values(handler.args)) {
       const problem = schemaProblem(field, handler.kind, "args", true);
       if (problem !== undefined) return problem;
@@ -144,6 +156,13 @@ export const HandlerDescriptors = Schema.Record(Schema.String, HandlerDescriptor
     (handlers) =>
       Object.keys(handlers).every(isHandlerName) ||
       "Handler names must be module.export, one level deep."
+  ),
+  // The build folds agent/ into the one module named agent.
+  Schema.makeFilter(
+    (handlers) =>
+      Object.entries(handlers).every(
+        ([name, handler]) => handler.agentTool !== true || name.startsWith("agent.")
+      ) || "Only agent.* handlers may be agent tools."
   )
 );
 export type HandlerDescriptors = typeof HandlerDescriptors.Type;

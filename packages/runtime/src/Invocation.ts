@@ -288,11 +288,19 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
       return yield* new Runtime.InvalidRequest({});
     if (parent === undefined)
       yield* WideEvents.enrich({ handler: input.handler, kind: descriptor.kind });
+    // Agent tools are for agents only, at any depth; only the binding says who called.
+    if (descriptor.agentTool === true && binding.agent === undefined)
+      return yield* new Runtime.AccessDenied({});
     if (parent !== undefined) {
       yield* capabilities
         .resolve(parent.capability.token, parent.capability.attempt)
         .pipe(Effect.mapError((cause) => new Runtime.AccessDenied({ cause })));
-      if (descriptor.kind === "action") return yield* new Runtime.AccessDenied({});
+      // An action never nests another, and a read-only action reaches queries only.
+      if (
+        descriptor.kind === "action" ||
+        (parent.capability.readOnly && descriptor.kind === "mutation")
+      )
+        return yield* new Runtime.AccessDenied({});
     }
     let cached = codecs.get(binding.manifest);
     if (cached === undefined) {
@@ -516,6 +524,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   deadline
                 },
                 kind: descriptor.kind,
+                readOnly: descriptor.readOnly === true,
                 reauthorize,
                 ...(observation === undefined ? {} : { onDependency: observation.onDependency }),
                 tree,

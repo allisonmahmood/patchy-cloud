@@ -50,6 +50,7 @@ const open = Effect.fn("test.openQuerySnapshot")(function* (
   const capability = yield* capabilities.issue({
     binding: { ...binding, identity, principal: { userId: identity.user.id } },
     kind: "query",
+    readOnly: false,
     attempt: {
       invocationId: `inv_${binding.patchId}`,
       attemptId: "attempt_one",

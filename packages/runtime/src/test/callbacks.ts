@@ -52,6 +52,7 @@ export const issue = Effect.fnUntraced(function* (
   const capability = yield* capabilities.issue({
     binding,
     kind: "query",
+    readOnly: false,
     attempt: {
       invocationId: "inv_test",
       attemptId: "attempt_one",
