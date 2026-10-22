@@ -38,9 +38,12 @@ On pull requests CI also runs `rollback-rehearsal`. When the PR changes a
 capability's `src/migrations.ts`, the handler descriptor schemas
 (`packages/api/src/handlers.ts`) or the CLI code that writes descriptors, it
 deploys the PR onto data the live release seeded, rolls back to the live
-release, and fails naming the step that broke; otherwise it passes at once.
+release and forward again, and fails naming the step that broke; otherwise it
+passes at once.
 Once the PR's CLI writes read-only actions, the PR publishes a tier 2 patch with
-one and an agent tool, and the live release must serve it and enforce both.
+one and an agent tool, and the live release must serve it and enforce both. The
+live release also ends credentials, by deactivation and Disconnect everything,
+and back at the PR the agent connections it ended must stay ended.
 [Rolling back](OPERATIONS.md#rolling-back) says what it covers. `pnpm verify`
 leaves it out, because it rehearses commits against the commit production runs. `pnpm test:rollback-rehearsal` runs it on HEAD, reading
 the Deploy runs with `gh`; `--live <sha>` rehearses against another commit.

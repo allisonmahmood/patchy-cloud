@@ -103,7 +103,7 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
 });
 
 /** Stable ids, so seeding twice updates the same rows. */
-const ids = (scenario: Scenario, person: Person) => ({
+export const ids = (scenario: Scenario, person: Person) => ({
   userId: `usr_env_${scenario.company.handle}_${person.key}`,
   clerkUserId: `env_${scenario.company.handle}_${person.key}`,
   tokenId: `tok_env_${scenario.company.handle}_${person.key}`

@@ -10,8 +10,11 @@
  *
  * Every time here is the database's clock, read in the statement that uses it: app servers'
  * clocks can disagree, and none of them moves an hour, a minute, 30 idle days or the person's
- * credentials-ended stamp. Creation and refresh take the person's row lock, which every ending
- * takes, after the company lock a caller may already hold, then the connection's own.
+ * credentials-ended stamp. Creation and refresh share the person's row lock, after the company
+ * lock a caller may already hold, then refresh takes the connection's own. Ending everything a
+ * person holds, by Disconnect everything or deactivation, takes the person's row for update and
+ * stamps it, so nothing is created or rotated against an ending that has committed. Ending one
+ * connection, by disconnecting it or reusing its refresh token, takes that connection's row.
  */
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import * as Context from "effect/Context";
@@ -38,6 +41,16 @@ export class RefreshRefused extends Schema.TaggedError<RefreshRefused>()("Refres
 }) {
   override get message() {
     return "This refresh token is unknown, was reused, or its agent connection has ended.";
+  }
+}
+
+/** No agent connection of the person's has this id; another person's is never found. */
+export class AgentConnectionNotFound extends Schema.TaggedError<AgentConnectionNotFound>()(
+  "AgentConnectionNotFound",
+  { id: Schema.String }
+) {
+  override get message() {
+    return `Agent connection ${this.id} was not found.`;
   }
 }
 
@@ -87,6 +100,15 @@ export class AgentConnections extends Context.Service<
     readonly refresh: (refreshToken: string) => Effect.Effect<Tokens, RefreshRefused | SqlError>;
     /** Drops every retry copy whose minute is up; the server runs it every few seconds. */
     readonly sweepRetries: Effect.Effect<void, SqlError>;
+    /**
+     * Your machines' Disconnect: ends one of the person's own connections, so its next call and
+     * refresh are refused. Nobody ends another person's, an admin included. Disconnecting one
+     * that has already ended keeps when it first ended.
+     */
+    readonly disconnect: (input: {
+      readonly id: string;
+      readonly userId: string;
+    }) => Effect.Effect<void, AgentConnectionNotFound | SqlError>;
   }
 >()("@patchy/auth/AgentConnections") {}
 
@@ -300,7 +322,19 @@ export const make = Effect.gen(function* () {
     WHERE retry IS NOT NULL AND rotated_at <= clock_timestamp() - interval '1 minute'`
   ).pipe(Effect.withSpan("AgentConnections.sweepRetries"));
 
-  return AgentConnections.of({ create, authenticate, refresh, sweepRetries });
+  // The UPDATE takes the connection's row, so a refresh rotating it finishes first, or waits and
+  // then finds it ended.
+  const disconnect = Effect.fn("AgentConnections.disconnect")(function* (input: {
+    readonly id: string;
+    readonly userId: string;
+  }) {
+    const rows = yield* sql`
+      UPDATE agent_connections SET revoked_at = COALESCE(revoked_at, clock_timestamp())
+      WHERE id = ${input.id} AND user_id = ${input.userId} RETURNING id`;
+    if (rows.length === 0) return yield* new AgentConnectionNotFound({ id: input.id });
+  });
+
+  return AgentConnections.of({ create, authenticate, refresh, sweepRetries, disconnect });
 });
 
 export const layer = Layer.effect(AgentConnections, make);
