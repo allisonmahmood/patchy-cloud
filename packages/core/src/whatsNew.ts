@@ -50,6 +50,25 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 16,
+    date: "2026-10-22",
+    through: "dd3f41f26da57474bd53df564a8f8b8d3d029847",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "Revoke all machines stops logins still on their way",
+        detail:
+          "A login you had approved in the browser could still finish on its computer after you pressed Revoke all machines on Your machines. Now Revoke all machines cancels it too, and so does deactivating someone.",
+        prs: [867]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy keeps two more company addresses, mcp and oauth, for its own use.",
+      "Patchy already understands, and enforces, tools' parts that only read and parts made for agents, so going back to this version stays safe once tools start using them.",
+      "Patchy's own logs record how long a tool's server takes to start."
+    ]
+  },
+  {
     id: 15,
     date: "2026-10-19",
     through: "9e4b0dfc8f5868035c8c40821b28145a4abbd804",
