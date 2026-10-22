@@ -400,10 +400,13 @@ date-time string, so an agent must send a time of day; a plain date is a
 `t.text()` the handler checks. Dev builds and publish refuse a tool that breaks
 these rules, naming its file; publish lists the tools as reads and changes.
 
-Read results over 100,000 characters are refused, so large reads need paging.
-The agent reads every result in full; a row result carries `id`, `createdAt`
-and `updatedAt` besides its columns. A change key makes a mutation's retry write
-once; an action that writes is not safe to retry.
+Limits: 300 calls a minute per person per patch, so bulk work needs a tool that
+takes a list. Read results over 100,000 characters are refused, so large reads
+need paging. The agent reads every result in full; a row result carries `id`,
+`createdAt` and `updatedAt` besides its columns. Each person has 16 calls in
+flight across their clients. `busy` and `rate_limited` carry
+`retryAfterSeconds`. A change key makes a mutation's retry write once; an action
+that writes is not safe to retry.
 
 `pnpm patchy dev agent` lists the tools as an agent sees them, and
 `pnpm patchy dev agent <tool> '<json>'` calls one as the dev viewer, or as the
@@ -478,8 +481,8 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `subscriptions.reruns.company` | operating | 2 | runs | company | Simultaneous subscription re-runs per company per host replica, across its patches; set independently of `subscriptions.reruns.patch`. A re-run reading tables or stores holds a company connection, and one reading shared ones briefly takes a second for its access check, so re-runs can occupy every connection; none are reserved for writes | `busy` | Yes | deployment |
 | `subscriptions.reruns.patch` | operating | 2 | runs | patch | Simultaneous subscription re-runs per patch per host replica, within `subscriptions.reruns.company`; an override of either leaves the other unchanged | None | Yes | deployment |
 | `tier2.actions.company` | operating | 8 | actions | company | Actions in flight per company per host replica | `busy` | Yes | deployment |
-| `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
-| `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
+| `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica; a person's worker agent has its own, across its clients, beside their pages' | `busy` | Yes | deployment |
+| `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica, worker agents' calls included; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
 | `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `limit_exceeded` | Yes | deployment |
 | `execution.management.bodyBytes` | operating | 16777216 | bytes | host | Serialized private management request, including pushed bundle source | `too_large` | No | deployment |
 | `execution.process.rss` | operating | 536870912 | bytes | patch | Process RSS at termination; memory configured in MiB | None | Yes | deployment |

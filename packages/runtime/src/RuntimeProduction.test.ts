@@ -26,6 +26,7 @@ import * as Invocation from "./Invocation.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
+import * as CompanyAdmission from "./CompanyAdmission.js";
 import * as RuntimeProduction from "./RuntimeProduction.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 
@@ -131,6 +132,7 @@ const admit = Effect.fn("RuntimeProductionTest.admit")(function* (token = signSe
   }>();
   const runtime = yield* RuntimeProduction.make({}).pipe(
     Effect.provide(StreamAdmission.layer),
+    Effect.provide(CompanyAdmission.layer),
     Effect.provideService(Invocation.Invocation, {
       call: (_args, binding, reauthorize) =>
         Deferred.succeed(captured, { binding, reauthorize }).pipe(

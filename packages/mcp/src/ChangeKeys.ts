@@ -57,6 +57,11 @@ export type Claim =
       readonly mutationKey: string | undefined;
       /** Ends the try's hold on the key, keeping a committed mutation's result as JSON text. */
       readonly settle: (result: string | undefined) => Effect.Effect<void, SqlError>;
+      /**
+       * Forgets an action's try that never started, refused before its handler ran, so the key
+       * is new again. A mutation's is never forgotten: its retry runs under its mutation key.
+       */
+      readonly discard: Effect.Effect<void, SqlError>;
     }
   | { readonly _tag: "Replay"; readonly result: string }
   | { readonly _tag: "Busy" }
@@ -132,6 +137,14 @@ export const make = Effect.gen(function* () {
         WHERE ${where(keyed)} AND attempt = ${attempt}`
     ).pipe(Effect.timeoutOption(cleanup), Effect.asVoid, Effect.withSpan("ChangeKeys.settle"));
 
+  /** An action's try that never started leaves no record, within the same bound as settling. */
+  const discard = (keyed: Keyed, attempt: string) =>
+    Effect.asVoid(
+      sql`
+        DELETE FROM change_keys
+        WHERE ${where(keyed)} AND attempt = ${attempt} AND kind = 'action'`
+    ).pipe(Effect.timeoutOption(cleanup), Effect.asVoid, Effect.withSpan("ChangeKeys.discard"));
+
   const read = SqlSchema.findOneOption({
     Request: Keyed,
     Result: Stored,
@@ -155,7 +168,8 @@ export const make = Effect.gen(function* () {
     const run = (attempt: string, mutationKey: string | null): Claim => ({
       _tag: "Run",
       mutationKey: mutationKey ?? undefined,
-      settle: settle(keyed, attempt)
+      settle: settle(keyed, attempt),
+      discard: discard(keyed, attempt)
     });
 
     for (let round = 0; round < ROUNDS; round++) {

@@ -8,10 +8,13 @@
  * the company's agent access, on the database's clock.
  *
  * Every refusal is a tool result, and nothing runs until the checks pass. A patch the person
- * couldn't open is "not found"; a retired one they could says who retired it and when. A
- * change then claims its change key (`ChangeKeys`), which decides whether it runs, answers its
- * first result again or is refused, before Runtime sees it.
+ * couldn't open is "not found"; a retired one they could says who retired it and when. The
+ * host's admission (`Admission`) then holds the person to their limits. A change after that
+ * claims its change key (`ChangeKeys`), which decides whether it runs, answers its first result
+ * again or is refused, before Runtime sees it; an action Runtime refuses before it starts gives
+ * its key back.
  */
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -32,6 +35,7 @@ import {
   invalidArgsRefusal,
   readAnswer,
   runtimeRefusal,
+  type RuntimeFailure,
   type RuntimeMe,
   type ServerCallReply,
   toolAnswer,
@@ -45,7 +49,13 @@ import { Companies } from "@patchy/companies";
 import { dateLabel } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { LoadedVersions, Patches } from "@patchy/patches";
-import { Invocation, type LoadedVersions as Served, Runtime } from "@patchy/runtime";
+import {
+  ExecutionLifecycle,
+  Invocation,
+  type LoadedVersions as Served,
+  Runtime
+} from "@patchy/runtime";
+import type * as Admission from "./Admission.js";
 import * as Catalogue from "./Catalogue.js";
 import * as ChangeKeys from "./ChangeKeys.js";
 import * as Tools from "./Tools.js";
@@ -234,15 +244,14 @@ const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections
 /**
  * Runs a reached tool on the version the call read, as the person through their agent, with
  * `mutationKey` for a change: Runtime's reply, or its refusal. `onReplay` is told when the reply
- * is the key's outcome an earlier invocation committed. A host without an invocation runs no
- * patch code.
+ * is the key's outcome an earlier invocation committed, and `retain` holds the call's admission
+ * until its work settles. A host without an invocation runs no patch code.
  */
 export const invoke = Effect.fn("Calls.invoke")(function* (
   identity: AgentConnections.AgentIdentity,
   target: Target,
   invocation: Option.Option<Invocation.Invocation["Service"]>,
-  mutationKey?: string,
-  onReplay?: Effect.Effect<void>
+  options: Pick<Invocation.AgentCall, "mutationKey" | "onReplay" | "retain"> = {}
 ): Effect.fn.Return<
   ServerCallReply,
   Runtime.RuntimeError,
@@ -256,8 +265,7 @@ export const invoke = Effect.fn("Calls.invoke")(function* (
     agent: { name: identity.agentConnection.clientName },
     tool: target.tool,
     args: target.args,
-    ...(mutationKey === undefined ? {} : { mutationKey }),
-    ...(onReplay === undefined ? {} : { onReplay }),
+    ...options,
     recheck: recheck(identity).pipe(Effect.provideContext(services))
   }).pipe(Effect.provideService(Invocation.Invocation, invocation.value));
 });
@@ -270,7 +278,8 @@ export const read = Effect.fn("Calls.read")(function* (
   identity: AgentConnections.AgentIdentity,
   args: unknown,
   publicUrl: URL,
-  invocation: Option.Option<Invocation.Invocation["Service"]>
+  invocation: Option.Option<Invocation.Invocation["Service"]>,
+  admit: Admission.Admit
 ) {
   const decoded = decodeRead(args ?? {});
   if (Result.isFailure(decoded))
@@ -282,18 +291,20 @@ export const read = Effect.fn("Calls.read")(function* (
   const reached = yield* reach(identity, decoded.success, publicUrl, "read");
   if ("refused" in reached) return reached.refused;
   const { target } = reached;
-  const answer = yield* invoke(identity, target, invocation).pipe(
-    Effect.map((reply) =>
-      callAnswer(target.patch.patch.name, target.tool, target.versionNumber, reply)
-    ),
-    Effect.catch((error) =>
-      Effect.succeed(runtimeRefusal(Runtime.toFailure(error), target.descriptor))
+  return yield* admit(identity, target.patch, (retain) =>
+    invoke(identity, target, invocation, { retain }).pipe(
+      Effect.map((reply) =>
+        callAnswer(target.patch.patch.name, target.tool, target.versionNumber, reply)
+      ),
+      Effect.catch((error) => refused(Runtime.toFailure(error), target.descriptor)),
+      Effect.map((answer) =>
+        readAnswer(
+          { name: target.patch.patch.name, owner: target.patch.owner.name },
+          target.tool,
+          answer
+        )
+      )
     )
-  );
-  return readAnswer(
-    { name: target.patch.patch.name, owner: target.patch.owner.name },
-    target.tool,
-    answer
   );
 });
 
@@ -340,6 +351,12 @@ const keyBusy = toolRefusal({
   retryAfterSeconds: 1
 });
 
+/** Runtime's refusal of a call as the agent gets it, with the limit it names in the event. */
+const refused = (failure: RuntimeFailure, descriptor: HandlerDescriptor) =>
+  WideEvents.enrich(failure.limitId === undefined ? {} : { limitId: failure.limitId }).pipe(
+    Effect.as(runtimeRefusal(failure, descriptor))
+  );
+
 /**
  * Runtime's refusal of a change. A mutation whose outcome is unknown resolves on a retry under
  * the same key, so its refusal says to retry with it; an action that may have partly happened
@@ -347,7 +364,7 @@ const keyBusy = toolRefusal({
  */
 const changeRefusal = (error: Runtime.RuntimeError, descriptor: HandlerDescriptor) => {
   const failure = Runtime.toFailure(error);
-  return runtimeRefusal(
+  return refused(
     descriptor.kind === "mutation" && failure.code === "unknown_outcome"
       ? {
           ...failure,
@@ -357,6 +374,11 @@ const changeRefusal = (error: Runtime.RuntimeError, descriptor: HandlerDescripto
     descriptor
   );
 };
+
+/** Runtime refused the call at its own admission, so the handler never started. */
+const neverStarted = Schema.is(
+  Schema.Union([Invocation.InvocationBusy, ExecutionLifecycle.LifecycleError])
+);
 
 /**
  * `change_patch { patch, tool, args, key }`: runs a change tool, a mutation or an action that
@@ -368,7 +390,8 @@ export const change = Effect.fn("Calls.change")(function* (
   identity: AgentConnections.AgentIdentity,
   args: unknown,
   publicUrl: URL,
-  invocation: Option.Option<Invocation.Invocation["Service"]>
+  invocation: Option.Option<Invocation.Invocation["Service"]>,
+  admit: Admission.Admit
 ) {
   const decoded = decodeChange(args ?? {});
   if (Result.isFailure(decoded))
@@ -381,13 +404,27 @@ export const change = Effect.fn("Calls.change")(function* (
   const reached = yield* reach(identity, call, publicUrl, "change");
   if ("refused" in reached) return reached.refused;
   const { target } = reached;
-  const patch = target.patch.patch.name;
   // A host that runs no patch code refuses before the key is taken, so the key stays free.
   if (Option.isNone(invocation))
     return runtimeRefusal(
       Runtime.toFailure(new Runtime.InvocationUnavailable()),
       target.descriptor
     );
+  // Admitted before the key is claimed, so a limit's refusal leaves the key free.
+  return yield* admit(identity, target.patch, (retain) =>
+    changeOn(identity, target, key, invocation, retain)
+  );
+});
+
+/** An admitted change: claims its key, then runs it, answers its first result or refuses it. */
+const changeOn = Effect.fn("Calls.changeOn")(function* (
+  identity: AgentConnections.AgentIdentity,
+  target: Target,
+  key: string,
+  invocation: Option.Option<Invocation.Invocation["Service"]>,
+  retain: Admission.Retain
+) {
+  const patch = target.patch.patch.name;
   const kind = target.descriptor.kind === "mutation" ? "mutation" : "action";
   const claimed = yield* (yield* ChangeKeys.ChangeKeys)
     .claim({
@@ -427,23 +464,32 @@ export const change = Effect.fn("Calls.change")(function* (
   // Runtime says when its own record of the mutation key answered a retry Patchy hadn't seen
   // commit, such as one after an unknown outcome: that change replayed too.
   const replayed = yield* Ref.make(false);
-  // A try that ends settles its key, keeping a committed mutation's result. If the agent goes
-  // away first, Runtime finishes the try without it and the key stays held until its lease runs
-  // out, since the try may still be running; a retry then resolves through Runtime's record.
+  // A try that ends settles its key, keeping a committed mutation's result, or gives an action's
+  // key back if Runtime refused it before it started. If the agent goes away first, Runtime
+  // finishes the try without it and the key stays held until its lease runs out, since the try
+  // may still be running; a retry then resolves through Runtime's record.
   const exit = yield* Effect.exit(
-    invoke(identity, target, invocation, claimed.mutationKey, Ref.set(replayed, true))
+    invoke(identity, target, invocation, {
+      ...(claimed.mutationKey === undefined ? {} : { mutationKey: claimed.mutationKey }),
+      onReplay: Ref.set(replayed, true),
+      retain
+    })
   );
-  yield* claimed
-    .settle(
-      kind === "mutation" && Exit.isSuccess(exit) && exit.value.ok
-        ? jsonText(exit.value.value)
-        : undefined
-    )
-    .pipe(
-      Effect.catchTags({
-        SqlError: (cause) => Effect.logError("A change key's try was not settled.", cause)
-      })
-    );
+  yield* (
+    kind === "action" &&
+    Exit.isFailure(exit) &&
+    Option.exists(Cause.findErrorOption(exit.cause), neverStarted)
+      ? claimed.discard
+      : claimed.settle(
+          kind === "mutation" && Exit.isSuccess(exit) && exit.value.ok
+            ? jsonText(exit.value.value)
+            : undefined
+        )
+  ).pipe(
+    Effect.catchTags({
+      SqlError: (cause) => Effect.logError("A change key's try was not settled.", cause)
+    })
+  );
   const answer = yield* exit.pipe(
     Effect.flatMap((reply) =>
       Effect.map(Ref.get(replayed), (again) =>
@@ -456,7 +502,7 @@ export const change = Effect.fn("Calls.change")(function* (
           : callAnswer(patch, target.tool, target.versionNumber, reply)
       )
     ),
-    Effect.catch((error) => Effect.succeed(changeRefusal(error, target.descriptor)))
+    Effect.catch((error) => changeRefusal(error, target.descriptor))
   );
   yield* WideEvents.enrich({ replayed: yield* Ref.get(replayed) });
   return changeAnswer(target.tool, target.versionNumber, answer);

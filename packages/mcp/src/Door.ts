@@ -14,7 +14,7 @@
  * with `Retry-After`. Every tool call needs the company's agent access on, and is refused
  * naming its admins while it is off. `find_patches` and `open_patch` are the catalogue's;
  * `read_patch` runs a patch's read tool through the host's invocation, and `change_patch` a
- * change tool under its change key.
+ * change tool under its change key, each once the host's admission lets it in (`Admission`).
  *
  * The request's wide event, opened by the server around every route, gains the connection, the
  * revision and method, the door's tool, the patch's tool a call named, the `Origin` and each
@@ -38,7 +38,8 @@ import { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig, Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import type { Patches } from "@patchy/patches";
-import { Invocation } from "@patchy/runtime";
+import { type CompanyAdmission, Invocation } from "@patchy/runtime";
+import * as Admission from "./Admission.js";
 import * as Calls from "./Calls.js";
 import * as Catalogue from "./Catalogue.js";
 import type * as ChangeKeys from "./ChangeKeys.js";
@@ -87,6 +88,9 @@ export const layer: Layer.Layer<
   never,
   Config.ConfigError | DeploymentConfig.InvalidLimit,
   | HttpRouter.HttpRouter
+  | CompanyAdmission.CompanyAdmission
+  | Limits.Limits
+  | OperatingLimits.OperatingLimits
   | HttpRouter.Request.From<
       "Requires",
       | AgentConnections.AgentConnections
@@ -103,6 +107,8 @@ export const layer: Layer.Layer<
     const dev = Session.isLoopback(publicUrl);
     const failuresPerMinute = (yield* DeploymentConfig.load).get("mcp.bearer.failures.perMinute");
     const people = yield* TokenBucket.make;
+    // The host's admission of reads and changes, with each person's calls in flight.
+    const admit = yield* Admission.make;
     // The host's invocation runs patch code; a host without one answers that it runs none.
     const invocation = yield* Effect.serviceOption(Invocation.Invocation);
     const cors: Record<string, string> = dev ? {} : OAuthMetadata.cors;
@@ -304,8 +310,8 @@ export const layer: Layer.Layer<
             : name === "open_patch"
               ? yield* Catalogue.open(identity, args, publicUrl)
               : name === "read_patch"
-                ? yield* Calls.read(identity, args, publicUrl, invocation)
-                : yield* Calls.change(identity, args, publicUrl, invocation));
+                ? yield* Calls.read(identity, args, publicUrl, invocation, admit)
+                : yield* Calls.change(identity, args, publicUrl, invocation, admit));
         // However a refusal came about, the agent reads it whole, so it keeps the read cap.
         return yield* toolAnswer(request.era, request.id, fitRefusal(answered));
       });

@@ -5,6 +5,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import { newInternalId } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -1176,5 +1177,167 @@ it.layer(services)("Invocation", (it) => {
       yield* Fiber.join(second);
       assert.deepStrictEqual(yield* call, { ok: true, value: null });
     })
+  );
+
+  it.effect(
+    "gives an agent its own action slots beside its person's page, shares the company's, and refuses before any row",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const limits = yield* OperatingLimits.OperatingLimits;
+        const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+        let gate = yield* Deferred.make<GuestProtocol.InvokeReply>();
+        const invocations = yield* makeInvocation((request) =>
+          Queue.offer(seen, request).pipe(Effect.andThen(Deferred.await(gate)))
+        );
+        const page = Effect.suspend(() =>
+          invocations.call(
+            { handler: "demo.action", args: {} },
+            { ...binding, correlationId: newInternalId("call") },
+            Effect.succeed(viewer)
+          )
+        );
+        const agent = Effect.suspend(() =>
+          Invocation.callAgent({
+            version: binding,
+            person: viewer,
+            agent: { name: "Claude" },
+            tool: "gather",
+            args: {},
+            recheck: Effect.succeed(viewer)
+          }).pipe(Effect.provideService(Invocation.Invocation, invocations))
+        );
+        const refused = (effect: Effect.Effect<unknown, Runtime.RuntimeError>) =>
+          effect.pipe(
+            Effect.flip,
+            Effect.map((error) => {
+              const { code, limitId, value } = Runtime.toFailure(error);
+              return { code, limitId, value };
+            })
+          );
+        const rows = Effect.map(
+          sql<{ readonly count: string }>`
+            SELECT count(*) AS count FROM runtime_invocations WHERE patch_id = ${binding.patchId}`,
+          ([row]) => Number(row?.count)
+        );
+        const run = Effect.fnUntraced(function* (calls: ReadonlyArray<typeof page>) {
+          const fibers = [];
+          for (const call of calls) fibers.push(yield* call.pipe(Effect.forkChild));
+          yield* Effect.forEach(calls, () => Queue.take(seen), { discard: true });
+          return fibers;
+        });
+        const settle = Effect.fnUntraced(function* (
+          fibers: ReadonlyArray<Fiber.Fiber<unknown, Runtime.RuntimeError>>
+        ) {
+          yield* Deferred.succeed(gate, {
+            outcome: "returned",
+            reply: { ok: true, value: null },
+            guestMs: 1
+          });
+          for (const fiber of fibers) yield* Fiber.join(fiber);
+          gate = yield* Deferred.make<GuestProtocol.InvokeReply>();
+        });
+        const before = yield* rows;
+
+        // The person's tab fills its two slots, and their agent still runs on its own two.
+        const running = yield* run([page, page, agent, agent]);
+        for (const call of [page, agent])
+          assert.deepStrictEqual(yield* refused(call), {
+            code: "busy",
+            limitId: "tier2.actions.viewer",
+            value: 2
+          });
+        // Refused at admission, neither wrote a row.
+        assert.strictEqual(yield* rows, before + running.length);
+        yield* settle(running);
+
+        // The company's slots stay shared: the page's two and the agent's one fill three.
+        yield* limits.setOverride({
+          companyId: binding.companyId,
+          limitId: "tier2.actions.company",
+          value: 3,
+          actor: "agent-slots-test"
+        });
+        const shared = yield* run([page, page, agent]);
+        assert.deepStrictEqual(yield* refused(agent), {
+          code: "busy",
+          limitId: "tier2.actions.company",
+          value: 3
+        });
+        yield* settle(shared);
+      }).pipe(
+        Effect.ensuring(
+          OperatingLimits.OperatingLimits.use((limits) =>
+            limits.removeOverride({
+              companyId: binding.companyId,
+              limitId: "tier2.actions.company",
+              actor: "agent-slots-test"
+            })
+          ).pipe(Effect.ignore)
+        )
+      )
+  );
+
+  it.effect(
+    "an agent's call retains its caller's hold from dispatch until its work settles, past a caller that went away",
+    () =>
+      Effect.gen(function* () {
+        const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+        const finish = yield* Deferred.make<void>();
+        const invocations = yield* makeInvocation((request) =>
+          Queue.offer(seen, request).pipe(
+            Effect.andThen(Deferred.await(finish)),
+            Effect.as({
+              outcome: "returned" as const,
+              reply: { ok: true as const, value: 1 },
+              guestMs: 1
+            })
+          )
+        );
+        const holds: string[] = [];
+        const letGo = yield* Deferred.make<void>();
+        const agent = (tool: string, from = invocations) =>
+          Invocation.callAgent({
+            version: binding,
+            person: viewer,
+            agent: { name: "Claude" },
+            tool,
+            args: {},
+            recheck: Effect.succeed(viewer),
+            retain: Effect.sync(() => {
+              holds.push(`${tool} held`);
+              return Effect.sync(() => void holds.push(`${tool} let go`)).pipe(
+                Effect.andThen(Deferred.succeed(letGo, undefined))
+              );
+            })
+          }).pipe(Effect.provideService(Invocation.Invocation, from));
+
+        // Its client went away: the caller is gone at once, and the work keeps its hold.
+        const caller = yield* agent("gather").pipe(Effect.forkChild);
+        yield* Queue.take(seen);
+        assert.deepStrictEqual(holds, ["gather held"]);
+        yield* Fiber.interrupt(caller);
+        assert.deepStrictEqual(holds, ["gather held"]);
+        yield* Deferred.succeed(finish, undefined);
+        yield* Deferred.await(letGo);
+        assert.deepStrictEqual(holds, ["gather held", "gather let go"]);
+
+        // A call refused before dispatch, or given up while it waits for the company's server,
+        // never holds anything.
+        holds.length = 0;
+        yield* agent("legacy").pipe(Effect.flip);
+        const waiting = yield* Deferred.make<void>();
+        const cold = yield* makeInvocation(() => Effect.die("Nothing is dispatched.")).pipe(
+          Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            touch: () => Effect.succeed({ outcome: "absent" as const }),
+            connect: () => Effect.void,
+            acquire: () => Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never))
+          })
+        );
+        const starting = yield* agent("gather", cold).pipe(Effect.forkChild);
+        yield* Deferred.await(waiting);
+        yield* Fiber.interrupt(starting);
+        assert.deepStrictEqual(holds, []);
+      })
   );
 });

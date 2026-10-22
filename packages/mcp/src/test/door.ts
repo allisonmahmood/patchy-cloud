@@ -1,7 +1,8 @@
 /**
  * The door over a migrated database, a request at a time as the router hands it over, with
- * what its tools read and write: Patches, Companies, Users and change keys. Each suite builds its own door per test,
- * so its in-memory buckets start full, and sends from its own address.
+ * what its tools read and write: Patches, Companies, Users, change keys and the company
+ * admission pages share. Each suite builds its own door per test, so its in-memory buckets
+ * and calls in flight start empty, and sends from its own address.
  */
 import { assert } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -32,7 +33,7 @@ import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
-import { type Binding, Invocation, type Runtime } from "@patchy/runtime";
+import { type Binding, CompanyAdmission, Invocation, type Runtime } from "@patchy/runtime";
 import { Wakes } from "@patchy/runtime/core";
 import * as Testing from "@patchy/sql/testing";
 import * as ChangeKeys from "../ChangeKeys.js";
@@ -58,7 +59,7 @@ export const harnessWith = (connections: ReadonlyArray<ConnectionStoreDev.DevCon
     ChangeKeys.layer,
     MachineTokens.layer,
     Limits.layer,
-    OperatingLimits.layer,
+    CompanyAdmission.layer.pipe(Layer.provideMerge(OperatingLimits.layer)),
     Patches.layer,
     Companies.layer,
     Users.layer,
