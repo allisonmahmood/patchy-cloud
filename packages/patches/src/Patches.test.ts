@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { Analytics } from "@patchy/analytics";
-import { type Manifest, sharedTableId, sharedStoreId } from "@patchy/api";
+import { type HandlerDescriptors, type Manifest, sharedTableId, sharedStoreId } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Wakes } from "@patchy/runtime/core";
 import * as Cause from "effect/Cause";
@@ -1360,6 +1360,63 @@ it.layer(
           .pipe(Effect.flip),
         Patches.PatchUnavailable
       );
+    })
+  );
+
+  it.effect("summarises each version's agent tools without their schemas, by version", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const area = (handlers: HandlerDescriptors, name: string, versionId: string) => ({
+        versionId,
+        manifest: { ...Fixtures.manifest, name, tier: 2 as const, handlers },
+        server: { objectKey: `patches/${versionId}/server.js`, sha256: "0".repeat(64), bytes: 0 }
+      });
+      const tool = (kind: "query" | "mutation" | "action", description: string) => ({
+        kind,
+        description,
+        agentTool: true as const,
+        args: { deal: { kind: "text" as const, description: "Which deal." } },
+        result: { kind: "json" as const }
+      });
+      const first = yield* create(
+        area(
+          {
+            "agent.moveDeal": tool("mutation", "Move a deal."),
+            "agent.findDeals": tool("query", "Find deals."),
+            "deals.list": { kind: "query", args: {}, result: { kind: "json" } }
+          },
+          "summaries-deals",
+          "ver_summaries_1"
+        )
+      );
+      yield* update(
+        first.patchId,
+        area(
+          { "agent.export": { ...tool("action", "Export the board."), readOnly: true } },
+          first.name,
+          "ver_summaries_2"
+        )
+      );
+      yield* create({
+        versionId: "ver_summaries_page",
+        manifest: { ...Fixtures.manifest, name: "summaries-page" }
+      });
+
+      const summaries = yield* service.agentToolSummaries([
+        "ver_summaries_1",
+        "ver_summaries_2",
+        "ver_summaries_page",
+        "ver_unknown"
+      ]);
+      // A version without tools, or no version at all, is absent.
+      assert.deepStrictEqual(Object.fromEntries(summaries), {
+        ver_summaries_1: [
+          { name: "findDeals", kind: "read", description: "Find deals." },
+          { name: "moveDeal", kind: "change", description: "Move a deal." }
+        ],
+        ver_summaries_2: [{ name: "export", kind: "read", description: "Export the board." }]
+      });
+      assert.strictEqual((yield* service.agentToolSummaries([])).size, 0);
     })
   );
 

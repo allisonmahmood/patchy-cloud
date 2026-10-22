@@ -3,8 +3,8 @@
  * Patchy MCP's door in the whole server, booted as a dev instance boots it, spoken to over a
  * raw socket as a client's bytes arrive: the `Host` a client wrote, a real persona sign-in's
  * cookie, Node's handling of duplicated headers and chunked bodies, HEAD through the serving
- * headers, and the request event the server writes around each request. The door's own rules
- * are packages/mcp's tests.
+ * headers, the request event the server writes around each request, and what people find
+ * beside what the portal lists them. The door's own rules are packages/mcp's tests.
  */
 import { connect } from "node:net";
 import { assert, it } from "@effect/vitest";
@@ -15,11 +15,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Cookies from "effect/http/Cookies";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpServer from "effect/http/HttpServer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { AgentConnections } from "@patchy/auth";
+import { AgentConnections, MachineTokens } from "@patchy/auth";
 import { DEV_SEED, mintDevAgentConnection } from "@patchy/auth/seed";
-import { server } from "./test/server.js";
+import { html, publishBody, send, server } from "./test/server.js";
 
 const BASE = "http://patchy-door.localhost:29276";
 const HOST = "patchy-door.localhost:29276";
@@ -275,6 +279,220 @@ it.layer(server(env).pipe(Layer.provideMerge(stdout)))("the door in the server",
         huge
       );
       assert.strictEqual(far.status, 413);
+    })
+  );
+});
+
+/** One `tools/call` of the door, as a modern client sends it. */
+const toolCall = (token: string, name: string, args: Record<string, unknown>) =>
+  post(
+    `host: ${HOST}\nauthorization: Bearer ${token}\nmcp-protocol-version: 2026-07-28\nmcp-method: tools/call\nmcp-name: ${name}`,
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name,
+        arguments: args,
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": { name: "claude-code", version: "2.1.308" },
+          "io.modelcontextprotocol/clientCapabilities": {}
+        }
+      }
+    }
+  ).pipe(
+    Effect.map(
+      (answer) =>
+        JSON.parse(answer.body).result as {
+          readonly isError?: true;
+          readonly structuredContent: Record<string, unknown>;
+        }
+    )
+  );
+
+/** The patch names on a portal page's list. */
+const listed = (html: string) =>
+  [
+    ...(/<tbody>([\s\S]*)<\/tbody>/.exec(html)?.[1] ?? "").matchAll(
+      /<strong>([a-z0-9-]+)<\/strong><\/a>/g
+    )
+  ].map((match) => match[1]!);
+
+it.layer(
+  server(env).pipe(
+    Layer.provideMerge(stdout),
+    Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+  )
+)("finding patches against the portal", (it) => {
+  it.effect("finds exactly what the portal lists for each person, and opens nothing else", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const rival = { id: "cmp_rival", handle: "rival", name: "Rival" };
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES (${rival.id}, ${rival.handle}, ${rival.name})`;
+      yield* sql`UPDATE companies SET agent_access_on = true WHERE id IN (${DEV_SEED.companyId}, ${rival.id})`;
+      const people = {
+        dev: {
+          email: DEV_SEED.email,
+          id: DEV_SEED.userId,
+          company: DEV_SEED.companyId,
+          role: "admin"
+        },
+        priya: {
+          email: "priya@door.test",
+          id: "usr_find_priya",
+          company: DEV_SEED.companyId,
+          role: "admin"
+        },
+        ben: {
+          email: "ben@door.test",
+          id: "usr_find_ben",
+          company: DEV_SEED.companyId,
+          role: "member"
+        },
+        cleo: {
+          email: "cleo@door.test",
+          id: "usr_find_cleo",
+          company: DEV_SEED.companyId,
+          role: "member"
+        },
+        dot: {
+          email: "dot@door.test",
+          id: "usr_find_dot",
+          company: DEV_SEED.companyId,
+          role: "member"
+        },
+        rachel: {
+          email: "rachel@door.test",
+          id: "usr_find_rachel",
+          company: rival.id,
+          role: "admin"
+        }
+      } as const;
+      type Key = keyof typeof people;
+      const tokens = new Map<Key, string>([["dev", DEV_SEED.token]]);
+      for (const [key, person] of Object.entries(people) as Array<[Key, (typeof people)[Key]]>) {
+        if (key === "dev") continue;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES (${person.id}, ${`clerk_${person.id}`}, ${person.company}, ${person.email}, ${key}, ${person.role})`;
+        const minted = yield* MachineTokens.MachineTokens.use((machines) =>
+          machines.mint({ userId: person.id, name: "Finding test" })
+        ).pipe(Effect.provide(MachineTokens.layer));
+        tokens.set(key, minted.token);
+      }
+
+      // Every sharing scope and lifecycle state a patch can be in, owned by every kind of person.
+      const cases: ReadonlyArray<{
+        readonly name: string;
+        readonly owner: Key;
+        readonly scope?: "public";
+        readonly state?: "retired" | "deleted" | "disabled";
+      }> = [
+        { name: "shared-board", owner: "dev" },
+        { name: "public-page", owner: "ben", scope: "public" },
+        { name: "bens-notes", owner: "ben" },
+        { name: "cleos-retired", owner: "cleo", state: "retired" },
+        { name: "cleos-deleted", owner: "cleo", state: "deleted" },
+        { name: "taken-down", owner: "ben", state: "disabled" },
+        { name: "dots-tracker", owner: "dot" },
+        { name: "rival-board", owner: "rachel" },
+        { name: "rival-public", owner: "rachel", scope: "public" }
+      ];
+      const published = new Map<string, { readonly patchId: string; readonly address: string }>();
+      for (const patch of cases) {
+        const token = tokens.get(patch.owner)!;
+        const created = yield* send(
+          HttpClientRequest.post("/api/publish").pipe(
+            HttpClientRequest.bearerToken(token),
+            HttpClientRequest.bodyJsonUnsafe(
+              publishBody({
+                html: html(patch.name),
+                metadata: { filename: `${patch.name}.html` },
+                ...(patch.scope === undefined ? {} : { scope: patch.scope })
+              })
+            )
+          )
+        );
+        assert.strictEqual(created.status, 201, patch.name);
+        const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
+        published.set(patch.name, { patchId, address });
+        const off =
+          patch.state === "retired"
+            ? HttpClientRequest.post(`/api/patches/${patchId}/retire`).pipe(
+                HttpClientRequest.bodyJsonUnsafe({})
+              )
+            : patch.state === "deleted"
+              ? HttpClientRequest.delete(`/api/patches/${patchId}`)
+              : undefined;
+        if (off !== undefined)
+          assert.strictEqual(
+            (yield* send(off.pipe(HttpClientRequest.bearerToken(token)))).status,
+            200
+          );
+        if (patch.state === "disabled")
+          yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'test' WHERE id = ${patchId}`;
+      }
+      // An owner who has left keeps their patches listed.
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${people.dot.id}`;
+
+      const expected: Record<string, ReadonlyArray<string>> = {
+        [DEV_SEED.companyId]: ["bens-notes", "dots-tracker", "public-page", "shared-board"],
+        [rival.id]: ["rival-board", "rival-public"]
+      };
+      for (const key of ["dev", "priya", "ben", "cleo", "rachel"] as const) {
+        const person = people[key];
+        // The portal's own list, as the person sees it at All patches.
+        const signedIn = yield* send(
+          HttpClientRequest.get(
+            `/dev/sign-in?as=${encodeURIComponent(person.email)}&return=%2Fpatches`
+          )
+        );
+        const page = yield* send(
+          HttpClientRequest.get("/patches").pipe(
+            HttpClientRequest.setHeader("cookie", Cookies.toCookieHeader(signedIn.cookies))
+          )
+        );
+        assert.strictEqual(page.status, 200, key);
+        const portal = listed(yield* page.text).sort();
+        assert.deepStrictEqual(portal, expected[person.company], key);
+
+        const { token } = yield* mintDevAgentConnection({
+          email: person.email,
+          clientName: "Claude Code",
+          clientId: "http://127.0.0.1:4100/dev/mcp-token"
+        }).pipe(Effect.provide(AgentConnections.layer));
+        const found = (yield* toolCall(token, "find_patches", {})).structuredContent as {
+          total: number;
+          patches: ReadonlyArray<{ name: string; address: string }>;
+        };
+        assert.deepStrictEqual(found.patches.map((entry) => entry.name).sort(), portal, key);
+        assert.strictEqual(found.total, portal.length, key);
+
+        // Every patch it lists opens; every other one, however it's named, is the same refusal.
+        const refusals = new Set<string>();
+        for (const [name, { patchId, address }] of published) {
+          for (const patch of [name, patchId, address]) {
+            const opened = yield* toolCall(token, "open_patch", { patch });
+            if (portal.includes(name)) {
+              assert.isUndefined(opened.isError, `${key} ${patch}`);
+              assert.strictEqual(opened.structuredContent["name"], name);
+            } else {
+              assert.isTrue(opened.isError, `${key} ${patch}`);
+              refusals.add(JSON.stringify(opened));
+            }
+          }
+          if (!portal.includes(name)) {
+            const searched = (yield* toolCall(token, "find_patches", { search: name }))
+              .structuredContent;
+            assert.deepStrictEqual(
+              [searched["total"], searched["patches"]],
+              [0, []],
+              `${key} ${name}`
+            );
+          }
+        }
+        assert.strictEqual(refusals.size, 1, key);
+      }
     })
   );
 });

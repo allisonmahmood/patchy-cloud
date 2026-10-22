@@ -11,7 +11,9 @@
  * requests a minute. Authority comes only from the bearer: the door never reads cookies.
  *
  * A limit on `tools/call` is the tool's refusal over HTTP 200; on any other method it is 429
- * with `Retry-After`. Until #852, #854 and #855 land, each tool refuses as not built.
+ * with `Retry-After`. Every tool call needs the company's agent access on, and is refused
+ * naming its admins while it is off. `find_patches` and `open_patch` are the catalogue's;
+ * until #854 and #855 land, `read_patch` and `change_patch` refuse as not built.
  *
  * The request's wide event, opened by the server around every route, gains the connection, the
  * revision and method, the door's tool, the `Origin` and each refusal's code. Arguments,
@@ -31,8 +33,11 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { CURRENT_RELEASE, toolRefusal, type ToolCallResult } from "@patchy/api";
 import { type AgentConnections, Authorization, Bearer, OAuthMetadata, Session } from "@patchy/auth";
+import { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig, Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
+import type { Patches } from "@patchy/patches";
+import * as Catalogue from "./Catalogue.js";
 import * as RequestTrust from "./RequestTrust.js";
 import * as Revisions from "./Revisions.js";
 import * as Tools from "./Tools.js";
@@ -80,7 +85,12 @@ export const layer: Layer.Layer<
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
-      AgentConnections.AgentConnections | Limits.Limits | OperatingLimits.OperatingLimits
+      | AgentConnections.AgentConnections
+      | Limits.Limits
+      | OperatingLimits.OperatingLimits
+      | Patches.Patches
+      | Companies.Companies
+      | Users.Users
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
@@ -234,7 +244,31 @@ export const layer: Layer.Layer<
         return { retryAfterSeconds: attempt.retryAfterSeconds, value: limit.value };
       });
 
-    const callTool = (request: Extract<Revisions.Classified, { kind: "request" }>) => {
+    /** While the company's agent access is off, the refusal every tool call gets. */
+    const accessOff = Effect.fn("Door.accessOff")(function* (
+      identity: AgentConnections.AgentIdentity
+    ) {
+      const access = yield* (yield* Companies.Companies)
+        .agentAccess(identity.company.id)
+        .pipe(Effect.catchTags({ CompanyNotFound: Effect.die, SqlError: Effect.die }));
+      if (access.on) return undefined;
+      const admins = (yield* (yield* Users.Users)
+        .list(identity.company.id)
+        .pipe(Effect.catchTags({ SqlError: Effect.die })))
+        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+        .map((user) => user.name)
+        .sort((a, b) => a.localeCompare(b));
+      return Tools.agentAccessOff({
+        company: identity.company.name,
+        admins,
+        turnOnAt: `${publicUrl.href.replace(/\/+$/u, "")}/company`
+      });
+    });
+
+    const callTool = (
+      request: Extract<Revisions.Classified, { kind: "request" }>,
+      identity: AgentConnections.AgentIdentity
+    ) => {
       const name = request.params["name"];
       if (typeof name !== "string")
         return rpcError(
@@ -253,9 +287,18 @@ export const layer: Layer.Layer<
           },
           "unknown_tool"
         );
-      return WideEvents.enrich({ mcpTool: name }).pipe(
-        Effect.andThen(toolAnswer(request.era, request.id, Tools.notBuilt(name)))
-      );
+      return Effect.gen(function* () {
+        yield* WideEvents.enrich({ mcpTool: name });
+        const args = request.params["arguments"];
+        const answered =
+          (yield* accessOff(identity)) ??
+          (name === "find_patches"
+            ? yield* Catalogue.find(identity, args, publicUrl)
+            : name === "open_patch"
+              ? yield* Catalogue.open(identity, args, publicUrl)
+              : Tools.notBuilt(name));
+        return yield* toolAnswer(request.era, request.id, answered);
+      });
     };
 
     const answer = (
@@ -293,7 +336,7 @@ export const layer: Layer.Layer<
           );
         case "legacy tools/call":
         case "modern tools/call":
-          return callTool(request);
+          return callTool(request, identity);
         default:
           // A legacy 404 means the session ended, so a legacy client hears this over 200.
           return rpcError(

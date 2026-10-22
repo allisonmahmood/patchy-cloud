@@ -175,15 +175,40 @@ export const agentToolKind = (
 
 /**
  * A manifest's agent tools by tool name, in the order every surface shows them: by name, by
- * code unit, so it holds however the manifest's keys were stored.
+ * code unit, so it holds however the manifest's keys were stored. It reads only the mark, so a
+ * catalogue can pass descriptors without their schemas.
  */
-export const agentToolEntries = (
-  handlers: HandlerDescriptors | undefined
-): ReadonlyArray<readonly [tool: string, descriptor: HandlerDescriptor]> =>
+export const agentToolEntries = <D extends Pick<HandlerDescriptor, "agentTool">>(
+  handlers: Readonly<Record<string, D>> | undefined
+): ReadonlyArray<readonly [tool: string, descriptor: D]> =>
   Object.entries(handlers ?? {})
     .filter(([, descriptor]) => descriptor.agentTool === true)
     .map(([handler, descriptor]) => [agentToolName(handler), descriptor] as const)
     .sort(([left], [right]) => byCodeUnit(left, right));
+
+/** What a descriptor says of a tool without its schemas: its mark, kind and words. */
+export type AgentToolMarks = Pick<
+  HandlerDescriptor,
+  "agentTool" | "kind" | "readOnly" | "description"
+>;
+
+/** A tool as `find_patches` lists it with `detail: "tools"`: `open_patch`'s, without schemas. */
+export interface AgentToolSummary {
+  readonly name: string;
+  readonly kind: AgentToolKind;
+  readonly description: string;
+}
+
+/** A manifest's agent tools in `open_patch`'s order, each without its schemas. */
+export const agentToolSummaries = (
+  handlers: Readonly<Record<string, AgentToolMarks>> | undefined
+): readonly AgentToolSummary[] =>
+  agentToolEntries(handlers).map(([name, descriptor]) => ({
+    name,
+    kind: agentToolKind(descriptor),
+    // The check refuses a tool without one.
+    description: descriptor.description ?? ""
+  }));
 
 const byCodeUnit = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
@@ -226,15 +251,18 @@ export const openPatchBytes = 64 * 1024;
 export const agentToolsBytes = 60 * 1024;
 const ownerLimit = 200;
 
-/** `open_patch`'s answer: the patch, who owns it and its tools. */
-export const openPatchAnswer = (
+/**
+ * `open_patch`'s answer: the patch, who owns it and its tools. `find_patches` lists each patch
+ * in the same shape, with its tools' names, or their summaries.
+ */
+export const openPatchAnswer = <Tools extends readonly unknown[] = readonly AgentTool[]>(
   patch: {
     readonly name: string;
     readonly description: string;
     readonly owner: string;
     readonly address: string;
   },
-  tools: readonly AgentTool[]
+  tools: Tools
 ) => ({
   name: patch.name,
   description: patch.description,

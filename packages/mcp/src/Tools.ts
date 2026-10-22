@@ -133,3 +133,22 @@ export const notBuilt = (name: Name): ToolCallResult =>
     from: "patchy",
     message: `${name} isn't built on this instance yet, so nothing was read or changed. Tell the person Patchy's MCP isn't ready here.`
   });
+
+/** "Ada", "Ada and Ben", "Ada, Ben and Cleo". */
+const listed = (names: readonly string[]) =>
+  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+/**
+ * Every tool call's refusal while the company's agent access is off: where an admin turns it
+ * on, and the active admins by name, never anything else about them.
+ */
+export const agentAccessOff = (off: {
+  readonly company: string;
+  readonly admins: readonly string[];
+  readonly turnOnAt: string;
+}): ToolCallResult =>
+  toolRefusal({
+    code: "agent_access_off",
+    from: "patchy",
+    message: `Agent access is off at ${off.company}, so Patchy refuses every agent until an admin turns it on at ${off.turnOnAt}.${off.admins.length === 0 ? " Tell the person." : ` ${off.company}'s admins are ${listed(off.admins)}; tell the person to ask one of them.`}`
+  });
