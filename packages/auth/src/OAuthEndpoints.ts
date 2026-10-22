@@ -251,7 +251,8 @@ const bounded = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const session = yield* Session.Session;
-    if (new URL(request.url, session.publicBaseUrl).search.length > MAX_REQUEST_CHARS)
+    // `search` holds the query after its `?`.
+    if (new URL(request.url, session.publicBaseUrl).search.length - 1 > MAX_REQUEST_CHARS)
       return unanswerable(
         session,
         `The agent's request is longer than ${MAX_REQUEST_CHARS} characters.`,

@@ -758,6 +758,11 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         assert.include(yield* text(page), "longer than 2048 characters");
       }
       assert.deepStrictEqual(seen, []);
+      // A query of exactly the bound is answered.
+      const longest = authorizeQuery(pkce().challenge, { state: "" });
+      longest.set("state", "s".repeat(2_048 - `${longest}`.length));
+      assert.lengthOf(`${longest}`, 2_048);
+      assert.strictEqual((yield* consentPage(longest)).status, 200);
     })
   );
 
