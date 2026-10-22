@@ -320,6 +320,51 @@ it.layer(layer)("AgentConnections", (it) => {
     })
   );
 
+  it.effect(
+    "a call's recheck reads who a live connection acts as now, without using it, and nothing once it ends",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const current = (id: string) =>
+          AgentConnections.AgentConnections.use((connections) => connections.current(id));
+        const userId = yield* person("recheck");
+        const { connection, tokens } = yield* connect(userId);
+        const identity = yield* authenticate(tokens.accessToken);
+        const stamped = yield* lastUsedAt(connection.id);
+        assert.deepStrictEqual(yield* current(connection.id), identity);
+        assert.deepStrictEqual(yield* lastUsedAt(connection.id), stamped, "a recheck is no call");
+        // A role change shows on the next recheck, and an expired access token ends nothing.
+        yield* sql`UPDATE users SET role = 'admin' WHERE id = ${userId}`;
+        yield* sql`UPDATE agent_connection_access_tokens SET expires_at = clock_timestamp()
+          WHERE connection_id = ${connection.id}`;
+        assert.strictEqual((yield* current(connection.id))?.role, "admin");
+
+        for (const [key, end] of [
+          [
+            "disconnected",
+            (id: string) =>
+              sql`UPDATE agent_connections SET revoked_at = clock_timestamp() WHERE id = ${id}`
+          ],
+          [
+            "deactivated",
+            (id: string) => sql`UPDATE users SET deactivated_at = clock_timestamp()
+              WHERE id = (SELECT user_id FROM agent_connections WHERE id = ${id})`
+          ],
+          [
+            "idle",
+            (id: string) => sql`UPDATE agent_connections
+              SET last_used_at = clock_timestamp() - interval '30 days 1 minute' WHERE id = ${id}`
+          ]
+        ] as const) {
+          const other = yield* connect(yield* person(`recheck-${key}`));
+          assert.isNotNull(yield* current(other.connection.id), key);
+          yield* end(other.connection.id);
+          assert.isNull(yield* current(other.connection.id), key);
+        }
+        assert.isNull(yield* current("agc_unknown"));
+      })
+  );
+
   it.effect("a connection made at or before the person's credentials ended is dead", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

@@ -11,10 +11,13 @@ import {
   invalidArgsRefusal,
   openPatchAnswer,
   patchRefusal,
+  readAnswer,
+  readAnswerChars,
   runtimeRefusal,
   toolAnswer,
   toolRefusal,
   unknownToolRefusal,
+  wrongKindRefusal,
   type HandlerDescriptor,
   type HandlerDescriptors,
   type HandlerSchema
@@ -474,6 +477,58 @@ describe("tool call answers", () => {
     });
     expect(unknownToolRefusal("New Business", "addDeal", []).content[0].text).toBe(
       "New Business has no tool addDeal. It has no agent tools now. Call open_patch to see what each does and takes."
+    );
+  });
+
+  it("sends a tool to the door's tool for its kind, naming the tools there are now", () => {
+    expect(
+      wrongKindRefusal("New Business", "addLead", "change", ["addLead", "listDeals"])
+        .structuredContent
+    ).toEqual({
+      error: {
+        code: "wrong_kind",
+        from: "patchy",
+        message:
+          "addLead is one of New Business's change tools, so call it with change_patch. Its tools now: addLead, listDeals. Call open_patch to see what each does and takes."
+      }
+    });
+    expect(
+      wrongKindRefusal("New Business", "listDeals", "read", ["listDeals"]).content[0].text
+    ).toBe(
+      "listDeals is one of New Business's read tools, so call it with read_patch. Its tools now: listDeals. Call open_patch to see what each does and takes."
+    );
+  });
+
+  it("answers a read of up to 100,000 characters of compact JSON and refuses a longer one", () => {
+    const patch = { name: "New Business", owner: "Priya Shah" };
+    // Characters, not bytes: each "é" is two bytes of UTF-8 and one character.
+    const around = JSON.stringify({ result: "", version: 4 }).length;
+    const fits = "é".repeat(readAnswerChars - around);
+    expect(readAnswer(patch, "listDeals", 4, { ok: true, value: fits })).toEqual(
+      toolAnswer({ result: fits, version: 4 })
+    );
+    // An escaped quote is two characters of the text the agent reads.
+    const over = `${fits.slice(1)}"`;
+    expect(readAnswer(patch, "listDeals", 4, { ok: true, value: over })).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "New Business's listDeals answered with 100,001 characters, more than the 100,000 an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, Priya Shah, can add paging."
+        }
+      ],
+      structuredContent: {
+        error: {
+          code: "too_large",
+          from: "patchy",
+          message:
+            "New Business's listDeals answered with 100,001 characters, more than the 100,000 an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, Priya Shah, can add paging."
+        }
+      },
+      isError: true
+    });
+    const failure = { ok: false as const, source: "handler" as const, code: "closed" };
+    expect(readAnswer(patch, "listDeals", 4, failure)).toEqual(
+      patchRefusal("New Business", "listDeals", failure)
     );
   });
 

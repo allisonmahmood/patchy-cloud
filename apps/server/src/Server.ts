@@ -189,15 +189,17 @@ const services = Layer.mergeAll(
         ),
         Layer.provide(StreamAdmission.layer)
       );
+      // The invocation that runs a page's calls also runs agents' calls at Patchy MCP's door,
+      // which finds it, when the host runs patch code at all, beside Runtime.
       if (yield* FleetInvocation.enabled)
         return runtime.pipe(
-          Layer.provide(
+          Layer.provideMerge(
             FleetInvocation.layer(handlers).pipe(Layer.provide(Content.serverBundlesLayer))
           )
         );
       return (yield* DevelopmentInvocation.enabled)
         ? runtime.pipe(
-            Layer.provide(
+            Layer.provideMerge(
               DevelopmentInvocation.layer(handlers).pipe(Layer.provide(Content.serverBundlesLayer))
             )
           )

@@ -16,6 +16,8 @@ export const isName = (name: string): name is Name => NAMES.some((known) => know
 export const SEARCH_CHARS = 200;
 export const CURSOR_CHARS = 2_048;
 export const PATCH_CHARS = 2_048;
+/** The longest tool name `read_patch` and `change_patch` take: an export's name is far shorter. */
+export const TOOL_CHARS = 128;
 
 /** A tool as `tools/list` shows it. */
 export interface Tool {
@@ -37,7 +39,12 @@ const patch: JsonSchema = {
   description:
     "The patch's name as find_patches lists it, its id, or its address. Another company's address is never found."
 };
-const tool: JsonSchema = { type: "string", description: "The tool's name, from open_patch." };
+const tool: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  maxLength: TOOL_CHARS,
+  description: "The tool's name, from open_patch."
+};
 const args: JsonSchema & { readonly type: "object" } = {
   type: "object",
   description: "The tool's arguments, as its schema in open_patch describes them. {} for none."
@@ -141,7 +148,7 @@ export const instructions = (identity: {
   return `You act for ${person} at ${company} through Patchy, where the company's internal tools are patches. find_patches lists the ones they can open, open_patch shows one's tools, then read_patch runs a read and change_patch a change. You reach only the tools each patch's builder added for agents; when one is missing, say so and name the patch's owner. Every change you make is logged as them, via you.`;
 };
 
-/** A tool the door lists before it is built: a refusal, so nothing is read or changed. */
+/** `change_patch` until change keys land (#855): a refusal, so nothing is changed. */
 export const notBuilt = (name: Name): ToolCallResult =>
   toolRefusal({
     code: "not_built",

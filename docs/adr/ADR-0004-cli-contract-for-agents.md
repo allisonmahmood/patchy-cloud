@@ -561,8 +561,9 @@ change key; a mutation's is its mutation key, kept by the daemon's retry of an
 command again is a new change. The company's agent access switch doesn't apply, and
 the daemon serves no MCP endpoint. A result exits 0, its document on stdout. Any
 refusal the door would give exits 2, `rejected`, with its `code`, `from` and any
-`details` and `retryAfterSeconds`: the patch's own, `unknown_tool`, `invalid_args`
-and Patchy's runtime refusals. A dev runtime that isn't healthy (`not_running`), a
+`details` and `retryAfterSeconds`: the patch's own, `unknown_tool`, `invalid_args`,
+`too_large` for a read whose answer is over 100,000 characters, and Patchy's runtime
+refusals. A dev runtime that isn't healthy (`not_running`), a
 patch below tier 2 or without agent tools (`no_agent_tools`) and arguments that
 aren't one JSON object exit 1. A started call that gets no usable answer exits 3,
 `unreachable`, since it may have run. Each answer names the server build that gave

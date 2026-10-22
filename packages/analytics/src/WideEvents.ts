@@ -98,9 +98,9 @@ const cliFields = {
 };
 /**
  * A Patchy MCP request: the agent connection and its client, what the client says it is, the
- * revision it spoke, its JSON-RPC method, the door's tool it called and what a catalogue call
- * found. What a client sends is cut short; arguments, results, tokens, change keys and
- * instructions are never recorded.
+ * revision it spoke, its JSON-RPC method, the door's tool it called, the patch's agent tool a
+ * read or change named and what a catalogue call found. What a client sends is cut short;
+ * arguments, results, tokens, change keys and instructions are never recorded.
  */
 const mcpFields = {
   agentConnectionId: Schema.optionalKey(Schema.String),
@@ -117,8 +117,14 @@ const mcpFields = {
   mcpTool: Schema.optionalKey(Schema.String),
   /** The request's `Origin`, cut to 256 characters. */
   origin: Schema.optionalKey(Schema.String),
-  /** How `open_patch`'s `patch` named the patch it opened. */
+  /** How `open_patch`'s, `read_patch`'s or `change_patch`'s `patch` named the patch it reached. */
   patchRef: Schema.optionalKey(Schema.Literals(["name", "id", "address"])),
+  /**
+   * The agent tool `read_patch` or `change_patch` named, cut short, unknown ones included, and
+   * its kind on the version the call read, once it is one of the patch's tools.
+   */
+  agentTool: Schema.optionalKey(Schema.String),
+  agentToolKind: Schema.optionalKey(Schema.Literals(["read", "change"])),
   /**
    * A `find_patches` answer: its matches in all and on this page, whether the page ended early
    * for the read cap, and whether it was searched, detailed or continued from a cursor. Never

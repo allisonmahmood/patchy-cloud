@@ -397,22 +397,24 @@ it.layer(harness)("the door", (it) => {
       })
   );
 
-  it.effect("answers the tools not built yet as such, and an unknown tool name -32602", () =>
+  it.effect("answers change_patch as not built yet, and an unknown tool name -32602", () =>
     Effect.gen(function* () {
       const { people } = yield* company("call", [["Ada Admin", "admin"]]);
       const { token } = people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.13");
-      for (const name of ["read_patch", "change_patch"]) {
-        const response = yield* send(call(token, name, { patch: "new-business" }));
-        assert.strictEqual(response.status, 200, name);
-        const result = objectAt(response.json, "result");
-        assert.include(result, { resultType: "complete", isError: true });
-        assert.include(objectAt(result, "structuredContent.error"), {
-          code: "not_built",
-          from: "patchy"
-        });
-        assert.include(response.event, { mcpTool: name, code: "not_built", outcome: "refused" });
-      }
+      const response = yield* send(call(token, "change_patch", { patch: "new-business" }));
+      assert.strictEqual(response.status, 200);
+      const result = objectAt(response.json, "result");
+      assert.include(result, { resultType: "complete", isError: true });
+      assert.include(objectAt(result, "structuredContent.error"), {
+        code: "not_built",
+        from: "patchy"
+      });
+      assert.include(response.event, {
+        mcpTool: "change_patch",
+        code: "not_built",
+        outcome: "refused"
+      });
       const unknown = yield* send(legacy(token, "tools/call", { name: "delete_everything" }));
       assert.strictEqual(unknown.status, 200);
       assert.strictEqual(at(unknown.json, "error.code"), -32602);

@@ -513,6 +513,23 @@ export const invalidArgsRefusal = (
     message: `${tool}'s arguments don't fit its schema: ${problem}. ${toolsNow(tools)}`
   });
 
+/**
+ * A tool named on the door's tool for the other kind: a change through `read_patch`, or a read
+ * through `change_patch`. A publish may have flipped its kind since the agent read it, so it
+ * names the tools the patch has now.
+ */
+export const wrongKindRefusal = (
+  patch: string,
+  tool: string,
+  kind: AgentToolKind,
+  tools: readonly string[]
+): ToolCallResult =>
+  toolRefusal({
+    code: "wrong_kind",
+    from: "patchy",
+    message: `${tool} is one of ${patch}'s ${kind} tools, so call it with ${kind === "read" ? "read_patch" : "change_patch"}. ${toolsNow(tools)}`
+  });
+
 /** The refusals of an action that ran out of time, at any depth, or whose outcome is unknown. */
 const unfinished = new Set<string>(["handler_timeout", "timeout", "unknown_outcome"]);
 
@@ -555,3 +572,28 @@ export const callAnswer = (
   reply.ok
     ? toolAnswer({ result: reply.value, version } satisfies CallSuccess)
     : patchRefusal(patch, tool, reply);
+
+/** The most characters of a read's compact JSON answer, which an agent reads whole. */
+export const readAnswerChars = 100_000;
+
+const counted = (count: number) => count.toLocaleString("en-US");
+
+/**
+ * A read's answer, as `callAnswer` gives it, measured once on the compact JSON text the agent
+ * reads: past `readAnswerChars` it is refused `too_large` instead, without the result.
+ */
+export const readAnswer = (
+  patch: { readonly name: string; readonly owner: string },
+  tool: string,
+  version: number,
+  reply: ServerCallReply
+): ToolCallResult => {
+  const answer = callAnswer(patch.name, tool, version, reply);
+  const chars = answer.content[0].text.length;
+  if (answer.isError === true || chars <= readAnswerChars) return answer;
+  return toolRefusal({
+    code: "too_large",
+    from: "patchy",
+    message: `${patch.name}'s ${tool} answered with ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, ${[...patch.owner].slice(0, ownerLimit).join("")}, can add paging.`
+  });
+};

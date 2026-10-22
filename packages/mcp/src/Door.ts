@@ -12,12 +12,13 @@
  *
  * A limit on `tools/call` is the tool's refusal over HTTP 200; on any other method it is 429
  * with `Retry-After`. Every tool call needs the company's agent access on, and is refused
- * naming its admins while it is off. `find_patches` and `open_patch` are the catalogue's;
- * until #854 and #855 land, `read_patch` and `change_patch` refuse as not built.
+ * naming its admins while it is off. `find_patches` and `open_patch` are the catalogue's, and
+ * `read_patch` runs a patch's read tool through the host's invocation; until #855 lands,
+ * `change_patch` refuses as not built.
  *
  * The request's wide event, opened by the server around every route, gains the connection, the
- * revision and method, the door's tool, the `Origin` and each refusal's code. Arguments,
- * results, tokens, change keys and instructions never reach it.
+ * revision and method, the door's tool, the patch's tool a call named, the `Origin` and each
+ * refusal's code. Arguments, results, tokens, change keys and instructions never reach it.
  */
 import type * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -37,6 +38,8 @@ import { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig, Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import type { Patches } from "@patchy/patches";
+import { Invocation } from "@patchy/runtime";
+import * as Calls from "./Calls.js";
 import * as Catalogue from "./Catalogue.js";
 import * as RequestTrust from "./RequestTrust.js";
 import * as Revisions from "./Revisions.js";
@@ -98,6 +101,8 @@ export const layer: Layer.Layer<
     const dev = Session.isLoopback(publicUrl);
     const failuresPerMinute = (yield* DeploymentConfig.load).get("mcp.bearer.failures.perMinute");
     const people = yield* TokenBucket.make;
+    // The host's invocation runs patch code; a host without one answers that it runs none.
+    const invocation = yield* Effect.serviceOption(Invocation.Invocation);
     const cors: Record<string, string> = dev ? {} : OAuthMetadata.cors;
     const challengeBase = `Bearer resource_metadata="${publicUrl.origin}/.well-known/oauth-protected-resource/mcp", scope="${OAuthMetadata.SCOPE}"`;
 
@@ -296,7 +301,9 @@ export const layer: Layer.Layer<
             ? yield* Catalogue.find(identity, args, publicUrl)
             : name === "open_patch"
               ? yield* Catalogue.open(identity, args, publicUrl)
-              : Tools.notBuilt(name));
+              : name === "read_patch"
+                ? yield* Calls.read(identity, args, publicUrl, invocation)
+                : Tools.notBuilt(name));
         return yield* toolAnswer(request.era, request.id, answered);
       });
     };

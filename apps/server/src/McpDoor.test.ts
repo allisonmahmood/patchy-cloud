@@ -20,10 +20,14 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpServer from "effect/http/HttpServer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { build } from "esbuild";
 import * as WideEvents from "@patchy/analytics/wide-events";
+import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
 import { AgentConnections, MachineTokens } from "@patchy/auth";
+import * as Inspection from "@patchy/execution/inspection";
 import { DEV_SEED, mintDevAgentConnection } from "@patchy/auth/seed";
-import { html, publishBody, send, server } from "./test/server.js";
+import { html, publish, publishBody, send, server } from "./test/server.js";
 
 const BASE = "http://patchy-door.localhost:29276";
 const HOST = "patchy-door.localhost:29276";
@@ -496,3 +500,64 @@ it.layer(
     })
   );
 });
+
+it.layer(server({ ...env, NODE_ENV: "development" }), { excludeTestServices: true })(
+  "the door's calls on a server that runs patch code",
+  (it) => {
+    it.effect(
+      "read_patch runs a published agent tool as the person, through the server's own invocation",
+      () =>
+        Effect.gen(function* () {
+          const source = (yield* Effect.promise(() =>
+            build({
+              stdin: {
+                contents: `import { query, createGuest, t } from "patchy/server";
+const whoami = query({description:"Who is asking, and through which agent.",args:{},result:t.json(),handler:async ctx => ({viewer:ctx.viewer.user.id, agent:ctx.agent})});
+export default createGuest({}, [], { tools: { whoami } });`,
+                resolveDir: new URL("../../../packages/patchy", import.meta.url).pathname,
+                sourcefile: "door-read-fixture.ts"
+              },
+              bundle: true,
+              write: false,
+              platform: "browser",
+              format: "esm",
+              target: "es2022",
+              conditions: ["development"]
+            })
+          )).outputFiles[0]!.text;
+          const handlers = yield* Inspection.inspect(source).pipe(
+            Effect.provide(NodeServices.layer)
+          );
+          const created = yield* publish(DEV_SEED.token, {
+            html: html("Who asks"),
+            server: source,
+            manifest: {
+              manifestVersion: MANIFEST_VERSION,
+              release: CURRENT_RELEASE,
+              tier: 2,
+              tables: {},
+              files: {},
+              uses: {},
+              handlers
+            }
+          });
+          assert.strictEqual(created.status, 201);
+          const { patchId } = (yield* created.json) as { patchId: string };
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE companies SET agent_access_on = true WHERE id = ${DEV_SEED.companyId}`;
+          const minted = yield* mint;
+          const answered = yield* toolCall(minted.token, "read_patch", {
+            patch: patchId,
+            tool: "whoami",
+            args: {}
+          });
+          assert.isUndefined(answered.isError, JSON.stringify(answered));
+          assert.deepStrictEqual(answered.structuredContent, {
+            result: { viewer: DEV_SEED.userId, agent: { name: "Codex" } },
+            version: 1
+          });
+        }),
+      60_000
+    );
+  }
+);

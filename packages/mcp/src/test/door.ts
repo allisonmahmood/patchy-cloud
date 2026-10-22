@@ -19,7 +19,8 @@ import {
   CURRENT_RELEASE,
   MANIFEST_VERSION,
   WIRE_VERSION,
-  type HandlerDescriptors
+  type HandlerDescriptors,
+  type Manifest
 } from "@patchy/api";
 import { AgentConnections, MachineTokens } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
@@ -43,25 +44,32 @@ const sink = Layer.succeed(WideEvents.Sink)(
   WideEvents.Sink.of({ write: (event) => Effect.sync(() => void recorded.push(event)) })
 );
 
-/** The door's services over a migrated database, with every event it writes recorded. */
-export const harness = Layer.mergeAll(
-  AgentConnections.layer,
-  MachineTokens.layer,
-  Limits.layer,
-  OperatingLimits.layer,
-  Patches.layer,
-  Companies.layer,
-  Users.layer,
-  WideEvents.layerWithSink.pipe(Layer.provide(sink))
-).pipe(
-  Layer.provideMerge(Analytics.layerNoop),
-  Layer.provideMerge(ConnectionStoreDev.layer([])),
-  Layer.provideMerge(Tables.layer),
-  Layer.provideMerge(Wakes.layer),
-  Layer.provideMerge(CompanyTesting.layer()),
-  Layer.provideMerge(CompanyTesting.resourceChangesLayer),
-  Layer.provideMerge(Testing.layer())
-);
+/**
+ * The door's services over a migrated database, with every event it writes recorded, and the
+ * company connections patches may declare.
+ */
+export const harnessWith = (connections: ReadonlyArray<ConnectionStoreDev.DevConnection>) =>
+  Layer.mergeAll(
+    AgentConnections.layer,
+    MachineTokens.layer,
+    Limits.layer,
+    OperatingLimits.layer,
+    Patches.layer,
+    Companies.layer,
+    Users.layer,
+    WideEvents.layerWithSink.pipe(Layer.provide(sink))
+  ).pipe(
+    Layer.provideMerge(Analytics.layerNoop),
+    Layer.provideMerge(ConnectionStoreDev.layer(connections)),
+    Layer.provideMerge(Tables.layer),
+    Layer.provideMerge(Wakes.layer),
+    Layer.provideMerge(CompanyTesting.layer()),
+    Layer.provideMerge(CompanyTesting.resourceChangesLayer),
+    Layer.provideMerge(Testing.layer())
+  );
+
+/** The door's services, with no company connections. */
+export const harness = harnessWith([]);
 
 /** The field at a dotted path of a decoded answer, or `undefined`. */
 export const at = (value: unknown, path: string): unknown =>
@@ -246,13 +254,18 @@ export const company = Effect.fn("DoorTest.company")(function* (
 
 let published = 0;
 
-/** A tier 0 page, or with `handlers` a tier 2 patch, published by `owner` as Patches records it. */
+/**
+ * A tier 0 page, or with `handlers` a tier 2 patch, published by `owner` as Patches records it,
+ * provisioning any `tables` it defines.
+ */
 export const publish = Effect.fn("DoorTest.publish")(function* (
   companyId: string,
   owner: Person,
   name: string,
   options: {
     readonly handlers?: HandlerDescriptors;
+    readonly tables?: (typeof Manifest.Type)["tables"];
+    readonly uses?: (typeof Manifest.Type)["uses"];
     readonly title?: string;
     readonly description?: string;
     readonly patchId?: string;
@@ -290,9 +303,9 @@ export const publish = Effect.fn("DoorTest.publish")(function* (
       manifestVersion: MANIFEST_VERSION,
       release: CURRENT_RELEASE,
       tier: tier2 ? 2 : 0,
-      tables: {},
+      tables: options.tables ?? {},
       files: {},
-      uses: {},
+      uses: options.uses ?? {},
       name,
       ...(tier2 ? { handlers: options.handlers } : {})
     },
