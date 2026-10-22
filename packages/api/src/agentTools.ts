@@ -484,6 +484,15 @@ export const patchRefusal = (
 };
 
 /** The tools a patch has now, read from the version a call would run on, and where to look. */
+/**
+ * What a refusal repeats of what the agent sent, a tool's name or a schema's words about its
+ * arguments, cut short so the refusal's own instructions always reach the agent.
+ */
+const repeated = (text: string, limit: number) =>
+  [...text].length > limit ? `${[...text].slice(0, limit - 1).join("")}…` : text;
+const repeatedName = 128;
+const repeatedProblem = 2_000;
+
 const toolsNow = (tools: readonly string[]) =>
   `${tools.length === 0 ? "It has no agent tools now." : `Its tools now: ${tools.join(", ")}.`} Call open_patch to see what each does and takes.`;
 
@@ -496,7 +505,7 @@ export const unknownToolRefusal = (
   toolRefusal({
     code: "unknown_tool",
     from: "patchy",
-    message: `${patch} has no tool ${tool}. ${toolsNow(tools)}`
+    message: `${patch} has no tool ${repeated(tool, repeatedName)}. ${toolsNow(tools)}`
   });
 
 /**
@@ -511,7 +520,7 @@ export const invalidArgsRefusal = (
   toolRefusal({
     code: "invalid_args",
     from: "patchy",
-    message: `${tool}'s arguments don't fit its schema: ${problem}. ${toolsNow(tools)}`
+    message: `${repeated(tool, repeatedName)}'s arguments don't fit its schema: ${repeated(problem, repeatedProblem)}. ${toolsNow(tools)}`
   });
 
 /**
@@ -528,7 +537,7 @@ export const wrongKindRefusal = (
   toolRefusal({
     code: "wrong_kind",
     from: "patchy",
-    message: `${tool} is one of ${patch}'s ${kind} tools, so call it with ${kind === "read" ? "read_patch" : "change_patch"}. ${toolsNow(tools)}`
+    message: `${repeated(tool, repeatedName)} is one of ${patch}'s ${kind} tools, so call it with ${kind === "read" ? "read_patch" : "change_patch"}. ${toolsNow(tools)}`
   });
 
 /** The refusals of an action that ran out of time, at any depth, or whose outcome is unknown. */
@@ -601,8 +610,7 @@ export const fitRefusal = (answer: ToolCallResult): ToolCallResult => {
     })
   );
 
-  const words =
-    [...message].length > keptWords ? `${[...message].slice(0, keptWords - 1).join("")}…` : message;
+  const words = repeated(message, keptWords);
   return toolRefusal({
     code,
     from,

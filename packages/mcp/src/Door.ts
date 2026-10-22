@@ -32,7 +32,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { CURRENT_RELEASE, toolRefusal, type ToolCallResult } from "@patchy/api";
+import { CURRENT_RELEASE, fitRefusal, toolRefusal, type ToolCallResult } from "@patchy/api";
 import { type AgentConnections, Authorization, Bearer, OAuthMetadata, Session } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig, Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
@@ -304,7 +304,8 @@ export const layer: Layer.Layer<
               : name === "read_patch"
                 ? yield* Calls.read(identity, args, publicUrl, invocation)
                 : Tools.notBuilt(name));
-        return yield* toolAnswer(request.era, request.id, answered);
+        // However a refusal came about, the agent reads it whole, so it keeps the read cap.
+        return yield* toolAnswer(request.era, request.id, fitRefusal(answered));
       });
     };
 

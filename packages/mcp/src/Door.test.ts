@@ -423,6 +423,35 @@ it.layer(harness)("the door", (it) => {
     })
   );
 
+  it.effect("keeps every refusal within the read cap, however long what it names", () =>
+    Effect.gen(function* () {
+      const long = (letter: string) => `${letter.toUpperCase()}${letter.repeat(39_999)}`;
+      const acme = yield* company(
+        "long-admins",
+        [
+          [long("a"), "admin"],
+          [long("b"), "admin"],
+          [long("c"), "admin"]
+        ],
+        { access: false }
+      );
+      const send = yield* door(PRODUCTION, "203.0.113.19");
+      for (const name of ["find_patches", "read_patch"]) {
+        const response = yield* send(call(acme.people[0]!.token, name, {}));
+        const text = String(at(response.json, "result.content.0.text"));
+        assert.isAtMost(text.length, 100_000, name);
+        assert.include(objectAt(response.json, "result.structuredContent.error"), {
+          code: "agent_access_off",
+          from: "patchy"
+        });
+        assert.match(
+          text,
+          /^Agent access is off at Door long-admins, so Patchy refuses every agent/u
+        );
+      }
+    })
+  );
+
   it.effect(
     "refuses every tool call while agent access is off, naming the admins and nothing else",
     () =>

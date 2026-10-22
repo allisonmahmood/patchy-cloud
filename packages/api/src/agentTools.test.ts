@@ -559,6 +559,16 @@ describe("tool call answers", () => {
     });
   });
 
+  it("repeats at most 128 characters of a tool's name and 2,000 of a schema's words", () => {
+    const now = "Its tools now: listDeals. Call open_patch to see what each does and takes.";
+    expect(
+      unknownToolRefusal("New Business", "x".repeat(60_000), ["listDeals"]).content[0].text
+    ).toBe(`New Business has no tool ${"x".repeat(127)}…. ${now}`);
+    expect(invalidArgsRefusal("listDeals", "y".repeat(5_000), ["listDeals"]).content[0].text).toBe(
+      `listDeals's arguments don't fit its schema: ${"y".repeat(1_999)}…. ${now}`
+    );
+  });
+
   it("says where arguments miss their schema, and names the tools there are now", () => {
     expect(
       invalidArgsRefusal("addLead", 'Missing key at ["email"]', ["addLead", "listDeals"]).content[0]

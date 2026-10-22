@@ -65,8 +65,16 @@ export const invalidArgs = (tool: string, problem: string, fix: string) =>
     message: `${tool}'s arguments don't fit its schema: ${problem}. ${fix}`
   });
 
-/** The schema's own words for what is wrong and where, on one line. */
-export const problemOf = (error: Schema.SchemaError) => error.message.replace(/\s*\n\s*/g, " ");
+/** The most of the schema's words a refusal repeats, so its own instructions always fit. */
+const PROBLEM_CHARS = 2_000;
+
+/** The schema's own words for what is wrong and where, on one line and cut short. */
+export const problemOf = (error: Schema.SchemaError) => {
+  const words = [...error.message.replace(/\s*\n\s*/g, " ")];
+  return words.length > PROBLEM_CHARS
+    ? `${words.slice(0, PROBLEM_CHARS - 1).join("")}…`
+    : words.join("");
+};
 
 const findFix =
   "Send search, cursor and detail as tools/list describes them, or {} to list them all.";

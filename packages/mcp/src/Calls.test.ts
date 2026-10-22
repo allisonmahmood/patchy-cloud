@@ -179,7 +179,8 @@ it.layer(harness)("read_patch", (it) => {
           assert.deepStrictEqual(refusal(unknown), {
             code: "unknown_tool",
             from: "patchy",
-            message: `new-business has no tool ${name}. ${now}`
+            // A refusal repeats 128 characters of a name.
+            message: `new-business has no tool ${name.length > 128 ? `${name.slice(0, 127)}…` : name}. ${now}`
           });
           // An event keeps 128 characters of a name.
           assert.include(unknown.event, { agentTool: name.slice(0, 128), code: "unknown_tool" });
@@ -230,20 +231,24 @@ it.layer(harness)("read_patch", (it) => {
       })
   );
 
-  it.effect("keeps a refusal that names a long tool within the read cap", () =>
+  it.effect("keeps a refusal that names a long tool within the read cap, with what to do", () =>
     Effect.gen(function* () {
       const acme = yield* company("long-name", [["Priya Shah", "admin"]]);
       const priya = acme.people[0]!;
-      // A name as long as a patch's tools allow, which the refusals repeat.
+      // A name as long as a patch's tools allow; the tools now list it in full.
       const long = "y".repeat(50_000);
       yield* publish(acme.id, priya, "new-business", {
         handlers: { [`agent.${long}`]: tool("mutation", "Changes something.", {}) }
       });
       const fake = yield* runtime(() => Effect.die("nothing runs"));
       const send = yield* doorTo(fake.service, "203.0.113.48");
-      for (const [name, code] of [
-        [long, "wrong_kind"],
-        ["z".repeat(60_000), "unknown_tool"]
+      for (const [name, code, says] of [
+        [
+          long,
+          "wrong_kind",
+          "is one of new-business's change tools, so call it with change_patch."
+        ],
+        ["z".repeat(60_000), "unknown_tool", "new-business has no tool"]
       ] as const) {
         const response = yield* send(
           call(priya.token, "read_patch", { patch: "new-business", tool: name, args: {} })
@@ -251,10 +256,8 @@ it.layer(harness)("read_patch", (it) => {
         const text = String(at(answered(response), "content.0.text"));
         assert.isAtMost(text.length, 100_000, code);
         assert.include(refusal(response), { code, from: "patchy" });
-        assert.match(
-          text,
-          /Its details were left out: the refusal came to 1\d\d,\d{3} characters/u
-        );
+        assert.include(text, says);
+        assert.include(text, `Its tools now: ${long}. Call open_patch`);
       }
     })
   );
