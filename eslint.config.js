@@ -13,7 +13,9 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/.turbo/**",
       ".claude/**",
-      ".local/**"
+      ".local/**",
+      // Independent npm add-on; its build and tests run from its own directory.
+      "addons/patchy-mcp/**"
     ]
   },
   {

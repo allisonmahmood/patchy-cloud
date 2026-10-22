@@ -68,6 +68,7 @@ Run `pnpm patchy dev` to exercise it locally over PGlite and invented fixtures, 
 
 A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to working in it, for people and agents alike.
 
+- [`addons/patchy-mcp`](addons/patchy-mcp/README.md) — the independent MCP connector for agents, with its own npm dependencies, build and tests. It is outside the pnpm workspace and Cloud deployment.
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
 - `apps/infra` — production infrastructure as AWS CDK: per environment, a base stack (image registry, deploy identity, budget, secrets) and an app stack (network, load balancer, hosts, exec task definition, uptime alert). CI synthesizes it offline, and releases apply it through the deploy workflow (`@patchy/infra`).
 - `packages/patchy`: `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files, edits declarations, discovers company tools and data sources, and manages owned patches.
