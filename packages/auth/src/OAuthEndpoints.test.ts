@@ -743,6 +743,24 @@ it.layer(services)("the authorization server's endpoints", (it) => {
     })
   );
 
+  it.effect("refuses a request too long to carry through sign-in, before signing in", () =>
+    Effect.gen(function* () {
+      seen.length = 0;
+      const query = authorizeQuery(pkce().challenge, { state: "s".repeat(4_096) });
+      for (const cookie of [undefined, sessionOf()]) {
+        const page = yield* send(
+          `/oauth/authorize?${query}`,
+          cookie === undefined ? {} : { headers: { cookie } }
+        );
+        assert.strictEqual(page.status, 414);
+        assert.isNull(page.headers.get("location"));
+        assert.isNull(page.headers.get("x-patchy-sign-in-url"));
+        assert.include(yield* text(page), "longer than 4096 characters");
+      }
+      assert.deepStrictEqual(seen, []);
+    })
+  );
+
   it.effect("limits consent pages per address once the person is signed in", () =>
     Effect.gen(function* () {
       yield* setAccess(true);

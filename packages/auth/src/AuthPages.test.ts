@@ -475,11 +475,8 @@ it.layer(
     Effect.gen(function* () {
       const sessionCookie = signedInCookies(signSession({ sub: "user_another_account" }));
       const consent = "/oauth/authorize?client_id=https%3A%2F%2Fagent.example%2Fc.json&state=s";
-      // A long state, as clients may send, is carried whole.
-      const long = `/oauth/authorize?state=${"%2F".repeat(4_000)}`;
       for (const [back, location] of [
         [consent, `/login?return=${encodeURIComponent(consent)}`],
-        [long, `/login?return=${encodeURIComponent(long)}`],
         ["//evil.example/", "/login"],
         ["https://evil.example/", "/login"]
       ] as const) {

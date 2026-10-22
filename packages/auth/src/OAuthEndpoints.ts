@@ -45,6 +45,12 @@ import { pageResponse, returnPath, signOutForm, type Page } from "./page.js";
 const MAX_BODY_BYTES = 8_192;
 /** How long a consent page's answer counts once shown: as long as a device login's code. */
 const ANSWER_SECONDS = 10 * 60;
+/**
+ * The longest authorization request answered, in characters of its query. Sign-in and Use
+ * another account carry the request's address in their own, encoded again at each hop, and
+ * every hop must stay inside Node's 16 KiB of request headers.
+ */
+const MAX_REQUEST_CHARS = 4_096;
 const MAX_ANSWER_BYTES = 4_096;
 /** The token request's parameters, each allowed once. */
 const TOKEN_PARAMS = [
@@ -237,6 +243,20 @@ const unanswerable = (
     },
     session
   ).pipe(HttpServerResponse.setHeaders(headers));
+
+/** A request too long to carry through sign-in is refused before it, on the page. */
+const bounded = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const session = yield* Session.Session;
+    if (new URL(request.url, session.publicBaseUrl).search.length > MAX_REQUEST_CHARS)
+      return unanswerable(
+        session,
+        `The agent's request is longer than ${MAX_REQUEST_CHARS} characters.`,
+        414
+      );
+    return yield* app;
+  });
 
 /** Sign-in and database failures stay retryable pages. */
 const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
@@ -560,8 +580,16 @@ export const layer: Layer.Layer<
       })
     );
 
-    yield* router.add("GET", "/oauth/authorize", pageErrors(RequireSession.withViewer(authorize)));
-    yield* router.add("POST", "/oauth/authorize", pageErrors(RequireSession.sameOrigin(answer)));
+    yield* router.add(
+      "GET",
+      "/oauth/authorize",
+      pageErrors(bounded(RequireSession.withViewer(authorize)))
+    );
+    yield* router.add(
+      "POST",
+      "/oauth/authorize",
+      pageErrors(RequireSession.sameOrigin(bounded(answer)))
+    );
     yield* router.add("POST", "/oauth/token", token);
     if (!dev) yield* router.add("OPTIONS", "/oauth/token", Effect.succeed(OAuthMetadata.preflight));
   })

@@ -167,4 +167,35 @@ it.layer(layer)("auth pages on a socket", (it) => {
         assert.strictEqual((yield* request("/join")).status, 401);
       })
   );
+  it.effect(
+    "Use another account carries the longest consent request through sign-out to the door",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* HttpServer.HttpServer;
+        if (server.address._tag === "UnixPathAddress")
+          return assert.fail("Expected a TCP listener");
+        const socket = `http://127.0.0.1:${server.address.port}`;
+        // The longest query consent answers, in a character that survives every re-serialization
+        // and triples each time it is encoded again.
+        const consent = `/oauth/authorize?state=${"+".repeat(4_090)}`;
+        const logout = yield* Effect.promise(() =>
+          fetch(`${socket}/logout`, {
+            method: "POST",
+            headers: {
+              origin: PUBLIC_BASE_URL,
+              cookie: signedInCookies(signSession({ sub: "user_socket_switch" }))
+            },
+            body: new URLSearchParams({ return: consent }),
+            redirect: "manual"
+          })
+        );
+        assert.strictEqual(logout.status, 303);
+        const door = yield* Effect.promise(() =>
+          fetch(`${socket}${logout.headers.get("location")}`, { redirect: "manual" })
+        );
+        assert.strictEqual(door.status, 200);
+        const signIn = new URL(door.headers.get("x-patchy-sign-in-url")!);
+        assert.strictEqual(signIn.searchParams.get("redirect_url"), `${PUBLIC_BASE_URL}${consent}`);
+      })
+  );
 });

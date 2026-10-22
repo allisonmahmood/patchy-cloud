@@ -61,10 +61,10 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
 });
 
 /**
- * Use another account carries a whole authorization request's address: at most Node's 16 KiB of
- * headers, and up to three times that once encoded again as a form field.
+ * Use another account carries a consent request's address, at most 4 KiB of query
+ * (`OAuthEndpoints`), and up to three times that once encoded again as a form field.
  */
-const MAX_LOGOUT_BYTES = 65_536;
+const MAX_LOGOUT_BYTES = 16_384;
 
 /** Sign out, then to the sign-in door; Use another account names the page to sign in back to. */
 const logout = Effect.gen(function* () {
