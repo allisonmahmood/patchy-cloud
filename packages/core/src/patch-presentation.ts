@@ -21,6 +21,13 @@ export const ago = (iso: string, now: number): string => {
   return unit(Math.round(seconds / 86_400), "day");
 };
 
+/**
+ * A person's welcome page, as onboarding publishes it: a tier 0 patch named `welcome`, or
+ * `welcome-<n>` when the name was taken. Home's live note and the activation event read it.
+ */
+export const isWelcomePage = (patch: { readonly name: string; readonly tier: number }): boolean =>
+  patch.tier === 0 && /^welcome(-\d+)?$/u.test(patch.name);
+
 export const daysLeft = (deadline: number, now: number): number =>
   Math.max(0, Math.ceil((deadline - now) / 86_400_000));
 
