@@ -1,6 +1,6 @@
 # Auth
 
-Who a caller is: Clerk sessions and viewers, user-owned machine tokens and agent connections, device login, consent and revocation. Auth draws the user and company behind each credential from [Companies](../companies/GLOSSARY.md); [Patches](../patches/GLOSSARY.md) uses the resulting identity without owning authentication.
+Who a caller is: Clerk sessions and viewers, user-owned machine tokens and agent connections, device login, client documents, consent and revocation. Auth draws the user and company behind each credential from [Companies](../companies/GLOSSARY.md); [Patches](../patches/GLOSSARY.md) uses the resulting identity without owning authentication.
 
 ## Language
 
@@ -19,6 +19,10 @@ _Avoid_: connection on its own (Integrations' company source), integration, app 
 **Consent**:
 The person's answer, in their signed-in browser, to a client asking to connect as them. It is asked every time and counts only for the account the page showed; only the client's code exchange creates the agent connection.
 _Avoid_: authorization (the protocol), approval
+
+**Client document**:
+The JSON an MCP client publishes on its own site to name itself; its https URL is the client's id. Patchy fetches it when the client asks to connect, accepts it only when its `client_id` is that URL and it offers the `none` auth method, and sends an answer only to a redirect it lists. Patchy keeps no registrations and trusts no list of clients; a consent page shows the document's name and site.
+_Avoid_: registration, client metadata on its own (any client's fields), trusted client
 
 **Identity**:
 The user, their company and role, and the machine or agent connection acting for them on a bearer-authenticated request. Every bearer is a user; a different machine token for that user reaches the same patches.

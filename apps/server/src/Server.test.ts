@@ -166,6 +166,22 @@ it.layer(
     })
   );
 
+  it.effect("serves the authorization metadata ahead of patch addresses, cacheable and open", () =>
+    Effect.gen(function* () {
+      for (const [path, field] of [
+        ["/.well-known/oauth-protected-resource/mcp", "resource"],
+        ["/.well-known/oauth-authorization-server", "issuer"]
+      ] as const) {
+        const response = yield* send(HttpClientRequest.get(path));
+        const { status, body } = yield* answer(response);
+        assert.strictEqual(status, 200, path);
+        assert.property(body, field, path);
+        assert.strictEqual(response.headers["cache-control"], "public, max-age=3600", path);
+        assert.strictEqual(response.headers["access-control-allow-origin"], "*", path);
+      }
+    })
+  );
+
   it.effect(
     "opens the portal at the root and keeps its signed-out door separate from the fallback",
     () =>

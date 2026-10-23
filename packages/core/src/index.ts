@@ -24,3 +24,4 @@ export {
   searchField
 } from "./components.js";
 export * as WhatsNew from "./whatsNew.js";
+export { isPublicAddress } from "./addresses.js";
