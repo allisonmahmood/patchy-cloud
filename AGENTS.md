@@ -22,7 +22,7 @@ Patchy implements tier 0 static pages, tier 1 sandboxed browser tools and tier 2
 
 - Tier 0 is a static page with no patch execution, browser or server. A tier 0 repo may provision resources, but its page cannot call them.
 - Tier 1 runs patch code in a sandboxed browser frame. It acts as the viewer through Patchy for tables, files and declared integrations; it has no outbound fetch or hosted patch code.
-- Tier 2 runs query, mutation and action handlers in credential-free workerd processes while a viewer has the patch open. Mutations are atomic; the page calls handlers instead of resources directly. Production runs it on the ECS fleet, with its infrastructure in `apps/infra`, released through the deploy workflow.
+- Tier 2 runs query, mutation and action handlers in credential-free workerd processes while a viewer has the patch open or their agent is calling it. Mutations are atomic; the page calls handlers instead of resources directly. Production runs it on the ECS fleet, with its infrastructure in `apps/infra`, released through the deploy workflow.
 - Tier 3 is next: execution without a viewer, including inbound routes, webhooks, schedules and unattended automation. It is not built.
 - Tier 4, a sandbox for agents, remains future work.
 

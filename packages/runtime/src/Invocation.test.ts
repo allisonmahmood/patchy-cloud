@@ -601,6 +601,112 @@ it.layer(services)("Invocation", (it) => {
     })
   );
 
+  it.effect(
+    "waits for the company's server outside the call's deadline, and its process start inside it",
+    () =>
+      Effect.gen(function* () {
+        // A bind wait of 30 s, then a process start just within the query's 3 s, then just past.
+        for (const [startMs, expected] of [
+          [2_900, "success"],
+          [3_100, "handler_timeout"]
+        ] as const) {
+          const invocations = yield* makeInvocation(
+            () =>
+              Effect.succeed({
+                outcome: "returned" as const,
+                reply: { ok: true as const, value: 1 },
+                guestMs: 1
+              }),
+            () => Effect.sleep(startMs).pipe(Effect.as(bound))
+          ).pipe(
+            Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+              touch: () => Effect.succeed({ outcome: "absent" as const }),
+              connect: () => Effect.void,
+              acquire: () =>
+                Effect.sleep("30 seconds").pipe(
+                  Effect.as({
+                    binding: { taskId: "cold-task", bindingEpoch: 1 },
+                    release: Effect.void
+                  })
+                )
+            })
+          );
+          const call = yield* invocations
+            .call(
+              { handler: "demo.query", args: { id: 1 } },
+              { ...binding, correlationId: `cold-${startMs}` },
+              Effect.succeed(viewer)
+            )
+            .pipe(
+              Effect.map(() => "success"),
+              Effect.catch((error) => Effect.succeed(error.code)),
+              Effect.forkChild
+            );
+          yield* TestClock.adjust("30 seconds");
+          yield* TestClock.adjust(startMs);
+          assert.strictEqual(yield* Fiber.join(call), expected, `${startMs} ms`);
+        }
+      })
+  );
+
+  it.effect("admits an agent's call as the agent's, and its nested calls ride on it", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+      const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const done = yield* Deferred.make<void>();
+      const callers: Array<ExecutionLifecycle.Caller> = [];
+      const released: Array<ExecutionLifecycle.Caller> = [];
+      const invocations = yield* makeInvocation((request) =>
+        Queue.offer(seen, request).pipe(
+          Effect.andThen(request.handler === "agent.gather" ? Deferred.await(done) : Effect.void),
+          Effect.as({
+            outcome: "returned" as const,
+            reply: { ok: true as const, value: 1 },
+            guestMs: 1
+          })
+        )
+      ).pipe(
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          touch: () => Effect.succeed({ outcome: "absent" as const }),
+          connect: () => Effect.void,
+          acquire: (_company, _patch, caller) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              return {
+                binding: { taskId: "agent-task", bindingEpoch: 1 },
+                release: Effect.sync(() => {
+                  released.push(caller);
+                })
+              };
+            })
+        })
+      );
+      yield* invocations.call(
+        { handler: "demo.query", args: { id: 1 } },
+        { ...binding, correlationId: "page-caller" },
+        Effect.succeed(viewer)
+      );
+      yield* Queue.take(seen);
+      const agent = yield* Invocation.callAgent({
+        version: binding,
+        person: viewer,
+        agent: { name: "Claude" },
+        tool: "gather",
+        args: {},
+        recheck: Effect.succeed(viewer)
+      }).pipe(Effect.provideService(Invocation.Invocation, invocations), Effect.forkChild);
+      const request = yield* Queue.take(seen);
+      const capability = yield* capabilities.resolve(request.callback.capability, request);
+      yield* capability.run!({ handler: "demo.query", args: { id: 1 } });
+      assert.deepStrictEqual(callers, ["page", "agent"]);
+      // The agent's one admission settles with its nested work, and only then.
+      assert.notInclude(released, "agent");
+      yield* Deferred.succeed(done, undefined);
+      yield* Fiber.join(agent);
+      assert.include(released, "agent");
+    })
+  );
+
   it.effect("keeps a nested call on its parent's process generation", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.InvocationCapabilities;

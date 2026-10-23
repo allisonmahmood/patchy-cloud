@@ -530,23 +530,21 @@ An action's database time includes its nested queries and mutations.
 The promise: **A tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
 internet: everything it does goes through Patchy, as you, while you have the
-patch open. It reaches outside systems only through your company's integrations,
-and every write is logged for your company's admins.**
+patch open or your agent is calling it. It reaches outside systems only through
+your company's integrations, and every write is logged for your company's admins.**
 
-Patchy admits new work while a viewer has the patch open. Already-admitted work
-finishes after departure. An open patch keeps its company's task only while its
-viewer is using it: after ten minutes with no calls and no change to what it
-subscribes to, the tab lets go, though its screen stays usable and live updates
-still arrive. The company task is released after thirty minutes with no active
-tier 2 documents and no admitted work, including retries, nested calls and
-cleanup, so the next action after that may wait for the company to start again. Bringing a whole app would be a second runtime with different limits;
-it is not supported.
-
-Patchy MCP, specified and not built, changes this rule to: Patchy admits new
-work while a viewer has the patch open or their agent is calling it. An agent's
-call is admitted as its person and keeps the company task for a minute on a
-clock of its own, which never touches the thirty-minute one
-([Bounds](#bounds)).
+Patchy admits new work while a viewer has the patch open or their agent is
+calling it. Already-admitted work finishes after departure. An open patch keeps
+its company's task only while its viewer is using it: after ten minutes with no
+calls and no change to what it subscribes to, the tab lets go, though its screen
+stays usable and live updates still arrive. The company task is released after
+thirty minutes with no active tier 2 documents and no admitted work, including
+retries, nested calls and cleanup, so the next action after that may wait for
+the company to start again. An agent's call is admitted as its person and keeps
+the company task for a minute after it settles, on a clock of its own that never
+touches the thirty-minute one; the task is released once both have run out
+([Bounds](#bounds)). Bringing a whole app would be a second runtime with
+different limits; it is not supported.
 
 Server-side calls use two identities. The **initiating viewer** is the person
 whose live session admitted the invocation. The gateway chooses the **effective

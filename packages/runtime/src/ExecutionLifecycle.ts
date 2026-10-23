@@ -19,6 +19,13 @@ export class LifecycleError extends Schema.TaggedError<LifecycleError>()("Lifecy
   }
 }
 
+/**
+ * Who admitted work runs for. A page's work keeps its company's task on the documents' clock
+ * (`execution.company.idle`); a worker agent's keeps it on the agent idle clock
+ * (`execution.company.agentIdle`) and never touches the documents'.
+ */
+export type Caller = "page" | "agent";
+
 export interface Admission {
   readonly binding: ExecutionBinding;
   readonly release: Effect.Effect<void>;
@@ -45,7 +52,8 @@ export class ExecutionLifecycle extends Context.Service<
     readonly connect: (companyId: string) => Effect.Effect<void, LifecycleError, Scope.Scope>;
     readonly acquire: (
       companyId: string,
-      patchId: string
+      patchId: string,
+      caller: Caller
     ) => Effect.Effect<Admission, LifecycleError>;
     /**
      * Restarts the idle clock of the version's process on the company's current task, unless

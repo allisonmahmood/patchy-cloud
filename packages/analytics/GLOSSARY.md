@@ -64,6 +64,14 @@ _Avoid_: heartbeat log, presence record
 `startMs` on a process event: how long a tier 2 version's process took from spawn until it was ready for its first call. A call that has to load the version waits this long, inside its handler's deadline. A process that never got there, such as a `load_failed` one, has none. `firstOnTask` says it was the first process its company task started since being bound: the start a call on a released company waits for after its bind. Later ones, after a reap, an eviction or for another version, are not. The process event carries both and is emitted when the process ends.
 _Avoid_: cold start (the task launch the spare pool measures), bind wait (`spareWaitMs`, outside the deadline)
 
+**Bind wait**:
+`companyBind` and `bindWaitMs` on a tier 2 call's event: how admission found its company's server, already `bound`, a ready `spare` bound to it, or a `launch` it waited for because the pool was empty, and how long it waited. A wait refused `busy` at `execution.pool.wait` lasted the whole wait, usually for a `launch`. It sits outside the handler's deadline; the process start after it does not.
+_Avoid_: spare wait (`spareWaitMs`, the binding's own), cold start
+
+**Agent-only binding**:
+`agentOnly` on a binding event: no document held the company's task and no page's work ran on it while it was bound, so only worker agents' calls kept it, each for its [agent idle](../runtime/GLOSSARY.md) minute. Bindings released before agents existed leave it unset.
+_Avoid_: headless binding, MCP binding
+
 **Limit peak**:
 The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.
 _Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)

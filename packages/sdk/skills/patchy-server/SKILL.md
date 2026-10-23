@@ -404,7 +404,8 @@ Limits: 300 calls a minute per person per patch, so bulk work needs a tool that
 takes a list. Read results over 100,000 characters are refused, so large reads
 need paging. The agent reads every result in full; a row result carries `id`,
 `createdAt` and `updatedAt` besides its columns. Each person has 16 calls in
-flight across their clients. `busy` and `rate_limited` carry
+flight across their clients, and the first call may wait about a second for the
+company's server, or up to 40 s when it is cold. `busy` and `rate_limited` carry
 `retryAfterSeconds`. A change key makes a mutation's retry write once; an action
 that writes is not safe to retry.
 
@@ -499,8 +500,9 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `execution.housekeeping.lease` | operating | 15000 | milliseconds | host | Exclusive fleet housekeeping ownership window | None | No | deployment |
 | `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
 | `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
-| `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed; held calls are never replayed | `busy` | Yes | deployment |
-| `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no active tier 2 documents and no in-flight work | None | Yes | deployment |
+| `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed, outside the handler's deadline; held calls are never replayed, and a worker agent's call is refused with 15 seconds to wait | `busy` | Yes | deployment |
+| `execution.company.idle` | operating | 1800000 | milliseconds | company | Release after no active tier 2 documents and no in-flight work, from the last document letting go or page work settling; worker agents' calls never touch it | None | Yes | deployment |
+| `execution.company.agentIdle` | operating | 60000 | milliseconds | company | Release after a worker agent's last call settles, nested work and cleanup included, on a clock of its own; release waits for this and execution.company.idle both | None | Yes | deployment |
 | `execution.document.idle` | operating | 600000 | milliseconds | company | Time a connected tier 2 document goes without activity before it lets go of its company task and version process | None | Yes | deployment |
 | `execution.deploy.drain` | operating | 90000 | milliseconds | host | Deployment deregistration delay | None | No | deployment |
 | `execution.endpoint.lifetime` | operating | 60000 | milliseconds | host | Reuse of an ECS task's resolved address by a host of the task's release; a failed call forgets it sooner | None | No | deployment |

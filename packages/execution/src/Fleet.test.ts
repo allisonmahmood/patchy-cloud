@@ -212,6 +212,17 @@ const lockWait = Effect.fn("FleetTest.lockWait")(function* (name: string) {
     })
   );
 });
+// A held call that began `ms` ago: its crash protection and the clock it started are aged in
+// place. Moving the clock while a call holds its binding can time out the activity session's
+// probe, and the session's reconnect frees its locks for a moment.
+const ranFor = Effect.fn("FleetTest.ranFor")(function* (taskId: string, ms: number) {
+  const sql = yield* SqlClient.SqlClient;
+  const now = yield* Clock.currentTimeMillis;
+  yield* sql`UPDATE execution_bindings
+    SET protected_until = LEAST(protected_until, ${now - ms + 65_000}),
+      agent_activity_at = LEAST(agent_activity_at, ${now - ms})
+    WHERE task_id = ${taskId}`;
+});
 // Records a patch and returns how to publish its versions, whose numbers a breaker reads.
 const publishedPatch = Effect.fn("FleetTest.publishedPatch")(function* (
   companyId: string,
@@ -458,7 +469,7 @@ it.layer(services)("host fleet controller", (it) => {
         yield* TestClock.adjust(30 * 60_000);
         yield* left.housekeeping();
         assert.strictEqual(yield* state, "running");
-        const admission = yield* right.lifecycle.acquire(companyId, bundle.patchId);
+        const admission = yield* right.lifecycle.acquire(companyId, bundle.patchId, "page");
         assert.strictEqual(admission.binding.taskId, bound.taskId);
         yield* Scope.close(document, Exit.void);
         yield* left.housekeeping();
@@ -483,11 +494,383 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
+    "keeps a company an agent's call bound for a minute after it settles, however long it ran",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, right, bundle } = yield* setupMemory("agent-idle");
+        const captured = yield* recording;
+        const keeper = yield* Fleet.make({
+          replicaId: "agent-idle-keeper",
+          deploymentRevision: "agent-idle",
+          automaticHousekeeping: false
+        }).pipe(
+          Effect.provideService(TaskProvider.TaskProvider, provider),
+          Effect.provideService(WideEvents.WideEvents, captured.events)
+        );
+        const admission = yield* right.lifecycle.acquire(companyId, bundle.patchId, "agent");
+        const state = Effect.map(
+          provider.list,
+          (tasks) => tasks.find((task) => task.taskId === admission.binding.taskId)?.state
+        );
+        // Admitted work holds the company however long it runs, and starts no tab's clock.
+        yield* ranFor(admission.binding.taskId, 5 * 60_000);
+        yield* keeper.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        yield* admission.release;
+        yield* TestClock.adjust(60_000 - 1);
+        yield* keeper.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        yield* TestClock.adjust(1);
+        yield* keeper.housekeeping();
+        assert.strictEqual(yield* state, "stopped");
+        assert.strictEqual((yield* keeper.history(companyId))[0]?.releaseCause, "idle");
+        const event = captured.records.find(
+          (record) => record.type === "binding" && record.taskId === admission.binding.taskId
+        );
+        assert.include(event, { releaseCause: "idle", agentOnly: true });
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "runs an agent's minute beside a tab's thirty minutes, never touching it, and releases after both",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, right, bundle } = yield* setupMemory("two-clocks");
+        const captured = yield* recording;
+        const keeper = yield* Fleet.make({
+          replicaId: "two-clocks-keeper",
+          deploymentRevision: "two-clocks",
+          automaticHousekeeping: false
+        }).pipe(
+          Effect.provideService(TaskProvider.TaskProvider, provider),
+          Effect.provideService(WideEvents.WideEvents, captured.events)
+        );
+        const document = yield* Scope.make();
+        yield* right.lifecycle.connect(companyId).pipe(Scope.provide(document));
+        const bound = yield* right.ensureBinding(companyId);
+        const state = Effect.map(
+          provider.list,
+          (tasks) => tasks.find((task) => task.taskId === bound.taskId)?.state
+        );
+        const agentCall = Effect.flatMap(
+          left.lifecycle.acquire(companyId, bundle.patchId, "agent"),
+          (admission) => admission.release
+        );
+        // A call while the tab holds the task runs on it.
+        yield* agentCall;
+        yield* TestClock.adjust(2 * 60_000);
+        yield* keeper.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        // The tab lets go, and the next pass starts its thirty minutes; an agent calls near their end.
+        yield* Scope.close(document, Exit.void);
+        yield* keeper.housekeeping();
+        yield* TestClock.adjust(29 * 60_000 + 30_000);
+        yield* agentCall;
+        yield* TestClock.adjust(30_000);
+        yield* keeper.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        // Had the call restarted the tab's clock, the company would stay another half hour.
+        yield* TestClock.adjust(30_000 - 1);
+        yield* keeper.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        yield* TestClock.adjust(1);
+        yield* keeper.housekeeping();
+        assert.strictEqual(yield* state, "stopped");
+        const event = captured.records.find(
+          (record) => record.type === "binding" && record.taskId === bound.taskId
+        );
+        assert.include(event, { releaseCause: "idle", agentOnly: false });
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "runs the minute from a call that settles on a binding a deployment replaced while it ran",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, bundle } = yield* setupMemory("replaced");
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "agent");
+        const next = yield* Fleet.make({
+          replicaId: "replaced-next",
+          deploymentRevision: "replaced-next",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.isTrue(yield* next.stageDeployment("replaced-next"));
+        yield* next.housekeeping();
+        assert.isTrue(yield* next.promoteDeployment("replaced-next"));
+        yield* next.housekeeping();
+        const replacement = yield* next.ensureBinding(companyId);
+        assert.notStrictEqual(replacement.taskId, admission.binding.taskId);
+        const state = Effect.map(
+          provider.list,
+          (tasks) => tasks.find((task) => task.taskId === replacement.taskId)?.state
+        );
+        // The call outlives the minute it inherited, and holds the company while it runs.
+        yield* ranFor(admission.binding.taskId, 5 * 60_000);
+        yield* ranFor(replacement.taskId, 5 * 60_000);
+        yield* next.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        yield* admission.release;
+        yield* next.housekeeping();
+        yield* TestClock.adjust(60_000 - 1);
+        yield* next.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        yield* TestClock.adjust(1);
+        yield* next.housekeeping();
+        assert.strictEqual(yield* state, "stopped");
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "runs a settling call's minute on the binding that replaced its own as it settled",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, provider, left, bundle } = yield* setupMemory("handoff");
+        const store = yield* FleetStore.make;
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "agent");
+        yield* ranFor(admission.binding.taskId, 5 * 60_000);
+        const next = yield* Fleet.make({
+          replicaId: "handoff-next",
+          deploymentRevision: "handoff-next",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.isTrue(yield* next.stageDeployment("handoff-next"));
+        yield* next.housekeeping();
+        assert.isTrue(yield* next.promoteDeployment("handoff-next"));
+        // A replacement is committing as the call settles, so the settlement's update waits on the
+        // fenced row and its snapshot can't see the new one.
+        const started = yield* Deferred.make<void>();
+        const commit = yield* Deferred.make<void>();
+        const replacing = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const replaced = yield* store.replaceDeploymentBinding(
+                "handoff-next",
+                yield* Clock.currentTimeMillis
+              );
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(commit);
+              return replaced!;
+            })
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const settling = yield* admission.release.pipe(Effect.forkChild);
+        yield* lockWait("the settlement waits on the replacement's fence");
+        yield* Deferred.succeed(commit, undefined);
+        const replaced = yield* Fiber.join(replacing);
+        yield* Fiber.join(settling);
+        assert.deepStrictEqual(
+          yield* sql`SELECT agent_activity_at FROM execution_bindings
+          WHERE binding_id = ${replaced.replacement.bindingId}`,
+          [{ agent_activity_at: yield* Clock.currentTimeMillis }]
+        );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("runs a settling call's minute before it lets go of the binding", () =>
+    Effect.gen(function* () {
+      const { companyId, provider, left, right, bundle } = yield* setupMemory("settling");
+      const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "agent");
+      const state = Effect.map(
+        provider.list,
+        (tasks) => tasks.find((task) => task.taskId === admission.binding.taskId)?.state
+      );
+      // The call ran past its protection and the minute counted from its start.
+      yield* ranFor(admission.binding.taskId, 10 * 60_000);
+      // Another host's pass lands before each statement the release sends, so one lands as soon
+      // as the call lets go of the binding.
+      let passes = 0;
+      let passing = false;
+      const passFirst: Statement.Transformer = (statement) =>
+        passing || !/^\s*UPDATE execution_bindings/.test(statement.compile()[0])
+          ? Effect.succeed(statement)
+          : Effect.sync(() => {
+              passing = true;
+              passes++;
+            }).pipe(
+              Effect.andThen(right.housekeeping()),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  passing = false;
+                })
+              ),
+              Effect.orDie,
+              Effect.as(statement)
+            );
+      yield* admission.release.pipe(Effect.provideService(Statement.CurrentTransformer, passFirst));
+      assert.isAtLeast(passes, 1);
+      assert.strictEqual(yield* state, "running");
+      yield* TestClock.adjust(60_000);
+      yield* right.housekeeping();
+      assert.strictEqual(yield* state, "stopped");
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("starts a tab's thirty minutes when it leaves, whatever agent work is in flight", () =>
+    Effect.gen(function* () {
+      const { companyId, provider, left, right, bundle } = yield* setupMemory("tab-leaves");
+      const document = yield* Scope.make();
+      yield* right.lifecycle.connect(companyId).pipe(Scope.provide(document));
+      const bound = yield* right.ensureBinding(companyId);
+      const state = Effect.map(
+        provider.list,
+        (tasks) => tasks.find((task) => task.taskId === bound.taskId)?.state
+      );
+      const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "agent");
+      // The tab leaves while the agent's call runs, and a pass sees it gone.
+      yield* Scope.close(document, Exit.void);
+      yield* left.housekeeping();
+      yield* admission.release;
+      yield* TestClock.adjust(30 * 60_000 - 1);
+      yield* left.housekeeping();
+      assert.strictEqual(yield* state, "running");
+      yield* TestClock.adjust(1);
+      yield* left.housekeeping();
+      assert.strictEqual(yield* state, "stopped");
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("lets go of the binding when a settled call's clock can't be run", () =>
+    Effect.gen(function* () {
+      const { companyId, provider, left, bundle } = yield* setupMemory("clock-fails");
+      const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "agent");
+      const state = Effect.map(
+        provider.list,
+        (tasks) => tasks.find((task) => task.taskId === admission.binding.taskId)?.state
+      );
+      const lost: Statement.Transformer = (statement) =>
+        /^\s*UPDATE execution_bindings\s+SET agent_activity_at/.test(statement.compile()[0])
+          ? Effect.die("The connection was lost.")
+          : Effect.succeed(statement);
+      yield* admission.release.pipe(Effect.provideService(Statement.CurrentTransformer, lost));
+      // It keeps its crash protection to the deadline, then idles out as a crashed call does.
+      yield* TestClock.adjust(65_000);
+      yield* left.housekeeping();
+      assert.strictEqual(yield* state, "stopped");
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "starts a document's thirty minutes no earlier than the first pass to find it gone",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, provider, left, bundle } = yield* setupMemory("vanished");
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
+        yield* admission.release;
+        const state = Effect.map(
+          provider.list,
+          (tasks) => tasks.find((task) => task.taskId === admission.binding.taskId)?.state
+        );
+        // A document held the task for 35 minutes, then its host stopped without letting go.
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`UPDATE execution_bindings SET last_activity_at = ${now - 35 * 60_000}
+          WHERE task_id = ${admission.binding.taskId}`;
+        yield* left.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        yield* TestClock.adjust(30 * 60_000 - 1);
+        yield* left.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        yield* TestClock.adjust(1);
+        yield* left.housekeeping();
+        assert.strictEqual(yield* state, "stopped");
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "says how a call found its company's server and how long it waited, a refused wait included",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, bundle, sql } = yield* setupMemory("found", false);
+        const captured = yield* recording;
+        const call = (company: string, host = left) =>
+          Effect.gen(function* () {
+            const exit = yield* captured.events
+              .withEvent(
+                { type: "request" },
+                Effect.flatMap(
+                  host.lifecycle.acquire(company, bundle.patchId, "agent"),
+                  (admission) => admission.release
+                )
+              )
+              .pipe(Effect.exit);
+            const event = yield* captured.take;
+            if (event.type !== "request") return assert.fail(`a ${event.type} event`);
+            return {
+              found: event.companyBind,
+              waitedMs: event.bindWaitMs,
+              refused: Exit.isFailure(exit)
+            };
+          });
+        // The pool starts empty, so the first call waits for a launched task.
+        assert.include(yield* phase("first call", call(companyId)), {
+          found: "launch",
+          refused: false
+        });
+        assert.deepStrictEqual(yield* call(companyId), {
+          found: "bound",
+          waitedMs: 0,
+          refused: false
+        });
+        // Another company takes the launch's other spare, leaving the pool empty.
+        const other = "cmp_fleet_found_other";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${other}, ${other}, 'Fleet found')`;
+        assert.include(yield* call(other), { found: "spare", refused: false });
+        // A host whose launch never comes refuses the next cold call at the end of the bind wait.
+        const stalled = yield* Fleet.make({
+          replicaId: "found-stalled",
+          deploymentRevision: "found",
+          automaticHousekeeping: false
+        }).pipe(
+          Effect.provideService(
+            TaskProvider.TaskProvider,
+            TaskProvider.TaskProvider.of({ ...provider, start: () => Effect.never })
+          )
+        );
+        const cold = "cmp_fleet_found_cold";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${cold}, ${cold}, 'Fleet cold')`;
+        const refused = yield* call(cold, stalled).pipe(Effect.forkChild);
+        // The wait arms once the call's reads land, so the clock moves until it gives up.
+        const gaveUp = Effect.gen(function* () {
+          while (refused.pollUnsafe() === undefined) {
+            yield* TestClock.adjust(500);
+            yield* TestClock.withLive(Effect.sleep(5));
+          }
+          return yield* Fiber.join(refused);
+        });
+        assert.deepStrictEqual(yield* phase("refused call", gaveUp), {
+          found: "launch",
+          waitedMs: 40_000,
+          refused: true
+        });
+        // A call whose agent goes away while it waits says so too.
+        const gone = "cmp_fleet_found_gone";
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${gone}, ${gone}, 'Fleet gone')`;
+        const abandoned = yield* captured.events
+          .withEvent({ type: "request" }, stalled.lifecycle.acquire(gone, bundle.patchId, "agent"))
+          .pipe(Effect.forkChild);
+        for (let step = 0; step < 10; step++) {
+          yield* TestClock.adjust(500);
+          yield* TestClock.withLive(Effect.sleep(5));
+        }
+        yield* Fiber.interrupt(abandoned);
+        const event = yield* captured.take;
+        if (event.type !== "request") return assert.fail(`a ${event.type} event`);
+        assert.include(event, { outcome: "interrupted", companyBind: "launch" });
+        assert.isAbove(event.bindWaitMs ?? 0, 0);
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
     "allows only the leased replica to replenish, respects budget, and stops unknown provider tasks",
     () =>
       Effect.gen(function* () {
         const { provider, companyId, bundle, left, right, sql } = yield* setupMemory("budget");
-        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         assert.isTrue(yield* left.housekeeping());
         assert.isFalse(yield* right.housekeeping());
         assert.strictEqual(
@@ -941,26 +1324,28 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
-    "admits and releases a warm call in five platform statements, none in a transaction",
+    "admits and releases a warm call in six platform statements, none in a transaction",
     () =>
       Effect.gen(function* () {
         const { sql, companyId, left, bundle } = yield* setupMemory("statements");
-        yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
+        yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId, "page")).release;
         yield* TestClock.adjust(1_000);
         const now = yield* Clock.currentTimeMillis;
         const call = yield* recordStatements(
           Effect.gen(function* () {
-            const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+            const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
             yield* admission.release;
           })
         );
-        // The pause upsert and read, the warm read, `protect`, then the release.
+        // The pause upsert and read, the warm read and `protect`, then the caller's clock while it
+        // still holds the binding, and the release.
         const expected = [
           /^INSERT INTO execution_breakers /,
           /^SELECT paused_until AS "pausedUntil" FROM execution_breakers /,
           /^SELECT .* FROM execution_bindings WHERE company_id = \$1 AND state = 'active' AND EXISTS /,
           /^UPDATE execution_bindings SET protected_until = GREATEST/,
-          /^UPDATE execution_bindings SET last_activity_at = CASE /
+          /^UPDATE execution_bindings SET last_activity_at = GREATEST\(last_activity_at, \$1\) WHERE company_id = /,
+          /^UPDATE execution_bindings SET protected_until = 0 WHERE binding_id = /
         ];
         assert.lengthOf(call.statements, expected.length);
         call.statements.forEach(({ text, inTransaction }, index) => {
@@ -968,9 +1353,34 @@ it.layer(services)("host fleet controller", (it) => {
           assert.isFalse(inTransaction, text);
         });
         assert.deepStrictEqual(
-          yield* sql`SELECT protected_until, last_activity_at, idle_since FROM execution_bindings
+          yield* sql`SELECT protected_until, last_activity_at, agent_activity_at FROM execution_bindings
           WHERE company_id = ${companyId} AND state = 'active'`,
-          [{ protected_until: 0, last_activity_at: now, idle_since: null }]
+          [{ protected_until: 0, last_activity_at: now, agent_activity_at: 0 }]
+        );
+        // An agent's call is the same statements on its own clock.
+        yield* TestClock.adjust(1_000);
+        const agent = yield* recordStatements(
+          Effect.flatMap(
+            left.lifecycle.acquire(companyId, bundle.patchId, "agent"),
+            (admission) => admission.release
+          )
+        );
+        assert.lengthOf(agent.statements, expected.length);
+        assert.match(
+          agent.statements[4]!.text,
+          /^UPDATE execution_bindings SET agent_activity_at = GREATEST\(agent_activity_at, \$1\)/
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT last_activity_at, agent_activity_at FROM execution_bindings
+          WHERE company_id = ${companyId} AND state = 'active'`,
+          [{ last_activity_at: now, agent_activity_at: now + 1_000 }]
+        );
+        // A settlement that lands after a later one never moves its clock back.
+        yield* (yield* FleetStore.make).touch(companyId, now, "agent");
+        assert.deepStrictEqual(
+          yield* sql`SELECT agent_activity_at FROM execution_bindings
+          WHERE company_id = ${companyId} AND state = 'active'`,
+          [{ agent_activity_at: now + 1_000 }]
         );
         // A keepalive touch reads the pause, two statements, and the binding.
         const touch = yield* recordStatements(
@@ -991,8 +1401,8 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { sql, companyId, left, right, bundle } = yield* setupMemory("release");
-        const first = yield* left.lifecycle.acquire(companyId, bundle.patchId);
-        const second = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const first = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
+        const second = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const row = (taskId: string) =>
           sql<{
             state: string;
@@ -1023,7 +1433,7 @@ it.layer(services)("host fleet controller", (it) => {
     Effect.gen(function* () {
       const { sql, companyId, left, bundle } = yield* setupMemory("adopt-race");
       const store = yield* FleetStore.make;
-      const warm = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+      const warm = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
       yield* warm.release;
       const current = (yield* store.findTask(warm.binding.taskId))[0]!;
       const adopting = yield* Deferred.make<void>();
@@ -1045,7 +1455,9 @@ it.layer(services)("host fleet controller", (it) => {
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(adopting);
-      const call = yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.forkChild);
+      const call = yield* left.lifecycle
+        .acquire(companyId, bundle.patchId, "page")
+        .pipe(Effect.forkChild);
       yield* lockWait("the call's hold waits behind the adoption");
       yield* Deferred.succeed(commit, undefined);
       const adopted = yield* Fiber.join(adoption);
@@ -1065,7 +1477,7 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { sql, provider, companyId, left, bundle } = yield* setupMemory("retired");
-        const old = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const old = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         yield* old.release;
         const next = yield* Fleet.make({
           replicaId: "retired-next",
@@ -1077,7 +1489,7 @@ it.layer(services)("host fleet controller", (it) => {
         assert.isTrue(yield* next.promoteDeployment("retired-next"));
         // Retired without the drain that would fence the binding first.
         yield* sql`UPDATE execution_deployments SET retired = true WHERE revision = 'retired'`;
-        const fresh = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const fresh = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         assert.notStrictEqual(fresh.binding.taskId, old.binding.taskId);
         const tasks = yield* provider.list;
         assert.strictEqual(
@@ -1098,7 +1510,7 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { sql, companyId, left, bundle } = yield* setupMemory("trip");
-        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const now = yield* Clock.currentTimeMillis;
         const tripped = yield* Deferred.make<void>();
         const commit = yield* Deferred.make<void>();
@@ -1115,7 +1527,7 @@ it.layer(services)("host fleet controller", (it) => {
           .pipe(Effect.forkChild);
         yield* Deferred.await(tripped);
         const next = yield* left.lifecycle
-          .acquire(companyId, bundle.patchId)
+          .acquire(companyId, bundle.patchId, "page")
           .pipe(Effect.flip, Effect.forkChild);
         yield* lockWait("the next admission waits on the trip");
         yield* Deferred.succeed(commit, undefined);
@@ -1123,7 +1535,7 @@ it.layer(services)("host fleet controller", (it) => {
         assert.include(yield* Fiber.join(next), { code: "patch_paused", retryAfterSeconds: 60 });
         yield* admitted.release;
         yield* TestClock.adjust(60_000);
-        yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
+        yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId, "page")).release;
       }).pipe(Effect.scoped)
   );
 
@@ -1133,7 +1545,7 @@ it.layer(services)("host fleet controller", (it) => {
       const store = yield* FleetStore.make;
       const publish = yield* publishedPatch(companyId, bundle.patchId, "fleet-publish-reset");
       yield* publish(1);
-      yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId)).release;
+      yield* (yield* left.lifecycle.acquire(companyId, bundle.patchId, "page")).release;
       const now = yield* Clock.currentTimeMillis;
       yield* sql`UPDATE execution_breakers SET paused_until = ${now + 60_000}
         WHERE company_id = ${companyId} AND patch_id = ${bundle.patchId}`;
@@ -1151,7 +1563,9 @@ it.layer(services)("host fleet controller", (it) => {
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(cleared);
-      const call = yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.forkChild);
+      const call = yield* left.lifecycle
+        .acquire(companyId, bundle.patchId, "page")
+        .pipe(Effect.forkChild);
       yield* lockWait("the call waits on the publish's reset");
       yield* Deferred.succeed(commit, undefined);
       yield* Fiber.join(other);
@@ -1166,7 +1580,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, right, bundle } = yield* setupLocal("fence");
-        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admission.binding);
         assert.isTrue(yield* left.releaseCompany(companyId));
         assert.isFalse(yield* right.adopt(admission.binding, "fence-left"));
@@ -1256,12 +1670,12 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, right, bundle, sql } = yield* setupLocal("adopt");
-        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admission.binding);
         assert.isFalse(yield* right.adopt(admission.binding, "adopt-left"));
         yield* admission.release;
         assert.isTrue(yield* right.adopt(admission.binding, "adopt-left"));
-        const adopted = yield* right.lifecycle.acquire(companyId, bundle.patchId);
+        const adopted = yield* right.lifecycle.acquire(companyId, bundle.patchId, "page");
         assert.strictEqual(adopted.binding.taskId, admission.binding.taskId);
         assert.isAbove(adopted.binding.bindingEpoch, admission.binding.bindingEpoch);
         const stale = yield* provider
@@ -1312,7 +1726,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, bundle } = yield* setupLocal("rollout-old");
-        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admitted.binding);
         const captured = yield* recording;
         const replacement = yield* Fleet.make({
@@ -1330,7 +1744,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         assert.isTrue(yield* replacement.promoteDeployment("rollout-new"));
         assert.strictEqual((yield* left.ensureBinding(companyId)).taskId, admitted.binding.taskId);
         yield* replacement.housekeeping();
-        const freshAdmission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const freshAdmission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const fresh = freshAdmission.binding;
         assert.notStrictEqual(fresh.taskId, admitted.binding.taskId);
         assert.strictEqual(
@@ -1374,7 +1788,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, bundle, sql } = yield* setupLocal("quiesce");
-        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admitted.binding);
         yield* left.executor.invoke(
           request(loaded.binding, loaded.processGeneration!, "quiesce-call"),
@@ -1439,7 +1853,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, bundle, sql } = yield* setupLocal("lost-quiesce");
-        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admitted.binding);
         yield* left.executor.invoke(
           request(loaded.binding, loaded.processGeneration!, "lost-quiesce-call"),
@@ -1493,7 +1907,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, bundle, sql } = yield* setupLocal("retry-quiesce");
-        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admitted.binding);
         yield* left.executor.invoke(
           request(loaded.binding, loaded.processGeneration!, "retry-quiesce-call"),
@@ -1559,7 +1973,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, bundle, sql } = yield* setupLocal("unreachable");
-        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admitted.binding);
         yield* left.executor.invoke(
           request(loaded.binding, loaded.processGeneration!, "unreachable-call"),
@@ -1611,7 +2025,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, bundle, sql } = yield* setupLocal("meter");
-        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(bundle, admitted.binding);
         yield* left.executor.invoke(
           request(loaded.binding, loaded.processGeneration!, "meter-call"),
@@ -1722,7 +2136,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
           deploymentRevision: "breaker",
           automaticHousekeeping: false
         }).pipe(Effect.provideService(TaskProvider.TaskProvider, reporting));
-        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
         const loaded = yield* left.executor.bind(
           { ...bundle, versionId: "breaker-1-0" },
           admission.binding
@@ -1756,7 +2170,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         assert.isTrue(yield* collector.housekeeping());
         let generation = real.processGeneration;
         const kill = Effect.fn("syntheticKill")(function* (host: typeof left, versionId: string) {
-          const admitted = yield* host.lifecycle.acquire(companyId, bundle.patchId);
+          const admitted = yield* host.lifecycle.acquire(companyId, bundle.patchId, "page");
           const reportId = `${real.reportId}:${versionId}`;
           generation++;
           synthetic.set(reportId, {
@@ -1789,7 +2203,7 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         yield* kill(left, "breaker-1-2");
         for (const host of [left, right]) {
           const refusal = yield* host.lifecycle
-            .acquire(companyId, bundle.patchId)
+            .acquire(companyId, bundle.patchId, "page")
             .pipe(Effect.flip);
           assert.strictEqual(refusal.code, "patch_paused");
           assert.isAbove(refusal.retryAfterSeconds, 0);
@@ -1800,12 +2214,13 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
         const override = { companyId, limitId: "execution.breaker.kills", actor: "fleet-test" };
         yield* left.setLimitOverride({ ...override, value: 4 });
         assert.strictEqual(
-          (yield* right.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.flip)).value,
+          (yield* right.lifecycle.acquire(companyId, bundle.patchId, "page").pipe(Effect.flip))
+            .value,
           4
         );
         yield* left.removeLimitOverride(override);
         yield* publish(2);
-        const fresh = yield* right.lifecycle.acquire(companyId, bundle.patchId);
+        const fresh = yield* right.lifecycle.acquire(companyId, bundle.patchId, "page");
         yield* fresh.release;
         for (let index = 0; index < 3; index++)
           yield* kill(index % 2 === 0 ? left : right, `breaker-2-${index}`);
@@ -1815,11 +2230,11 @@ it.layer(services)("host fleet controller over local tasks", (it) => {
           .paused_until;
         yield* TestClock.setTime(paused - 1);
         assert.strictEqual(
-          (yield* left.lifecycle.acquire(companyId, bundle.patchId).pipe(Effect.flip)).code,
+          (yield* left.lifecycle.acquire(companyId, bundle.patchId, "page").pipe(Effect.flip)).code,
           "patch_paused"
         );
         yield* TestClock.adjust(1);
-        const expired = yield* right.lifecycle.acquire(companyId, bundle.patchId);
+        const expired = yield* right.lifecycle.acquire(companyId, bundle.patchId, "page");
         yield* expired.release;
         const metering =
           yield* sql`SELECT count(*)::integer AS kills FROM execution_breaker_kills WHERE company_id = ${companyId}`;

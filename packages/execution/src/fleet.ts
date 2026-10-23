@@ -11,6 +11,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -67,6 +68,16 @@ const housekeepingGuard = Context.Reference<Effect.Effect<void, SqlError | Lease
   { defaultValue: () => Effect.void }
 );
 const checkHousekeeping = Effect.flatMap(housekeepingGuard, (guard) => guard);
+/**
+ * One admission's search for its company's server, across its tries: when it began, how it
+ * found the server so far (already `bound`, a ready `spare`, or a `launch` it waited for), and
+ * the end of its one `execution.pool.wait`, set by its first try that has to claim.
+ */
+interface Search {
+  readonly startedAt: number;
+  found: "bound" | "spare" | "launch";
+  until?: number;
+}
 export interface Options {
   readonly replicaId: string;
   readonly deploymentRevision: string;
@@ -275,6 +286,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           spareWaitMs: row.spareWaitMs,
           peakProcesses: row.peakProcesses,
           releaseCause: row.releaseCause ?? "task_lost",
+          ...(row.agentOnly === null ? {} : { agentOnly: row.agentOnly }),
           outcome: row.releaseCause === "task_lost" ? "failure" : "success"
         },
         Effect.void
@@ -565,16 +577,18 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                   yield* store.activate(binding);
                 }
                 yield* collect(binding, yield* readStats(binding));
-                const idle = yield* limits.get({
+                const idle = yield* limits.getMany({
                   companyId: binding.companyId,
-                  limitId: "execution.company.idle"
+                  limits: {
+                    documents: "execution.company.idle",
+                    agents: "execution.company.agentIdle"
+                  }
                 });
                 yield* guard;
-                const fenced = yield* store.idleFence(
-                  binding,
-                  yield* Clock.currentTimeMillis,
-                  idle.value
-                );
+                const fenced = yield* store.idleFence(binding, yield* Clock.currentTimeMillis, {
+                  idleMs: idle.documents.value,
+                  agentIdleMs: idle.agents.value
+                });
                 if (fenced[0]) yield* finishStop(fenced[0]);
               })
             ),
@@ -653,20 +667,33 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       Effect.asVoid
     );
   });
-  const ensure = Effect.fn("Fleet.ensureBinding")(
-    function* (companyId: string) {
-      const startedAt = yield* Clock.currentTimeMillis;
+  /**
+   * The company's admissible binding, claiming a spare for `caller` when it has none and
+   * waiting for a launched one when the pool is empty, until the search's one
+   * `execution.pool.wait` runs out. It records how it found the server on `search`.
+   */
+  const find = Effect.fn("Fleet.find")(
+    function* (companyId: string, caller: ExecutionLifecycle.Caller, search: Search) {
       // A warm company's active binding needs no claim. `protect` still decides admission
       // against the same epoch, state and task; any miss takes the claim loop, which fences.
       const warm = (yield* store.findAdmissible(companyId))[0];
       if (warm) return warm;
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
+      search.until ??= search.startedAt + wait.value;
+      if (search.found === "bound") search.found = "spare";
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
         while (true) {
           const wake = changed;
           const now = yield* Clock.currentTimeMillis;
-          claimed ??= yield* store.claim(companyId, options.replicaId, now, now - startedAt);
+          claimed ??= yield* store.claim(
+            companyId,
+            options.replicaId,
+            now,
+            now - search.startedAt,
+            FleetStore.clocksOf(caller, now)
+          );
+          if (claimed === undefined) search.found = "launch";
           if (claimed) {
             if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
               yield* fence(claimed, "deployment").pipe(
@@ -700,22 +727,46 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           yield* Effect.sleep(50).pipe(Effect.raceFirst(Deferred.await(wake)));
         }
       }).pipe(
-        Effect.timeoutOrElse({ duration: wait.value, orElse: () => Effect.fail(busy(wait.value)) })
+        Effect.timeoutOrElse({
+          duration: Math.max(0, search.until - (yield* Clock.currentTimeMillis)),
+          orElse: () => Effect.fail(busy(wait.value))
+        })
       );
     },
     Effect.catchTags({ SchemaError: Effect.die }),
     Effect.mapError((cause) => (isLifecycleError(cause) ? cause : lifecycleFailure(cause)))
   );
+  const ensure = Effect.fn("Fleet.ensureBinding")(function* (
+    companyId: string,
+    caller: ExecutionLifecycle.Caller = "page"
+  ) {
+    return yield* find(companyId, caller, {
+      startedAt: yield* Clock.currentTimeMillis,
+      found: "bound"
+    });
+  });
   const releaseActivity = Effect.fn("Fleet.releaseActivity")(function* (
     companyId: string,
     unlock: Effect.Effect<void, SqlError>,
-    binding?: FleetStore.Binding
+    settled?: { readonly binding: FleetStore.Binding; readonly caller: ExecutionLifecycle.Caller }
   ) {
+    if (settled === undefined) {
+      // A document letting go runs the documents' clock; a pass that finds it gone first
+      // starts that window no earlier than then.
+      yield* unlock;
+      return yield* store.touch(companyId, yield* Clock.currentTimeMillis);
+    }
+    // Settled work runs its caller's clock while it still holds the binding, so no pass finds
+    // the binding free with the clock not yet run. It lets go whatever came of that.
+    const clocked = yield* Effect.exit(
+      store.touch(companyId, yield* Clock.currentTimeMillis, settled.caller)
+    );
     yield* unlock;
-    const now = yield* Clock.currentTimeMillis;
-    // A normal final settlement removes crash protection when all callers have
-    // released. A crashed owner leaves the absolute deadline protection intact.
-    yield* binding ? store.release(binding, now) : store.touch(companyId, now);
+    // A normal final settlement removes crash protection when all callers have released. A
+    // crashed owner, or a settlement whose clock didn't run, leaves the absolute deadline
+    // protection intact.
+    if (Exit.isSuccess(clocked)) yield* store.release(settled.binding);
+    else yield* Effect.logWarning("A settled call's idle clock was not run", clocked.cause);
   }, Effect.orDie);
   const lifecycle = ExecutionLifecycle.ExecutionLifecycle.of({
     connect: Effect.fn("Fleet.connect")(function* (companyId) {
@@ -723,12 +774,13 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         activity.hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
         (unlock) => releaseActivity(companyId, unlock)
       ).pipe(Effect.asVoid);
+      yield* ensure(companyId);
+      // After the bind, so a binding an agent claimed meanwhile still starts the documents' clock.
       yield* store
         .touch(companyId, yield* Clock.currentTimeMillis)
         .pipe(Effect.mapError(lifecycleFailure));
-      yield* ensure(companyId);
     }),
-    acquire: Effect.fn("Fleet.acquire")(function* (companyId, patchId) {
+    acquire: Effect.fn("Fleet.acquire")(function* (companyId, patchId, caller) {
       const now = yield* Clock.currentTimeMillis;
       const paused = yield* store
         .pausedUntil(companyId, patchId)
@@ -746,10 +798,21 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           value: threshold.value
         });
       }
+      // The call's event says how it found its company's server and how long it waited, a
+      // refused wait included.
+      const search: Search = { startedAt: now, found: "bound" };
+      const searched = Effect.flatMap(Clock.currentTimeMillis, (end) =>
+        WideEvents.enrich({ companyBind: search.found, bindWaitMs: end - now })
+      );
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           while (true) {
-            const binding = yield* restore(ensure(companyId));
+            // A refused or abandoned wait is recorded too.
+            const binding = yield* restore(find(companyId, caller, search)).pipe(
+              Effect.onExit((exit) =>
+                Exit.isFailure(exit) && search.until !== undefined ? searched : Effect.void
+              )
+            );
             const unlock = yield* activity
               .hold(FleetStore.bindingLock(binding.bindingId))
               .pipe(Effect.mapError(lifecycleFailure));
@@ -757,17 +820,20 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               .protect(
                 binding,
                 (yield* Clock.currentTimeMillis) + maximumCallMs,
-                yield* Clock.currentTimeMillis
+                yield* Clock.currentTimeMillis,
+                caller
               )
               .pipe(
                 Effect.mapError(lifecycleFailure),
                 Effect.onError(() => unlock.pipe(Effect.orDie))
               );
-            if (protectedBinding[0])
+            if (protectedBinding[0]) {
+              yield* searched;
               return {
                 binding: { taskId: binding.taskId, bindingEpoch: binding.bindingEpoch },
-                release: releaseActivity(companyId, unlock, binding)
+                release: releaseActivity(companyId, unlock, { binding, caller })
               };
+            }
             yield* unlock.pipe(Effect.mapError(lifecycleFailure));
           }
         })

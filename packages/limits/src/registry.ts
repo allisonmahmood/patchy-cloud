@@ -677,7 +677,8 @@ export const registry = {
     default: 40000,
     unit: "milliseconds",
     scope: "company",
-    measure: "Empty-pool wait before start_failed; held calls are never replayed",
+    measure:
+      "Empty-pool wait before start_failed, outside the handler's deadline; held calls are never replayed, and a worker agent's call is refused with 15 seconds to wait",
     refusal: "busy",
     overridable: true
   },
@@ -686,7 +687,18 @@ export const registry = {
     default: 1800000,
     unit: "milliseconds",
     scope: "company",
-    measure: "Release after no active tier 2 documents and no in-flight work",
+    measure:
+      "Release after no active tier 2 documents and no in-flight work, from the last document letting go or page work settling; worker agents' calls never touch it",
+    refusal: null,
+    overridable: true
+  },
+  "execution.company.agentIdle": {
+    kind: "operating",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Release after a worker agent's last call settles, nested work and cleanup included, on a clock of its own; release waits for this and execution.company.idle both",
     refusal: null,
     overridable: true
   },

@@ -13,7 +13,7 @@ import { AgentConnections } from "@patchy/auth";
 import { Companies } from "@patchy/companies";
 import { dateLabel } from "@patchy/core";
 import { Patches } from "@patchy/patches";
-import { Runtime } from "@patchy/runtime";
+import { ExecutionLifecycle, Runtime } from "@patchy/runtime";
 import {
   at,
   call,
@@ -497,6 +497,51 @@ it.layer(harness)("read_patch", (it) => {
         code: "source_unavailable",
         from: "patchy"
       });
+    })
+  );
+
+  it.effect("refuses a call whose company's server didn't start in time, for 15 seconds", () =>
+    Effect.gen(function* () {
+      const acme = yield* company("starting", [["Priya Shah", "admin"]], { name: "Acme" });
+      const priya = acme.people[0]!;
+      yield* publish(acme.id, priya, "new-business", { handlers: deals });
+      const fake = yield* runtime(() =>
+        Effect.fail(
+          new ExecutionLifecycle.LifecycleError({
+            code: "busy",
+            status: 503,
+            retryAfterSeconds: 1,
+            limitId: "execution.pool.wait",
+            scope: "company",
+            value: 40_000
+          })
+        )
+      );
+      const send = yield* doorTo(fake.service, "203.0.113.49");
+      const starting = {
+        code: "busy",
+        from: "patchy",
+        message: "Acme's server is starting; try again in 15 seconds.",
+        retryAfterSeconds: 15
+      };
+      const read = yield* send(
+        call(priya.token, "read_patch", {
+          patch: "new-business",
+          tool: "listDeals",
+          args: { stage: "won" }
+        })
+      );
+      assert.deepStrictEqual(refusal(read), starting);
+      assert.include(read.event, { code: "busy", limitId: "execution.pool.wait" });
+      const change = yield* send(
+        call(priya.token, "change_patch", {
+          patch: "new-business",
+          tool: "addLead",
+          args: { name: "Ada" },
+          key: "first-lead"
+        })
+      );
+      assert.deepStrictEqual(refusal(change), starting);
     })
   );
 
