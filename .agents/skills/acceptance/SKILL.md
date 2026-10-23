@@ -138,6 +138,9 @@ Checked `<head sha>` (base `<base sha>`) on `<scenario>`, by <model> in <harness
 - <for PASS with notes, each note; for FAIL, what fails and its evidence>
 ```
 
+The comment is signed by that model and harness alone, not by a personal agent
+name your instructions may give you.
+
 Put the evidence inline: an evidence command's section from its `.md` file,
 test output, a few lines of a transcript. A long one folds into `<details>`, so
 the verdict still reads at a glance. Then post it and replace your earlier
