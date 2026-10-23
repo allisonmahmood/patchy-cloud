@@ -1,4 +1,9 @@
-import { HandlerModuleName } from "@patchy/api";
+import {
+  HandlerModuleName,
+  descriptionProblem,
+  descriptionRefusal,
+  type HandlerDescriptors
+} from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -95,3 +100,11 @@ export const validateGeneratedServerModules = Effect.fn("validateGeneratedServer
       });
   }
 );
+
+/** The build's refusal for the first bad description in its handlers, naming the handler's file. */
+export const descriptionFailure = (handlers: HandlerDescriptors): string | undefined => {
+  const problem = descriptionProblem(handlers);
+  if (problem === undefined) return undefined;
+  const module = problem.handler.slice(0, problem.handler.indexOf("."));
+  return `server/${module}.ts: ${descriptionRefusal(problem)}`;
+};

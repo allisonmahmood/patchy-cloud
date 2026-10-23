@@ -5,6 +5,7 @@ import type {
   Fields,
   FileHandle,
   Json,
+  NonEmptyString,
   Row,
   SchemaInput,
   Upload,
@@ -128,10 +129,11 @@ export type ServerClient<Modules> = {
       : HandlerCall<Modules[M][N]>;
   };
 };
-export type RunClient<Modules> = {
+/** `ctx.run`: sibling handlers of the allowed kinds, queries and mutations unless narrowed. */
+export type RunClient<Modules, Kinds extends HandlerKindName = "query" | "mutation"> = {
   readonly [M in keyof Modules]: {
     // Resolve only the selected sibling; filtering keys would inspect the action being inferred.
-    readonly [N in keyof Modules[M]]: HandlerKind<Modules[M][N]> extends "query" | "mutation"
+    readonly [N in keyof Modules[M]]: HandlerKind<Modules[M][N]> extends Kinds
       ? HandlerCall<Modules[M][N]>
       : never;
   };
@@ -150,6 +152,9 @@ export interface MutationUnknownOutcome<Result> extends Error {
 
 export interface HandlerDescriptor {
   readonly kind: HandlerKindName;
+  readonly description?: string;
+  readonly readOnly?: true;
+  readonly agentTool?: true;
   readonly args: Readonly<Record<string, ValueDescriptor>>;
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
@@ -199,15 +204,21 @@ export interface Members {
 }
 export interface ContextBase {
   readonly viewer: Me;
+  /**
+   * The worker agent calling through Patchy MCP, by the name its person approved: a label, never
+   * proof. Null when a page calls, including a page's call to a handler an agent tool re-exports.
+   */
+  readonly agent: { readonly name: string } | null;
   log(message: string, details?: Json): void;
 }
+type ReadTables<C extends Config> = {
+  readonly [N in keyof C["tables"] & string]: ReadonlyOperations<
+    Pick<OwnedTable<C, N>, "get" | "getMany" | "list">
+  >;
+};
 export type QueryContext<C extends Config, Shared = Empty> = ContextBase &
   DeclaredMembers<C, Members> & {
-    readonly tables: {
-      readonly [N in keyof C["tables"] & string]: ReadonlyOperations<
-        Pick<OwnedTable<C, N>, "get" | "getMany" | "list">
-      >;
-    };
+    readonly tables: ReadTables<C>;
     readonly shared: QueryShared<Shared>;
     readonly files: { readonly [N in keyof C["files"]]: QueryFileStore };
   };
@@ -228,6 +239,23 @@ export type ActionContext<
   readonly connections: Connections;
   readonly run: RunClient<Modules>;
 };
+/**
+ * An action declared `readOnly: true`: an action's reads with no writes, and `ctx.run` for queries
+ * only. Patchy refuses a write forced past these types, so its connection reads count as reads.
+ */
+export type ReadOnlyActionContext<
+  C extends Config,
+  Modules = Empty,
+  Shared = Empty,
+  Connections = Empty
+> = ContextBase &
+  DeclaredMembers<C, Members> & {
+    readonly tables: ReadTables<C>;
+    readonly shared: ActionShared<Shared>;
+    readonly files: { readonly [N in keyof C["files"]]: ActionSharedFileStore };
+    readonly connections: Connections;
+    readonly run: RunClient<Modules, "query">;
+  };
 
 type Position = "args" | "result";
 type SchemaProblem<
@@ -287,22 +315,39 @@ type CheckSchema<
 type CheckFields<A extends Fields, K extends HandlerKindName, C extends Config> = {
   readonly [N in keyof A]: CheckSchema<A[N], K, "args", C, true>;
 };
-export interface HandlerBuilder<K extends HandlerKindName, C extends Config, Context> {
+type HandlerDefinition<
+  K extends HandlerKindName,
+  C extends Config,
+  Context,
+  A extends Fields,
+  R extends SchemaInput,
+  E extends readonly string[],
+  D extends string
+> = {
+  /** What the handler does, for agents: nonblank, at most 2,000 characters. */
+  readonly description?: NonEmptyString<D>;
+  readonly args: A & CheckFields<A, K, C>;
+  readonly result: R & CheckSchema<R, K, "result", C, false>;
+  readonly errors?: E;
+  readonly handler: (
+    ctx: Context,
+    args: NoInfer<ArgsOf<A, C>>
+  ) =>
+    | NoInfer<InferDescriptor<DescriptorOf<R>, C>>
+    | Promise<NoInfer<InferDescriptor<DescriptorOf<R>, C>>>;
+};
+export interface HandlerBuilder<K extends "query" | "mutation", C extends Config, Context> {
   <
     const A extends Fields,
     const R extends SchemaInput,
-    const E extends readonly string[] = readonly []
-  >(definition: {
-    readonly args: A & CheckFields<A, K, C>;
-    readonly result: R & CheckSchema<R, K, "result", C, false>;
-    readonly errors?: E;
-    readonly handler: (
-      ctx: Context,
-      args: NoInfer<ArgsOf<A, C>>
-    ) =>
-      | NoInfer<InferDescriptor<DescriptorOf<R>, C>>
-      | Promise<NoInfer<InferDescriptor<DescriptorOf<R>, C>>>;
-  }): Handler<K, ArgsOf<A, C>, InferDescriptor<DescriptorOf<R>, C>, E[number]>;
+    const E extends readonly string[] = readonly [],
+    const D extends string = string
+  >(
+    definition: HandlerDefinition<K, C, Context, A, R, E, D> & {
+      /** Only actions may be read-only. */
+      readonly readOnly?: never;
+    }
+  ): Handler<K, ArgsOf<A, C>, InferDescriptor<DescriptorOf<R>, C>, E[number]>;
 }
 export type QueryBuilder<C extends Config, Shared = Empty> = HandlerBuilder<
   "query",
@@ -310,12 +355,36 @@ export type QueryBuilder<C extends Config, Shared = Empty> = HandlerBuilder<
   QueryContext<C, Shared>
 >;
 export type MutationBuilder<C extends Config> = HandlerBuilder<"mutation", C, MutationContext<C>>;
-export type ActionBuilder<
+/** `readOnly: true` gives the handler a `ReadOnlyActionContext`; otherwise an `ActionContext`. */
+export interface ActionBuilder<
   C extends Config,
   Modules = Empty,
   Shared = Empty,
   Connections = Empty
-> = HandlerBuilder<"action", C, ActionContext<C, Modules, Shared, Connections>>;
+> {
+  <
+    const A extends Fields,
+    const R extends SchemaInput,
+    const E extends readonly string[] = readonly [],
+    const D extends string = string,
+    const ReadOnly extends true | undefined = undefined
+  >(
+    definition: HandlerDefinition<
+      "action",
+      C,
+      ReadOnly extends true
+        ? ReadOnlyActionContext<C, Modules, Shared, Connections>
+        : ActionContext<C, Modules, Shared, Connections>,
+      A,
+      R,
+      E,
+      D
+    > & {
+      /** Holds the action to reads: no writes in its context, and Patchy refuses forced ones. */
+      readonly readOnly?: ReadOnly;
+    }
+  ): Handler<"action", ArgsOf<A, C>, InferDescriptor<DescriptorOf<R>, C>, E[number]>;
+}
 export interface ServerBuilders<
   C extends Config,
   Modules = Empty,
@@ -330,6 +399,8 @@ export interface ServerBuilders<
 const makeBuilder =
   <K extends HandlerKindName>(kind: K) =>
   (definition: {
+    readonly description?: string;
+    readonly readOnly?: true;
     readonly args: Fields;
     readonly result: SchemaInput;
     readonly errors?: readonly string[];
@@ -344,8 +415,11 @@ const makeBuilder =
         enumerable: true
       });
     }
+    // Descriptions are checked on the inspected descriptors, where the refusal can name the fix.
     const descriptor = decodeHandlerDescriptor({
       kind,
+      ...(definition.description === undefined ? {} : { description: definition.description }),
+      ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly }),
       args,
       result: definition.result.toJSON(),
       ...(definition.errors === undefined ? {} : { errors: definition.errors })

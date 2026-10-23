@@ -73,6 +73,60 @@ it("extracts serializable descriptors without executing handlers", () => {
   assert.deepStrictEqual(manifest.handlers, extracted);
 });
 
+it("writes descriptions and the read-only flag, omitting them when absent", () => {
+  const peek = server.action({
+    readOnly: true,
+    description: "Counts leads without changing any.",
+    args: {
+      since: t.timestamp().optional().describe("Oldest lead to include."),
+      names: t.array(t.text().describe("One name.")).describe("Leads to count.").optional(),
+      stage: t.nullable(t.enum(["open"]).describe("Inner.")).describe("Outer.")
+    },
+    result: t.object({ count: t.integer().describe("Matching leads.") }),
+    handler: () => ({ count: 0 })
+  });
+  assert.deepStrictEqual(extractHandlerDescriptors({ leads: { peek } })["leads.peek"], {
+    kind: "action",
+    description: "Counts leads without changing any.",
+    readOnly: true,
+    args: {
+      since: { kind: "timestamp", description: "Oldest lead to include.", optional: true },
+      names: {
+        kind: "array",
+        element: { kind: "text", description: "One name." },
+        description: "Leads to count.",
+        optional: true
+      },
+      // Both are kept; whoever shows the value to an agent shows the outer one.
+      stage: {
+        kind: "nullable",
+        value: { kind: "enum", values: ["open"], description: "Inner." },
+        description: "Outer."
+      }
+    },
+    result: {
+      kind: "object",
+      fields: { count: { kind: "integer", description: "Matching leads." } }
+    }
+  });
+  const plain = server.action({ args: {}, result: t.boolean(), handler: () => true });
+  assert.deepStrictEqual(Object.keys(plain.descriptor), ["kind", "args", "result"]);
+});
+
+it("refuses the read-only flag on a query or mutation, past the types", () => {
+  for (const builder of [server.query, server.mutation])
+    assert.throws(
+      () =>
+        (builder as unknown as (definition: object) => unknown)({
+          readOnly: true,
+          args: {},
+          result: t.boolean(),
+          handler: () => true
+        }),
+      InvalidManifestError
+    );
+});
+
 it("extracts handlers constructed by an independently bundled server module", async () => {
   const bundle = await build({
     entryPoints: [new URL("./server.ts", import.meta.url).pathname],

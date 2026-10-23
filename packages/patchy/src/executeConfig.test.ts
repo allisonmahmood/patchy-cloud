@@ -259,6 +259,20 @@ describe("executeConfig", () => {
     }
   );
 
+  it("refuses a described table column, saying how to fix it", async () => {
+    const path = await fixture(
+      `export default defineConfig({ name: "described-column", tier: 1,
+        tables: { notes: table("Notes identified by id.", { title: t.text().optional().describe("The title.") }) }
+      });`
+    );
+    const failure = await executeConfig(path).then(() => undefined, ConfigExecution.configFailure);
+    expect(failure).toMatchObject({
+      code: "invalid_manifest",
+      message:
+        'Column "title" of table "notes" has .describe(), but table columns take no description. Remove .describe(), and say what the column holds in the table\'s description.'
+    });
+  });
+
   it("refuses declarations without generated stamps instead of inventing ids or revisions", async () => {
     const path = await fixture(
       'export default defineConfig({ name: "missing-stamps", tier: 1, uses: { sales: postgres("warehouse") } });'

@@ -161,11 +161,39 @@ class PrimitiveNameCollision extends Schema.TaggedError<PrimitiveNameCollision>(
 }
 const isPrimitiveNameCollision = Schema.is(PrimitiveNameCollision);
 
+class DescribedColumn extends Schema.TaggedError<DescribedColumn>()("DescribedColumn", {
+  table: DefinitionName,
+  column: DefinitionName
+}) {
+  override get message() {
+    return `Column "${this.column}" of table "${this.table}" has .describe(), but table columns take no description. Remove .describe(), and say what the column holds in the table's description.`;
+  }
+}
+const isDescribedColumn = Schema.is(DescribedColumn);
+const isDefinitionName = Schema.is(DefinitionName);
+const entries = (value: unknown): ReadonlyArray<readonly [string, unknown]> =>
+  typeof value === "object" && value !== null ? Object.entries(value) : [];
+const field = (value: unknown, name: string) => entries(value).find(([key]) => key === name)?.[1];
+
+/** `.describe()` makes a handler value, which a column's descriptor would otherwise just carry. */
+const describedColumn = (config: unknown) => {
+  for (const [table, definition] of entries(field(config, "tables")))
+    for (const [column, value] of entries(field(definition, "columns")))
+      // Only grammar-checked names reach the diagnostic, as with a name collision.
+      if (
+        field(value, "description") !== undefined &&
+        isDefinitionName(table) &&
+        isDefinitionName(column)
+      )
+        return new DescribedColumn({ table, column });
+  return undefined;
+};
+
 /** Only known config errors supply public diagnostics; arbitrary config exceptions stay in cause. */
 export const configFailure = (cause: unknown) =>
   new LocalError({
     message:
-      isPrimitiveNameCollision(cause) || cause instanceof StaleGenerated
+      isPrimitiveNameCollision(cause) || isDescribedColumn(cause) || cause instanceof StaleGenerated
         ? cause.message
         : "Could not execute patchy.config.ts. Check the config, its imports and primitive descriptions.",
     code: cause instanceof StaleGenerated ? cause.code : "invalid_manifest",
@@ -235,11 +263,13 @@ export async function executeConfig(
   options?: { readonly resolve: false; readonly source?: string }
 ): Promise<ExecutedManifest | UnresolvedManifest> {
   const absolutePath = resolve(path);
-  const input = decodeConfig(
+  const executed =
     options?.source === undefined
       ? await runConfig(absolutePath)
-      : await runEditedConfig(absolutePath, options.source)
-  );
+      : await runEditedConfig(absolutePath, options.source);
+  const described = describedColumn(executed);
+  if (described !== undefined) throw described;
+  const input = decodeConfig(executed);
   let config: typeof GenerationManifest.Type;
   try {
     config = decodeGenerationManifest({

@@ -2927,16 +2927,16 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
             result: { kind: "text" as const }
           }
         };
-        // Nothing writes these fields yet, so each descriptor is extended by hand.
+        // The SDK writes descriptions and the read-only flag; the agent tool mark comes only from
+        // a build of agent/, so that descriptor is marked by hand.
         const built = yield* Effect.promise(() =>
           build({
             stdin: {
               contents: `import { createGuest, query, action, t } from "patchy/server";
-                const described = ${JSON.stringify(handlers)};
-                const as = (name, handler) => ({ ...handler, descriptor: described[name] });
+                const lookup = query({ description: "Looks something up for an agent.", args: {}, result: t.text(), handler: async () => "found" });
                 export default createGuest({
-                  demo: { peek: as("demo.peek", action({ args: { since: t.timestamp() }, result: t.text(), handler: async () => "read" })) },
-                  agent: { lookup: as("agent.lookup", query({ args: {}, result: t.text(), handler: async () => "found" })) }
+                  demo: { peek: action({ readOnly: true, description: "Reads without changing anything.", args: { since: t.timestamp().describe("Oldest to include.") }, result: t.text().describe("What it read."), handler: async () => "read" }) },
+                  agent: { lookup: { ...lookup, descriptor: { ...lookup.descriptor, agentTool: true } } }
                 });`,
               resolveDir: new URL("../../patchy", import.meta.url).pathname,
               sourcefile: "agent-area-publish.ts"
@@ -2996,6 +2996,63 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           });
           assert.strictEqual(refused.status, 422);
           assert.include(yield* refused.json, { code: "invalid_manifest" });
+        }
+      }),
+    30_000
+  );
+
+  it.effect(
+    "refuses a blank or over-long description in the bundle, naming the handler and fix",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        // A builder can't type a blank literal, and the CLI checks before sending; a hand-rolled
+        // publish skips both.
+        for (const [description, message] of [
+          [
+            " ",
+            "demo.find's description of args.name is blank. Say what it holds, or remove its .describe()."
+          ],
+          [
+            "x".repeat(2_001),
+            "demo.find's description of args.name is 2,001 characters; descriptions are at most 2,000. Shorten it."
+          ]
+        ] as const) {
+          const built = yield* Effect.promise(() =>
+            build({
+              stdin: {
+                contents: `import { createGuest, query, t } from "patchy/server";
+                export default createGuest({
+                  demo: { find: query({ args: { name: t.text().describe(${JSON.stringify(description)}) }, result: t.text(), handler: async () => "found" }) }
+                });`,
+                resolveDir: new URL("../../patchy", import.meta.url).pathname,
+                sourcefile: "described-publish.ts"
+              },
+              bundle: true,
+              write: false,
+              platform: "browser",
+              format: "esm",
+              target: "es2022",
+              conditions: ["development"]
+            })
+          );
+          const handlers = {
+            "demo.find": {
+              kind: "query" as const,
+              args: { name: { kind: "text" as const, description } },
+              result: { kind: "text" as const }
+            }
+          };
+          const refused = yield* api.publish({
+            payload: publishRequest({
+              html: html("Described"),
+              server: built.outputFiles[0]!.text,
+              manifest: { ...Fixtures.manifest, tier: 2 as const, handlers }
+            }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(refused.status, 422);
+          assert.deepInclude(yield* refused.json, { code: "invalid_manifest", error: message });
         }
       }),
     30_000

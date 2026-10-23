@@ -90,6 +90,10 @@ An instance's HTTP 422 `invalid_description` is still `rejected` (exit 2).
 The tier 2 contract's descriptor extraction refuses a non-handler export from a
 one-level server module with `invalid_manifest`, local exit 1. A handler must
 declare a query, mutation or action with valid argument and result descriptors.
+A blank handler or value description, or one over 2,000 characters, is
+`invalid_manifest` naming the handler and the fix: local exit 1 from the build
+and dev builds, which also name its file, and exit 2 from the instance for a
+publish that skipped the check.
 Dev and test instances admit tier 2 publication. The server inspects
 the stored server bytes in a throwaway process. A descriptor disagreement,
 top-level throw, unresolved module or unfinished initializer is HTTP 422

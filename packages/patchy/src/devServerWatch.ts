@@ -11,7 +11,7 @@ import * as Scope from "effect/Scope";
 import { LocalError } from "./CliError.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
 import { watchServer, type BuiltServer } from "./serverBuild.js";
-import { discoverServerModules } from "./serverModules.js";
+import { descriptionFailure, discoverServerModules } from "./serverModules.js";
 
 export interface ServerBuild extends BuiltServer {
   readonly modules: readonly string[];
@@ -185,7 +185,18 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
                   "Could not inspect the server bundle. Its modules must load and export only valid handlers; the last successful binding stays served.",
                 cause
               })
-          )
+          ),
+          Effect.flatMap((handlers) => {
+            const problem = descriptionFailure(handlers);
+            return problem === undefined
+              ? Effect.succeed(handlers)
+              : Effect.fail(
+                  new LocalError({
+                    code: "invalid_manifest",
+                    message: `${problem} The last successful binding stays served.`
+                  })
+                );
+          })
         )
       };
     }

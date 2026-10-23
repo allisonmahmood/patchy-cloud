@@ -71,11 +71,13 @@ must be a `query`, `mutation` or `action`; its name is `<module>.<export>`.
 Keep reusable company code in `helpers/`, outside handler discovery. Import
 builders and bound context types from `patchy/_generated/server.js`, and `t` and
 `HandlerError` from `patchy/server`.
-Each builder takes `{ args, result, errors?, handler }`. `args` is a field map;
-`result` is one descriptor. The handler receives `(ctx, args)`.
+Each builder takes `{ description?, args, result, errors?, handler }`, and
+`action` also takes `readOnly: true`. `args` is a field map; `result` is one
+descriptor. The handler receives `(ctx, args)`.
 
 The generated builders bind the config's table types. A helper can accept
-`QueryContext`, `MutationContext` or `ActionContext` without repeating generics.
+`QueryContext`, `MutationContext`, `ActionContext` or `ReadOnlyActionContext`
+without repeating generics.
 A type-only import of the server modules gives the page its handler names and
 arguments; renaming a handler breaks callers at compile time. A helper's runtime
 imports join its caller's dependency graph, so a helper that imports server code
@@ -87,6 +89,14 @@ Scalar descriptors are `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`,
 `t.array(element)`, `t.enum(values)` and `t.nullable(value)`. `t.row("table")`
 validates the full row, including its columns and system fields, not just its id.
 Results are readonly.
+
+A handler's `description` says what it does, and any handler value takes
+`.describe(text)`, such as `t.text().describe("The customer's legal name.")`.
+Every description is nonblank and at most 2,000 characters; the build refuses
+others with `invalid_manifest`, naming the file, the handler and the fix. When
+`t.nullable(value)` and its value are both described, the outer description
+wins. Table columns take no `.describe()`: the types and config execution refuse
+it, and the table's description covers its columns.
 
 An argument field's `.optional()` permits an omitted key. It does not permit
 null; use `t.nullable(...)` for null. A table column's `.optional()` instead means
@@ -109,6 +119,16 @@ options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `put(name, upload)`
 - A mutation reads and writes owned tables in one atomic transaction. It cannot
   read file metadata. Use queries for file lists and metadata, and actions for
   file bytes, integrations and `ctx.run`.
+- A read-only action is an action declared `readOnly: true`. Its
+  `ReadOnlyActionContext` keeps an action's reads and drops its writes:
+  `ctx.viewer`, `ctx.log`, declared `ctx.members`, table `get`, `getMany` and
+  `list`, shared reads, file `list`, `stat` and `get`, `ctx.connections`, and
+  `ctx.run` for queries only. A write is a type error, and Patchy refuses one
+  forced past the types with `access_denied`. Only actions take the flag.
+
+Queries and read-only actions are reads; every other mutation or action is a
+change, even one that writes nothing. So Postgres and PostHog reads count as
+reads only from a read-only action.
 
 All three kinds expose `ctx.members` when `uses.members` is declared. Read
 `../patchy-members/SKILL.md` for candidates, resolution, member columns and

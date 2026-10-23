@@ -21,7 +21,11 @@ import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
 import { releaseFromPin } from "./packagePin.js";
-import { discoverServerModules, validateGeneratedServerModules } from "./serverModules.js";
+import {
+  descriptionFailure,
+  discoverServerModules,
+  validateGeneratedServerModules
+} from "./serverModules.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -341,6 +345,9 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
               })
           )
         );
+  const described = handlers === undefined ? undefined : descriptionFailure(handlers);
+  if (described !== undefined)
+    return yield* new LocalError({ message: described, code: "invalid_manifest" });
   const manifest = decodeManifest({
     ...configured,
     sdkImports: built.sdkImports,

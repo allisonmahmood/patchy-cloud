@@ -167,6 +167,83 @@ export const HandlerDescriptors = Schema.Record(Schema.String, HandlerDescriptor
 );
 export type HandlerDescriptors = typeof HandlerDescriptors.Type;
 
+/** The most Unicode code points a handler or value description may have. */
+export const descriptionLimit = 2_000;
+
+/** A description that breaks the rule: where it is, and whether it is blank or too long. */
+export const DescriptionProblem = Schema.Struct({
+  /** The handler, `module.export`. */
+  handler: Schema.String,
+  /** The value's path, such as `args.filter.ids[]`; absent for the handler's own description. */
+  value: Schema.optionalKey(Schema.String),
+  violation: Schema.Literals(["blank", "long"]),
+  /** In code points. */
+  length: Schema.Number
+});
+export type DescriptionProblem = typeof DescriptionProblem.Type;
+
+const violation = (text: string) => {
+  const length = [...text].length;
+  if (text.trim() === "") return { violation: "blank" as const, length };
+  return length > descriptionLimit ? { violation: "long" as const, length } : undefined;
+};
+
+const valueProblem = (
+  schema: HandlerSchema,
+  handler: string,
+  value: string
+): DescriptionProblem | undefined => {
+  const own = schema.description === undefined ? undefined : violation(schema.description);
+  if (own !== undefined) return { handler, value, ...own };
+  switch (schema.kind) {
+    case "object":
+      for (const [name, field] of Object.entries(schema.fields)) {
+        const problem = valueProblem(field, handler, `${value}.${name}`);
+        if (problem !== undefined) return problem;
+      }
+      return undefined;
+    case "array":
+      return valueProblem(schema.element, handler, `${value}[]`);
+    case "nullable":
+      return valueProblem(schema.value, handler, value);
+    default:
+      return undefined;
+  }
+};
+
+/**
+ * The first description that breaks the rule, nonblank and at most 2,000 code points. Readers
+ * accept any description, so the CLI's build and the instance's publish run this on the
+ * descriptors they inspect.
+ */
+export const descriptionProblem = (
+  handlers: HandlerDescriptors
+): DescriptionProblem | undefined => {
+  for (const [handler, descriptor] of Object.entries(handlers)) {
+    const own =
+      descriptor.description === undefined ? undefined : violation(descriptor.description);
+    if (own !== undefined) return { handler, ...own };
+    for (const [field, schema] of Object.entries(descriptor.args)) {
+      const problem = valueProblem(schema, handler, `args.${field}`);
+      if (problem !== undefined) return problem;
+    }
+    const problem = valueProblem(descriptor.result, handler, "result");
+    if (problem !== undefined) return problem;
+  }
+  return undefined;
+};
+
+/** What a description problem says: the handler, the value and how to fix it. */
+export const descriptionRefusal = (problem: DescriptionProblem): string => {
+  const what =
+    problem.value === undefined
+      ? `${problem.handler}'s description`
+      : `${problem.handler}'s description of ${problem.value}`;
+  if (problem.violation === "blank")
+    return `${what} is blank. ${problem.value === undefined ? "Say what it does, or leave the description out." : "Say what it holds, or remove its .describe()."}`;
+  return `${what} is ${problem.length.toLocaleString("en-US")} characters; descriptions are at most ${descriptionLimit.toLocaleString("en-US")}. Shorten it.`;
+};
+
 export const handlerKinds = (
   handlers: HandlerDescriptors | undefined
 ): Readonly<Record<string, HandlerKind>> =>

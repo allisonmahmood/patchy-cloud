@@ -630,6 +630,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 PatchQuotaReached: () => replayOrRespond(quotaResponse()),
                 InvalidManifest: (error) =>
                   replayOrRespond(rejected("invalid_manifest", error.message)),
+                InvalidHandlerDescription: (error) =>
+                  replayOrRespond(rejected("invalid_manifest", error.message)),
                 HasPrimitives: (error) =>
                   replayOrRespond(rejected("has_primitives", error.message)),
                 PatchNotOpenable: (error) =>

@@ -18,6 +18,7 @@ import type {
   ActionContext,
   QueryContext,
   MutationContext,
+  ReadOnlyActionContext,
   ServerModules,
   config
 } from "./server.generated.types.js";
@@ -137,8 +138,119 @@ export const sync = action({
     return (await ctx.files.documents.stat(args.name))?.handle ?? null;
   }
 });
+/** A helper typed for read-only actions; an `ActionContext` helper would need writes. */
+const countLeads = async (ctx: ReadOnlyActionContext) =>
+  (await ctx.tables.leads.list({ limit: 20 })).rows.length;
+export const peek = action({
+  readOnly: true,
+  description: "Counts leads and totals sales without changing anything.",
+  args: {
+    stage: t.enum(["open", "closed"]).describe("Which leads to count."),
+    since: t.timestamp().optional().describe("Oldest lead to include."),
+    names: t.array(t.text().describe("One lead's name.")).describe("Leads to count.").optional()
+  },
+  result: t
+    .object({ count: t.integer().describe("Matching leads."), total: t.number() })
+    .describe("What matched."),
+  handler: async (ctx, args) => {
+    const agent: { readonly name: string } | null = ctx.agent;
+    const stage: "open" | "closed" = args.stage;
+    const since: string | undefined = args.since;
+    await ctx.members.list();
+    await ctx.tables.leads.get("lead" as Id<"leads">);
+    await ctx.tables.leads.getMany([]);
+    await ctx.shared.directory.list();
+    const logo: Uint8Array = await ctx.shared.assets.get("logos/company.svg");
+    await ctx.files.documents.list();
+    await ctx.files.documents.stat("invoice.pdf");
+    await ctx.files.documents.get("invoice.pdf");
+    const [sales] = await ctx.connections.sales.query("select sum(amount) as total from sales");
+    await ctx.run.leads.list({ stage: null });
+    // @ts-expect-error a read-only action cannot insert rows
+    await ctx.tables.leads.insert({ name: "forbidden" });
+    // @ts-expect-error a read-only action cannot update rows
+    await ctx.tables.leads.update("lead" as Id<"leads">, { name: "forbidden" });
+    // @ts-expect-error a read-only action cannot delete rows
+    await ctx.tables.leads.delete("lead" as Id<"leads">);
+    // @ts-expect-error a read-only action cannot put files
+    await ctx.files.documents.put("invoice.pdf", logo);
+    // @ts-expect-error a read-only action cannot delete files
+    await ctx.files.documents.delete("invoice.pdf");
+    // @ts-expect-error a read-only action runs queries only, never mutations
+    void ctx.run.leads.save({ name: "forbidden" });
+    // @ts-expect-error a read-only action never runs actions
+    void ctx.run.leads.peek({ stage: "open" });
+    // @ts-expect-error a read-only action's context is not an action's
+    await totalSales(ctx);
+    ctx.log(stage, { since: since ?? null, agent: agent?.name ?? null });
+    return { count: await countLeads(ctx), total: sales?.total ?? 0 };
+  }
+});
+
+const definitions = () => {
+  query({
+    // @ts-expect-error only actions may be read-only
+    readOnly: true,
+    args: {},
+    result: t.boolean(),
+    handler: () => true
+  });
+  mutation({
+    // @ts-expect-error only actions may be read-only
+    readOnly: true,
+    args: {},
+    result: t.boolean(),
+    handler: () => true
+  });
+  action({
+    // @ts-expect-error the flag is the literal true or absent
+    readOnly: false,
+    args: {},
+    result: t.boolean(),
+    handler: () => true
+  });
+  query({
+    // @ts-expect-error a description cannot be an empty literal
+    description: "",
+    args: {},
+    result: t.boolean(),
+    handler: () => true
+  });
+  query({
+    // @ts-expect-error a value's description cannot be an empty literal
+    args: { name: t.text().describe("") },
+    result: t.boolean(),
+    handler: () => true
+  });
+  query({
+    // @ts-expect-error a described column stays table-only: defaults have no description
+    args: { limit: t.integer().default(20).describe("Most rows.") },
+    result: t.boolean(),
+    handler: () => true
+  });
+  query({
+    // @ts-expect-error a described reference is still table-only
+    args: { id: t.ref("leads").describe("A lead.") },
+    result: t.boolean(),
+    handler: () => true
+  });
+  query({
+    args: {},
+    // @ts-expect-error describing a value keeps the result-root rule against optional
+    result: t.text().describe("A name.").optional(),
+    handler: () => "value"
+  });
+};
+void definitions;
 
 export type ServerAssertions = [
+  Assert<Equal<HandlerKind<typeof peek>, "action">>,
+  Assert<Equal<HandlerArgs<typeof peek>["stage"], "open" | "closed">>,
+  Assert<Equal<HandlerArgs<typeof peek>["since"], string | undefined>>,
+  Assert<Equal<HandlerArgs<typeof peek>["names"], readonly string[] | undefined>>,
+  Assert<Equal<HandlerResult<typeof peek>["count"], number>>,
+  Assert<Equal<QueryContext["agent"], { readonly name: string } | null>>,
+  Assert<Equal<MutationContext["agent"], ActionContext["agent"]>>,
   Assert<Equal<HandlerKind<typeof list>, "query">>,
   Assert<Equal<HandlerErrors<typeof save>, "duplicate">>,
   Assert<Equal<HandlerArgs<typeof list>["search"], string | undefined>>,

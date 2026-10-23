@@ -195,6 +195,14 @@ handles and action-argument uploads. Optional argument keys may be absent;
 optional columns remain nullable. Defaults and refs are table-only. Queries
 cannot write, mutations cannot reach shared data, connections, file bytes or
 `ctx.run`, and actions can call only sibling queries and mutations.
+`action({ readOnly: true, … })` declares a read-only action: its context keeps
+an action's reads and runs only queries, and Patchy refuses a write forced past
+the types. Only actions take the flag. Every handler takes an optional
+`description` and every handler value `.describe(text)`; table columns take
+none, and config execution refuses one with `invalid_manifest`. Descriptions are
+nonblank and at most 2,000 characters; the build and the instance refuse others
+as `invalid_manifest`, naming the handler and the fix, and the build also names
+its file.
 Server-side shared reads return promises, without browser subscription methods
 or query stores.
 

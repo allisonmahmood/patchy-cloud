@@ -235,7 +235,7 @@ it.live(
 );
 
 it.live(
-  "recovers after import refusals, failed builds, and invalid handler exports",
+  "recovers after import refusals, failed builds, invalid handler exports and descriptions",
   () =>
     Effect.gen(function* () {
       const { root, fs, path } = yield* repo;
@@ -257,6 +257,15 @@ it.live(
 
       yield* save(source, "export const read = 42;");
       assert.strictEqual((yield* next.pipe(Effect.flip)).code, "invalid_manifest");
+      yield* save(
+        source,
+        handler("text").replace("t.text()", `t.text().describe("${"x".repeat(2_001)}")`)
+      );
+      assert.deepInclude(yield* next.pipe(Effect.flip), {
+        code: "invalid_manifest",
+        message:
+          "server/leads.ts: leads.read's description of result is 2,001 characters; descriptions are at most 2,000. Shorten it. The last successful binding stays served."
+      });
       yield* save(source, handler("text"));
       assert.deepStrictEqual((yield* next).handlers, initial.handlers);
     }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, DirectoryWatch.layer])),

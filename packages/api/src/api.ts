@@ -228,7 +228,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "version from `GET /api/release`. Tiers 0, 1 and 2 may define tables and file stores, provisioned additively; " +
           "tier 3 answers `tier_mismatch`. Tier 2 is admitted on dev and test instances; production requires the fleet executor. " +
           "Tier 2 requires `server`, a closed JavaScript module. Stored bytes are inspected in a throwaway process: " +
-          "descriptor disagreement, load failure or timeout answers `invalid_manifest`. A server artifact below tier 2 is `tier_mismatch`. " +
+          "descriptor disagreement, load failure or timeout answers `invalid_manifest`, and so does a blank handler or value " +
+          "description or one over 2,000 code points, with an error naming the handler and how to fix it. A server artifact below tier 2 is `tier_mismatch`. " +
           "Zero handlers warns. `artifacts.html` is always returned; tier 2 also returns `artifacts.server` and " +
           "`handlers: [{name, kind}]` sorted by name. Both artifact records carry `sha256` and UTF-8 `bytes`. " +
           "Publishing tier 2 to a public patch requires explicit company scope, otherwise `tier2_not_public`. " +

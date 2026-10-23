@@ -21,7 +21,13 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { contentHash, newInternalId, newPatchId, sha256 } from "@patchy/core";
 import { ContentStore } from "@patchy/content-store";
-import { HandlerDescriptors, WIRE_VERSION } from "@patchy/api";
+import {
+  DescriptionProblem,
+  HandlerDescriptors,
+  WIRE_VERSION,
+  descriptionProblem,
+  descriptionRefusal
+} from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Inspection from "@patchy/execution/inspection";
 import { DeploymentConfig } from "@patchy/limits";
@@ -42,6 +48,16 @@ export class InvalidManifest extends Schema.TaggedError<InvalidManifest>()("Inva
 }) {
   override get message() {
     return `Invalid server manifest: ${this.reason}.`;
+  }
+}
+
+/** A handler or value description in the stored bundle that is blank or over the limit. */
+export class InvalidHandlerDescription extends Schema.TaggedError<InvalidHandlerDescription>()(
+  "InvalidHandlerDescription",
+  DescriptionProblem.fields
+) {
+  override get message() {
+    return descriptionRefusal(this);
   }
 }
 
@@ -85,6 +101,7 @@ export class Content extends Context.Service<
       | Patches.Tier2NotPublic
       | SqlError
       | InvalidManifest
+      | InvalidHandlerDescription
       | ContentStore.InvalidObjectKey
       | ContentStore.StoreUnavailable
     >;
@@ -156,6 +173,9 @@ export const make = Effect.gen(function* () {
       );
       if (!sameHandlers(handlers, input.manifest.handlers ?? {}))
         return yield* new InvalidManifest({ reason: "descriptors" });
+      // Readers accept any description; a new version must keep the rule.
+      const problem = descriptionProblem(handlers);
+      if (problem !== undefined) return yield* new InvalidHandlerDescription(problem);
       server = {
         objectKey,
         sha256: sha256(stored),
