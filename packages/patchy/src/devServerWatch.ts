@@ -57,7 +57,8 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       )
     );
   const changes = yield* Queue.unbounded<Change>();
-  const inspection = yield* Inspection.make().pipe(
+  // The repo pins workerd, so a CLI installed without one still inspects its server.
+  const inspection = yield* Inspection.make({ workerdFrom: root }).pipe(
     Effect.mapError(
       (cause) =>
         new LocalError({

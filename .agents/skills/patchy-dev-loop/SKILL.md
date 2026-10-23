@@ -75,6 +75,22 @@ Done when `pnpm dev status` exits 0.
   replace their Patchy skill, and `pnpm dev down` undoes neither. Onboarding
   checks use DEVELOPMENT's throwaway machine, under **Front door and
   onboarding**.
+- **Worker agents.** `pnpm dev up` also prints `worker-claude` and
+  `worker-codex <person>`: people's own agents using the environment's patches
+  through Patchy MCP, which reach a tier 2 patch's `agent/` tools while the
+  company's agent access is on (`brightline` has both). Neither loads the
+  person's instructions, skills, plugins or config, and both reach Patchy only
+  through `/mcp`. `worker-claude` signs in through consent: `/mcp` ›
+  Authenticate opens the consent page in the person's browser, where they sign
+  in as one of the scenario's people; its sign-in stays in their
+  `~/.claude/.credentials.json` after `down`, one entry per worktree and address, which
+  `/mcp` › Clear authentication removes. `worker-codex <person>` mints a new
+  connection as that person on each launch. For one task without a person:
+  `…/worker-codex jordan exec --skip-git-repo-check "<task>" < /dev/null`, and
+  to let it change, add
+  `-c 'mcp_servers.patchy-dev-<hash>.tools.change_patch.approval_mode="approve"'`
+  with the server name its `config.toml` holds. DEVELOPMENT's **Environments**
+  has what each needs.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
   A tier 2 repo's agent tools answer `pnpm patchy dev agent`, which lists them as
   an agent sees them, and `pnpm patchy dev agent <tool> '<json>' [--colleague]`,

@@ -7,11 +7,9 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { sha256 } from "@patchy/core";
-import { layerFromUrl } from "@patchy/sql";
 
 const Slug = Schema.String.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/));
 const Email = Schema.String.check(Schema.isPattern(/^[^@\s]+@[^@\s]+$/));
@@ -41,7 +39,12 @@ export const FilePatch = Schema.Struct({
 });
 
 export const Scenario = Schema.Struct({
-  company: Schema.Struct({ name: Schema.NonEmptyString, handle: Slug }),
+  company: Schema.Struct({
+    name: Schema.NonEmptyString,
+    handle: Slug,
+    /** The company's agent access starts on, turned on by the publisher, so worker agents can use its agent areas. */
+    agentAccess: Schema.optionalKey(Schema.Boolean)
+  }),
   people: Schema.NonEmptyArray(Person),
   /** The admin the environment's CLI publishes as. */
   publisher: Slug,
@@ -113,37 +116,43 @@ export const ids = (scenario: Scenario, person: Person) => ({
 export const publisherToken = (scenario: Scenario) =>
   `patchy-env-${scenario.company.handle}-${scenario.publisher}`;
 
-/** Seeds the scenario's company, people and publishing key into a migrated database. */
-export const seedScenario = Effect.fn("seedScenario")(function* (
-  databaseUrl: string,
-  scenario: Scenario
-) {
-  yield* Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const companyId = `cmp_env_${scenario.company.handle}`;
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
+/**
+ * Seeds the scenario's company, people and publishing key into a migrated database, and turns
+ * agent access on when the scenario asks. Every start seeds again; agent access is turned on
+ * only while nobody has ever switched it, so a switch at Company survives restarts.
+ */
+export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scenario) {
+  const sql = yield* SqlClient.SqlClient;
+  const companyId = `cmp_env_${scenario.company.handle}`;
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`
+        INSERT INTO companies (id, handle, name, created_at)
+        VALUES (${companyId}, ${scenario.company.handle}, ${scenario.company.name}, now())
+        ON CONFLICT (id) DO UPDATE SET handle = EXCLUDED.handle, name = EXCLUDED.name`;
+      for (const person of scenario.people) {
+        const { userId, clerkUserId, tokenId } = ids(scenario, person);
         yield* sql`
-          INSERT INTO companies (id, handle, name, created_at)
-          VALUES (${companyId}, ${scenario.company.handle}, ${scenario.company.name}, now())
-          ON CONFLICT (id) DO UPDATE SET handle = EXCLUDED.handle, name = EXCLUDED.name`;
-        for (const person of scenario.people) {
-          const { userId, clerkUserId, tokenId } = ids(scenario, person);
+          INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
+          VALUES (${userId}, ${clerkUserId}, ${companyId}, ${person.email.toLowerCase()},
+            ${person.name}, ${person.role}, now())
+          ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name,
+            role = EXCLUDED.role, deactivated_at = NULL`;
+        if (person.key === scenario.publisher)
           yield* sql`
-            INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
-            VALUES (${userId}, ${clerkUserId}, ${companyId}, ${person.email.toLowerCase()},
-              ${person.name}, ${person.role}, now())
-            ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name,
-              role = EXCLUDED.role, deactivated_at = NULL`;
-          if (person.key === scenario.publisher)
-            yield* sql`
-              INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
-              VALUES (${tokenId}, ${userId}, ${"Dev environment"},
-                ${sha256(publisherToken(scenario))}, now(), now() + interval '90 days', now())
-              ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash,
-                expires_at = EXCLUDED.expires_at, last_used_at = EXCLUDED.last_used_at, revoked_at = NULL`;
-        }
-      })
-    );
-  }).pipe(Effect.provide(layerFromUrl(Redacted.make(databaseUrl))));
+            INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+            VALUES (${tokenId}, ${userId}, ${"Dev environment"},
+              ${sha256(publisherToken(scenario))}, now(), now() + interval '90 days', now())
+            ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash,
+              expires_at = EXCLUDED.expires_at, last_used_at = EXCLUDED.last_used_at, revoked_at = NULL`;
+      }
+      if (scenario.company.agentAccess === true) {
+        const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
+        yield* sql`
+          UPDATE companies SET agent_access_on = true,
+            agent_access_changed_by = ${ids(scenario, publisher).userId}, agent_access_changed_at = now()
+          WHERE id = ${companyId} AND agent_access_changed_at IS NULL`;
+      }
+    })
+  );
 });

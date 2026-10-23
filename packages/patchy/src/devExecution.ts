@@ -27,6 +27,8 @@ export interface ServerBinding {
 export interface Options {
   readonly server?: ServerBinding;
   readonly observe?: (settlement: Invocation.DevSettlement) => Effect.Effect<void>;
+  /** The patch repo, whose pinned workerd runs the server, so a CLI installed without one still does. */
+  readonly workerdFrom?: string;
 }
 
 // Dev settlement goes to dev.log, never to the platform attribution tables.
@@ -72,7 +74,8 @@ export const make = Effect.fn("DevExecution.make")(function* (
   const executor = yield* Local.make({
     companyId: version.companyId,
     callbackUrls: [listener.url],
-    environment: "development"
+    environment: "development",
+    ...(options.workerdFrom === undefined ? {} : { workerdFrom: options.workerdFrom })
   });
   const bundles = new WeakMap<typeof Manifest.Type, GuestProtocol.Bundle>();
   const invocation = yield* Invocation.makeDev({

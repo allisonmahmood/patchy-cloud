@@ -4,12 +4,12 @@ What `pnpm dev up <scenario>` builds an environment from. See `docs/DEVELOPMENT.
 
 Each folder holds a `scenario.json`:
 
-- `company`: name and handle.
+- `company`: name and handle, and `agentAccess: true` to start the company's agent access on, turned on by the publisher, so worker agents can use its agent areas from the start. Every start seeds again, but only a company whose switch nobody has touched is turned on, so turning it off at Company lasts until `pnpm dev down`.
 - `people`: `key`, `name`, `email` and `admin` or `member` role. Use `.example` addresses; no mail is ever sent.
 - `publisher`: the admin the environment's CLI publishes as.
 - `patches`: repo patches (`repo`, `tier`, `description`, optional `sampleData`) and file patches (`file`, `name`, `description`), published in order.
 
-A repo patch's source is `patches/<repo>/`, holding only builder-owned files: `src/`, `server/`, `helpers/`, `fixtures/`, `index.html`, `patchy.config.ts` and `AGENTS.md`. `up` runs `patchy init` at the scenario's tier, copies these over the starter, refreshes and publishes. Managed files (pins, lockfile, `patchy/_generated/`, project skills) always come from the instance's current release.
+A repo patch's source is `patches/<repo>/`, holding only builder-owned files: `src/`, `server/`, `agent/`, `helpers/`, `fixtures/`, `index.html`, `patchy.config.ts` and `AGENTS.md`. `up` runs `patchy init` at the scenario's tier, copies these over the starter, refreshes and publishes. Managed files (pins, lockfile, `patchy/_generated/`, project skills) always come from the instance's current release.
 
 `sampleData: true` means the patch's empty state has a **Load sample data** button. `up` presses it once, as the publisher, after publishing. Sample data comes from the patch's own code, so it uses the scenario's people and goes through the patch's own rules.
 
@@ -19,7 +19,9 @@ File patches are static pages in `files/`, published with their `name` and `desc
 
 An agent started from the environment's `agent` launcher makes new patches and pages in the workspace beside these repos, as the workspace's `CLAUDE.md` tells it, so `pnpm dev down` removes them with the rest. One builder agent per patch is the norm; nothing enforces it.
 
-| Scenario     | What it is                                                                                                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `team`       | The default. Acme Co: Ada (admin), Ben and Cleo. No patches.                                                                                                                                |
-| `brightline` | A brand and digital agency: New Business (tier 2 CRM board), Spend Requests (tier 2 approvals with receipts), Kudos (tier 1) and a tier 0 kickoff brief. Five people, Allison is the admin. |
+A tier 2 repo's `agent/` is its agent area: the tools people's own agents use through Patchy MCP. The environment's worker launchers, `worker-claude` and `worker-codex <person>`, are such agents; DEVELOPMENT's **Environments** says what each needs.
+
+| Scenario     | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `team`       | The default. Acme Co: Ada (admin), Ben and Cleo. No patches.                                                                                                                                                                                                                                                                                                                                                                                            |
+| `brightline` | A brand and digital agency: New Business (tier 2 CRM board), Spend Requests (tier 2 approvals with receipts), Kudos (tier 1) and a tier 0 kickoff brief. Five people, Allison is the admin. Agent access is on, and both tier 2 patches have agent areas that keep their rules: New Business's agents list deals, add leads (saying what happens next), move deals and add notes; Spend's list requests, submit ones under $500, and approve or reject. |

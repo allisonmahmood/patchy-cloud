@@ -192,11 +192,9 @@ after 30 days without a call, or when its person's credentials end. Nothing
 else mints one without consent, and no route does. Agents use it at the door,
 `<url>/mcp`, where `<url>` is the plan's API URL: the door answers only its own
 `Host`, so an environment's door is at its `<label>.localhost` host, never the
-`127.0.0.1` alias, and a browser page may call it only from that origin. For
-Codex, a throwaway `CODEX_HOME` whose `config.toml` holds
-`[mcp_servers.patchy]` with `url` and `bearer_token_env_var` reaches it without
-touching your own; `--enable mcp_2026_07_28` switches Codex to the newest MCP
-revision.
+`127.0.0.1` alias, and a browser page may call it only from that origin. An
+environment's `worker-codex` launcher mints one for you and hands it to Codex;
+`--enable mcp_2026_07_28` switches Codex to the newest MCP revision.
 
 **Connecting through consent.** An MCP client opens the consent page at
 `/oauth/authorize` with its client id, a redirect its document lists, an S256
@@ -204,7 +202,8 @@ PKCE challenge and its state. The instance fetches the client's metadata
 document from the internet: Claude Code's is
 `https://claude.ai/oauth/claude-code-client-metadata`, whose redirect is
 `http://127.0.0.1:<any port>/callback`. Turn agent access on at Company first,
-or the page says it's off. Allow sends `code`, `state` and `iss` to the
+or the page says it's off; a scenario can start with it on. An environment's
+`worker-claude` launcher is Claude Code connecting this way. Allow sends `code`, `state` and `iss` to the
 redirect, and the code exchanges at `/oauth/token` on `127.0.0.1`; Deny sends
 `error=access_denied`. The page and its answers are limited to 10 a minute per
 address once signed in.
@@ -270,9 +269,49 @@ An environment is this instance plus what a multi-person check or demo needs:
   give it a throwaway machine: see **Front door and onboarding** under
   [What to exercise for a change](#what-to-exercise-for-a-change).
 
+- **Worker agents**: people's own agents using the environment's patches
+  through Patchy MCP at `<url>/mcp`, as a person's Claude Code or Codex would.
+  A patch's agent area is what they reach, so they need a tier 2 patch with an
+  `agent/` folder and agent access on at Company; `brightline` has both. The two
+  launchers sit beside `agent` and start in the environment's `workers/`, an
+  empty folder of their own, behind the same guard and with a temp folder per
+  session. Their CLI state never logs in, so they reach Patchy only through the
+  door. Both name the door `patchy-dev-<hash>`, the hash of this worktree's path,
+  and pass your arguments through.
+
+  `…/worker-claude` is Claude Code connecting through consent. Run `/mcp`, pick
+  the server and Authenticate; the consent page opens in your browser, where you
+  sign in as one of the scenario's people and Allow. It loads only that server
+  and none of your settings, skills, plugins, connectors or instruction files,
+  with auto memory off and Claude Code's default permissions, so it asks before
+  every call. Claude Code keeps the sign-in in your own
+  `~/.claude/.credentials.json`, whatever the config, keyed by the server's name
+  and address: one entry for this worktree's address, which the next sign-in
+  there replaces. `down` leaves it: your running
+  Claude Code sessions rewrite that file when they refresh, and a second writer
+  could lose a refresh and sign you out. Before `down`, `/mcp` › the server ›
+  Clear authentication removes it. Trusting the `workers/` folder is recorded in
+  your `~/.claude.json`, as for any folder.
+
+  `…/worker-codex <person>` is Codex as that person, a key, email or first
+  name. Each launch mints a new agent connection with
+  `pnpm dev mcp-token <person> --client Codex`, listed on that person's Your
+  machines, and hands its token to Codex in its environment only. Codex runs on
+  a home of its own: `CODEX_HOME` is the environment's, whose `config.toml`
+  names only the door and turns off your account's apps and plugins, and
+  `HOME` is the session's temp folder, so your `~/.codex` config and
+  `AGENTS.md`, your skills (`~/.agents/skills` included) and your shell profile
+  never load. Your Codex login is linked in, so a refresh is written to it as
+  another session of yours would write it; with no login of yours, Codex signs
+  in inside the environment and `down` deletes it. One task without a person:
+  `…/worker-codex jordan exec --skip-git-repo-check "<task>" < /dev/null`.
+  `exec` can't ask before a change, so it refuses `change_patch` unless you add
+  `-c 'mcp_servers.patchy-dev-<hash>.tools.change_patch.approval_mode="approve"'`.
+
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
 is three people and no patches; `brightline` is a five-person agency with tier 0,
-1 and 2 patches and takes about a minute. `up` is idempotent and resumes a
+1 and 2 patches, agent areas on its tier 2 ones and agent access on, and takes
+about a minute. `up` is idempotent and resumes a
 failed run. Run on a plain personas instance, it turns that instance into the
 environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
@@ -475,13 +514,15 @@ can quote it.
   and phone widths. Allow and exchange the code, Deny, answer after switching
   persona in another tab (asked again, 409), and answer from another origin
   (403). Nothing reaches the client's redirect except Allow and Deny.
-- **Patchy MCP.** Connect Claude Code through consent and Codex with a token
-  from `pnpm dev mcp-token`, each from a temp dir outside your HOME with
-  per-invocation config (`claude --strict-mcp-config --mcp-config <file>`, a
-  throwaway `CODEX_HOME`), never your own. Have each find the person's patches,
-  page through them (more than 50, or `detail: "tools"` over large tool
-  descriptions) and open one, as a member and an admin. With agent access off,
-  a call names the admins.
+- **Patchy MCP.** `pnpm dev up brightline`, then connect Claude Code through
+  consent with the environment's `worker-claude` and Codex with
+  `worker-codex <person>`, never with your own config. Have each find the
+  person's patches, page through them (more than 50, or `detail: "tools"` over
+  large tool descriptions), open one and read and change through it, as a
+  member and an admin, meeting the patches' rules (a member can't approve their
+  own spend; Proposal needs a value and an owner). With agent access off, a call
+  names the admins. Your own `~/Patchy`, `~/.codex/config.toml` and
+  `~/.claude/settings.json` gain nothing.
 - **Portal and lifecycle.** Sign in as an owner, an admin and a member: Home at
   `/` (open a few patches first, so Your usual and New to you have something to
   show; `pnpm dev shot <person> /<company>/<patch>` records an open), a search on
@@ -560,7 +601,8 @@ can quote it.
   still starts and serves on the schema your commit leaves.
 - **The dev runner.** `pnpm exec vitest run scripts/dev`, then the real loop:
   `pnpm dev`, `up`, `shot`, `compare`, `film`, `transcript` and `down` in
-  this worktree. `trial` is part of the loop too, at a model run per side.
+  this worktree, and the `agent`, `worker-claude` and `worker-codex` launchers.
+  `trial` is part of the loop too, at a model run per side.
 
 ## How the runner works
 

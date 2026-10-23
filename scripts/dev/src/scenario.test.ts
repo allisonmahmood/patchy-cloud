@@ -5,7 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { expect } from "vitest";
-import { loadScenario, publisherToken } from "./scenario.js";
+import * as Companies from "@patchy/companies/Companies";
+import * as Testing from "@patchy/sql/testing";
+import { ids, loadScenario, publisherToken, seedScenario } from "./scenario.js";
 
 const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 const repo = new URL("../../..", import.meta.url).pathname;
@@ -54,3 +56,29 @@ it.layer(Platform)("scenarios", (it) => {
     }).pipe(Effect.scoped)
   );
 });
+
+it.layer(Layer.mergeAll(Platform, Companies.layer.pipe(Layer.provideMerge(Testing.layer()))))(
+  "seeding a scenario",
+  (it) => {
+    it.effect("turns brightline's agent access on as its publisher, once", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const { scenario } = yield* loadScenario(repo, "brightline");
+        const companyId = `cmp_env_${scenario.company.handle}`;
+        const publisher = ids(
+          scenario,
+          scenario.people.find((p) => p.key === scenario.publisher)!
+        );
+        yield* seedScenario(scenario);
+        const seeded = yield* companies.agentAccess(companyId);
+        expect(seeded.on).toBe(true);
+        expect(seeded.latest?.by.id).toBe(publisher.userId);
+
+        // Every start seeds again; an admin's switch at Company stays.
+        yield* companies.setAgentAccess({ companyId, on: false, by: publisher.userId });
+        yield* seedScenario(scenario);
+        expect((yield* companies.agentAccess(companyId)).on).toBe(false);
+      })
+    );
+  }
+);

@@ -89,6 +89,8 @@ export interface Options {
     readonly deploymentRevision: string;
     readonly overrideRevision: string;
   };
+  /** Where the pinned workerd is installed, when not beside this package; see `startWorkerd`. */
+  readonly workerdFrom?: string;
 }
 
 interface Invocation {
@@ -654,7 +656,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* Effect.gen(function* () {
           const child = yield* startWorkerd({
             callbackUrls: [resident.proxyUrl],
-            separateUid: true
+            separateUid: true,
+            ...(options.workerdFrom === undefined ? {} : { workerdFrom: options.workerdFrom })
           }).pipe(Effect.provideService(Scope.Scope, resident.scope));
           resident.process = child;
           resident.lastHealthy = Date.now();

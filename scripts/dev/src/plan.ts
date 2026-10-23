@@ -91,8 +91,12 @@ export const DATABASE_NAME = "patchy";
 export const basePort = (worktree: string): number =>
   20000 + (Math.abs(Hash.string(worktree)) % 10000) * 2;
 
+/** Six base-36 characters hashed from the worktree's full path, the same in every process. */
+export const worktreeHash = (worktree: string): string =>
+  (Math.abs(Hash.string(worktree)) % 36 ** 6).toString(36).padStart(6, "0");
+
 /**
- * The worktree's DNS label: its folder name plus a hash of its full path. An
+ * The worktree's DNS label: its folder name plus `worktreeHash`. An
  * environment serves on `<label>.localhost` and keeps its files under the same
  * label, so two worktrees named alike never share cookies or an environment.
  */
@@ -103,8 +107,7 @@ export const hostLabel = (worktree: string): string => {
       .replace(/[^a-z0-9]+/g, "-")
       .slice(0, 56)
       .replace(/^-+|-+$/g, "") || "patchy";
-  const hash = (Math.abs(Hash.string(worktree)) % 36 ** 6).toString(36).padStart(6, "0");
-  return `${name}-${hash}`;
+  return `${name}-${worktreeHash(worktree)}`;
 };
 
 /** How many pairs `computePlan` tries above the hashed base before giving up. */
