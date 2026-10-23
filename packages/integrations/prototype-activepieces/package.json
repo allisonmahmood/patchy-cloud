@@ -1,0 +1,12 @@
+{
+  "name": "patchy-activepieces-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "../../../node_modules/.bin/vitest run --config vitest.config.ts",
+    "typecheck": "../../../node_modules/.bin/tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@activepieces/piece-posthog": "0.7.1"
+  }
+}
