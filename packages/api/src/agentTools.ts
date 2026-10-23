@@ -415,12 +415,14 @@ export type ToolRefusal = typeof ToolRefusal.Type;
 
 /**
  * A `read_patch` or `change_patch` success: the result and the version the call ran on.
- * `replayed` marks a change key's retry of a committed change, which wrote nothing.
+ * `replayed` marks a change key's retry of a committed change, which wrote nothing. A change
+ * whose result is too large for an agent to read leaves it out, saying so in `resultLeftOut`.
  */
 export const CallSuccess = Schema.Struct({
-  result: Schema.Json,
+  result: Schema.optionalKey(Schema.Json),
   version: Schema.Int,
-  replayed: Schema.optionalKey(Schema.Literal(true))
+  replayed: Schema.optionalKey(Schema.Literal(true)),
+  resultLeftOut: Schema.optionalKey(Schema.String)
 });
 export type CallSuccess = typeof CallSuccess.Type;
 
@@ -637,4 +639,25 @@ export const readAnswer = (
     from: "patchy",
     message: `${patch.name}'s ${tool} answered with ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, ${[...patch.owner].slice(0, ownerLimit).join("")}, can add paging.`
   });
+};
+
+/**
+ * A change's answer as the agent gets it, measured as a read's is. A change has happened by the
+ * time it answers, so a result past `readAnswerChars` is still a success, on `version`, with
+ * the result left out and `resultLeftOut` saying so, still `replayed` if it was; a refusal is
+ * `fitRefusal`'s.
+ */
+export const changeAnswer = (
+  tool: string,
+  version: number,
+  answer: ToolCallResult
+): ToolCallResult => {
+  const chars = answer.content[0].text.length;
+  if (answer.isError === true) return fitRefusal(answer);
+  if (chars <= readAnswerChars) return answer;
+  return toolAnswer({
+    version,
+    ...(answer.structuredContent["replayed"] === true ? { replayed: true as const } : {}),
+    resultLeftOut: `${tool} succeeded, but its result came to ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer, so it was left out. Read what you need of the change through the patch's read tools.`
+  } satisfies CallSuccess);
 };

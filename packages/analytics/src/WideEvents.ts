@@ -126,6 +126,11 @@ const mcpFields = {
   agentTool: Schema.optionalKey(Schema.String),
   agentToolKind: Schema.optionalKey(Schema.Literals(["read", "change"])),
   /**
+   * Whether a `change_patch` answered its change key's first result again, running nothing, or
+   * ran the change. Unset when the key refused the try.
+   */
+  replayed: Schema.optionalKey(Schema.Boolean),
+  /**
    * A `find_patches` answer: its matches in all and on this page, whether the page ended early
    * for the read cap, and whether it was searched, detailed or continued from a cursor. Never
    * the words or the cursor.

@@ -39,6 +39,12 @@
  * patch isn't published, so a release that can't read the fields is never
  * asked to.
  *
+ * Once HEAD's door changes patches, step 2 also turns agent access on as the
+ * publisher and logs a note through the agent area's `addNote` under a change
+ * key, so the change keys table holds a row from then on. Step 4 retries that
+ * change under the same key: it must answer the first result, replayed, with
+ * nothing written again, so a rollback lost no key.
+ *
  * Step 2 also mints agent connections with HEAD's `pnpm dev mcp-token`, for the
  * publisher and two members, so their tables hold rows from then on, and every
  * later step's API must refuse the publisher's token as unknown while the CLI's
@@ -65,6 +71,7 @@ import { parseArgs } from "node:util";
 import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { agentTokensWork } from "./dev/src/agentTokens.js";
 import { hostLabel, PlanJson } from "./dev/src/plan.js";
@@ -150,6 +157,20 @@ const decodeRuntimeReply = Schema.decodeUnknownSync(
       Schema.Struct({ ok: Schema.Literal(true), value: Schema.Unknown }),
       Schema.Struct({ ok: Schema.Literal(false), code: Schema.String })
     ])
+  )
+);
+/** A `tools/call` answer from the door: a success's document, or a refusal's code. */
+const decodeToolCall = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.Struct({
+        structuredContent: Schema.Struct({
+          result: Schema.optionalKey(Schema.Unknown),
+          replayed: Schema.optionalKey(Schema.Boolean),
+          error: Schema.optionalKey(Schema.Struct({ code: Schema.String }))
+        })
+      })
+    })
   )
 );
 /** A server wide event; the server writes each one to stdout as a JSON line. */
@@ -638,6 +659,7 @@ interface AgentArea {
 
 /** The read-only action that forces a write, and the agent tool, as the patch's handlers. */
 const FORCED_WRITE = "rehearsal.forcedWrite";
+const FORCED_TITLE = "Written by a read-only action";
 const AGENT_TOOL = "agent.countNotes";
 /** The runtime wire every release speaks, `WIRE_VERSION` in `@patchy/api`. */
 const WIRE_VERSION = 1;
@@ -689,7 +711,7 @@ export const forcedWrite = action({
   handler: async (ctx) => {
     await (
       ctx as unknown as { tables: { notes: { insert(row: { title: string }): Promise<unknown> } } }
-    ).tables.notes.insert({ title: "Written by a read-only action" });
+    ).tables.notes.insert({ title: ${JSON.stringify(FORCED_TITLE)} });
     return null;
   }
 });
@@ -698,13 +720,20 @@ export const forcedWrite = action({
   await mkdir(path.join(repo, "agent"), { recursive: true });
   await writeFile(
     path.join(repo, "agent", "notes.ts"),
-    `import { query, t } from "../patchy/_generated/server.js";
+    `import { mutation, query, t } from "../patchy/_generated/server.js";
 
 export const countNotes = query({
   description: "Counts the notes. Changes nothing.",
   args: {},
   result: t.integer(),
   handler: async (ctx) => (await ctx.tables.notes.list({ limit: 100 })).rows.length
+});
+
+export const addNote = mutation({
+  description: "Adds a note with this title and returns its id.",
+  args: { title: t.text().describe("The note's title.") },
+  result: t.text(),
+  handler: async (ctx, args) => (await ctx.tables.notes.insert({ title: args.title })).id
 });
 `
   );
@@ -770,8 +799,11 @@ const exerciseAgentArea = async (
   if (agentArea.agentTool) await expectRefused(AGENT_TOOL, "the page's call to the agent tool");
   const notes = await call("notes.list");
   if (!notes.ok) problems.push(`the patch's own query answered ${notes.code}`);
-  else if (!Array.isArray(notes.value) || notes.value.length !== 0)
-    problems.push("a note was written, so the read-only action's write went through");
+  else if (
+    !Array.isArray(notes.value) ||
+    notes.value.some((row) => Predicate.hasProperty(row, "title") && row.title === FORCED_TITLE)
+  )
+    problems.push("the read-only action's note was written, so its write went through");
   return problems;
 };
 
@@ -1237,6 +1269,62 @@ const checkEndings = async (environment: Environment, connections: Connections, 
   return problems;
 };
 
+// ---- A change through the door ---------------------------------------------------
+
+/** The change step 2 makes and step 4 retries, under one change key. */
+const CHANGE_KEY = "rehearsal-note";
+const CHANGE_TITLE = "Added by a worker agent";
+
+/** Turns the company's agent access on as `admin`, through Company's own form. */
+const turnOnAgentAccess = async (browser: Browser, apiUrl: string, admin: Person) => {
+  const { context } = await signedIn(browser, apiUrl, admin);
+  try {
+    const response = await context.request.post(`${apiUrl}/company/agent-access`, {
+      form: { state: "on" },
+      headers: { origin: apiUrl }
+    });
+    if (!response.ok()) throw new Error(`Turning agent access on answered ${response.status()}.`);
+  } finally {
+    await context.close();
+  }
+};
+
+/**
+ * `change_patch` through the door as the publisher's agent connection: the agent area's
+ * `addNote`, under the rehearsal's change key. Answers its result and whether it replayed.
+ */
+const changeThroughDoor = async (environment: Environment, agentArea: AgentArea, token: string) => {
+  const response = await send(`${environment.apiUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-06-18"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "change_patch",
+        arguments: {
+          patch: agentArea.patchId,
+          tool: "addNote",
+          args: { title: CHANGE_TITLE },
+          key: CHANGE_KEY
+        }
+      }
+    })
+  });
+  if (response.status !== 200)
+    throw new Error(`The door answered change_patch with HTTP ${response.status}.`);
+  const answer = decodeToolCall(response.body.toString("utf8")).result.structuredContent;
+  if (answer.error !== undefined)
+    throw new Error(`The door refused change_patch: ${answer.error.code}.`);
+  return { result: JSON.stringify(answer.result), replayed: answer.replayed === true };
+};
+
 // ---- The rehearsal ------------------------------------------------------------
 
 const summary = async (lines: ReadonlyArray<string>) => {
@@ -1303,6 +1391,8 @@ const rehearse = async (live: string, head: string) => {
   let connections: Connections | undefined;
   /** What step 3 ended on the live release. */
   let ended: Ended | undefined;
+  /** The result of the change HEAD's door made at step 2, as JSON, for step 4's retry. */
+  let changed: string | undefined;
   try {
     for (const step of steps) {
       console.log(`\n▶ Step ${step.number}: ${step.title}`);
@@ -1407,6 +1497,40 @@ const rehearse = async (live: string, head: string) => {
       );
       if (exercised.problems.length > 0) throw await fail("exercising", exercised.problems);
       baseline = exercised.baseline;
+      const agentArea = baseline.agentArea;
+      if (step.number === 2 && connections !== undefined && agentArea?.agentTool === true) {
+        const [token, from] = [connections.publisher, await logSize(log)];
+        const { people, publisher } = current.scenario;
+        changed = await phase("changing a patch through the door", async () => {
+          await withBrowser((browser) =>
+            turnOnAgentAccess(
+              browser,
+              current.apiUrl,
+              people.find((person) => person.key === publisher)!
+            )
+          );
+          const first = await changeThroughDoor(current, agentArea, token);
+          if (first.replayed) throw new Error("A new change key's first try answered replayed.");
+          return first.result;
+        });
+        const failures = serverFailures(await logSince(log, from));
+        if (failures.length > 0) throw await fail("changing a patch through the door", failures);
+      }
+      if (step.number === 4 && connections !== undefined && agentArea !== undefined && changed) {
+        const [token, first, from] = [connections.publisher, changed, await logSize(log)];
+        const retried = await phase("retrying the change through the door", () =>
+          changeThroughDoor(current, agentArea, token)
+        );
+        const problems = [
+          ...(retried.replayed && retried.result === first
+            ? []
+            : [
+                `retrying step 2's change under its key answered ${retried.result}${retried.replayed ? ", replayed" : " without replayed"}, not ${first}, replayed`
+              ]),
+          ...serverFailures(await logSince(log, from))
+        ];
+        if (problems.length > 0) throw await fail("retrying the change through the door", problems);
+      }
       if (step.number === 3 && connections !== undefined) {
         const [minted, from] = [connections, await logSize(log)];
         ended = await phase("ending credentials on the live release", () =>

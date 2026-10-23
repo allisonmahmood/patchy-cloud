@@ -4,6 +4,7 @@ import { migrations as companyDatabase } from "@patchy/company-database";
 import { migrations as execution } from "@patchy/execution/migrations";
 import { migrations as integrations } from "@patchy/integrations";
 import { migrations as limits } from "@patchy/limits/migrations";
+import { migrations as mcp } from "@patchy/mcp";
 import { migrations as patches } from "@patchy/patches";
 import { migrations as runtime } from "@patchy/runtime";
 import type { Migrations } from "@patchy/sql";
@@ -21,7 +22,8 @@ export const capabilityMigrations: ReadonlyArray<Migrations> = [
   runtime,
   integrations,
   limits,
-  execution
+  execution,
+  mcp
 ];
 
 /**

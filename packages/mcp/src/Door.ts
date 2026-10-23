@@ -12,9 +12,9 @@
  *
  * A limit on `tools/call` is the tool's refusal over HTTP 200; on any other method it is 429
  * with `Retry-After`. Every tool call needs the company's agent access on, and is refused
- * naming its admins while it is off. `find_patches` and `open_patch` are the catalogue's, and
- * `read_patch` runs a patch's read tool through the host's invocation; until #855 lands,
- * `change_patch` refuses as not built.
+ * naming its admins while it is off. `find_patches` and `open_patch` are the catalogue's;
+ * `read_patch` runs a patch's read tool through the host's invocation, and `change_patch` a
+ * change tool under its change key.
  *
  * The request's wide event, opened by the server around every route, gains the connection, the
  * revision and method, the door's tool, the patch's tool a call named, the `Origin` and each
@@ -41,6 +41,7 @@ import type { Patches } from "@patchy/patches";
 import { Invocation } from "@patchy/runtime";
 import * as Calls from "./Calls.js";
 import * as Catalogue from "./Catalogue.js";
+import type * as ChangeKeys from "./ChangeKeys.js";
 import * as RequestTrust from "./RequestTrust.js";
 import * as Revisions from "./Revisions.js";
 import * as Tools from "./Tools.js";
@@ -89,6 +90,7 @@ export const layer: Layer.Layer<
   | HttpRouter.Request.From<
       "Requires",
       | AgentConnections.AgentConnections
+      | ChangeKeys.ChangeKeys
       | Limits.Limits
       | OperatingLimits.OperatingLimits
       | Patches.Patches
@@ -303,7 +305,7 @@ export const layer: Layer.Layer<
               ? yield* Catalogue.open(identity, args, publicUrl)
               : name === "read_patch"
                 ? yield* Calls.read(identity, args, publicUrl, invocation)
-                : Tools.notBuilt(name));
+                : yield* Calls.change(identity, args, publicUrl, invocation));
         // However a refusal came about, the agent reads it whole, so it keeps the read cap.
         return yield* toolAnswer(request.era, request.id, fitRefusal(answered));
       });

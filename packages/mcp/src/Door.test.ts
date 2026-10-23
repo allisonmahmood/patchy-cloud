@@ -397,24 +397,11 @@ it.layer(harness)("the door", (it) => {
       })
   );
 
-  it.effect("answers change_patch as not built yet, and an unknown tool name -32602", () =>
+  it.effect("answers an unknown tool name -32602", () =>
     Effect.gen(function* () {
       const { people } = yield* company("call", [["Ada Admin", "admin"]]);
       const { token } = people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.13");
-      const response = yield* send(call(token, "change_patch", { patch: "new-business" }));
-      assert.strictEqual(response.status, 200);
-      const result = objectAt(response.json, "result");
-      assert.include(result, { resultType: "complete", isError: true });
-      assert.include(objectAt(result, "structuredContent.error"), {
-        code: "not_built",
-        from: "patchy"
-      });
-      assert.include(response.event, {
-        mcpTool: "change_patch",
-        code: "not_built",
-        outcome: "refused"
-      });
       const unknown = yield* send(legacy(token, "tools/call", { name: "delete_everything" }));
       assert.strictEqual(unknown.status, 200);
       assert.strictEqual(at(unknown.json, "error.code"), -32602);

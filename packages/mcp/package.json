@@ -28,6 +28,7 @@
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/runtime": "workspace:*",
+    "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
@@ -37,7 +38,6 @@
     "@patchy/execution": "workspace:*",
     "@patchy/integrations": "workspace:*",
     "@patchy/primitives": "workspace:*",
-    "@patchy/sql": "workspace:*",
     "esbuild": "0.28.2",
     "vitest": "^5.0.3"
   }

@@ -801,6 +801,14 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
               );
             break;
           }
+          // Another invocation's commit answered, so this one wrote nothing.
+          if (
+            parent === undefined &&
+            storedOutcome !== undefined &&
+            storedOutcome.invocationId !== id &&
+            binding.onReplay !== undefined
+          )
+            yield* binding.onReplay;
           if (storedOutcome !== undefined) {
             // Journal failure or a stuck driver cannot invalidate a proven commit.
             // Leave cleanup time for this invocation's own settlement.
@@ -1047,6 +1055,11 @@ export interface AgentCall {
   /** A mutation's key, as a page's call carries one, kept by the caller to retry the change. */
   readonly mutationKey?: string;
   /**
+   * Told when the mutation answers with its key's outcome that an earlier invocation committed,
+   * so this call wrote nothing: the caller's retry replayed the change.
+   */
+  readonly onReplay?: Effect.Effect<void>;
+  /**
    * The caller's own condition, rechecked before each company callback at any depth, as a page's
    * session is. It answers the person's current identity or refuses the callback.
    */
@@ -1073,7 +1086,8 @@ export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: Age
       identity: input.person,
       principal: { userId: input.person.user.id },
       correlationId: newInternalId("call"),
-      agent: input.agent
+      agent: input.agent,
+      ...(input.onReplay === undefined ? {} : { onReplay: input.onReplay })
     }),
     input.recheck
   );
