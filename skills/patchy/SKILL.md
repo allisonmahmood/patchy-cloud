@@ -17,8 +17,9 @@ Patchy Cloud's onboarding, asks to redo their Patchy setup, or asks in any words
 this machine ready to use Patchy, such as the portal's setup line
 (`Set up Patchy using <instance>/llms.txt`).
 That reference owns the whole flow —
-the company look, the welcome patch, the probe's key names, and the words to say to
-the user, which are the source of truth for user-facing copy anywhere in this skill.
+the company look, the welcome patch, the first suggestion, the probe's key names, and
+the words to say to the user, which are the source of truth for user-facing copy
+anywhere in this skill.
 
 ## Finding tools and data sources
 

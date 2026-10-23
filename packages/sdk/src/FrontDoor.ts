@@ -60,7 +60,7 @@ Login prints JSON with \`verificationUrl\`, \`userCode\` and \`next\`. Give the 
 
 ## Next
 
-Read the installed skill before doing anything else with Patchy: the \`Skill:\` path the installer printed, also linked at \`~/.agents/skills/patchy/SKILL.md\`.
+Read the installed skill before doing anything else with Patchy: the \`Skill:\` path the installer printed, also linked at \`~/.agents/skills/patchy/SKILL.md\`. Its onboarding reference finishes setup: the person's welcome page goes live, then you suggest a first patch from what you know about them.
 `;
 
 const headers = { "cache-control": "no-store" };
