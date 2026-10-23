@@ -14,8 +14,9 @@
  *      the scenario and loads its sample data, and the step is exercised.
  *   2. HEAD's server starts on that data, migrates it and is exercised.
  *   3. The live commit's server starts on that data again and is exercised.
+ *   4. HEAD's server starts on it once more and is exercised.
  *
- * Steps 2 and 3 swap only the server build. Step 1 leaves the data in the
+ * Steps 2 to 4 swap only the server build. Step 1 leaves the data in the
  * worktree's `.local/dev`: the Postgres cluster (the platform database and
  * every company database), the stored files and the credential keys. A
  * checkout keeps it, and this file starts each build's server on it the way the
@@ -38,9 +39,17 @@
  * patch isn't published, so a release that can't read the fields is never
  * asked to.
  *
- * Step 2 also mints an agent connection with HEAD's `pnpm dev mcp-token`, so
- * its tables hold rows from then on, and every later step's API must refuse its
- * token as unknown while the CLI's machine token keeps working.
+ * Step 2 also mints agent connections with HEAD's `pnpm dev mcp-token`, for the
+ * publisher and two members, so their tables hold rows from then on, and every
+ * later step's API must refuse the publisher's token as unknown while the CLI's
+ * machine token keeps working. Step 3 then ends credentials as people do on the
+ * live release, which knows nothing of agent connections: the publisher
+ * deactivates and reactivates one member, and the other collects a machine
+ * token, approves a second device login without collecting it and presses
+ * Disconnect everything. Back at HEAD, step 4 checks that a rollback brought
+ * nothing back: HEAD's own check refuses both members' agent connections and
+ * still accepts the publisher's, the approved device login mints nothing, and
+ * the collected machine token is refused.
  *
  * The live commit is the revision production's `/healthz/deep` names. When a
  * Deploy run is unfinished, or the one updated last did not succeed, the
@@ -54,11 +63,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { agentTokensWork } from "./dev/src/agentTokens.js";
 import { hostLabel, PlanJson } from "./dev/src/plan.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./dev/src/postgres.js";
-import { publisherToken, Scenario } from "./dev/src/scenario.js";
+import { ids, type Person, publisherToken, Scenario } from "./dev/src/scenario.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const SCENARIO = "brightline";
@@ -82,6 +93,22 @@ const decodeRelease = Schema.decodeUnknownSync(
 /** What `pnpm dev mcp-token --json` prints. */
 const decodeMcpToken = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ token: Schema.String }))
+);
+/** What `POST /api/login/device` answers. */
+const decodeDeviceLogin = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({ deviceCode: Schema.String, verificationUrl: Schema.String })
+  )
+);
+/** What `POST /api/login/device/token` answers: a status and, once complete, a token; or a refusal's code. */
+const decodeDevicePoll = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      status: Schema.optionalKey(Schema.String),
+      token: Schema.optionalKey(Schema.String),
+      code: Schema.optionalKey(Schema.String)
+    })
+  )
 );
 const decodeHealth = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ revision: Schema.String }))
@@ -159,7 +186,7 @@ const decodeRuns = Schema.decodeUnknownSync(
 class Uncertain extends Error {}
 
 interface Step {
-  readonly number: 1 | 2 | 3;
+  readonly number: 1 | 2 | 3 | 4;
   readonly title: string;
   readonly commit: string;
 }
@@ -171,7 +198,7 @@ class StepFailed extends Error {
     phase: string,
     readonly problems: ReadonlyArray<string>
   ) {
-    super(`Step ${step.number} of 3, ${step.title}, failed while ${phase}.`);
+    super(`Step ${step.number} of 4, ${step.title}, failed while ${phase}.`);
   }
 }
 
@@ -294,24 +321,49 @@ const run = (command: string, args: ReadonlyArray<string>, options: RunOptions) 
 const git = (...args: Array<string>) => run("git", args, { cwd: repoRoot });
 
 /**
- * GETs `url` from the instance on a connection of its own, within `timeoutMs`.
- * A starting server accepts connections before it can answer them, and a pooled
+ * Asks the instance on a connection of its own, within `timeoutMs`. A starting
+ * server accepts connections before it can answer them, and a pooled
  * connection could still lead to the previous step's server.
  */
-const get = (url: string, timeoutMs = 15_000, headers: http.OutgoingHttpHeaders = {}) =>
+const send = (
+  url: string,
+  options: {
+    readonly method?: string;
+    readonly headers?: http.OutgoingHttpHeaders;
+    readonly body?: string;
+    readonly timeoutMs?: number;
+  }
+) =>
   new Promise<{ readonly status: number; readonly body: Buffer }>((resolve, reject) => {
-    const request = http.get(url, { agent: false, timeout: timeoutMs, headers }, (response) => {
-      const chunks: Array<Buffer> = [];
-      response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("end", () =>
-        resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks) })
-      );
-      response.on("error", reject);
-    });
+    const timeoutMs = options.timeoutMs ?? 15_000;
+    const request = http.request(
+      url,
+      { method: options.method, agent: false, timeout: timeoutMs, headers: options.headers },
+      (response) => {
+        const chunks: Array<Buffer> = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks) })
+        );
+        response.on("error", reject);
+      }
+    );
     request.on("timeout", () =>
       request.destroy(new Error(`${url} did not answer within ${timeoutMs / 1000}s`))
     );
     request.on("error", reject);
+    request.end(options.body);
+  });
+
+const get = (url: string, timeoutMs = 15_000, headers: http.OutgoingHttpHeaders = {}) =>
+  send(url, { headers, timeoutMs });
+
+/** POSTs `data` as JSON, as the CLI calls the unauthenticated device login routes. */
+const post = (url: string, data: unknown) =>
+  send(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(data)
   });
 
 // ---- The live commit --------------------------------------------------------
@@ -562,6 +614,8 @@ const serverFailures = (text: string) =>
 
 interface Environment {
   readonly apiUrl: string;
+  /** The platform database every step's server runs on. */
+  readonly databaseUrl: string;
   readonly scenario: Scenario;
   /** Each scenario patch's address, keyed by its repo or file-patch name. */
   readonly addresses: ReadonlyMap<string, string>;
@@ -957,6 +1011,21 @@ const exercisePages = async (
   return { problems, delivered };
 };
 
+/** Chromium for `work`. The harness owns shutdown; Playwright's own handlers would exit before cleanup. */
+const withBrowser = async <A>(work: (browser: Browser) => Promise<A>) => {
+  proceed();
+  const browser = await chromium.launch({
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false
+  });
+  try {
+    return await work(browser);
+  } finally {
+    await browser.close();
+  }
+};
+
 /**
  * Everything a step checks against the server writing to `log`. Answers every
  * problem, and step 1's baseline or the one it was given.
@@ -983,14 +1052,7 @@ const exercise = async (
   const cli = await exerciseCli(step, environment, baseline?.rehearsalPage, scratch);
   problems.push(...cli.problems);
   const agentArea = cli.agentArea ?? baseline?.agentArea;
-  proceed();
-  // The harness owns shutdown; Playwright's own handlers would exit before cleanup.
-  const browser = await chromium.launch({
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false
-  });
-  try {
+  return withBrowser(async (browser) => {
     const pages = await exercisePages(
       browser,
       environment,
@@ -1006,9 +1068,173 @@ const exercise = async (
       problems,
       baseline: cli.agentArea === undefined ? seen : { ...seen, agentArea: cli.agentArea }
     };
-  } finally {
-    await browser.close();
+  });
+};
+
+// ---- Ended credentials ----------------------------------------------------------
+
+/** The agent connections HEAD mints at step 2, by whose they are. */
+interface Connections {
+  /** The publisher's, which nothing ends; every later step's API refuses it as unknown. */
+  readonly publisher: string;
+  /** A member's, whom the live release deactivates and reactivates at step 3. */
+  readonly deactivated: { readonly person: Person; readonly token: string };
+  /** A member's, who presses Disconnect everything on the live release at step 3. */
+  readonly disconnected: { readonly person: Person; readonly token: string };
+}
+
+/** What the disconnected member held when they pressed Disconnect everything, for step 4. */
+interface Ended {
+  /** The machine token their first device login collected. */
+  readonly machineToken: string;
+  /** Their second device login, approved and never collected. */
+  readonly deviceCode: string;
+}
+
+/** A browser context signed in as `person` through the instance's dev sign-in. */
+const signedIn = async (browser: Browser, apiUrl: string, person: Person) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const response = await page.goto(
+    `${apiUrl}/dev/sign-in?as=${encodeURIComponent(person.email)}&return=/`
+  );
+  if (response?.status() !== 200) {
+    await context.close();
+    throw new Error(`Signing in as ${person.email} answered ${response?.status() ?? "nothing"}.`);
   }
+  return { context, page };
+};
+
+/**
+ * Presses the one `button` on `page`, which submits its form, and waits until the page its
+ * POST led to, through any redirect, has loaded.
+ */
+const press = async (page: Page, button: string, what: string) => {
+  const target = page.locator(button);
+  if ((await target.count()) !== 1)
+    throw new Error(`${what}: ${new URL(page.url()).pathname} has no single ${button}.`);
+  const submitted = page.waitForResponse(
+    (response) => response.request().isNavigationRequest() && response.request().method() === "POST"
+  );
+  const committed = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
+  await target.click();
+  const response = await submitted;
+  if (response.status() >= 400) throw new Error(`${what} answered ${response.status()}.`);
+  await committed;
+  await page.waitForLoadState();
+};
+
+/** Starts a device login as the CLI does, and approves it in `page`'s signed-in browser. */
+const approveDeviceLogin = async (page: Page, apiUrl: string, machine: string) => {
+  const started = await post(`${apiUrl}/api/login/device`, { machineNameHint: machine });
+  if (started.status !== 201)
+    throw new Error(`Starting a device login answered ${started.status}.`);
+  const login = decodeDeviceLogin(started.body.toString("utf8"));
+  await page.goto(login.verificationUrl);
+  await press(page, 'button[name="action"][value="confirm"]', `Approving ${machine}`);
+  return login.deviceCode;
+};
+
+/**
+ * Step 3's endings, on the live release as people use it. The disconnected member collects
+ * one device login's machine token, approves another without collecting it, and presses
+ * Disconnect everything; the publisher deactivates the other member and reactivates them.
+ * Throws when an act didn't land, and answers what step 4 checks.
+ */
+const endCredentials = async (
+  browser: Browser,
+  environment: Environment,
+  connections: Connections
+): Promise<Ended> => {
+  const { apiUrl, scenario } = environment;
+  const disconnecting = await signedIn(browser, apiUrl, connections.disconnected.person);
+  let ended: Ended;
+  try {
+    const { page } = disconnecting;
+    const first = await approveDeviceLogin(page, apiUrl, "Rehearsal laptop");
+    const collected = decodeDevicePoll(
+      (await post(`${apiUrl}/api/login/device/token`, { deviceCode: first })).body.toString("utf8")
+    );
+    if (collected.token === undefined)
+      throw new Error(
+        `Collecting an approved device login answered ${collected.status ?? collected.code}.`
+      );
+    const deviceCode = await approveDeviceLogin(page, apiUrl, "Rehearsal server");
+    await page.goto(`${apiUrl}/machines`);
+    await press(
+      page,
+      'form[action="/machines/revoke-all"] button[type="submit"]',
+      "Disconnect everything"
+    );
+    const me = await get(`${apiUrl}/api/me`, 15_000, {
+      authorization: `Bearer ${collected.token}`
+    });
+    if (me.status !== 401)
+      throw new Error(`Disconnect everything left its machine token answering ${me.status}.`);
+    ended = { machineToken: collected.token, deviceCode };
+  } finally {
+    await disconnecting.context.close();
+  }
+  const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
+  const admin = await signedIn(browser, apiUrl, publisher);
+  try {
+    const { page } = admin;
+    const user = `/company/users/${encodeURIComponent(ids(scenario, connections.deactivated.person).userId)}`;
+    // A member with no live patches goes straight to the confirmation, as one with none retired.
+    for (const [act, after] of [
+      ["deactivate", "reactivate"],
+      ["reactivate", "deactivate"]
+    ] as const) {
+      await page.goto(`${apiUrl}${user}/${act}`);
+      await press(page, 'form.confirmation-form button[type="submit"]', `Confirming ${act}`);
+      if (!(await page.content()).includes(`${user}/${after}`))
+        throw new Error(`After confirming ${act}, Company offers no ${after} for that member.`);
+    }
+  } finally {
+    await admin.context.close();
+  }
+  return ended;
+};
+
+/**
+ * Step 4, back at HEAD: what step 3 ended stays ended. Answers what came back.
+ */
+const checkEndings = async (environment: Environment, connections: Connections, ended: Ended) => {
+  const { apiUrl } = environment;
+  const problems: Array<string> = [];
+  const [publisher, deactivated, disconnected] = await Effect.runPromise(
+    agentTokensWork(environment.databaseUrl, [
+      connections.publisher,
+      connections.deactivated.token,
+      connections.disconnected.token
+    ])
+  );
+  if (!publisher)
+    problems.push("HEAD refuses the publisher's agent connection, which nothing ended");
+  if (deactivated)
+    problems.push(
+      `HEAD accepts ${connections.deactivated.person.name}'s agent connection after the live release deactivated and reactivated them`
+    );
+  if (disconnected)
+    problems.push(
+      `HEAD accepts ${connections.disconnected.person.name}'s agent connection after they pressed Disconnect everything on the live release`
+    );
+  const poll = await post(`${apiUrl}/api/login/device/token`, { deviceCode: ended.deviceCode });
+  const answer = decodeDevicePoll(poll.body.toString("utf8"));
+  if (poll.status === 200)
+    problems.push(
+      `the device login approved before Disconnect everything answered ${answer.status ?? "200"}${answer.token === undefined ? "" : " with a machine token"}`
+    );
+  else if (answer.code !== "unknown")
+    problems.push(
+      `the device login approved before Disconnect everything answered ${poll.status} ${answer.code ?? ""}, not unknown${answer.code === "expired" ? ": it expired before step 4 polled it, so this shows nothing" : ""}`
+    );
+  const me = await get(`${apiUrl}/api/me`, 15_000, {
+    authorization: `Bearer ${ended.machineToken}`
+  });
+  if (me.status !== 401)
+    problems.push(`/api/me answered ${me.status} to the machine token Disconnect everything ended`);
+  return problems;
 };
 
 // ---- The rehearsal ------------------------------------------------------------
@@ -1031,14 +1257,16 @@ const report = async (message: string, details: ReadonlyArray<string> = []) => {
 
 const short = (commit: string) => commit.slice(0, 7);
 
-/** The three steps on a scratch worktree, which it removes again, instance and all. */
+/** The four steps on a scratch worktree, which it removes again, instance and all. */
 const rehearse = async (live: string, head: string) => {
   const steps: ReadonlyArray<Step> = [
     { number: 1, title: `the live commit (${short(live)}) seeds the data`, commit: live },
     { number: 2, title: `HEAD (${short(head)}) upgrades it`, commit: head },
-    { number: 3, title: `the live commit (${short(live)}) comes back`, commit: live }
+    { number: 3, title: `the live commit (${short(live)}) comes back`, commit: live },
+    { number: 4, title: `HEAD (${short(head)}) comes back`, commit: head }
   ];
-  console.log(`Rehearsing ${short(live)} → ${short(head)} → ${short(live)} on one set of data.`);
+  const route = `${short(live)} → ${short(head)} → ${short(live)} → ${short(head)}`;
+  console.log(`Rehearsing ${route} on one set of data.`);
   const started = Date.now();
   const scratch = await mkdtemp(path.join(os.tmpdir(), "patchy-rollback-rehearsal-"));
   const worktree = path.join(scratch, "repo");
@@ -1071,8 +1299,10 @@ const rehearse = async (live: string, head: string) => {
     })());
   let environment: Environment | undefined;
   let baseline: Baseline | undefined;
-  /** The token of the agent connection HEAD mints at step 2. */
-  let agentToken: string | undefined;
+  /** The agent connections HEAD mints at step 2. */
+  let connections: Connections | undefined;
+  /** What step 3 ended on the live release. */
+  let ended: Ended | undefined;
   try {
     for (const step of steps) {
       console.log(`\n▶ Step ${step.number}: ${step.title}`);
@@ -1131,8 +1361,10 @@ const rehearse = async (live: string, head: string) => {
               devRunning = true;
               const manifest = decodeManifest(await dev(["up", SCENARIO, "--json"], 900_000));
               const scenario = path.join(worktree, "scenarios", SCENARIO, "scenario.json");
+              const plan = path.join(worktree, ".local", "dev", "plan.json");
               return {
                 apiUrl: manifest.apiUrl,
+                databaseUrl: decodePlan(await readFile(plan, "utf8")).databaseUrl,
                 scenario: decodeScenario(await readFile(scenario, "utf8")),
                 addresses: new Map(manifest.patches.map((patch) => [patch.key, patch.address]))
               };
@@ -1142,26 +1374,48 @@ const rehearse = async (live: string, head: string) => {
               return previous;
             });
       environment = current;
-      if (step.number === 2) {
-        const publisher = current.scenario.people.find(
-          (person) => person.key === current.scenario.publisher
-        )!;
-        agentToken = await phase(
-          "minting an agent connection",
-          async () =>
+      if (step.number === 2)
+        connections = await phase("minting agent connections", async () => {
+          const { people, publisher } = current.scenario;
+          const [deactivated, disconnected] = people.filter((person) => person.role === "member");
+          if (deactivated === undefined || disconnected === undefined)
+            throw new Error(`The ${SCENARIO} scenario needs two members.`);
+          const mint = async (person: Person) =>
             decodeMcpToken(
               await dev(
-                ["mcp-token", publisher.email, "--client", "Rollback rehearsal", "--json"],
+                ["mcp-token", person.email, "--client", "Rollback rehearsal", "--json"],
                 120_000
               )
-            ).token
+            ).token;
+          return {
+            publisher: await mint(people.find((person) => person.key === publisher)!),
+            deactivated: { person: deactivated, token: await mint(deactivated) },
+            disconnected: { person: disconnected, token: await mint(disconnected) }
+          };
+        });
+      // Before anything else, so the device login step 3 approved can't have expired.
+      if (step.number === 4 && connections !== undefined && ended !== undefined) {
+        const [minted, left, from] = [connections, ended, await logSize(log)];
+        const came = await phase("checking what the live release ended", () =>
+          checkEndings(current, minted, left)
         );
+        const problems = [...came, ...serverFailures(await logSince(log, from))];
+        if (problems.length > 0) throw await fail("checking what the live release ended", problems);
       }
       const exercised = await phase("exercising", () =>
-        exercise(step, current, baseline, agentToken, scratch, log)
+        exercise(step, current, baseline, connections?.publisher, scratch, log)
       );
       if (exercised.problems.length > 0) throw await fail("exercising", exercised.problems);
       baseline = exercised.baseline;
+      if (step.number === 3 && connections !== undefined) {
+        const [minted, from] = [connections, await logSize(log)];
+        ended = await phase("ending credentials on the live release", () =>
+          withBrowser((browser) => endCredentials(browser, current, minted))
+        );
+        const failures = serverFailures(await logSince(log, from));
+        if (failures.length > 0)
+          throw await fail("ending credentials on the live release", failures);
+      }
       await phase("stopping", async () => {
         if (devRunning) {
           await dev(["stop"], 120_000);
@@ -1172,7 +1426,7 @@ const rehearse = async (live: string, head: string) => {
       console.log(`  passed in ${Math.round((Date.now() - stepStarted) / 1000)}s`);
     }
     const seconds = Math.round((Date.now() - started) / 1000);
-    const passed = `Exercised rollback paths passed: ${short(live)} → ${short(head)} → ${short(live)}, in ${seconds}s.`;
+    const passed = `Exercised rollback paths passed: ${route}, in ${seconds}s.`;
     console.log(`\n${passed}`);
     await summary([passed]);
   } catch (error) {

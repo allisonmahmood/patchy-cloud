@@ -769,16 +769,23 @@ a pull request that changes a capability's `src/migrations.ts`, the handler
 descriptor schemas or the CLI code that writes descriptors, the live release,
 the commit `/healthz/deep` names, starts a fresh dev-runner instance, migrates
 and seeds the brightline scenario; the PR's server starts on that data and
-migrates it; then the live release's server starts on it again. Those two swap
-only the server build and seed nothing, so rows stay as the migration left them.
+migrates it; then the live release's server starts on it again, and the PR's
+once more. Those three swap only the server build and seed nothing, so rows stay
+as the migration left them.
 After each start it exercises the deep health check, that build's CLI (whoami,
 list and a publish) and, in Chromium, the portal and every scenario patch, whose
 live queries must deliver again as they did for the live release and whose
 sample data must still show; meanwhile the server must log no failed request,
-call or live query. Once the PR's CLI writes read-only actions, the PR's step
-also publishes a tier 2 patch with one that forces a write and, once its build
+call or live query. Once the PR's CLI writes read-only actions, the PR's first
+step also publishes a tier 2 patch with one that forces a write and, once its build
 makes them, an agent tool; the live release must then serve that patch, refuse
-the write and refuse the page's call to the agent tool. A failure names its step. A failure caused by another
+the write and refuse the page's call to the agent tool. The PR's first step also
+connects agents for the publisher and two members. The live release then ends
+credentials as people do: the publisher deactivates and reactivates one member,
+and the other presses Disconnect everything with a device login approved and not
+yet collected. Back at the PR, both members' agent connections must be dead, the
+publisher's alive, and the device login must mint nothing, so a rollback can't
+bring a credential back. A failure names its step. A failure caused by another
 unreleased migration on `main` is real too, since the next release carries it.
 While a Deploy run is unfinished, or the one updated last did not succeed, the
 live commit is uncertain, by the same rule a deploy pins it with (AGENTS.md ›

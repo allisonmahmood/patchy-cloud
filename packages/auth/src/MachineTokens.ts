@@ -234,10 +234,11 @@ export const make = Effect.gen(function* () {
     return result.value;
   });
 
-  // Disconnect everything. The stamp ends every device login confirmed at or before it
-  // (DeviceLogins.poll). It is the database's clock read under the user lock that mint and
-  // confirmation take, so it follows everything made under that lock before it, and never
-  // moves back.
+  // Disconnect everything, with or without a machine token. The stamp ends every device login
+  // confirmed at or before it (DeviceLogins.poll) and every agent connection made at or before
+  // it (AgentConnections), whichever release wrote it. It is the database's clock read under the
+  // user lock that mint, confirmation and agent connections take, so it follows everything made
+  // under that lock before it, and never moves back.
   const revokeAll = Effect.fn("MachineTokens.revokeAll")((userId: string) =>
     sql.withTransaction(
       Effect.gen(function* () {
