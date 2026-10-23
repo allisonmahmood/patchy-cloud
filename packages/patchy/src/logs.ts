@@ -46,7 +46,8 @@ const took = (durationMs: number | null) =>
   durationMs === null ? "unsettled" : `${durationMs} ms`;
 
 function* entryLines(entry: LogEntry): Generator<string> {
-  const viewer = entry.viewer.name ?? entry.viewer.id;
+  // An agent's call, and every step it took as its person, read "Jordan Lee via Claude".
+  const viewer = `${entry.viewer.name ?? entry.viewer.id}${entry.agent === null ? "" : ` via ${entry.agent.name}`}`;
   const as = (principal: string) =>
     principal === "patch"
       ? "as the patch"

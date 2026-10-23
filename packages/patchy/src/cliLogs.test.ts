@@ -5,7 +5,8 @@ import { runCli, stubInstance } from "./test/cli.js";
 describe("patchy logs", () => {
   const patchId = "abcdefghijkl";
   const env = (url: string) => ({ PATCHY_API_URL: url, PATCHY_API_TOKEN: "pp_owner" });
-  const entry = {
+  // An entry as an instance from before agents sends it, without `agent`.
+  const before = {
     id: "inv_new",
     correlationId: "cor_new",
     startedAt: "2026-10-19T10:00:01.000Z",
@@ -49,6 +50,7 @@ describe("patchy logs", () => {
     ],
     stepsTruncated: false
   };
+  const entry = { ...before, agent: { name: "Codex" } };
   const page = { ok: true, patchId, entries: [entry], next: "inv_new", windowEnded: false };
 
   it("asks for one page by its flags and prints the document or readable lines", async () => {
@@ -67,7 +69,7 @@ describe("patchy logs", () => {
     const text = await runCli(args, { env: env(instance.url) });
     expect(text, text.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(text.stdout.trim().split("\n")).toEqual([
-      "2026-10-19T10:00:01.000Z · v12 · leads.import (action) · failure handler_failed · 40 ms · Alice",
+      "2026-10-19T10:00:01.000Z · v12 · leads.import (action) · failure handler_failed · 40 ms · Alice via Codex",
       "  entry inv_new · correlation cor_new",
       "  log: Cannot read properties of undefined (reading 'email')",
       "    TypeError: Cannot read properties of undefined",
@@ -76,6 +78,17 @@ describe("patchy logs", () => {
       "",
       `Older entries: patchy logs --patch ${patchId} --failed --before inv_new`
     ]);
+  });
+
+  it("reads a page from an instance before agents as people's own calls", async () => {
+    const instance = await stubInstance((_, respond) =>
+      respond(200, { ...page, entries: [before], next: null })
+    );
+    const json = await runCli(["logs", "--patch", patchId, "--json"], { env: env(instance.url) });
+    expect(json, json.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(json.stdout).entries[0].agent).toBeNull();
+    const text = await runCli(["logs", "--patch", patchId], { env: env(instance.url) });
+    expect(text.stdout.split("\n")[0]).toMatch(/ · 40 ms · Alice$/u);
   });
 
   it("relays the instance's refusal for someone who isn't the owner or an admin", async () => {

@@ -2149,6 +2149,8 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
   input: {
     readonly handler: string;
     readonly kind: "query" | "mutation" | "action";
+    /** The worker agent the viewer called through; absent for a page's call. */
+    readonly agent?: { readonly name: string };
     readonly outcome?: Exclude<InvocationLog.Outcome, "pending">;
     readonly outcomeCode?: string | null;
     readonly parentId?: string;
@@ -2177,7 +2179,7 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
     handler: input.handler,
     kind: input.kind,
     initiatingViewerId: viewer.id,
-    agent: null,
+    agent: input.agent ?? null,
     parentId: input.parentId ?? null,
     correlationId: `correlation-${id}`,
     startedAt,
@@ -2210,6 +2212,7 @@ const operation = Effect.fn("PortalPagesTest.operation")(function* (
     readonly op: string;
     readonly resource: string;
     readonly as: Person | "patch";
+    readonly agent?: { readonly name: string };
     readonly outcome: "success" | "failure";
     readonly outcomeCode?: string;
     readonly rowCount: number | null;
@@ -2226,7 +2229,9 @@ const operation = Effect.fn("PortalPagesTest.operation")(function* (
     userId: principal === "patch" ? null : principal,
     effectivePrincipal: principal,
     invocationId,
-    credentialKind: "session",
+    ...(input.agent === undefined
+      ? { credentialKind: "session" as const }
+      : { credentialKind: "agent" as const, agent: input.agent }),
     op: input.op,
     resource: input.resource,
     connectionId: input.op.startsWith("postgres.") ? "con_warehouse" : null,
@@ -2767,6 +2772,57 @@ it.layer(layer)("patch log on a socket", (it) => {
       const member = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
       assert.notInclude(text(member), "Recent activity");
       assert.notInclude(member, logPath(patch.name));
+    })
+  );
+
+  it.effect("names an agent's work as its person via the client they approved, escaped", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "call-log", { title: "Call Log" });
+      const seed = seedOf(workspace.id, patch);
+      const agent = { name: "Claude <Code> & co" };
+      const shown = "Alex via Claude &lt;Code&gt; &amp; co";
+      yield* invoke(seed, workspace.member, { handler: "calls.add", kind: "mutation" });
+      yield* invoke(seed, workspace.member, {
+        handler: "agent.logCalls",
+        kind: "action",
+        agent,
+        inside: (id) =>
+          operation(seed, id, {
+            op: "postgres.list",
+            resource: '"public"."customers"',
+            as: workspace.member,
+            agent,
+            outcome: "success",
+            rowCount: 2
+          })
+      });
+
+      const log = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
+      assert.notInclude(log, "<Code>");
+      assert.include(text(log), `${shown} v1 agent.logCalls action Succeeded`);
+      assert.include(text(log), "Alex v1 calls.add mutation Succeeded");
+      assert.include(
+        text(log),
+        `customers.list (connection call) · as ${shown} Succeeded 12 ms · 2 rows`
+      );
+      // The person filter is unchanged: the agent's work is its person's.
+      assert.deepStrictEqual(
+        [
+          ...(log.match(/<select[^>]*name="person"[\s\S]*?<\/select>/)?.[0] ?? "").matchAll(
+            /<option value="[^"]+">([^<]*)<\/option>/g
+          )
+        ].map((match) => match[1]),
+        ["Alex"]
+      );
+
+      const card = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
+      assert.notInclude(card, "<Code>");
+      const activity = text(
+        card.match(/<section[^>]*activity-heading[\s\S]*?<\/section>/)?.[0] ?? ""
+      );
+      assert.include(activity, `${shown} · Call Log v1 · agent.logCalls (action) Succeeded`);
+      assert.include(activity, "Alex · Call Log v1 · calls.add (mutation) Succeeded");
     })
   );
 

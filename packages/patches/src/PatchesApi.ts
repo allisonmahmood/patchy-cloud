@@ -217,6 +217,7 @@ const logEntry = ({ invocation, tree, truncated }: InvocationLog.Entry, names: L
       id: invocation.initiatingViewerId,
       name: names.people.get(invocation.initiatingViewerId) ?? null
     },
+    agent: invocation.agent,
     outcome: invocation.outcome,
     code: invocation.outcomeCode,
     durationMs: invocation.durationMs,

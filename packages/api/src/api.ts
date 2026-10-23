@@ -399,7 +399,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "patch. Its current owner and company admins read it in any lifecycle state; another member " +
           "answers 403 `not_owner` naming the owner, and unknown, unopenable, foreign and gone patches 404. " +
           "Each entry is a top-level handler call with its version number, handler and kind, initiating " +
-          "viewer, outcome and code, timings, correlation id, `ctx.log` lines (including a thrown error's " +
+          "viewer and the `agent` they called through (null for their page's call), outcome and code, timings, correlation id, `ctx.log` lines (including a thrown error's " +
           "message and stack) and up to 50 retained steps: nested handlers and the operations each made, " +
           "successful or not, with `stepsTruncated` when it made more. Quiet successful queries roll up " +
           "without entries, so tiers 0 and 1 have none. `limit` is 1 to 25, default 10, and a page stops " +

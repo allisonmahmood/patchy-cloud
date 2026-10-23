@@ -1282,8 +1282,9 @@ broken, then fix the bug and publish. Inside a published repo it reads
 entries: mutations and actions always, queries only when they log or fail.
 
 Each entry names its time, version, handler and kind, outcome and code, duration
-and the person who opened the patch, then its correlation id, its `ctx.log` lines
-and the steps it made: nested handlers and table, file and connection calls,
+and the person who made the call, "Jordan Lee via Claude" when their agent made
+it, then its correlation id, its `ctx.log` lines and the steps it made: nested
+handlers and table, file and connection calls,
 successful or not. A thrown error's message and stack are a log line. Stacks
 point into the minified server bundle, so trust the message over line numbers.
 A browser's failure reports its correlation id; grep for it to find the entry.
@@ -1298,7 +1299,9 @@ Text prints each step under the handler that made it and stops after about
 2 MiB, saying so; `--json` always holds the whole page. There is no search or
 follow mode: page with `--before` and filter with `grep` or `jq`. `--json` prints `{ ok, patchId, entries, next, windowEnded }`, documented
 in [`docs/API.md`](../../docs/API.md); `next` is the cursor for `--before`, or
-null at the start of the log. Another member's key is refused with `not_owner`,
+null at the start of the log. An entry's `agent` is `{ name }` when the person's
+agent made the call and null for their page's; an instance from before agents
+sends none, which the CLI prints as null. Another member's key is refused with `not_owner`,
 exit 2, naming the owner.
 
 ### The company look

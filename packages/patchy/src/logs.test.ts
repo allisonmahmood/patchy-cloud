@@ -24,7 +24,11 @@ const step = (id: string, parentId: string, fields: Partial<Step> = {}): Step =>
   ...fields
 });
 
-const page = (steps: ReadonlyArray<Step>, next: string | null = null) =>
+const page = (
+  steps: ReadonlyArray<Step>,
+  next: string | null = null,
+  agent: LogEntry["agent"] = null
+) =>
   new PatchLog({
     ok: true,
     patchId: "abcdefghijkl",
@@ -38,6 +42,7 @@ const page = (steps: ReadonlyArray<Step>, next: string | null = null) =>
         handler: "orders.import",
         kind: "action",
         viewer: { id: "usr_ben", name: "Ben" },
+        agent,
         outcome: "handler_error",
         code: "bad_row",
         durationMs: 100,
@@ -74,6 +79,34 @@ describe("patchy logs text", () => {
       "    - tables.insert orders · as the patch · success · 1 ms · 1 rows",
       "  - orders.notify (mutation) · as the patch · success · 1 ms",
       "    - tables.insert outbox · as the patch · success · 1 ms · 1 rows"
+    ]);
+  });
+
+  it("names an agent's call and the person it acted as by the person via the agent", () => {
+    const lines = render(
+      page(
+        [
+          step("call_a", "inv_top", {
+            type: "call",
+            kind: null,
+            name: "postgres.list",
+            resource: "public.orders",
+            connection: "postgres/warehouse",
+            effectivePrincipal: "usr_ben"
+          }),
+          step("call_b", "inv_top", { type: "call", kind: null, name: "tables.insert" })
+        ],
+        null,
+        { name: "Claude" }
+      ),
+      options
+    );
+    expect(lines[0]).toBe(
+      "2026-10-19T10:00:00.000Z · v3 · orders.import (action) · handler_error bad_row · 100 ms · Ben via Claude"
+    );
+    expect(lines.slice(2)).toEqual([
+      "  - postgres.list public.orders on postgres/warehouse · as Ben via Claude · success · 1 ms",
+      "  - tables.insert · as the patch · success · 1 ms"
     ]);
   });
 

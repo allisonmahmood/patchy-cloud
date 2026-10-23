@@ -5,6 +5,7 @@
  * them. Field names use `patch` naming — the wire renamed `draft → patch` when
  * this package was created, ahead of the tables and the code.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
@@ -1037,8 +1038,19 @@ export const LogEntry = Schema.Struct({
   version: Schema.NullOr(Schema.Int),
   handler: Schema.String,
   kind: HandlerKind,
-  /** Who opened the patch; `name` is null for someone no longer in the company. */
+  /**
+   * Who made the call, from their page or through their agent; `name` is null for someone no
+   * longer in the company.
+   */
   viewer: Schema.Struct({ id: Schema.String, name: Schema.NullOr(Schema.String) }),
+  /**
+   * The agent the viewer called through, by the client name they approved at consent, so the
+   * call reads "Jordan Lee via Claude"; null for their page's call. An instance from before
+   * agents sends none, which reads as null.
+   */
+  agent: Schema.NullOr(Schema.Struct({ name: Schema.String })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null))
+  ),
   outcome: LogOutcome,
   code: Schema.NullOr(Schema.String),
   durationMs: Schema.NullOr(Schema.Int),
