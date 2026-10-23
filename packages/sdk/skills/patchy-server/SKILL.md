@@ -377,7 +377,8 @@ or refuse them. A tool of its own can require what the page leaves optional; its
 schema then tells the agent, and a call missing the field is refused before the
 handler runs.
 
-To agents, a query or read-only action is a read and anything else is a change.
+To agents, a query or read-only action is a read and anything else is a change,
+so Postgres and PostHog reads count as reads only from a read-only action.
 Clients decide whether to ask the person before a change, and most ask every
 time. Patchy's log records each change and action as "Person via Client",
 failures included. A query that succeeds without `ctx.log` leaves no row; a
