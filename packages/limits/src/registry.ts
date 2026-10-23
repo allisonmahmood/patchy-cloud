@@ -1005,6 +1005,36 @@ export const registry = {
     refusal: "rate_limited",
     overridable: false
   },
+  "mcp.requests.perMinute": {
+    kind: "operating",
+    default: 600,
+    unit: "requests/minute",
+    scope: "viewer",
+    measure:
+      "Patchy MCP requests per person across their agent connections per host replica, catalogue calls included. The bucket holds a minute's worth and refills over the minute; past it a tool call is refused in its result and any other request is answered 429",
+    refusal: "rate_limited",
+    overridable: true
+  },
+  "mcp.bearer.failures.perMinute": {
+    kind: "operating",
+    default: 60,
+    unit: "attempts/minute",
+    scope: "host",
+    measure:
+      "Patchy MCP requests with no token or a bad one per source address per host replica, counted after each check fails; a failure past it is answered 429, and a request whose token checks is never refused",
+    refusal: "rate_limited",
+    overridable: false
+  },
+  "mcp.body.bytes": {
+    kind: "contract",
+    default: 1114112,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "One Patchy MCP request body: the tier 2 argument cap plus 64 KiB of envelope. A larger one is answered 413 before it is parsed",
+    refusal: "too_large",
+    overridable: false
+  },
   "rate.protectedApi.perMinute": {
     kind: "operating",
     configuration: "legacy",

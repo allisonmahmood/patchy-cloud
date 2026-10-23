@@ -63,6 +63,14 @@ it("keeps a reader's stream and its subscription requests on one host", () => {
   });
 });
 
+it("passes the Host a client sent through to the hosts, for Patchy MCP's door to check", () => {
+  template.hasResourceProperties("AWS::ElasticLoadBalancingV2::LoadBalancer", {
+    LoadBalancerAttributes: Match.arrayWith([
+      { Key: "routing.http.preserve_host_header.enabled", Value: "true" }
+    ])
+  });
+});
+
 it("rolls hosts out beside the promoted release, back if they cannot start, and exec with no AWS identity", () => {
   // Until promotion the new hosts launch and manage the promoted revision's tasks too.
   template.hasResourceProperties("AWS::ECS::TaskDefinition", {

@@ -356,7 +356,10 @@ export class AppStack extends Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       http2Enabled: true,
       // Document streams stay open; the server ends them, not the load balancer.
-      idleTimeout: Duration.seconds(3600)
+      idleTimeout: Duration.seconds(3600),
+      // Patchy MCP's door compares the Host a client sent, port included; by default the load
+      // balancer drops the port. Two Host fields reach the door too, which refuses them.
+      preserveHostHeader: true
     });
     loadBalancer.addListener("Http", {
       port: 80,

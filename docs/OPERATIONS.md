@@ -26,7 +26,12 @@ refuses a missing variable and names it. `PATCHY_PUBLIC_BASE_URL` must be an
 HTTP(S) origin, without credentials, a path, query or fragment, and must match
 the URL used in the browser; it is Clerk's single origin authority.
 `PORT` defaults to 3000; set it and the public origin together if changing ports.
-The optional Clerk settings follow [Development: Clerk keys](DEVELOPMENT.md#clerk-keys).
+Patchy MCP's door at `/mcp` answers only requests addressed to the public
+origin's host, port included, and refuses any other with 421 before reading a
+token. It never believes a forwarded host, so the load balancer preserves the
+`Host` a client sent (`preserveHostHeader`); by default it would drop the port.
+Preserved, two `Host` fields reach the door too, which refuses them. A proxy put
+in front of the server must pass `Host` through the same way.
 
 Before it touches Postgres, a `NODE_ENV=production` host also refuses a
 `PATCHY_PUBLIC_BASE_URL` that is not HTTPS and a missing or incomplete

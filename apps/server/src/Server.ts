@@ -59,6 +59,7 @@ import {
   PostHogOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
+import { Door } from "@patchy/mcp";
 import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
 import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
@@ -331,6 +332,7 @@ const app = Layer.mergeAll(
     AuthPages.layer,
     OAuthMetadata.layer,
     OAuthEndpoints.layer,
+    Door.layer,
     Layer.unwrap(
       Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
     ),

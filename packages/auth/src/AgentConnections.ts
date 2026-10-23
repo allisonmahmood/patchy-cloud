@@ -59,7 +59,12 @@ export const AgentIdentity = Schema.Struct({
   user: Identity.fields.user,
   company: Identity.fields.company,
   role: Identity.fields.role,
-  agentConnection: Schema.Struct({ id: Schema.String, clientName: Schema.String })
+  agentConnection: Schema.Struct({
+    id: Schema.String,
+    clientName: Schema.String,
+    /** The host of the client's metadata document, shown at consent beside its name. */
+    clientSite: Schema.String
+  })
 });
 export type AgentIdentity = typeof AgentIdentity.Type;
 
@@ -196,7 +201,8 @@ export const make = Effect.gen(function* () {
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', co.id, 'handle', co.handle, 'name', co.name),
         'role', u.role,
-        'agentConnection', json_build_object('id', c.id, 'clientName', c.client_name)
+        'agentConnection', json_build_object(
+          'id', c.id, 'clientName', c.client_name, 'clientSite', c.client_site)
       ) AS identity`
   });
 

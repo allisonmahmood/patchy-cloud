@@ -1,0 +1,36 @@
+{
+  "name": "@patchy/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Patchy MCP: the door at /mcp through which people's agents use their company's patches, its revisions, request trust, bearer and limits.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@patchy/analytics": "workspace:*",
+    "@patchy/api": "workspace:*",
+    "@patchy/auth": "workspace:*",
+    "@patchy/limits": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@patchy/companies": "workspace:*",
+    "@patchy/sql": "workspace:*",
+    "vitest": "^5.0.3"
+  }
+}

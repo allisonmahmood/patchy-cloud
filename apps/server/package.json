@@ -35,6 +35,7 @@
     "@patchy/execution": "workspace:*",
     "@patchy/integrations": "workspace:*",
     "@patchy/limits": "workspace:*",
+    "@patchy/mcp": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/portal": "workspace:*",
     "@patchy/primitives": "workspace:*",

@@ -31,7 +31,8 @@ export function renderServerSkillLimits(): string {
           !id.startsWith("rate.") &&
           !id.startsWith("look.") &&
           !id.startsWith("invites.") &&
-          !id.startsWith("oauth.")
+          !id.startsWith("oauth.") &&
+          !id.startsWith("mcp.")
       )
     ),
     ""

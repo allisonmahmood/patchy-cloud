@@ -189,7 +189,14 @@ key or first name; `--json` adds the connection's id, name and site. The token
 is the `work` credential, so the CLI's API answers it 401. It lasts a year
 instead of an hour, and the connection ends as any other does: disconnected,
 after 30 days without a call, or when its person's credentials end. Nothing
-else mints one without consent, and no route does.
+else mints one without consent, and no route does. Agents use it at the door,
+`<url>/mcp`, where `<url>` is the plan's API URL: the door answers only its own
+`Host`, so an environment's door is at its `<label>.localhost` host, never the
+`127.0.0.1` alias, and a browser page may call it only from that origin. For
+Codex, a throwaway `CODEX_HOME` whose `config.toml` holds
+`[mcp_servers.patchy]` with `url` and `bearer_token_env_var` reaches it without
+touching your own; `--enable mcp_2026_07_28` switches Codex to the newest MCP
+revision.
 
 **Connecting through consent.** An MCP client opens the consent page at
 `/oauth/authorize` with its client id, a redirect its document lists, an S256
