@@ -190,11 +190,16 @@ export const layer: Layer.Layer<
         "/company",
         errors(RequireSession.withViewer(company({ kind: "view" })))
       );
-      yield* router.add(
-        "POST",
-        "/company/invites",
-        errors(RequireSession.sameOrigin(RequireSession.withViewer(company({ kind: "invite" }))))
-      );
+      for (const [path, kind] of [
+        ["/company/invites", "invite"],
+        ["/company/agent-access", "agent-access"]
+      ] as const) {
+        yield* router.add(
+          "POST",
+          path,
+          errors(RequireSession.sameOrigin(RequireSession.withViewer(company({ kind }))))
+        );
+      }
       for (const [path, kind] of [
         ["/company/invites/:id/revoke", "revoke"],
         ["/company/invites/:id/resend", "resend"],

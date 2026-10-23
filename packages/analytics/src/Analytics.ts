@@ -188,6 +188,9 @@ export type AnalyticsCatalogue = Catalogue<{
     readonly fromRevision: number | null;
   };
 
+  /** An admin turned the company's agent access on or off. Principal: that admin. */
+  readonly "agent_access.changed": { readonly on: boolean };
+
   /** An admin connected an integration to the company. Principal: that admin. */
   readonly "connection.connected": ConnectionSubject;
 

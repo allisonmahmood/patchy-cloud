@@ -27,7 +27,7 @@ interface Viewer {
   readonly role: Users.Role;
 }
 export type Action =
-  | { readonly kind: "view" | "invite" }
+  | { readonly kind: "view" | "invite" | "agent-access" }
   | {
       readonly kind: "revoke" | "resend" | "role";
       readonly id: string;
@@ -107,6 +107,9 @@ const isEmail = Schema.is(
   Schema.String.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/))
 );
 const decodeRole = Schema.decodeUnknownEffect(Schema.Struct({ role: Users.Role }));
+const decodeAgentAccess = Schema.decodeUnknownEffect(
+  Schema.Struct({ state: Schema.Literals(["on", "off"]) })
+);
 
 /** A pasted list: commas, semicolons and whitespace separate addresses; repeats count once. */
 const addresses = (text: string) => {
@@ -147,12 +150,43 @@ const filterHref = (show: Show, query: string) => {
   return search ? `/company?${search}` : "/company";
 };
 
+/**
+ * The foot of the page: agent access, its latest change, and for an admin the one button that
+ * flips it. Members learn where to connect when it is on and whom to ask when it is off.
+ */
+const agentAccessSection = (
+  viewer: Viewer,
+  access: Companies.AgentAccess,
+  admins: readonly string[]
+) => {
+  const company = escapeHtml(viewer.company.name);
+  const latest = access.latest
+    ? `<p class="supporting-text">Turned ${access.on ? "on" : "off"} by ${escapeHtml(access.latest.by.name)} on ${time(access.latest.at)}</p>`
+    : "";
+  const reach =
+    "Agents only reach the agent tools each patch’s builder added, and never do anything their person can’t.";
+  const text =
+    viewer.role === "admin"
+      ? access.on
+        ? `<p>Everyone at ${company} can connect their own agent, like Claude or Codex, to use the company’s patches as themselves. ${reach} Turning it off refuses every agent until it’s back on, without ending anyone’s connection.</p><form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="off"><button class="btn" type="submit">Turn off</button></form>`
+        : `<p>Turn it on to let everyone at ${company} connect their own agent, like Claude or Codex, to use the company’s patches as themselves. ${reach}</p><form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="on"><button class="btn btn-primary" type="submit">Turn on</button></form>`
+      : access.on
+        ? `<p>Your own agent, like Claude or Codex, can use ${company}’s patches as you, through the agent tools each patch’s builder added.</p><p class="supporting-text">Connect yours on <a href="/machines">Your machines</a>.</p>`
+        : `<p>Your own agent, like Claude or Codex, can use ${company}’s patches as you once an admin turns this on.</p><p class="supporting-text">At ${company} that’s ${sentenceList(admins)}.</p>`;
+  return `<section class="section" id="agent-access" aria-labelledby="agent-access-heading"><h2 class="section-heading" id="agent-access-heading">Agent access <span class="tag">${access.on ? "On" : "Off"}</span></h2>${latest}${text}</section>`;
+};
+
 const render = Effect.fn("CompanyPage.render")(function* (
   viewer: Viewer,
   view: View = {}
 ): Effect.fn.Return<Page, SqlError, Users.Users | Companies.Companies> {
+  const companies = yield* Companies.Companies;
   const users = yield* (yield* Users.Users).list(viewer.company.id);
-  const invites = yield* (yield* Companies.Companies).listInvites(viewer.company.id);
+  const invites = yield* companies.listInvites(viewer.company.id);
+  // The viewer's own company: it exists for as long as they can open this page.
+  const access = yield* companies
+    .agentAccess(viewer.company.id)
+    .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
   const ownedPatches = yield* OwnedPatches;
   const owned =
     ownedPatches === undefined
@@ -296,10 +330,14 @@ const render = Effect.fn("CompanyPage.render")(function* (
   const notice = view.notice
     ? `<div class="note note-warn" role="alert">${view.notice.message}</div>`
     : "";
-  const admins = active.filter((user) => user.role === "admin").length;
+  const admins = active.filter((user) => user.role === "admin");
   return {
     title: viewer.company.name,
-    body: `<p class="supporting-text">${escapeHtml(viewer.company.handle)} · ${plural(active.length, "person", "people")} · ${plural(admins, "admin", "admins")}</p>${notice}${inviteForm}<div class="company-tools"><nav class="tabs" aria-label="Show">${tabs}</nav>${search}</div>${matches}${table}`,
+    body: `<p class="supporting-text">${escapeHtml(viewer.company.handle)} · ${plural(active.length, "person", "people")} · ${plural(admins.length, "admin", "admins")}</p>${notice}${inviteForm}<div class="company-tools"><nav class="tabs" aria-label="Show">${tabs}</nav>${search}</div>${matches}${table}${agentAccessSection(
+      viewer,
+      access,
+      admins.map((user) => user.name)
+    )}`,
     status: view.notice?.status ?? (draft?.problem ? 422 : undefined)
   };
 });
@@ -325,8 +363,27 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     const users = yield* Users.Users;
     const analytics = yield* Analytics.Analytics;
     // A refused action fails before its event. Invitations deliver uninterruptibly,
-    // so each reports in the same region; the role change reports with its commit.
+    // so each reports in the same region; role and agent access changes report with their commit.
     const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
+    if (action.kind === "agent-access") {
+      const form = yield* decodeAgentAccess(Object.fromEntries(yield* request.urlParamsBody)).pipe(
+        Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
+      );
+      if (form === null) return yield* refuse(viewer, "Choose on or off.", 422);
+      const on = form.state === "on";
+      const change = (yield* Companies.Companies).setAgentAccess({
+        companyId: viewer.company.id,
+        on,
+        by: viewer.user.id
+      });
+      yield* withReportedCommit(change, ({ changed }) =>
+        changed
+          ? analytics.track({ name: "agent_access.changed", ...admin, properties: { on } })
+          : Effect.void
+      );
+      // Back to the section the button sat in, at the foot of the page.
+      return { title: viewer.company.name, body: "", redirect: "/company#agent-access" };
+    }
     if (action.kind === "invite") {
       const fields = Object.fromEntries(yield* request.urlParamsBody);
       const text = fields.email ?? "";

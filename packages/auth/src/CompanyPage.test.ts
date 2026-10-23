@@ -92,6 +92,10 @@ const redirected = (response: Response) => {
   assert.strictEqual(response.status, 303);
   assert.strictEqual(response.headers.get("location"), "/company");
 };
+const redirectedTo = (response: Response) => {
+  assert.strictEqual(response.status, 303);
+  assert.strictEqual(response.headers.get("location"), "/company#agent-access");
+};
 const deliveryFailed = Effect.fn(function* (response: Response) {
   assert.strictEqual(response.status, 502);
   assert.strictEqual(response.headers.get("location"), null);
@@ -676,7 +680,8 @@ it.layer(services)("company page and actions", (it) => {
           ["/company/invites", { email: "member-forbidden@example.com", role: "admin" }],
           [`/company/invites/${invite.id}/revoke`, {}],
           [`/company/invites/${invite.id}/resend`, {}],
-          [`/company/users/${member.id}/role`, { role: "admin" }]
+          [`/company/users/${member.id}/role`, { role: "admin" }],
+          ["/company/agent-access", { state: "on" }]
         ];
         for (const [path, body] of actions) {
           const response = yield* send(path, post(member, body));
@@ -685,8 +690,91 @@ it.layer(services)("company page and actions", (it) => {
         }
         assert.deepStrictEqual(yield* users.list(owner.company.id), beforeUsers);
         assert.deepStrictEqual(yield* companies.listInvites(owner.company.id), beforeInvites);
+        assert.deepStrictEqual(yield* companies.agentAccess(owner.company.id), {
+          on: false,
+          latest: null
+        });
         assert.deepStrictEqual(yield* recording.events, beforeMail);
         assert.deepStrictEqual(reported(owner.company.id), []);
+      })
+  );
+
+  it.effect(
+    "lets an admin turn agent access on and off at the foot of Company, stamped with who and when",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("company-agent-access", "Brightline Studio");
+        const second = yield* addUser(owner, "second", "admin", "Priya Shah");
+        const member = yield* addUser(owner, "member");
+        const page = Effect.fn(function* (viewer: Users.User) {
+          const response = yield* send("/company", { headers: { cookie: cookie(viewer) } });
+          assert.strictEqual(response.status, 200);
+          const html = yield* Effect.promise(() => response.text());
+          // The section is the page's last.
+          const section = html.slice(html.indexOf('<section class="section" id="agent-access"'));
+          assert.match(section, /^<section[^>]*>[\s\S]*?<\/section><\/main>/);
+          return section;
+        });
+        const turn = (viewer: Users.User, state: string) =>
+          send("/company/agent-access", post(viewer, { state }));
+        const button = (state: "on" | "off") =>
+          new RegExp(
+            `<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${state}"><button class="btn${state === "on" ? " btn-primary" : ""}" type="submit">Turn ${state}</button></form>`
+          );
+
+        // The starting Off has no latest change; an admin gets Turn on, a member the admins.
+        const off = yield* page(owner.user);
+        assert.include(off, 'Agent access <span class="tag">Off</span>');
+        assert.notInclude(off, "Turned");
+        assert.include(off, "Turn it on to let everyone at Brightline Studio connect");
+        assert.match(off, button("on"));
+        const offForMember = yield* page(member);
+        assert.notInclude(offForMember, "<form");
+        assert.notInclude(offForMember, "Turned");
+        assert.include(
+          offForMember,
+          "At Brightline Studio that’s company-agent-access Admin and Priya Shah."
+        );
+
+        yield* TestClock.setTime(Date.parse("2026-10-12T09:00:00Z"));
+        const turnedOn = yield* turn(owner.user, "on");
+        assert.strictEqual(turnedOn.status, 303);
+        assert.strictEqual(turnedOn.headers.get("location"), "/company#agent-access");
+        const on = yield* page(owner.user);
+        assert.include(on, 'Agent access <span class="tag">On</span>');
+        const stamp =
+          'Turned on by company-agent-access Admin on <time datetime="2026-10-12T09:00:00.000Z">12 Oct 2026</time>';
+        assert.include(on, stamp);
+        assert.include(on, "refuses every agent until it’s back on");
+        assert.match(on, button("off"));
+        const onForMember = yield* page(member);
+        assert.include(onForMember, 'Agent access <span class="tag">On</span>');
+        assert.include(onForMember, stamp);
+        assert.include(onForMember, 'Connect yours on <a href="/machines">Your machines</a>.');
+        assert.notInclude(onForMember, "<form");
+
+        // A stale Turn on from another admin's tab changes nothing and reports nothing.
+        redirectedTo(yield* turn(second, "on"));
+        assert.include(yield* page(owner.user), stamp);
+
+        yield* TestClock.adjust("1 day");
+        redirectedTo(yield* turn(second, "off"));
+        const offAgain = yield* page(member);
+        assert.include(offAgain, 'Agent access <span class="tag">Off</span>');
+        assert.include(
+          offAgain,
+          'Turned off by Priya Shah on <time datetime="2026-10-13T09:00:00.000Z">13 Oct 2026</time>'
+        );
+        assert.deepStrictEqual(reported(owner.company.id), [
+          { name: "agent_access.changed", principalId: owner.user.id, properties: { on: true } },
+          { name: "agent_access.changed", principalId: second.id, properties: { on: false } }
+        ]);
+
+        const malformed = yield* turn(owner.user, "maybe");
+        assert.strictEqual(malformed.status, 422);
+        assert.include(yield* Effect.promise(() => malformed.text()), 'role="alert"');
+        assert.isFalse((yield* (yield* Companies.Companies).agentAccess(owner.company.id)).on);
+        assert.lengthOf(reported(owner.company.id), 2);
       })
   );
 
@@ -709,7 +797,8 @@ it.layer(services)("company page and actions", (it) => {
         ["/company/invites", { email: "origin-forbidden@example.com", role: "member" }],
         [`/company/invites/${invite.id}/revoke`, {}],
         [`/company/invites/${invite.id}/resend`, {}],
-        [`/company/users/${member.id}/role`, { role: "admin" }]
+        [`/company/users/${member.id}/role`, { role: "admin" }],
+        ["/company/agent-access", { state: "on" }]
       ];
       const refusedHeaders: ReadonlyArray<Record<string, string>> = [
         { origin: "https://foreign.invalid", "sec-fetch-site": "same-origin" },
@@ -727,6 +816,7 @@ it.layer(services)("company page and actions", (it) => {
       }
       assert.deepStrictEqual(yield* users.list(owner.company.id), beforeUsers);
       assert.deepStrictEqual(yield* companies.listInvites(owner.company.id), beforeInvites);
+      assert.isFalse((yield* companies.agentAccess(owner.company.id)).on);
       assert.deepStrictEqual(yield* recording.events, beforeMail);
       assert.deepStrictEqual(reported(owner.company.id), []);
     })

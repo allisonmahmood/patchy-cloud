@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -18,6 +20,31 @@ const outcome = {
   onSuccess: () => "ok",
   onFailure: (error: { readonly _tag: string }) => error._tag
 };
+// Runs `effect` in a transaction left open, holding its locks, until `release` commits it.
+// `waiter` waits until another session waits on one of those locks.
+const held = Effect.fn("held")(function* <A, E>(effect: Effect.Effect<A, E>) {
+  const sql = yield* SqlClient.SqlClient;
+  const ran = yield* Deferred.make<number>();
+  const commit = yield* Deferred.make<void>();
+  const fiber = yield* sql
+    .withTransaction(
+      Effect.gen(function* () {
+        const result = yield* effect;
+        const [session] = yield* sql<{ readonly pid: number }>`SELECT pg_backend_pid() AS pid`;
+        yield* Deferred.succeed(ran, session!.pid);
+        yield* Deferred.await(commit);
+        return result;
+      })
+    )
+    .pipe(Effect.forkScoped);
+  const holder = yield* Deferred.await(ran);
+  return {
+    waiter: sql`SELECT pid FROM pg_stat_activity WHERE ${holder} = ANY(pg_blocking_pids(pid))`.pipe(
+      Effect.repeat({ until: (rows) => rows.length > 0 })
+    ),
+    release: Deferred.succeed(commit, undefined).pipe(Effect.andThen(Fiber.join(fiber)))
+  };
+});
 
 it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Testing.layer())))(
   "Companies",
@@ -357,6 +384,111 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         );
         assert.deepStrictEqual(yield* companies.findInvitesByEmail(invite.email), []);
       })
+    );
+
+    it.effect("starts a new company's agent access off, with no latest change", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const { company } = yield* companies.create(companyInput("agent-access-new"));
+        assert.deepStrictEqual(yield* companies.agentAccess(company.id), {
+          on: false,
+          latest: null
+        });
+      })
+    );
+
+    it.effect("records who turned agent access on or off and when, and only a real change", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const users = yield* Users.Users;
+        const { company, user: admin } = yield* companies.create(companyInput("agent-access-set"));
+        const invite = yield* companies.createInvite({
+          companyId: company.id,
+          invitedBy: admin.id,
+          email: "agent-access-second@example.com",
+          role: "admin"
+        });
+        const second = yield* companies.consumeInvite({
+          inviteId: invite.id,
+          clerkUserId: "clerk_agent_access_second",
+          email: invite.email,
+          name: "Priya Shah"
+        });
+        yield* TestClock.setTime(Date.parse("2026-10-12T09:00:00Z"));
+        const on = yield* companies.setAgentAccess({
+          companyId: company.id,
+          on: true,
+          by: admin.id
+        });
+        const turnedOn = {
+          on: true,
+          latest: { by: { id: admin.id, name: "Founder" }, at: new Date("2026-10-12T09:00:00Z") }
+        };
+        assert.deepStrictEqual(on, { access: turnedOn, changed: true });
+        // A second admin asking for the state it already has leaves the latest change alone.
+        yield* TestClock.adjust("1 hour");
+        assert.deepStrictEqual(
+          yield* companies.setAgentAccess({ companyId: company.id, on: true, by: second.id }),
+          { access: turnedOn, changed: false }
+        );
+        yield* TestClock.adjust("1 day");
+        const off = yield* companies.setAgentAccess({
+          companyId: company.id,
+          on: false,
+          by: second.id
+        });
+        const turnedOff = {
+          on: false,
+          latest: {
+            by: { id: second.id, name: "Priya Shah" },
+            at: new Date("2026-10-13T10:00:00Z")
+          }
+        };
+        assert.deepStrictEqual(off, { access: turnedOff, changed: true });
+        // Leaving keeps the name on the latest change.
+        yield* users.deactivate({ companyId: company.id, userId: second.id });
+        assert.deepStrictEqual(yield* companies.agentAccess(company.id), turnedOff);
+      })
+    );
+
+    it.effect("refuses agent access for a company that doesn't exist", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const { user } = yield* companies.create(companyInput("agent-access-unknown"));
+        const outcomes = yield* Effect.all([
+          companies.agentAccess("cmp_missing").pipe(Effect.match(outcome)),
+          companies.holdAgentAccess("cmp_missing").pipe(Effect.match(outcome)),
+          companies
+            .setAgentAccess({ companyId: "cmp_missing", on: true, by: user.id })
+            .pipe(Effect.match(outcome))
+        ]);
+        assert.deepStrictEqual(outcomes, Array(3).fill("CompanyNotFound"));
+      })
+    );
+
+    it.effect(
+      "makes a change wait for a holder of agent access, and a holder wait for a change",
+      () =>
+        Effect.gen(function* () {
+          const companies = yield* Companies.Companies;
+          const { company, user } = yield* companies.create(companyInput("agent-access-hold"));
+          const set = (on: boolean) =>
+            companies.setAgentAccess({ companyId: company.id, on, by: user.id });
+
+          // An exchange holding the switch keeps its "off" until it commits.
+          const exchange = yield* held(companies.holdAgentAccess(company.id));
+          const turnOn = yield* set(true).pipe(Effect.forkScoped);
+          yield* exchange.waiter;
+          assert.isFalse(yield* exchange.release);
+          assert.isTrue((yield* Fiber.join(turnOn)).changed);
+
+          // A hold during an uncommitted "off" reads the "off" once it commits, never the "on".
+          const turnOff = yield* held(set(false));
+          const waiting = yield* companies.holdAgentAccess(company.id).pipe(Effect.forkScoped);
+          yield* turnOff.waiter;
+          assert.isTrue((yield* turnOff.release).changed);
+          assert.isFalse(yield* Fiber.join(waiting));
+        }).pipe(Effect.scoped)
     );
 
     it.effect("joins exactly one company when two different invitations race", () =>
