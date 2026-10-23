@@ -463,13 +463,15 @@ const READ_TOKEN = `process.stdout.write(JSON.parse(require("fs").readFileSync(0
  *
  * `worker-codex <person>` mints an agent connection for that person with
  * `pnpm dev mcp-token`, as Codex, and hands its token to Codex in its
- * environment only. Codex runs on a home of its own: `CODEX_HOME` is the
- * environment's, whose `config.toml` names only the door and turns off the
- * account's own apps and plugins, and `HOME` is the session's temp folder, so
- * none of the developer's config, instructions, skills or shell profile load. The developer's Codex login is linked in, and
- * Codex writes a refreshed login through the link, into that one file, as
- * another session of theirs would. With no login of theirs, Codex signs in
- * inside the environment, and `down` deletes it.
+ * environment only, never to the commands it runs. Codex runs on a home of its
+ * own: `CODEX_HOME` is the environment's, whose `config.toml` names only the
+ * door and turns off the account's own apps and plugins, and `HOME` is the
+ * session's temp folder, with the variables that point shells at startup files
+ * cleared, so none of the developer's config, instructions, skills or shell
+ * profile load. The developer's Codex login is linked in, and Codex writes a
+ * refreshed login through the link, into that one file, as another session of
+ * theirs would. With no login of theirs, Codex signs in inside the
+ * environment, and `down` deletes it.
  *
  * Arguments pass through to each client, which the launcher execs.
  */
@@ -537,6 +539,8 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
       "#!/usr/bin/env bash",
       "# Codex as a person's worker agent, using this environment's patches through Patchy MCP.",
       "# worker-codex <person> [codex arguments]: a person's key, email or first name.",
+      "# An inherited SHELLOPTS=xtrace would print the token below.",
+      "set +x",
       'person=${1:?"usage: worker-codex <person> [codex arguments]"}',
       "shift",
       ...session,
@@ -551,6 +555,8 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
       `PATCHY_MCP_TOKEN=$(printf '%s' "$minted" | node -e ${quote(READ_TOKEN)}) || exit 1`,
       "unset minted",
       "export PATCHY_MCP_TOKEN",
+      "# None of your shell's startup files either: these point bash and zsh past HOME.",
+      "unset BASH_ENV ENV ZDOTDIR",
       'export HOME="$TMPDIR"',
       'exec codex "$@"',
       ""

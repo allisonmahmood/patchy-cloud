@@ -35,8 +35,14 @@ const launch = Effect.fn(function* (
   const child = yield* spawner.spawn(
     ChildProcess.make(agent, [...args], { env, extendEnv: false, stdin: "ignore" })
   );
-  const stdout = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
-  return { pid: child.pid, exitCode: yield* child.exitCode, stdout };
+  const [stdout, stderr] = yield* Effect.all(
+    [
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString)
+    ],
+    { concurrency: "unbounded" }
+  );
+  return { pid: child.pid, exitCode: yield* child.exitCode, stdout, stderr };
 });
 
 it.layer(NodeServices.layer)("the agent launcher", (it) => {
@@ -218,13 +224,25 @@ it.layer(NodeServices.layer)("the worker agent launchers", (it) => {
         yield* fs.makeDirectory(own);
         yield* fs.writeFileString(path.join(own, "auth.json"), "{}");
         const pnpmLog = path.join(dir, "pnpm.log");
-        const { exitCode, stdout } = yield* launch(
+        const { exitCode, stdout, stderr } = yield* launch(
           layout.codexWorker,
-          { ...env, CODEX_HOME: own, HOME: path.join(dir, "home"), PNPM_LOG: pnpmLog },
+          {
+            ...env,
+            CODEX_HOME: own,
+            HOME: path.join(dir, "home"),
+            PNPM_LOG: pnpmLog,
+            // A shell set up to trace, and to load your own startup files.
+            SHELLOPTS: "xtrace",
+            BASH_ENV: path.join(dir, "home", ".bashrc"),
+            ZDOTDIR: path.join(dir, "home", ".zsh")
+          },
           ["jordan", "exec", "Add a lead"]
         );
 
         assert.strictEqual(exitCode, 0);
+        assert.notInclude(stderr, token);
+        assert.notInclude(stdout, "BASH_ENV=");
+        assert.notInclude(stdout, "ZDOTDIR=");
         assert.strictEqual(
           yield* fs.readFileString(pnpmLog),
           `${worktree}|--silent dev mcp-token jordan --client Codex --json\n`
