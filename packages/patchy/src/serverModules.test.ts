@@ -161,7 +161,7 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
     });
     assert.strictEqual(
       descriptionFailure(blank("agent.count"), { count: "intake" }),
-      "agent/intake.ts: agent.count's description is blank. Say what it does, or leave the description out."
+      "agent/intake.ts: agent.count's description is blank. Say what it does, what it changes and when it refuses."
     );
     // __proto__ must not resolve through Object.prototype.
     assert.match(descriptionFailure(blank("agent.__proto__"), {})!, /^agent\/\*\.ts: /);

@@ -88,37 +88,37 @@ export const HandlerSchema: Schema.Codec<HandlerSchema> = Schema.suspend(() =>
   ])
 ).annotate({ identifier: "HandlerSchema" });
 
+/**
+ * The first value a page handler's contract can't hold. An agent tool may hold no upload or file
+ * handle anywhere, which the agent area check refuses with its tool and fix, so its positions
+ * aren't checked here.
+ */
 const schemaProblem = (
   schema: HandlerSchema,
-  kind: HandlerKind,
+  handler: Pick<HandlerDescriptor, "kind" | "agentTool">,
   position: "args" | "result",
-  field: boolean,
-  tables?: Readonly<Record<string, unknown>>
+  field: boolean
 ): string | undefined => {
   if (schema.optional === true && !field) return "Only object and argument fields may be optional.";
   switch (schema.kind) {
     case "fileHandle":
-      return position === "result"
+      return position === "result" || handler.agentTool === true
         ? undefined
         : "File handles are allowed only in handler results.";
     case "upload":
-      return position === "args" && kind === "action"
+      return (position === "args" && handler.kind === "action") || handler.agentTool === true
         ? undefined
         : "Uploads are allowed only in action arguments.";
     case "object":
       for (const child of Object.values(schema.fields)) {
-        const problem = schemaProblem(child, kind, position, true, tables);
+        const problem = schemaProblem(child, handler, position, true);
         if (problem !== undefined) return problem;
       }
       return undefined;
     case "array":
-      return schemaProblem(schema.element, kind, position, false, tables);
+      return schemaProblem(schema.element, handler, position, false);
     case "nullable":
-      return schemaProblem(schema.value, kind, position, false, tables);
-    case "row":
-      return tables === undefined || Object.hasOwn(tables, schema.table)
-        ? undefined
-        : `Row schema names unknown table "${schema.table}".`;
+      return schemaProblem(schema.value, handler, position, false);
     default:
       return undefined;
   }
@@ -142,10 +142,10 @@ export const HandlerDescriptor = Schema.Struct({
     if (handler.readOnly === true && handler.kind !== "action")
       return "Only actions may be read-only.";
     for (const field of Object.values(handler.args)) {
-      const problem = schemaProblem(field, handler.kind, "args", true);
+      const problem = schemaProblem(field, handler, "args", true);
       if (problem !== undefined) return problem;
     }
-    return schemaProblem(handler.result, handler.kind, "result", false) ?? true;
+    return schemaProblem(handler.result, handler, "result", false) ?? true;
   })
 );
 export type HandlerDescriptor = typeof HandlerDescriptor.Type;
@@ -178,7 +178,9 @@ export const DescriptionProblem = Schema.Struct({
   value: Schema.optionalKey(Schema.String),
   violation: Schema.Literals(["blank", "long"]),
   /** In code points. */
-  length: Schema.Number
+  length: Schema.Number,
+  /** The handler is an agent tool, which must keep its own description. */
+  agentTool: Schema.optionalKey(Schema.Literal(true))
 });
 export type DescriptionProblem = typeof DescriptionProblem.Type;
 
@@ -222,7 +224,8 @@ export const descriptionProblem = (
   for (const [handler, descriptor] of Object.entries(handlers)) {
     const own =
       descriptor.description === undefined ? undefined : violation(descriptor.description);
-    if (own !== undefined) return { handler, ...own };
+    if (own !== undefined)
+      return { handler, ...own, ...(descriptor.agentTool === true ? { agentTool: true } : {}) };
     for (const [field, schema] of Object.entries(descriptor.args)) {
       const problem = valueProblem(schema, handler, `args.${field}`);
       if (problem !== undefined) return problem;
@@ -240,7 +243,13 @@ export const descriptionRefusal = (problem: DescriptionProblem): string => {
       ? `${problem.handler}'s description`
       : `${problem.handler}'s description of ${problem.value}`;
   if (problem.violation === "blank")
-    return `${what} is blank. ${problem.value === undefined ? "Say what it does, or leave the description out." : "Say what it holds, or remove its .describe()."}`;
+    return `${what} is blank. ${
+      problem.value !== undefined
+        ? "Say what it holds, or remove its .describe()."
+        : problem.agentTool === true
+          ? "Say what it does, what it changes and when it refuses."
+          : "Say what it does, or leave the description out."
+    }`;
   return `${what} is ${problem.length.toLocaleString("en-US")} characters; descriptions are at most ${descriptionLimit.toLocaleString("en-US")}. Shorten it.`;
 };
 
@@ -251,18 +260,58 @@ export const handlerKinds = (
     Object.entries(handlers ?? {}).map(([name, descriptor]) => [name, descriptor.kind])
   );
 
-/** Resolve every row descriptor against this manifest, including nested descriptors. */
+/** How to fix `server/agent.ts`, whose handlers would clash with the agent area's names. */
+export const serverAgentModuleFix = "Agent tools live in agent/; move these exports there.";
+
+/** An agent tool's name: its export, the handler name after `agent.`. */
+export const agentToolName = (handler: string) => handler.slice("agent.".length);
+
+/**
+ * Each value in a handler's arguments and result, outermost first, at its path such as
+ * `args.filter.ids[]`. A nullable value shares its wrapper's path.
+ */
+export function* handlerValues(
+  descriptor: Pick<HandlerDescriptor, "args" | "result">
+): Generator<{ readonly path: string; readonly schema: HandlerSchema }> {
+  function* walk(
+    schema: HandlerSchema,
+    path: string
+  ): Generator<{ readonly path: string; readonly schema: HandlerSchema }> {
+    yield { path, schema };
+    switch (schema.kind) {
+      case "object":
+        for (const [name, field] of Object.entries(schema.fields))
+          yield* walk(field, `${path}.${name}`);
+        return;
+      case "array":
+        return yield* walk(schema.element, `${path}[]`);
+      case "nullable":
+        return yield* walk(schema.value, path);
+    }
+  }
+  for (const [name, field] of Object.entries(descriptor.args)) yield* walk(field, `args.${name}`);
+  yield* walk(descriptor.result, "result");
+}
+
+/** What a row naming a table its patch doesn't define says, naming the handler or tool. */
+export const unknownRowRefusal = (name: string, value: string, table: string) =>
+  `${name}'s ${value} is t.row("${table}"), but this patch defines no table ${table}. Define the table in patchy.config.ts, or name one it defines.`;
+
+/**
+ * Resolve every row descriptor against this manifest, including nested descriptors. The
+ * refusal names an agent tool by its tool name and any other handler by `module.export`.
+ */
 export const handlerTablesValid = (manifest: {
   readonly tables: Readonly<Record<string, unknown>>;
   readonly handlers?: HandlerDescriptors;
 }): true | string => {
-  for (const handler of Object.values(manifest.handlers ?? {})) {
-    for (const field of Object.values(handler.args)) {
-      const problem = schemaProblem(field, handler.kind, "args", true, manifest.tables);
-      if (problem !== undefined) return problem;
-    }
-    const problem = schemaProblem(handler.result, handler.kind, "result", false, manifest.tables);
-    if (problem !== undefined) return problem;
-  }
+  for (const [name, handler] of Object.entries(manifest.handlers ?? {}))
+    for (const { path, schema } of handlerValues(handler))
+      if (schema.kind === "row" && !Object.hasOwn(manifest.tables, schema.table))
+        return unknownRowRefusal(
+          handler.agentTool === true ? agentToolName(name) : name,
+          path,
+          schema.table
+        );
   return true;
 };

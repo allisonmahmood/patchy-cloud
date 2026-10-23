@@ -99,6 +99,15 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "Queries only. Host-observed reads determine dependencies; read only what the screen needs. A source refusal can recover after reshare, even on the first run. Permanent errors retain the last data. Canonical arguments share one subscription, with remount grace, hidden suspension and reconciliation. At most 64 subscriptions per document, 256 per patch, 1,024 per company and 8 MiB per snapshot. Member reads are outside the company snapshot."
   },
   {
+    id: "core.agent-tools",
+    group: "Core",
+    name: "Agent tools",
+    entrypoints: ["agent/*.ts", "patchy/_generated/server.ts"],
+    runs: "Tier 2, called by people's own agents through Patchy MCP at <instance>/mcp, as the person who connected them",
+    limits:
+      "Every export of agent/*.ts is a described query, mutation or action, named after its export; pages can't call them. Queries and read-only actions are reads, everything else changes. Agents know only descriptions and schemas. Descriptions are at most 2,000 characters and one patch's tools at most 64 KiB, rows expanded. JSON only: no uploads, file handles or push. Agent access is a company switch an admin turns on."
+  },
+  {
     id: "primitives.tables",
     group: "Primitives",
     name: "Owned tables",

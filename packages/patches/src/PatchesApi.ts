@@ -65,9 +65,11 @@ import {
   PublishKeyConflict,
   type PublishMetadata,
   MANIFEST_VERSION,
-  WIRE_VERSION
+  WIRE_VERSION,
+  agentToolEntries,
+  type HandlerDescriptors
 } from "@patchy/api";
-import { Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Users } from "@patchy/companies";
 import { contentHash, documentTitle, validateHtml } from "@patchy/core";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
@@ -331,6 +333,15 @@ const keyConflict = () =>
     error: "Publish key was already used with a different payload."
   });
 
+/**
+ * A manifest-wide check's own words, such as a row naming a table the patch doesn't define;
+ * a malformed field stays "Invalid manifest.".
+ */
+const manifestRefusal = (error: Schema.SchemaError) =>
+  error.issue._tag === "Composite" && error.issue.issues.every((issue) => issue._tag === "Filter")
+    ? error.message
+    : "Invalid manifest.";
+
 /** Ends `text` with a full stop unless it already ends a sentence. */
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 
@@ -347,6 +358,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const openability = yield* Patches.Openability;
     const limits = yield* Limits.Limits;
     const looks = yield* Looks.Looks;
+    const companies = yield* Companies.Companies;
     const invocationLog = yield* InvocationLog.InvocationLog;
     const users = yield* Users.Users;
     const connectionStore = yield* ConnectionStore.ConnectionStore;
@@ -419,6 +431,34 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               Effect.as([
                 "Could not check whether this repo's look is current: The look could not be read."
               ])
+            )
+        })
+      );
+    });
+
+    /**
+     * A version with agent tools hears when its company's agent access is off, since no agent
+     * can use them until an admin turns it on. Advisory, like the look check.
+     */
+    const agentAccessWarnings = Effect.fn("PatchesApi.agentAccessWarnings")(function* (
+      handlers: HandlerDescriptors | undefined,
+      company: CurrentIdentity["Service"]["company"]
+    ) {
+      if (agentToolEntries(handlers).length === 0) return [];
+      return yield* companies.agentAccess(company.id).pipe(
+        Effect.map((access) =>
+          access.on
+            ? []
+            : [
+                `Agent access is off at ${company.name}, so no agent can use these agent tools yet. An admin turns it on at ${publicBaseUrl.replace(/\/+$/, "")}/company.`
+              ]
+        ),
+        Effect.catchTags({
+          CompanyNotFound: Effect.die,
+          SqlError: (error) =>
+            Effect.logWarning("Publish could not read agent access.", error).pipe(
+              Effect.annotateLogs({ companyId: company.id }),
+              Effect.as([`Could not check whether agent access is on at ${company.name}.`])
             )
         })
       );
@@ -516,7 +556,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             );
           }
           const manifest = yield* decodeManifest(key.manifest).pipe(
-            Effect.catch(() => Effect.succeed(rejected("invalid_manifest", "Invalid manifest.")))
+            Effect.catch((error) =>
+              Effect.succeed(rejected("invalid_manifest", manifestRefusal(error)))
+            )
           );
           if (HttpServerResponse.isHttpServerResponse(manifest)) return manifest;
           if (manifest.manifestVersion !== MANIFEST_VERSION) {
@@ -588,6 +630,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const metadata = payload.metadata;
           // Before the version is recorded, so the stored response a same-key retry replays has it.
           warnings.push(...(yield* lookWarnings(metadata.look, identity.company)));
+          warnings.push(...(yield* agentAccessWarnings(manifest.handlers, identity.company)));
           const recorded = yield* content
             .publish({
               patchId,
@@ -631,6 +674,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 InvalidManifest: (error) =>
                   replayOrRespond(rejected("invalid_manifest", error.message)),
                 InvalidHandlerDescription: (error) =>
+                  replayOrRespond(rejected("invalid_manifest", error.message)),
+                InvalidAgentArea: (error) =>
                   replayOrRespond(rejected("invalid_manifest", error.message)),
                 HasPrimitives: (error) =>
                   replayOrRespond(rejected("has_primitives", error.message)),

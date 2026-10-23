@@ -22,9 +22,12 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { contentHash, newInternalId, newPatchId, sha256 } from "@patchy/core";
 import { ContentStore } from "@patchy/content-store";
 import {
+  AgentAreaProblem,
   DescriptionProblem,
   HandlerDescriptors,
   WIRE_VERSION,
+  agentAreaRefusal,
+  checkAgentArea,
   descriptionProblem,
   descriptionRefusal
 } from "@patchy/api";
@@ -58,6 +61,15 @@ export class InvalidHandlerDescription extends Schema.TaggedError<InvalidHandler
 ) {
   override get message() {
     return descriptionRefusal(this);
+  }
+}
+
+/** An agent area in the stored bundle that fails the shared check, naming the tool and fix. */
+export class InvalidAgentArea extends Schema.TaggedError<InvalidAgentArea>()("InvalidAgentArea", {
+  problem: AgentAreaProblem
+}) {
+  override get message() {
+    return agentAreaRefusal(this.problem);
   }
 }
 
@@ -102,6 +114,7 @@ export class Content extends Context.Service<
       | SqlError
       | InvalidManifest
       | InvalidHandlerDescription
+      | InvalidAgentArea
       | ContentStore.InvalidObjectKey
       | ContentStore.StoreUnavailable
     >;
@@ -162,6 +175,7 @@ export const make = Effect.gen(function* () {
     });
     yield* put(key, input.html);
     let server: Patches.RecordInput["server"];
+    let warnings = input.warnings;
     if (input.server !== undefined) {
       const objectKey = serverObjectKey(patchId, versionId);
       yield* put(objectKey, input.server);
@@ -176,6 +190,10 @@ export const make = Effect.gen(function* () {
       // Readers accept any description; a new version must keep the rule.
       const problem = descriptionProblem(handlers);
       if (problem !== undefined) return yield* new InvalidHandlerDescription(problem);
+      // The agent area's own check, so a hand-rolled publish can't skip the CLI's.
+      const area = checkAgentArea({ tables: input.manifest.tables, handlers });
+      if (area.problem !== undefined) return yield* new InvalidAgentArea({ problem: area.problem });
+      warnings = [...warnings, ...area.warnings];
       server = {
         objectKey,
         sha256: sha256(stored),
@@ -184,6 +202,7 @@ export const make = Effect.gen(function* () {
     }
     return yield* patches.record({
       ...input,
+      warnings,
       server,
       ...target,
       versionId,

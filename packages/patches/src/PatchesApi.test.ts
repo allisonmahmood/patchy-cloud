@@ -45,7 +45,7 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
-import { Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
@@ -149,7 +149,7 @@ const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
-  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer)),
+  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
     ConfigProvider.layer(
@@ -418,7 +418,7 @@ const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
-  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer)),
+  Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
 );
@@ -2782,6 +2782,27 @@ const tier2Bundle = Effect.promise(async () => {
   return built.outputFiles[0]!.text;
 });
 
+/** A tier 2 bundle whose agent area is the given createGuest source, marked as a build of agent/ does. */
+const agentBundle = (tools: string) =>
+  Effect.promise(async () => {
+    const built = await build({
+      stdin: {
+        contents: `import { createGuest, query, mutation, t } from "patchy/server";
+          const marked = (tools) => Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, { ...tool, descriptor: { ...tool.descriptor, agentTool: true } }]));
+          export default createGuest({ agent: marked(${tools}) });`,
+        resolveDir: new URL("../../patchy", import.meta.url).pathname,
+        sourcefile: "agent-area-check.ts"
+      },
+      bundle: true,
+      write: false,
+      platform: "browser",
+      format: "esm",
+      target: "es2022",
+      conditions: ["development"]
+    });
+    return built.outputFiles[0]!.text;
+  });
+
 it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
   it.effect(
     "retains both artifacts and prevents public sharing, publishing and rollback",
@@ -3054,6 +3075,222 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           assert.strictEqual(refused.status, 422);
           assert.deepInclude(yield* refused.json, { code: "invalid_manifest", error: message });
         }
+      }),
+    30_000
+  );
+
+  it.effect(
+    "refuses an agent area that fails the shared check, naming the tool and the fix",
+    () =>
+      Effect.gen(function* () {
+        // The CLI runs the same check before sending; a hand-rolled publish skips it.
+        const long = "d".repeat(2_000);
+        for (const [tools, handlers, message] of [
+          [
+            `{ lookup: query({ args: {}, result: t.text(), handler: async () => "found" }) }`,
+            {
+              "agent.lookup": {
+                kind: "query" as const,
+                agentTool: true as const,
+                args: {},
+                result: { kind: "text" as const }
+              }
+            },
+            "lookup needs a description: it is all an agent knows about the tool. Say what it does, what it changes and when it refuses."
+          ],
+          [
+            `{ lookup: query({ description: "Finds a file.", args: {}, result: t.fileHandle(), handler: async () => "x" }) }`,
+            {
+              "agent.lookup": {
+                kind: "query" as const,
+                description: "Finds a file.",
+                agentTool: true as const,
+                args: {},
+                result: { kind: "fileHandle" as const }
+              }
+            },
+            "lookup uses t.fileHandle() in result. Agent tools exchange JSON only; files stay on the page."
+          ],
+          [
+            // A page query can't take an upload at all; the descriptor check leaves agent tools to
+            // this one. The SDK's builders and types refuse this position, so only a hand-written descriptor has it.
+            `{ lookup: { ...query({ description: "Finds a file.", args: {}, result: t.text(), handler: async () => "x" }), descriptor: { kind: "query", description: "Finds a file.", args: { file: { kind: "upload" } }, result: { kind: "text" } } } }`,
+            {
+              "agent.lookup": {
+                kind: "query" as const,
+                description: "Finds a file.",
+                agentTool: true as const,
+                args: { file: { kind: "upload" as const } },
+                result: { kind: "text" as const }
+              }
+            },
+            "lookup uses t.upload() in args.file. Agent tools exchange JSON only; files stay on the page."
+          ],
+          [
+            `{ lookup: query({ description: "Finds a deal.", args: {}, result: t.row("deals"), handler: async () => null }) }`,
+            {
+              "agent.lookup": {
+                kind: "query" as const,
+                description: "Finds a deal.",
+                agentTool: true as const,
+                args: {},
+                result: { kind: "row" as const, table: "deals" }
+              }
+            },
+            'lookup\'s result is t.row("deals"), but this patch defines no table deals. Define the table in patchy.config.ts, or name one it defines.'
+          ],
+          [
+            `Object.fromEntries(Array.from({ length: 40 }, (_, index) => ["tool" + index, query({ description: ${JSON.stringify(long)}, args: {}, result: t.text(), handler: async () => "x" })]))`,
+            Object.fromEntries(
+              Array.from({ length: 40 }, (_, index) => [
+                `agent.tool${index}`,
+                {
+                  kind: "query" as const,
+                  description: long,
+                  agentTool: true as const,
+                  args: {},
+                  result: { kind: "text" as const }
+                }
+              ])
+            ),
+            "An agent reads all of this patch's tools in one answer of at most 64 KiB, and the tools get 60 KiB of it; yours come to 85 KiB. Shorten descriptions or drop tools."
+          ]
+        ] as const) {
+          // The typed request refuses an unknown row table itself, so the body is sent as is.
+          const payload = publishRequest({
+            html: html("Agent area"),
+            server: yield* agentBundle(tools),
+            manifest: { ...Fixtures.manifest, tier: 2 as const }
+          });
+          const raw = yield* client.pipe(
+            Effect.provide(
+              HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
+                next(
+                  request.pipe(
+                    HttpClientRequest.bearerToken(uploader.machine.id),
+                    HttpClientRequest.bodyJsonUnsafe({
+                      ...payload,
+                      manifest: { ...payload.manifest, handlers }
+                    })
+                  )
+                )
+              )
+            )
+          );
+          const refused = yield* raw.publish({ payload, responseMode: "response-only" });
+          assert.strictEqual(refused.status, 422);
+          assert.deepInclude(yield* refused.json, { code: "invalid_manifest", error: message });
+        }
+      }),
+    30_000
+  );
+
+  it.effect(
+    "refuses an unmarked agent.* handler, as server/agent.ts builds, naming it and the fix",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        // The CLI refuses server/agent.ts before building; a hand-rolled publish skips that.
+        const built = yield* Effect.promise(() =>
+          build({
+            stdin: {
+              contents: `import { createGuest, query, t } from "patchy/server";
+                export default createGuest({
+                  agent: { listDeals: query({ description: "Lists deals.", args: {}, result: t.text(), handler: async () => "deals" }) }
+                });`,
+              resolveDir: new URL("../../patchy", import.meta.url).pathname,
+              sourcefile: "server-agent-module.ts"
+            },
+            bundle: true,
+            write: false,
+            platform: "browser",
+            format: "esm",
+            target: "es2022",
+            conditions: ["development"]
+          })
+        );
+        const refused = yield* api.publish({
+          payload: publishRequest({
+            html: html("Server agent module"),
+            server: built.outputFiles[0]!.text,
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2 as const,
+              handlers: {
+                "agent.listDeals": {
+                  kind: "query" as const,
+                  description: "Lists deals.",
+                  args: {},
+                  result: { kind: "text" as const }
+                }
+              }
+            }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(refused.status, 422);
+        assert.deepInclude(yield* refused.json, {
+          code: "invalid_manifest",
+          error:
+            "agent.listDeals comes from server/agent.ts. Agent tools live in agent/; move these exports there."
+        });
+      }),
+    30_000
+  );
+
+  it.effect(
+    "warns about undescribed arguments, and that no agent can use the tools while access is off",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const companies = yield* Companies.Companies;
+        const server = yield* agentBundle(
+          `{ addLead: mutation({ description: "Adds a lead.", args: { email: t.text() }, result: t.text(), handler: async () => "added" }) }`
+        );
+        const manifest = {
+          ...Fixtures.manifest,
+          tier: 2 as const,
+          handlers: {
+            "agent.addLead": {
+              kind: "mutation" as const,
+              description: "Adds a lead.",
+              agentTool: true as const,
+              args: { email: { kind: "text" as const } },
+              result: { kind: "text" as const }
+            }
+          }
+        };
+        const undescribed =
+          "addLead's argument email has no description, so an agent knows only the name and type. Add .describe() where the name doesn't say enough.";
+        const created = yield* api.publish({
+          payload: publishRequest({ html: html("Agent tools"), server, manifest })
+        });
+        assert.deepStrictEqual(created.warnings, [
+          `Agent access is off at ${uploader.company.name}, so no agent can use these agent tools yet. An admin turns it on at https://patchy.example/company.`,
+          undescribed
+        ]);
+        yield* companies.setAgentAccess({
+          companyId: uploader.company.id,
+          on: true,
+          by: admin.user.id
+        });
+        const updated = yield* api
+          .publish({
+            payload: publishRequest({
+              patchId: created.patchId,
+              html: html("Agent tools"),
+              server,
+              manifest
+            })
+          })
+          .pipe(
+            Effect.ensuring(
+              companies
+                .setAgentAccess({ companyId: uploader.company.id, on: false, by: admin.user.id })
+                .pipe(Effect.orDie)
+            )
+          );
+        assert.deepStrictEqual(updated.warnings, [undescribed]);
       }),
     30_000
   );

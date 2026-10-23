@@ -1,3 +1,4 @@
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -189,6 +190,12 @@ describe("handler descriptors", () => {
     expect(refusal({ "leads.peek": { ...described["leads.peek"], description: " \n" } })).toBe(
       "leads.peek's description is blank. Say what it does, or leave the description out."
     );
+    // An agent tool must keep one, so its refusal says what to write instead.
+    expect(
+      refusal({ "agent.peek": { ...described["leads.peek"], agentTool: true, description: " " } })
+    ).toBe(
+      "agent.peek's description is blank. Say what it does, what it changes and when it refuses."
+    );
     // Code points, not UTF-16 units: one astral character is one.
     expect(refusal({ "leads.peek": { ...query, description: `${"😀".repeat(2_000)}x` } })).toBe(
       "leads.peek's description is 2,001 characters; descriptions are at most 2,000. Shorten it."
@@ -254,6 +261,14 @@ describe("handler descriptors", () => {
     ]) {
       expect(decodeDescriptor({ ...query, kind: "action", result })._tag).toBe("Failure");
     }
+    // An agent tool may hold neither anywhere; the agent area check refuses it, naming the fix.
+    for (const [args, result] of [
+      [{ upload: { kind: "upload" } }, { kind: "boolean" }],
+      [{ handle: { kind: "fileHandle" } }, { kind: "upload" }]
+    ] as const) {
+      expect(decodeDescriptor({ ...query, agentTool: true, args, result })._tag).toBe("Success");
+      expect(decodeDescriptor({ ...query, args, result })._tag).toBe("Failure");
+    }
   });
 
   it("rejects nested defaults in canonical JSON codecs", () => {
@@ -268,6 +283,26 @@ describe("handler descriptors", () => {
           }
         })._tag
       ).toBe("Failure");
+    }
+    // The refusal names the handler, or an agent tool by its tool name, and the fix.
+    const decodeUnknown = Schema.decodeUnknownResult(Manifest);
+    for (const [name, agentTool, said] of [
+      ["leads.list", undefined, "leads.list"],
+      ["agent.listDeals", true as const, "listDeals"]
+    ] as const) {
+      const decoded = decodeUnknown({
+        ...manifest,
+        handlers: {
+          [name]: {
+            ...query,
+            ...(agentTool === undefined ? {} : { agentTool }),
+            result: { kind: "array", element: { kind: "row", table: "missing" } }
+          }
+        }
+      });
+      expect(Result.isFailure(decoded) && decoded.failure.message).toBe(
+        `${said}'s result[] is t.row("missing"), but this patch defines no table missing. Define the table in patchy.config.ts, or name one it defines.`
+      );
     }
   });
 

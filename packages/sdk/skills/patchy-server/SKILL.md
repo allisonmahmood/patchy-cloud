@@ -382,6 +382,17 @@ Patchy a tool's handler is `agent.<export>`, which is how publish and logs name
 it. Page imports from `agent/` are refused, and `agent/` below tier 2 is
 `tier_mismatch`.
 
+Descriptions and schemas are all an agent knows about a tool: what it does, what
+it changes, and when and why it refuses. The ids it holds come from earlier
+results or from the person. A tool needs a `description` of at most 2,000
+characters, and publish warns about top-level arguments without `.describe()`.
+One patch's tools fit in 64 KiB, as agents read them with rows expanded. Tools
+exchange JSON only: there are no uploads or file handles, though handlers still
+read the patch's own files, and MCP can't push. `t.timestamp()` is an ISO
+date-time string, so an agent must send a time of day; a plain date is a
+`t.text()` the handler checks. Dev builds and publish refuse a tool that breaks
+these rules, naming its file; publish lists the tools as reads and changes.
+
 <!-- generated-limits:start -->
 
 ## Limits

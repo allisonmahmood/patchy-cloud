@@ -1,4 +1,9 @@
-import { HandlerDescriptor, HandlerModuleName, HandlerName } from "@patchy/api/handlers";
+import {
+  HandlerDescriptor,
+  HandlerModuleName,
+  HandlerName,
+  serverAgentModuleFix
+} from "@patchy/api/handlers";
 import * as Schema from "effect/Schema";
 import { InvalidManifestError } from "./invalidManifestError.js";
 
@@ -9,8 +14,7 @@ const isModuleName = Schema.is(HandlerModuleName);
 const isHandlerName = Schema.is(HandlerName);
 
 /** The refusal for `server/agent.ts`, whose handlers would clash with the agent area's names. */
-export const serverAgentModule =
-  "server/agent.ts: Agent tools live in agent/; move these exports there.";
+export const serverAgentModule = `server/agent.ts: ${serverAgentModuleFix}`;
 
 /** The refusal for one tool name exported by two `agent/` files, named by filename stem. */
 export const duplicateAgentTool = (name: string, first: string, second: string) =>

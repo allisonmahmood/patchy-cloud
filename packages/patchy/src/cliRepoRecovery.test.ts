@@ -227,6 +227,45 @@ describe("repo publish recovery", () => {
     expect(resent).toEqual(Array(2).fill(saved));
   });
 
+  it("names the agent tools of the manifest it sent, even when today's source differs", async () => {
+    let lost = true;
+    const response = { ...publish(201, "abcdefghijkl", 1), tier: 2 };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return lost ? disconnect() : respond(201, response);
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    expect((await runCli(["publish", "--json"], options)).status).toBe(3);
+    // The attempt as a tier 2 build with agent tools would have saved it.
+    const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
+    const attempt = JSON.parse(readFileSync(pendingFile(attemptPath), "utf8"));
+    const tool = { args: {}, result: { kind: "text" }, agentTool: true };
+    attempt.request.manifest = {
+      ...attempt.request.manifest,
+      tier: 2,
+      handlers: {
+        "notes.list": { kind: "query", args: {}, result: { kind: "text" } },
+        "agent.listDeals": { ...tool, kind: "query", description: "Lists deals." },
+        "agent.addLead": { ...tool, kind: "mutation", description: "Adds a lead." },
+        "agent.peek": { ...tool, kind: "action", readOnly: true, description: "Reads." }
+      }
+    };
+    writeFileSync(pendingFile(attemptPath), JSON.stringify(attempt));
+    writeFileSync(path.join(dir, "patchy.config.ts"), "broken config");
+    lost = false;
+    const recovered = await runCli(["publish"], options);
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(recovered.stdout.split("\n")).toContain(
+      `Agent tools: addLead (change), listDeals (read), peek (read). People's agents use these through Patchy's MCP at ${instance.url}/mcp.`
+    );
+  });
+
   it.each([true, false])(
     "clears only a proven payload-too-large response (decoded: %s)",
     async (decoded) => {

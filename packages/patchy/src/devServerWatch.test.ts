@@ -22,6 +22,12 @@ export const read = query({
 });
 `;
 
+/** A handler source with a description, as an agent tool needs. */
+const described = (source: string, description: string) =>
+  source.replace("args: {}", `description: ${JSON.stringify(description)}, args: {}`);
+/** The running manifest's tables, which rows resolve against. */
+const tables = {};
+
 const repo = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -51,7 +57,7 @@ const save = Effect.fnUntraced(function* (file: string, source: string) {
 });
 
 const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: string) {
-  const next = yield* watch(root, toolchain, []);
+  const next = yield* watch(root, toolchain, [], tables);
   const observed = next.pipe(
     Effect.flatMap(({ inspect, ...build }) =>
       inspect.pipe(Effect.map((handlers) => ({ ...build, handlers })))
@@ -240,23 +246,38 @@ it.live(
   () =>
     Effect.gen(function* () {
       const { root, fs, path } = yield* leadsRepo;
+      // As a tool, the re-exported page handler needs a description too.
+      yield* save(path.join(root, "server/leads.ts"), described(handler("text"), "Reads leads."));
       const next = yield* inspectedChanges(root);
       assert.deepStrictEqual(Object.keys((yield* next).handlers), ["leads.read"]);
 
       // The page's handler re-exported for agents, and a tool of its own in another file.
       yield* fs.makeDirectory(path.join(root, "agent"));
       yield* save(path.join(root, "agent/leads.ts"), 'export { read } from "../server/leads.js";');
-      yield* save(
-        path.join(root, "agent/intake.ts"),
-        handler("number").replace("export const read", "export const count")
+      const intake = path.join(root, "agent/intake.ts");
+      const own = described(
+        handler("number").replace("export const read", "export const count"),
+        "Counts leads."
       );
+      yield* save(intake, own);
       let built = yield* next;
       while (built.agentFiles.length < 2) built = yield* next;
       assert.deepStrictEqual(built.agentFiles, ["intake", "leads"]);
+      const query = { kind: "query", args: {} } as const;
       assert.deepStrictEqual(built.handlers, {
-        "leads.read": { kind: "query", args: {}, result: { kind: "text" } },
-        "agent.count": { kind: "query", args: {}, result: { kind: "number" }, agentTool: true },
-        "agent.read": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true }
+        "leads.read": { ...query, description: "Reads leads.", result: { kind: "text" } },
+        "agent.count": {
+          ...query,
+          description: "Counts leads.",
+          result: { kind: "number" },
+          agentTool: true
+        },
+        "agent.read": {
+          ...query,
+          description: "Reads leads.",
+          result: { kind: "text" },
+          agentTool: true
+        }
       });
 
       // A second file exporting read, by name or through `export *`: the guest's fold names both
@@ -290,15 +311,27 @@ it.live(
       yield* fs.remove(twice);
       assert.deepStrictEqual((yield* next).handlers, built.handlers);
 
-      // A tool's refusals name its own file under agent/.
-      const intake = path.join(root, "agent/intake.ts");
-      const own = yield* fs.readFileString(intake);
-      yield* save(intake, own.replace("args: {}", 'description: " ", args: {}'));
-      assert.deepInclude(yield* next.pipe(Effect.flip), {
-        code: "invalid_manifest",
-        message:
-          "agent/intake.ts: agent.count's description is blank. Say what it does, or leave the description out. The last successful binding stays served."
-      });
+      // A tool's refusals name its own file under agent/, and the last good binding stays.
+      for (const [source, message] of [
+        [
+          own.replace('description: "Counts leads."', 'description: " "'),
+          "agent/intake.ts: agent.count's description is blank. Say what it does, what it changes and when it refuses."
+        ],
+        [
+          own.replace('description: "Counts leads.", ', ""),
+          "agent/intake.ts: count needs a description: it is all an agent knows about the tool. Say what it does, what it changes and when it refuses."
+        ],
+        [
+          own.replace("t.number()", 't.row("deals")'),
+          'agent/intake.ts: count\'s result is t.row("deals"), but this patch defines no table deals. Define the table in patchy.config.ts, or name one it defines.'
+        ]
+      ] as const) {
+        yield* save(intake, source);
+        assert.deepInclude(yield* next.pipe(Effect.flip), {
+          code: "invalid_manifest",
+          message: `${message} The last successful binding stays served.`
+        });
+      }
       yield* save(intake, own);
       assert.deepStrictEqual((yield* next).handlers, built.handlers);
     }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, DirectoryWatch.layer])),
