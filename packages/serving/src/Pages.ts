@@ -28,6 +28,7 @@ import { contentHash, isWelcomePage, newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
+import { withReportedCommit } from "@patchy/sql";
 import * as Door from "./Door.js";
 import { renderNotFound } from "./render.js";
 import { renderAddressNotice } from "./address-notice.js";
@@ -297,33 +298,32 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       ? admission.user.id
       : undefined;
   // A colleague's first open is the one business event serving reports: activation is counted
-  // in it. It reports once the open commits, and the two are one step, so a reader who leaves
-  // mid-open can't leave a first open recorded and never reported. Tracking never fails the page.
+  // in it. It reports with the open's commit, so a reader who leaves mid-COMMIT can't leave a first
+  // open recorded and never reported, while the open itself, lock waits included, stays
+  // cancellable. Tracking never fails the page.
   if (kind === "address" && viewerId !== undefined) {
     const { patch } = served.value;
-    yield* patches.recordOpen(viewerId, patch.id, version.id).pipe(
-      Effect.flatMap((firstOpen) =>
-        firstOpen && viewerId !== patch.ownerUserId
-          ? analytics.track({
-              name: "patch.first_opened",
-              principalId: viewerId,
-              companyId: patch.companyId,
-              properties: {
-                patchId: patch.id,
-                ownerUserId: patch.ownerUserId,
-                tier: version.tier,
-                welcomePage: isWelcomePage({ name: patch.name, tier: version.tier })
-              }
-            })
-          : Effect.void
-      ),
+    yield* withReportedCommit(patches.recordOpen(viewerId, patch.id, version.id), (firstOpen) =>
+      firstOpen && viewerId !== patch.ownerUserId
+        ? analytics.track({
+            name: "patch.first_opened",
+            principalId: viewerId,
+            companyId: patch.companyId,
+            properties: {
+              patchId: patch.id,
+              ownerUserId: patch.ownerUserId,
+              tier: version.tier,
+              welcomePage: isWelcomePage({ name: patch.name, tier: version.tier })
+            }
+          })
+        : Effect.void
+    ).pipe(
       Effect.catchTags({
         SqlError: (error) =>
           Effect.logWarning("Patch open recording failed.", error).pipe(
             Effect.annotateLogs({ patchId: patch.id })
           )
-      }),
-      Effect.uninterruptible
+      })
     );
   }
 
@@ -494,6 +494,10 @@ export const layer: Layer.Layer<
   | Content.Content
   | HttpRouter.Request.From<
       "Requires",
-      Content.Content | Patches.Patches | Session.Session | Analytics.Analytics
+      | Content.Content
+      | Patches.Patches
+      | Session.Session
+      | Analytics.Analytics
+      | SqlClient.SqlClient
     >
 > = Layer.mergeAll(patches, otherPages, health);

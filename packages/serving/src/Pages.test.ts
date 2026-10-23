@@ -967,7 +967,7 @@ it.layer(services)("pages in memory", (it) => {
     })
   );
 
-  it.effect("reports a first open whose reader leaves while it is being recorded", () =>
+  it.effect("never records a first open it doesn't report when the reader leaves mid-open", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const colleagueId = "usr_leaving_colleague";
@@ -975,7 +975,8 @@ it.layer(services)("pages in memory", (it) => {
       yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
         VALUES (${colleagueId}, ${colleagueId}, ${DEV_SEED.companyId}, ${email}, 'Ana', 'member')`;
       const { path, patchId } = yield* publish("Opened as its reader leaves");
-      // Recording the open takes a second, and the reader leaves during it.
+      // Recording the open takes a second, and the reader leaves during it. The open stays
+      // cancellable, so it either commits and reports or leaves nothing behind.
       yield* ddl(
         `CREATE FUNCTION slow_open() RETURNS trigger AS $$
             BEGIN PERFORM pg_sleep(1); RETURN NULL; END
@@ -994,8 +995,8 @@ it.layer(services)("pages in memory", (it) => {
       yield* ddl(`DROP TRIGGER slow_open ON patch_opens`, `DROP FUNCTION slow_open()`);
       const recorded = yield* sql`SELECT 1 FROM patch_opens
         WHERE user_id = ${colleagueId} AND patch_id = ${patchId}`;
-      assert.strictEqual(recorded.length, 1);
-      assert.strictEqual(firstOpens(patchId).length, 1);
+      assert.strictEqual(firstOpens(patchId).length, recorded.length);
+      assert.strictEqual(recorded.length, 0);
     })
   );
 
