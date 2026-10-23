@@ -93,7 +93,18 @@ export type AnalyticsCatalogue = Catalogue<{
     readonly tokenId: string;
     /** The login replaced one of the user's earlier machine tokens. */
     readonly replaced: boolean;
+    /** The setup the login was started from, when its line carried one. */
+    readonly setupId?: string;
   };
+
+  /**
+   * The Final step panel made a person a setup line. `setupId` ties the setup's events
+   * together; it is not the line's value. Principal: the person.
+   */
+  readonly "setup.line_shown": { readonly setupId: string };
+
+  /** An agent first fetched a setup line's llms.txt. Principal: the line's person. */
+  readonly "setup.picked_up": { readonly setupId: string };
 
   /** A publish created a patch and its first version. Principal: the publisher. */
   readonly "patch.created": Publication & Cli;

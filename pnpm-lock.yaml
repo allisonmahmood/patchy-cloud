@@ -717,6 +717,9 @@ importers:
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../integrations
+      '@patchy/limits':
+        specifier: workspace:*
+        version: link:../limits
       '@patchy/patches':
         specifier: workspace:*
         version: link:../patches

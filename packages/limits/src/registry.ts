@@ -1109,6 +1109,16 @@ export const registry = {
     refusal: "rate_limited",
     overridable: false
   },
+  "rate.setupLine.perMinute": {
+    kind: "operating",
+    configuration: "legacy",
+    default: 10,
+    unit: "attempts/minute",
+    scope: "viewer",
+    measure: "New setup lines per user from the Final step panel; deployment-wide configuration",
+    refusal: "rate_limited",
+    overridable: false
+  },
   "rate.deviceLookup.perMinute": {
     kind: "operating",
     configuration: "legacy",

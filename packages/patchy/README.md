@@ -850,10 +850,13 @@ Each start clears and reloads that source store, so deleting a fixture file remo
 it from the next session. Edit fixtures and restart dev to change a source locally.
 Dev does not simulate source authority changes.
 
-### `patchy login [--complete [code]] [--wait <seconds>]`
+### `patchy login [--complete [code]] [--wait <seconds>] [--setup <link>]`
 
 Log this machine in to the resolved instance. Start sends this machine's
 hostname as the name hint, plus the saved login key's id on re-login.
+`--setup <link>` comes from the login command `/llms.txt` prints for a person's
+setup line; it lets their Final step panel follow this login. A rerun with a
+different link starts a new login instead of resuming the pending one.
 An agent rerun with a pending login polls once rather than creating another code: it returns
 `pending`, `logged_in`, or the instance's terminal refusal, not a new handoff.
 The original URL and code remain valid until answered or expired.

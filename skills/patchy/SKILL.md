@@ -324,6 +324,9 @@ the chosen instance and follow the handoff. Resolve an overriding
 
 ### Login handoff
 
+Run the login command `/llms.txt` printed as it stands, `--setup` included when it
+has one: that lets the person's Final step panel follow along.
+
 1. On `status: "awaiting_confirmation"`, relay **both** `verificationUrl` and
    `userCode`, using the handoff wording in
    [onboarding step 2](references/onboarding.md#2-log-in),

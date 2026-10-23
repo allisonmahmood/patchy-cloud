@@ -297,6 +297,12 @@ const login = Command.make(
     wait: Flag.Finite("wait").pipe(
       Flag.withDescription("With --complete, seconds to poll; defaults to 60, and 0 polls once"),
       Flag.withDefault(60)
+    ),
+    setup: Flag.String("setup").pipe(
+      Flag.withDescription(
+        "The ?s= of the setup line /llms.txt printed, so the person's Final step panel follows this login"
+      ),
+      Flag.optional
     )
   },
   (options) => run(Login.login(options))

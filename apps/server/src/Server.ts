@@ -87,6 +87,7 @@ import * as FleetInvocation from "./FleetInvocation.js";
 import * as MemberDirectory from "./MemberDirectory.js";
 import { migrations } from "./migrations.js";
 import * as RequestEvents from "./RequestEvents.js";
+import * as SetupPickup from "./SetupPickup.js";
 
 /** Where client documents come from, which the launcher brings: the pinned network, or fixtures. */
 export type DocumentNetwork = ClientDocumentNetwork.ClientDocumentNetwork;
@@ -330,7 +331,7 @@ const app = Layer.mergeAll(
   Layer.mergeAll(
     api,
     SdkApi.tarballLayer,
-    FrontDoor.layer,
+    FrontDoor.layer.pipe(Layer.provide(SetupPickup.layer)),
     Pages.layer,
     PortalPages.layer,
     WhatsNewPages.layer,

@@ -135,6 +135,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `rate.deviceLogin.perMinute` | operating | 5 | attempts/minute | host | Device login starts per source address | `rate_limited` | No | legacy |
 | `rate.patchCreate.perMinute` | operating | 10 | attempts/minute | viewer | Patch creates per machine token; deployment-wide configuration | `rate_limited` | No | legacy |
 | `rate.publish.perMinute` | operating | 20 | attempts/minute | viewer | New publish attempts per machine token after replay lookup; deployment-wide configuration | `rate_limited` | No | legacy |
+| `rate.setupLine.perMinute` | operating | 10 | attempts/minute | viewer | New setup lines per user from the Final step panel; deployment-wide configuration | `rate_limited` | No | legacy |
 | `rate.deviceLookup.perMinute` | operating | 10 | attempts/minute | viewer | Device login lookups per user; deployment-wide configuration | `rate_limited` | No | legacy |
 | `rate.devicePoll.attempts` | operating | 1 | attempts/window | viewer | Device login polls per device code | `rate_limited` | No | legacy |
 | `rate.devicePoll.window` | operating | 5000 | milliseconds | viewer | Device login poll fixed window | None | No | legacy |

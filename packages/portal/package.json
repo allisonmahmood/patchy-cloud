@@ -26,6 +26,7 @@
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/integrations": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:"

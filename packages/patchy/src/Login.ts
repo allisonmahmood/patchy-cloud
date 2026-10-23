@@ -175,9 +175,17 @@ export const login = Effect.fn("Login.login")(function* (options: {
   readonly complete: boolean;
   readonly code: Option.Option<string>;
   readonly wait: number;
+  /** The setup line's `?s=`, which binds the login to the person's Final step panel. */
+  readonly setup?: Option.Option<string>;
 }) {
+  const setup = options.setup ?? Option.none<string>();
   if (!Number.isFinite(options.wait) || options.wait < 0) {
     return yield* new LocalError({ message: "--wait must be a non-negative number of seconds." });
+  }
+  if (options.complete && Option.isSome(setup)) {
+    return yield* new LocalError({
+      message: "--setup starts a login and doesn't go with --complete. Run: patchy login --complete"
+    });
   }
   if (!options.complete && Option.isSome(options.code)) {
     return yield* new LocalError({
@@ -203,7 +211,12 @@ export const login = Effect.fn("Login.login")(function* (options: {
   if (Option.isSome(yield* Instance.ApiUrlFlag)) yield* state.saveConfigUrl(apiUrl);
   const reason = yield* notWaitingBecause;
   let current: State.PendingLogin;
-  if (Option.isSome(pending)) {
+  // A pending login from another setup line, or from none, can't bind to this one's panel:
+  // it is abandoned and a fresh one starts. Without --setup a rerun resumes as before.
+  const otherLine =
+    Option.isSome(pending) && Option.isSome(setup) && pending.value.setupLink !== setup.value;
+  if (otherLine) yield* state.forgetPendingLogin(apiUrl);
+  if (Option.isSome(pending) && !otherLine) {
     current = pending.value;
     // A rerun resumes rather than creating a second code, even after local expiry.
     if (reason !== null) return yield* poll(current, 0);
@@ -218,11 +231,15 @@ export const login = Effect.fn("Login.login")(function* (options: {
       .startDeviceLogin({
         payload: new StartDeviceLoginRequest({
           machineNameHint: hostname(),
-          ...(previousMachineTokenId === undefined ? {} : { previousMachineTokenId })
+          ...(previousMachineTokenId === undefined ? {} : { previousMachineTokenId }),
+          ...(Option.isSome(setup) ? { setupLink: setup.value } : {})
         })
       })
       .pipe(Effect.catch((error) => Api.classify(error, "Login could not start.")));
-    current = new State.PendingLogin(started);
+    current = new State.PendingLogin({
+      ...started,
+      ...(Option.isSome(setup) ? { setupLink: setup.value } : {})
+    });
     yield* state.savePendingLogin(apiUrl, current);
   }
   const next = yield* nextCommand(current);
