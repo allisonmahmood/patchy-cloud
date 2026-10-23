@@ -34,9 +34,29 @@ const decodeForm = Schema.decodeUnknownEffect(
     code: Schema.String,
     userId: Schema.String,
     action: Schema.Literals(["confirm", "deny"]),
-    machineName: Schema.optional(Schema.String)
+    machineName: Schema.optional(Schema.String),
+    /** The Final step panel's setup link, when the form was answered there. */
+    setup: Schema.optional(Schema.String.check(Schema.isMaxLength(64)))
   })
 );
+
+/**
+ * The confirmation form, on the device page and inside the Final step panel. Both post here and
+ * carry the account the page was rendered for; the panel's also carries its setup link, so the
+ * server rechecks the line before answering and sends the person back Home.
+ */
+export const confirmForm = (input: {
+  readonly userCode: string;
+  readonly userId: string;
+  readonly machineName: string;
+  readonly oldMachineName: string | null;
+  readonly invalid?: boolean;
+  readonly setupLink?: string;
+}): string => {
+  const inline = input.setupLink !== undefined;
+  const id = inline ? "inline-machine-name" : "machine-name";
+  return `<form method="post" action="/login/device"${inline ? " data-inline-confirm" : ""}><input type="hidden" name="code" value="${escapeAttribute(input.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(input.userId)}">${inline ? `<input type="hidden" name="setup" value="${escapeAttribute(input.setupLink!)}">` : ""}<label class="field-label" for="${id}">${inline ? "Name this computer" : "Machine name"}</label><input class="field" id="${id}" name="machineName" value="${escapeAttribute(input.machineName)}" aria-required="true" required maxlength="64" autocomplete="off"${input.invalid ? ` aria-invalid="true" aria-describedby="${id}-error"` : ""}>${input.invalid ? `<p class="field-error" role="alert" id="${id}-error">Give the machine a name, up to 64 characters.</p>` : ""}${input.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(input.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">${inline ? "Not me" : "Deny"}</button></div></form>`;
+};
 
 /** Why a POST came back to the confirmation page instead of answering. */
 type Refusal =
@@ -78,7 +98,7 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
       heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
       styles,
       status: refusal === undefined ? 200 : invalid ? 422 : 409,
-      body: `${notice}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(viewer.user.id)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
+      body: `${notice}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p>${confirmForm({ userCode: login.userCode, userId: viewer.user.id, machineName, oldMachineName: login.oldMachineName, invalid })}<p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
     },
     session
   );
@@ -103,6 +123,66 @@ const getDevice = Effect.gen(function* () {
   return yield* renderConfirm(login);
 });
 
+const home = HttpServerResponse.redirect("/", {
+  status: 303,
+  headers: { "cache-control": "private, no-store" }
+});
+
+/**
+ * An answer from the Final step panel. The server, not the page, decides: the line must still be
+ * the person's, live, uncontested and bound to this login. Whatever happens, the person goes back
+ * Home, where the panel shows where things stand; a refreshed sign-in replays nothing.
+ */
+const postInline = Effect.fn("DevicePages.postInline")(function* (form: {
+  readonly code: string;
+  readonly userId: string;
+  readonly action: "confirm" | "deny";
+  readonly machineName?: string;
+  readonly setup: string;
+}) {
+  return yield* RequireSession.withViewer(
+    Effect.gen(function* () {
+      const viewer = yield* RequireSession.Viewer;
+      const session = yield* Session.Session;
+      const logins = yield* DeviceLogins.DeviceLogins;
+      if (form.userId !== viewer.user.id) return home;
+      if (form.action === "confirm") {
+        yield* logins.confirmInline({
+          userCode: form.code,
+          userId: viewer.user.id,
+          machineName: form.machineName ?? "",
+          setupLink: form.setup
+        });
+        return home;
+      }
+      const ended = yield* logins.denyInline({
+        userCode: form.code,
+        userId: viewer.user.id,
+        setupLink: form.setup
+      });
+      return ended === "connected"
+        ? pageResponse(
+            message(
+              "That computer is already connected.",
+              '<p>It finished logging in before you pressed Not me. Remove it on <a href="/machines">Your machines</a> to disconnect it.</p>',
+              409
+            ),
+            session
+          )
+        : home;
+    }).pipe(
+      Effect.catchTags({
+        DeviceLoginExpired: () => Effect.succeed(home),
+        DeviceLoginAnswered: () => Effect.succeed(home),
+        DeviceLoginUnknown: () => Effect.succeed(home),
+        SetupLineChanged: () => Effect.succeed(home),
+        InvalidMachineName: () => Effect.succeed(home)
+      })
+    ),
+    "/"
+  );
+});
+
 const postDevice = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (Number(request.headers["content-length"]) > MAX_FORM_BYTES) {
@@ -112,6 +192,7 @@ const postDevice = Effect.gen(function* () {
     Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES))
   );
   const form = yield* decodeForm(Object.fromEntries(params));
+  if (form.setup !== undefined) return yield* postInline({ ...form, setup: form.setup });
   // Only the code survives authentication/enrollment. Neither the action nor
   // the entered machine name is replayed after a session refresh.
   const returnTo = `/login/device?${new URLSearchParams({ code: form.code, refreshed: "1" })}`;

@@ -201,7 +201,12 @@ export const Status = Schema.Struct({
   loginState: Schema.NullOr(Schema.Literals(["pending", "confirmed", "denied"])),
   machineTokenId: Schema.NullOr(Schema.String),
   /** When the bound login runs out, on the app's clock like the login itself. */
-  loginExpiresAt: Schema.NullOr(Schema.Date)
+  loginExpiresAt: Schema.NullOr(Schema.Date),
+  /** The bound login, for confirming it in the panel: its code, the computer's name hint, and the
+   * name of the person's own key it would replace. */
+  userCode: Schema.NullOr(Schema.String),
+  machineNameHint: Schema.NullOr(Schema.String),
+  oldMachineName: Schema.NullOr(Schema.String)
 });
 export type Status = typeof Status.Type;
 const decodeStatus = Schema.decodeUnknownEffect(Schema.Array(Status));
@@ -211,9 +216,11 @@ export const status = Effect.fn("SetupLinks.status")(function* (userId: string) 
   const rows = yield* sql`
     SELECT l.id AS value, l.expires_at > now() AS live, l.picked_up_at IS NOT NULL AS "pickedUp",
       l.outcome, d.state AS "loginState", l.machine_token_id AS "machineTokenId",
-      d.expires_at AS "loginExpiresAt"
+      d.expires_at AS "loginExpiresAt",
+      d.user_code AS "userCode", d.machine_name_hint AS "machineNameHint", t.name AS "oldMachineName"
     FROM setup_links l
     LEFT JOIN device_logins d ON d.setup_link_id = l.id AND d.user_code = l.user_code
+    LEFT JOIN machine_tokens t ON t.id = d.old_token_id AND t.user_id = l.user_id
     WHERE l.user_id = ${userId} AND l.retired_at IS NULL
     ORDER BY l.created_at DESC LIMIT 1`;
   const [row] = yield* decodeStatus(rows).pipe(Effect.catchTags({ SchemaError: Effect.die }));

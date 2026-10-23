@@ -1,4 +1,4 @@
-import type { RequireSession } from "@patchy/auth";
+import { confirmForm, type RequireSession } from "@patchy/auth";
 import { copyLine, copyScriptPath, escapeAttribute, escapeHtml, isWelcomePage } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 
@@ -13,7 +13,15 @@ export type Fallback = "contested" | "denied" | "expired" | "other_account" | "r
 export type SetupState =
   | { readonly kind: "waiting" }
   | { readonly kind: "picked_up" }
-  | { readonly kind: "login_pending" }
+  | {
+      readonly kind: "login_pending";
+      /** The login the line bound, to confirm right here; absent once it can't be. */
+      readonly login?: {
+        readonly userCode: string;
+        readonly machineNameHint: string;
+        readonly oldMachineName: string | null;
+      };
+    }
   | { readonly kind: "confirming" }
   | { readonly kind: "fallback"; readonly reason: Fallback }
   | { readonly kind: "connected" }
@@ -121,7 +129,17 @@ export const renderSetupSteps = (input: {
               "2",
               "Confirm it’s you",
               state.kind === "login_pending"
-                ? `<p>Check your agent: it shows a link and a code to confirm.</p>`
+                ? state.login === undefined || input.setupLink === undefined
+                  ? `<p>Check your agent: it shows a link and a code to confirm.</p>`
+                  : `<section class="note note-info"><span class="note-title">A computer wants to publish as you</span><p>Does your agent show <code>${escapeHtml(state.login.userCode)}</code>?</p>${confirmForm(
+                      {
+                        userCode: state.login.userCode,
+                        userId: viewer.user.id,
+                        machineName: state.login.machineNameHint,
+                        oldMachineName: state.login.oldMachineName,
+                        setupLink: input.setupLink
+                      }
+                    )}<p class="supporting-text">Or open the link your agent showed you. Both work.</p></section>`
                 : state.kind === "confirming"
                   ? `<p>Confirmed. Your agent is collecting its key.</p>`
                   : `<section class="note note-warn" role="status"><span class="note-title">${fallbackLines[state.reason]}</span><p>Finish with the link your agent shows you, or get a new line.</p><form method="post" action="/guide/new-line"><input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><button class="btn" type="submit">Get a new line</button></form></section>`
@@ -258,7 +276,13 @@ export const guideScript = `(() => {
       const response = await fetch("/guide/steps" + (watching ? "?mode=watch" : ""), { credentials: "same-origin", headers: { accept: "text/html" } });
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-guide-steps]");
       if (!response.ok || next === null) return location.reload();
-      if (next.dataset.state !== region.dataset.state) {
+      // A confirmation someone is filling in stays put until they answer it.
+      const form = region.querySelector("form[data-inline-confirm]");
+      const busy =
+        form !== null &&
+        (form.contains(document.activeElement) ||
+          [...form.querySelectorAll("input")].some((input) => input.value !== input.defaultValue));
+      if (next.dataset.state !== region.dataset.state && !busy) {
         if (!watching) show(next);
         else {
           if (next.dataset.state === "live") {

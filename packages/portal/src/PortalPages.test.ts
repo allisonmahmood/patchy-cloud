@@ -716,7 +716,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const login = yield* logins.start({ machineNameHint: "laptop", setupLink: value });
       const [pending, pendingText] = yield* state;
       assert.strictEqual(pending, "login_pending");
-      assert.include(pendingText, "Check your agent: it shows a link and a code to confirm.");
+      // The login's own confirmation, right in the panel, still asking for the code check.
+      assert.include(pendingText, "A computer wants to publish as you");
+      assert.include(pendingText, `Does your agent show ${login.userCode} ?`);
+      const form = yield* (yield* request("/guide/steps", workspace.owner)).text;
+      assert.include(form, `<input type="hidden" name="setup" value="${value}">`);
+      assert.include(
+        form,
+        '<button class="btn" type="submit" name="action" value="deny">Not me</button>'
+      );
       yield* logins.confirm({
         userCode: login.userCode,
         userId: workspace.owner.id,

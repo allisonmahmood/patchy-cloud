@@ -328,7 +328,16 @@ const setupState = Effect.fn("PortalPages.setupState")(function* () {
             ? { kind: line.pickedUp ? "picked_up" : "waiting" }
             : line.outcome === "pending"
               ? line.loginState === "pending"
-                ? { kind: "login_pending" }
+                ? line.userCode !== null && line.machineNameHint !== null
+                  ? {
+                      kind: "login_pending",
+                      login: {
+                        userCode: line.userCode,
+                        machineNameHint: line.machineNameHint,
+                        oldMachineName: line.oldMachineName
+                      }
+                    }
+                  : { kind: "login_pending" }
                 : line.loginState === "confirmed"
                   ? { kind: "confirming" }
                   : {
