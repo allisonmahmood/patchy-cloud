@@ -18,6 +18,7 @@ import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import { Companies, CompanyPage, InviteMail, Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
+import * as AgentConnections from "./AgentConnections.js";
 import * as AuthApi from "./AuthApi.js";
 import * as AuthPages from "./AuthPages.js";
 import * as Authorization from "./Authorization.js";
@@ -121,6 +122,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Authorization.layer),
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
+  Layer.provideMerge(AgentConnections.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Limits.layer,

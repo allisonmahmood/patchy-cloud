@@ -155,43 +155,7 @@ const postDevice = Effect.gen(function* () {
   );
 });
 
-const machines = Effect.gen(function* () {
-  const viewer = yield* RequireSession.Viewer;
-  const session = yield* Session.Session;
-  const tokens = yield* (yield* MachineTokens.MachineTokens).list(viewer.user.id);
-  const time = (iso: string) =>
-    `<time datetime="${escapeAttribute(iso)}">${escapeHtml(iso.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"))}</time>`;
-  const rows = tokens.map(
-    (token) =>
-      `<li class="list-row"><h2 class="section-heading">${escapeHtml(token.name)}</h2><dl class="facts"><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form class="actions" method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="btn btn-danger" type="submit" aria-label="Revoke ${escapeAttribute(token.name)}">Revoke</button></form></li>`
-  );
-  return pageResponse(
-    {
-      title: "Your machines",
-      app: { viewer, section: "machines" },
-      body: `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
-    },
-    session
-  );
-});
-
-const revoke = Effect.fn("DevicePages.revoke")(function* (all: boolean) {
-  const viewer = yield* RequireSession.Viewer;
-  const tokens = yield* MachineTokens.MachineTokens;
-  if (all) yield* tokens.revokeAll(viewer.user.id);
-  else {
-    const params = yield* HttpRouter.params;
-    yield* tokens.revokeOwned({ id: params.id ?? "", userId: viewer.user.id });
-  }
-  return HttpServerResponse.redirect("/machines", {
-    status: 303,
-    headers: { "cache-control": "private, no-store" }
-  });
-});
-
-type PageError =
-  | Effect.Error<typeof getDevice | typeof postDevice | typeof machines>
-  | MachineTokens.MachineTokenNotFound;
+type PageError = Effect.Error<typeof getDevice | typeof postDevice>;
 
 const errors = <R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, PageError, R>) =>
   Effect.gen(function* () {
@@ -225,14 +189,6 @@ const errors = <R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, Pag
             )
           ).pipe(
             Effect.map(HttpServerResponse.setHeader("retry-after", String(error.retryAfterSeconds)))
-          ),
-        MachineTokenNotFound: () =>
-          reply(
-            message(
-              "Machine not found",
-              '<p>This machine is not on <a href="/machines">Your machines</a>.</p>',
-              404
-            )
           ),
         BodyTooLarge: () =>
           reply(message("Invalid form", "<p>The submitted form is too large.</p>", 413)),
@@ -271,22 +227,10 @@ export const layer: Layer.Layer<
       | Users.Users
       | SqlClient.SqlClient
       | DeviceLogins.DeviceLogins
-      | MachineTokens.MachineTokens
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
     yield* router.add("GET", "/login/device", errors(RequireSession.withViewer(getDevice)));
     yield* router.add("POST", "/login/device", errors(RequireSession.sameOrigin(postDevice)));
-    yield* router.add("GET", "/machines", errors(RequireSession.withViewer(machines)));
-    yield* router.add(
-      "POST",
-      "/machines/:id/revoke",
-      errors(RequireSession.sameOrigin(RequireSession.withViewer(revoke(false))))
-    );
-    yield* router.add(
-      "POST",
-      "/machines/revoke-all",
-      errors(RequireSession.sameOrigin(RequireSession.withViewer(revoke(true))))
-    );
   })
 );

@@ -9,8 +9,10 @@ import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
 import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
+import type * as AgentConnections from "./AgentConnections.js";
 import * as DevicePages from "./DevicePages.js";
 import type * as DeviceLogins from "./DeviceLogins.js";
+import * as MachinesPage from "./MachinesPage.js";
 import type * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
@@ -147,10 +149,12 @@ export const layer: Layer.Layer<
       | SqlClient.SqlClient
       | DeviceLogins.DeviceLogins
       | MachineTokens.MachineTokens
+      | AgentConnections.AgentConnections
       | Analytics.Analytics
     >
-> = Layer.merge(
+> = Layer.mergeAll(
   DevicePages.layer,
+  MachinesPage.layer,
   HttpRouter.use((router) =>
     Effect.gen(function* () {
       yield* router.add(

@@ -75,6 +75,18 @@ export interface Tokens {
   readonly expiresIn: number;
 }
 
+/** A live agent connection, as Your machines lists it. Times are ISO strings. */
+export interface Listed {
+  readonly id: string;
+  readonly clientName: string;
+  readonly clientSite: string;
+  readonly connectedAt: string;
+  /** Its last call, or `null` before the first. */
+  readonly lastUsedAt: string | null;
+  /** When it ends on its own: 30 days after its last call, or after connecting if never called. */
+  readonly endsAt: string;
+}
+
 /** A new agent connection, as the consent page showed it, and its first tokens. */
 export interface Connected {
   readonly connection: {
@@ -119,6 +131,8 @@ export class AgentConnections extends Context.Service<
     readonly refresh: (refreshToken: string) => Effect.Effect<Tokens, RefreshRefused | SqlError>;
     /** Drops every retry copy whose minute is up; the server runs it every few seconds. */
     readonly sweepRetries: Effect.Effect<void, SqlError>;
+    /** The person's live connections for Your machines, newest first. */
+    readonly list: (userId: string) => Effect.Effect<ReadonlyArray<Listed>, SqlError>;
     /**
      * Your machines' Disconnect: ends one of the person's own connections, so its next call and
      * refresh are refused. Nobody ends another person's, an admin included. Disconnecting one
@@ -236,6 +250,25 @@ export const make = Effect.gen(function* () {
       JOIN agent_connections c ON c.id = r.connection_id
       JOIN users u ON u.id = c.user_id
       WHERE r.token_hash = ${tokenHash}`
+  });
+
+  const liveConnections = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      id: Schema.String,
+      clientName: Schema.String,
+      clientSite: Schema.String,
+      connectedAt: Schema.Date,
+      lastUsedAt: Schema.NullOr(Schema.Date),
+      endsAt: Schema.Date
+    }),
+    execute: (userId) => sql`
+      SELECT c.id, c.client_name AS "clientName", c.client_site AS "clientSite",
+        c.created_at AS "connectedAt", c.last_used_at AS "lastUsedAt",
+        COALESCE(c.last_used_at, c.created_at) + interval '30 days' AS "endsAt"
+      FROM agent_connections c JOIN users u ON u.id = c.user_id
+      WHERE c.user_id = ${userId} AND ${live}
+      ORDER BY c.created_at DESC, c.id`
   });
 
   const secondsLeft = SqlSchema.findOne({
@@ -362,6 +395,16 @@ export const make = Effect.gen(function* () {
     WHERE retry IS NOT NULL AND rotated_at <= clock_timestamp() - interval '1 minute'`
   ).pipe(Effect.withSpan("AgentConnections.sweepRetries"));
 
+  const list = Effect.fn("AgentConnections.list")(function* (userId: string) {
+    const rows = yield* liveConnections(userId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    return rows.map((row): Listed => ({
+      ...row,
+      connectedAt: row.connectedAt.toISOString(),
+      lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
+      endsAt: row.endsAt.toISOString()
+    }));
+  });
+
   // The UPDATE takes the connection's row, so a refresh rotating it finishes first, or waits and
   // then finds it ended.
   const disconnect = Effect.fn("AgentConnections.disconnect")(function* (input: {
@@ -380,6 +423,7 @@ export const make = Effect.gen(function* () {
     chainOf,
     refresh,
     sweepRetries,
+    list,
     disconnect
   });
 });

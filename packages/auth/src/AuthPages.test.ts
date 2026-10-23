@@ -12,6 +12,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
+import * as AgentConnections from "./AgentConnections.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Testing from "@patchy/sql/testing";
@@ -68,6 +69,7 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
+  Layer.provideMerge(AgentConnections.layer),
   Layer.provideMerge(recordedAnalytics),
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
@@ -452,6 +454,7 @@ it.layer(
   Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording).pipe(
     Layer.provideMerge(DeviceLogins.layer),
     Layer.provideMerge(MachineTokens.layer),
+    Layer.provideMerge(AgentConnections.layer),
     Layer.provideMerge(Analytics.layerNoop),
     Layer.provide(Limits.layer),
     Layer.provideMerge(Testing.layer()),

@@ -7,11 +7,11 @@ import { TestClock } from "effect/testing";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
+import * as AgentConnections from "./AgentConnections.js";
 import * as AuthPages from "./AuthPages.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
@@ -28,6 +28,7 @@ const services = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
+  Layer.provideMerge(AgentConnections.layer),
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
@@ -531,72 +532,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       })
   );
 
-  it.effect(
-    "lists only owned live tokens and revokes one or all without exposing credentials",
-    () =>
-      Effect.gen(function* () {
-        const owner = yield* account("machines");
-        const other = yield* account("foreign");
-        const tokens = yield* MachineTokens.MachineTokens;
-        const sql = yield* SqlClient.SqlClient;
-        const first = yield* tokens.mint({ userId: owner.user.id, name: 'Live "<laptop>"' });
-        const second = yield* tokens.mint({ userId: owner.user.id, name: "Second machine" });
-        const foreign = yield* tokens.mint({ userId: other.user.id, name: "Foreign secret name" });
-        const revoked = yield* tokens.mint({ userId: owner.user.id, name: "Revoked machine" });
-        yield* tokens.revoke(revoked.id);
-        const expired = yield* tokens.mint({ userId: owner.user.id, name: "Expired machine" });
-        const idle = yield* tokens.mint({ userId: owner.user.id, name: "Idle machine" });
-        yield* sql`UPDATE machine_tokens SET expires_at = '1960-01-01' WHERE id = ${expired.id}`;
-        yield* sql`UPDATE machine_tokens SET last_used_at = '1960-01-01' WHERE id = ${idle.id}`;
-        const page = yield* send("/machines", { headers: { cookie: owner.cookie } });
-        assert.strictEqual(page.status, 200);
-        const html = yield* Effect.promise(() => page.text());
-        assert.include(html, "Your machines");
-        assert.include(html, "Live &quot;&lt;laptop&gt;&quot;");
-        assert.include(html, "Created");
-        assert.include(html, "Last used");
-        assert.include(html, "Expires");
-        assert.include(html, `datetime="${first.expiresAt}"`);
-        assert.include(html, `action="/machines/${first.id}/revoke"`);
-        assert.include(html, 'action="/machines/revoke-all"');
-        assert.include(html, 'action="/logout"');
-        for (const absent of [
-          first.token,
-          second.token,
-          foreign.token,
-          "Foreign secret name",
-          "Revoked machine",
-          "Expired machine",
-          "Idle machine"
-        ])
-          assert.notInclude(html, absent);
-        const refused = yield* send(`/machines/${foreign.id}/revoke`, post(owner.cookie));
-        const missing = yield* send("/machines/tok_missing/revoke", post(owner.cookie));
-        assert.strictEqual(refused.status, 404);
-        assert.strictEqual(missing.status, 404);
-        assert.strictEqual(
-          yield* Effect.promise(() => refused.text()),
-          yield* Effect.promise(() => missing.text())
-        );
-        const one = yield* send(`/machines/${first.id}/revoke`, post(owner.cookie));
-        assert.strictEqual(one.status, 303);
-        assert.strictEqual(one.headers.get("location"), "/machines");
-        assert.strictEqual(yield* tokens.authenticate(first.token), null);
-        assert.strictEqual((yield* tokens.authenticate(second.token))?.machine.id, second.id);
-        const repeated = yield* send(`/machines/${first.id}/revoke`, post(owner.cookie));
-        assert.strictEqual(repeated.status, 303);
-        const all = yield* send("/machines/revoke-all", post(owner.cookie));
-        assert.strictEqual(all.status, 303);
-        assert.strictEqual(yield* tokens.authenticate(second.token), null);
-        assert.strictEqual((yield* tokens.authenticate(foreign.token))?.machine.id, foreign.id);
-        const empty = yield* send("/machines", { headers: { cookie: owner.cookie } });
-        const emptyHtml = yield* Effect.promise(() => empty.text());
-        assert.include(emptyHtml, "No machines are logged in.");
-        assert.include(emptyHtml, 'action="/logout"');
-        assert.notInclude(emptyHtml, 'action="/machines/revoke-all"');
-      })
-  );
-
   it.effect("shows the deactivated page rather than confirming or exposing machines", () =>
     Effect.gen(function* () {
       const owner = yield* account("deactivated");
@@ -649,6 +584,12 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         const tokens = yield* MachineTokens.MachineTokens;
         const login = yield* logins.start({ machineNameHint: "Protected" });
         const token = yield* tokens.mint({ userId: owner.user.id, name: "Protected" });
+        const connections = yield* AgentConnections.AgentConnections;
+        const agent = yield* connections.create({
+          userId: owner.user.id,
+          clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+          clientName: "Protected"
+        });
         for (const route of ["/machines", pathFor(login.userCode)]) {
           const signedOut = yield* send(route, {
             headers: { authorization: `Bearer ${token.token}` }
@@ -658,6 +599,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         for (const route of [
           "/login/device",
           `/machines/${token.id}/revoke`,
+          `/machines/agents/${agent.connection.id}/disconnect`,
           "/machines/revoke-all"
         ]) {
           for (const origin of [undefined, "https://foreign.invalid"]) {
@@ -683,6 +625,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           status: "pending"
         });
         assert.strictEqual((yield* tokens.authenticate(token.token))?.machine.id, token.id);
+        assert.isNotNull(yield* connections.authenticate(agent.tokens.accessToken));
         const unenrolled = signedInCookies(signSession({ sub: "user_device_no_company" }));
         for (const route of ["/machines", pathFor(login.userCode)]) {
           const enrollment = yield* send(route, { headers: { cookie: unenrolled } });
