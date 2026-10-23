@@ -165,7 +165,7 @@ export const handle = Effect.fn("Join.handle")(function* (
     } satisfies JoinPage;
   }
   if (request.method !== "POST") return yield* render(claims, door);
-  const fields = Object.fromEntries(yield* request.urlParamsBody);
+  const fields = Object.fromEntries(new URLSearchParams(yield* request.text));
   const entered = { name: (fields.name ?? "").trim(), handle: fields.handle ?? "" };
   const companies = yield* Companies.Companies;
   const analytics = yield* Analytics.Analytics;
