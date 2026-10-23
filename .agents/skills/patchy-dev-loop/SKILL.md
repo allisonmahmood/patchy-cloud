@@ -26,6 +26,13 @@ read `pnpm dev logs`. A failed migration also prints which step failed and why.
 
 Done when `pnpm dev status` exits 0.
 
+On the Activepieces prototype branch, use `npm --prefix
+packages/integrations/prototype-activepieces run local` for its alternate local
+entrypoint, two companies and simulated provider. The prototype README describes
+the sign-in links and test patches. Restart it with this launcher after `pnpm dev
+stop`; plain `pnpm dev` uses the native source. Status, logs, shot and stop still
+use the same worktree plan. The prototype has no real-provider mode.
+
 ## 2. Exercise the change
 
 - **The CLI.** `pnpm patchy …` runs from source and publishes as **Dev
