@@ -730,6 +730,12 @@ export function htmlPage(options: {
     .tile-row-plain .tile-text { white-space: normal; }
     /* side-panel: a framed column beside a page's main content, such as Home's Pages. */
     .side-panel { min-width: 0; padding: 18px 18px 8px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper); box-shadow: 3px 3px 0 var(--ink); }
+    /* card-split: a patch's card with a side-panel to its right, such as what agents can do. On a narrow page the
+       panel drops below the card. */
+    .card-split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 32px 28px; align-items: start; }
+    @media (max-width: 960px) {
+      .card-split { grid-template-columns: minmax(0, 1fr); }
+    }
     /* shelf-label: a small capitalised label over a group inside a shelf or panel, such as New to you. */
     .shelf-label { margin: 14px 0 4px; color: var(--muted); font-size: .74rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
     mark { padding: 0 2px; border-radius: 3px; background: rgba(255, 191, 53, .6); color: var(--ink); }
@@ -910,3 +916,10 @@ export function escapeHtml(value: unknown): string {
 export function escapeAttribute(value: unknown): string {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
+/** "a, b and c", escaped, as when a page names a company's admins. */
+export const sentenceList = (items: readonly string[]): string => {
+  const escaped = items.map(escapeHtml);
+  return escaped.length < 2
+    ? escaped.join("")
+    : `${escaped.slice(0, -1).join(", ")} and ${escaped.at(-1)}`;
+};

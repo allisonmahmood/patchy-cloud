@@ -19,7 +19,8 @@ import {
   MANIFEST_VERSION,
   WIRE_VERSION,
   sharedTableId,
-  sharedStoreId
+  sharedStoreId,
+  type HandlerDescriptors
 } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { MachineTokens, RequireSession, Session } from "@patchy/auth";
@@ -2456,6 +2457,158 @@ it.layer(layer)("patch health on a socket", (it) => {
       assert.notInclude(text(member), "3 failed");
       assert.notInclude(text(member), "Needs attention");
       assert.include(listed(member), page.name);
+    })
+  );
+});
+
+/** A tier 2 patch whose agent area has a tool of each kind, beside a page handler. */
+const agentHandlers: HandlerDescriptors = {
+  "agent.moveDeal": {
+    kind: "mutation",
+    description: "Move one deal to another stage.",
+    agentTool: true,
+    args: { deal: { kind: "text" } },
+    result: { kind: "boolean" }
+  },
+  "agent.findDeals": {
+    kind: "query",
+    description: "Search the pipeline for <b>open</b> deals.",
+    agentTool: true,
+    args: {},
+    result: { kind: "json" }
+  },
+  "agent.exportDeals": {
+    kind: "action",
+    description: "Export the board as CSV.",
+    readOnly: true,
+    agentTool: true,
+    args: {},
+    result: { kind: "text" }
+  },
+  "agent.addNote": {
+    kind: "action",
+    description: "Add a note to a deal's timeline.",
+    agentTool: true,
+    args: {},
+    result: { kind: "boolean" }
+  },
+  "deals.update": { kind: "mutation", args: {}, result: { kind: "boolean" } }
+};
+const publishAgentArea = Effect.fn("PortalPagesTest.publishAgentArea")(function* (
+  person: Person,
+  name: string,
+  handlers: HandlerDescriptors = agentHandlers,
+  overrides: Partial<Patches.RecordInput> = {}
+) {
+  const ordinal = ++counter;
+  return yield* publish(person, name, {
+    filename: null,
+    manifest: { ...manifest, name, tier: 2, handlers },
+    server: {
+      objectKey: `patches/agents-${ordinal}/server.js`,
+      sha256: sha256(String(ordinal)),
+      bytes: 0
+    },
+    ...overrides
+  });
+});
+const agentPanel = (html: string) => html.match(/<aside class="side-panel"[\s\S]*?<\/aside>/)?.[0];
+/** The panel's tools as `name kind`, in order. */
+const agentTools = (html: string) =>
+  [
+    ...(agentPanel(html) ?? "").matchAll(/<summary><code>([^<]*)<\/code><span class="tag">(\w+)/g)
+  ].map((match) => `${match[1]} ${match[2]}`);
+
+it.layer(layer)("what agents can do on a socket", (it) => {
+  it.effect("shows everyone a live card's agent tools, and who can turn agent access on", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publishAgentArea(workspace.owner, "new-business");
+      const companies = yield* Companies.Companies;
+      yield* companies.setAgentAccess({
+        companyId: workspace.id,
+        on: true,
+        by: workspace.admin.id
+      });
+
+      for (const person of [workspace.member, workspace.owner, workspace.admin]) {
+        const html = yield* (yield* request(cardPath(patch.name), person)).text;
+        assert.include(html, '<div class="card-split"><article class="portal-card">');
+        const panel = agentPanel(html) ?? "";
+        // In open_patch's order, page handlers left out; a read-only action reads.
+        assert.deepStrictEqual(agentTools(html), [
+          "addNote Changes",
+          "exportDeals Reads",
+          "findDeals Reads",
+          "moveDeal Changes"
+        ]);
+        assert.include(
+          text(panel),
+          "What agents can do As the person who connected them. addNote Changes Add a note to a deal's timeline."
+        );
+        assert.include(panel, "Search the pipeline for &lt;b&gt;open&lt;/b&gt; deals.");
+        assert.deepStrictEqual(links(panel), [
+          { href: "/machines#connect-an-agent", text: "Connect your agent" }
+        ]);
+        assert.notInclude(panel, "note-warn");
+      }
+      // Only beside the Overview.
+      const versions = yield* (yield* request(`${cardPath(patch.name)}/versions`, workspace.member))
+        .text;
+      assert.isUndefined(agentPanel(versions));
+      assert.notInclude(versions, `<div class="card-split">`);
+
+      // Off, the panel names the admins in place of the connect link; an admin can turn it on.
+      yield* companies.setAgentAccess({
+        companyId: workspace.id,
+        on: false,
+        by: workspace.admin.id
+      });
+      const member = agentPanel(
+        yield* (yield* request(cardPath(patch.name), workspace.member)).text
+      );
+      assert.include(
+        text(member ?? ""),
+        "Agent access is off at Northwind No agent can use these yet. Only admins can turn it on. At Northwind that’s Sam."
+      );
+      assert.deepStrictEqual(links(member ?? ""), []);
+      assert.strictEqual(agentTools(member ?? "").length, 4);
+      const admin = agentPanel(yield* (yield* request(cardPath(patch.name), workspace.admin)).text);
+      assert.include(text(admin ?? ""), "At Northwind that’s you.");
+      assert.deepStrictEqual(links(admin ?? ""), [
+        { href: "/company#agent-access", text: "Turn it on at Company" }
+      ]);
+    })
+  );
+
+  it.effect("leaves a card without live agent tools as it was", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      yield* (yield* Companies.Companies).setAgentAccess({
+        companyId: workspace.id,
+        on: true,
+        by: workspace.admin.id
+      });
+      const pageOnly = yield* publishAgentArea(workspace.owner, "page-only", {
+        "deals.update": agentHandlers["deals.update"]!
+      });
+      const tier0 = yield* publish(workspace.owner, "kickoff-brief");
+      // The current version decides: rolled back to one without tools, the panel goes.
+      const rolled = yield* publishAgentArea(workspace.owner, "rolled-back", {});
+      yield* publishAgentArea(workspace.owner, rolled.name, agentHandlers, {
+        intent: "update",
+        patchId: rolled.patchId
+      });
+      yield* (yield* Patches.Patches).rollback(rolled.patchId, actor(workspace.owner), 1);
+      const retired = yield* publishAgentArea(workspace.owner, "retired-tools");
+      yield* (yield* Patches.Patches).retire(retired.patchId, actor(workspace.owner));
+
+      for (const name of [pageOnly.name, tier0.name, rolled.name, retired.name]) {
+        const html = yield* (yield* request(cardPath(name), workspace.admin)).text;
+        assert.isUndefined(agentPanel(html), name);
+        assert.notInclude(html, `<div class="card-split">`, name);
+        assert.notInclude(text(html), "What agents can do", name);
+      }
     })
   );
 });
