@@ -106,6 +106,22 @@ it.layer(layer)("What's new pages", (it) => {
         assert.strictEqual((yield* request(sam, seenPost("soon"))).status, 400);
       })
   );
+
+  it.effect("serves the public changelog to anyone, cacheable for five minutes", () =>
+    Effect.gen(function* () {
+      const response = yield* (yield* HttpClient.HttpClient).execute(
+        HttpClientRequest.get("/whats-new.json")
+      );
+      assert.strictEqual(response.status, 200);
+      assert.include(response.headers["content-type"], "application/json");
+      assert.strictEqual(response.headers["cache-control"], "public, max-age=300");
+      assert.notProperty(response.headers, "set-cookie");
+      assert.notProperty(response.headers, "access-control-allow-origin");
+      assert.deepStrictEqual(yield* response.json, {
+        releases: WhatsNewPages.publicReleases(WhatsNew.releases)
+      });
+    })
+  );
 });
 
 describe("the changelog", () => {
@@ -137,6 +153,48 @@ describe("the changelog", () => {
     assert.deepStrictEqual(reading(1), ["Third", "Second", "rule", "First"]);
     assert.strictEqual(tinted(2), 1);
     assert.strictEqual(tinted(1), 2);
+  });
+
+  it("publishes only New and Improved changes, without PRs, through or releases left empty", () => {
+    const change = (kind: WhatsNew.ChangeKind, title: string): WhatsNew.Change => ({
+      kind,
+      title,
+      detail: `${title} in detail.`,
+      prs: [1]
+    });
+    const behindTheScenes = ["Quieter logs."];
+    assert.deepStrictEqual(
+      WhatsNewPages.publicReleases([
+        {
+          id: 2,
+          date: "2026-10-08",
+          through: "2".repeat(40),
+          changes: [change("Fixed", "Mended")],
+          behindTheScenes
+        },
+        {
+          id: 1,
+          date: "2026-10-07",
+          through: "1".repeat(40),
+          changes: [
+            change("New", "Added"),
+            change("Fixed", "Mended"),
+            change("Improved", "Faster")
+          ],
+          behindTheScenes
+        }
+      ]),
+      [
+        {
+          id: 1,
+          date: "2026-10-07",
+          changes: [
+            { kind: "New", title: "Added", detail: "Added in detail." },
+            { kind: "Improved", title: "Faster", detail: "Faster in detail." }
+          ]
+        }
+      ]
+    );
   });
 
   it("has no rule or tint once everything is seen, and tints it all for someone new to it", () => {
