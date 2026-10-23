@@ -19,7 +19,7 @@ import {
   SetupLinks,
   SetupPrompts
 } from "@patchy/auth";
-import { ago, copyScript, copyScriptPath, escapeHtml } from "@patchy/core";
+import { ago, copyScript, copyScriptPath, escapeAttribute, escapeHtml } from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
@@ -404,7 +404,7 @@ const home = Effect.fn("PortalPages.home")(function* () {
         note:
           first === undefined ? undefined : renderLiveNote(first, viewer, session.publicBaseUrl),
         failures: yield* recentFailures(rows)
-      })}${watch ? renderWatch(machine === null ? "waiting" : "connected") : ""}`,
+      })}${watch ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
       styles: styles + homeStyles + finalStepStyles,
       app: {
         viewer,
@@ -463,7 +463,7 @@ const guideSteps = Effect.fn("PortalPages.guideSteps")(function* () {
   const watching = new URL(request.url, session.publicBaseUrl).searchParams.get("mode") === "watch";
   const { state, setupLink } = yield* setupState();
   const html = watching
-    ? `<div data-guide-steps data-state="${state.kind}">${state.kind === "live" ? renderLiveNote(state.row, viewer, session.publicBaseUrl) : ""}</div>`
+    ? `<div data-guide-steps data-viewer="${escapeAttribute(viewer.user.id)}" data-state="${state.kind}">${state.kind === "live" ? renderLiveNote(state.row, viewer, session.publicBaseUrl) : ""}</div>`
     : renderSetupSteps({
         state,
         viewer,
@@ -475,7 +475,9 @@ const guideSteps = Effect.fn("PortalPages.guideSteps")(function* () {
     headers: {
       "cache-control": "private, no-store",
       "x-content-type-options": "nosniff",
-      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'"
+      // It carries the inline confirmation, so nothing may frame it or post its forms elsewhere.
+      "content-security-policy":
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     }
   });
 });

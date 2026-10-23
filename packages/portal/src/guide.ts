@@ -158,7 +158,7 @@ export const renderSetupSteps = (input: {
       : state.kind === "live"
         ? `${renderLiveNote(state.row, viewer, input.publicBaseUrl)}<div class="actions">${go}</div>`
         : "";
-  return `<div class="final-step-steps" data-guide-steps data-state="${stateKey(state)}" data-announce="${escapeAttribute(announcements[state.kind])}"><ol class="steps final-step-list">${steps}</ol>${after}</div>`;
+  return `<div class="final-step-steps" data-guide-steps data-viewer="${escapeAttribute(viewer.user.id)}" data-state="${stateKey(state)}" data-announce="${escapeAttribute(announcements[state.kind])}"><ol class="steps final-step-list">${steps}</ol>${after}</div>`;
 };
 
 /**
@@ -282,7 +282,8 @@ export const guideScript = `(() => {
     try {
       const response = await fetch("/guide/steps" + (watching ? "?mode=watch" : ""), { credentials: "same-origin", headers: { accept: "text/html" } });
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-guide-steps]");
-      if (!response.ok || next === null) return location.reload();
+      // Another account signed in since the page loaded: its answers belong on its own page.
+      if (!response.ok || next === null || next.dataset.viewer !== region.dataset.viewer) return location.reload();
       // A confirmation someone is filling in stays put until they answer it.
       const form = region.querySelector("form[data-inline-confirm]");
       const busy =
@@ -315,8 +316,8 @@ export const guideScript = `(() => {
  * Home watches for the first publication without the panel, after a computer connects or after
  * Later: the region is empty until the live note arrives.
  */
-export const renderWatch = (state: SetupState["kind"]): string =>
-  `<div data-guide-steps data-mode="watch" data-state="${state}" hidden></div><script defer src="${guideScriptPath}"></script>`;
+export const renderWatch = (state: SetupState["kind"], viewerId: string): string =>
+  `<div data-guide-steps data-mode="watch" data-viewer="${escapeAttribute(viewerId)}" data-state="${state}" hidden></div><script defer src="${guideScriptPath}"></script>`;
 
 /** A person's earliest patch, for the day after it was made and while it is live. */
 export const firstPatch = (
