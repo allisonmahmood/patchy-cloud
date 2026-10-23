@@ -181,7 +181,10 @@ export class Companies extends Context.Service<
     readonly holdAgentAccess: (
       companyId: string
     ) => Effect.Effect<boolean, CompanyNotFound | SqlError>;
-    /** Turns agent access on or off; asking for the state it already has changes nothing. */
+    /**
+     * Turns agent access on or off; asking for the state it already has changes nothing. Off
+     * cancels every consent in progress at the company, in the same transaction.
+     */
     readonly setAgentAccess: (
       input: AgentAccessInput
     ) => Effect.Effect<
@@ -470,6 +473,14 @@ export const make = Effect.gen(function* () {
         const changed = yield* changeAgentAccess({ ...input, now }).pipe(
           Effect.catchTags(dieOnSchemaError)
         );
+        // Off cancels consents in progress. Auth owns the codes; deleting them under this lock
+        // means none issued while it was on is exchanged after the off commits, even once it
+        // is on again.
+        if (!input.on && changed.length > 0)
+          yield* sql`
+            DELETE FROM agent_consents c USING users u
+            WHERE u.id = c.user_id AND u.company_id = ${input.companyId}
+              AND c.connection_id IS NULL`;
         return { access: yield* agentAccess(input.companyId), changed: changed.length > 0 };
       })
     )

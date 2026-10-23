@@ -19,4 +19,6 @@ export {
 } from "./page.js";
 export * as ClientDocuments from "./ClientDocuments.js";
 export * as ClientDocumentNetwork from "./ClientDocumentNetwork.js";
+export * as Consents from "./Consents.js";
+export * as OAuthEndpoints from "./OAuthEndpoints.js";
 export * as OAuthMetadata from "./OAuthMetadata.js";
