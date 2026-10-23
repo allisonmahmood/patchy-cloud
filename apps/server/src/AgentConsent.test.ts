@@ -1,23 +1,20 @@
 /**
  * A scripted client connects through the whole server booted as a dev instance boots it: dev
  * personas, a `<label>.localhost` origin and its token endpoint on `127.0.0.1`, with Claude
- * Code's metadata document served from a fixture. Approval is a service call on the same
- * database, as the consent page's answer will make it.
+ * Code's metadata document served from a fixture. The person answers on the consent page, as
+ * their browser would post it.
  */
 import { assert, it } from "@effect/vitest";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
-import { AgentConnections, ClientDocuments, Consents } from "@patchy/auth";
+import { AgentConnections } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clientDocumentFixtures, layerClientDocumentNetwork } from "@patchy/auth/testing";
-import { Companies } from "@patchy/companies";
 import { randomToken, sha256 } from "@patchy/core";
-import { Limits } from "@patchy/limits";
 import { send, server } from "./test/server.js";
 
 const BASE = "http://patchy-flow.localhost:29276";
@@ -26,16 +23,8 @@ const CALLBACK = "http://127.0.0.1:53682/callback";
 const env = { PATCHY_PUBLIC_BASE_URL: BASE, PATCHY_DEV_PERSONAS_SECRET: "flow", NODE_ENV: "test" };
 const documents = layerClientDocumentNetwork([CLAUDE_CODE]);
 
-/** Consent and agent connections on the server's database, as the consent page reaches them. */
-const services = Effect.provide(
-  Layer.mergeAll(
-    Consents.layer.pipe(
-      Layer.provide(ClientDocuments.layer.pipe(Layer.provide([documents, Limits.layer]))),
-      Layer.provideMerge(AgentConnections.layer),
-      Layer.provide(Companies.layer)
-    )
-  ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))))
-);
+/** Agent connections on the server's database, to see who a token acts as. */
+const services = Effect.provide(AgentConnections.layer);
 
 it.layer(
   server(env, documents).pipe(
@@ -83,19 +72,24 @@ it.layer(
         HttpClientRequest.get(authorize).pipe(HttpClientRequest.setHeader("cookie", cookie))
       );
       assert.strictEqual(page.status, 200);
-      assert.include(yield* page.text, "Connect Claude Code to Patchy Dev?");
+      const html = yield* page.text;
+      assert.include(html, "Connect Claude Code to Patchy Dev?");
+      assert.include(html, "Your answer goes to a program on this computer");
 
-      const answer = new URL(
-        yield* Effect.gen(function* () {
-          const consents = yield* Consents.Consents;
-          const checked = yield* consents.check(query);
-          return yield* consents.approve({
-            request: checked,
-            userId: DEV_SEED.userId,
-            companyId: DEV_SEED.companyId
-          });
-        }).pipe(services)
+      const field = (name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(html)![1]!;
+      const allowed = yield* send(
+        HttpClientRequest.post(authorize).pipe(
+          HttpClientRequest.setHeaders({ cookie, origin: BASE }),
+          HttpClientRequest.bodyUrlParams({
+            userId: field("userId"),
+            client: field("client"),
+            shown: field("shown"),
+            action: "allow"
+          })
+        )
       );
+      assert.strictEqual(allowed.status, 303);
+      const answer = new URL(allowed.headers.location!);
       assert.strictEqual(`${answer.origin}${answer.pathname}`, CALLBACK);
       assert.strictEqual(answer.searchParams.get("state"), "client-state");
       assert.strictEqual(answer.searchParams.get("iss"), metadata.issuer);

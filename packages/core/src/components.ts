@@ -16,6 +16,13 @@ export const avatar = (key: string, label: string, variant?: "waiting" | "off") 
   return `<span class="avatar${tint}" aria-hidden="true">${escapeHtml(letters)}</span>`;
 };
 
+/** The guide's agent icon: a terminal window. */
+export const agentIcon =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 10 3 2.5L7 15M12.5 15H17" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** An agent's mark beside its name, as `avatar` is a person's. */
+export const agentMark = `<span class="agent-mark" aria-hidden="true">${agentIcon}</span>`;
+
 /**
  * A patch's mark: two letters from its name on a tint picked from it, or a ruled sheet for a
  * tier 0 page. `large` is the size beside a page heading.

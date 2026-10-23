@@ -466,7 +466,24 @@ it.layer(
       );
       const response = yield* send("/logout", post({}, sessionCookie));
       assert.strictEqual(response.status, 303);
+      assert.strictEqual(response.headers.get("location"), "/login");
       assert.deepStrictEqual(revokedSessions.slice(before), ["sess_signed_in"]);
+    })
+  );
+
+  it.effect("Use another account signs in again back at its page, only ever a local one", () =>
+    Effect.gen(function* () {
+      const sessionCookie = signedInCookies(signSession({ sub: "user_another_account" }));
+      const consent = "/oauth/authorize?client_id=https%3A%2F%2Fagent.example%2Fc.json&state=s";
+      for (const [back, location] of [
+        [consent, `/login?return=${encodeURIComponent(consent)}`],
+        ["//evil.example/", "/login"],
+        ["https://evil.example/", "/login"]
+      ] as const) {
+        const response = yield* send("/logout", post({ return: back }, sessionCookie));
+        assert.strictEqual(response.status, 303);
+        assert.strictEqual(response.headers.get("location"), location);
+      }
     })
   );
 

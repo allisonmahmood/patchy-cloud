@@ -23,8 +23,9 @@ import { pageResponse, returnPath, withCookies } from "./page.js";
  * `PATCHY_DEV_PERSONAS_SECRET`. It refuses to start unless `NODE_ENV` is
  * development or test and the public origin is loopback, and the server then
  * listens on loopback only, so neither a stray secret nor a LAN neighbour can
- * sign in. `/dev/sign-in?as=<email>&return=<path>` signs in; `/dev/sign-in`
- * lists the active people to pick from.
+ * sign in. `/dev/sign-in?as=<email>&return=<path>` signs in, unless the
+ * browser says another site sent it there; `/dev/sign-in` lists the active
+ * people to pick from.
  */
 
 export class DevPersonasOutsideDevelopment extends Schema.TaggedError<DevPersonasOutsideDevelopment>()(
@@ -166,6 +167,15 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
     Schema.decodeUnknownEffect(Schema.Array(Person))
   );
   if (as === undefined || as === "") return picker(yield* people, target);
+  // Another site may not change who you are, mid-consent included. The dev tools that switch
+  // persona open this URL directly, so their browsers send `none` or no header at all.
+  const from = request.headers["sec-fetch-site"];
+  if (from === "cross-site" || from === "same-site")
+    return pageResponse({
+      title: "Sign in from this instance",
+      status: 403,
+      body: `<p>Another site asked to sign you in as someone else, so nothing changed. To switch, open <a href="${escapeAttribute(`/dev/sign-in?return=${encodeURIComponent(target)}`)}">the people on this instance</a> and pick one.</p>`
+    });
   if (!/^[^@\s]+@[^@\s]+$/.test(as))
     return picker(yield* people, target, `${as} is not an email address.`);
   const user = yield* (yield* Users.Users).findByEmail(as);

@@ -1,5 +1,5 @@
 import type { RequireSession } from "@patchy/auth";
-import { ago, copyLine, copyScriptPath, escapeHtml } from "@patchy/core";
+import { agentIcon, ago, copyLine, copyScriptPath, escapeHtml } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 
 /**
@@ -23,7 +23,7 @@ const firstPatchWindow = 24 * 60 * 60 * 1_000;
 
 const icons = {
   you: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" stroke-linecap="round"/></svg>`,
-  agent: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 10 3 2.5L7 15M12.5 15H17" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  agent: agentIcon,
   team: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" stroke-linecap="round"/><circle cx="17" cy="9" r="2.8"/><path d="M16.5 14.2c2.9.3 5 2.3 5 5.3" stroke-linecap="round"/></svg>`
 };
 

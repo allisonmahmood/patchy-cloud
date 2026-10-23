@@ -166,7 +166,11 @@ People sign in as **dev personas**: `/dev/sign-in` lists everyone, and
 `/dev/sign-in?as=<email>&return=<path>` signs in as any email, including one
 that was only invited. Invitations are recorded, never mailed. Personas run
 only in development on a loopback origin, and the server then listens on
-`127.0.0.1` only.
+`127.0.0.1` only. A switch that another site sends the browser to
+(`Sec-Fetch-Site: cross-site` or `same-site`) is refused, so a page can't
+change who you are mid-consent. Opening the URL yourself, `curl`, and
+`pnpm dev open`, `shot`, `film` and `compare` send `none` or no header and
+keep working.
 
 `pnpm patchy` runs the CLI from source and finds this worktree's
 `.local/dev/env` from any directory beneath it. A command uses
@@ -186,6 +190,17 @@ is the `work` credential, so the CLI's API answers it 401. It lasts a year
 instead of an hour, and the connection ends as any other does: disconnected,
 after 30 days without a call, or when its person's credentials end. Nothing
 else mints one without consent, and no route does.
+
+**Connecting through consent.** An MCP client opens the consent page at
+`/oauth/authorize` with its client id, a redirect its document lists, an S256
+PKCE challenge and its state. The instance fetches the client's metadata
+document from the internet: Claude Code's is
+`https://claude.ai/oauth/claude-code-client-metadata`, whose redirect is
+`http://127.0.0.1:<any port>/callback`. Turn agent access on at Company first,
+or the page says it's off. Allow sends `code`, `state` and `iss` to the
+redirect, and the code exchanges at `/oauth/token` on `127.0.0.1`; Deny sends
+`error=access_denied`. The page and its answers are limited to 10 a minute per
+address once signed in.
 
 The seed holds identity rows only; a fresh portal shows the guide to a first patch.
 `pnpm seed:dev` publishes the accepted HTML fixtures as live tier 0 patches.
@@ -448,6 +463,11 @@ can quote it.
   `public, max-age=60` and no `Set-Cookie`; older versions keep the door. Cover
   `share … public`, a new publish and `share … company`, and a reader from
   another company, who gets the same 404 as a missing patch.
+- **Consent.** Open the consent page as a member and as an admin, with agent
+  access on and off, for a hosted redirect and a `127.0.0.1` one, at desktop
+  and phone widths. Allow and exchange the code, Deny, answer after switching
+  persona in another tab (asked again, 409), and answer from another origin
+  (403). Nothing reaches the client's redirect except Allow and Deny.
 - **Portal and lifecycle.** Sign in as an owner, an admin and a member: Home at
   `/` (open a few patches first, so Your usual and New to you have something to
   show; `pnpm dev shot <person> /<company>/<patch>` records an open), a search on

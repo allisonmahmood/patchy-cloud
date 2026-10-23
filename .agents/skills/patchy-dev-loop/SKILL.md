@@ -32,7 +32,9 @@ Done when `pnpm dev status` exits 0.
   Machine**, `dev@patchy.local`, the admin of Patchy Dev. For login or logout
   checks, keep `PATCHY_API_TOKEN` unset and set
   `PATCHY_STATE_DIR="$PWD/.local/cli-check"` on every command.
-- **A server-rendered page as a person.** Sign in with a cookie jar, then fetch:
+- **A server-rendered page as a person.** Sign in with a cookie jar, then fetch.
+  A persona switch that another site sends the browser to is refused 403;
+  `curl` and the dev tools send no `Sec-Fetch-Site` or `none`, so they switch:
 
   ```sh
   curl -s -c /tmp/jar -o /dev/null "$url/dev/sign-in?as=<email>&return=/"
@@ -49,6 +51,12 @@ Done when `pnpm dev status` exits 0.
   is as for `shot`. The token is the `work` credential: the CLI's API answers it 401. The connection ends as any other: disconnected, 30 days without a call,
   or its person's credentials ending. Only this command mints one without
   consent.
+- **Consent.** `/oauth/authorize` with a real client's document, such as
+  Claude Code's (`https://claude.ai/oauth/claude-code-client-metadata`, any
+  `http://127.0.0.1:<port>/callback`), an S256 challenge and a state shows the
+  consent page; agent access must be on at Company. DEVELOPMENT's
+  **Connecting through consent** has the details. The page allows 10 loads
+  and answers a minute per address.
 - **The environment's agent.** `pnpm dev up` prints an `agent` launcher:
   Claude Code in the environment's workspace with the Patchy skill, publishing
   as the scenario's publisher. It ignores the shell's `PATCHY_API_TOKEN` and
