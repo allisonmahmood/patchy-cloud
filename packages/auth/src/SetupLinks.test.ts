@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
@@ -166,6 +168,44 @@ it.layer(layer)("SetupLinks", (it) => {
       yield* logins.confirm({ userCode: login.userCode, userId: late, machineName: "Laptop" });
       assert.strictEqual((yield* logins.poll(login.deviceCode)).status, "complete");
       assert.deepStrictEqual(yield* outcome(late), Option.some("expired"));
+    }).pipe(withDeviceLogins)
+  );
+
+  it.effect("cleans up an expired bound login without deadlocking an answer to it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const sql = yield* SqlClient.SqlClient;
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const userId = yield* addUser("order");
+      const line = yield* SetupLinks.current(userId);
+      const login = yield* logins.start({ machineNameHint: "laptop", setupLink: line.value });
+      yield* TestClock.adjust("11 minutes");
+      /** Until another transaction on this database is waiting for a lock. */
+      const someoneWaits = Effect.gen(function* () {
+        for (let attempt = 0; attempt < 2_000; attempt++) {
+          yield* sql`SELECT pg_stat_clear_snapshot()`;
+          const waiting = yield* sql`SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+          if (waiting.length > 0) return;
+        }
+        return yield* Effect.die(new Error("start never waited for the login"));
+      });
+      const locked = yield* Deferred.make<void>();
+      // An answer's order, the login and then its line, held open until start's cleanup waits.
+      const answer = yield* Effect.forkChild(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT 1 FROM device_logins WHERE user_code = ${login.userCode} FOR UPDATE`;
+            yield* Deferred.succeed(locked, undefined);
+            yield* someoneWaits;
+            yield* sql`SELECT 1 FROM setup_links WHERE id = ${line.value} FOR UPDATE`;
+          })
+        )
+      );
+      yield* Deferred.await(locked);
+      yield* logins.start({ machineNameHint: "elsewhere" });
+      yield* Fiber.join(answer);
+      assert.deepStrictEqual(yield* outcome(userId), Option.some("expired"));
     }).pipe(withDeviceLogins)
   );
 

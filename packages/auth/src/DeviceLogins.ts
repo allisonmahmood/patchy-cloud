@@ -212,13 +212,15 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const expires = now + LIFETIME_MS;
-          // Lines whose bound login runs out unanswered end expired before the login goes.
-          const ran = yield* sql<{ readonly setup_link_id: string }>`
+          // Lines whose bound login runs out unanswered end expired before the login goes. The
+          // logins lock first, in one order, as every answer locks its login before its line.
+          const ran = yield* sql<{ readonly setup_link_id: string | null }>`
             SELECT setup_link_id FROM device_logins
-            WHERE expires_at <= to_timestamp(${now / 1_000}) AND setup_link_id IS NOT NULL`;
-          yield* SetupLinks.expired(ran.map((row) => row.setup_link_id)).pipe(
-            Effect.provideService(SqlClient.SqlClient, sql)
-          );
+            WHERE expires_at <= to_timestamp(${now / 1_000})
+            ORDER BY user_code FOR UPDATE`;
+          yield* SetupLinks.expired(
+            ran.flatMap((row) => (row.setup_link_id === null ? [] : [row.setup_link_id]))
+          ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
           yield* sql`DELETE FROM device_logins WHERE expires_at <= to_timestamp(${now / 1_000})`;
           while (true) {
             let code = "";
