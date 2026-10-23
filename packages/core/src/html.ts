@@ -292,6 +292,11 @@ export interface AppShell {
    * those no link is current.
    */
   readonly section: "home" | "patches" | "company" | "connections" | "machines" | "whats-new";
+  /**
+   * A modal panel over the page, such as Home's Final step: the app card behind it goes inert
+   * and blurs, and the panel carries its own role, label and ways out.
+   */
+  readonly overlay?: string;
 }
 
 /** A change's kind as a pill: New green, Improved blue, Fixed plain. */
@@ -327,7 +332,7 @@ function whatsNewBell(seen: number): string {
 function appBody(app: AppShell, body: string): string {
   const link = (href: string, label: string, section: AppShell["section"]) =>
     `<a href="${href}"${section === app.section ? ' aria-current="page"' : ""}>${label}</a>`;
-  return `<div class="app-card"><header class="app-bar"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span>Patchy</a><nav class="app-nav" aria-label="Primary">${link("/patches", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
+  return `<div class="app-card"${app.overlay === undefined ? "" : " inert"}><header class="app-bar"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span>Patchy</a><nav class="app-nav" aria-label="Primary">${link("/patches", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**
@@ -846,6 +851,15 @@ export function htmlPage(options: {
     .step-card > * + .agent-preview { margin-top: 8px; }
     .step-card summary { color: var(--blue-dark); font-weight: 750; cursor: pointer; }
     .step-card details p { margin: 6px 0 0; }
+    /* modal-panel: a panel over an app page, which is inert and statically blurred behind it, never animated. It has
+       no close button: its own actions are the ways out. On a phone it is a bottom sheet. */
+    .app-card[inert] { filter: blur(3px); user-select: none; }
+    .modal-scrim { position: fixed; inset: 0; background: rgba(18, 17, 15, .32); }
+    .modal-panel { position: fixed; top: 40px; left: 50%; width: min(640px, calc(100% - 32px)); max-height: calc(100dvh - 64px); overflow-y: auto; padding: 26px 28px 22px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 6px 6px 0 var(--ink); transform: translateX(-50%); }
+    .modal-panel .page-heading { margin-top: 0; }
+    @media (max-width: 600px) {
+      .modal-panel { top: auto; right: 0; bottom: 0; left: 0; width: auto; max-height: 88dvh; padding: 20px 18px 22px; border-radius: 16px 16px 0 0; box-shadow: 0 -4px 0 var(--ink); transform: none; }
+    }
     @media (max-width: 480px) {
       .step { grid-template-columns: 36px minmax(0, 1fr); gap: 0 12px; }
       .step-marker { width: 36px; height: 36px; }

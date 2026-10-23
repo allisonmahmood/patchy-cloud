@@ -1,39 +1,25 @@
 import type { RequireSession } from "@patchy/auth";
-import { agentIcon, ago, copyLine, copyScriptPath, escapeHtml } from "@patchy/core";
+import { copyLine, copyScriptPath, escapeAttribute, escapeHtml, isWelcomePage } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 
 /**
- * Where a person stands on the way to their first patch, from what Patchy already records. The guide is at
- * `/guide` while they own no patch, and is Home itself while nothing is live; `machine` is the newest machine
- * logged in as them, once one is.
+ * Where a person stands on connecting their agent, from what Patchy already records: no live
+ * machine token yet, connected, or connected with a patch of theirs published since. Nothing
+ * about setup is stored.
  */
-export interface Guide {
-  readonly machine: { readonly name: string; readonly createdAt: string } | null;
-}
+export type SetupState =
+  | { readonly kind: "waiting" }
+  | { readonly kind: "connected" }
+  | { readonly kind: "live"; readonly row: Patches.ReadPatch };
 
-/** The example in the flow and step 3, and the patch the agent's reply names. */
-const example = {
-  ask: "Build us a lead tracker",
-  prompt: "Build us a lead tracker with Patchy",
-  name: "lead-tracker"
-};
+/** Where the portal serves `guideScript`; "assets" is a reserved company handle. */
+export const guideScriptPath = "/assets/guide.js";
 
 /** The first publish's note stays up for a day after the patch was created. */
 const firstPatchWindow = 24 * 60 * 60 * 1_000;
 
-const icons = {
-  you: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" stroke-linecap="round"/></svg>`,
-  agent: agentIcon,
-  team: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" stroke-linecap="round"/><circle cx="17" cy="9" r="2.8"/><path d="M16.5 14.2c2.9.3 5 2.3 5 5.3" stroke-linecap="round"/></svg>`
-};
-
-const preview = (lines: ReadonlyArray<string>) =>
-  `<p class="supporting-text">Your agent will say something like</p><div class="agent-preview">${lines.map((line) => `<p>${line}</p>`).join("")}</div>`;
-
-const said = (text: string) =>
-  `<span class="agent-preview-said" aria-hidden="true">●</span> ${text}`;
-const you = (text: string) =>
-  `<span class="agent-preview-you" aria-hidden="true">›</span> ${escapeHtml(text)}`;
+/** The Home it lives on, by the company's name: "Back to Acme Co". */
+const companyHome = (viewer: RequireSession.Viewer["Service"]) => escapeHtml(viewer.company.name);
 
 const step = (
   state: "done" | "current" | "upcoming",
@@ -43,71 +29,189 @@ const step = (
 ) =>
   `<li class="step${state === "upcoming" ? "" : ` step-${state}`}"${state === "current" ? ' aria-current="step"' : ""}><span class="step-marker" aria-hidden="true">${marker}</span><div><h2 class="step-title">${title}</h2>${body}</div></li>`;
 
-/** The guide's card: what Patchy is, then the steps to a first patch with the open one's work and a preview. */
-export const renderGuide = (input: {
-  readonly guide: Guide;
+/**
+ * "Your welcome page is live", or "Your first patch is live" for anything else, with the ways to
+ * open it and pass it on. Home's first-patch note and the panel's last state are this one note.
+ */
+export const renderLiveNote = (
+  row: Patches.ReadPatch,
+  viewer: RequireSession.Viewer["Service"],
+  publicBaseUrl: string
+): string => {
+  const { patch } = row;
+  const address = `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
+  const url = `${publicBaseUrl.replace(/\/+$/u, "")}${address}`;
+  return `<section class="note note-ok" role="status"><span class="note-title">${isWelcomePage({ name: patch.name, tier: row.tier }) ? "Your welcome page is live" : "Your first patch is live"}</span><p>${
+    patch.scope === "public"
+      ? "Anyone with the link can open it."
+      : `Signed-in people at ${escapeHtml(viewer.company.name)} can open it.`
+  } To change it, tell your agent what to change.</p><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(address)}">Open it</a><button type="button" class="btn" data-copy="${escapeAttribute(url)}" aria-live="polite" hidden>Copy link</button></div></section>`;
+};
+
+/**
+ * The panel's two steps in the state Patchy's records give them. `/guide/steps` serves this region
+ * alone, and the guide script swaps it in when its state changes.
+ */
+export const renderSetupSteps = (input: {
+  readonly state: SetupState;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly publicBaseUrl: string;
-  readonly now: number;
+}): string => {
+  const base = input.publicBaseUrl.replace(/\/+$/u, "");
+  const setup = `Set up Patchy using ${base}/llms.txt`;
+  const { state, viewer } = input;
+  const steps =
+    state.kind === "waiting"
+      ? `${step(
+          "current",
+          "1",
+          "Give your agent this line",
+          `<div class="step-card">${copyLine(setup, "Setup line, select to copy")}<p class="supporting-text">Paste it into Claude Code, Codex, Cursor or any agent that can run commands on your computer.</p><p class="note note-info final-step-copied" role="status" hidden><strong>Now paste it into your agent.</strong> This page moves on by itself when your computer connects.</p><details><summary>Don’t have an agent yet?</summary><p>An agent is an AI assistant that works on your computer, like Claude Code or Codex. Install one, then come back: this step waits for you here.</p></details></div>`
+        )}${step(
+          "upcoming",
+          "2",
+          "Confirm it’s you",
+          `<p class="supporting-text">Your agent sends a link and a code. Open it, check the code, confirm. This page moves on by itself.</p>`
+        )}`
+      : `${step("done", "✓", "Give your agent this line", "")}${step("done", "✓", "Confirm it’s you", `<p class="supporting-text">Your computer is connected.</p>`)}`;
+  const after =
+    state.kind === "connected"
+      ? `<section class="note note-ok"><span class="note-title">You’re set</span><p>Your agent finishes setup from here. What it publishes shows up on Home.</p><div class="actions"><a class="btn btn-primary" href="/">Go to ${companyHome(viewer)}</a></div></section>`
+      : state.kind === "live"
+        ? renderLiveNote(state.row, viewer, input.publicBaseUrl)
+        : "";
+  return `<div class="final-step-steps" data-guide-steps data-state="${state.kind}"><ol class="steps">${steps}</ol>${after}</div>`;
+};
+
+/**
+ * The Final step panel: connecting an agent is the last thing between a person and Patchy. As
+ * `modal` it sits over Home with Later as its only way out before connecting; as `page` it is
+ * `/guide`, which the nav leaves. On a phone it says the step happens on their computer.
+ */
+export const renderFinalStep = (input: {
+  readonly state: SetupState;
+  readonly viewer: RequireSession.Viewer["Service"];
+  readonly publicBaseUrl: string;
+  readonly mode: "modal" | "page";
 }): string => {
   const company = escapeHtml(input.viewer.company.name);
   const base = input.publicBaseUrl.replace(/\/+$/u, "");
-  const host = escapeHtml(base.replace(/^https?:\/\//u, ""));
-  const setup = `Set up Patchy using ${base}/llms.txt`;
-  const { machine } = input.guide;
-  const flow = `<ol class="flow" aria-label="How Patchy works"><li class="flow-node"><span class="flow-icon flow-icon-you">${icons.you}</span><strong>You ask</strong><span>“${example.ask}”</span></li><li class="flow-node"><span class="flow-icon flow-icon-agent">${icons.agent}</span><strong>Your agent builds it</strong><span>Claude Code, Codex, Cursor…</span></li><li class="flow-node"><span class="flow-icon flow-icon-patchy"><span class="glyph" aria-hidden="true"></span></span><strong>Patchy puts it online</strong><span>${escapeHtml(input.viewer.company.handle)}/${example.name}</span></li><li class="flow-node"><span class="flow-icon flow-icon-team">${icons.team}</span><strong>${company} uses it</strong><span>Signed in, private to ${company}</span></li></ol>`;
-  const ask = step(
-    machine === null ? "upcoming" : "current",
-    "3",
-    "Ask for your first patch",
-    machine === null
-      ? `<p class="supporting-text">Anything works, like “Publish this plan with Patchy”. It shows up on your Home.</p>`
-      : `<div class="step-card"><p>Tell your agent what you want, and mention Patchy.</p>${copyLine(example.prompt, "Example request, select to copy")}<p class="supporting-text">Anything works: a lunch poll, an on-call rota, a page from today’s notes.</p>${preview(
-          [
-            you(example.prompt),
-            said(`Building ${example.name}… done.`),
-            said(
-              `Published. Here it is: <u>${host}/${escapeHtml(input.viewer.company.handle)}/${example.name}</u>. Everyone at ${company} can open it.`
-            )
-          ]
-        )}</div>`
-  );
-  const steps =
-    machine === null
-      ? [
-          step(
-            "current",
-            "1",
-            "Give your agent this line",
-            `<div class="step-card">${copyLine(setup, "Setup line, select to copy")}<p class="supporting-text">Paste it into Claude Code, Codex, Cursor or any AI agent that can run commands on your computer. It installs Patchy and gets this computer ready to publish.</p><details><summary>Don’t have an agent yet?</summary><p>An agent is an AI assistant that works on your computer, like Claude Code or Codex. Install one, then come back. This guide stays at ${host}/guide until your first patch is live.</p></details>${preview(
-              [
-                you(setup),
-                said("Installing Patchy… done."),
-                said(
-                  `To publish as you, this machine needs to be logged in. Open <u>${host}/login/device?code=BCDF-GHJK</u> and check that it shows <strong>BCDF-GHJK</strong>.`
-                )
-              ]
-            )}</div>`
-          ),
-          step(
-            "upcoming",
-            "2",
-            "Confirm it’s you",
-            `<p class="supporting-text">Your agent replies with a link and a code. Open the link, check the code matches, name this computer and confirm.</p>`
-          ),
-          ask
-        ]
-      : [
-          step(
-            "done",
-            "✓",
-            "Agent connected",
-            `<p class="supporting-text">“${escapeHtml(machine.name)}” can publish as you · ${escapeHtml(ago(machine.createdAt, input.now))}</p>`
-          ),
-          ask
-        ];
-  return `<article class="portal-card portal-guide" aria-labelledby="guide-heading"><p class="supporting-text">Get started · ${machine === null ? "a few minutes" : "2 of 3 done"}</p><h1 class="page-heading" id="guide-heading">Ship your first patch</h1><p class="lede">Patchy is where ${company}’s tools live. You say what you need, your AI agent builds it, and Patchy puts it online for everyone at ${company}.</p>${machine === null ? flow : ""}<ol class="steps">${steps.join("")}</ol><script defer src="${copyScriptPath}"></script></article>`;
+  const later =
+    input.mode === "modal"
+      ? `<form class="final-step-later" method="post" action="/guide/later"><input type="hidden" name="user" value="${escapeAttribute(input.viewer.user.id)}"><button class="btn btn-quiet" type="submit"><span class="final-step-wide">Later</span><span class="final-step-narrow">Look around ${company} first</span></button></form>`
+      : "";
+  const body = `<h1 class="page-heading" id="final-step-heading">Final step</h1><p class="lede final-step-wide">Connect your AI agent. It builds what ${company} needs, and Patchy puts it online for everyone at ${company}.</p><div class="final-step-wide">${renderSetupSteps(input)}</div><div class="final-step-narrow"><p class="lede">Connect your AI agent. It runs on your computer, so this step happens there, and it’ll be waiting when you open Patchy on your computer.</p><div class="actions"><button type="button" class="btn btn-primary" data-share="${escapeAttribute(base)}" hidden>Send this to my computer</button></div></div><p class="supporting-text final-step-how">How Patchy works: you ask → your agent builds it → Patchy puts it online → ${company} uses it.</p>${later}<script defer src="${copyScriptPath}"></script><script defer src="${guideScriptPath}"></script>`;
+  return input.mode === "modal"
+    ? `<section class="modal-panel final-step" role="dialog" aria-modal="true" aria-labelledby="final-step-heading" data-guide-modal>${body}</section>`
+    : `<article class="portal-card final-step" aria-labelledby="final-step-heading">${body}</article>`;
 };
+
+/** Layout only; every control is the shell's. */
+export const finalStepStyles = `
+  .final-step .lede { margin: 0; }
+  .final-step .steps { margin-top: 18px; }
+  .final-step-steps > .note { margin: 18px 0 0; }
+  .final-step-how { margin: 22px 0 0; padding-top: 14px; border-top: 2px dashed var(--line-strong); }
+  .final-step-later { margin: 12px 0 0; text-align: center; }
+  .final-step .actions > [hidden], .note .actions > [hidden] { display: none; }
+  .final-step-narrow { display: none; }
+  @media (max-width: 600px) {
+    .final-step-wide { display: none; }
+    .final-step-narrow { display: block; }
+    .final-step-later .final-step-narrow { display: inline; }
+  }
+`;
+
+/**
+ * Follows the agent: while the tab is visible it asks `/guide/steps` every 3 s and swaps the steps
+ * in when their state changes, then stops at the last state, after 30 minutes (offering Check
+ * again) or when the answer isn't the steps (a reload then lands on the sign-in door). On Home
+ * without the panel it watches the same way and puts the live note at the top. It also reveals
+ * Send this to my computer and the line after Copy, and puts focus in the panel.
+ */
+export const guideScript = `(() => {
+  const limit = 30 * 60 * 1000;
+  const started = Date.now();
+  let region = document.querySelector("[data-guide-steps]");
+  if (region === null) return;
+  const watching = region.dataset.mode === "watch";
+  let timer;
+  // Copy buttons that arrive after the copy script ran, such as the live note's Copy link.
+  const wireCopy = (root) => {
+    for (const button of root.querySelectorAll("button[data-copy]")) {
+      const label = button.textContent;
+      button.hidden = false;
+      button.addEventListener("click", () => {
+        navigator.clipboard.writeText(button.dataset.copy ?? "").then(
+          () => { button.textContent = "Copied"; },
+          () => { button.textContent = "Select the line to copy"; }
+        ).finally(() => setTimeout(() => { button.textContent = label; }, 2000));
+      });
+    }
+  };
+  const modal = document.querySelector("[data-guide-modal]");
+  if (modal !== null) (modal.querySelector("button[data-copy]:not([hidden])") ?? modal.querySelector("h1"))?.focus?.();
+  document.addEventListener("click", (event) => {
+    const copy = event.target.closest?.("[data-guide-steps] button[data-copy]");
+    if (copy) document.querySelector(".final-step-copied")?.removeAttribute("hidden");
+  });
+  for (const button of document.querySelectorAll("button[data-share]")) {
+    button.hidden = false;
+    button.addEventListener("click", () => {
+      const url = button.dataset.share ?? "";
+      if (navigator.share) navigator.share({ title: "Patchy", text: "Finish setting up Patchy on your computer", url }).catch(() => {});
+      else navigator.clipboard.writeText(url).then(() => { button.textContent = "Link copied"; }, () => {});
+    });
+  }
+  const done = (state) => state === "live";
+  const checkAgain = () => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.textContent = "Check again";
+    button.addEventListener("click", () => location.reload());
+    region.append(button);
+  };
+  const tick = async () => {
+    if (document.hidden) return;
+    if (Date.now() - started > limit) return checkAgain();
+    try {
+      const response = await fetch("/guide/steps" + (watching ? "?mode=watch" : ""), { credentials: "same-origin", headers: { accept: "text/html" } });
+      const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-guide-steps]");
+      if (!response.ok || next === null) return location.reload();
+      if (next.dataset.state !== region.dataset.state) {
+        if (watching) {
+          if (next.dataset.state === "live") {
+            const notes = [...next.children];
+            document.querySelector("main")?.prepend(...notes);
+            for (const note of notes) wireCopy(note);
+          }
+        } else {
+          region.replaceWith(next);
+          region = next;
+          wireCopy(region);
+          // Connected, the panel's own Go button is the way out.
+          document.querySelector(".final-step-later")?.setAttribute("hidden", "");
+        }
+        region.dataset.state = next.dataset.state;
+      }
+      if (done(region.dataset.state)) return;
+    } catch {}
+    timer = setTimeout(tick, 3000);
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !done(region.dataset.state)) { clearTimeout(timer); tick(); }
+  });
+  timer = setTimeout(tick, 3000);
+})();
+`;
+
+/**
+ * Home watches for the first publication after a computer connects, without the panel: the region
+ * is empty until the live note arrives.
+ */
+export const renderWatch = (): string =>
+  `<div data-guide-steps data-mode="watch" data-state="connected" hidden></div><script defer src="${guideScriptPath}"></script>`;
 
 /** A person's earliest patch, for the day after it was made and while it is live. */
 export const firstPatch = (
@@ -132,13 +236,20 @@ export const firstPatch = (
     : undefined;
 };
 
-/** Shown at the top of Home while `firstPatch` holds. */
-export const renderFirstPatchNote = (
-  row: Patches.ReadPatch,
-  viewer: RequireSession.Viewer["Service"]
-): string =>
-  `<section class="note note-ok" role="status"><span class="note-title">Your first patch is live</span><p>${
-    row.patch.scope === "public"
-      ? "Anyone with the link can open it."
-      : `Everyone at ${escapeHtml(viewer.company.name)} can open it.`
-  } To change it, tell your agent what to change.</p></section>`;
+/** A token's mint stamps the database's clock and a publish the server's, which can disagree a little. */
+const clockSkew = 60_000;
+
+/** The person's first live patch whose current version was published at or after `since`. */
+export const publishedSince = (
+  rows: ReadonlyArray<Patches.ReadPatch>,
+  userId: string,
+  since: string
+): Patches.ReadPatch | undefined =>
+  rows
+    .filter(
+      (row) =>
+        row.owner.id === userId &&
+        row.patch.state === "live" &&
+        Date.parse(row.publishedAt) >= Date.parse(since) - clockSkew
+    )
+    .sort((a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt))[0];

@@ -10,14 +10,25 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { agentTools, PatchName, PatchState, SharingScope } from "@patchy/api";
-import { MachineTokens, pageResponse, RequireSession, Session } from "@patchy/auth";
+import { MachineTokens, pageResponse, RequireSession, Session, SetupPrompts } from "@patchy/auth";
 import { ago, copyScript, copyScriptPath, escapeHtml } from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
 import { listStyles, renderAllPatches, searchQuery, shows } from "./allPatches.js";
-import { firstPatch, renderFirstPatchNote, renderGuide } from "./guide.js";
+import {
+  finalStepStyles,
+  firstPatch,
+  guideScript,
+  guideScriptPath,
+  publishedSince,
+  renderFinalStep,
+  renderLiveNote,
+  renderSetupSteps,
+  renderWatch,
+  type SetupState
+} from "./guide.js";
 import { homeStyles, renderHome } from "./home.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
@@ -266,81 +277,143 @@ const render = Effect.fn("PortalPages.render")(function* (
   );
 });
 
-/** The guide to a first patch, with its progress from the viewer's newest machine. */
-const guideBody = Effect.fn("PortalPages.guideBody")(function* () {
-  const { viewer, session } = yield* context;
-  return renderGuide({
-    guide: { machine: yield* newestMachine(viewer.user.id) },
-    viewer,
-    publicBaseUrl: session.publicBaseUrl,
-    now: yield* Clock.currentTimeMillis
-  });
+/** How long after a computer connects Home keeps watching for the first publication. */
+const watchWindow = 30 * 60 * 1_000;
+
+/** Where the viewer's setup stands, from their newest live machine and their own patches. */
+const setupState = Effect.fn("PortalPages.setupState")(function* () {
+  const { viewer, access } = yield* context;
+  const machine = yield* newestMachine(viewer.user.id);
+  if (machine === null) return { machine, state: { kind: "waiting" } as SetupState };
+  const mine = yield* (yield* Patches.Patches).read({ ...access, state: "all", mine: true });
+  const row = publishedSince(mine, viewer.user.id, machine.createdAt);
+  return {
+    machine,
+    state: (row === undefined ? { kind: "connected" } : { kind: "live", row }) as SetupState
+  };
 });
 
 /**
- * Home at `/`: search, the viewer's usual patches, the company's tools and pages. With nothing
- * live and nothing of their own, it is the guide to a first patch.
+ * Home at `/`: search, the viewer's usual patches, the company's tools and pages. Until the viewer
+ * connects an agent, the Final step panel sits over it at each sign-in for their first week or
+ * first three sign-ins, whichever lasts longer, unless they pressed Later.
  */
 const home = Effect.fn("PortalPages.home")(function* () {
   const { viewer, session, access } = yield* context;
+  const signedIn = yield* RequireSession.SignedIn;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const query = searchQuery(new URL(request.url, session.publicBaseUrl).searchParams.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const now = yield* Clock.currentTimeMillis;
-  const owns = rows.some((row) => row.owner.id === viewer.user.id);
-  const off = rows.filter((row) => row.patch.state !== "live").length;
-  const page = (title: string, body: string) =>
-    pageResponse(
-      {
-        title,
-        heading: "",
-        body,
-        styles: styles + homeStyles,
-        app: { viewer, section: "home" }
-      },
-      session
-    );
-  if (!owns && off === rows.length)
-    return page(
-      "Your first patch",
-      `${yield* guideBody()}${off > 0 ? `<p class="supporting-text home-foot"><a href="/patches?show=off">${off} retired or deleted</a></p>` : ""}`
-    );
+  const machine = yield* newestMachine(viewer.user.id);
+  // Everyone's sign-ins count, so someone who connects and later revokes every key stays out.
+  const prompt = yield* SetupPrompts.seen(viewer.user.id, signedIn.sid);
   const first = firstPatch(rows, viewer.user.id, now);
-  return page(
-    "Home",
-    renderHome({
-      rows,
-      viewer,
-      opens: new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])),
-      now,
-      publicBaseUrl: session.publicBaseUrl,
-      query,
-      note: first === undefined ? undefined : renderFirstPatchNote(first, viewer),
-      failures: yield* recentFailures(rows)
-    })
+  const watch =
+    machine !== null &&
+    now - Date.parse(machine.createdAt) < watchWindow &&
+    publishedSince(rows, viewer.user.id, machine.createdAt) === undefined;
+  return pageResponse(
+    {
+      title: "Home",
+      heading: "",
+      body: `${renderHome({
+        rows,
+        viewer,
+        opens: new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])),
+        now,
+        publicBaseUrl: session.publicBaseUrl,
+        query,
+        connected: machine !== null,
+        note:
+          first === undefined ? undefined : renderLiveNote(first, viewer, session.publicBaseUrl),
+        failures: yield* recentFailures(rows)
+      })}${watch ? renderWatch() : ""}`,
+      styles: styles + homeStyles + finalStepStyles,
+      app: {
+        viewer,
+        section: "home",
+        ...(machine === null && prompt
+          ? {
+              overlay: renderFinalStep({
+                state: { kind: "waiting" },
+                viewer,
+                publicBaseUrl: session.publicBaseUrl,
+                mode: "modal"
+              })
+            }
+          : {})
+      }
+    },
+    session
   );
 });
 
-/** `/guide`, the guide on its own page. Owning any patch ends it, so an owner goes Home. */
+/** `/guide`, the Final step panel as a page, for anyone not yet connected; others go Home. */
 const guidePage = Effect.fn("PortalPages.guidePage")(function* () {
-  const { viewer, session, access } = yield* context;
-  const rows = yield* (yield* Patches.Patches).read({ ...access, state: "all", mine: true });
-  if (rows.length > 0)
+  const { viewer, session } = yield* context;
+  const { machine, state } = yield* setupState();
+  if (machine !== null)
     return HttpServerResponse.redirect("/", {
       status: 303,
       headers: { "cache-control": "private, no-store" }
     });
   return pageResponse(
     {
-      title: "Your first patch",
+      title: "Final step",
       heading: "",
-      body: yield* guideBody(),
-      styles,
+      body: renderFinalStep({ state, viewer, publicBaseUrl: session.publicBaseUrl, mode: "page" }),
+      styles: styles + finalStepStyles,
       app: { viewer, section: "home" }
     },
     session
   );
+});
+
+/**
+ * `/guide/steps`, the panel's steps as Patchy's records give them, for the guide script. With
+ * `?mode=watch` it is only Home's live note, once the first publication lands.
+ */
+const guideSteps = Effect.fn("PortalPages.guideSteps")(function* () {
+  const { viewer, session } = yield* context;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const watching = new URL(request.url, session.publicBaseUrl).searchParams.get("mode") === "watch";
+  const { state } = yield* setupState();
+  const html = watching
+    ? `<div data-guide-steps data-state="${state.kind}">${state.kind === "live" ? renderLiveNote(state.row, viewer, session.publicBaseUrl) : ""}</div>`
+    : renderSetupSteps({ state, viewer, publicBaseUrl: session.publicBaseUrl });
+  return HttpServerResponse.text(html, {
+    contentType: "text/html",
+    headers: {
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'"
+    }
+  });
+});
+
+/** Later: the panel stays away for the rest of this sign-in. A form from another account changes nothing. */
+const guideLater = Effect.fn("PortalPages.guideLater")(function* () {
+  const { viewer } = yield* context;
+  const signedIn = yield* RequireSession.SignedIn;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = new URLSearchParams(
+    yield* request.text.pipe(
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(1_024))
+    )
+  );
+  if (form.get("user") !== viewer.user.id)
+    return yield* errorPage(
+      409,
+      "Signed in as someone else",
+      "This page was open for another account. Nothing changed."
+    );
+  yield* SetupPrompts.later(viewer.user.id, signedIn.sid);
+  return HttpServerResponse.redirect("/", {
+    status: 303,
+    headers: { "cache-control": "private, no-store" }
+  });
 });
 
 const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
@@ -814,6 +887,14 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     yield* router.add(
       "GET",
+      guideScriptPath,
+      HttpServerResponse.text(guideScript, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
+      })
+    );
+    yield* router.add(
+      "GET",
       copyScriptPath,
       HttpServerResponse.text(copyScript, {
         contentType: "text/javascript",
@@ -850,6 +931,16 @@ export const layer: Layer.Layer<
       "GET",
       "/guide",
       errors(RequireSession.withViewer(guidePage().pipe(pageErrors)))
+    );
+    yield* router.add(
+      "GET",
+      "/guide/steps",
+      errors(RequireSession.withViewer(guideSteps().pipe(pageErrors)))
+    );
+    yield* router.add(
+      "POST",
+      "/guide/later",
+      errors(RequireSession.sameOrigin(RequireSession.withViewer(guideLater().pipe(pageErrors))))
     );
     // The wildcard also answers `/patches` itself, which is All patches.
     yield* router.add(

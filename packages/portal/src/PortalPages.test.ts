@@ -275,8 +275,10 @@ const readPatch = Effect.fn("PortalPagesTest.readPatch")(function* (
   return rows[0]!;
 });
 type FormFields = Record<string, string | readonly string[]>;
-const sessionCookie = (person: Person) =>
-  signedInCookies(signSession({ sub: person.clerkUserId, email: person.email, name: person.name }));
+const sessionCookie = (person: Person, sid = "sess_offline") =>
+  signedInCookies(
+    signSession({ sub: person.clerkUserId, email: person.email, name: person.name, sid })
+  );
 /** A confirmation posted without, then with, the acknowledgement box ticked. */
 const acknowledgements: ReadonlyArray<FormFields> = [{}, { ack: "on" }];
 const request = Effect.fn("PortalPagesTest.request")(function* (
@@ -286,7 +288,8 @@ const request = Effect.fn("PortalPagesTest.request")(function* (
   headers: Record<string, string> = {}
 ) {
   const client = yield* HttpClient.HttpClient;
-  const cookie = person === null ? "" : sessionCookie(person);
+  const { sid, ...rest } = headers;
+  const cookie = person === null ? "" : sessionCookie(person, sid);
   const input =
     fields === undefined
       ? HttpClientRequest.get(path)
@@ -300,7 +303,7 @@ const request = Effect.fn("PortalPagesTest.request")(function* (
             "application/x-www-form-urlencoded"
           )
         );
-  return yield* client.execute(input.pipe(HttpClientRequest.setHeaders({ cookie, ...headers })));
+  return yield* client.execute(input.pipe(HttpClientRequest.setHeaders({ cookie, ...rest })));
 });
 const post = (path: string, person: Person, fields: FormFields) =>
   request(path, person, fields, { origin: PUBLIC_BASE_URL });
@@ -519,78 +522,162 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect("guides a person with no patch from the setup line to their first patch", () =>
+  it.effect("lays Final step over Home until the person connects their agent", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.owner.id}`;
-      // In an empty company, Home is the guide.
       const fresh = yield* request("/", workspace.owner);
       assert.strictEqual(fresh.status, 200);
       const html = yield* fresh.text;
-      assert.strictEqual(heading(html), "Ship your first patch");
-      assert.include(text(html), "Get started · a few minutes");
+      // Home is still Home, inert and blurred behind the panel.
+      assert.strictEqual(heading(html), "Nothing here yet");
+      assert.include(html, '<div class="app-card" inert>');
+      assert.include(
+        html,
+        '<section class="modal-panel final-step" role="dialog" aria-modal="true" aria-labelledby="final-step-heading" data-guide-modal>'
+      );
+      assert.include(html, '<h1 class="page-heading" id="final-step-heading">Final step</h1>');
       assert.deepStrictEqual(steps(html), [
         ["current", "Give your agent this line"],
-        ["upcoming", "Confirm it’s you"],
-        ["upcoming", "Ask for your first patch"]
+        ["upcoming", "Confirm it’s you"]
       ]);
-      // The setup line selects as a whole; the copy script reveals the button that copies it.
       const setup = `Set up Patchy using ${PUBLIC_BASE_URL}/llms.txt`;
       assert.include(html, `<code aria-label="Setup line, select to copy">${setup}</code>`);
       assert.include(html, `data-copy="${setup}"`);
-      assert.include(html, '<script defer src="/assets/copy.js"></script>');
-      assert.strictEqual(
-        heading(yield* (yield* request("/guide", workspace.owner)).text),
-        "Ship your first patch"
-      );
+      assert.include(html, '<script defer src="/assets/guide.js"></script>');
+      assert.include(html, '<form class="final-step-later" method="post" action="/guide/later">');
+      // Home's own way back stays while nothing is connected.
+      assert.include(html, '<a class="tile-row tile-row-placeholder" href="/guide">');
 
-      // A machine logged in as the person finishes the first two steps.
-      const connected = yield* (yield* request("/guide", workspace.member)).text;
-      assert.include(text(connected), "Get started · 2 of 3 done");
-      assert.deepStrictEqual(steps(connected), [
-        ["done", "Agent connected"],
-        ["current", "Ask for your first patch"]
-      ]);
-      assert.include(text(connected), "“Portal test machine” can publish as you");
-      assert.include(connected, 'data-copy="Build us a lead tracker with Patchy"');
-      assert.notInclude(connected, "llms.txt");
+      // Later is for this sign-in only, and only from this account's page.
+      const cross = yield* request("/guide/later", workspace.owner, { user: workspace.owner.id });
+      assert.strictEqual(cross.status, 403);
+      const stale = yield* post("/guide/later", workspace.owner, { user: workspace.member.id });
+      assert.strictEqual(stale.status, 409);
+      assert.include(yield* (yield* request("/", workspace.owner)).text, "data-guide-modal");
+      const later = yield* post("/guide/later", workspace.owner, { user: workspace.owner.id });
+      assert.strictEqual(later.status, 303);
+      assert.strictEqual(later.headers.location, "/");
+      assert.notInclude(yield* (yield* request("/", workspace.owner)).text, "data-guide-modal");
+      const next = yield* (yield* request("/", workspace.owner, undefined, { sid: "sess_2" })).text;
+      assert.include(next, "data-guide-modal");
+
+      // Someone with a live machine token sees Home alone, without the way back.
+      const member = yield* (yield* request("/", workspace.member)).text;
+      assert.notInclude(member, "data-guide-modal");
+      assert.notInclude(member, '<div class="app-card" inert>');
+      assert.notInclude(member, 'class="tile-row tile-row-placeholder"');
     })
   );
 
   it.effect(
-    "offers Make your own in a busy company until the first publish, then celebrates it",
+    "shows the panel for the first week or the first three sign-ins, whichever is longer",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
-        const theirs = yield* publish(workspace.admin, "crm");
-        const root = yield* (yield* request("/", workspace.member)).text;
-        assert.notInclude(text(root), "Ship your first patch");
-        assert.deepStrictEqual(shelf(root, "tile-link"), [theirs.name]);
-        assert.include(root, '<a class="tile-row tile-row-placeholder" href="/guide">');
-        assert.strictEqual((yield* request("/guide", workspace.member)).status, 200);
-
-        // The first patch ends the guide and is celebrated on Home for a day.
-        const mine = yield* publish(workspace.member, "lead-tracker");
-        const shipped = yield* (yield* request("/", workspace.member)).text;
-        assert.notInclude(shipped, '<a class="tile-row tile-row-placeholder"');
-        assert.include(
-          text(shipped),
-          "Your first patch is live Everyone at Northwind can open it."
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE machine_tokens SET revoked_at = now()
+        WHERE user_id IN (${workspace.owner.id}, ${workspace.member.id})`;
+        yield* sql`UPDATE users SET created_at = now() - interval '8 days'
+        WHERE id IN (${workspace.owner.id}, ${workspace.member.id})`;
+        const shown = (person: Person, sid: string) =>
+          request("/", person, undefined, { sid }).pipe(
+            Effect.flatMap((response) => response.text),
+            Effect.map((html) => html.includes("data-guide-modal"))
+          );
+        assert.deepStrictEqual(
+          [
+            yield* shown(workspace.owner, "s1"),
+            yield* shown(workspace.owner, "s2"),
+            yield* shown(workspace.owner, "s3"),
+            yield* shown(workspace.owner, "s4"),
+            yield* shown(workspace.owner, "s1"),
+            yield* shown(workspace.owner, "s5")
+          ],
+          [true, true, true, false, true, false]
         );
-        const guide = yield* request("/guide", workspace.member);
-        assert.strictEqual(guide.status, 303);
-        assert.strictEqual(guide.headers.location, "/");
-        assert.notInclude(
-          text(yield* (yield* request(cardPath(mine.name), workspace.member)).text),
-          "Your first patch is live"
+        // Inside the first week every sign-in shows it, and Later sticks for each.
+        yield* sql`UPDATE users SET created_at = now() WHERE id = ${workspace.owner.id}`;
+        assert.isTrue(yield* shown(workspace.owner, "s6"));
+        yield* post("/guide/later", workspace.owner, { user: workspace.owner.id }).pipe(
+          Effect.provideService(HttpClient.HttpClient, yield* HttpClient.HttpClient)
         );
-        yield* TestClock.adjust(DAY);
-        assert.notInclude(
-          text(yield* (yield* request("/", workspace.member)).text),
-          "Your first patch is live"
-        );
+        // A connected person's sign-ins count too, so revoking every key later never reopens it.
+        yield* sql`UPDATE machine_tokens SET revoked_at = NULL WHERE user_id = ${workspace.member.id}`;
+        for (const sid of ["m1", "m2", "m3", "m4"]) yield* shown(workspace.member, sid);
+        yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.member.id}`;
+        assert.isFalse(yield* shown(workspace.member, "m5"));
       })
+  );
+
+  it.effect("follows a person's setup on /guide and /guide/steps from Patchy's records", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.owner.id}`;
+      const page = yield* (yield* request("/guide", workspace.owner)).text;
+      assert.strictEqual(heading(page), "Final step");
+      assert.notInclude(page, "data-guide-modal");
+      assert.notInclude(page, "/guide/later");
+      const state = (html: string) => html.match(/data-state="([a-z]+)"/)?.[1];
+      assert.strictEqual(
+        state(yield* (yield* request("/guide/steps", workspace.owner)).text),
+        "waiting"
+      );
+
+      // Connected: /guide sends them Home, and the steps say they're set. The key was made just
+      // before the test clock's now, so what the member publishes next counts as since then.
+      yield* sql`UPDATE machine_tokens SET created_at = to_timestamp(${1_767_225_600 - 3600})
+        WHERE user_id = ${workspace.member.id}`;
+      const guide = yield* request("/guide", workspace.member);
+      assert.strictEqual(guide.status, 303);
+      assert.strictEqual(guide.headers.location, "/");
+      const connected = yield* (yield* request("/guide/steps", workspace.member)).text;
+      assert.strictEqual(state(connected), "connected");
+      assert.include(text(connected), "You’re set");
+      assert.deepStrictEqual(steps(connected), [
+        ["done", "Give your agent this line"],
+        ["done", "Confirm it’s you"]
+      ]);
+
+      // The first publication after connecting is the live note, a welcome page by its name.
+      yield* publish(workspace.member, "welcome");
+      const live = yield* (yield* request("/guide/steps", workspace.member)).text;
+      assert.strictEqual(state(live), "live");
+      assert.include(text(live), "Your welcome page is live");
+      const watch = yield* (yield* request("/guide/steps?mode=watch", workspace.member)).text;
+      assert.strictEqual(state(watch), "live");
+      assert.notInclude(watch, 'class="steps"');
+      assert.include(text(watch), "Your welcome page is live");
+    })
+  );
+
+  it.effect("celebrates the first patch on Home for a day", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      yield* publish(workspace.admin, "crm");
+      const mine = yield* publish(workspace.member, "lead-tracker");
+      const shipped = yield* (yield* request("/", workspace.member)).text;
+      assert.include(
+        text(shipped),
+        "Your first patch is live Signed-in people at Northwind can open it."
+      );
+      assert.isTrue(
+        links(shipped).some(
+          (link) => link.href === `/${workspace.handle}/lead-tracker` && link.text === "Open it"
+        )
+      );
+      assert.notInclude(
+        text(yield* (yield* request(cardPath(mine.name), workspace.member)).text),
+        "Your first patch is live"
+      );
+      yield* TestClock.adjust(DAY);
+      assert.notInclude(
+        text(yield* (yield* request("/", workspace.member)).text),
+        "Your first patch is live"
+      );
+    })
   );
 
   it.effect("tells an owner whose only patches are off that nothing is live", () =>
@@ -602,9 +689,9 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(heading(offOnly), "Nothing is live");
       assert.isTrue(links(offOnly).some((link) => link.href === "/patches?show=off"));
       assert.deepStrictEqual(shelf(offOnly, "tile-link"), []);
-      // A colleague who owns nothing gets the guide, with the way to what is off.
+      // A colleague who owns nothing sees the same, with the way to what is off.
       const member = yield* (yield* request("/", workspace.member)).text;
-      assert.strictEqual(heading(member), "Ship your first patch");
+      assert.strictEqual(heading(member), "Nothing is live");
       assert.isTrue(links(member).some((link) => link.href === "/patches?show=off"));
     })
   );
@@ -744,7 +831,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.include(miss, "Nothing at Northwind matches “&lt;b&gt;freelancer”");
       assert.notInclude(miss, "<b>freelancer");
       assert.include(miss, 'data-copy="Build us a Patchy tool for &lt;b&gt;freelancer"');
-      assert.isTrue(links(miss).some((link) => link.href === "/guide"));
+      // A connected viewer isn't sent to the setup panel.
+      assert.isFalse(links(miss).some((link) => link.href === "/guide"));
       assert.isTrue(
         links(miss).some((link) => link.href === "/patches?show=off&amp;q=%3Cb%3Efreelancer")
       );
