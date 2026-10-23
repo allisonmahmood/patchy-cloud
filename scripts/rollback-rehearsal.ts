@@ -38,6 +38,10 @@
  * patch isn't published, so a release that can't read the fields is never
  * asked to.
  *
+ * Step 2 also mints an agent connection with HEAD's `pnpm dev mcp-token`, so
+ * its tables hold rows from then on, and every later step's API must refuse its
+ * token as unknown while the CLI's machine token keeps working.
+ *
  * The live commit is the revision production's `/healthz/deep` names. When a
  * Deploy run is unfinished, or the one updated last did not succeed, the
  * rehearsal fails rather than guess (`gh` reads the runs).
@@ -74,6 +78,10 @@ const decodeManifest = Schema.decodeUnknownSync(
 );
 const decodeRelease = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ package: Schema.Struct({ tarball: Schema.String }) }))
+);
+/** What `pnpm dev mcp-token --json` prints. */
+const decodeMcpToken = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ token: Schema.String }))
 );
 const decodeHealth = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ revision: Schema.String }))
@@ -290,9 +298,9 @@ const git = (...args: Array<string>) => run("git", args, { cwd: repoRoot });
  * A starting server accepts connections before it can answer them, and a pooled
  * connection could still lead to the previous step's server.
  */
-const get = (url: string, timeoutMs = 15_000) =>
+const get = (url: string, timeoutMs = 15_000, headers: http.OutgoingHttpHeaders = {}) =>
   new Promise<{ readonly status: number; readonly body: Buffer }>((resolve, reject) => {
-    const request = http.get(url, { agent: false, timeout: timeoutMs }, (response) => {
+    const request = http.get(url, { agent: false, timeout: timeoutMs, headers }, (response) => {
       const chunks: Array<Buffer> = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
       response.on("end", () =>
@@ -957,6 +965,7 @@ const exercise = async (
   step: Step,
   environment: Environment,
   baseline: Baseline | undefined,
+  agentToken: string | undefined,
   scratch: string,
   log: string
 ) => {
@@ -964,6 +973,13 @@ const exercise = async (
   const problems: Array<string> = [];
   const health = await get(`${environment.apiUrl}/healthz/deep`);
   if (health.status !== 200) problems.push(`/healthz/deep answered ${health.status}`);
+  if (agentToken !== undefined) {
+    const me = await get(`${environment.apiUrl}/api/me`, 15_000, {
+      authorization: `Bearer ${agentToken}`
+    });
+    if (me.status !== 401)
+      problems.push(`/api/me answered ${me.status} to an agent connection's token, not 401`);
+  }
   const cli = await exerciseCli(step, environment, baseline?.rehearsalPage, scratch);
   problems.push(...cli.problems);
   const agentArea = cli.agentArea ?? baseline?.agentArea;
@@ -1055,6 +1071,8 @@ const rehearse = async (live: string, head: string) => {
     })());
   let environment: Environment | undefined;
   let baseline: Baseline | undefined;
+  /** The token of the agent connection HEAD mints at step 2. */
+  let agentToken: string | undefined;
   try {
     for (const step of steps) {
       console.log(`\n▶ Step ${step.number}: ${step.title}`);
@@ -1124,8 +1142,23 @@ const rehearse = async (live: string, head: string) => {
               return previous;
             });
       environment = current;
+      if (step.number === 2) {
+        const publisher = current.scenario.people.find(
+          (person) => person.key === current.scenario.publisher
+        )!;
+        agentToken = await phase(
+          "minting an agent connection",
+          async () =>
+            decodeMcpToken(
+              await dev(
+                ["mcp-token", publisher.email, "--client", "Rollback rehearsal", "--json"],
+                120_000
+              )
+            ).token
+        );
+      }
       const exercised = await phase("exercising", () =>
-        exercise(step, current, baseline, scratch, log)
+        exercise(step, current, baseline, agentToken, scratch, log)
       );
       if (exercised.problems.length > 0) throw await fail("exercising", exercised.problems);
       baseline = exercised.baseline;

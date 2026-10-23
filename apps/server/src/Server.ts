@@ -11,15 +11,18 @@
  */
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import type { SqlError } from "effect/sql/SqlError";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
 import {
+  AgentConnections,
   AuthApi,
   AuthPages,
   Authorization,
@@ -198,6 +201,7 @@ const services = Layer.mergeAll(
       OperatingLimits.layer,
       contentStore,
       MachineTokens.layer,
+      AgentConnections.layer,
       Patches.layer,
       Companies.layer,
       Users.layer,
@@ -226,18 +230,25 @@ const services = Layer.mergeAll(
 );
 
 /**
- * Each sweep runs once on the way up and then hourly in its own scoped fiber.
- * A slow or defective orphan pass must not stop deletion. Contain pass failures
- * inside each repeat so the next tick retries, but never swallow shutdown.
+ * Each sweep runs once on the way up and then on its own interval in its own
+ * scoped fiber: deletion and orphans hourly, agent connections' retry copies
+ * every 15 seconds, so none outlives its minute by more. A slow or defective
+ * pass must not stop another. Contain pass failures inside each repeat so the
+ * next tick retries, but never swallow shutdown.
  */
 export const sweeper = Layer.effectDiscard(
   Effect.gen(function* () {
     const deletion = yield* DeletionSweep.DeletionSweep;
     const orphan = yield* OrphanSweep.OrphanSweep;
-    for (const [name, sweep] of [
-      ["deletion", Effect.asVoid(deletion.sweep)],
-      ["orphan", Effect.asVoid(orphan.sweep)]
-    ] as const) {
+    const connections = yield* AgentConnections.AgentConnections;
+    const sweeps: ReadonlyArray<
+      readonly [name: string, sweep: Effect.Effect<void, SqlError>, every: Duration.Input]
+    > = [
+      ["deletion", Effect.asVoid(deletion.sweep), "1 hour"],
+      ["orphan", Effect.asVoid(orphan.sweep), "1 hour"],
+      ["agent connection retries", connections.sweepRetries, "15 seconds"]
+    ];
+    for (const [name, sweep, every] of sweeps) {
       yield* sweep.pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterrupts(cause)
@@ -246,7 +257,7 @@ export const sweeper = Layer.effectDiscard(
                 Effect.annotateLogs({ sweep: name })
               )
         ),
-        Effect.repeat(Schedule.spaced("1 hour")),
+        Effect.repeat(Schedule.spaced(every)),
         Effect.forkScoped
       );
     }

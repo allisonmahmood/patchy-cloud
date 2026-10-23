@@ -124,23 +124,24 @@ once and keeps using the instance. Ports come from a hash of the worktree path,
 so worktrees run side by side; use the printed URL, not a remembered port. The
 server is not watched: after a code change, `pnpm dev stop && pnpm dev`.
 
-| Command                               | What it does                                                                                       |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                            | Start (or confirm) this worktree's instance and print the plan; `--json` for scripts.              |
-| `pnpm dev --clerk`                    | The same, signing people in through Clerk; see [Signing in with Clerk](#signing-in-with-clerk).    |
-| `pnpm dev --dry-run --json`           | Print the plan this worktree would run with; touches nothing.                                      |
-| `pnpm dev status`                     | Exit 0 only when the recorded processes are alive and `/healthz` answers.                          |
-| `pnpm dev stop`                       | Stop the instance; its data stays.                                                                 |
-| `pnpm dev logs`                       | Print `dev.log`: every process's lines, wide events and startup failures.                          |
-| `pnpm dev reset`                      | Stop, wipe `.local/dev/` and start fresh.                                                          |
-| `pnpm dev up [scenario]`              | An environment: a scenario's company, people and patches, a logged-in CLI and an agent workspace.  |
-| `pnpm dev open <person>`              | A browser window with its own profile, signed in as one of the environment's people.               |
-| `pnpm dev shot <person> [path]`       | A full-page PNG of a page as one person, with its HTTP status and browser errors.                  |
-| `pnpm dev compare <person> <path>...` | Pages before and after as one person, from throwaway instances at both commits, laid out for a PR. |
-| `pnpm dev film <person> <flow>`       | A Playwright flow recorded before and after, as captioned mp4s side by side, for a PR.             |
-| `pnpm dev transcript <script>`        | CLI lines run before and after as the scenario's signed-in CLI, compared line by line, for a PR.   |
-| `pnpm dev trial "<task>"`             | A fresh agent tries a task before and after, as the scenario's publisher, logged for a PR.         |
-| `pnpm dev down`                       | Stop everything the instance or environment started and delete what it made.                       |
+| Command                                       | What it does                                                                                       |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                    | Start (or confirm) this worktree's instance and print the plan; `--json` for scripts.              |
+| `pnpm dev --clerk`                            | The same, signing people in through Clerk; see [Signing in with Clerk](#signing-in-with-clerk).    |
+| `pnpm dev --dry-run --json`                   | Print the plan this worktree would run with; touches nothing.                                      |
+| `pnpm dev status`                             | Exit 0 only when the recorded processes are alive and `/healthz` answers.                          |
+| `pnpm dev stop`                               | Stop the instance; its data stays.                                                                 |
+| `pnpm dev logs`                               | Print `dev.log`: every process's lines, wide events and startup failures.                          |
+| `pnpm dev reset`                              | Stop, wipe `.local/dev/` and start fresh.                                                          |
+| `pnpm dev up [scenario]`                      | An environment: a scenario's company, people and patches, a logged-in CLI and an agent workspace.  |
+| `pnpm dev open <person>`                      | A browser window with its own profile, signed in as one of the environment's people.               |
+| `pnpm dev shot <person> [path]`               | A full-page PNG of a page as one person, with its HTTP status and browser errors.                  |
+| `pnpm dev mcp-token <person> --client <name>` | An agent connection for one person, minted into this instance's database, and its access token.    |
+| `pnpm dev compare <person> <path>...`         | Pages before and after as one person, from throwaway instances at both commits, laid out for a PR. |
+| `pnpm dev film <person> <flow>`               | A Playwright flow recorded before and after, as captioned mp4s side by side, for a PR.             |
+| `pnpm dev transcript <script>`                | CLI lines run before and after as the scenario's signed-in CLI, compared line by line, for a PR.   |
+| `pnpm dev trial "<task>"`                     | A fresh agent tries a task before and after, as the scenario's publisher, logged for a PR.         |
+| `pnpm dev down`                               | Stop everything the instance or environment started and delete what it made.                       |
 
 `pnpm --silent dev … --json` keeps pnpm's echo out of the JSON. One
 `relation "schema_migrations" does not exist` line in a fresh `dev.log` is
@@ -172,6 +173,16 @@ only in development on a loopback origin, and the server then listens on
 `PATCHY_STATE_DIR` to keep a check's logins out of your shared `~/.patchy`.
 For `curl` or `psql`, load the env in a separate shell:
 `set -a; . .local/dev/env; set +a`.
+
+**Agent connections without consent.** `pnpm dev mcp-token <person> --client <name>`
+mints an agent connection for one person straight into this instance's
+database and prints its access token, for launchers that take a pasted token.
+`<person>` is any email of someone in the database, or an environment person's
+key or first name; `--json` adds the connection's id, name and site. The token
+is the `work` credential, so the CLI's API answers it 401. It lasts a year
+instead of an hour, and the connection ends as any other does: disconnected,
+after 30 days without a call, or when its person's credentials end. Nothing
+else mints one without consent, and no route does.
 
 The seed holds identity rows only; a fresh portal shows the guide to a first patch.
 `pnpm seed:dev` publishes the accepted HTML fixtures as live tier 0 patches.

@@ -43,6 +43,12 @@ Done when `pnpm dev status` exits 0.
   writes a full-page PNG and prints the final URL, status and the browser's
   errors. Read the PNG to look at it. `<person>` is any email, or an
   environment person's key or first name.
+- **An agent connection's token.** `pnpm dev mcp-token <person> --client <name>`
+  mints an agent connection straight into this instance's database and prints
+  its access token, which lasts a year; `--json` adds the connection. `<person>`
+  is as for `shot`. The token is the `work` credential: the CLI's API answers it 401. The connection ends as any other: disconnected, 30 days without a call,
+  or its person's credentials ending. Only this command mints one without
+  consent.
 - **The environment's agent.** `pnpm dev up` prints an `agent` launcher:
   Claude Code in the environment's workspace with the Patchy skill, publishing
   as the scenario's publisher. It ignores the shell's `PATCHY_API_TOKEN` and
