@@ -25,7 +25,7 @@ describe("htmlPage app body", () => {
         label
       ])
     ).toEqual([
-      ["/", "Patches"],
+      ["/patches", "Patches"],
       ["/company", "Company"],
       ["/company/connections", "Connections"],
       ["/machines", "Your machines"]
@@ -34,6 +34,25 @@ describe("htmlPage app body", () => {
     expect(body).toContain('<a href="/company/connections" aria-current="page">');
     expect(body).toContain('<form method="post" action="/logout">');
     expect(body).toContain('type="submit">Sign out</button>');
+  });
+
+  it("leads Home from the brand and lights no section there", () => {
+    const html = htmlPage({
+      title: "Home",
+      app: {
+        viewer: {
+          user: { name: "Sam" },
+          company: { name: "Northwind" },
+          whatsNewSeen: latestRelease
+        },
+        section: "home"
+      },
+      body: "<p>Home</p>"
+    });
+    const body = html.slice(html.indexOf("<body>"));
+    expect(body).toContain('<a class="brand" href="/">');
+    expect(body).not.toContain('aria-current="page"');
+    expect(body).toContain('<a href="/patches">Patches</a>');
   });
 
   it("escapes viewer and company names without introducing header markup", () => {
