@@ -507,8 +507,10 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
-    yield* request.urlParamsBody.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
+    new URLSearchParams(
+      yield* request.text.pipe(
+        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
+      )
     )
   );
   // Every form carries the id of the patch it was rendered for. A form without it, or

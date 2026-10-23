@@ -286,12 +286,11 @@ const tokenParams = Effect.gen(function* () {
     return yield* refused("Send the token request as application/x-www-form-urlencoded.");
   if (Number(request.headers["content-length"]) > MAX_BODY_BYTES)
     return yield* refused(`The token request is larger than ${MAX_BODY_BYTES} bytes.`, 413);
-  const body = yield* request.urlParamsBody.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_BODY_BYTES)),
-    Effect.mapError(() => refused("The token request's body couldn't be read."))
-  );
   const params = new URLSearchParams(
-    body.params.map(([name, value]): [string, string] => [name, value])
+    yield* request.text.pipe(
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_BODY_BYTES)),
+      Effect.mapError(() => refused("The token request's body couldn't be read."))
+    )
   );
   const twice = TOKEN_PARAMS.find((name) => params.getAll(name).length > 1);
   if (twice !== undefined) return yield* refused(`Send ${twice} only once.`);

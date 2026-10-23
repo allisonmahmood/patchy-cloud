@@ -379,7 +379,7 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       return { title: viewer.company.name, body: "", redirect: "/company#agent-access" };
     }
     if (action.kind === "invite") {
-      const fields = Object.fromEntries(yield* request.urlParamsBody);
+      const fields = Object.fromEntries(new URLSearchParams(yield* request.text));
       const text = fields.email ?? "";
       const role = yield* decodeRole(fields).pipe(
         Effect.map(({ role }) => role),
