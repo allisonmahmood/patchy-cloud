@@ -3,7 +3,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { discoverServerModules, validateGeneratedServerModules } from "./serverModules.js";
+import {
+  agentTypecheckWarning,
+  descriptionFailure,
+  discoverAgentFiles,
+  discoverServerModules,
+  validateGeneratedServerModules
+} from "./serverModules.js";
 
 it.layer(NodeServices.layer)("server source module discovery", (it) => {
   it.effect("uses only filenames and permits an absent or empty server directory", () =>
@@ -90,6 +96,76 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
       })
     );
   }
+
+  it.effect("finds agent/ files by name like server/, and refuses server/agent.ts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-modules-" });
+      assert.deepStrictEqual(yield* discoverAgentFiles(root), []);
+      yield* fs.makeDirectory(path.join(root, "agent"));
+      yield* fs.writeFileString(path.join(root, "agent/deals.ts"), "");
+      yield* fs.writeFileString(path.join(root, "agent/crm.ts"), "");
+      yield* fs.writeFileString(path.join(root, "agent/README.md"), "");
+      assert.deepStrictEqual(yield* discoverAgentFiles(root), ["crm", "deals"]);
+      yield* fs.makeDirectory(path.join(root, "agent/nested"));
+      assert.deepInclude(yield* discoverAgentFiles(root).pipe(Effect.flip), {
+        code: "invalid_manifest",
+        message: "Agent tool files must be one level deep; move agent/nested/*.ts into agent/."
+      });
+
+      yield* fs.makeDirectory(path.join(root, "server"));
+      yield* fs.writeFileString(path.join(root, "server/agent.ts"), "");
+      assert.deepInclude(yield* discoverServerModules(root).pipe(Effect.flip), {
+        code: "invalid_manifest",
+        message: "server/agent.ts: Agent tools live in agent/; move these exports there."
+      });
+    })
+  );
+
+  it.effect("warns when tsconfig.json's files leave out an agent file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-modules-" });
+      yield* fs.makeDirectory(path.join(root, "agent"));
+      yield* fs.writeFileString(path.join(root, "agent/deals.ts"), "export {};");
+      const tsconfig = (include?: readonly string[]) =>
+        fs.writeFileString(
+          path.join(root, "tsconfig.json"),
+          // tsconfig.json takes comments, as the TypeScript reader does.
+          `// The repo's own\n${JSON.stringify(include === undefined ? {} : { include })}`
+        );
+      yield* tsconfig(["src", "server"]);
+      assert.strictEqual(
+        agentTypecheckWarning(root, ["deals"]),
+        'tsconfig.json doesn\'t include agent/, so pnpm typecheck skips your agent tools. Add "agent" to its include list.'
+      );
+      assert.strictEqual(agentTypecheckWarning(root, []), undefined);
+      for (const include of [["src", "agent"], ["agent/**/*.ts"], undefined]) {
+        yield* tsconfig(include);
+        assert.strictEqual(agentTypecheckWarning(root, ["deals"]), undefined);
+      }
+    })
+  );
+
+  it("names an agent tool's file, and none when the build found none", () => {
+    const blank = (name: string) => ({
+      [name]: {
+        kind: "query" as const,
+        description: " ",
+        args: {},
+        result: { kind: "text" as const },
+        agentTool: true as const
+      }
+    });
+    assert.strictEqual(
+      descriptionFailure(blank("agent.count"), { count: "intake" }),
+      "agent/intake.ts: agent.count's description is blank. Say what it does, or leave the description out."
+    );
+    // __proto__ must not resolve through Object.prototype.
+    assert.match(descriptionFailure(blank("agent.__proto__"), {})!, /^agent\/\*\.ts: /);
+  });
 
   it.effect("refuses linked module files and linked server directories", () =>
     Effect.gen(function* () {

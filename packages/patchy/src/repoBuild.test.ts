@@ -137,18 +137,22 @@ it.layer(NodeServices.layer)("validateRepoBundle", (it) => {
     })
   );
 
-  it.effect("infers server code from a directory, not a same-named regular file", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-bundle-" });
-      const server = path.join(cwd, "server");
-      yield* fs.writeFileString(server, "Documentation, not a server bundle.");
-      yield* validateRepoBundle(cwd, manifest(1), page(""));
-      yield* fs.remove(server);
-      yield* fs.makeDirectory(server);
-      const error = yield* Effect.flip(validateRepoBundle(cwd, manifest(1), page("")));
-      assert.strictEqual(error.code, "tier_mismatch");
-    }).pipe(Effect.scoped)
-  );
+  for (const folder of ["server", "agent"])
+    it.effect(`infers ${folder} code from a directory, not a same-named regular file`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-bundle-" });
+        const source = path.join(cwd, folder);
+        yield* fs.writeFileString(source, "Documentation, not a server bundle.");
+        yield* validateRepoBundle(cwd, manifest(1), page(""));
+        yield* fs.remove(source);
+        yield* fs.makeDirectory(source);
+        const error = yield* Effect.flip(validateRepoBundle(cwd, manifest(1), page("")));
+        assert.deepInclude(error, {
+          code: "tier_mismatch",
+          message: `${folder}/ requires tier 2. Change the tier and run \`patchy refresh\`, or remove ${folder}/.`
+        });
+      }).pipe(Effect.scoped)
+    );
 });

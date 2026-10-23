@@ -575,7 +575,7 @@ the tier 2 contract. Tier 2 supports an interactive CRM, not unattended executio
 
 ### Declaring and changing a tier
 
-The tier is explicit in `patchy.config.ts`. Edit it and run `patchy refresh` before publishing a change. The CLI checks both graphs: `server/` requires tier 2, and script cannot claim tier 0. The server independently checks tier 0 against the safe-HTML policy and re-derives tier 2 descriptors from the stored server module. Dev and test instances admit tier 2; production requires fleet execution. Claiming a higher built tier than the code needs is fine, and tier 2 with zero handlers publishes with a warning. A tier 0 repo may provision tables and stores; resources do not make a tier.
+The tier is explicit in `patchy.config.ts`. Edit it and run `patchy refresh` before publishing a change. The CLI checks both graphs: `server/` and `agent/` require tier 2, and script cannot claim tier 0. The server independently checks tier 0 against the safe-HTML policy and re-derives tier 2 descriptors from the stored server module. Dev and test instances admit tier 2; production requires fleet execution. Claiming a higher built tier than the code needs is fine, and tier 2 with zero handlers publishes with a warning. A tier 0 repo may provision tables and stores; resources do not make a tier.
 
 To move from tier 1 to 2, set `tier: 2`, create `server/` handlers and refresh.
 Refresh adds the exact `workerd` pin, generated `server.ts` and `patchy-server`
@@ -583,7 +583,7 @@ skill. The generated client is server-only; typechecking identifies direct
 resource calls to move into handlers. A public patch needs `--share company`
 on that publish.
 
-To move from tier 2 to 1, set `tier: 1`, remove `server/` and refresh. Refresh
+To move from tier 2 to 1, set `tier: 1`, remove `server/` and `agent/`, and refresh. Refresh
 removes those tier 2 managed parts, the one tier-keyed exception to sticky
 skills. Typechecking identifies `patchy.server.*` calls to rewrite. There is no
 codemod or tier-change command, and refresh never rewrites application source.

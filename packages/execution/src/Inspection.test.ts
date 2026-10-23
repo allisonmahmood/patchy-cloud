@@ -55,6 +55,26 @@ it.live(
 );
 
 it.live(
+  "carries a guest's refusal of its own modules, and no other failure's text",
+  () =>
+    Effect.gen(function* () {
+      const answering = (code: string) =>
+        `export default { fetch() { return Response.json({ ok: false, source: "patchy", code: ${JSON.stringify(code)}, error: "list is exported twice." }); } };`;
+      const inspection = yield* Inspection.make();
+      expect(
+        yield* inspection.inspect(answering("invalid_request")).pipe(Effect.result)
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "refused", problem: "list is exported twice." }
+      });
+      const failed = yield* inspection.inspect(answering("handler_failed")).pipe(Effect.result);
+      expect(failed).toMatchObject({ _tag: "Failure", failure: { reason: "load" } });
+      expect(failed).not.toMatchObject({ failure: { problem: expect.anything() } });
+    }).pipe(Effect.scoped),
+  30_000
+);
+
+it.live(
   "inspects each replacement bundle independently and recovers after a refused load",
   () =>
     Effect.gen(function* () {

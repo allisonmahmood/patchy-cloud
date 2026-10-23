@@ -752,9 +752,10 @@ reads as Dev calls on the connection's page.
 
 Vite runs in build-watch mode, not as an unrestricted dev server. A successful
 `src/` rebuild atomically swaps the single-file page and reloads the whole shell.
-A `server/` edit rebuilds and atomically rebinds its bundle and descriptors without
-reloading the browser. New modules are discovered automatically; `dev.log` tells
-you to run `patchy refresh` for their types. In-flight calls and their nested calls
+A `server/` or `agent/` edit rebuilds and atomically rebinds its bundle and
+descriptors without reloading the browser. New modules and agent files are
+discovered automatically; `dev.log` tells you to run `patchy refresh` for a new
+module's types, and agent files need none. In-flight calls and their nested calls
 finish on their original binding. Existing subscriptions rerun on the new one,
 discarding results that cross the swap; removed handlers or incompatible arguments
 end that subscription permanently. Failed builds keep the last good binding or
@@ -1059,13 +1060,23 @@ both tiers, while the runtime sandbox still governs navigation.
 The local HTML cap is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2; either excess
 is `too_large`, with a largest-contributor report. Tier 0's policy also bounds the
 parser's work: nesting past 510 elements, more than 256 attributes on an element and
-heavy repair of misnested markup are refused with a message naming the bound. `server/` below tier 2 remains
+heavy repair of misnested markup are refused with a message naming the bound. `server/` or `agent/` below tier 2 remains
 `tier_mismatch`; scripts require at least tier 1. A failed repo build never falls
 back to a static file.
 
 Tier 2 bundles `server/` into one closed module with no dynamic imports.
 The server graph allows `patchy/server`, `patchy/csv`, generated server
 helpers and company code. The page imports server modules only as types.
+The agent area, `agent/*.ts` one level deep, joins the same module: its files
+fold into the module `agent`, so each export is the handler `agent.<export>`,
+marked in the manifest as an agent tool that only people's agents may call. A
+re-export such as `export { listDeals } from "../server/deals.js"` is one
+handler under both names. Nothing generated lists agent files, so the dev
+watcher and publish discover them without `refresh`. A name two agent files
+export, `server/agent.ts` and a nested `agent/` folder are local
+`invalid_manifest`; a page import from `agent/` is `import_refused`. When
+`tsconfig.json` leaves out an agent file, dev builds and publish warn that
+`pnpm typecheck` skips the agent tools.
 `handlers` and `sdkImports` are recorded in the manifest. The instance inspects
 the stored server bytes in a throwaway process; descriptor disagreement, a
 top-level throw, an unresolved import or an unfinished initializer is

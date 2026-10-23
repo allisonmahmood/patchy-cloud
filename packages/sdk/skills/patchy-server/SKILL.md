@@ -352,6 +352,36 @@ There are at most 64 subscriptions per document, 256 per patch and 1,024 per
 company. The newest is refused without evicting another. Each snapshot is at
 most 8 MiB; an oversized result ends only that subscription.
 
+## The agent area
+
+A tier 2 patch can have an agent area: its root `agent/` folder, one level deep
+like `server/`. Every export of `agent/*.ts` is a tool, named after its export,
+that people's own agents, such as Claude or Codex, call through Patchy MCP at
+`<instance>/mcp`. Nothing else in the patch is reachable by agents, and tiers 0
+and 1 have no agent area. Agent tools are for agents only; the page can't call
+them. Re-exporting a `server/` handler from `agent/`, as
+`export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
+same arguments and rules; a tool of its own can take different ones. Agent
+access is a company switch, off until an admin turns it on at
+`<instance>/company`.
+
+A tool runs as the person who connected the agent. `ctx.viewer` is that person,
+under the same access rules as their page calls. `ctx.agent` is
+`{ name } | null`: the client's name, a label the person approved and never
+proof of who is calling. It is null for page calls. A patch can use it to hold
+agents to stricter rules than people, tag the rows they write, log their calls
+or refuse them. A tool of its own can require what the page leaves optional; its
+schema then tells the agent, and a call missing the field is refused before the
+handler runs.
+
+Each export is a `query`, `mutation` or `action` from the same generated
+builders as `server/`, with shared code in `helpers/`. Files only organise
+tools: moving one to another file renames nothing, two files exporting one name
+are refused, and adding, removing or renaming a file needs no refresh. Inside
+Patchy a tool's handler is `agent.<export>`, which is how publish and logs name
+it. Page imports from `agent/` are refused, and `agent/` below tier 2 is
+`tier_mismatch`.
+
 <!-- generated-limits:start -->
 
 ## Limits

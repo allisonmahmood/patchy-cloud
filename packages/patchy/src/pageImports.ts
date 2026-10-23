@@ -52,9 +52,24 @@ export function pageImports(
     // Bundlers mutate thrown errors; retain the CLI refusal for watch and publish.
     throw new Error(error.message);
   };
+  // The page reaches handlers through patchy.server, never by importing their code.
+  const refuseFolder = (source: string, importer: string, folder: "server" | "agent"): never => {
+    const error = new LocalError({
+      code: "import_refused",
+      message: `${path.relative(root, importer)} imports ${JSON.stringify(source)}, but the page can't import ${folder}/ at runtime. ${
+        folder === "server"
+          ? "Call its handlers through patchy.server, and import their contracts with import type."
+          : "Agent tools are for people's agents only; call server/ handlers through patchy.server."
+      }`
+    });
+    refused(error);
+    throw new Error(error.message);
+  };
   const checkTarget = (target: string, source: string, importer: string) => {
-    if (graph === "page" && target.startsWith(path.join(root, "server") + path.sep))
-      refuse(source, importer, "server/");
+    if (graph === "page")
+      for (const folder of ["server", "agent"] as const)
+        if (target.startsWith(path.join(root, folder) + path.sep))
+          refuseFolder(source, importer, folder);
     const dependency = target.lastIndexOf(`${path.sep}node_modules${path.sep}`);
     if (dependency !== -1 && !companyPath(target))
       refuse(source, importer, target.slice(dependency + "/node_modules/".length));

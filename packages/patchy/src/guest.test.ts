@@ -136,6 +136,25 @@ it.each([{ errors: undefined }, { errors: ["declared_refusal"] }])(
   }
 );
 
+it("answers every request with its refusal when two agent files export one name", async () => {
+  const list = server.query({ args: {}, result: t.boolean(), handler: () => true });
+  const guest = createGuest({}, [], { crm: { list }, deals: { list } });
+  const response = await guest.fetch(
+    new Request("https://guest/", {
+      method: "POST",
+      body: JSON.stringify({ wire: 1, type: "describe" })
+    }),
+    {},
+    { props: {} }
+  );
+  assert.deepStrictEqual(await response.json(), {
+    ok: false,
+    source: "patchy",
+    code: "invalid_request",
+    error: "list is exported by agent/crm.ts and agent/deals.ts; each tool needs its own name."
+  });
+});
+
 it("returns a declared business refusal without logging its cause", async () => {
   const error = new HandlerError("declared_refusal", { reason: "unavailable" });
   error.message = "Private business error message.";

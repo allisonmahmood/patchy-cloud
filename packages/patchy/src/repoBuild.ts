@@ -22,7 +22,9 @@ import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
 import { releaseFromPin } from "./packagePin.js";
 import {
+  agentTypecheckWarning,
   descriptionFailure,
+  discoverAgentFiles,
   discoverServerModules,
   validateGeneratedServerModules
 } from "./serverModules.js";
@@ -250,6 +252,9 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   });
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
   const serverModules = configured.tier === 2 ? yield* discoverServerModules(cwd) : undefined;
+  const agentFiles = configured.tier === 2 ? yield* discoverAgentFiles(cwd) : [];
+  const skipped = agentTypecheckWarning(cwd, agentFiles);
+  if (skipped !== undefined) warnings.push(skipped);
   if (serverModules !== undefined)
     yield* fs.readFileString(path.join(cwd, "package.json")).pipe(
       Effect.flatMap((source) => Effect.try(() => decodeServerPackage(source))),
@@ -281,7 +286,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const built = yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
-      const { sdkImports } = yield* runToolchain(cwd, {
+      const { sdkImports, agentTools } = yield* runToolchain(cwd, {
         build: output,
         toolchain,
         ...(serverModules === undefined
@@ -289,6 +294,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
           : {
               server: {
                 modules: serverModules,
+                agentFiles,
                 sharedStores: Object.entries(configured.uses)
                   .filter(([, declaration]) => declaration.kind === "sharedStore")
                   .map(([alias]) => alias)
@@ -311,7 +317,8 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         ...(serverModules === undefined
           ? {}
           : { server: yield* fs.readFileString(path.join(output, "server.js")) }),
-        sdkImports
+        sdkImports,
+        agentTools
       };
     })
   ).pipe(
@@ -339,13 +346,15 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
             (cause) =>
               new LocalError({
                 message:
+                  cause.problem ??
                   "Could not inspect the server bundle. Its modules must load and export only valid handlers.",
                 code: "invalid_manifest",
                 cause
               })
           )
         );
-  const described = handlers === undefined ? undefined : descriptionFailure(handlers);
+  const described =
+    handlers === undefined ? undefined : descriptionFailure(handlers, built.agentTools);
   if (described !== undefined)
     return yield* new LocalError({ message: described, code: "invalid_manifest" });
   const manifest = decodeManifest({
@@ -387,25 +396,27 @@ export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
       message: `HTML bundle is ${bytes} bytes; maximum for tier ${manifest.tier} is ${maxBytes} bytes. Largest contributors:\n${inspection.contributors.map((entry) => `- ${entry.name}: ${entry.bytes} bytes`).join("\n")}\nReduce these resources before publishing.`,
       code: "too_large"
     });
-  const server = yield* fs.stat(path.join(cwd, "server")).pipe(
-    Effect.map((info) => info.type === "Directory"),
-    Effect.catchTags({
-      PlatformError: (cause) =>
-        cause.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(cause)
-    }),
-    Effect.mapError(
-      (cause) =>
-        new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
-    )
-  );
-  if ((server && manifest.tier < 2) || manifest.tier > 2)
-    return yield* new LocalError({
-      message:
-        manifest.tier > 2
-          ? "Tier 3 is not served yet."
-          : "server/ requires tier 2. Change the tier and run `patchy refresh`, or remove server/.",
-      code: "tier_mismatch"
-    });
+  if (manifest.tier > 2)
+    return yield* new LocalError({ message: "Tier 3 is not served yet.", code: "tier_mismatch" });
+  // server/ and agent/ are evidence of tier 2 even when empty.
+  for (const folder of ["server", "agent"]) {
+    const present = yield* fs.stat(path.join(cwd, folder)).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(cause)
+      }),
+      Effect.mapError(
+        (cause) =>
+          new LocalError({ message: `Could not inspect ${folder}/ for the evident tier.`, cause })
+      )
+    );
+    if (present && manifest.tier < 2)
+      return yield* new LocalError({
+        message: `${folder}/ requires tier 2. Change the tier and run \`patchy refresh\`, or remove ${folder}/.`,
+        code: "tier_mismatch"
+      });
+  }
   if (manifest.tier === 0) {
     const validation = validateHtml(html, { maxBytes });
     if (!validation.ok)

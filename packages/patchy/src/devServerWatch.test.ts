@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import { watch } from "./devServerWatch.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
 import toolchain from "./toolchain.json" with { type: "json" };
+import * as Inspection from "@patchy/execution/inspection";
 import { buildServer } from "./serverBuild.js";
 
 const handler = (kind: "text" | "number" | "boolean") => `
@@ -235,6 +236,113 @@ it.live(
 );
 
 it.live(
+  "folds agent/ files into agent tools with no refresh, and refuses a name two files export",
+  () =>
+    Effect.gen(function* () {
+      const { root, fs, path } = yield* leadsRepo;
+      const next = yield* inspectedChanges(root);
+      assert.deepStrictEqual(Object.keys((yield* next).handlers), ["leads.read"]);
+
+      // The page's handler re-exported for agents, and a tool of its own in another file.
+      yield* fs.makeDirectory(path.join(root, "agent"));
+      yield* save(path.join(root, "agent/leads.ts"), 'export { read } from "../server/leads.js";');
+      yield* save(
+        path.join(root, "agent/intake.ts"),
+        handler("number").replace("export const read", "export const count")
+      );
+      let built = yield* next;
+      while (built.agentFiles.length < 2) built = yield* next;
+      assert.deepStrictEqual(built.agentFiles, ["intake", "leads"]);
+      assert.deepStrictEqual(built.handlers, {
+        "leads.read": { kind: "query", args: {}, result: { kind: "text" } },
+        "agent.count": { kind: "query", args: {}, result: { kind: "number" }, agentTool: true },
+        "agent.read": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true }
+      });
+
+      // A second file exporting read, by name or through `export *`: the guest's fold names both
+      // files, and inspection carries its refusal to the CLI.
+      const twice = path.join(root, "agent/more.ts");
+      const duplicate =
+        "read is exported by agent/leads.ts and agent/more.ts; each tool needs its own name.";
+      for (const source of [
+        'export { read } from "../server/leads.js";',
+        'export * from "../server/leads.js";'
+      ]) {
+        yield* save(twice, source);
+        assert.deepInclude(yield* next.pipe(Effect.flip), {
+          code: "invalid_manifest",
+          message: `${duplicate} The last successful binding stays served.`
+        });
+        // Back to a good build, so the next refusal is a new result rather than a repeat.
+        yield* fs.remove(twice);
+        assert.deepStrictEqual((yield* next).handlers, built.handlers);
+      }
+      yield* save(twice, 'export * from "../server/leads.js";');
+      assert.strictEqual((yield* next.pipe(Effect.flip)).code, "invalid_manifest");
+      // Publish inspects the same bundle.
+      const published = yield* Effect.tryPromise(() =>
+        buildServer(root, ["leads"], ["intake", "leads", "more"], toolchain, [])
+      );
+      assert.deepInclude(yield* Inspection.inspect(published.server).pipe(Effect.flip), {
+        reason: "refused",
+        problem: duplicate
+      });
+      yield* fs.remove(twice);
+      assert.deepStrictEqual((yield* next).handlers, built.handlers);
+
+      // A tool's refusals name its own file under agent/.
+      const intake = path.join(root, "agent/intake.ts");
+      const own = yield* fs.readFileString(intake);
+      yield* save(intake, own.replace("args: {}", 'description: " ", args: {}'));
+      assert.deepInclude(yield* next.pipe(Effect.flip), {
+        code: "invalid_manifest",
+        message:
+          "agent/intake.ts: agent.count's description is blank. Say what it does, or leave the description out. The last successful binding stays served."
+      });
+      yield* save(intake, own);
+      assert.deepStrictEqual((yield* next).handlers, built.handlers);
+    }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, DirectoryWatch.layer])),
+  30_000
+);
+
+it.live(
+  "keeps a file named __proto__, and never refuses a name that only export * gives",
+  () =>
+    Effect.gen(function* () {
+      const { root, fs, path } = yield* repo;
+      yield* fs.makeDirectory(path.join(root, "agent"));
+      yield* fs.makeDirectory(path.join(root, "helpers"));
+      // two.ts stars one.ts but has its own read, and more.ts stars both. The two reads are
+      // different bindings, so ES modules leave read out of more.ts's namespace, and leads.ts's
+      // read is the only one; the build must not take it for a duplicate.
+      yield* fs.writeFileString(path.join(root, "helpers/one.ts"), handler("text"));
+      yield* fs.writeFileString(
+        path.join(root, "helpers/two.ts"),
+        'export * from "./one.js";\n' + handler("number")
+      );
+      yield* fs.writeFileString(
+        path.join(root, "agent/more.ts"),
+        'export * from "../helpers/two.js";\nexport * from "../helpers/one.js";'
+      );
+      yield* fs.writeFileString(path.join(root, "agent/leads.ts"), handler("boolean"));
+      yield* fs.writeFileString(
+        path.join(root, "agent/__proto__.ts"),
+        handler("text").replace("export const read", "export const count")
+      );
+      const built = yield* Effect.tryPromise(() =>
+        buildServer(root, [], ["__proto__", "leads", "more"], toolchain, [])
+      );
+      assert.deepStrictEqual(built.agentTools, { count: "__proto__", read: "leads" });
+
+      assert.deepStrictEqual(yield* Inspection.inspect(built.server), {
+        "agent.count": { kind: "query", args: {}, result: { kind: "text" }, agentTool: true },
+        "agent.read": { kind: "query", args: {}, result: { kind: "boolean" }, agentTool: true }
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  30_000
+);
+
+it.live(
   "recovers after import refusals, failed builds, invalid handler exports and descriptions",
   () =>
     Effect.gen(function* () {
@@ -327,7 +435,7 @@ export const read = query({ args: {}, result: t.json(), handler: () => optionalM
 `
       );
       const build = Effect.tryPromise({
-        try: () => buildServer(root, ["leads"], toolchain, []),
+        try: () => buildServer(root, ["leads"], [], toolchain, []),
         catch: (cause) => cause
       });
       assert.deepInclude(yield* build.pipe(Effect.flip), { code: "invalid_manifest" });

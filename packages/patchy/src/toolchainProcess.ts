@@ -13,7 +13,8 @@ const decodeResult = Schema.decodeUnknownSync(
       Schema.Struct({
         ok: Schema.Literal(true),
         warnings: Schema.Array(Schema.String),
-        sdkImports: Schema.Array(Schema.String)
+        sdkImports: Schema.Array(Schema.String),
+        agentTools: Schema.Record(Schema.String, Schema.String)
       }),
       Schema.Struct({
         ok: Schema.Literal(false),
@@ -44,6 +45,7 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
         readonly toolchain: typeof ReleaseToolchain.Type;
         readonly server?: {
           readonly modules: readonly string[];
+          readonly agentFiles: readonly string[];
           readonly sharedStores: readonly string[];
         };
       },
@@ -64,7 +66,8 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
             ? []
             : [
                 encodeModules(operation.server.modules),
-                encodeModules(operation.server.sharedStores)
+                encodeModules(operation.server.sharedStores),
+                encodeModules(operation.server.agentFiles)
               ])
         ])
   ]);
