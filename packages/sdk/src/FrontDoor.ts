@@ -28,12 +28,18 @@ export class InstallerUnavailable extends Schema.TaggedError<InstallerUnavailabl
 
 /**
  * Hosting's hook for a setup line's `?s=`: stamps "picked up" and answers whether the line is live.
- * The SDK knows nothing of setup links; without this service, or when it answers false, llms.txt is
- * the plain page and setup still works, just without the person's panel following along.
+ * It gets the fetch's trusted client address to rate-limit by. The SDK knows nothing of setup
+ * links; without this service, or when it answers false, llms.txt is the plain page and setup
+ * still works, just without the person's panel following along.
  */
 export class SetupPickup extends Context.Service<
   SetupPickup,
-  { readonly pickUp: (value: string) => Effect.Effect<boolean> }
+  {
+    readonly pickUp: (
+      value: string,
+      clientAddress: Option.Option<string>
+    ) => Effect.Effect<boolean>;
+  }
 >()("@patchy/sdk/FrontDoor/SetupPickup") {}
 
 /** A JavaScript string literal, as the installer source writes its base URL. */
@@ -103,7 +109,9 @@ export const layer = HttpRouter.use((router) =>
         // A live line's value goes into its login command; anything else gets the plain page.
         const live =
           value !== null && Option.isSome(pickup)
-            ? yield* pickup.value.pickUp(value).pipe(Effect.catchCause(() => Effect.succeed(false)))
+            ? yield* pickup.value
+                .pickUp(value, request.remoteAddress)
+                .pipe(Effect.catchCause(() => Effect.succeed(false)))
             : false;
         return HttpServerResponse.text(live ? llms(base, value!) : intro, {
           contentType: "text/plain; charset=utf-8",

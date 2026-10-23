@@ -41,6 +41,9 @@ export const notWaitingBecause = Effect.gen(function* () {
   return (yield* stdio.stdinIsTerminal) ? null : "stdin is not a terminal";
 });
 
+const abandonedNotice =
+  "Started a new login for this setup line; the earlier code no longer applies.";
+
 const agentNextSteps =
   "Show the person the URL and the code and ask them to confirm it in a browser where they are signed in. Do not open a browser yourself. Then run the next command; it waits up to a minute and says pending if they have not confirmed yet.";
 const nextCommand = Effect.fn("Login.nextCommand")(function* (login: State.PendingLogin) {
@@ -244,6 +247,7 @@ export const login = Effect.fn("Login.login")(function* (options: {
   }
   const next = yield* nextCommand(current);
   const expires = yield* expiryLine(current.expiresAt);
+  const abandoned = otherLine ? [abandonedNotice] : [];
   yield* Output.report(
     {
       ok: true,
@@ -254,10 +258,11 @@ export const login = Effect.fn("Login.login")(function* (options: {
       expiresAt: current.expiresAt,
       interval: current.interval,
       next,
-      agentNextSteps,
+      agentNextSteps: [...abandoned, agentNextSteps].join(" "),
       notWaitingBecause: reason
     },
     [
+      ...abandoned,
       `Sign in: ${current.verificationUrl}`,
       `Code: ${current.userCode}`,
       expires,

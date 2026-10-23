@@ -212,6 +212,13 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const expires = now + LIFETIME_MS;
+          // Lines whose bound login runs out unanswered end expired before the login goes.
+          const ran = yield* sql<{ readonly setup_link_id: string }>`
+            SELECT setup_link_id FROM device_logins
+            WHERE expires_at <= to_timestamp(${now / 1_000}) AND setup_link_id IS NOT NULL`;
+          yield* SetupLinks.expired(ran.map((row) => row.setup_link_id)).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql)
+          );
           yield* sql`DELETE FROM device_logins WHERE expires_at <= to_timestamp(${now / 1_000})`;
           while (true) {
             let code = "";
@@ -331,6 +338,10 @@ export const make = Effect.gen(function* () {
         const row = found.value;
         const remove = sql`DELETE FROM device_logins WHERE user_code = ${row.userCode}`;
         if (row.expiresAt.getTime() <= (yield* Clock.currentTimeMillis)) {
+          if (row.setupLinkId !== null)
+            yield* SetupLinks.expired([row.setupLinkId]).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql)
+            );
           yield* remove;
           return { reply: new DeviceLoginExpired({}) };
         }

@@ -314,22 +314,30 @@ const setupState = Effect.fn("PortalPages.setupState")(function* () {
     const state: SetupState = row === undefined ? { kind: "connected" } : { kind: "live", row };
     return { connected: true, setupLink, state };
   }
+  const now = yield* Clock.currentTimeMillis;
   const state = Option.match(link, {
     onNone: (): SetupState => ({ kind: "waiting" }),
     onSome: (line): SetupState =>
       !line.live
         ? { kind: "fallback", reason: "ran_out" }
-        : line.outcome === null
-          ? { kind: line.pickedUp ? "picked_up" : "waiting" }
-          : line.outcome === "pending"
-            ? line.loginState === "pending"
-              ? { kind: "login_pending" }
-              : line.loginState === "confirmed"
-                ? { kind: "confirming" }
-                : { kind: "fallback", reason: line.loginState === "denied" ? "denied" : "expired" }
-            : line.outcome === "connected"
-              ? { kind: "fallback", reason: "ran_out" }
-              : { kind: "fallback", reason: line.outcome }
+        : line.outcome === "pending" &&
+            line.loginExpiresAt !== null &&
+            line.loginExpiresAt.getTime() <= now
+          ? { kind: "fallback", reason: "expired" }
+          : line.outcome === null
+            ? { kind: line.pickedUp ? "picked_up" : "waiting" }
+            : line.outcome === "pending"
+              ? line.loginState === "pending"
+                ? { kind: "login_pending" }
+                : line.loginState === "confirmed"
+                  ? { kind: "confirming" }
+                  : {
+                      kind: "fallback",
+                      reason: line.loginState === "denied" ? "denied" : "expired"
+                    }
+              : line.outcome === "connected"
+                ? { kind: "fallback", reason: "ran_out" }
+                : { kind: "fallback", reason: line.outcome }
   });
   return { connected: false, setupLink, state };
 });

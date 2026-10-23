@@ -49,7 +49,7 @@ it.layer(layer)("SetupLinks", (it) => {
         const userId = yield* addUser("line");
         const first = yield* SetupLinks.current(userId);
         assert.isTrue(first.created);
-        assert.match(first.value, /^[A-Za-z0-9_-]{22}$/);
+        assert.match(first.value, /^[a-z2-7]{26}$/);
         assert.notStrictEqual(first.setupId, first.value);
         const again = yield* SetupLinks.current(userId);
         assert.deepStrictEqual([again.created, again.value], [false, first.value]);
@@ -87,7 +87,7 @@ it.layer(layer)("SetupLinks", (it) => {
         { user_code: second.userCode, setup_link_id: null }
       ]);
       // An unknown value binds nothing and the login proceeds as an ordinary one.
-      const plain = yield* logins.start({ machineNameHint: "laptop", setupLink: "x".repeat(22) });
+      const plain = yield* logins.start({ machineNameHint: "laptop", setupLink: "a".repeat(26) });
       assert.deepStrictEqual(
         yield* sql`SELECT setup_link_id FROM device_logins WHERE user_code = ${plain.userCode}`,
         [{ setup_link_id: null }]
@@ -118,6 +118,55 @@ it.layer(layer)("SetupLinks", (it) => {
         yield* connect(theirs.value, owner);
         assert.deepStrictEqual(yield* outcome(other), Option.some("other_account"));
       }).pipe(withDeviceLogins)
+  );
+
+  it.effect("keeps a contested line contested when its bound login mints, with its setup id", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const userId = yield* addUser("contest");
+      const line = yield* SetupLinks.current(userId);
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const bound = yield* logins.start({ machineNameHint: "laptop", setupLink: line.value });
+      yield* logins.start({ machineNameHint: "elsewhere", setupLink: line.value });
+      yield* logins.confirm({ userCode: bound.userCode, userId, machineName: "Laptop" });
+      const reply = yield* logins.poll(bound.deviceCode);
+      assert.strictEqual(reply.status, "complete");
+      const status = Option.getOrThrow(yield* SetupLinks.status(userId));
+      assert.strictEqual(status.outcome, "contested");
+      assert.strictEqual(
+        status.machineTokenId,
+        reply.status === "complete" ? reply.machine.id : ""
+      );
+      const minted = events.findLast((event) => event.name === "token.minted");
+      assert.strictEqual(minted?.properties.setupId, line.setupId);
+    }).pipe(withDeviceLogins)
+  );
+
+  it.effect("ends a line expired when its login runs out, or when the line ran out first", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const sql = yield* SqlClient.SqlClient;
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const idle = yield* addUser("idle");
+      const idleLine = yield* SetupLinks.current(idle);
+      const unanswered = yield* logins.start({
+        machineNameHint: "laptop",
+        setupLink: idleLine.value
+      });
+      yield* TestClock.adjust("11 minutes");
+      yield* logins.poll(unanswered.deviceCode).pipe(Effect.ignore);
+      assert.deepStrictEqual(yield* outcome(idle), Option.some("expired"));
+
+      // A login bound just before the line's half hour ends that mints after it doesn't connect.
+      const late = yield* addUser("late");
+      const lateLine = yield* SetupLinks.current(late);
+      const login = yield* logins.start({ machineNameHint: "laptop", setupLink: lateLine.value });
+      yield* sql`UPDATE setup_links SET expires_at = now() - interval '1 second'
+        WHERE id = ${lateLine.value}`;
+      yield* logins.confirm({ userCode: login.userCode, userId: late, machineName: "Laptop" });
+      assert.strictEqual((yield* logins.poll(login.deviceCode)).status, "complete");
+      assert.deepStrictEqual(yield* outcome(late), Option.some("expired"));
+    }).pipe(withDeviceLogins)
   );
 
   it.effect("ends a denied login's line as denied", () =>

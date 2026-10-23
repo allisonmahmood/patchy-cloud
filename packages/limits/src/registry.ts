@@ -1119,6 +1119,17 @@ export const registry = {
     refusal: "rate_limited",
     overridable: false
   },
+  "rate.setupPickup.perMinute": {
+    kind: "operating",
+    configuration: "legacy",
+    default: 30,
+    unit: "attempts/minute",
+    scope: "host",
+    measure:
+      "llms.txt fetches carrying a setup line per source address per host replica; past it the page is the plain one",
+    refusal: "rate_limited",
+    overridable: false
+  },
   "rate.deviceLookup.perMinute": {
     kind: "operating",
     configuration: "legacy",

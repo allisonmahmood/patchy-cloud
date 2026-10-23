@@ -554,7 +554,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const setup = lineOf(html);
       assert.match(
         setup,
-        new RegExp(`^Set up Patchy using ${PUBLIC_BASE_URL}/llms\\.txt\\?s=[A-Za-z0-9_-]{22}$`)
+        new RegExp(`^Set up Patchy using ${PUBLIC_BASE_URL}/llms\\.txt\\?s=[a-z2-7]{26}$`)
       );
       assert.include(html, `data-copy="${setup}"`);
       assert.strictEqual(lineOf(yield* (yield* request("/", workspace.owner)).text), setup);
@@ -751,6 +751,18 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.include(
         yield* (yield* request("/guide/steps", workspace.admin)).text,
         'data-state="waiting"'
+      );
+
+      // A login left unanswered shows as expired once it runs out, with no poll or start after.
+      yield* logins.start({ machineNameHint: "laptop", setupLink: next.split("?s=")[1]! });
+      assert.include(
+        yield* (yield* request("/guide/steps", workspace.admin)).text,
+        'data-state="login_pending"'
+      );
+      yield* TestClock.adjust("11 minutes");
+      assert.include(
+        yield* (yield* request("/guide/steps", workspace.admin)).text,
+        'data-state="fallback-expired"'
       );
     }).pipe(Effect.provide(DeviceLogins.layer))
   );

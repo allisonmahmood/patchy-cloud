@@ -117,7 +117,7 @@ export const migrations: Migrations = {
   // separate random id for events, so the link's value never leaves Patchy.
   "0027_setup_links": ddl(
     `CREATE TABLE setup_links (
-    id TEXT PRIMARY KEY CHECK (char_length(id) = 22),
+    id TEXT PRIMARY KEY CHECK (id ~ '^[a-z2-7]{26}$'),
     analytics_id TEXT NOT NULL UNIQUE,
     user_id TEXT NOT NULL REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -125,7 +125,9 @@ export const migrations: Migrations = {
     retired_at TIMESTAMPTZ,
     picked_up_at TIMESTAMPTZ,
     user_code TEXT,
-    outcome TEXT CHECK (outcome IN ('pending', 'denied', 'contested', 'connected', 'other_account')),
+    outcome TEXT CHECK (
+      outcome IN ('pending', 'denied', 'expired', 'contested', 'connected', 'other_account')
+    ),
     machine_token_id TEXT REFERENCES machine_tokens(id),
     confirmed_by TEXT REFERENCES users(id)
     )`,

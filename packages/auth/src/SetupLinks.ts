@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+// @effect-diagnostics nodeBuiltinImport:off -- a setup link needs cryptographic randomness; Effect Random is not a CSPRNG.
+import { randomBytes } from "node:crypto";
 import * as SqlClient from "effect/sql/SqlClient";
 import { randomToken } from "@patchy/core";
 
@@ -12,7 +14,24 @@ import { randomToken } from "@patchy/core";
  * events carry the separate `setupId`.
  */
 const lifetime = "30 minutes";
-const valueShape = /^[A-Za-z0-9_-]{22}$/u;
+const valueShape = /^[a-z2-7]{26}$/u;
+const base32 = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** 128 random bits as 26 lowercase base32 characters: easy to read aloud, safe in any URL. */
+const newValue = () => {
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const byte of randomBytes(16)) {
+    value = ((value << 8) | byte) & 0xffff;
+    bits += 8;
+    while (bits >= 5) {
+      out += base32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return bits > 0 ? out + base32[(value << (5 - bits)) & 31] : out;
+};
 
 /** A value as the line carries it, or null for anything that can't be one. */
 export const parse = (value: string | null | undefined): string | null =>
@@ -22,6 +41,7 @@ export const parse = (value: string | null | undefined): string | null =>
 export const Outcome = Schema.Literals([
   "pending",
   "denied",
+  "expired",
   "contested",
   "connected",
   "other_account"
@@ -53,7 +73,7 @@ export const current = Effect.fn("SetupLinks.current")(function* (userId: string
           ? live
           : yield* sql`
               INSERT INTO setup_links (id, analytics_id, user_id, expires_at)
-              VALUES (${randomToken(16)}, ${randomToken(12)}, ${userId},
+              VALUES (${newValue()}, ${randomToken(12)}, ${userId},
                 clock_timestamp() + ${lifetime}::interval)
               RETURNING id AS value, analytics_id AS "setupId", true AS created`;
       const [link] = yield* decodeLinks(made).pipe(Effect.catchTags({ SchemaError: Effect.die }));
@@ -121,6 +141,17 @@ export const bind = Effect.fn("SetupLinks.bind")(function* (value: string, userC
   return row?.bound === true;
 });
 
+/**
+ * Bound logins that ran out before an answer: their lines end expired, written before the logins
+ * are deleted. Runs inside the purge's or the poll's transaction.
+ */
+export const expired = Effect.fn("SetupLinks.expired")(function* (linkIds: ReadonlyArray<string>) {
+  if (linkIds.length === 0) return;
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE setup_links SET outcome = 'expired'
+    WHERE id IN ${sql.in(linkIds)} AND outcome = 'pending'`;
+});
+
 /** The bound login was denied. */
 export const denied = Effect.fn("SetupLinks.denied")(function* (linkId: string) {
   const sql = yield* SqlClient.SqlClient;
@@ -133,8 +164,10 @@ const decodeMinted = Schema.decodeUnknownEffect(
 );
 
 /**
- * The bound login's key was minted, inside the mint's transaction: connected when the line's
- * owner confirmed it, or confirmed by another account otherwise. Answers the setup id.
+ * The bound login's key was minted, inside the mint's transaction. The key and who confirmed it are
+ * always recorded and the setup id always answered, so analytics join up even for a contested
+ * line. Only a pending outcome moves: connected when its owner confirmed, confirmed by another
+ * account otherwise, and expired when the line ran out first.
  */
 export const minted = Effect.fn("SetupLinks.minted")(function* (input: {
   readonly linkId: string;
@@ -144,8 +177,12 @@ export const minted = Effect.fn("SetupLinks.minted")(function* (input: {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql`
     UPDATE setup_links SET machine_token_id = ${input.tokenId}, confirmed_by = ${input.userId},
-      outcome = CASE WHEN user_id = ${input.userId} THEN 'connected' ELSE 'other_account' END
-    WHERE id = ${input.linkId} AND outcome = 'pending'
+      outcome = CASE
+        WHEN outcome <> 'pending' THEN outcome
+        WHEN expires_at <= now() THEN 'expired'
+        WHEN user_id = ${input.userId} THEN 'connected'
+        ELSE 'other_account' END
+    WHERE id = ${input.linkId}
     RETURNING analytics_id AS "setupId"`;
   const [row] = yield* decodeMinted(rows).pipe(Effect.catchTags({ SchemaError: Effect.die }));
   return Option.fromNullishOr(row?.setupId);
@@ -159,7 +196,9 @@ export const Status = Schema.Struct({
   outcome: Schema.NullOr(Outcome),
   /** The bound device login's state while it exists; null once it completed, expired or went. */
   loginState: Schema.NullOr(Schema.Literals(["pending", "confirmed", "denied"])),
-  machineTokenId: Schema.NullOr(Schema.String)
+  machineTokenId: Schema.NullOr(Schema.String),
+  /** When the bound login runs out, on the app's clock like the login itself. */
+  loginExpiresAt: Schema.NullOr(Schema.Date)
 });
 export type Status = typeof Status.Type;
 const decodeStatus = Schema.decodeUnknownEffect(Schema.Array(Status));
@@ -168,7 +207,8 @@ export const status = Effect.fn("SetupLinks.status")(function* (userId: string) 
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql`
     SELECT l.id AS value, l.expires_at > now() AS live, l.picked_up_at IS NOT NULL AS "pickedUp",
-      l.outcome, d.state AS "loginState", l.machine_token_id AS "machineTokenId"
+      l.outcome, d.state AS "loginState", l.machine_token_id AS "machineTokenId",
+      d.expires_at AS "loginExpiresAt"
     FROM setup_links l
     LEFT JOIN device_logins d ON d.setup_link_id = l.id AND d.user_code = l.user_code
     WHERE l.user_id = ${userId} AND l.retired_at IS NULL

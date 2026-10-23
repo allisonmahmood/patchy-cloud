@@ -53,7 +53,7 @@ it.layer(layer)("the front door", (it) => {
   );
 });
 
-const live = "abcdefghijklmnopqrstuv";
+const live = "abcdefghijklmnopqrstuvwxyz";
 const picked: string[] = [];
 const withPickup = HttpRouter.serve(
   FrontDoor.layer.pipe(

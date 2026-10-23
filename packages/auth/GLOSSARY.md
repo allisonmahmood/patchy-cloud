@@ -45,7 +45,7 @@ The signed-in user, their company and role on a first-party page or at a company
 _Avoid_: bearer, machine, principal
 
 **Setup link**:
-The `?s=` on the Final step panel's setup line: 128 random bits, one live per person for 30 minutes, which `/llms.txt` carries into its login command as `--setup`. Its fetch marks the line picked up; the first device login it starts binds to it, and a second contests it. It keeps how its login ended, because device logins are deleted when they finish. It is no credential: it only lets a login show on its owner's own panel. Events carry a separate setup id.
+The `?s=` on the Final step panel's setup line: 128 random bits as 26 base32 characters, one live per person for 30 minutes, which `/llms.txt` carries into its login command as `--setup`. Its fetch marks the line picked up; the first device login it starts binds to it, and a second contests it. It keeps how its login ended (pending, denied, expired, contested, connected or confirmed by another account), because device logins are deleted when they finish. It is no credential: it only lets a login show on its owner's own panel. Events carry a separate setup id.
 _Avoid_: setup token, setup code (the device login's code is the code), attempt
 
 **Device login**:

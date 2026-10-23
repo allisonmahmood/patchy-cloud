@@ -156,23 +156,32 @@ it.effect("starts afresh for a different setup line and resumes the same one", (
     const { files, login } = makeLoginHarness(client);
     const pending = () =>
       JSON.parse(files.get("/state/device-login.json")!).hosts[apiUrl] as { setupLink?: string };
+    const abandoned = TestConsole.logLines.pipe(
+      Effect.map((lines) =>
+        String(JSON.parse(String(lines.at(-1))).agentNextSteps).startsWith(
+          "Started a new login for this setup line; the earlier code no longer applies."
+        )
+      )
+    );
     // The harness's pending login came from no line, so a line's --setup can't resume it.
-    yield* login(0, { complete: false, setup: "abcdefghijklmnopqrstuv" });
+    yield* login(0, { complete: false, setup: "abcdefghijklmnopqrstuvwxyz" });
     assert.strictEqual(starts.length, 1);
-    assert.include(starts[0] as object, { setupLink: "abcdefghijklmnopqrstuv" });
-    assert.strictEqual(pending().setupLink, "abcdefghijklmnopqrstuv");
-    // The same line resumes; another line starts again.
-    yield* login(0, { complete: false, setup: "abcdefghijklmnopqrstuv" });
+    assert.include(starts[0] as object, { setupLink: "abcdefghijklmnopqrstuvwxyz" });
+    assert.strictEqual(pending().setupLink, "abcdefghijklmnopqrstuvwxyz");
+    assert.isTrue(yield* abandoned);
+    // The same line resumes; another line starts again and says the earlier code is gone.
+    yield* login(0, { complete: false, setup: "abcdefghijklmnopqrstuvwxyz" });
     assert.strictEqual(starts.length, 1);
-    yield* login(0, { complete: false, setup: "vutsrqponmlkjihgfedcba" });
+    yield* login(0, { complete: false, setup: "zyxwvutsrqponmlkjihgfedcba" });
     assert.strictEqual(starts.length, 2);
-    assert.strictEqual(pending().setupLink, "vutsrqponmlkjihgfedcba");
+    assert.strictEqual(pending().setupLink, "zyxwvutsrqponmlkjihgfedcba");
+    assert.isTrue(yield* abandoned);
     // Without --setup a rerun resumes whatever is pending, as before.
     yield* login(0, { complete: false });
     assert.strictEqual(starts.length, 2);
     // --setup starts a login, so it never goes with --complete.
     const refused = yield* Effect.result(
-      login(0, { complete: true, setup: "abcdefghijklmnopqrstuv" })
+      login(0, { complete: true, setup: "abcdefghijklmnopqrstuvwxyz" })
     );
     assert.isTrue(Result.isFailure(refused));
   }).pipe(Effect.provide(TestConsole.layer))
