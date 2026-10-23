@@ -104,6 +104,7 @@ const logCall = (
       handler: "leads.import",
       kind: "action",
       initiatingViewerId: reader.user.id,
+      agent: null,
       parentId: null,
       correlationId: `cor_${id}`,
       startedAt: call.at,

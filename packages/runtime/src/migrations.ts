@@ -128,5 +128,19 @@ export const migrations: Migrations = {
     `CREATE INDEX runtime_invocations_top_level_recent
       ON runtime_invocations (company_id, started_at)
       WHERE parent_id IS NULL`
+  ),
+  // A person's worker agent calls a patch's agent tools through its agent connection. Every
+  // row of such a call names the agent by the client name approved at the time, a snapshot
+  // like the machine's; its callbacks name the agent connection as their credential.
+  "0021_runtime_log_agents": ddl(
+    `ALTER TABLE runtime_calls
+      ADD COLUMN agent_name TEXT,
+      DROP CONSTRAINT runtime_calls_credential_kind_check,
+      ADD CONSTRAINT runtime_calls_credential_kind_check
+        CHECK (credential_kind IN ('session', 'admin', 'machine', 'agent')),
+      ADD CONSTRAINT runtime_calls_agent_check CHECK (CASE WHEN credential_kind = 'agent'
+        THEN agent_name IS NOT NULL AND patch_id IS NOT NULL AND version_id IS NOT NULL
+        ELSE agent_name IS NULL END)`,
+    `ALTER TABLE runtime_invocations ADD COLUMN agent_name TEXT`
   )
 };

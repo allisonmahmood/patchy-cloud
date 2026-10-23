@@ -28,6 +28,13 @@ const viewer = Schema.Struct({
   company: Identity.fields.company,
   admin: Schema.Boolean
 });
+/**
+ * The worker agent an invocation runs for, by the name its person approved: a label, never proof.
+ * Only Patchy's own agent callers set it. It is absent for a page's call, so older loaders and
+ * guests, which refuse unknown keys, keep serving pages, and handler code reads it as null.
+ */
+export const Agent = Schema.Struct({ name: Schema.NonEmptyString });
+export type Agent = typeof Agent.Type;
 
 export const BundleBinding = Schema.Struct({
   companyId: identity,
@@ -66,6 +73,7 @@ export const Invoke = Schema.Struct({
   handler: HandlerName,
   args,
   viewer,
+  agent: Schema.optionalKey(Agent),
   callback: Schema.Struct({ url: identity, capability: identity })
 });
 export type Invoke = typeof Invoke.Type;
@@ -76,7 +84,8 @@ export const GuestRequest = Schema.Union([
     type: Schema.Literal("invoke"),
     handler: HandlerName,
     args,
-    viewer
+    viewer,
+    agent: Schema.optionalKey(Agent)
   })
 ]);
 export type GuestRequest = typeof GuestRequest.Type;

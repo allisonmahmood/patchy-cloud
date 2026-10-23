@@ -74,7 +74,14 @@ const binding: Binding.Binding["Service"] = {
         args: {},
         result: { kind: "json" }
       },
-      "agent.legacy": { kind: "query", args: {}, result: { kind: "json" } }
+      "agent.legacy": { kind: "query", args: {}, result: { kind: "json" } },
+      "agent.gather": {
+        kind: "action",
+        description: "Gathers what an agent asked for.",
+        agentTool: true,
+        args: {},
+        result: { kind: "json" }
+      }
     }
   }
 };
@@ -706,7 +713,11 @@ it.layer(services)("Invocation", (it) => {
       const done = yield* Deferred.make<void>();
       const invocations = yield* makeInvocation((request) =>
         Queue.offer(seen, request).pipe(
-          Effect.andThen(request.handler === "demo.action" ? Deferred.await(done) : Effect.void),
+          Effect.andThen(
+            request.handler === "demo.action" || request.handler === "agent.gather"
+              ? Deferred.await(done)
+              : Effect.void
+          ),
           Effect.as({
             outcome: "returned" as const,
             reply: { ok: true as const, value: 1 },
@@ -720,6 +731,15 @@ it.layer(services)("Invocation", (it) => {
           { ...from, correlationId: newInternalId("call") },
           Effect.succeed(viewer)
         );
+      const agentCall = (tool: string, person: Invocation.AgentCall["person"] = viewer) =>
+        Invocation.callAgent({
+          version: binding,
+          person,
+          agent: { name: "Claude" },
+          tool,
+          args: {},
+          recheck: Effect.succeed(person)
+        }).pipe(Effect.provideService(Invocation.Invocation, invocations));
       const refused = (effect: Effect.Effect<unknown, { readonly code: string }>) =>
         effect.pipe(
           Effect.flip,
@@ -736,33 +756,54 @@ it.layer(services)("Invocation", (it) => {
         ),
         "access_denied"
       );
+      // An agent starts only a marked tool: never a page handler, nor an agent.* handler with no
+      // mark, which stays an ordinary page handler; and only in its person's own company.
+      const agent = { ...binding, agent: { name: "Claude" } };
+      assert.strictEqual(yield* refused(call("demo.query", agent)), "access_denied");
+      assert.strictEqual(yield* refused(agentCall("legacy")), "access_denied");
+      assert.strictEqual(yield* refused(agentCall("missing")), "invalid_request");
+      assert.strictEqual(
+        yield* refused(
+          agentCall("lookup", { ...viewer, company: { ...viewer.company, id: "cmp_elsewhere" } })
+        ),
+        "access_denied"
+      );
       assert.strictEqual(yield* Queue.size(seen), 0);
-      // An agent.* handler with no mark stays an ordinary page handler.
       assert.deepStrictEqual(yield* call("agent.legacy"), { ok: true, value: 1 });
-      yield* Queue.take(seen);
-      const nestedFrom = Effect.fnUntraced(function* (from: Binding.Binding["Service"]) {
-        const parent = yield* call("demo.action", from).pipe(Effect.forkChild);
+      assert.notProperty(yield* Queue.take(seen), "agent");
+      // Whether a call came from an agent is Patchy's own invocation context, and the guest
+      // hears it as ctx.agent.
+      assert.deepStrictEqual(yield* agentCall("lookup"), { ok: true, value: 1 });
+      assert.deepStrictEqual((yield* Queue.take(seen)).agent, { name: "Claude" });
+      const nestedFrom = Effect.fnUntraced(function* (parent: Effect.Effect<unknown, unknown>) {
+        const fiber = yield* parent.pipe(Effect.forkChild);
         const request = yield* Queue.take(seen);
         const capability = yield* capabilities.resolve(request.callback.capability, request);
-        return { parent, run: capability.run! };
+        return { fiber, request, run: capability.run! };
       });
-      const page = yield* nestedFrom(binding);
+      const page = yield* nestedFrom(call("demo.action"));
       assert.strictEqual(
         yield* refused(page.run({ handler: "agent.lookup", args: {} })),
         "access_denied"
       );
-      // Whether a call came from an agent is Patchy's own invocation context.
-      const agent = { ...binding, agent: { name: "Claude" } };
-      assert.deepStrictEqual(yield* call("agent.lookup", agent), { ok: true, value: 1 });
-      yield* Queue.take(seen);
-      const fromAgent = yield* nestedFrom(agent);
-      assert.deepStrictEqual(yield* fromAgent.run({ handler: "agent.lookup", args: {} }), {
-        ok: true,
-        value: 1
-      });
+      // Inside an agent tool, ctx.run reaches ordinary siblings, and each carries the agent.
+      const fromAgent = yield* nestedFrom(agentCall("gather"));
+      assert.deepStrictEqual(fromAgent.request.agent, { name: "Claude" });
+      for (const [handler, args] of [
+        ["demo.query", { id: 1 }],
+        ["agent.lookup", {}]
+      ] as const) {
+        assert.deepStrictEqual(yield* fromAgent.run({ handler, args }), {
+          ok: true,
+          value: 1
+        });
+        const nested = yield* Queue.take(seen);
+        assert.strictEqual(nested.handler, handler);
+        assert.deepStrictEqual(nested.agent, { name: "Claude" });
+      }
       yield* Deferred.succeed(done, undefined);
-      yield* Fiber.join(page.parent);
-      yield* Fiber.join(fromAgent.parent);
+      yield* Fiber.join(page.fiber);
+      yield* Fiber.join(fromAgent.fiber);
     })
   );
 

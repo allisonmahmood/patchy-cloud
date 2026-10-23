@@ -184,7 +184,9 @@ async function invoke(
           type: "invoke",
           handler: request.handler,
           args: request.args,
-          viewer: request.viewer
+          viewer: request.viewer,
+          // Only an agent's call carries it, so a page's call reaches a guest built before agents.
+          ...(request.agent === undefined ? {} : { agent: request.agent })
         } satisfies GuestProtocol.GuestRequest)
       });
     const reply = decodeGuestReply(await response.json());

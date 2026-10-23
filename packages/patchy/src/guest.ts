@@ -457,10 +457,10 @@ export function createGuest(
       const pendingLogs: Promise<Failure | undefined>[] = [];
       const kind = entry.descriptor.kind;
       // A read-only action keeps an action's writes here, so one forced past its types reaches
-      // the host, which refuses it. No call comes from an agent yet.
+      // the host, which refuses it. Only an agent's call names its agent; a page's is null.
       const context = {
         viewer: input.viewer,
-        agent: null,
+        agent: input.agent ?? null,
         tables: names((name) => table(call, name, kind !== "query")),
         members: members(call),
         log(message: string, details?: Json): void {

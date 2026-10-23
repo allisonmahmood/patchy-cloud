@@ -20,8 +20,13 @@ export const invocation = Effect.fn("DevLog.invocation")(function* (
   const current = yield* settlement;
   if (current !== undefined && event.parentId === null) current.logged = true;
   if (json) return yield* Console.log(encodeJson({ type: "invocation", ...event }));
+  // An agent's call reads as its person via the agent, as the platform log says it.
+  const who =
+    event.agent === null
+      ? event.initiatingViewerId
+      : `${event.initiatingViewerId} via ${event.agent.name}`;
   const lines = [
-    `${event.initiatingViewerId} ${event.handler} ${event.outcomeCode ?? event.outcome} ${event.durationMs}ms`
+    `${who} ${event.handler} ${event.outcomeCode ?? event.outcome} ${event.durationMs}ms`
   ];
   for (const entry of event.logLines) {
     if (entry !== null && typeof entry === "object" && "message" in entry) {

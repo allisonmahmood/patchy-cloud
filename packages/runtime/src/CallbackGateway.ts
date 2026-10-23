@@ -378,7 +378,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           userId: effectivePrincipal === "patch" ? null : effectivePrincipal,
           effectivePrincipal,
           invocationId: attempt.invocationId,
-          credentialKind: "session",
+          // An agent's call came through its person's agent connection, never their session.
+          ...(binding.agent === undefined
+            ? { credentialKind: "session" as const }
+            : { credentialKind: "agent" as const, agent: binding.agent }),
           op: request.op,
           resource: handler.resource?.(request.args) ?? null,
           connectionId: handler.connectionId?.(request.args, binding) ?? null,

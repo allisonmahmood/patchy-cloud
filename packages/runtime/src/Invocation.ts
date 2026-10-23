@@ -31,6 +31,7 @@ import * as Executor from "./Executor.js";
 import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
+import type * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
@@ -291,6 +292,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     // Agent tools are for agents only, at any depth; only the binding says who called.
     if (descriptor.agentTool === true && binding.agent === undefined)
       return yield* new Runtime.AccessDenied({});
+    // An agent's call starts only an agent tool. Inside it, `ctx.run` reaches siblings as usual.
+    if (binding.agent !== undefined && parent === undefined && descriptor.agentTool !== true)
+      return yield* new Runtime.AccessDenied({});
     if (parent !== undefined) {
       yield* capabilities
         .resolve(parent.capability.token, parent.capability.attempt)
@@ -432,6 +436,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           handler: input.handler,
           kind: descriptor.kind,
           initiatingViewerId: viewer.user.id,
+          agent: binding.agent ?? null,
           parentId: parent?.capability.attempt.invocationId ?? null,
           correlationId: binding.correlationId,
           startedAt,
@@ -576,6 +581,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                     handler: input.handler,
                     args: input.args,
                     viewer,
+                    // Absent for a page, so its calls still reach a loader or guest built before
+                    // agents. Nested calls keep their parent's binding, and so its agent.
+                    ...(binding.agent === undefined ? {} : { agent: binding.agent }),
                     callback: { url: options.callbackUrl, capability: capability.token }
                   },
                   admission?.lease.binding
@@ -1020,3 +1028,53 @@ export const makeDev = (options: {
 
 export const layer = (options: { readonly callbackUrl: string }) =>
   Layer.effect(Invocation, make(options));
+
+/**
+ * One call of an agent tool for a person's worker agent. Only Patchy's own agent callers make
+ * one, the door and `patchy dev agent`; nothing a request supplies names an agent.
+ */
+export interface AgentCall {
+  /**
+   * The version the caller read the tool from, served when the call arrived. The call runs on
+   * it, so the caller's own checks of the tool and the run agree.
+   */
+  readonly version: LoadedVersions.LoadedVersion;
+  readonly person: NonNullable<RuntimeMe>;
+  readonly agent: GuestProtocol.Agent;
+  /** The tool's name, its export from `agent/`, which runs as the handler `agent.<tool>`. */
+  readonly tool: string;
+  readonly args: unknown;
+  /** A mutation's key, as a page's call carries one, kept by the caller to retry the change. */
+  readonly mutationKey?: string;
+  /**
+   * The caller's own condition, rechecked before each company callback at any depth, as a page's
+   * session is. It answers the person's current identity or refuses the callback.
+   */
+  readonly recheck: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>;
+}
+
+/**
+ * Runs an agent tool as its person, through the same invocation as a page's call: the tool's
+ * kind decides how it runs, and its writes reach open pages live. Every row it logs names the
+ * agent, and handler code sees it as `ctx.agent`, nested calls included.
+ */
+export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: AgentCall) {
+  const invocation = yield* Invocation;
+  if (input.person.company.id !== input.version.companyId)
+    return yield* new Runtime.AccessDenied({});
+  return yield* invocation.call(
+    {
+      handler: `agent.${input.tool}`,
+      args: input.args,
+      ...(input.mutationKey === undefined ? {} : { mutationKey: input.mutationKey })
+    },
+    Binding.Binding.of({
+      ...input.version,
+      identity: input.person,
+      principal: { userId: input.person.user.id },
+      correlationId: newInternalId("call"),
+      agent: input.agent
+    }),
+    input.recheck
+  );
+});

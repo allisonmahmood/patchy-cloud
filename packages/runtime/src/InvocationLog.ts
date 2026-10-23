@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { HandlerKind } from "@patchy/api";
-import { credentialKinds } from "./RuntimeLog.js";
+import { Agent, credentialKinds } from "./RuntimeLog.js";
 
 export const Outcome = Schema.Literals([
   "pending",
@@ -28,6 +28,8 @@ export interface Begin {
   readonly handler: string;
   readonly kind: typeof HandlerKind.Type;
   readonly initiatingViewerId: string;
+  /** The worker agent the call runs for, on every invocation of its tree; null for a page's. */
+  readonly agent: Agent | null;
   readonly parentId: string | null;
   readonly correlationId: string;
   readonly startedAt: number;
@@ -58,6 +60,7 @@ export class Invocation extends Schema.Class<Invocation>("InvocationLog.Invocati
   handler: Schema.String,
   kind: HandlerKind,
   initiatingViewerId: Schema.String,
+  agent: Schema.NullOr(Agent),
   effectivePrincipal: Schema.String,
   parentId: Schema.NullOr(Schema.String),
   outcome: Outcome,
@@ -193,6 +196,7 @@ export const make = Effect.gen(function* () {
   const columns = (now: number) => sql`
     id, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
     handler, kind, initiating_viewer_id AS "initiatingViewerId",
+    CASE WHEN agent_name IS NULL THEN NULL ELSE json_build_object('name', agent_name) END AS agent,
     effective_principal AS "effectivePrincipal", parent_id AS "parentId",
     ${outcomeOf(now)} AS outcome,
     CASE WHEN mutation_committed THEN NULL ELSE outcome_code END AS "outcomeCode",
@@ -351,10 +355,11 @@ export const make = Effect.gen(function* () {
   const begin = Effect.fn("InvocationLog.begin")(function* (input: Begin) {
     yield* sql`
       INSERT INTO runtime_invocations (id, company_id, patch_id, version_id, handler, kind,
-        initiating_viewer_id, effective_principal, parent_id, correlation_id, started_at,
-        deadline, args_bytes)
+        initiating_viewer_id, agent_name, effective_principal, parent_id, correlation_id,
+        started_at, deadline, args_bytes)
       VALUES (${input.id}, ${input.companyId}, ${input.patchId}, ${input.versionId},
-        ${input.handler}, ${input.kind}, ${input.initiatingViewerId}, 'patch', ${input.parentId},
+        ${input.handler}, ${input.kind}, ${input.initiatingViewerId}, ${input.agent?.name ?? null},
+        'patch', ${input.parentId},
         ${input.correlationId}, to_timestamp(${input.startedAt / 1_000}),
         to_timestamp(${input.deadline / 1_000}), ${input.argsBytes})`;
     return input.id;
