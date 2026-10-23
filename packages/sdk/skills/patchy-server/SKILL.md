@@ -396,6 +396,10 @@ date-time string, so an agent must send a time of day; a plain date is a
 `t.text()` the handler checks. Dev builds and publish refuse a tool that breaks
 these rules, naming its file; publish lists the tools as reads and changes.
 
+Read results over 100,000 characters are refused, so large reads need paging.
+The agent reads every result in full; a row result carries `id`, `createdAt`
+and `updatedAt` besides its columns.
+
 `pnpm patchy dev agent` lists the tools as an agent sees them, and
 `pnpm patchy dev agent <tool> '<json>'` calls one as the dev viewer, or as the
 colleague with `--colleague`; `-` reads the JSON from stdin. The call runs as an

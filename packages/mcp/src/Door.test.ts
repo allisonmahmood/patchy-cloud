@@ -397,27 +397,58 @@ it.layer(harness)("the door", (it) => {
       })
   );
 
-  it.effect("answers the tools not built yet as such, and an unknown tool name -32602", () =>
+  it.effect("answers change_patch as not built yet, and an unknown tool name -32602", () =>
     Effect.gen(function* () {
       const { people } = yield* company("call", [["Ada Admin", "admin"]]);
       const { token } = people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.13");
-      for (const name of ["read_patch", "change_patch"]) {
-        const response = yield* send(call(token, name, { patch: "new-business" }));
-        assert.strictEqual(response.status, 200, name);
-        const result = objectAt(response.json, "result");
-        assert.include(result, { resultType: "complete", isError: true });
-        assert.include(objectAt(result, "structuredContent.error"), {
-          code: "not_built",
-          from: "patchy"
-        });
-        assert.include(response.event, { mcpTool: name, code: "not_built", outcome: "refused" });
-      }
+      const response = yield* send(call(token, "change_patch", { patch: "new-business" }));
+      assert.strictEqual(response.status, 200);
+      const result = objectAt(response.json, "result");
+      assert.include(result, { resultType: "complete", isError: true });
+      assert.include(objectAt(result, "structuredContent.error"), {
+        code: "not_built",
+        from: "patchy"
+      });
+      assert.include(response.event, {
+        mcpTool: "change_patch",
+        code: "not_built",
+        outcome: "refused"
+      });
       const unknown = yield* send(legacy(token, "tools/call", { name: "delete_everything" }));
       assert.strictEqual(unknown.status, 200);
       assert.strictEqual(at(unknown.json, "error.code"), -32602);
       assert.include(unknown.event, { code: "unknown_tool", outcome: "refused" });
       assert.isUndefined(unknown.event.type === "request" ? unknown.event.mcpTool : undefined);
+    })
+  );
+
+  it.effect("keeps every refusal within the read cap, however long what it names", () =>
+    Effect.gen(function* () {
+      const long = (letter: string) => `${letter.toUpperCase()}${letter.repeat(39_999)}`;
+      const acme = yield* company(
+        "long-admins",
+        [
+          [long("a"), "admin"],
+          [long("b"), "admin"],
+          [long("c"), "admin"]
+        ],
+        { access: false }
+      );
+      const send = yield* door(PRODUCTION, "203.0.113.19");
+      for (const name of ["find_patches", "read_patch"]) {
+        const response = yield* send(call(acme.people[0]!.token, name, {}));
+        const text = String(at(response.json, "result.content.0.text"));
+        assert.isAtMost(text.length, 100_000, name);
+        assert.include(objectAt(response.json, "result.structuredContent.error"), {
+          code: "agent_access_off",
+          from: "patchy"
+        });
+        assert.match(
+          text,
+          /^Agent access is off at Door long-admins, so Patchy refuses every agent/u
+        );
+      }
     })
   );
 

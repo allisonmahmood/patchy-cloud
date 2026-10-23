@@ -7,11 +7,13 @@
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   agentToolEntries,
+  agentToolKind,
   agentTools,
   callAnswer,
   handlerArgsSchema,
   invalidArgsRefusal,
   openPatchAnswer,
+  readAnswer,
   runtimeRefusal,
   toolAnswer,
   unknownToolRefusal,
@@ -112,7 +114,11 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
         call.pipe(Effect.retry({ times: 2, while: (error) => error.code === "unknown_outcome" }))
     ).pipe(
       Effect.map((reply) => callAnswer(dev.patch.name, tool, build, reply)),
-      Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor)))
+      Effect.catch((error) => Effect.succeed(runtimeRefusal(Runtime.toFailure(error), descriptor))),
+      // A read's answer keeps the read cap here as at the door.
+      Effect.map((answer) =>
+        agentToolKind(descriptor) === "read" ? readAnswer(dev.patch, tool, answer) : answer
+      )
     )
   );
   return answered(result);

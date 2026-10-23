@@ -61,7 +61,8 @@ const addNote = mutation({description:"Adds a note. Refuses a blank title.",args
   return {viewer:ctx.viewer.user.id, agent:ctx.agent};
 }});
 const broken = action({description:"Always fails.",args:{},result:t.text(),handler:async () => { throw new Error("dev agent failure"); }});
-export default createGuest({notes:{list}}, [], {tools:{notes, addNote, broken}});`
+const dump = query({description:"Every note, at length.",args:{},result:t.text(),handler:async () => "x".repeat(100000)});
+export default createGuest({notes:{list}}, [], {tools:{notes, addNote, broken, dump}});`
       },
       alias: { "patchy/server": new URL("./server.ts", import.meta.url).pathname },
       external: ["./executeConfig.js"],
@@ -172,16 +173,23 @@ it.live(
         code: "invalid_args",
         from: "patchy",
         message:
-          "addNote's arguments don't fit its schema: Missing key at [\"title\"]. Its tools now: addNote, broken, notes. Call open_patch to see what each does and takes."
+          "addNote's arguments don't fit its schema: Missing key at [\"title\"]. Its tools now: addNote, broken, dump, notes. Call open_patch to see what each does and takes."
       });
       // The page's own handler is not a tool.
       assert.deepStrictEqual(yield* refused("list"), {
         code: "unknown_tool",
         from: "patchy",
         message:
-          "notes has no tool list. Its tools now: addNote, broken, notes. Call open_patch to see what each does and takes."
+          "notes has no tool list. Its tools now: addNote, broken, dump, notes. Call open_patch to see what each does and takes."
       });
       assert.include(yield* refused("broken"), { code: "handler_failed", from: "patchy" });
+      // A read longer than an agent reads in one answer is refused, as the door refuses it.
+      assert.deepStrictEqual(yield* refused("dump"), {
+        code: "too_large",
+        from: "patchy",
+        message:
+          "notes's dump answered with 100,025 characters, more than the 100,000 an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, Builder, can add paging."
+      });
 
       // Below tier 2 there is nothing to call through; a tier 2 patch may have no tools yet.
       const noTools = yield* DevAgent.answer(

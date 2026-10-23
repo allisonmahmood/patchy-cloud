@@ -11,10 +11,13 @@ import {
   invalidArgsRefusal,
   openPatchAnswer,
   patchRefusal,
+  readAnswer,
+  readAnswerChars,
   runtimeRefusal,
   toolAnswer,
   toolRefusal,
   unknownToolRefusal,
+  wrongKindRefusal,
   type HandlerDescriptor,
   type HandlerDescriptors,
   type HandlerSchema
@@ -474,6 +477,110 @@ describe("tool call answers", () => {
     });
     expect(unknownToolRefusal("New Business", "addDeal", []).content[0].text).toBe(
       "New Business has no tool addDeal. It has no agent tools now. Call open_patch to see what each does and takes."
+    );
+  });
+
+  it("sends a tool to the door's tool for its kind, naming the tools there are now", () => {
+    expect(
+      wrongKindRefusal("New Business", "addLead", "change", ["addLead", "listDeals"])
+        .structuredContent
+    ).toEqual({
+      error: {
+        code: "wrong_kind",
+        from: "patchy",
+        message:
+          "addLead is one of New Business's change tools, so call it with change_patch. Its tools now: addLead, listDeals. Call open_patch to see what each does and takes."
+      }
+    });
+    expect(
+      wrongKindRefusal("New Business", "listDeals", "read", ["listDeals"]).content[0].text
+    ).toBe(
+      "listDeals is one of New Business's read tools, so call it with read_patch. Its tools now: listDeals. Call open_patch to see what each does and takes."
+    );
+  });
+
+  it("answers a read of up to 100,000 characters of compact JSON and refuses a longer one", () => {
+    const patch = { name: "New Business", owner: "Priya Shah" };
+    const read = (value: string) =>
+      readAnswer(patch, "listDeals", callAnswer(patch.name, "listDeals", 4, { ok: true, value }));
+    // Characters, not bytes: each "é" is two bytes of UTF-8 and one character.
+    const around = JSON.stringify({ result: "", version: 4 }).length;
+    const fits = "é".repeat(readAnswerChars - around);
+    expect(read(fits)).toEqual(toolAnswer({ result: fits, version: 4 }));
+    // An escaped quote is two characters of the text the agent reads.
+    const message =
+      "New Business's listDeals answered with 100,001 characters, more than the 100,000 an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, Priya Shah, can add paging.";
+    expect(read(`${fits.slice(1)}"`)).toEqual({
+      content: [{ type: "text", text: message }],
+      structuredContent: { error: { code: "too_large", from: "patchy", message } },
+      isError: true
+    });
+  });
+
+  it("keeps a refusal past the read cap's code and words, leaving its details out", () => {
+    const patch = { name: "New Business", owner: "Priya Shah" };
+    const failure = (details: { readonly message: string; readonly open: readonly string[] }) =>
+      patchRefusal(patch.name, "listDeals", { code: "stage_closed", details });
+    const small = failure({ message: "pick an open stage", open: ["lead"] });
+    expect(readAnswer(patch, "listDeals", small)).toEqual(small);
+    const large = failure({ message: "pick an open stage", open: ["x".repeat(readAnswerChars)] });
+    const left = (chars: number) =>
+      ` Its details were left out: the refusal came to ${chars.toLocaleString("en-US")} characters, more than the 100,000 an agent reads in one answer.`;
+    const chars = large.content[0].text.length;
+    expect(readAnswer(patch, "listDeals", large)).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `New Business refused listDeals (stage_closed): pick an open stage.${left(chars)}`
+        }
+      ],
+      structuredContent: {
+        error: {
+          code: "stage_closed",
+          from: "patch",
+          message: `New Business refused listDeals (stage_closed): pick an open stage.${left(chars)}`
+        }
+      },
+      isError: true
+    });
+    // A long name is shortened, so the patch's words still fit.
+    const named = readAnswer(
+      patch,
+      "y".repeat(50_000),
+      patchRefusal(patch.name, "y".repeat(50_000), {
+        code: "stage_closed",
+        details: { message: "pick an open stage", open: ["x".repeat(readAnswerChars)] }
+      })
+    );
+    expect(named.content[0].text).toMatch(
+      new RegExp(
+        `^New Business refused y{127}… \\(stage_closed\\): pick an open stage\\. Its details`,
+        "u"
+      )
+    );
+    // Words past 2,000 characters are cut too, and a retry's wait stays.
+    const wordy = toolRefusal({
+      code: "busy",
+      from: "patchy",
+      message: "y".repeat(readAnswerChars + 1),
+      retryAfterSeconds: 3
+    });
+    const kept = readAnswer(patch, "listDeals", wordy).structuredContent["error"];
+    expect(kept).toEqual({
+      code: "busy",
+      from: "patchy",
+      message: `${"y".repeat(1_999)}…${left(readAnswerChars + 1)}`,
+      retryAfterSeconds: 3
+    });
+  });
+
+  it("repeats at most 128 characters of a tool's name and 2,000 of a schema's words", () => {
+    const now = "Its tools now: listDeals. Call open_patch to see what each does and takes.";
+    expect(
+      unknownToolRefusal("New Business", "x".repeat(60_000), ["listDeals"]).content[0].text
+    ).toBe(`New Business has no tool ${"x".repeat(127)}…. ${now}`);
+    expect(invalidArgsRefusal("listDeals", "y".repeat(5_000), ["listDeals"]).content[0].text).toBe(
+      `listDeals's arguments don't fit its schema: ${"y".repeat(1_999)}…. ${now}`
     );
   });
 

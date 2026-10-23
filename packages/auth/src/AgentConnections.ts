@@ -114,6 +114,13 @@ export class AgentConnections extends Context.Service<
     /** The `work` bearer check: who the access token acts as, or `null`. A call stamps last used. */
     readonly authenticate: (accessToken: string) => Effect.Effect<AgentIdentity | null, SqlError>;
     /**
+     * Who a live connection acts as now, or `null` once it has ended in any way: what an admitted
+     * call rechecks before each company callback, as a page's callbacks recheck its session. It
+     * reads without using the connection, so last used stays the call's, and its access token
+     * expiring mid-call ends nothing.
+     */
+    readonly current: (connectionId: string) => Effect.Effect<AgentIdentity | null, SqlError>;
+    /**
      * The connection a refresh token was issued to, its client's id and whether the token is the
      * chain's current one, which `refresh` would rotate, or `null`: what the token endpoint checks
      * and limits by before it calls `refresh`. Unlocked, so `current` can be stale by the time
@@ -218,6 +225,21 @@ export const make = Effect.gen(function* () {
         'agentConnection', json_build_object(
           'id', c.id, 'clientName', c.client_name, 'clientSite', c.client_site)
       ) AS identity`
+  });
+
+  const liveIdentity = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ identity: AgentIdentity }),
+    execute: (connectionId) => sql`
+      SELECT json_build_object(
+        'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
+        'company', json_build_object('id', co.id, 'handle', co.handle, 'name', co.name),
+        'role', u.role,
+        'agentConnection', json_build_object(
+          'id', c.id, 'clientName', c.client_name, 'clientSite', c.client_site)
+      ) AS identity
+      FROM agent_connections c JOIN users u ON u.id = c.user_id JOIN companies co ON co.id = u.company_id
+      WHERE c.id = ${connectionId} AND ${live}`
   });
 
   const chainOwner = SqlSchema.findOneOption({
@@ -327,6 +349,13 @@ export const make = Effect.gen(function* () {
     return Option.isSome(used) ? used.value.identity : null;
   });
 
+  const current = Effect.fn("AgentConnections.current")(function* (connectionId: string) {
+    const found = yield* liveIdentity(connectionId).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return Option.isSome(found) ? found.value.identity : null;
+  });
+
   // A connection's client never changes; whether the token is current only feeds a limit.
   const chainOf = Effect.fn("AgentConnections.chainOf")(function* (refreshToken: string) {
     const owner = yield* chainOwner(sha256(refreshToken)).pipe(
@@ -420,6 +449,7 @@ export const make = Effect.gen(function* () {
   return AgentConnections.of({
     create,
     authenticate,
+    current,
     chainOf,
     refresh,
     sweepRetries,

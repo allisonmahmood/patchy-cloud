@@ -46,6 +46,7 @@ it.effect(
         AgentConnections.AgentConnections.of({
           create: () => Effect.die("not swept"),
           authenticate: () => Effect.die("not swept"),
+          current: () => Effect.die("not swept"),
           chainOf: () => Effect.die("not swept"),
           refresh: () => Effect.die("not swept"),
           list: () => Effect.die("not swept"),

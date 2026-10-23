@@ -19,6 +19,7 @@ import {
   openPatchAnswer,
   openPatchBytes,
   PatchName,
+  readAnswerChars,
   toolAnswer,
   toolRefusal
 } from "@patchy/api";
@@ -28,8 +29,6 @@ import * as Tools from "./Tools.js";
 
 /** The most patches one find answers. */
 const PAGE_SIZE = 50;
-/** The most characters of a find's compact JSON text, the read cap every read answer keeps. */
-export const RESULT_CHARS = 100_000;
 
 const FindArgs = Schema.Struct({
   search: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(Tools.SEARCH_CHARS))),
@@ -58,15 +57,24 @@ const isPatchName = Schema.is(PatchName);
 const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const jsonLength = (value: unknown) => jsonText(value).length;
 
-const invalidArgs = (tool: string, problem: string, fix: string) =>
+/** One of the door's own tools given arguments its input schema refuses, and how to fix them. */
+export const invalidArgs = (tool: string, problem: string, fix: string) =>
   toolRefusal({
     code: "invalid_args",
     from: "patchy",
     message: `${tool}'s arguments don't fit its schema: ${problem}. ${fix}`
   });
 
-/** The schema's own words for what is wrong and where, on one line. */
-const problemOf = (error: Schema.SchemaError) => error.message.replace(/\s*\n\s*/g, " ");
+/** The most of the schema's words a refusal repeats, so its own instructions always fit. */
+const PROBLEM_CHARS = 2_000;
+
+/** The schema's own words for what is wrong and where, on one line and cut short. */
+export const problemOf = (error: Schema.SchemaError) => {
+  const words = [...error.message.replace(/\s*\n\s*/g, " ")];
+  return words.length > PROBLEM_CHARS
+    ? `${words.slice(0, PROBLEM_CHARS - 1).join("")}…`
+    : words.join("");
+};
 
 const findFix =
   "Send search, cursor and detail as tools/list describes them, or {} to list them all.";
@@ -221,7 +229,7 @@ export const find = Effect.fn("Catalogue.find")(
       const next = index < remaining.length - 1 ? `,"next":""`.length + nextAfter(key).length : 0;
       const grown = (entry: ReturnType<typeof entryOf>) =>
         chars + jsonLength(entry) + (page.length === 0 ? 0 : 1);
-      const fits = (entry: ReturnType<typeof entryOf>) => grown(entry) + next <= RESULT_CHARS;
+      const fits = (entry: ReturnType<typeof entryOf>) => grown(entry) + next <= readAnswerChars;
       let entry = entryOf(listed);
       if (!fits(entry)) {
         if (page.length > 0) {
@@ -258,11 +266,11 @@ export const find = Effect.fn("Catalogue.find")(
 type PatchRef = "name" | "id" | "address";
 
 /**
- * The patch `patch` names among those the person can open, and how it named it: an address
- * on this instance under their company's handle, an id, or a name, a former one following its
- * rename as the address does. Anything else is none.
+ * The patch `patch` names among `rows`, those the person can open, and how it named it: an
+ * address on this instance under their company's handle, an id, or a name, a former one
+ * following its rename as the address does. Anything else is none.
  */
-const resolve = Effect.fn("Catalogue.resolve")(function* (
+export const resolve = Effect.fn("Catalogue.resolve")(function* (
   identity: AgentConnections.AgentIdentity,
   rows: ReadonlyArray<Patches.ReadPatch>,
   patch: string,
@@ -293,7 +301,7 @@ const resolve = Effect.fn("Catalogue.resolve")(function* (
 });
 
 /** One refusal for every patch the person can't open, so none of them can be told apart. */
-const notFound = (identity: AgentConnections.AgentIdentity) =>
+export const notFound = (identity: AgentConnections.AgentIdentity) =>
   toolRefusal({
     code: "not_found",
     from: "patchy",

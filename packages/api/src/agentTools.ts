@@ -4,6 +4,7 @@
  * 2020-12, `open_patch`'s tools, the agent area check, and the shapes of a tool call's answer
  * (docs/product.md › Patchy MCP).
  */
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import {
@@ -449,6 +450,16 @@ export const toolRefusal = (error: ToolRefusal, text = error.message): ToolCallR
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 
 /**
+ * What a refusal repeats of a tool's name, as the agent sent it or a builder chose it, or of a
+ * schema's words about the arguments, cut short so the refusal's own words always reach the
+ * agent within the read cap.
+ */
+const repeated = (text: string, limit: number) =>
+  [...text].length > limit ? `${[...text].slice(0, limit - 1).join("")}…` : text;
+const repeatedName = 128;
+const repeatedProblem = 2_000;
+
+/**
  * A patch's own refusal of a tool, such as "New Business refused addLead (missing_fields):
  * give every field." A string `message` in its details says what to do; the rest of the
  * details follow in the text, and all of them stay in `structuredContent` unchanged.
@@ -466,7 +477,7 @@ export const patchRefusal = (
       ? details
       : Object.fromEntries(Object.entries(record).filter(([key]) => key !== "message"));
   // Without its own words, the tool's description is where the agent learns what to do.
-  const message = `${patch} refused ${tool} (${failure.code})${said === undefined ? ". Its description in open_patch says when it refuses and what to do." : `: ${sentence(said)}`}`;
+  const message = `${patch} refused ${repeated(tool, repeatedName)} (${failure.code})${said === undefined ? ". Its description in open_patch says when it refuses and what to do." : `: ${sentence(said)}`}`;
   const extra =
     rest === undefined || (Predicate.isObject(rest) && Object.keys(rest).length === 0)
       ? ""
@@ -495,7 +506,7 @@ export const unknownToolRefusal = (
   toolRefusal({
     code: "unknown_tool",
     from: "patchy",
-    message: `${patch} has no tool ${tool}. ${toolsNow(tools)}`
+    message: `${patch} has no tool ${repeated(tool, repeatedName)}. ${toolsNow(tools)}`
   });
 
 /**
@@ -510,7 +521,24 @@ export const invalidArgsRefusal = (
   toolRefusal({
     code: "invalid_args",
     from: "patchy",
-    message: `${tool}'s arguments don't fit its schema: ${problem}. ${toolsNow(tools)}`
+    message: `${repeated(tool, repeatedName)}'s arguments don't fit its schema: ${repeated(problem, repeatedProblem)}. ${toolsNow(tools)}`
+  });
+
+/**
+ * A tool named on the door's tool for the other kind: a change through `read_patch`, or a read
+ * through `change_patch`. A publish may have flipped its kind since the agent read it, so it
+ * names the tools the patch has now.
+ */
+export const wrongKindRefusal = (
+  patch: string,
+  tool: string,
+  kind: AgentToolKind,
+  tools: readonly string[]
+): ToolCallResult =>
+  toolRefusal({
+    code: "wrong_kind",
+    from: "patchy",
+    message: `${repeated(tool, repeatedName)} is one of ${patch}'s ${kind} tools, so call it with ${kind === "read" ? "read_patch" : "change_patch"}. ${toolsNow(tools)}`
   });
 
 /** The refusals of an action that ran out of time, at any depth, or whose outcome is unknown. */
@@ -555,3 +583,58 @@ export const callAnswer = (
   reply.ok
     ? toolAnswer({ result: reply.value, version } satisfies CallSuccess)
     : patchRefusal(patch, tool, reply);
+
+/** The most characters of a read's compact JSON answer, which an agent reads whole. */
+export const readAnswerChars = 100_000;
+
+/** The most characters of a refusal's words kept when its details are left out. */
+const keptWords = 2_000;
+
+const counted = (count: number) => count.toLocaleString("en-US");
+const decodeRefusal = Schema.decodeUnknownOption(ToolRefusal);
+
+/**
+ * A refusal within the read cap, measured once on the compact JSON text the agent reads: past
+ * `readAnswerChars` it keeps its code, its words (cut at 2,000 characters) and any retry wait,
+ * leaving its details out. A long tool name or a schema's words about long arguments can make
+ * even Patchy's own refusal that long.
+ */
+export const fitRefusal = (answer: ToolCallResult): ToolCallResult => {
+  const chars = answer.content[0].text.length;
+  if (answer.isError !== true || chars <= readAnswerChars) return answer;
+  const { code, from, message, retryAfterSeconds } = Option.getOrElse(
+    decodeRefusal(answer.structuredContent["error"]),
+    (): ToolRefusal => ({
+      code: "too_large",
+      from: "patchy",
+      message: "The refusal was too long to send."
+    })
+  );
+
+  const words = repeated(message, keptWords);
+  return toolRefusal({
+    code,
+    from,
+    message: `${words} Its details were left out: the refusal came to ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer.`,
+    ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds })
+  });
+};
+
+/**
+ * A read's answer as the agent gets it, measured once on the compact JSON text it reads: a
+ * result past `readAnswerChars` is refused `too_large` without it, and a refusal is `fitRefusal`'s.
+ */
+export const readAnswer = (
+  patch: { readonly name: string; readonly owner: string },
+  tool: string,
+  answer: ToolCallResult
+): ToolCallResult => {
+  const chars = answer.content[0].text.length;
+  if (answer.isError === true) return fitRefusal(answer);
+  if (chars <= readAnswerChars) return answer;
+  return toolRefusal({
+    code: "too_large",
+    from: "patchy",
+    message: `${patch.name}'s ${tool} answered with ${counted(chars)} characters, more than the ${counted(readAnswerChars)} an agent reads in one answer, so nothing was sent. Narrow the call; the patch's owner, ${[...patch.owner].slice(0, ownerLimit).join("")}, can add paging.`
+  });
+};
