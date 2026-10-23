@@ -2,8 +2,9 @@
 
 Local, throwaway milestone 1, based on Patchy main at
 `e4243ff54d2acbbc88b60eeb0cf9b82a26dc9d5d`. This directory is outside the
-integration package's production `src` and is not wired into the server, CLI,
-release, migrations or SDK. No Nango branch code was incorporated.
+integration package's production `src`. A separate local server entrypoint
+composes the adapter; normal server startup, releases, migrations and the SDK
+keep their existing behavior. No Nango branch code was incorporated.
 
 The question: can a shared adapter run an existing community action while
 Patchy owns connections, secrets and authorization? **Yes for this one action,
@@ -25,6 +26,50 @@ database and loopback HTTP simulator are closed and removed at teardown. It need
 no provider account, real credentials, Activepieces server, subscription or Docker.
 Dependency installation downloads the pinned npm package; this is not a runtime
 dependency on Activepieces Cloud.
+
+## Try it in a browser
+
+From the worktree root:
+
+```sh
+npm --prefix packages/integrations/prototype-activepieces run local
+```
+
+This starts the worktree's full local Patchy server on loopback with dev-persona
+sign-in, then seeds **Customer A** (`alice@customer-a.example`, project 101) and
+**Customer B** (`bob@customer-b.example`, project 202). Each has its own encrypted
+`posthog/analytics` connection and published `activepieces-demo` patch. The
+launcher prints both signed-in patch links. Use separate browser profiles or
+private windows to keep their cookies separate.
+
+Press **Run action** to load that company's simulated results. **Try unsupported
+input** shows a refusal before provider HTTP. Use Patchy's existing Connections
+page to read the call log, disconnect, test the refusal, and reconnect. While
+signed in to A, opening B's patch address must be refused.
+
+**The provider is a loopback simulator, not PostHog.** It accepts only the two
+dummy keys in `customers.ts` and the demo query. The local entrypoint refuses
+production, public origins and non-persona authentication. There is deliberately
+no option to paste a real key into this simulator. Its connection screens work
+normally, but a real key will be rejected by the simulator.
+
+The launcher is repeatable: a running prototype is reused, existing connection
+states are preserved, and the demo patches are refreshed and republished. It
+refuses to replace a different running dev instance. State and the generated
+patch repos live in `.local/dev/`. No dependencies or CLIs are installed globally.
+
+```sh
+npm --prefix packages/integrations/prototype-activepieces run local:status
+npm --prefix packages/integrations/prototype-activepieces run local:logs
+npm --prefix packages/integrations/prototype-activepieces run local:stop
+```
+
+After server code edits, stop and run `local` again. Plain `pnpm dev` starts
+the normal native integration, not this adapter. `pnpm dev down` deletes the
+disposable instance and its generated patch repos; it is not needed to restart.
+The shared dev supervisor accepts an alternate entrypoint, and `Server` exposes
+alternate PostHog-source composition; their defaults are unchanged. Only this
+prototype launcher selects the alternate entrypoint.
 
 ## What runs
 
@@ -52,9 +97,17 @@ viewer/company checks, result shaping and `RuntimeLog`. Native connection
 validation/discovery uses the existing PostHog HTTP double; invocation queries
 use the Activepieces action over a loopback HTTP simulator. Published-version
 lookup is an in-memory test layer, and session JWTs are signed offline fixtures.
-There is no browser or hosted workerd deployment in this milestone.
+The local browser demo instead publishes real tier 1 patches and signs in through local dev
+personas. There is no hosted workerd deployment in this milestone.
 
 ## Evidence
+
+The local browser demo was exercised in isolated browser contexts: A returned
+project 101 / 12 events, B returned project 202 / 34 events, both cross-company
+patch requests returned 404, and unsupported input returned `invalid_query`.
+The existing Connections page showed each viewer's successful and refused calls.
+Disconnecting A made its browser action return `access_denied`; reconnecting
+restored its original result. Screenshots are kept locally under `.local/shots/`.
 
 Two tests exercise the following scenario and adapter refusal cases:
 
@@ -138,7 +191,7 @@ Resource limits, cancellation, outbound network policy and a complete bundled
 dependency/license inventory need review before any production adapter.
 
 Focused demo, TypeScript and lint/format checks are the relevant checks here.
-Full `pnpm verify`, live provider validation and browser acceptance have not been
-run. This prototype is not ready to ship. No production files, migrations, wire
-contracts, CLI flags, generated release assets, product vocabulary or served UI
-were changed; those mirrored surfaces do not apply yet.
+Full `pnpm verify` and live provider validation have not been run. This prototype
+is not ready to ship. Migrations, wire contracts, CLI flags, generated release
+assets and product vocabulary remain unchanged. The local browser app is a
+published patch; first-party portal and connection pages keep their existing UI.

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "local": "node --import tsx --conditions=development local.mjs",
+    "local:status": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts status",
+    "local:logs": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts logs",
+    "local:stop": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts stop",
     "demo": "../../../node_modules/.bin/vitest run --config vitest.config.ts",
     "typecheck": "../../../node_modules/.bin/tsc -p tsconfig.json"
   },

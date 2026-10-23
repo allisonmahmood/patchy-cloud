@@ -1,0 +1,76 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #172c33;
+  background: #f5f6f2;
+  line-height: 1.55;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 740px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+h1 {
+  line-height: 1.15;
+  font-size: clamp(28px, 5vw, 40px);
+  margin: 16px 0;
+}
+h2 {
+  font-size: 18px;
+}
+.badge {
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  color: #556027;
+}
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 28px 0;
+}
+button {
+  font: inherit;
+  font-weight: 650;
+  background: #234b3d;
+  color: white;
+  border: 1px solid #234b3d;
+  border-radius: 6px;
+  padding: 11px 18px;
+  cursor: pointer;
+}
+button.secondary {
+  color: #234b3d;
+  background: white;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+button:focus-visible {
+  outline: 3px solid #b3bc3d;
+  outline-offset: 3px;
+}
+section,
+aside {
+  background: white;
+  padding: 18px 22px;
+  border: 1px solid #d7ded5;
+  border-radius: 8px;
+  margin-top: 24px;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+li {
+  margin: 9px 0;
+}
+.error {
+  border-left: 4px solid #a33e2e;
+  padding: 12px;
+  background: #fff0e9;
+}

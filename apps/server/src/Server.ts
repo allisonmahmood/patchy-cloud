@@ -206,10 +206,7 @@ const services = Layer.mergeAll(
     ).pipe(
       // One PostHog source, so connection administration and patches share each project's slots.
       Layer.provideMerge(
-        SqlConnectionStore.layer.pipe(
-          Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
-          Layer.provideMerge(PostHogSource.layer)
-        )
+        SqlConnectionStore.layer.pipe(Layer.provide([CredentialKeys.layer, PostgresSource.layer]))
       ),
       Layer.provideMerge(Tables.layer),
       Layer.provideMerge(Analytics.layer),
@@ -316,11 +313,14 @@ const app = Layer.mergeAll(
   middleware
 );
 
-/** The server: serving the app, sweeping, and closing both with the scope. */
-export const layer = Layer.mergeAll(
-  HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provide(ownedPatches)
-  ),
-  sweeper,
-  Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
-).pipe(Layer.provide(services));
+/** Serve and sweep in one scope, with an alternate source for isolated local harnesses. */
+export const withPostHogSource = <E, R>(source: Layer.Layer<PostHogSource.Source, E, R>) =>
+  Layer.mergeAll(
+    HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
+      Layer.provide(ownedPatches)
+    ),
+    sweeper,
+    Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
+  ).pipe(Layer.provide(services), Layer.provide(source));
+
+export const layer = withPostHogSource(PostHogSource.layer);
