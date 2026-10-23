@@ -278,11 +278,13 @@ out; **Sign out** on **Your machines** does that.
 ### 6. Suggest a first patch
 
 With the welcome page live, or skipped, suggest one or two first patches this person
-might want. Draw them from what you know about them: the work you're in together, what
-they've told you, their role, and what their company already has (`patchy list`). Tie
-each to something specific you know, and say why in a few words. Patchy keeps no list
-of suggestions, so there are no stock examples to fall back on. If you know too little
-to suggest anything specific, ask what they'd like their company's tools to do.
+might want. Draw them from what you know about them: what they've told you, your own
+memory of them, the folder you're working in (a quick look often says what they do),
+their role, and what their company already has (`patchy list`). Tie each to something
+specific you found, and say why in a few words. Patchy keeps no list of suggestions:
+don't offer generic examples in their place. If you still know too little, ask one
+short question about their work, such as what they do and what's tedious this week,
+then suggest from their answer.
 
 Build whatever they pick, or whatever they ask for instead. Close with what to say next
 time, in their words: "publish this with patchy", "publish this plan", "update my
@@ -329,8 +331,12 @@ actually gives you; never invent one, and never carry these into a real session.
 > **Agent**: You're publishing as sam@acme.example at Acme, from "Work laptop". Your
 > tools will use Acme's look. Publishing your welcome page now… Here it is:
 > `https://pages.example.com/acme/welcome` — signed-in colleagues in your company can
-> open it. I don't know much about your work yet: what would you like Acme's tools to
-> do for you?
+> open it. What do you do at Acme, and what's been tedious this week?
+>
+> **User**: I run payroll. Chasing everyone's timesheets every Friday.
+>
+> **Agent**: Then a timesheet board could be a good first tool: everyone marks their
+> week done, and you see who's left without chasing. Want me to build it?
 
 ### A webmail address
 
