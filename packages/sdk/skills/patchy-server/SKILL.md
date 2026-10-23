@@ -363,9 +363,10 @@ them. Re-exporting a `server/` handler from `agent/`, as
 `export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
 same arguments and rules; a tool of its own can take different ones. Agent
 access is a company switch an admin turns on at `<instance>/company`; a publish
-with agent tools warns while it is off. Each person connects their own agent
-with the steps at `<instance>/machines#connect-an-agent` on Your machines, which
-also lists the agents they've connected, each with Disconnect.
+with agent tools warns while it is off, and says nothing when it is on. Each
+person connects their own agent with the steps at
+`<instance>/machines#connect-an-agent` on Your machines, which also lists the
+agents they've connected, each with Disconnect.
 
 A tool runs as the person who connected the agent. `ctx.viewer` is that person,
 under the same access rules as their page calls. `ctx.agent` is
@@ -397,16 +398,18 @@ Descriptions and schemas are all an agent knows about a tool: what it does, what
 it changes, and when and why it refuses. The ids it holds come from earlier
 results or from the person. The agent reads every result in full; a row result
 carries `id`, `createdAt` and `updatedAt` besides its columns. A read result
-over 100,000 characters is refused, so a read that grows with its table needs
-paging. At 300 calls a minute per person per patch, bulk work needs a tool that
-takes a list. A tool needs a `description` of at most 2,000 characters, and
-publish warns about top-level arguments without `.describe()`. One patch's tools
-fit in 64 KiB, as agents read them with rows expanded. Tools exchange JSON only:
-there are no uploads or file handles, though handlers still read the patch's own
-files, and MCP can't push. `t.timestamp()` is an ISO date-time string, so an
-agent must send a time of day; a plain date is a `t.text()` the handler checks.
-Dev builds and publish refuse a tool that breaks these rules, naming its file;
-publish lists the tools as reads and changes.
+over 100,000 characters is refused, counting every row's text in full: 50 rows
+holding 2,000 characters of text each reach it. A read that grows with its
+table, in rows or in text, needs paging. At 300 calls a minute per person per
+patch, bulk work needs a tool that takes a list. A tool needs a `description` of
+at most 2,000 characters, and publish warns about top-level arguments without
+`.describe()`. One patch's tools fit in 64 KiB, as agents read them with rows
+expanded. Tools exchange JSON only: there are no uploads or file handles, though
+handlers still read the patch's own files, and MCP can't push. `t.timestamp()`
+is an ISO date-time string, so an agent must send a time of day; a plain date is
+a `t.text()` the handler checks. Dev builds and publish refuse a tool that
+breaks these rules, naming its file; publish lists the tools as reads and
+changes.
 
 Each person has 16 calls in flight across their clients, and the first call may
 wait about a second for the company's server, or up to 40 s when it is cold.
