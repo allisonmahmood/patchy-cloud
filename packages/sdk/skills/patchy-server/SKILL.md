@@ -362,10 +362,10 @@ and 1 have no agent area. Agent tools are for agents only; the page can't call
 them. Re-exporting a `server/` handler from `agent/`, as
 `export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
 same arguments and rules; a tool of its own can take different ones. Agent
-access is a company switch, off until an admin turns it on at
-`<instance>/company`. Each person connects their own agent with the steps at
-`<instance>/machines#connect-an-agent` on Your machines, which also lists the
-agents they've connected, each with Disconnect.
+access is a company switch an admin turns on at `<instance>/company`; a publish
+with agent tools warns while it is off. Each person connects their own agent
+with the steps at `<instance>/machines#connect-an-agent` on Your machines, which
+also lists the agents they've connected, each with Disconnect.
 
 A tool runs as the person who connected the agent. `ctx.viewer` is that person,
 under the same access rules as their page calls. `ctx.agent` is
@@ -377,9 +377,12 @@ or refuse them. A tool of its own can require what the page leaves optional; its
 schema then tells the agent, and a call missing the field is refused before the
 handler runs.
 
-Patchy's log records each change and action as "Person via Client", failures
-included. A query that succeeds without `ctx.log` leaves no row; a patch that
-wants agent reads seen logs them itself, using `ctx.agent` for the name.
+To agents, a query or read-only action is a read and anything else is a change.
+Clients decide whether to ask the person before a change, and most ask every
+time. Patchy's log records each change and action as "Person via Client",
+failures included. A query that succeeds without `ctx.log` leaves no row; a
+patch that wants agent reads seen logs them itself, using `ctx.agent` for the
+name.
 
 Each export is a `query`, `mutation` or `action` from the same generated
 builders as `server/`, with shared code in `helpers/`. Files only organise
@@ -391,23 +394,23 @@ it. Page imports from `agent/` are refused, and `agent/` below tier 2 is
 
 Descriptions and schemas are all an agent knows about a tool: what it does, what
 it changes, and when and why it refuses. The ids it holds come from earlier
-results or from the person. A tool needs a `description` of at most 2,000
-characters, and publish warns about top-level arguments without `.describe()`.
-One patch's tools fit in 64 KiB, as agents read them with rows expanded. Tools
-exchange JSON only: there are no uploads or file handles, though handlers still
-read the patch's own files, and MCP can't push. `t.timestamp()` is an ISO
-date-time string, so an agent must send a time of day; a plain date is a
-`t.text()` the handler checks. Dev builds and publish refuse a tool that breaks
-these rules, naming its file; publish lists the tools as reads and changes.
+results or from the person. The agent reads every result in full; a row result
+carries `id`, `createdAt` and `updatedAt` besides its columns. A read result
+over 100,000 characters is refused, so a read that grows with its table needs
+paging. At 300 calls a minute per person per patch, bulk work needs a tool that
+takes a list. A tool needs a `description` of at most 2,000 characters, and
+publish warns about top-level arguments without `.describe()`. One patch's tools
+fit in 64 KiB, as agents read them with rows expanded. Tools exchange JSON only:
+there are no uploads or file handles, though handlers still read the patch's own
+files, and MCP can't push. `t.timestamp()` is an ISO date-time string, so an
+agent must send a time of day; a plain date is a `t.text()` the handler checks.
+Dev builds and publish refuse a tool that breaks these rules, naming its file;
+publish lists the tools as reads and changes.
 
-Limits: 300 calls a minute per person per patch, so bulk work needs a tool that
-takes a list. Read results over 100,000 characters are refused, so large reads
-need paging. The agent reads every result in full; a row result carries `id`,
-`createdAt` and `updatedAt` besides its columns. Each person has 16 calls in
-flight across their clients, and the first call may wait about a second for the
-company's server, or up to 40 s when it is cold. `busy` and `rate_limited` carry
-`retryAfterSeconds`. A change key makes a mutation's retry write once; an action
-that writes is not safe to retry.
+Each person has 16 calls in flight across their clients, and the first call may
+wait about a second for the company's server, or up to 40 s when it is cold.
+`busy` and `rate_limited` carry `retryAfterSeconds`. A change key makes a
+mutation's retry write once; an action that writes is not safe to retry.
 
 `pnpm patchy dev agent` lists the tools as an agent sees them, and
 `pnpm patchy dev agent <tool> '<json>'` calls one as the dev viewer, or as the
