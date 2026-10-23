@@ -31,9 +31,15 @@ export type SetupState =
 export const stateKey = (state: SetupState): string =>
   state.kind === "fallback" ? `fallback-${state.reason}` : state.kind;
 
+/** What to do next: after a denial there's nothing to finish, only a fresh start if wanted. */
+const fallbackNext = (reason: Fallback) =>
+  reason === "denied"
+    ? "If you didn’t just paste the line, you’re fine: no computer can publish as you."
+    : "Finish with the link your agent shows you, or get a new line.";
+
 const fallbackLines: Record<Fallback, string> = {
   contested: "Two computers used this line, so it can’t finish here.",
-  denied: "That login was denied, so nothing was connected.",
+  denied: "Nothing was connected.",
   expired: "Your agent’s code ran out before it was confirmed.",
   other_account: "A different account confirmed that login, so it isn’t yours.",
   ran_out: "This line ran out."
@@ -142,7 +148,7 @@ export const renderSetupSteps = (input: {
                     )}<p class="supporting-text">Or open the link your agent showed you. Both work.</p></section>`
                 : state.kind === "confirming"
                   ? `<p>Confirmed. Your agent is collecting its key.</p>`
-                  : `<section class="note note-warn" role="status"><span class="note-title">${fallbackLines[state.reason]}</span><p>Finish with the link your agent shows you, or get a new line.</p><form method="post" action="/guide/new-line"><input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><button class="btn" type="submit">Get a new line</button></form></section>`
+                  : `<section class="note note-warn" role="status"><span class="note-title">${fallbackLines[state.reason]}</span><p>${fallbackNext(state.reason)}</p><form method="post" action="/guide/new-line"><input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><button class="btn" type="submit">Get a new line</button></form></section>`
             )}`
           : `${step("done", "✓", "Give your agent this line", "")}${step("done", "✓", "Confirm it’s you", `<p class="supporting-text">Your computer is connected.</p>`)}`;
   const go = `<a class="btn" href="/">Go to ${companyHome(viewer)}</a>`;
@@ -184,6 +190,7 @@ export const finalStepStyles = `
   .final-step .lede { margin: 0; }
   .final-step .steps { margin-top: 18px; }
   .final-step-steps > .note { margin: 18px 0 0; }
+  .final-step-steps form[data-inline-confirm] + p { margin-top: 14px; }
   .final-step-how { margin: 22px 0 0; padding-top: 14px; border-top: 2px dashed var(--line-strong); }
   .final-step-later { margin: 12px 0 0; text-align: center; }
   .final-step .actions > [hidden], .note .actions > [hidden] { display: none; }
