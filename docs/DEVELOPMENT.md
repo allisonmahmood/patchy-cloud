@@ -475,6 +475,13 @@ can quote it.
   and phone widths. Allow and exchange the code, Deny, answer after switching
   persona in another tab (asked again, 409), and answer from another origin
   (403). Nothing reaches the client's redirect except Allow and Deny.
+- **Patchy MCP.** Connect Claude Code through consent and Codex with a token
+  from `pnpm dev mcp-token`, each from a temp dir outside your HOME with
+  per-invocation config (`claude --strict-mcp-config --mcp-config <file>`, a
+  throwaway `CODEX_HOME`), never your own. Have each find the person's patches,
+  page through them (more than 50, or `detail: "tools"` over large tool
+  descriptions) and open one, as a member and an admin. With agent access off,
+  a call names the admins.
 - **Portal and lifecycle.** Sign in as an owner, an admin and a member: Home at
   `/` (open a few patches first, so Your usual and New to you have something to
   show; `pnpm dev shot <person> /<company>/<patch>` records an open), a search on

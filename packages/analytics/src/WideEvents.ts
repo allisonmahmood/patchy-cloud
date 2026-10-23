@@ -98,8 +98,9 @@ const cliFields = {
 };
 /**
  * A Patchy MCP request: the agent connection and its client, what the client says it is, the
- * revision it spoke, its JSON-RPC method and the door's tool it called. What a client sends is
- * cut short; arguments, results, tokens, change keys and instructions are never recorded.
+ * revision it spoke, its JSON-RPC method, the door's tool it called and what a catalogue call
+ * found. What a client sends is cut short; arguments, results, tokens, change keys and
+ * instructions are never recorded.
  */
 const mcpFields = {
   agentConnectionId: Schema.optionalKey(Schema.String),
@@ -115,7 +116,20 @@ const mcpFields = {
   /** One of the door's four tools; an unknown name is recorded as its code alone. */
   mcpTool: Schema.optionalKey(Schema.String),
   /** The request's `Origin`, cut to 256 characters. */
-  origin: Schema.optionalKey(Schema.String)
+  origin: Schema.optionalKey(Schema.String),
+  /** How `open_patch`'s `patch` named the patch it opened. */
+  patchRef: Schema.optionalKey(Schema.Literals(["name", "id", "address"])),
+  /**
+   * A `find_patches` answer: its matches in all and on this page, whether the page ended early
+   * for the read cap, and whether it was searched, detailed or continued from a cursor. Never
+   * the words or the cursor.
+   */
+  catalogueTotal: Schema.optionalKey(Schema.Number),
+  catalogueListed: Schema.optionalKey(Schema.Number),
+  catalogueEndedEarly: Schema.optionalKey(Schema.Boolean),
+  catalogueSearched: Schema.optionalKey(Schema.Boolean),
+  catalogueDetail: Schema.optionalKey(Schema.Boolean),
+  catalogueContinued: Schema.optionalKey(Schema.Boolean)
 };
 /** Why a subscription ran: what made it dirty first, while it waited for a slot. */
 export const RerunTrigger = Schema.Literals([

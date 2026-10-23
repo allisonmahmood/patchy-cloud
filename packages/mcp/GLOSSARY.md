@@ -1,6 +1,6 @@
 # Patchy MCP
 
-How a person's own agent uses their company's patches: one door, four fixed tools and change keys. It acts through [Auth](../auth/GLOSSARY.md)'s agent connections, finds patches through [Patches](../patches/GLOSSARY.md), calls the agent tools [Publishing](../patchy/GLOSSARY.md) builds through [Runtime](../runtime/GLOSSARY.md), and needs [Companies](../companies/GLOSSARY.md)' agent access on. `docs/product.md` › Patchy MCP is the spec. Built so far: the door's revisions, request trust, bearer and limits; each tool refuses as not built until its own ticket lands.
+How a person's own agent uses their company's patches: one door, four fixed tools and change keys. It acts through [Auth](../auth/GLOSSARY.md)'s agent connections, finds patches through [Patches](../patches/GLOSSARY.md), calls the agent tools [Publishing](../patchy/GLOSSARY.md) builds through [Runtime](../runtime/GLOSSARY.md), and needs [Companies](../companies/GLOSSARY.md)' agent access on. `docs/product.md` › Patchy MCP is the spec. Built so far: the door's revisions, request trust, bearer and limits, the agent access refusal, and the catalogue calls; `read_patch` and `change_patch` refuse as not built until their tickets land.
 
 ## Language
 
@@ -21,7 +21,7 @@ Which kind of MCP revision a request speaks. **Modern** (2026-07-28) carries its
 _Avoid_: protocol mode, session (there is none)
 
 **Catalogue call**:
-A `find_patches` or `open_patch` call, which reads what patches and their agent areas declare and never starts a patch.
+A `find_patches` or `open_patch` call, which reads what patches and their agent areas declare and never starts a patch. It starts from the list the portal shows the person, so it finds and opens only patches they can open.
 _Avoid_: discovery (the CLI's `patchy list`), read
 
 **Change key**:

@@ -23,8 +23,11 @@ import type * as Statement from "effect/sql/Statement";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
+  type AgentToolSummary,
+  agentToolSummaries,
   DescriptionText,
   FileStoreDefinition,
+  HandlerKind,
   Manifest,
   PatchInventory,
   PatchName,
@@ -670,6 +673,19 @@ class PortalVersionRow extends Schema.Class<PortalVersionRow>("PortalVersionRow"
   publisherName: Schema.String
 }) {}
 class NameRow extends Schema.Class<NameRow>("NameRow")({ name: PatchName }) {}
+/** One version's agent tools as a catalogue reads them: the marks and words, never the schemas. */
+class AgentToolMarksRow extends Schema.Class<AgentToolMarksRow>("AgentToolMarksRow")({
+  versionId: Schema.String,
+  handlers: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      kind: HandlerKind,
+      agentTool: Schema.Literal(true),
+      readOnly: Schema.optionalKey(Schema.Literal(true)),
+      description: Schema.optionalKey(Schema.String)
+    })
+  )
+}) {}
 class ResolvedName extends Schema.Class<ResolvedName>("ResolvedName")({
   patchId: Schema.String,
   name: PatchName,
@@ -819,6 +835,14 @@ export class Patches extends Context.Service<
       Option.Option<{ patchId: string; name: string; current: boolean }>,
       SqlError
     >;
+    /**
+     * The agent tools each of these versions marks, in `open_patch`'s order and without their
+     * schemas: what a catalogue lists of many patches at once, without loading whole manifests.
+     * A version with no tools, or none by that id, is absent.
+     */
+    readonly agentToolSummaries: (
+      versionIds: ReadonlyArray<string>
+    ) => Effect.Effect<ReadonlyMap<string, readonly AgentToolSummary[]>, SqlError>;
     /**
      * A patch in service and one of its versions — the current one, or the
      * numbered one asked for. Retired, deleted and disabled patches are absent.
@@ -1155,6 +1179,22 @@ export const make = Effect.gen(function* () {
       ORDER BY (patches.owner_user_id = ${userId}) DESC, patches.name, patches.id`
   });
 
+  const agentToolMarksRows = SqlSchema.findAll({
+    Request: Schema.Array(Schema.String),
+    Result: AgentToolMarksRow,
+    execute: (versionIds) => sql`
+      SELECT patch_versions.id AS "versionId",
+        jsonb_object_agg(handler.key, jsonb_strip_nulls(jsonb_build_object(
+          'kind', handler.value->'kind', 'agentTool', handler.value->'agentTool',
+          'readOnly', handler.value->'readOnly', 'description', handler.value->'description'
+        ))) AS handlers
+      FROM patch_versions
+      CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'handlers') AS handler
+      WHERE patch_versions.id IN ${sql.in(versionIds)}
+        AND handler.value->'agentTool' = 'true'::jsonb
+      GROUP BY patch_versions.id`
+  });
+
   const companyPatchRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ companyId: Schema.String, patchId: Schema.String }),
     Result: PatchRow,
@@ -1377,6 +1417,14 @@ export const make = Effect.gen(function* () {
       version: toVersion(row.version),
       patchTier: row.patchTier
     }));
+  }, Effect.catchTags(dieOnSchemaError));
+
+  const agentToolSummariesOf = Effect.fn("Patches.agentToolSummaries")(function* (
+    versionIds: ReadonlyArray<string>
+  ) {
+    if (versionIds.length === 0) return new Map<string, readonly AgentToolSummary[]>();
+    const rows = yield* agentToolMarksRows(versionIds);
+    return new Map(rows.map((row) => [row.versionId, agentToolSummaries(row.handlers)] as const));
   }, Effect.catchTags(dieOnSchemaError));
 
   const find = Effect.fn("Patches.find")(function* (
@@ -2522,6 +2570,7 @@ export const make = Effect.gen(function* () {
     record,
     setScope,
     resolveName,
+    agentToolSummaries: agentToolSummariesOf,
     find,
     findRetained,
     recordVisit,

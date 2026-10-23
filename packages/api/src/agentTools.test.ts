@@ -3,6 +3,7 @@ import {
   agentAreaRefusal,
   agentTools,
   agentToolsBytes,
+  agentToolSummaries,
   argsJsonSchema,
   callAnswer,
   checkAgentArea,
@@ -203,6 +204,40 @@ describe("open_patch's tools", () => {
       expect.objectContaining({ name: "peek", kind: "read" }),
       expect.objectContaining({ name: "sync", kind: "change" })
     ]);
+  });
+
+  it("summarises the same tools in the same order without schemas, from descriptors alone", () => {
+    const handlers: HandlerDescriptors = {
+      "agent.sync": tool({ kind: "action", description: "Syncs." }),
+      "agent.peek": tool({ kind: "action", readOnly: true, description: "Reads a connection." }),
+      "agent.addLead": tool({ kind: "mutation", description: "Adds a lead." }),
+      "leads.list": { kind: "query", args: {}, result: { kind: "boolean" } }
+    };
+    const summaries = [
+      { name: "addLead", kind: "change", description: "Adds a lead." },
+      { name: "peek", kind: "read", description: "Reads a connection." },
+      { name: "sync", kind: "change", description: "Syncs." }
+    ];
+    expect(agentToolSummaries(handlers)).toEqual(summaries);
+    expect(
+      agentTools({ tables, handlers }).map(({ name, kind, description }) => ({
+        name,
+        kind,
+        description
+      }))
+    ).toEqual(summaries);
+    // What a catalogue reads of a manifest: the marks and words, never the schemas.
+    expect(
+      agentToolSummaries({
+        "agent.peek": {
+          kind: "action",
+          readOnly: true,
+          agentTool: true,
+          description: "Reads a connection."
+        },
+        "deals.list": { kind: "query" }
+      })
+    ).toEqual([summaries[1]]);
   });
 
   it("answers the patch with its owner cut at 200 characters", () => {

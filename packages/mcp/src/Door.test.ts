@@ -1,154 +1,31 @@
 /**
- * The door over a migrated database, a request at a time as the router hands it over. Each test
- * builds its own door, so its in-memory buckets start full, and sends from its own address.
- * The socket's view, cookies from a real sign-in and the server's own request events are
- * apps/server's tests.
+ * The door's own rules, a request at a time as the router hands it over (`test/door.ts`). The
+ * socket's view, cookies from a real sign-in and the server's own request events are
+ * apps/server's tests; the catalogue's are `Catalogue.test.ts`.
  */
 import { assert, it } from "@effect/vitest";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as HttpRouter from "effect/http/HttpRouter";
-import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as WideEvents from "@patchy/analytics/wide-events";
-import { AgentConnections, MachineTokens } from "@patchy/auth";
+import { AgentConnections } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { Limits, OperatingLimits } from "@patchy/limits";
-import * as Testing from "@patchy/sql/testing";
-import * as Door from "./Door.js";
+import { Companies } from "@patchy/companies";
+import { OperatingLimits } from "@patchy/limits";
 import * as Tools from "./Tools.js";
-
-const PRODUCTION = "https://cloud.example";
-const DEV = "http://patchy-door.localhost:29276";
-const CLAUDE = "https://claude.ai/oauth/claude-code-client-metadata";
-
-/** Every event the door's requests closed, in order. */
-const recorded: WideEvents.WideEvent[] = [];
-const sink = Layer.succeed(WideEvents.Sink)(
-  WideEvents.Sink.of({ write: (event) => Effect.sync(() => void recorded.push(event)) })
-);
-
-const layer = Layer.mergeAll(
-  AgentConnections.layer,
-  MachineTokens.layer,
-  Limits.layer,
-  OperatingLimits.layer,
-  WideEvents.layerWithSink.pipe(Layer.provide(sink))
-).pipe(Layer.provideMerge(Testing.layer()));
-
-/** The field at a dotted path of a decoded answer, or `undefined`. */
-const at = (value: unknown, path: string): unknown =>
-  path
-    .split(".")
-    .reduce<unknown>(
-      (current, key) => (Predicate.hasProperty(current, key) ? current[key] : undefined),
-      value
-    );
-
-/** The object at a dotted path of a decoded answer, failing the test when there is none. */
-const objectAt = (value: unknown, path: string): Readonly<Record<string, unknown>> => {
-  const found = at(value, path);
-  if (!Predicate.isObject(found)) return assert.fail(`No object at ${path}`);
-  return { ...found };
-};
-
-interface Sent {
-  readonly method?: string;
-  readonly path?: string;
-  readonly token?: string;
-  readonly headers?: Record<string, string>;
-  readonly body?: unknown;
-  readonly raw?: string;
-  /** Sends the body as a stream with no declared length. */
-  readonly chunked?: boolean;
-}
-
-/**
- * A door for an instance at `base`, and a way to send it requests from `address`. Requests
- * carry the instance's own `Host` unless a test says otherwise.
- */
-const door = (base: string, address: string) =>
-  Effect.gen(function* () {
-    const app = yield* HttpRouter.toHttpEffect(
-      Layer.mergeAll(
-        Door.layer,
-        HttpRouter.use((router) =>
-          router.add("*", "/*", Effect.succeed(HttpServerResponse.empty({ status: 404 })))
-        )
-      )
-    ).pipe(
-      Effect.provide(
-        ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: base }))
-      )
-    );
-    const wide = yield* WideEvents.WideEvents;
-    return Effect.fn("send")(function* (sent: Sent) {
-      const body = sent.raw ?? (sent.body === undefined ? undefined : JSON.stringify(sent.body));
-      const headers: Record<string, string> = {
-        host: new URL(base).host,
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-        ...(body === undefined || sent.chunked === true
-          ? {}
-          : { "content-length": String(Buffer.byteLength(body)) }),
-        ...(sent.token === undefined ? {} : { authorization: `Bearer ${sent.token}` }),
-        ...sent.headers
-      };
-      const init: RequestInit & { duplex?: "half" } = {
-        method: sent.method ?? "POST",
-        headers,
-        ...(body === undefined
-          ? {}
-          : sent.chunked === true
-            ? { body: new Blob([body]).stream(), duplex: "half" }
-            : { body })
-      };
-      const request = HttpServerRequest.fromWeb(
-        new Request(new URL(sent.path ?? "/mcp", base), init)
-      ).modify({ remoteAddress: Option.some(address) });
-      const before = recorded.length;
-      const response = yield* wide
-        .withEvent({ type: "request", route: "/mcp" }, app)
-        .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request));
-      const web = HttpServerResponse.toWeb(response);
-      const text = yield* Effect.promise(() => web.text());
-      // Delivery is detached; let it land before reading the event.
-      while (recorded.length === before) yield* Effect.yieldNow;
-      return {
-        status: web.status,
-        headers: web.headers,
-        text,
-        json: text === "" ? undefined : (JSON.parse(text) as unknown),
-        event: recorded[before]!
-      };
-    });
-  });
-
-const meta = {
-  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-  "io.modelcontextprotocol/clientInfo": { name: "claude-code", version: "2.1.308" },
-  "io.modelcontextprotocol/clientCapabilities": {}
-};
-
-/** A modern request, with the headers a conforming client mirrors from it. */
-const modern = (token: string, method: string, params: Record<string, unknown> = {}): Sent => ({
-  token,
-  headers: {
-    "mcp-protocol-version": "2026-07-28",
-    "mcp-method": method,
-    ...(typeof params["name"] === "string" ? { "mcp-name": params["name"] } : {})
-  },
-  body: { jsonrpc: "2.0", id: 1, method, params: { ...params, _meta: meta } }
-});
-
-const legacy = (token: string, method: string, params: Record<string, unknown> = {}): Sent => ({
-  token,
-  headers: { "mcp-protocol-version": "2025-06-18" },
-  body: { jsonrpc: "2.0", id: 1, method, params }
-});
+import {
+  at,
+  call,
+  CLAUDE,
+  company,
+  DEV,
+  door,
+  harness,
+  legacy,
+  meta,
+  modern,
+  objectAt,
+  PRODUCTION,
+  type Sent
+} from "./test/door.js";
 
 /** A fresh person in a company of their own, connected through an agent. */
 const connected = (key: string, clientName = "Claude Code") =>
@@ -169,7 +46,7 @@ const connected = (key: string, clientName = "Claude Code") =>
     return { company, userId, connection, token: tokens.accessToken };
   });
 
-it.layer(layer)("the door", (it) => {
+it.layer(harness)("the door", (it) => {
   it.effect("refuses a host that isn't the instance's with 421 and no challenge", () =>
     Effect.gen(function* () {
       const { token } = yield* connected("host");
@@ -504,6 +381,13 @@ it.layer(layer)("the door", (it) => {
           ["find_patches", "open_patch", "read_patch", "change_patch"]
         );
         for (const tool of tools) assert.isAbove(tool.description.length, 50, tool.name);
+        // The limits the catalogue enforces are the ones it advertises.
+        assert.include(at(tools[0], "inputSchema.properties.search"), { maxLength: 200 });
+        assert.include(at(tools[0], "inputSchema.properties.cursor"), { maxLength: 2_048 });
+        assert.include(at(tools[1], "inputSchema.properties.patch"), {
+          minLength: 1,
+          maxLength: 2_048
+        });
         assert.deepStrictEqual(tools[2]!.annotations, { readOnlyHint: true });
         assert.deepStrictEqual(tools[3]!.annotations, {
           readOnlyHint: false,
@@ -513,14 +397,13 @@ it.layer(layer)("the door", (it) => {
       })
   );
 
-  it.effect("answers each tool as not built yet, and an unknown tool name -32602", () =>
+  it.effect("answers the tools not built yet as such, and an unknown tool name -32602", () =>
     Effect.gen(function* () {
-      const { token } = yield* connected("call");
+      const { people } = yield* company("call", [["Ada Admin", "admin"]]);
+      const { token } = people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.13");
-      for (const name of Tools.NAMES) {
-        const response = yield* send(
-          modern(token, "tools/call", { name, arguments: { patch: "new-business" } })
-        );
+      for (const name of ["read_patch", "change_patch"]) {
+        const response = yield* send(call(token, name, { patch: "new-business" }));
         assert.strictEqual(response.status, 200, name);
         const result = objectAt(response.json, "result");
         assert.include(result, { resultType: "complete", isError: true });
@@ -536,6 +419,82 @@ it.layer(layer)("the door", (it) => {
       assert.include(unknown.event, { code: "unknown_tool", outcome: "refused" });
       assert.isUndefined(unknown.event.type === "request" ? unknown.event.mcpTool : undefined);
     })
+  );
+
+  it.effect(
+    "refuses every tool call while agent access is off, naming the admins and nothing else",
+    () =>
+      Effect.gen(function* () {
+        const acme = yield* company(
+          "off",
+          [
+            ["Priya Shah", "admin"],
+            ["Ben Member", "member"],
+            ["Ada Lovelace", "admin"],
+            ["Gone Admin", "admin"]
+          ],
+          { access: false, name: "Acme" }
+        );
+        const [priya, ben, ada, gone] = acme.people;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${gone!.id}`;
+        const send = yield* door(PRODUCTION, "203.0.113.17");
+        for (const person of [ben!, priya!])
+          for (const [name, args] of [
+            ["find_patches", {}],
+            // Access comes first: these arguments are bad too.
+            ["find_patches", { detail: "everything" }],
+            ["open_patch", { patch: "new-business" }],
+            ["read_patch", { patch: "new-business", tool: "listDeals", args: {} }],
+            ["change_patch", { patch: "new-business", tool: "addLead", args: {}, key: "k1" }]
+          ] as const) {
+            const response = yield* send(call(person.token, name, args));
+            assert.strictEqual(response.status, 200, name);
+            const error = objectAt(response.json, "result.structuredContent.error");
+            // The admins' names and where they turn it on, never their emails or ids.
+            assert.deepStrictEqual(error, {
+              code: "agent_access_off",
+              from: "patchy",
+              message:
+                "Agent access is off at Acme, so Patchy refuses every agent until an admin turns it on at https://cloud.example/company. Acme's admins are Ada Lovelace and Priya Shah; tell the person to ask one of them."
+            });
+            assert.strictEqual(at(response.json, "result.content.0.text"), error["message"]);
+            for (const leak of [
+              ...acme.people.flatMap((member) => [member.email, member.id]),
+              "Gone Admin"
+            ])
+              assert.notInclude(response.text, leak);
+            assert.include(response.event, {
+              mcpTool: name,
+              code: "agent_access_off",
+              outcome: "refused"
+            });
+          }
+        // Discovery and the tool list keep working.
+        for (const method of ["server/discover", "tools/list"])
+          assert.isUndefined(at((yield* send(modern(ben!.token, method))).json, "error"), method);
+        assert.isUndefined(at((yield* send(legacy(ben!.token, "tools/list"))).json, "error"));
+
+        // On again, the same connection works on the next call.
+        yield* Companies.Companies.use((companies) =>
+          companies.setAgentAccess({ companyId: acme.id, on: true, by: ada!.id })
+        );
+        const found = yield* send(call(ben!.token, "find_patches"));
+        assert.isUndefined(at(found.json, "result.isError"));
+
+        // One admin is named as one.
+        assert.strictEqual(
+          at(
+            Tools.agentAccessOff({
+              company: "Acme",
+              admins: ["Ada Lovelace"],
+              turnOnAt: "/company"
+            }),
+            "structuredContent.error.message"
+          ),
+          "Agent access is off at Acme, so Patchy refuses every agent until an admin turns it on at /company. Acme's admin is Ada Lovelace; tell the person to ask them."
+        );
+      })
   );
 
   it.effect("answers the modern status table with real statuses", () =>
