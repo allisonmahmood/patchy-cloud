@@ -25,7 +25,7 @@ The fixed span over which a key's attempts are counted, starting with its first 
 _Avoid_: bucket (the token-bucket algorithm, which this is not)
 
 **Token bucket**:
-A call allowance that refills continuously at a rate and holds at most one burst's capacity. Company admission spends one token per company-scoped top-level call, including calls that do not use a database connection. Public `me` calls use only their per-caller allowance.
+A call allowance that refills continuously at a rate and holds at most one burst's capacity. Company admission spends one token per company-scoped top-level call, a page's or a worker agent's, including calls that do not use a database connection. Public `me` calls use only their per-caller allowance.
 _Avoid_: fixed window
 
 **Fails closed**:

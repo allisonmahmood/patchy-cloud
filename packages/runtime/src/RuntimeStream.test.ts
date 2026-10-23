@@ -33,6 +33,7 @@ import * as Invocation from "./Invocation.js";
 import { HandlerFailed } from "./Invocation.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeApi from "./RuntimeApi.js";
+import * as CompanyAdmission from "./CompanyAdmission.js";
 import * as RuntimeProduction from "./RuntimeProduction.js";
 import * as RuntimeStream from "./RuntimeStream.js";
 import * as StreamAdmission from "./StreamAdmission.js";
@@ -965,6 +966,7 @@ it.layer(layer)("document streams", (it) => {
       Effect.gen(function* () {
         const limits = yield* Limits.make;
         const runtime = yield* RuntimeProduction.make({ me }).pipe(
+          Effect.provide(CompanyAdmission.layer),
           Effect.provideService(Limits.Limits, limits),
           Effect.provideService(ContractLimits.overrides, { "runtime.calls.perMinute": 3 })
         );

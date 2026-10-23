@@ -512,7 +512,8 @@ export const registry = {
     default: 2,
     unit: "actions",
     scope: "viewer",
-    measure: "Actions in flight per viewer per patch per host replica",
+    measure:
+      "Actions in flight per viewer per patch per host replica; a person's worker agent has its own, across its clients, beside their pages'",
     refusal: "busy",
     overridable: true
   },
@@ -522,7 +523,7 @@ export const registry = {
     unit: "calls/second",
     scope: "company",
     measure:
-      "Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs",
+      "Company tier 1 operations and tier 2 calls per host replica, worker agents' calls included; excludes public me, callbacks and re-runs",
     refusal: "limit_exceeded",
     overridable: true
   },
@@ -1013,6 +1014,26 @@ export const registry = {
     measure:
       "Patchy MCP requests per person across their agent connections per host replica, catalogue calls included. The bucket holds a minute's worth and refills over the minute; past it a tool call is refused in its result and any other request is answered 429",
     refusal: "rate_limited",
+    overridable: true
+  },
+  "mcp.calls.perMinute": {
+    kind: "operating",
+    default: 300,
+    unit: "calls/minute",
+    scope: "viewer",
+    measure:
+      "Patchy MCP `read_patch` and `change_patch` calls per person per patch across their agent connections per host replica, beside the page's own `runtime.calls.perMinute`; past it a call is refused in its result",
+    refusal: "rate_limited",
+    overridable: true
+  },
+  "mcp.inFlight": {
+    kind: "operating",
+    default: 16,
+    unit: "calls",
+    scope: "viewer",
+    measure:
+      "Patchy MCP `read_patch` and `change_patch` calls in flight per person across their agent connections per host replica. An admitted call holds its slot until its work settles, its wait for the company's server included and after its client goes away",
+    refusal: "busy",
     overridable: true
   },
   "mcp.bearer.failures.perMinute": {

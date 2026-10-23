@@ -341,7 +341,13 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             input.args
           )
         : undefined;
-    const key = canonicalArgs([binding.companyId, binding.patchId, viewer.user.id]);
+    // A person's worker agent has action slots of its own beside their pages', across its clients.
+    const key = canonicalArgs([
+      binding.companyId,
+      binding.patchId,
+      viewer.user.id,
+      binding.agent === undefined ? "page" : "agent"
+    ]);
     const actionLimits =
       descriptor.kind === "action" && platform !== undefined
         ? yield* platform.actionLimits(binding.companyId)
@@ -985,8 +991,15 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           ),
           Effect.ensuring(releaseAdmission)
         );
+        // Taken with the fork, so whatever the caller holds for this work is let go when the
+        // work settles, never before and never missed. Every run takes its own, nested ones
+        // too: a child an action started through `ctx.run` can outlast the action.
+        const held = binding.retain === undefined ? undefined : yield* binding.retain;
         const owner = yield* Effect.forkIn(
-          Effect.interruptible(run).pipe(Effect.provideService(DatabaseMeter.current, meter)),
+          Effect.interruptible(run).pipe(
+            Effect.provideService(DatabaseMeter.current, meter),
+            Effect.ensuring(held ?? Effect.void)
+          ),
           scope
         );
         return yield* restore(Fiber.join(owner)).pipe(
@@ -1060,6 +1073,12 @@ export interface AgentCall {
    */
   readonly onReplay?: Effect.Effect<void>;
   /**
+   * Run as each of the tool's runs is dispatched, its own and any it starts through `ctx.run`;
+   * what it answers runs once that run settles, however it ends, even after the caller went
+   * away. A call refused before dispatch never runs it, so the caller's own hold is all there is.
+   */
+  readonly retain?: Effect.Effect<Effect.Effect<void>>;
+  /**
    * The caller's own condition, rechecked before each company callback at any depth, as a page's
    * session is. It answers the person's current identity or refuses the callback.
    */
@@ -1069,7 +1088,8 @@ export interface AgentCall {
 /**
  * Runs an agent tool as its person, through the same invocation as a page's call: the tool's
  * kind decides how it runs, and its writes reach open pages live. Every row it logs names the
- * agent, and handler code sees it as `ctx.agent`, nested calls included.
+ * agent, and handler code sees it as `ctx.agent`, nested calls included. Its actions take the
+ * agent's own slots beside its person's pages, and share the company's.
  */
 export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: AgentCall) {
   const invocation = yield* Invocation;
@@ -1087,7 +1107,8 @@ export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: Age
       principal: { userId: input.person.user.id },
       correlationId: newInternalId("call"),
       agent: input.agent,
-      ...(input.onReplay === undefined ? {} : { onReplay: input.onReplay })
+      ...(input.onReplay === undefined ? {} : { onReplay: input.onReplay }),
+      ...(input.retain === undefined ? {} : { retain: input.retain })
     }),
     input.recheck
   );

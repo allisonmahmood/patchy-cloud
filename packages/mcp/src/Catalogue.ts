@@ -83,7 +83,7 @@ const cursorFix =
 
 /** A patch the person can open, with the agent tools its current version has. */
 interface Listed {
-  readonly row: Patches.ReadPatch;
+  readonly row: Patches.ListedPatch;
   readonly tools: readonly AgentToolSummary[];
 }
 
@@ -110,7 +110,7 @@ const wordsOf = (search: string | undefined) => {
 };
 
 /** Every word appears in the name, title, description or owner's name. */
-const matches = (row: Patches.ReadPatch, words: string | undefined) => {
+const matches = (row: Patches.ListedPatch, words: string | undefined) => {
   if (words === undefined) return true;
   const fields = [row.patch.name, row.patch.title, row.patch.description, row.owner.name].map(
     (field) => field.toLowerCase()
@@ -118,12 +118,15 @@ const matches = (row: Patches.ReadPatch, words: string | undefined) => {
   return words.split(" ").every((word) => fields.some((field) => field.includes(word)));
 };
 
-/** The live patches the person can open, as the portal lists them: the same read, through the same rule. */
+/**
+ * The live patches the person can open, by the portal's rule, without the sharing edges its
+ * cards show, so a call never scans every version's declarations.
+ */
 const visible = (identity: AgentConnections.AgentIdentity) =>
   Effect.gen(function* () {
     const canOpen = yield* Patches.Openability;
     return yield* (yield* Patches.Patches)
-      .read({
+      .list({
         companyId: identity.company.id,
         userId: identity.user.id,
         canOpen: (patch) => canOpen(patch, identity.user.id),
@@ -134,7 +137,7 @@ const visible = (identity: AgentConnections.AgentIdentity) =>
 
 /** Each patch with its current version's agent tools, read from the manifests' marks alone. */
 const withTools = Effect.fn("Catalogue.withTools")(function* (
-  rows: ReadonlyArray<Patches.ReadPatch>
+  rows: ReadonlyArray<Patches.ListedPatch>
 ) {
   const tools = yield* (yield* Patches.Patches).agentToolSummaries(
     rows.flatMap(({ patch }) => (patch.currentVersionId === null ? [] : [patch.currentVersionId]))
@@ -272,7 +275,7 @@ type PatchRef = "name" | "id" | "address";
  */
 export const resolve = Effect.fn("Catalogue.resolve")(function* (
   identity: AgentConnections.AgentIdentity,
-  rows: ReadonlyArray<Patches.ReadPatch>,
+  rows: ReadonlyArray<Patches.ListedPatch>,
   patch: string,
   publicUrl: URL
 ) {

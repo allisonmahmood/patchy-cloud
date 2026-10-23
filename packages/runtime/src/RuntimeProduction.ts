@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
-import * as WideEvents from "@patchy/analytics/wide-events";
-import { Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
+import type { Limits, OperatingLimits } from "@patchy/limits";
+import * as CompanyAdmission from "./CompanyAdmission.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
@@ -15,6 +15,7 @@ import * as RuntimeStream from "./RuntimeStream.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 
 type Dependencies =
+  | CompanyAdmission.CompanyAdmission
   | LoadedVersions.LoadedVersions
   | Limits.Limits
   | OperatingLimits.OperatingLimits
@@ -28,8 +29,8 @@ export const make = (
   Effect.gen(function* () {
     const log = yield* RuntimeLog.RuntimeLog;
     const session = yield* Session.Session;
-    const operatingLimits = yield* OperatingLimits.OperatingLimits;
-    const companyTokens = yield* TokenBucket.make;
+    // The company's bucket, which Patchy MCP's door spends agents' calls from too.
+    const companyAdmission = yield* CompanyAdmission.CompanyAdmission;
     const principalAdmission = yield* StreamAdmission.StreamAdmission;
     // The server provides the host's streams, so a call keeps its viewer's open documents
     // active; suites without streams have no documents to keep.
@@ -90,43 +91,7 @@ export const make = (
         reauthorize: Effect.map(recheck, (current) => current.identity)
       })),
       ...(Option.isSome(streams) ? { called: streams.value.called } : {}),
-      admitCompany: Effect.fn("Runtime.admitCompany")(function* (companyId: string) {
-        const { rate, burst } = yield* operatingLimits
-          .getMany({
-            companyId,
-            limits: { rate: "company.admission.rate", burst: "company.admission.burst" }
-          })
-          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-        const attempt = yield* companyTokens.consume({
-          key: `company.admission:${companyId}`,
-          rate: rate.value,
-          burst: burst.value
-        });
-        if (!attempt.allowed && attempt.reason === "capacity")
-          return yield* new Runtime.RateLimited({
-            retryAfterSeconds: attempt.retryAfterSeconds,
-            limitId: "rate.trackedKeys",
-            value: Limits.MAX_TRACKED_KEYS
-          });
-        yield* WideEvents.enrich({
-          limits: [
-            {
-              limitId: burst.limitId,
-              value: burst.value,
-              // Whole-token capacity depleted at admission; refused calls spend no token.
-              peak: burst.value - attempt.remaining,
-              configRevision: burst.configRevision
-            }
-          ]
-        });
-        if (!attempt.allowed) {
-          return yield* new Runtime.LimitExceeded({
-            retryAfterSeconds: attempt.retryAfterSeconds,
-            limitId: "company.admission.rate",
-            value: rate.value
-          });
-        }
-      }),
+      admitCompany: companyAdmission.admit,
       record: ({ input, operation, binding, deadlineMs }, run) =>
         Effect.gen(function* () {
           const started = yield* Clock.currentTimeMillis;
@@ -174,7 +139,11 @@ export const make = (
     });
   });
 
+/** Runtime, and the company admission it spends, for the host's other doors to share. */
 export const layer = (
   handlers: Readonly<Record<string, Runtime.Handler>>
-): Layer.Layer<Runtime.Runtime, never, Dependencies> =>
-  Layer.effect(Runtime.Runtime, make(handlers));
+): Layer.Layer<
+  Runtime.Runtime | CompanyAdmission.CompanyAdmission,
+  never,
+  Exclude<Dependencies, CompanyAdmission.CompanyAdmission>
+> => Layer.effect(Runtime.Runtime, make(handlers)).pipe(Layer.provideMerge(CompanyAdmission.layer));
