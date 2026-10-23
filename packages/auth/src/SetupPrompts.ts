@@ -13,22 +13,29 @@ const firstSignIns = 3;
 const kept = 4;
 
 const decodeSeen = Schema.decodeUnknownEffect(
-  Schema.Array(Schema.Struct({ show: Schema.Boolean }))
+  Schema.Array(Schema.Struct({ show: Schema.Boolean, later: Schema.Boolean }))
 );
 
-/** Records that this sign-in reached Home, and answers whether the panel shows for it. */
+/**
+ * Records that this sign-in reached Home, and answers whether the panel shows for it and
+ * whether Later put it off.
+ */
 export const seen = Effect.fn("SetupPrompts.seen")(function* (userId: string, sid: string) {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
-      // Two sign-ins racing past the cap at once can keep a fifth row; the first three are still
-      // the first three, so Home takes no lock on every visit.
-      yield* sql`
-        INSERT INTO setup_prompt_sign_ins (user_id, sid)
-        SELECT ${userId}, ${sid}
-        WHERE (SELECT created_at > now() - interval '7 days' FROM users WHERE id = ${userId})
-          OR (SELECT count(*) FROM setup_prompt_sign_ins WHERE user_id = ${userId}) < ${kept}
-        ON CONFLICT DO NOTHING`;
+      const known = yield* sql`SELECT 1 FROM setup_prompt_sign_ins
+        WHERE user_id = ${userId} AND sid = ${sid}`;
+      if (known.length === 0) {
+        // A new sign-in takes the person's turn, so two arriving at once can't both rank third.
+        yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`setup-prompt:${userId}`}, 0))`;
+        yield* sql`
+          INSERT INTO setup_prompt_sign_ins (user_id, sid)
+          SELECT ${userId}, ${sid}
+          WHERE (SELECT created_at > now() - interval '7 days' FROM users WHERE id = ${userId})
+            OR (SELECT count(*) FROM setup_prompt_sign_ins WHERE user_id = ${userId}) < ${kept}
+          ON CONFLICT DO NOTHING`;
+      }
       // No row for this sign-in means the window closed for good, so nothing comes back.
       const rows = yield* sql`
         SELECT s.later_at IS NULL AND (
@@ -36,11 +43,11 @@ export const seen = Effect.fn("SetupPrompts.seen")(function* (userId: string, si
           OR (SELECT count(*) FROM setup_prompt_sign_ins e
               WHERE e.user_id = s.user_id AND (e.first_seen_at, e.sid) < (s.first_seen_at, s.sid))
             < ${firstSignIns}
-        ) AS show
+        ) AS show, s.later_at IS NOT NULL AS later
         FROM setup_prompt_sign_ins s JOIN users u ON u.id = s.user_id
         WHERE s.user_id = ${userId} AND s.sid = ${sid}`;
       const [row] = yield* decodeSeen(rows).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-      return row?.show === true;
+      return { show: row?.show === true, later: row?.later === true };
     })
   );
 });

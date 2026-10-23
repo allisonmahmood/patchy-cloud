@@ -537,7 +537,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         html,
         '<section class="modal-panel final-step" role="dialog" aria-modal="true" aria-labelledby="final-step-heading" data-guide-modal>'
       );
-      assert.include(html, '<h1 class="page-heading" id="final-step-heading">Final step</h1>');
+      assert.include(
+        html,
+        '<h1 class="page-heading" id="final-step-heading" tabindex="-1">Final step</h1>'
+      );
       assert.deepStrictEqual(steps(html), [
         ["current", "Give your agent this line"],
         ["upcoming", "Confirm it’s you"]
@@ -597,18 +600,43 @@ it.layer(layer)("portal pages on a socket", (it) => {
           ],
           [true, true, true, false, true, false]
         );
-        // Inside the first week every sign-in shows it, and Later sticks for each.
+        // Inside the first week every sign-in shows it, a fifth included, and Later sticks for the
+        // sign-in that pressed it alone.
         yield* sql`UPDATE users SET created_at = now() WHERE id = ${workspace.owner.id}`;
         assert.isTrue(yield* shown(workspace.owner, "s6"));
-        yield* post("/guide/later", workspace.owner, { user: workspace.owner.id }).pipe(
-          Effect.provideService(HttpClient.HttpClient, yield* HttpClient.HttpClient)
+        const later = yield* request(
+          "/guide/later",
+          workspace.owner,
+          { user: workspace.owner.id },
+          { origin: PUBLIC_BASE_URL, sid: "s6" }
         );
+        assert.strictEqual(later.status, 303);
+        assert.isFalse(yield* shown(workspace.owner, "s6"));
+        assert.isTrue(yield* shown(workspace.owner, "s7"));
         // A connected person's sign-ins count too, so revoking every key later never reopens it.
         yield* sql`UPDATE machine_tokens SET revoked_at = NULL WHERE user_id = ${workspace.member.id}`;
         for (const sid of ["m1", "m2", "m3", "m4"]) yield* shown(workspace.member, sid);
         yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.member.id}`;
         assert.isFalse(yield* shown(workspace.member, "m5"));
       })
+  );
+
+  it.effect("counts two new sign-ins arriving at once as two, not both third", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.owner.id}`;
+      yield* sql`UPDATE users SET created_at = now() - interval '8 days' WHERE id = ${workspace.owner.id}`;
+      const shown = (sid: string) =>
+        request("/", workspace.owner, undefined, { sid }).pipe(
+          Effect.flatMap((response) => response.text),
+          Effect.map((html) => html.includes("data-guide-modal"))
+        );
+      yield* shown("c1");
+      yield* shown("c2");
+      const both = yield* Effect.all([shown("c3"), shown("c4")], { concurrency: 2 });
+      assert.sameMembers(both, [true, false]);
+    })
   );
 
   it.effect("follows a person's setup on /guide and /guide/steps from Patchy's records", () =>

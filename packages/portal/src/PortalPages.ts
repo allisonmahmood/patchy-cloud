@@ -22,7 +22,6 @@ import {
   firstPatch,
   guideScript,
   guideScriptPath,
-  publishedSince,
   renderFinalStep,
   renderLiveNote,
   renderSetupSteps,
@@ -280,15 +279,22 @@ const render = Effect.fn("PortalPages.render")(function* (
 /** How long after a computer connects Home keeps watching for the first publication. */
 const watchWindow = 30 * 60 * 1_000;
 
-/** Where the viewer's setup stands, from their newest live machine and their own patches. */
+/**
+ * Where the viewer's setup stands: waiting until they have a live machine token, then connected,
+ * and live once one of their live keys published something that is still live. Attribution is by
+ * the publishing key, so a patch reassigned to them later never counts.
+ */
 const setupState = Effect.fn("PortalPages.setupState")(function* () {
   const { viewer, access } = yield* context;
-  const machine = yield* newestMachine(viewer.user.id);
-  if (machine === null) return { machine, state: { kind: "waiting" } as SetupState };
-  const mine = yield* (yield* Patches.Patches).read({ ...access, state: "all", mine: true });
-  const row = publishedSince(mine, viewer.user.id, machine.createdAt);
+  const machines = yield* (yield* MachineTokens.MachineTokens).list(viewer.user.id);
+  if (machines.length === 0) return { connected: false, state: { kind: "waiting" } as SetupState };
+  const patches = yield* Patches.Patches;
+  const published = yield* patches.publishedWith(machines.map((machine) => machine.id));
+  const [row] = Option.isSome(published)
+    ? yield* patches.read({ ...access, state: "all", patchRef: published.value })
+    : [];
   return {
-    machine,
+    connected: true,
     state: (row === undefined ? { kind: "connected" } : { kind: "live", row }) as SetupState
   };
 });
@@ -310,10 +316,13 @@ const home = Effect.fn("PortalPages.home")(function* () {
   // Everyone's sign-ins count, so someone who connects and later revokes every key stays out.
   const prompt = yield* SetupPrompts.seen(viewer.user.id, signedIn.sid);
   const first = firstPatch(rows, viewer.user.id, now);
+  // Without the panel, Home still watches for the first publication: after Later, or for a
+  // while after a computer connects.
   const watch =
-    machine !== null &&
-    now - Date.parse(machine.createdAt) < watchWindow &&
-    publishedSince(rows, viewer.user.id, machine.createdAt) === undefined;
+    machine === null
+      ? prompt.later
+      : now - Date.parse(machine.createdAt) < watchWindow &&
+        (yield* setupState()).state.kind === "connected";
   return pageResponse(
     {
       title: "Home",
@@ -329,12 +338,12 @@ const home = Effect.fn("PortalPages.home")(function* () {
         note:
           first === undefined ? undefined : renderLiveNote(first, viewer, session.publicBaseUrl),
         failures: yield* recentFailures(rows)
-      })}${watch ? renderWatch() : ""}`,
+      })}${watch ? renderWatch(machine === null ? "waiting" : "connected") : ""}`,
       styles: styles + homeStyles + finalStepStyles,
       app: {
         viewer,
         section: "home",
-        ...(machine === null && prompt
+        ...(machine === null && prompt.show
           ? {
               overlay: renderFinalStep({
                 state: { kind: "waiting" },
@@ -353,8 +362,8 @@ const home = Effect.fn("PortalPages.home")(function* () {
 /** `/guide`, the Final step panel as a page, for anyone not yet connected; others go Home. */
 const guidePage = Effect.fn("PortalPages.guidePage")(function* () {
   const { viewer, session } = yield* context;
-  const { machine, state } = yield* setupState();
-  if (machine !== null)
+  const { connected, state } = yield* setupState();
+  if (connected)
     return HttpServerResponse.redirect("/", {
       status: 303,
       headers: { "cache-control": "private, no-store" }

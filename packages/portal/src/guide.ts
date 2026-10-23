@@ -21,6 +21,13 @@ const firstPatchWindow = 24 * 60 * 60 * 1_000;
 /** The Home it lives on, by the company's name: "Back to Acme Co". */
 const companyHome = (viewer: RequireSession.Viewer["Service"]) => escapeHtml(viewer.company.name);
 
+/** What a screen reader hears when the panel moves to each state, once. */
+const announcements: Record<SetupState["kind"], string> = {
+  waiting: "",
+  connected: "You’re set. Your computer is connected.",
+  live: "Your first publication is live."
+};
+
 const step = (
   state: "done" | "current" | "upcoming",
   marker: string,
@@ -74,13 +81,14 @@ export const renderSetupSteps = (input: {
           `<p class="supporting-text">Your agent sends a link and a code. Open it, check the code, confirm. This page moves on by itself.</p>`
         )}`
       : `${step("done", "✓", "Give your agent this line", "")}${step("done", "✓", "Confirm it’s you", `<p class="supporting-text">Your computer is connected.</p>`)}`;
+  const go = `<a class="btn" href="/">Go to ${companyHome(viewer)}</a>`;
   const after =
     state.kind === "connected"
-      ? `<section class="note note-ok"><span class="note-title">You’re set</span><p>Your agent finishes setup from here. What it publishes shows up on Home.</p><div class="actions"><a class="btn btn-primary" href="/">Go to ${companyHome(viewer)}</a></div></section>`
+      ? `<section class="note note-ok" role="status"><span class="note-title">You’re set</span><p>Your agent finishes setup from here. What it publishes shows up on Home.</p><div class="actions">${go.replace('class="btn"', 'class="btn btn-primary"')}</div></section>`
       : state.kind === "live"
-        ? renderLiveNote(state.row, viewer, input.publicBaseUrl)
+        ? `${renderLiveNote(state.row, viewer, input.publicBaseUrl)}<div class="actions">${go}</div>`
         : "";
-  return `<div class="final-step-steps" data-guide-steps data-state="${state.kind}"><ol class="steps">${steps}</ol>${after}</div>`;
+  return `<div class="final-step-steps" data-guide-steps data-state="${state.kind}" data-announce="${escapeAttribute(announcements[state.kind])}"><ol class="steps final-step-list">${steps}</ol>${after}</div>`;
 };
 
 /**
@@ -100,7 +108,7 @@ export const renderFinalStep = (input: {
     input.mode === "modal"
       ? `<form class="final-step-later" method="post" action="/guide/later"><input type="hidden" name="user" value="${escapeAttribute(input.viewer.user.id)}"><button class="btn btn-quiet" type="submit"><span class="final-step-wide">Later</span><span class="final-step-narrow">Look around ${company} first</span></button></form>`
       : "";
-  const body = `<h1 class="page-heading" id="final-step-heading">Final step</h1><p class="lede final-step-wide">Connect your AI agent. It builds what ${company} needs, and Patchy puts it online for everyone at ${company}.</p><div class="final-step-wide">${renderSetupSteps(input)}</div><div class="final-step-narrow"><p class="lede">Connect your AI agent. It runs on your computer, so this step happens there, and it’ll be waiting when you open Patchy on your computer.</p><div class="actions"><button type="button" class="btn btn-primary" data-share="${escapeAttribute(base)}" hidden>Send this to my computer</button></div></div><p class="supporting-text final-step-how">How Patchy works: you ask → your agent builds it → Patchy puts it online → ${company} uses it.</p>${later}<script defer src="${copyScriptPath}"></script><script defer src="${guideScriptPath}"></script>`;
+  const body = `<h1 class="page-heading" id="final-step-heading" tabindex="-1">Final step</h1><p class="lede final-step-wide">Connect your AI agent. It builds what ${company} needs, and Patchy puts it online for everyone at ${company}.</p><p class="final-step-announce" aria-live="polite" data-guide-announce></p>${renderSetupSteps(input)}<div class="final-step-narrow"><p class="lede">Connect your AI agent. It runs on your computer, so this step happens there, and it’ll be waiting when you open Patchy on your computer.</p><div class="actions"><button type="button" class="btn btn-primary" data-share="${escapeAttribute(base)}" hidden>Send this to my computer</button></div></div><p class="supporting-text final-step-how">How Patchy works: you ask → your agent builds it → Patchy puts it online → ${company} uses it.</p>${later}<script defer src="${copyScriptPath}"></script><script defer src="${guideScriptPath}"></script>`;
   return input.mode === "modal"
     ? `<section class="modal-panel final-step" role="dialog" aria-modal="true" aria-labelledby="final-step-heading" data-guide-modal>${body}</section>`
     : `<article class="portal-card final-step" aria-labelledby="final-step-heading">${body}</article>`;
@@ -115,8 +123,11 @@ export const finalStepStyles = `
   .final-step-later { margin: 12px 0 0; text-align: center; }
   .final-step .actions > [hidden], .note .actions > [hidden] { display: none; }
   .final-step-narrow { display: none; }
+  .final-step-narrow[hidden], .final-step-later[hidden] { display: none; }
+  .final-step-announce { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   @media (max-width: 600px) {
-    .final-step-wide { display: none; }
+    .final-step-wide, .final-step-list { display: none; }
+    .final-step-steps > .note { margin-top: 0; }
     .final-step-narrow { display: block; }
     .final-step-later .final-step-narrow { display: inline; }
   }
@@ -135,7 +146,11 @@ export const guideScript = `(() => {
   let region = document.querySelector("[data-guide-steps]");
   if (region === null) return;
   const watching = region.dataset.mode === "watch";
-  let timer;
+  const modal = document.querySelector("[data-guide-modal]");
+  const panel = modal ?? document.querySelector(".final-step");
+  const announcer = document.querySelector("[data-guide-announce]");
+  const visible = (root) =>
+    [...root.querySelectorAll("button, a[href], summary")].find((el) => !el.hidden && el.offsetParent !== null);
   // Copy buttons that arrive after the copy script ran, such as the live note's Copy link.
   const wireCopy = (root) => {
     for (const button of root.querySelectorAll("button[data-copy]")) {
@@ -149,8 +164,6 @@ export const guideScript = `(() => {
       });
     }
   };
-  const modal = document.querySelector("[data-guide-modal]");
-  if (modal !== null) (modal.querySelector("button[data-copy]:not([hidden])") ?? modal.querySelector("h1"))?.focus?.();
   document.addEventListener("click", (event) => {
     const copy = event.target.closest?.("[data-guide-steps] button[data-copy]");
     if (copy) document.querySelector(".final-step-copied")?.removeAttribute("hidden");
@@ -163,7 +176,23 @@ export const guideScript = `(() => {
       else navigator.clipboard.writeText(url).then(() => { button.textContent = "Link copied"; }, () => {});
     });
   }
+  // Focus starts on the panel's first visible control: Copy on a computer, Send on a phone.
+  if (modal !== null) (visible(modal) ?? modal.querySelector("h1"))?.focus();
+  const settled = (state) => state === "connected" || state === "live";
   const done = (state) => state === "live";
+  const show = (next) => {
+    const hadFocus = region.contains(document.activeElement);
+    region.replaceWith(next);
+    region = next;
+    wireCopy(region);
+    if (settled(region.dataset.state))
+      for (const gone of document.querySelectorAll(".final-step-later, .final-step-narrow")) gone.hidden = true;
+    if (announcer !== null && region.dataset.announce) announcer.textContent = region.dataset.announce;
+    const lost = document.activeElement === document.body || document.activeElement?.offsetParent === null;
+    if (hadFocus || lost) (visible(region) ?? panel?.querySelector("h1"))?.focus();
+  };
+  let timer;
+  let inFlight = false;
   const checkAgain = () => {
     const button = document.createElement("button");
     button.type = "button";
@@ -172,46 +201,44 @@ export const guideScript = `(() => {
     button.addEventListener("click", () => location.reload());
     region.append(button);
   };
+  // One loop: a tick never overlaps another, so replies arrive in order and none goes stale.
   const tick = async () => {
-    if (document.hidden) return;
+    clearTimeout(timer);
+    if (inFlight || document.hidden || done(region.dataset.state)) return;
     if (Date.now() - started > limit) return checkAgain();
+    inFlight = true;
     try {
       const response = await fetch("/guide/steps" + (watching ? "?mode=watch" : ""), { credentials: "same-origin", headers: { accept: "text/html" } });
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-guide-steps]");
       if (!response.ok || next === null) return location.reload();
       if (next.dataset.state !== region.dataset.state) {
-        if (watching) {
+        if (!watching) show(next);
+        else {
           if (next.dataset.state === "live") {
             const notes = [...next.children];
             document.querySelector("main")?.prepend(...notes);
             for (const note of notes) wireCopy(note);
           }
-        } else {
-          region.replaceWith(next);
-          region = next;
-          wireCopy(region);
-          // Connected, the panel's own Go button is the way out.
-          document.querySelector(".final-step-later")?.setAttribute("hidden", "");
+          region.dataset.state = next.dataset.state;
         }
-        region.dataset.state = next.dataset.state;
       }
-      if (done(region.dataset.state)) return;
-    } catch {}
-    timer = setTimeout(tick, 3000);
+    } catch {
+    } finally {
+      inFlight = false;
+    }
+    if (!done(region.dataset.state)) timer = setTimeout(tick, 3000);
   };
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && !done(region.dataset.state)) { clearTimeout(timer); tick(); }
-  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
   timer = setTimeout(tick, 3000);
 })();
 `;
 
 /**
- * Home watches for the first publication after a computer connects, without the panel: the region
- * is empty until the live note arrives.
+ * Home watches for the first publication without the panel, after a computer connects or after
+ * Later: the region is empty until the live note arrives.
  */
-export const renderWatch = (): string =>
-  `<div data-guide-steps data-mode="watch" data-state="connected" hidden></div><script defer src="${guideScriptPath}"></script>`;
+export const renderWatch = (state: SetupState["kind"]): string =>
+  `<div data-guide-steps data-mode="watch" data-state="${state}" hidden></div><script defer src="${guideScriptPath}"></script>`;
 
 /** A person's earliest patch, for the day after it was made and while it is live. */
 export const firstPatch = (
@@ -235,21 +262,3 @@ export const firstPatch = (
     ? first
     : undefined;
 };
-
-/** A token's mint stamps the database's clock and a publish the server's, which can disagree a little. */
-const clockSkew = 60_000;
-
-/** The person's first live patch whose current version was published at or after `since`. */
-export const publishedSince = (
-  rows: ReadonlyArray<Patches.ReadPatch>,
-  userId: string,
-  since: string
-): Patches.ReadPatch | undefined =>
-  rows
-    .filter(
-      (row) =>
-        row.owner.id === userId &&
-        row.patch.state === "live" &&
-        Date.parse(row.publishedAt) >= Date.parse(since) - clockSkew
-    )
-    .sort((a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt))[0];
