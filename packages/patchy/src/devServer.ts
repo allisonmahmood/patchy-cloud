@@ -29,7 +29,8 @@ import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as Redacted from "effect/Redacted";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -38,11 +39,12 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as DevAgent from "./devAgent.js";
 import * as DevResources from "./devResources.js";
 import * as DevLog from "./devLog.js";
 import { colleague } from "./devMembers.js";
 import type { Prepared } from "./devPreparation.js";
-import { atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
+import { AgentRequest, atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
 import { watch } from "./devWatch.js";
 import * as DevServerWatch from "./devServerWatch.js";
 
@@ -55,6 +57,7 @@ const headers = {
   "permissions-policy": PATCH_PERMISSIONS_POLICY
 };
 const absent = HttpServerResponse.text("Not found", { status: 404, headers });
+const decodeAgentRequest = Schema.decodeUnknownEffect(AgentRequest);
 // External trusted script, never inserted into the sandbox. A reload retains pathname/query/hash.
 const reloadScript = `(() => {
   const revision = new URL(document.currentScript.src).searchParams.get("v");
@@ -118,6 +121,21 @@ export const serve = Effect.fn("Dev.serve")(function* (
   let html = yield* nextBuild(prepared.manifest);
   let title = titleOf(html);
   let revision = 1;
+  // A failed rebuild keeps the last good binding serving, and `patchy dev agent` says so until a
+  // newer build installs. Recording the build that was serving keeps the two in step.
+  let failedOver: number | undefined;
+  const agentDev: DevAgent.Dev = {
+    binding: () => ({
+      version: resources.version,
+      build: resources.build,
+      rebuildFailed: failedOver === resources.build
+    }),
+    patch: {
+      name: prepared.manifest.name ?? "This patch",
+      description: prepared.manifest.description ?? "",
+      owner: prepared.identity.user.name
+    }
+  };
   if (nextServer !== undefined) {
     yield* Effect.forever(
       nextServer.pipe(
@@ -132,8 +150,14 @@ export const serve = Effect.fn("Dev.serve")(function* (
             yield* install(handlers);
           })
         ),
-        Effect.tap(() => Console.log("Server binding ready; waking subscriptions.")),
-        Effect.catch((error) => Console.error(error))
+        Effect.tap(() =>
+          Console.log(`Server build ${resources.build} ready; waking subscriptions.`)
+        ),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            failedOver = resources.build;
+          }).pipe(Effect.andThen(Console.error(error)))
+        )
       )
     ).pipe(Effect.forkScoped);
   }
@@ -163,6 +187,28 @@ export const serve = Effect.fn("Dev.serve")(function* (
                   { headers }
                 )
               : absent;
+          })
+        );
+        // `patchy dev agent`, answering as this mount's person. The nonce keeps pages and other
+        // local programs out, as for health.
+        yield* router.add(
+          "POST",
+          "/~dev/agent",
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (request.headers["x-patchy-dev"] !== record.nonce) return absent;
+            const body = yield* request.json.pipe(
+              Effect.flatMap(decodeAgentRequest),
+              Effect.option
+            );
+            if (Option.isNone(body))
+              return HttpServerResponse.text("Bad request", { status: 400, headers });
+            const reply = yield* DevAgent.answer(
+              agentDev,
+              { person: identity, address: `${origin}${base}` },
+              body.value
+            ).pipe(Effect.provideContext(resources.context), Effect.provideContext(events));
+            return HttpServerResponse.jsonUnsafe(reply, { headers });
           })
         );
         yield* router.add(

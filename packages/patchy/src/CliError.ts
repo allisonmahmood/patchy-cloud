@@ -16,6 +16,7 @@ import {
   PatchRetired,
   PatchState,
   SourcesOff,
+  ToolRefusal,
   WrongState
 } from "@patchy/api";
 
@@ -43,10 +44,24 @@ export const refusalFields = {
   sources: Schema.optionalKey(SourcesOff.fields.sources),
   state: Schema.optionalKey(PatchState),
   purgeAt: Schema.optionalKey(PatchDeleted.fields.purgeAt),
-  admins: Schema.optionalKey(AdminRequired.fields.admins)
+  admins: Schema.optionalKey(AdminRequired.fields.admins),
+  // A refusal Patchy MCP's door would give, from `patchy dev agent`.
+  from: Schema.optionalKey(ToolRefusal.fields.from),
+  details: ToolRefusal.fields.details,
+  retryAfterSeconds: ToolRefusal.fields.retryAfterSeconds
 };
 
 const refusal = Schema.Union([
+  // The door's refusal: who refused, its code, and any details and retry delay. First, because a
+  // patch's own code may be any string, `patch_retired` included; no instance refusal has `from`.
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    error: Schema.String,
+    code: ToolRefusal.fields.code,
+    from: ToolRefusal.fields.from,
+    details: ToolRefusal.fields.details,
+    retryAfterSeconds: ToolRefusal.fields.retryAfterSeconds
+  }),
   AdminRequired,
   NotOwner,
   PatchRetired,

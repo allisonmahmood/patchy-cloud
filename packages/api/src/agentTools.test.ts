@@ -4,12 +4,16 @@ import {
   agentTools,
   agentToolsBytes,
   argsJsonSchema,
+  callAnswer,
   checkAgentArea,
   handlerJsonSchema,
+  invalidArgsRefusal,
   openPatchAnswer,
   patchRefusal,
+  runtimeRefusal,
   toolAnswer,
   toolRefusal,
+  unknownToolRefusal,
   type HandlerDescriptor,
   type HandlerDescriptors,
   type HandlerSchema
@@ -410,5 +414,96 @@ describe("tool call answers", () => {
       structuredContent: { error },
       isError: true
     });
+  });
+
+  it("answers a call with its result and version, or passes the patch's refusal through", () => {
+    expect(callAnswer("New Business", "addLead", 4, { ok: true, value: { id: "lead_1" } })).toEqual(
+      toolAnswer({ result: { id: "lead_1" }, version: 4 })
+    );
+    const failure = { ok: false as const, source: "handler" as const, code: "closed" };
+    expect(callAnswer("New Business", "addLead", 4, failure)).toEqual(
+      patchRefusal("New Business", "addLead", failure)
+    );
+  });
+
+  it("names the tools a patch has now for a tool it doesn't have", () => {
+    expect(
+      unknownToolRefusal("New Business", "addDeal", ["addLead", "listDeals"]).structuredContent
+    ).toEqual({
+      error: {
+        code: "unknown_tool",
+        from: "patchy",
+        message:
+          "New Business has no tool addDeal. Its tools now: addLead, listDeals. Call open_patch to see what each does and takes."
+      }
+    });
+    expect(unknownToolRefusal("New Business", "addDeal", []).content[0].text).toBe(
+      "New Business has no tool addDeal. It has no agent tools now. Call open_patch to see what each does and takes."
+    );
+  });
+
+  it("says where arguments miss their schema, and names the tools there are now", () => {
+    expect(
+      invalidArgsRefusal("addLead", 'Missing key at ["email"]', ["addLead", "listDeals"]).content[0]
+        .text
+    ).toBe(
+      "addLead's arguments don't fit its schema: Missing key at [\"email\"]. Its tools now: addLead, listDeals. Call open_patch to see what each does and takes."
+    );
+  });
+
+  it("keeps Patchy's runtime refusal's code, message and details, its retry in whole seconds", () => {
+    expect(
+      runtimeRefusal(
+        {
+          ok: false,
+          source: "patchy",
+          code: "busy",
+          error: "The action concurrency limit is reached. Try again shortly.",
+          limitId: "tier2.actions.viewer",
+          retryAfter: 0.5,
+          details: { held: 2 }
+        },
+        { kind: "action" }
+      ).structuredContent
+    ).toEqual({
+      error: {
+        code: "busy",
+        from: "patchy",
+        message: "The action concurrency limit is reached. Try again shortly.",
+        details: { held: 2 },
+        retryAfterSeconds: 1
+      }
+    });
+  });
+
+  it("names the correlation id the message points to", () => {
+    const failure = {
+      ok: false as const,
+      source: "patchy" as const,
+      code: "handler_failed" as const,
+      error: "The handler failed. Use the correlation id to find its log.",
+      correlationId: "call_1"
+    };
+    expect(runtimeRefusal(failure, { kind: "mutation" }).content[0].text).toBe(
+      "The handler failed. Use the correlation id to find its log. Correlation id: call_1."
+    );
+  });
+
+  it("says an action that can write and didn't finish may have partly happened", () => {
+    const refusal = (code: "handler_timeout" | "timeout" | "unknown_outcome") => ({
+      ok: false as const,
+      source: "patchy" as const,
+      code,
+      error: "It didn't finish."
+    });
+    const partly =
+      "It didn't finish. It may have partly happened: read what it changes before trying again, with a new change key.";
+    for (const code of ["handler_timeout", "timeout", "unknown_outcome"] as const)
+      expect(runtimeRefusal(refusal(code), { kind: "action" }).content[0].text, code).toBe(partly);
+    // A read-only action can't write, and a mutation either committed or didn't.
+    for (const tool of [{ kind: "action", readOnly: true }, { kind: "mutation" }] as const)
+      expect(runtimeRefusal(refusal("handler_timeout"), tool).content[0].text).toBe(
+        "It didn't finish."
+      );
   });
 });

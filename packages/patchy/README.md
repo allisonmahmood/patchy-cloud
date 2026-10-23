@@ -768,10 +768,45 @@ page and log the error. Config and fixture changes need `dev stop` followed by `
 | `dev stop`   | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                                               |
 | `dev logs`   | Print the dev log.                                                                             | `{ ok, log, text }`                                                                                  |
 | `dev reset`  | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                                                |
+| `dev agent`  | Call the running binding's agent tools as people's agents do; see below.                       | `open_patch`'s answer, or `{ result, version }`                                                      |
 
 `--foreground` waits and streams logs; Ctrl-C stops a session it started.
 Joining an existing session leaves it running on interruption. Under `--json`
 only the readiness document is printed; use `dev logs --json` to read logs.
+
+### `patchy dev agent [<tool>] [<json>|-] [--colleague]`
+
+Tries a tier 2 repo's agent tools against the running `patchy dev` session, the
+way Patchy MCP's door calls them, before anything is published. With no tool it
+prints what `open_patch` would answer: the patch's name, description and owner,
+its dev URL as the address, and each tool with its kind, description, argument
+and result schemas and declared refusals. With a tool it calls it with the JSON
+object given, read from stdin with `-`, or `{}` when omitted.
+
+The call goes through Runtime's agent invocation as the primary dev viewer, or
+as the dev colleague with `--colleague`, and handler code sees `ctx.agent` as
+`{ name: "patchy dev" }`. A query or read-only action is a read and anything else
+a change. Each change gets a fresh change key; a mutation's is its mutation key,
+which the daemon keeps when it retries an `unknown_outcome`, so the retry writes
+once. An action is never retried, and running the command again is a new change;
+there is no `--key`. Pages open on the dev URLs update live, and `dev.log` shows
+the call's viewer as `<viewer> via patchy dev`. The company's agent access switch
+doesn't apply here, and the daemon serves no MCP endpoint.
+
+Answers take the door's shapes. Text output is the answer as indented JSON,
+then a line naming the server build that answered: builds count from 1 for the
+session, as `dev.log`'s `Server build N ready` lines do, and a call's `version` is
+its build. When the latest rebuild failed, the line says the last good build
+answered instead; under `--json` that line rides in `warnings`, and without it the
+newest build answered.
+
+| exit | when                                                                                                                                   | `--json`                                                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 0    | a result                                                                                                                               | stdout: `open_patch`'s answer or `{ result, version }`, adding `warnings` when the last good build answered |
+| 2    | any refusal the door would give: the patch's own, `unknown_tool`, `invalid_args`, or Patchy's runtime refusal such as `handler_failed` | stderr: `{ ok: false, error, kind: "rejected", code, from, details?, retryAfterSeconds?, warnings? }`       |
+| 1    | dev not running or unhealthy (`not_running`), not tier 2 or no agent tools (`no_agent_tools`), arguments that aren't one JSON object   | stderr: the usual failure document                                                                          |
+| 3    | a started call got no usable answer, so it may have run; read `dev logs` before calling it again                                       | stderr: the usual failure document, `kind: "unreachable"`                                                   |
+| 130  | interrupted                                                                                                                            |                                                                                                             |
 
 Local state lives in `.patchy/dev/<instance-hash>/`, including the daemon
 record with its release and authenticated identity, log, PGlite data and

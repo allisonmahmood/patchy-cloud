@@ -50,7 +50,7 @@ export default tseslint.config(
     ignores: [
       "**/*.test.ts",
       "packages/patchy/src/test/**",
-      "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members}.ts"
+      "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members,Agent}.ts"
     ],
     rules: {
       "no-restricted-imports": [
@@ -74,7 +74,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ["packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members}.ts"],
+    files: ["packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members,Agent}.ts"],
     rules: {
       "no-restricted-imports": [
         "error",

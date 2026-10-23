@@ -60,6 +60,9 @@ Done when `pnpm dev status` exits 0.
   checks use DEVELOPMENT's throwaway machine, under **Front door and
   onboarding**.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
+  A tier 2 repo's agent tools answer `pnpm patchy dev agent`, which lists them as
+  an agent sees them, and `pnpm patchy dev agent <tool> '<json>' [--colleague]`,
+  which calls one as a dev person, so open dev pages show its changes live.
   Postgres declarations read invented fixtures. PostHog declarations have none:
   `patchy dev` reads the real connection through this instance, as the CLI's
   key, and each read shows as a Dev call on the connection's page. Connecting

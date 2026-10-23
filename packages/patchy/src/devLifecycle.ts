@@ -9,16 +9,20 @@ import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { ToolRefusal } from "@patchy/api";
 import type { CliError } from "./CliError.js";
-import { LocalError } from "./CliError.js";
+import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
 import * as Preparation from "./devPreparation.js";
 import { checkRepoRelease } from "./repoBuild.js";
 import { safePath } from "./ManagedProject.js";
 import {
+  AgentReply,
   atomicJson,
   birth,
   directory,
@@ -42,6 +46,18 @@ const decodeFailure = Schema.decodeUnknownSync(
   )
 );
 const missing = Schema.is(Schema.Struct({ code: Schema.Literal("ENOENT") }));
+const decodeAgentReply = Schema.decodeUnknownEffect(AgentReply);
+const decodeToolRefusal = Schema.decodeUnknownEffect(ToolRefusal);
+/** An answer as text: indented JSON, for a person or an agent to read. */
+const indentedJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+const decodeToolArgs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json))
+);
+const notRunning = () =>
+  new LocalError({
+    message: "No healthy dev runtime for this repo and instance. Run `patchy dev`.",
+    code: "not_running"
+  });
 
 /**
  * The daemon's Node arguments: the CLI's own, plus `--no-wasm-code-gc` on Node 24, whose V8 can
@@ -352,10 +368,7 @@ export const manage = Effect.fn("Dev.manage")(function* (
           yield* io("Could not clear the stale dev record.", async () =>
             fs.rm(await safePath(stateDir, "daemon.json"), { force: true })
           );
-        return yield* new LocalError({
-          message: "No healthy dev runtime for this repo and instance. Run `patchy dev`.",
-          code: "not_running"
-        });
+        return yield* notRunning();
       }
       if (command === "logs") {
         const file = yield* io("Could not locate the dev log.", () =>
@@ -394,5 +407,119 @@ export const manage = Effect.fn("Dev.manage")(function* (
         ]
       );
     })
+  );
+});
+
+/** A tool's arguments: a JSON object, from the command line or from stdin with `-`; `{}` when omitted. */
+const toolArgs = Effect.fn("Dev.agent.args")(function* (given: Option.Option<string>) {
+  if (Option.isNone(given)) return {};
+  let text = given.value;
+  if (text === "-") {
+    const stdio = yield* Stdio.Stdio;
+    if (yield* stdio.stdinIsTerminal)
+      return yield* new LocalError({
+        message: "`-` reads the arguments from stdin; pipe a JSON object in."
+      });
+    text = yield* stdio.stdin.pipe(
+      Stream.decodeText,
+      Stream.mkString,
+      Effect.mapError(
+        (cause) => new LocalError({ message: "Could not read the arguments from stdin.", cause })
+      )
+    );
+  }
+  const args = decodeToolArgs(text);
+  if (Option.isNone(args))
+    return yield* new LocalError({
+      message: `A tool's arguments are one JSON object, such as '{"name":"Acme"}'.`
+    });
+  return args.value;
+});
+
+/**
+ * `patchy dev agent`: what `open_patch` answers for the running binding, or one tool called the
+ * way Patchy MCP's door calls it, as the primary dev viewer or the colleague. A result exits 0
+ * and the door's refusal 2, each naming the server build that answered; a local problem exits 1,
+ * and a started call that gets no usable answer 3. It sends one request: the daemon mints a
+ * change's key and retries a mutation's unknown outcome under it, and running the command again
+ * is a new change.
+ */
+export const agent = Effect.fn("Dev.agent")(function* (
+  cwd: string,
+  input: {
+    readonly tool: Option.Option<string>;
+    readonly args: Option.Option<string>;
+    readonly colleague: boolean;
+  }
+) {
+  const call = Option.isNone(input.tool)
+    ? undefined
+    : { tool: input.tool.value, args: yield* toolArgs(input.args) };
+  const instance = yield* Instance.Instance;
+  const { root, stateDir } = yield* directory(cwd, instance.apiUrl);
+  const record = yield* recorded(root, stateDir, instance.apiUrl);
+  if (record?.url === undefined || !(yield* healthy(record))) return yield* notRunning();
+  // Each mount answers as its own person. Tier 0 has no colleague, and no agent area for its
+  // one mount to answer for.
+  const origin = new URL((input.colleague ? record.colleagueUrl : undefined) ?? record.url).origin;
+  const unusable = (cause: unknown) =>
+    new UnreachableError({
+      instanceUrl: origin,
+      message:
+        call === undefined
+          ? "The dev runtime gave no usable answer. Read `pnpm patchy dev logs`."
+          : `The dev runtime gave no usable answer, so ${call.tool} may or may not have run. Read \`pnpm patchy dev logs\` before calling it again.`,
+      cause
+    });
+  const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+  const reply = yield* http
+    .execute(
+      HttpClientRequest.post(`${origin}/~dev/agent`).pipe(
+        HttpClientRequest.setHeader("x-patchy-dev", record.nonce),
+        HttpClientRequest.bodyJsonUnsafe(call === undefined ? {} : { call })
+      )
+    )
+    .pipe(
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(decodeAgentReply),
+      Effect.mapError(unusable)
+    );
+  if (!reply.ok) return yield* new LocalError({ message: reply.error, code: reply.code });
+  const as = call === undefined ? "" : ` as ${reply.person} via patchy dev`;
+  const stale = reply.rebuildFailed
+    ? [
+        `Server build ${reply.build}, the last good one, answered${as}: the latest rebuild failed. Read \`pnpm patchy dev logs\`.`
+      ]
+    : [];
+  const answered = stale[0] ?? `Server build ${reply.build} answered${as}.`;
+  const { answer } = reply;
+  if (answer.isError === true) {
+    const refusal = yield* decodeToolRefusal(answer.structuredContent["error"]).pipe(
+      Effect.mapError(unusable)
+    );
+    // Warnings ride in the failure document; a fresh build is only worth a line of text.
+    if (stale.length > 0) yield* Output.rememberWarnings(stale);
+    else yield* Output.warn(answered);
+    const text = answer.content[0].text;
+    return yield* new RejectedError({
+      refusal: {
+        ok: false,
+        error: text,
+        code: refusal.code,
+        from: refusal.from,
+        ...(refusal.details === undefined ? {} : { details: refusal.details }),
+        ...(refusal.retryAfterSeconds === undefined
+          ? {}
+          : { retryAfterSeconds: refusal.retryAfterSeconds })
+      },
+      // The door's own words, whatever its code, never a lifecycle refusal's.
+      hint: text
+    });
+  }
+  yield* Output.report(
+    stale.length === 0
+      ? answer.structuredContent
+      : { ...answer.structuredContent, warnings: stale },
+    [indentedJson(answer.structuredContent), answered]
   );
 });

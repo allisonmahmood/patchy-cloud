@@ -93,7 +93,7 @@ A tier 2 patch's `agent/` folder, whose exports are its agent tools. A patch has
 _Avoid_: MCP server (Patchy MCP is the one server), `server/agent.ts` (the prototype's form)
 
 **Agent tool**:
-One export of an agent area: a described query, mutation or action that a worker agent calls through Patchy MCP, named after its export. It is a read when it is a query or a read-only action, otherwise a change. Agents only; the page calls server handlers.
+One export of an agent area: a described query, mutation or action that a worker agent calls through Patchy MCP, named after its export. It is a read when it is a query or a read-only action, otherwise a change. Agents only; the page calls server handlers. A builder agent tries them in the dev runtime with `patchy dev agent`, which calls them as the door does.
 _Avoid_: MCP tool (Patchy MCP's four fixed tools), endpoint
 
 **Agent area check**:
