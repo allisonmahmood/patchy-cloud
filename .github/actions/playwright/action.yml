@@ -1,8 +1,7 @@
 name: Install Chromium
 description: >-
-  Installs Playwright's Chromium and its system packages, restoring the browser
-  from the Actions cache when this runner image and Playwright version already
-  have it. Use after `pnpm install`.
+  Installs Playwright's Chromium, restoring it from the Actions cache when this
+  runner image and Playwright version already have it. Use after `pnpm install`.
 
 runs:
   using: composite
@@ -21,10 +20,15 @@ runs:
         path: ~/.cache/ms-playwright
         key: ${{ steps.key.outputs.key }}
 
-    - name: Download Chromium and install its system packages
+    # No `--with-deps`. The runner image ships Google Chrome and Chromium, so it
+    # already has every library Playwright's Chromium loads; Playwright names any
+    # that go missing when it launches. The rest of `--with-deps` is xvfb and
+    # extra fonts, which the headless suites don't need, and fetching them from a
+    # slow apt mirror pushed jobs past their time limit.
+    - name: Download Chromium
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
-      run: pnpm exec playwright install --with-deps chromium
+      run: pnpm exec playwright install chromium
 
     # Saved now rather than at the end of the job, so a failing test still
     # leaves the browser for the next run.
@@ -34,9 +38,3 @@ runs:
       with:
         path: ~/.cache/ms-playwright
         key: ${{ steps.key.outputs.key }}
-
-    # Each job starts on a fresh VM, so a restored browser still needs these.
-    - name: Install Chromium's system packages
-      if: steps.restore.outputs.cache-hit == 'true'
-      shell: bash
-      run: pnpm exec playwright install-deps chromium

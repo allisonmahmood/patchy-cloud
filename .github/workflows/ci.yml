@@ -78,7 +78,7 @@ jobs:
           node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install Chromium and system dependencies
+      - name: Install Chromium
         uses: ./.github/actions/playwright
       - name: Verify live Clerk API and browser workflows
         run: pnpm test:clerk
@@ -131,7 +131,7 @@ jobs:
           node-version: ${{ matrix.exact-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install Chromium and system dependencies
+      - name: Install Chromium
         uses: ./.github/actions/playwright
       - name: Check the packed CLI harness reaps orphaned processes
         run: node scripts/packed-cli-e2e.mjs --cleanup-check
@@ -163,7 +163,7 @@ jobs:
           node-version: 22.22.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install Chromium and system dependencies
+      - name: Install Chromium
         uses: ./.github/actions/playwright
       - name: Exercise the packed tier 2 journey against an isolated real server
         run: pnpm test:packed-tier2-e2e
@@ -211,7 +211,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         if: steps.changed.outputs.rehearse
-      - name: Install Chromium and system dependencies
+      - name: Install Chromium
         if: steps.changed.outputs.rehearse
         uses: ./.github/actions/playwright
       - name: Rehearse a deploy and a rollback on one set of data
@@ -234,7 +234,7 @@ jobs:
           node-version: 22.22.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install Chromium and system dependencies
+      - name: Install Chromium
         uses: ./.github/actions/playwright
       - name: Exercise tier 1 and 2 pages in Chromium
         run: pnpm test:browser
