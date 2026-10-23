@@ -278,10 +278,11 @@ out; **Sign out** on **Your machines** does that.
 ### 6. Suggest a first patch
 
 With the welcome page live, or skipped, suggest one or two first patches this person
-might want. Draw them from what you know about them: what they've told you, your own
-memory of them, the folder you're working in (a quick look often says what they do),
-their role, and what their company already has (`patchy list`). Tie each to something
-specific you found, and say why in a few words. Patchy keeps no list of suggestions:
+might want. First gather what you know about them: what they've told you, your own
+memory of them, the files in the folder you're working in (list it and skim anything
+that says what they do), their role, and what their company already has
+(`patchy list`). Tie each suggestion to something specific you found, and say why in a
+few words. Patchy keeps no list of suggestions:
 don't offer generic examples in their place. If you still know too little, ask one
 short question about their work, such as what they do and what's tedious this week,
 then suggest from their answer.
