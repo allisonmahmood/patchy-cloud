@@ -1,7 +1,9 @@
 /**
  * Server-side business moments. Serving a page is not a business analytics event;
- * visits remain database counts today. Wide events report runtime work, including
- * viewer ids and handler names, through the same PostHog client.
+ * visits remain database counts. The one exception is `patch.first_opened`, a
+ * colleague's first open of someone's patch, because activation is counted in it.
+ * Wide events report runtime work, including viewer ids and handler names, through
+ * the same PostHog client.
  * Neither event family carries page content, filenames, source addresses or URLs.
  * A reporting failure never fails the caller's request.
  */
@@ -141,6 +143,20 @@ export type AnalyticsCatalogue = Catalogue<{
     readonly versionNumber: number;
     /** The version current before, absent only for a patch that never had one. */
     readonly fromVersionNumber: number | null;
+  };
+
+  /**
+   * A member opened a colleague's patch at its address for the first time, once that open
+   * was recorded for their own Home. Principal: the member who opened it. The owner's own
+   * opens report nothing, and neither do public patches, which record no member's opens.
+   * It is the only business event serving reports: activation counts a person's patches,
+   * welcome page aside, that someone else first opened within 7 days of `user.joined`.
+   */
+  readonly "patch.first_opened": PatchSubject & {
+    /** The current version's tier, which the open was recorded against. */
+    readonly tier: number;
+    /** It is the owner's welcome page, by `@patchy/core`'s `isWelcomePage`. */
+    readonly welcomePage: boolean;
   };
 
   /**

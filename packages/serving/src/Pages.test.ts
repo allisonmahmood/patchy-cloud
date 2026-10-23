@@ -93,6 +93,17 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
   });
 });
 
+const tracked: Analytics.AnalyticsEvent[] = [];
+const recordingAnalytics = Layer.succeed(
+  Analytics.Analytics,
+  Analytics.Analytics.of({ track: (event) => Effect.sync(() => void tracked.push(event)) })
+);
+/** The first opens reported about one patch, in order. */
+const firstOpens = (patchId: string) =>
+  tracked.filter(
+    (event) => event.name === "patch.first_opened" && event.properties.patchId === patchId
+  );
+
 const routes = Layer.mergeAll(
   Pages.layer,
   AuthPages.layer,
@@ -113,7 +124,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
       InviteMail.layerRecording
     )
   ),
-  Layer.provideMerge(Analytics.layerNoop),
+  Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(ConnectionStoreDev.layer([])),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),
@@ -631,6 +642,52 @@ it.layer(layer)("pages", (it) => {
     })
   );
 
+  it.effect("reports a colleague's first open of a patch, and no other open", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const colleagueId = "usr_first_open_colleague";
+      const email = `${colleagueId}@example.com`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${colleagueId}, ${colleagueId}, ${DEV_SEED.companyId}, ${email}, 'Sam', 'member')`;
+      const colleague = {
+        cookie: signedInCookies(signSession({ sub: colleagueId, email, name: "Sam" }))
+      };
+      const patch = yield* publish("First opened by a colleague");
+      const welcome = yield* publish("Your welcome page", undefined, null, "welcome");
+      const shared = yield* publish("Public at its first open", "public");
+
+      // The owner's own first open, a public patch and an older version report nothing.
+      assert.strictEqual((yield* get(patch.path)).status, 200);
+      assert.strictEqual((yield* get(shared.path, colleague)).status, 200);
+      yield* publish("First opened by a colleague, again", undefined, patch.patchId);
+      assert.strictEqual((yield* get(`${patch.path}/~v/1`, colleague)).status, 200);
+      assert.deepStrictEqual(firstOpens(patch.patchId), []);
+      assert.deepStrictEqual(firstOpens(shared.patchId), []);
+
+      // The colleague's first open of the current version reports once; opening it again doesn't.
+      assert.strictEqual((yield* get(patch.path, colleague)).status, 200);
+      assert.strictEqual((yield* get(patch.path, colleague)).status, 200);
+      assert.deepStrictEqual(firstOpens(patch.patchId), [
+        {
+          name: "patch.first_opened",
+          principalId: colleagueId,
+          companyId: DEV_SEED.companyId,
+          properties: {
+            patchId: patch.patchId,
+            ownerUserId: DEV_SEED.userId,
+            tier: 0,
+            welcomePage: false
+          }
+        }
+      ]);
+      assert.strictEqual((yield* get(welcome.path, colleague)).status, 200);
+      assert.deepStrictEqual(
+        firstOpens(welcome.patchId).map((event) => event.properties),
+        [{ patchId: welcome.patchId, ownerUserId: DEV_SEED.userId, tier: 0, welcomePage: true }]
+      );
+    })
+  );
+
   it.effect("serves the page when recording an open fails", () =>
     Effect.gen(function* () {
       const { path, patchId } = yield* publish("Survives a failed open");
@@ -907,6 +964,38 @@ it.layer(services)("pages in memory", (it) => {
         yield* Effect.promise(() => response.text()),
         "&lt;h1&gt;Email-only colleague&lt;/h1&gt;"
       );
+    })
+  );
+
+  it.effect("reports a first open whose reader leaves while it is being recorded", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const colleagueId = "usr_leaving_colleague";
+      const email = `${colleagueId}@example.com`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${colleagueId}, ${colleagueId}, ${DEV_SEED.companyId}, ${email}, 'Ana', 'member')`;
+      const { path, patchId } = yield* publish("Opened as its reader leaves");
+      // Recording the open takes a second, and the reader leaves during it.
+      yield* ddl(
+        `CREATE FUNCTION slow_open() RETURNS trigger AS $$
+            BEGIN PERFORM pg_sleep(1); RETURN NULL; END
+          $$ LANGUAGE plpgsql`,
+        `CREATE TRIGGER slow_open AFTER INSERT ON patch_opens
+            FOR EACH ROW EXECUTE FUNCTION slow_open()`
+      );
+      const opening = yield* send(path, {
+        headers: { cookie: signedInCookies(signSession({ sub: colleagueId, email })) }
+      }).pipe(Effect.forkChild);
+      yield* sql`SELECT pid FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event = 'PgSleep'`.pipe(
+        Effect.repeat({ until: (rows) => rows.length === 1 })
+      );
+      yield* Fiber.interrupt(opening);
+      yield* ddl(`DROP TRIGGER slow_open ON patch_opens`, `DROP FUNCTION slow_open()`);
+      const recorded = yield* sql`SELECT 1 FROM patch_opens
+        WHERE user_id = ${colleagueId} AND patch_id = ${patchId}`;
+      assert.strictEqual(recorded.length, 1);
+      assert.strictEqual(firstOpens(patchId).length, 1);
     })
   );
 

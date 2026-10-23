@@ -1,12 +1,16 @@
 # Analytics
 
-The business moments and runtime work the instance reports about itself. [Patches](../patches/GLOSSARY.md), [Auth](../auth/GLOSSARY.md), [Companies](../companies/GLOSSARY.md), [Portal](../portal/GLOSSARY.md) and [Integrations](../integrations/GLOSSARY.md) decide which business moments matter; Analytics owns their reporting vocabulary and wide events.
+The business moments and runtime work the instance reports about itself. [Patches](../patches/GLOSSARY.md), [Auth](../auth/GLOSSARY.md), [Companies](../companies/GLOSSARY.md), [Portal](../portal/GLOSSARY.md), [Integrations](../integrations/GLOSSARY.md) and, for a colleague's first open alone, [Serving](../serving/GLOSSARY.md) decide which business moments matter; Analytics owns their reporting vocabulary and wide events.
 
 ## Language
 
 **Analytics event**:
 A server-side business moment, such as a patch published or a machine token minted. The catalogue in `src/Analytics.ts` names each event and the properties it carries. Every event names the company it happened in, and a patch event names the patch's owner at that moment. It carries ids, sizes, counts and states, and the identifiers a patch's manifest declares, never a person's or company's name, an email address, page content, a filename, source address, URL or free text; reporting is optional and its failure never fails the caller's request.
 _Avoid_: telemetry, tracking, pageview, metric (an analytics event names what happened in the domain, not what the process measured)
+
+**Activation**:
+A person's patch, other than their welcome page, that another member of their company opened within 7 days of the person joining. PostHog reads it over `user.joined` and `patch.first_opened`, matching the joined user to the opened patch's `ownerUserId`. Serving a page is otherwise never an analytics event; `patch.first_opened` is the one exception, sent once per member and patch after their first open is recorded. Public patches record no member's opens, so one never counts.
+_Avoid_: engagement, adoption, first open (the event activation is counted in, not the measure)
 
 **Principal of an event**:
 Who an event belongs to: the user who acted, or the instance itself when no user is attributable. A wide event's viewer is its principal when known; the company is attribution, not a principal, and reporting creates no person profile.

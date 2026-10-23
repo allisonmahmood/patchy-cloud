@@ -2,8 +2,9 @@
  * The routes a reader hits: the health checks, patch addresses
  * (`/:company/:name[/~v/:n][/route]`) and exact-version content URLs.
  * The server owns the root and catch-all together. Pages read through
- * `patches`; metadata and visits go through `Patches`, and `Content` reads
- * the HTML only after admission. A content URL's document comes from the
+ * `patches`; metadata, visits and opens go through `Patches`, a colleague's
+ * first open is reported as `patch.first_opened`, and `Content` reads the
+ * HTML only after admission. A content URL's document comes from the
  * host's memory once read, compressed by `Accept-Encoding`. The serving
  * guarantees these routes answer under are `serving-headers.ts`.
  */
@@ -19,10 +20,11 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
+import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
-import { contentHash, newInternalId } from "@patchy/core";
+import { contentHash, isWelcomePage, newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
@@ -146,6 +148,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
 ) {
   const content = yield* Content.Content;
   const patches = yield* Patches.Patches;
+  const analytics = yield* Analytics.Analytics;
   const { result: admission, cookies, completedHandshake } = yield* Door.Admission;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -293,15 +296,36 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
       ? admission.user.id
       : undefined;
-  if (kind === "address" && viewerId !== undefined)
-    yield* patches.recordOpen(viewerId, served.value.patch.id, served.value.version.id).pipe(
+  // A colleague's first open is the one business event serving reports: activation is counted
+  // in it. It reports once the open commits, and the two are one step, so a reader who leaves
+  // mid-open can't leave a first open recorded and never reported. Tracking never fails the page.
+  if (kind === "address" && viewerId !== undefined) {
+    const { patch } = served.value;
+    yield* patches.recordOpen(viewerId, patch.id, version.id).pipe(
+      Effect.flatMap((firstOpen) =>
+        firstOpen && viewerId !== patch.ownerUserId
+          ? analytics.track({
+              name: "patch.first_opened",
+              principalId: viewerId,
+              companyId: patch.companyId,
+              properties: {
+                patchId: patch.id,
+                ownerUserId: patch.ownerUserId,
+                tier: version.tier,
+                welcomePage: isWelcomePage({ name: patch.name, tier: version.tier })
+              }
+            })
+          : Effect.void
+      ),
       Effect.catchTags({
         SqlError: (error) =>
           Effect.logWarning("Patch open recording failed.", error).pipe(
-            Effect.annotateLogs({ patchId: served.value.patch.id })
+            Effect.annotateLogs({ patchId: patch.id })
           )
-      })
+      }),
+      Effect.uninterruptible
     );
+  }
 
   const headers = {
     ...patchUrlHeaders,
@@ -468,5 +492,8 @@ export const layer: Layer.Layer<
   | Users.Users
   | SqlClient.SqlClient
   | Content.Content
-  | HttpRouter.Request.From<"Requires", Content.Content | Patches.Patches | Session.Session>
+  | HttpRouter.Request.From<
+      "Requires",
+      Content.Content | Patches.Patches | Session.Session | Analytics.Analytics
+    >
 > = Layer.mergeAll(patches, otherPages, health);
