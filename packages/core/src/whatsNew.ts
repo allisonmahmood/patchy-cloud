@@ -52,6 +52,60 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 17,
+    date: "2026-10-23",
+    through: "5dd94f381d3fae4c6957e76beceeb66b0ebec467",
+    changes: [
+      {
+        kind: "New",
+        title: "Your AI agent can use your company's tools",
+        detail:
+          "Connect Claude Code or Codex to Patchy once, with the steps on Your machines, and it can find your company's tools and read or change them for you. It reaches only a tool's agent tools, the parts made for agents, and it can't do anything you can't. Before it connects, Patchy asks you in your browser, showing what it will and won't be able to do.",
+        prs: [873, 878, 880, 881, 882, 883, 884, 886, 887]
+      },
+      {
+        kind: "New",
+        title: "Admins choose whether agents can use the company's tools",
+        detail:
+          "Agent access, at the foot of the Company page, starts off. An admin turns it on to let everyone connect their own agent, or off to refuse every agent until it's back on, without ending anyone's connection. Everyone can see whether it's on and who changed it last.",
+        prs: [871]
+      },
+      {
+        kind: "Improved",
+        title: "Your machines shows your agents too",
+        detail:
+          "Your machines now shows how to connect your agent, and lists the agents you've connected beside your computers, with when each was last used and a button to disconnect it. Revoke all machines is now Disconnect everything, at the foot of the page. It's always there, and it disconnects your agents as well as your computers.",
+        prs: [885, 879]
+      },
+      {
+        kind: "New",
+        title: "See what agents can do with a tool",
+        detail:
+          "A tool's page now lists its agent tools beside the Overview, under What agents can do: what each one does and whether it reads or changes anything, with a link to connect your agent.",
+        prs: [876]
+      },
+      {
+        kind: "New",
+        title: "The log says when an agent made a change",
+        detail:
+          "A tool's log now names agent work as the person via their agent, such as \"Jordan Lee via Claude\", so you can tell someone's own changes from their agent's. It shows in the Log tab, the tool's recent activity and the log your agent reads.",
+        prs: [888]
+      },
+      {
+        kind: "New",
+        title: "Your agent can make a tool ready for agents",
+        detail:
+          "When your AI agent builds a tool with server code, it can now add agent tools: what people's agents may read and change in it, under the tool's own rules. It can try them on your computer before publishing, and publishing lists them and says if agent access is still off.",
+        prs: [869, 870, 872, 875, 896]
+      }
+    ],
+    behindTheScenes: [
+      "Agents' calls to a tool have limits of their own, and a tool's server that only an agent is using rests a minute after its last call.",
+      "The New and Improved changes in this list are now public, so patchyhq.com can show them too.",
+      "We updated the libraries Patchy is built on to their latest fixes."
+    ]
+  },
+  {
     id: 16,
     date: "2026-10-22",
     through: "dd3f41f26da57474bd53df564a8f8b8d3d029847",
