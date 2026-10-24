@@ -716,7 +716,21 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const login = yield* logins.start({ machineNameHint: "laptop", setupLink: value });
       const [pending, pendingText] = yield* state;
       assert.strictEqual(pending, "login_pending");
-      assert.include(pendingText, "Check your agent: it shows a link and a code to confirm.");
+      // The login's own confirmation, right in the panel, still asking for the code check.
+      assert.include(pendingText, "A computer wants to publish as you");
+      assert.include(pendingText, `Does your agent show ${login.userCode} ?`);
+      const fragment = yield* request("/guide/steps", workspace.owner);
+      // The fragment carries a confirmation, so nothing may frame it, and the script reloads
+      // rather than swap in a fragment for whichever account signed in since.
+      assert.include(fragment.headers["content-security-policy"] ?? "", "frame-ancestors 'none'");
+      const form = yield* fragment.text;
+      assert.include(form, `data-viewer="${workspace.owner.id}"`);
+      assert.include(form, `<input type="hidden" name="setup" value="${value}">`);
+      // Not me answers even when the name was cleared.
+      assert.include(
+        form,
+        '<button class="btn" type="submit" name="action" value="deny" formnovalidate>Not me</button>'
+      );
       yield* logins.confirm({
         userCode: login.userCode,
         userId: workspace.owner.id,

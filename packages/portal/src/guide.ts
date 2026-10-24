@@ -1,4 +1,4 @@
-import type { RequireSession } from "@patchy/auth";
+import { confirmForm, type RequireSession } from "@patchy/auth";
 import { copyLine, copyScriptPath, escapeAttribute, escapeHtml, isWelcomePage } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 
@@ -13,7 +13,15 @@ export type Fallback = "contested" | "denied" | "expired" | "other_account" | "r
 export type SetupState =
   | { readonly kind: "waiting" }
   | { readonly kind: "picked_up" }
-  | { readonly kind: "login_pending" }
+  | {
+      readonly kind: "login_pending";
+      /** The login the line bound, to confirm right here; absent once it can't be. */
+      readonly login?: {
+        readonly userCode: string;
+        readonly machineNameHint: string;
+        readonly oldMachineName: string | null;
+      };
+    }
   | { readonly kind: "confirming" }
   | { readonly kind: "fallback"; readonly reason: Fallback }
   | { readonly kind: "connected" }
@@ -23,9 +31,15 @@ export type SetupState =
 export const stateKey = (state: SetupState): string =>
   state.kind === "fallback" ? `fallback-${state.reason}` : state.kind;
 
+/** What to do next: after a denial there's nothing to finish, only a fresh start if wanted. */
+const fallbackNext = (reason: Fallback) =>
+  reason === "denied"
+    ? "If you didn’t just paste the line, you’re fine: no computer can publish as you."
+    : "Finish with the link your agent shows you, or get a new line.";
+
 const fallbackLines: Record<Fallback, string> = {
   contested: "Two computers used this line, so it can’t finish here.",
-  denied: "That login was denied, so nothing was connected.",
+  denied: "Nothing was connected.",
   expired: "Your agent’s code ran out before it was confirmed.",
   other_account: "A different account confirmed that login, so it isn’t yours.",
   ran_out: "This line ran out."
@@ -121,10 +135,20 @@ export const renderSetupSteps = (input: {
               "2",
               "Confirm it’s you",
               state.kind === "login_pending"
-                ? `<p>Check your agent: it shows a link and a code to confirm.</p>`
+                ? state.login === undefined || input.setupLink === undefined
+                  ? `<p>Check your agent: it shows a link and a code to confirm.</p>`
+                  : `<section class="note note-info"><span class="note-title">A computer wants to publish as you</span><p>Does your agent show <code>${escapeHtml(state.login.userCode)}</code>?</p>${confirmForm(
+                      {
+                        userCode: state.login.userCode,
+                        userId: viewer.user.id,
+                        machineName: state.login.machineNameHint,
+                        oldMachineName: state.login.oldMachineName,
+                        setupLink: input.setupLink
+                      }
+                    )}<p class="supporting-text">Or open the link your agent showed you. Both work.</p></section>`
                 : state.kind === "confirming"
                   ? `<p>Confirmed. Your agent is collecting its key.</p>`
-                  : `<section class="note note-warn" role="status"><span class="note-title">${fallbackLines[state.reason]}</span><p>Finish with the link your agent shows you, or get a new line.</p><form method="post" action="/guide/new-line"><input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><button class="btn" type="submit">Get a new line</button></form></section>`
+                  : `<section class="note note-warn" role="status"><span class="note-title">${fallbackLines[state.reason]}</span><p>${fallbackNext(state.reason)}</p><form method="post" action="/guide/new-line"><input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><button class="btn" type="submit">Get a new line</button></form></section>`
             )}`
           : `${step("done", "✓", "Give your agent this line", "")}${step("done", "✓", "Confirm it’s you", `<p class="supporting-text">Your computer is connected.</p>`)}`;
   const go = `<a class="btn" href="/">Go to ${companyHome(viewer)}</a>`;
@@ -134,7 +158,7 @@ export const renderSetupSteps = (input: {
       : state.kind === "live"
         ? `${renderLiveNote(state.row, viewer, input.publicBaseUrl)}<div class="actions">${go}</div>`
         : "";
-  return `<div class="final-step-steps" data-guide-steps data-state="${stateKey(state)}" data-announce="${escapeAttribute(announcements[state.kind])}"><ol class="steps final-step-list">${steps}</ol>${after}</div>`;
+  return `<div class="final-step-steps" data-guide-steps data-viewer="${escapeAttribute(viewer.user.id)}" data-state="${stateKey(state)}" data-announce="${escapeAttribute(announcements[state.kind])}"><ol class="steps final-step-list">${steps}</ol>${after}</div>`;
 };
 
 /**
@@ -166,6 +190,7 @@ export const finalStepStyles = `
   .final-step .lede { margin: 0; }
   .final-step .steps { margin-top: 18px; }
   .final-step-steps > .note { margin: 18px 0 0; }
+  .final-step-steps form[data-inline-confirm] + p { margin-top: 14px; }
   .final-step-how { margin: 22px 0 0; padding-top: 14px; border-top: 2px dashed var(--line-strong); }
   .final-step-later { margin: 12px 0 0; text-align: center; }
   .final-step .actions > [hidden], .note .actions > [hidden] { display: none; }
@@ -191,7 +216,8 @@ export const guideScript = `(() => {
   const limit = 30 * 60 * 1000;
   const started = Date.now();
   let region = document.querySelector("[data-guide-steps]");
-  if (region === null) return;
+  // Without the account it was rendered for, a reply can't be checked against it.
+  if (region === null || !region.dataset.viewer) return;
   const watching = region.dataset.mode === "watch";
   const modal = document.querySelector("[data-guide-modal]");
   const panel = modal ?? document.querySelector(".final-step");
@@ -257,8 +283,15 @@ export const guideScript = `(() => {
     try {
       const response = await fetch("/guide/steps" + (watching ? "?mode=watch" : ""), { credentials: "same-origin", headers: { accept: "text/html" } });
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-guide-steps]");
-      if (!response.ok || next === null) return location.reload();
-      if (next.dataset.state !== region.dataset.state) {
+      // Another account signed in since the page loaded: its answers belong on its own page.
+      if (!response.ok || next === null || next.dataset.viewer !== region.dataset.viewer) return location.reload();
+      // A confirmation someone is filling in stays put until they answer it.
+      const form = region.querySelector("form[data-inline-confirm]");
+      const busy =
+        form !== null &&
+        (form.contains(document.activeElement) ||
+          [...form.querySelectorAll("input")].some((input) => input.value !== input.defaultValue));
+      if (next.dataset.state !== region.dataset.state && !busy) {
         if (!watching) show(next);
         else {
           if (next.dataset.state === "live") {
@@ -284,8 +317,8 @@ export const guideScript = `(() => {
  * Home watches for the first publication without the panel, after a computer connects or after
  * Later: the region is empty until the live note arrives.
  */
-export const renderWatch = (state: SetupState["kind"]): string =>
-  `<div data-guide-steps data-mode="watch" data-state="${state}" hidden></div><script defer src="${guideScriptPath}"></script>`;
+export const renderWatch = (state: SetupState["kind"], viewerId: string): string =>
+  `<div data-guide-steps data-mode="watch" data-viewer="${escapeAttribute(viewerId)}" data-state="${state}" hidden></div><script defer src="${guideScriptPath}"></script>`;
 
 /** A person's earliest patch, for the day after it was made and while it is live. */
 export const firstPatch = (

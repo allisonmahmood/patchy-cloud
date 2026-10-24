@@ -66,7 +66,24 @@ export class DeviceLoginLookupLimited extends Schema.TaggedError<DeviceLoginLook
   }
 }
 
+/**
+ * The Final step panel's line no longer lets this login be answered there: it isn't the person's,
+ * was contested, retired or ran out, or binds another login. The link the agent printed still works.
+ */
+export class SetupLineChanged extends Schema.TaggedError<SetupLineChanged>()(
+  "SetupLineChanged",
+  {}
+) {
+  override get message() {
+    return "This setup line can no longer answer that login here. Use the link your agent printed.";
+  }
+}
+
 type AnswerError = DeviceLoginExpired | DeviceLoginAnswered | DeviceLoginUnknown;
+
+const decodeOwnLine = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ machineTokenId: Schema.NullOr(Schema.String) }))
+);
 
 const LoginRow = Schema.Struct({
   userCode: Schema.String,
@@ -135,6 +152,37 @@ export class DeviceLogins extends Context.Service<
       userCode: string,
       userId: string
     ) => Effect.Effect<void, AnswerError | DeviceLoginLookupLimited | SqlError>;
+    /**
+     * Confirm from the Final step panel: `confirm`, once the person's own live, uncontested line
+     * still binds this login. The same locks in the same order as the mint: the login, the
+     * person, then the line.
+     */
+    readonly confirmInline: (input: {
+      readonly userCode: string;
+      readonly userId: string;
+      readonly machineName: string;
+      readonly setupLink: string;
+    }) => Effect.Effect<
+      void,
+      | AnswerError
+      | DeviceLoginLookupLimited
+      | MachineTokens.InvalidMachineName
+      | SetupLineChanged
+      | SqlError
+    >;
+    /**
+     * Not me, from the panel, by where the bound login actually is: a pending one is denied, a
+     * confirmed one whose terminal hasn't collected its key is cancelled so no key is ever made,
+     * and one already minted is reported as connected, for the person to remove on Your machines.
+     */
+    readonly denyInline: (input: {
+      readonly userCode: string;
+      readonly userId: string;
+      readonly setupLink: string;
+    }) => Effect.Effect<
+      "denied" | "cancelled" | "connected",
+      DeviceLoginLookupLimited | SetupLineChanged | SqlError
+    >;
     readonly poll: (deviceCode: string) => Effect.Effect<PollResult, SqlError | PollError>;
   }
 >()("@patchy/auth/DeviceLogins") {}
@@ -212,6 +260,9 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const expires = now + LIFETIME_MS;
+          // The terminal's hint prefills the name, so it keeps the 64 characters a name may have:
+          // a longer one could push the confirmation's Deny past the form's size cap.
+          const hint = Array.from(input.machineNameHint).slice(0, 64).join("");
           // Lines whose bound login runs out unanswered end expired before the login goes. The
           // logins lock first, in one order, as every answer locks its login before its line.
           const ran = yield* sql<{ readonly setup_link_id: string | null }>`
@@ -232,7 +283,7 @@ export const make = Effect.gen(function* () {
             const inserted = yield* sql`
             INSERT INTO device_logins (user_code, device_code_hash, state, machine_name_hint,
               old_token_id, expires_at, created_at)
-            VALUES (${userCode}, ${sha256(deviceCode)}, 'pending', ${input.machineNameHint},
+            VALUES (${userCode}, ${sha256(deviceCode)}, 'pending', ${hint},
               (SELECT id FROM machine_tokens WHERE id = ${input.previousMachineTokenId ?? null}),
               to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}))
             ON CONFLICT DO NOTHING RETURNING user_code`;
@@ -305,6 +356,84 @@ export const make = Effect.gen(function* () {
           UPDATE device_logins SET state = 'confirmed', user_id = ${input.userId},
             machine_name = ${input.machineName}, confirmed_at = clock_timestamp()
           WHERE user_code = ${input.userCode}`;
+      })
+    );
+  });
+
+  const ownLine = (setupLink: string, userId: string, userCode: string) =>
+    sql`
+      SELECT machine_token_id AS "machineTokenId" FROM setup_links
+      WHERE id = ${setupLink} AND user_id = ${userId} AND user_code = ${userCode}
+      FOR UPDATE`.pipe(
+      Effect.flatMap(decodeOwnLine),
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+
+  const confirmInline = Effect.fn("DeviceLogins.confirmInline")(function* (input: {
+    readonly userCode: string;
+    readonly userId: string;
+    readonly machineName: string;
+    readonly setupLink: string;
+  }) {
+    yield* consumeLookup(input.userId);
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const row = yield* readPending(input.userCode);
+        yield* MachineTokens.validateMachineName(input.machineName);
+        yield* sql`SELECT id FROM users WHERE id = ${input.userId} FOR SHARE`;
+        // Lock the line, then check it: the wait for its lock can outlast the line, and now()
+        // stays at the transaction's start.
+        yield* sql`SELECT 1 FROM setup_links WHERE id = ${input.setupLink} FOR UPDATE`;
+        const line = yield* sql`
+          SELECT 1 FROM setup_links
+          WHERE id = ${input.setupLink} AND user_id = ${input.userId}
+            AND user_code = ${input.userCode} AND outcome = 'pending'
+            AND retired_at IS NULL AND expires_at > clock_timestamp()`;
+        if (line.length === 0 || row.setupLinkId !== input.setupLink)
+          return yield* new SetupLineChanged({});
+        yield* sql`
+          UPDATE device_logins SET state = 'confirmed', user_id = ${input.userId},
+            machine_name = ${input.machineName}, confirmed_at = clock_timestamp()
+          WHERE user_code = ${input.userCode}`;
+      })
+    );
+  });
+
+  const denyInline = Effect.fn("DeviceLogins.denyInline")(function* (input: {
+    readonly userCode: string;
+    readonly userId: string;
+    readonly setupLink: string;
+  }) {
+    yield* consumeLookup(input.userId);
+    return yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const found = yield* byUserCode(input.userCode).pipe(
+          Effect.catchTags({ SchemaError: Effect.die })
+        );
+        const [line] = yield* ownLine(input.setupLink, input.userId, input.userCode);
+        if (line === undefined) return yield* new SetupLineChanged({});
+        const endLine = sql`UPDATE setup_links SET outcome = 'denied'
+          WHERE id = ${input.setupLink} AND outcome = 'pending'`;
+        const login =
+          Option.isSome(found) && found.value.setupLinkId === input.setupLink
+            ? found.value
+            : undefined;
+        if (login === undefined) {
+          // The login is gone: its key was collected, or it expired or was denied.
+          if (line.machineTokenId !== null) return "connected" as const;
+          yield* endLine;
+          return "denied" as const;
+        }
+        if (login.state === "confirmed") {
+          // Confirmed but not collected: deleting it means the terminal's next poll finds nothing.
+          yield* sql`DELETE FROM device_logins WHERE user_code = ${input.userCode}`;
+          yield* endLine;
+          return "cancelled" as const;
+        }
+        if (login.state === "pending")
+          yield* sql`UPDATE device_logins SET state = 'denied' WHERE user_code = ${input.userCode}`;
+        yield* endLine;
+        return "denied" as const;
       })
     );
   });
@@ -430,7 +559,7 @@ export const make = Effect.gen(function* () {
     return result.reply;
   });
 
-  return DeviceLogins.of({ start, lookup, confirm, deny, poll });
+  return DeviceLogins.of({ start, lookup, confirm, deny, confirmInline, denyInline, poll });
 });
 
 export const layer = Layer.effect(DeviceLogins, make);

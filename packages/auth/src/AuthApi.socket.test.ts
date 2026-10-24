@@ -81,9 +81,10 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
           assert.strictEqual(response.status, 413);
           assert.deepStrictEqual(response.body, { ok: false, error: "Request body is too large." });
         }
+        // A stored hint is cut to 64 characters, so look for its start.
         const sql = yield* SqlClient.SqlClient;
         assert.deepStrictEqual(
-          yield* sql`SELECT user_code FROM device_logins WHERE machine_name_hint = ${machineNameHint}`,
+          yield* sql`SELECT user_code FROM device_logins WHERE machine_name_hint LIKE ${`${framing}-%`}`,
           []
         );
       })

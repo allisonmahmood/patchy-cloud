@@ -16,6 +16,7 @@ import * as AuthPages from "./AuthPages.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Session from "./Session.js";
+import * as SetupLinks from "./SetupLinks.js";
 import { clerkEnv, signedInCookies, signHandshake, signSession } from "./testing.js";
 
 const env = clerkEnv();
@@ -79,6 +80,134 @@ const hiddenFields = (html: string): Record<string, string> =>
   );
 
 it.layer(services)("device login pages in memory with keypair sessions", (it) => {
+  it.effect(
+    "confirms from the Final step panel only while the person's own line binds the login",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+        const owner = yield* account("inline-owner");
+        const other = yield* account("inline-other");
+        const logins = yield* DeviceLogins.DeviceLogins;
+        const line = yield* SetupLinks.current(owner.user.id);
+        const login = yield* logins.start({ machineNameHint: "laptop", setupLink: line.value });
+        const answer = (who: typeof owner, fields: Record<string, string>) =>
+          send(
+            "/login/device",
+            post(who.cookie, { userId: who.user.id, code: login.userCode, ...fields })
+          );
+        // Another account's form, or another line, confirms nothing and goes back Home.
+        const foreign = yield* answer(other, {
+          action: "confirm",
+          machineName: "Laptop",
+          setup: line.value
+        });
+        assert.strictEqual(foreign.status, 303);
+        assert.strictEqual(foreign.headers.get("location"), "/");
+        const elsewhere = yield* answer(owner, {
+          action: "confirm",
+          machineName: "Laptop",
+          setup: (yield* SetupLinks.current(other.user.id)).value
+        });
+        assert.strictEqual(elsewhere.status, 303);
+        assert.strictEqual(
+          (yield* logins.lookup(login.userCode, owner.user.id)).userCode,
+          login.userCode
+        );
+        // The owner's own form confirms, then the terminal collects its key.
+        const confirmed = yield* answer(owner, {
+          action: "confirm",
+          machineName: "Laptop",
+          setup: line.value
+        });
+        assert.strictEqual(confirmed.status, 303);
+        assert.strictEqual(confirmed.headers.get("location"), "/");
+        assert.strictEqual((yield* logins.poll(login.deviceCode)).status, "complete");
+      })
+  );
+
+  it.effect("refuses a stale panel form once its line is contested", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const owner = yield* account("inline-contested");
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const line = yield* SetupLinks.current(owner.user.id);
+      const login = yield* logins.start({ machineNameHint: "laptop", setupLink: line.value });
+      yield* logins.start({ machineNameHint: "elsewhere", setupLink: line.value });
+      const stale = yield* send(
+        "/login/device",
+        post(owner.cookie, {
+          userId: owner.user.id,
+          code: login.userCode,
+          action: "confirm",
+          machineName: "Laptop",
+          setup: line.value
+        })
+      );
+      assert.strictEqual(stale.status, 303);
+      // Still pending: the printed link can confirm it, the panel can't.
+      assert.strictEqual(
+        (yield* logins.lookup(login.userCode, owner.user.id)).userCode,
+        login.userCode
+      );
+    })
+  );
+
+  it.effect("answers Not me by where the login actually is", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const owner = yield* account("inline-not-me");
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const notMe = (line: string, code: string) =>
+        logins.denyInline({ userCode: code, userId: owner.user.id, setupLink: line });
+
+      // Pending: denied, and the terminal hears so.
+      const pendingLine = yield* SetupLinks.current(owner.user.id);
+      const pending = yield* logins.start({ machineNameHint: "a", setupLink: pendingLine.value });
+      assert.strictEqual(yield* notMe(pendingLine.value, pending.userCode), "denied");
+      const denied = yield* Effect.flip(logins.poll(pending.deviceCode));
+      assert.strictEqual(denied._tag, "DeviceLoginDenied");
+
+      // Confirmed but not collected: cancelled, so no key is ever made.
+      yield* SetupLinks.retire(owner.user.id);
+      const confirmedLine = yield* SetupLinks.current(owner.user.id);
+      const confirmed = yield* logins.start({
+        machineNameHint: "b",
+        setupLink: confirmedLine.value
+      });
+      yield* logins.confirm({
+        userCode: confirmed.userCode,
+        userId: owner.user.id,
+        machineName: "B"
+      });
+      assert.strictEqual(yield* notMe(confirmedLine.value, confirmed.userCode), "cancelled");
+      const gone = yield* Effect.flip(logins.poll(confirmed.deviceCode));
+      assert.strictEqual(gone._tag, "DeviceLoginUnknown");
+      assert.deepStrictEqual(yield* (yield* MachineTokens.MachineTokens).list(owner.user.id), []);
+
+      // Already minted: says so, for the person to remove on Your machines.
+      yield* SetupLinks.retire(owner.user.id);
+      const mintedLine = yield* SetupLinks.current(owner.user.id);
+      const minted = yield* logins.start({ machineNameHint: "c", setupLink: mintedLine.value });
+      yield* logins.confirm({ userCode: minted.userCode, userId: owner.user.id, machineName: "C" });
+      yield* logins.poll(minted.deviceCode);
+      assert.strictEqual(yield* notMe(mintedLine.value, minted.userCode), "connected");
+      const page = yield* send(
+        "/login/device",
+        post(owner.cookie, {
+          userId: owner.user.id,
+          code: minted.userCode,
+          action: "deny",
+          setup: mintedLine.value
+        })
+      );
+      assert.strictEqual(page.status, 409);
+      assert.include(
+        yield* Effect.promise(() => page.text()),
+        "That computer is already connected."
+      );
+    })
+  );
+
   it.effect(
     "shows the code first, names the identity, and confirms without minting a plaintext key",
     () =>
@@ -205,6 +334,32 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       assert.include(html, 'value="Old &quot;&lt;laptop&gt;&quot;"');
       assert.include(html, "Replaces the key named");
       assert.notInclude(html, 'value="hostname"');
+    })
+  );
+
+  it.effect("keeps a long name hint to 64 characters, so Deny still fits the form", () =>
+    Effect.gen(function* () {
+      const owner = yield* account("long-hint");
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const login = yield* logins.start({ machineNameHint: "&".repeat(1_400) });
+      const page = yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } });
+      const html = yield* Effect.promise(() => page.text());
+      assert.include(html, `name="machineName" value="${"&amp;".repeat(64)}"`);
+      // What the browser posts for Deny with that prefill is answered, not refused for size.
+      const denied = yield* send(
+        "/login/device",
+        post(owner.cookie, {
+          userId: owner.user.id,
+          action: "deny",
+          code: login.userCode,
+          machineName: "&".repeat(64)
+        })
+      );
+      assert.strictEqual(denied.status, 200);
+      assert.strictEqual(
+        (yield* logins.poll(login.deviceCode).pipe(Effect.flip))._tag,
+        "DeviceLoginDenied"
+      );
     })
   );
 
